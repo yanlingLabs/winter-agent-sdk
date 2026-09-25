@@ -33,7 +33,10 @@ export interface WorkerCommand {
 }
 
 export interface ResolveWorkerCommandOptions {
-  /** Overridable for tests; defaults to a real detection of the single-file `$bunfs` executable. */
+  /**
+   * Overridable for tests; defaults to a real detection of the single-file `$bunfs` executable.
+   * Stating either field bypasses a host command installed by `setHostWorkflowWorkerCommand`.
+   */
   compiled?: boolean;
   execPath?: string;
 }
@@ -44,7 +47,41 @@ export function isCompiledBinary(): boolean {
   return typeof Bun !== "undefined" && typeof Bun.main === "string" && Bun.main.includes("$bunfs");
 }
 
+// --- WS-23: the HOST's worker command (embedded sessions) -------------------------------------------
+//
+// The default below assumes `process.execPath` is a `winter` binary whose main routes
+// `__workflow-worker --bridge` to `workflowWorkerMain`. That holds for a spawned `winter` child and
+// for `bun src/main.ts`, and it is FALSE for an embedded session: there `process.execPath` is the
+// HOST's own binary. Measured on Winter's daemon (`winter-core`), whose `main.ts` sends ANY argv
+// containing `__workflow-worker` to the daemon's own, different workflow worker without looking at
+// `--bridge` -- so a Workflow call from an embedded session would have launched the wrong program
+// under the seatbelt and failed its bridge handshake.
+//
+// So the host says what to spawn, through this one setter, and the default is untouched for every
+// other caller. MODULE STATE ON PURPOSE: an embedded session runs in its own Worker realm (one
+// session per realm, the ruling that made embedding safe at all), so a realm-wide value IS a
+// per-session value. `runEmbeddedSession` sets it for its run and restores the previous one after.
+let hostWorkerCommand: WorkerCommand | undefined;
+
+/**
+ * Install the host's workflow-worker command for this realm; returns a restore function. `undefined`
+ * clears it (the default applies again). The command is copied, so a caller mutating its own object
+ * afterwards changes nothing here.
+ */
+export function setHostWorkflowWorkerCommand(command: WorkerCommand | undefined): () => void {
+  const previous = hostWorkerCommand;
+  hostWorkerCommand = command === undefined ? undefined : { file: command.file, args: [...command.args] };
+  return () => {
+    hostWorkerCommand = previous;
+  };
+}
+
 export function resolveWorkerCommand(opts: ResolveWorkerCommandOptions = {}): WorkerCommand {
+  // The host's command wins over the DERIVED default -- but not over a caller that states its own
+  // `compiled`/`execPath` (the unit tests of the derivation itself, which must keep testing it).
+  if (hostWorkerCommand !== undefined && opts.compiled === undefined && opts.execPath === undefined) {
+    return { file: hostWorkerCommand.file, args: [...hostWorkerCommand.args] };
+  }
   const execPath = opts.execPath ?? process.execPath;
   const compiled = opts.compiled ?? isCompiledBinary();
   if (compiled) {
