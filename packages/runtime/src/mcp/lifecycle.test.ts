@@ -945,7 +945,7 @@ describe("WS-23: type 'sdk' only from the host, versionNegotiation validated, li
 
   test("...so a file-sourced 'sdk' entry can no longer be REPORTED connected with the tools it claims (the state-only feed never sees it)", async () => {
     const resolved = resolveMcpServerSources([{ origin: "plugin", servers: { ghost: { type: "sdk", name: "ghost", tools: [{ name: "t", inputSchema: {} }] } } }], { trustedWorkspace: true }).resolved;
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
     try {
       await lifecycle.start();
       expect(lifecycle.stateSource.snapshot()).toEqual([]);
@@ -999,7 +999,7 @@ describe("WS-23: type 'sdk' only from the host, versionNegotiation validated, li
     let connects = 0;
     const counting: InProcessMcpServer = { connect: (t) => (connects++, server.connect(t)) };
     const resolved: ResolvedMcpServerEntry[] = [{ name: "lc", origin: "explicit", config: { type: "sdk", name: "lc" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { lc: counting } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { lc: counting } });
     try {
       await lifecycle.start();
       expect(lifecycle.stateSource.snapshot()[0]!.toolNames).toEqual(["before"]);
@@ -1021,7 +1021,7 @@ describe("WS-23: type 'sdk' only from the host, versionNegotiation validated, li
     const spec: FixtureServerSpec = { toolsListChanged: true, tools: [{ name: "old", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [] }) }] };
     const server = createFixtureMcpServer(spec);
     const resolved: ResolvedMcpServerEntry[] = [{ name: "park", origin: "explicit", config: { type: "sdk", name: "park" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { park: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { park: server } });
     try {
       await lifecycle.start();
       await lifecycle.controlSeam.toggle("park", false);
@@ -1045,7 +1045,7 @@ describe("WS-23: type 'sdk' only from the host, versionNegotiation validated, li
       { name: "live", origin: "explicit", config: { ...stdioFixtureCommand(), env: {} } },
       { name: "dead", origin: "explicit", config: { command: "/no/such/binary-ws23-version" } },
     ];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ timeoutMs: 5000 }), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ timeoutMs: 5000 }), elicitationAsk: NO_ELICIT });
     try {
       await lifecycle.start();
       await lifecycle.stateSource.waitForPending(undefined, 5000);
@@ -1074,7 +1074,7 @@ describe("WS-23 fix round 1: listChanged refreshes are single-flight; a change d
       return { tools: [{ name: snapshot, inputSchema: { type: "object", properties: {} } }] };
     });
     server.setRequestHandler("tools/call", async () => ({ content: [{ type: "text", text: "x" }] }));
-    const lifecycle = createMcpLifecycle({ servers: [{ name: "race", origin: "explicit", config: { type: "sdk", name: "race" } }], envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { race: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: [{ name: "race", origin: "explicit", config: { type: "sdk", name: "race" } }], envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { race: server } });
     try {
       await lifecycle.start();
       expect(lifecycle.stateSource.snapshot()[0]!.toolNames).toEqual(["v0"]);
@@ -1111,7 +1111,7 @@ describe("WS-23 fix round 1: listChanged refreshes are single-flight; a change d
       return { tools: [{ name: snapshot, inputSchema: { type: "object", properties: {} } }] };
     });
     server.setRequestHandler("tools/call", async () => ({ content: [] }));
-    const lifecycle = createMcpLifecycle({ servers: [{ name: "early", origin: "explicit", config: { type: "sdk", name: "early" } }], envConfig: fastEnv({ timeoutMs: 5000 }), elicitationAsk: NO_ELICIT, inProcessServers: { early: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: [{ name: "early", origin: "explicit", config: { type: "sdk", name: "early" } }], envConfig: fastEnv({ timeoutMs: 5000 }), elicitationAsk: NO_ELICIT, inProcessServers: { early: server } });
     try {
       await lifecycle.start();
       for (let i = 0; i < 200 && lifecycle.stateSource.snapshot()[0]!.toolNames[0] !== "after"; i++) await new Promise((r) => setTimeout(r, 10));
