@@ -4,6 +4,45 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## Unreleased
+
+### Claude in code mode (WS-23 Anthropic hardening)
+
+- **Block order is kept end to end.** A response's thinking, text and tool calls are persisted and replayed in
+  the order the model streamed them (`ProviderTurn.content`, additive); a `[thinking, text, thinking, tool_use]`
+  turn used to come back as `[thinking, thinking, text, tool_use]`. WebSearch's inner tool loop now replays a
+  round's thinking blocks too (it dropped them, a 400 on always-on-thinking models).
+- **Context overflow recovers.** `model_context_window_exceeded` and the 400 "prompt is too long" (typed as
+  `ProviderError.contextOverflow`) trigger the engine's own compaction and one retry of the round; a second
+  overflow ends the turn with `terminal_reason: "prompt_too_long"`. The overflowed partial output is discarded.
+- **`pause_turn`** continues the turn (bounded at 5 resends) instead of ending it.
+- **Refusals are typed.** A `refusal` ends the turn with `is_error: true` and `terminal_reason: "refusal"`,
+  is not persisted, never executes a half-streamed tool call, and the refusal frame carries
+  `api_refusal_category` / `api_refusal_explanation` from the response's `stop_details`.
+- **`max_tokens`** defaults to 64000 capped at the row's maximum, not the row's full 128K; an explicit request
+  or a host `defaultMaxOutputTokens` still wins.
+- **Mid-stream `overloaded_error`** arriving before any content is retried under the adapter's existing retry
+  policy; after content it stays a final, typed error.
+- **Interleaved thinking** on the budget-only 4.5 rows (Opus 4.5, Sonnet 4.5): `interleaved-thinking-2025-05-14`
+  rides a request that carries a thinking budget and tools.
+- **WebSearch works on Opus 5.5 / Fable 5.1.** The runtime runs the search for the tool's own input before any
+  model call and hands the results to the inner model; nothing is forced any more (a forced `tool_choice` is a
+  400 on those models). The output shape is unchanged.
+- **Console bearer auth.** The `console` provider gets the same bearer treatment as `anthropic`: the
+  `oauth-2025-04-20` beta and the `anthropic:console` account guard. Winter still identifies as Winter.
+
+### Catalog data
+
+- Dashed aliases (`claude-opus-4-6`, `-4-7`, `-4-8`, `claude-sonnet-4-6`) on the Opus 4.6/4.7/4.8 and Sonnet 4.6
+  rows (anthropic + console), so transcripts the claude binary wrote resolve to their rows.
+- Opus 5 records that disabled thinking is rejected at xhigh/max
+  (`thinking.type.disabled+output_config.effort.{xhigh,max}`, a conjunction token); the adapter sends adaptive
+  thinking for that combination instead of a request it knows will 400.
+
+### Tooling
+
+- `scripts/probe-anthropic-code.ts`: an opt-in live probe (`WINTER_ANTHROPIC_PROBE=1`) for the above.
+
 ## 0.0.24
 
 Fixes to the 0.0.23 catalog refresh from an independent audit (53 rows fact-checked against vendor pages), plus
