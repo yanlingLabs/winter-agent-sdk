@@ -863,6 +863,41 @@ export function blockBindingBetaFor(body: Record<string, unknown>, descriptor: W
   return descriptor?.reasoning?.blockBinding?.value?.beta;
 }
 
+/** The beta Anthropic gates interleaved thinking behind on a MANUAL-budget model. */
+export const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
+
+/**
+ * WS-23 (item 5): the interleaved-thinking beta, or `undefined` -- derived from the BODY this request
+ * actually carries (same discipline as `blockBindingBetaFor`, so the header can never claim a mode the
+ * body does not use).
+ *
+ * WHY: without it, a manual-budget model thinks ONCE, before its first tool call, and never between
+ * tool calls again for the rest of the turn -- a code loop reasons about the first call and then acts
+ * blind. Anthropic's extended-thinking docs gate interleaved thinking on this header for the manual
+ * `thinking: {type: "enabled", budget_tokens}` mode; adaptive thinking interleaves by itself and needs
+ * nothing (https://platform.claude.com/docs/en/build-with-claude/extended-thinking, "Interleaved
+ * thinking"; the 4.6 migration guide lists the header as removable once on adaptive).
+ *
+ * GATED ON CATALOG EVIDENCE, THREE WAYS:
+ *   - the row lists `thinking.type.adaptive` in `unsupportedParameters` -- it is a budget-ONLY model
+ *     (Opus 4.5, Sonnet 4.5, Haiku 4.5 on `anthropic` and `console`). No sibling
+ *     Anthropic-dialect row carries that token, so a third party never gets Anthropic's beta name;
+ *   - the body's thinking arm is `enabled` (a budget), the only mode the header changes;
+ *   - the body carries tools -- interleaving is BETWEEN tool calls, so without tools there is nothing
+ *     for the header to do.
+ * Disclosed, not relied on: with the header the vendor lets `budget_tokens` exceed `max_tokens` (it
+ * becomes the whole turn's thinking budget). This adapter still refuses `budget >= max_tokens` before
+ * the request, the conservative reading that holds with or without the header.
+ */
+export function interleavedThinkingBetaFor(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined): string | undefined {
+  if (descriptor === undefined || !descriptor.unsupportedParameters.includes("thinking.type.adaptive")) return undefined;
+  const thinking = body["thinking"];
+  if (thinking === null || typeof thinking !== "object" || (thinking as { type?: unknown }).type !== "enabled") return undefined;
+  const tools = body["tools"];
+  if (!Array.isArray(tools) || tools.length === 0) return undefined;
+  return INTERLEAVED_THINKING_BETA;
+}
+
 // --- endpoint + headers ---------------------------------------------------------------------------
 
 interface Endpoint {
@@ -926,7 +961,8 @@ async function resolveFreshMaterial(ctx: ProviderContext): Promise<CredentialMat
 }
 
 /**
- * `blockBindingBeta` is OPTIONAL, and it is a VALUE the caller computed, never a descriptor this
+ * `bodyBetas` (formerly `blockBindingBeta`; WS-23 widened it to a list so the interleaved-thinking
+ * beta rides the same door) is OPTIONAL, and each entry is a VALUE the caller computed, never a descriptor this
  * function reads for itself (fix round 2: see `blockBindingBetaFor`'s own comment for the bug that
  * made). `validateCredential`/`listModels` hit `/v1/models`, not a model-specific endpoint, and pass
  * `undefined` -- there is no row and no body to have derived a beta from.
@@ -935,7 +971,7 @@ async function resolveFreshMaterial(ctx: ProviderContext): Promise<CredentialMat
  * -- including this beta and its dedupe against `opts.betas` -- is otherwise unreachable without a
  * real or faked HTTP round trip, and `messages.test.ts` asserts it directly.
  */
-export async function buildHeaders(ctx: ProviderContext, blockBindingBeta: string | undefined, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean, identity: Record<string, string> = {}): Promise<Record<string, string>> {
+export async function buildHeaders(ctx: ProviderContext, bodyBetas: string | readonly (string | undefined)[] | undefined, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean, identity: Record<string, string> = {}): Promise<Record<string, string>> {
   const material = await resolveFreshMaterial(ctx);
   // P10a-4, AMENDED (Lane S round 3, Opus review): a `bearer` credential for the `anthropic` provider
   // row is honoured ONLY under its own fixed account, `ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT`
@@ -971,7 +1007,7 @@ export async function buildHeaders(ctx: ProviderContext, blockBindingBeta: strin
   // actually produces post-P10a-1. Scoped to `isConsoleProvider(ctx)` exactly as before: a sibling
   // row's `bearer` material still gets no vendor beta.
   //
-  // BLOCK BINDING (2026-09-25 fix round 1), a THIRD, independent beta source: `blockBindingBeta`, the
+  // BLOCK BINDING (2026-09-25 fix round 1), a THIRD, independent beta source: `bodyBetas`, the
   // caller's OWN precomputed decision (`blockBindingBetaFor`, called from `prepare()`/`countTokens()`
   // against the ACTUAL body those functions built) -- never re-derived from a descriptor here, which
   // is exactly the fix round 2 bug (this function used to read `descriptor?.reasoning?.blockBinding`
@@ -983,7 +1019,9 @@ export async function buildHeaders(ctx: ProviderContext, blockBindingBeta: strin
   const betas = [
     ...(opts.betas ?? []),
     ...((material?.kind === "oauth" || material?.kind === "bearer") && isConsoleProvider(ctx) ? [CONSOLE_BEARER.betaHeader] : []),
-    ...(blockBindingBeta !== undefined ? [blockBindingBeta] : []),
+    // WS-23: `bodyBetas` is every beta the caller derived from the BODY it built -- block binding and
+    // (item 5) interleaved thinking today -- one value or a list, `undefined` entries skipped.
+    ...(typeof bodyBetas === "string" ? [bodyBetas] : (bodyBetas ?? []).filter((beta): beta is string => beta !== undefined)),
   ].filter((value, index, all) => all.indexOf(value) === index);
   // HOST HEADERS FIRST, so nothing below can be silently overridden: spread LAST, a host header could
   // replace `anthropic-version` or `content-type`, and a wrong API version is a class of failure that
@@ -1190,7 +1228,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
     const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
     const body = buildRequestBody(req, descriptor, opts);
-    const headers = await buildHeaders(ctx, blockBindingBetaFor(body, descriptor), endpoint.policy, opts, true, identityFor(ctx));
+    const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor)], endpoint.policy, opts, true, identityFor(ctx));
     return { endpoint, body, headers, captureEvent: anthropicCaptureEvent(descriptor) };
   }
 
@@ -1463,7 +1501,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
       const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
       const body = buildRequestBody(req, descriptor, opts, "count");
-      const headers = await buildHeaders(ctx, blockBindingBetaFor(body, descriptor), endpoint.policy, opts, true, identityFor(ctx));
+      const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor)], endpoint.policy, opts, true, identityFor(ctx));
       const res = await boundedFetch(`${endpoint.base}/v1/messages/count_tokens`, {
         method: "POST",
         headers,

@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { serve } from "bun";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
-import { ANTHROPIC_ROW_DEFAULT_MAX_TOKENS, buildRequestBody, createAnthropicMessagesAdapter, findDescriptor } from "./messages.ts";
+import { ANTHROPIC_ROW_DEFAULT_MAX_TOKENS, INTERLEAVED_THINKING_BETA, buildRequestBody, createAnthropicMessagesAdapter, findDescriptor } from "./messages.ts";
 import { createMemoryCredentialStore } from "../../credentials/memory.ts";
 import type { ProviderContext, ProviderEvent, TurnRequest } from "../../types.ts";
 
@@ -197,5 +197,55 @@ describe("WS-23 item 4: a mid-stream `overloaded_error` BEFORE any content retri
     const events = await collect(s.url);
     expect(s.requests).toHaveLength(1);
     expect(error(events)?.error).toMatchObject({ code: "server", providerCode: "api_error", retryable: false });
+  });
+});
+
+describe("WS-23 item 5: the interleaved-thinking beta on the budget-only 4.5 rows, with tools", () => {
+  const TOOLS: TurnRequest["tools"] = [{ name: "Glob", description: "find files", inputSchema: { type: "object", properties: {} } }];
+  const betasOf = async (req: Partial<TurnRequest>, over: Partial<ProviderContext> = {}): Promise<string[]> => {
+    const s = start(() => sse(messageStart + textBlock(0, "ok") + ending("end_turn")));
+    const events: ProviderEvent[] = [];
+    for await (const e of adapter().streamTurn({ model: "claude-sonnet-4.5", messages: [{ role: "user", content: "hi" }], ...req }, { ...ctx(s.url), ...over })) events.push(e);
+    expect(done(events)).toBeDefined();
+    return (s.requests[0]!.headers["anthropic-beta"] ?? "").split(",").filter((b) => b.length > 0);
+  };
+
+  for (const model of ["claude-opus-4.5", "claude-sonnet-4.5"]) {
+    test(`${model}: a budget + tools -> the beta rides the request`, async () => {
+      expect(await betasOf({ model, thinking: { type: "enabled", budgetTokens: 4_096 }, tools: TOOLS })).toContain(INTERLEAVED_THINKING_BETA);
+    });
+  }
+
+  test("Haiku 4.5: the catalog declares NO reasoning for its rows, so a thinking request is refused before the wire and the beta never arises (a catalog-evidence gap, not an adapter rule)", async () => {
+    const s = start(() => sse(messageStart + ending("end_turn")));
+    const events: ProviderEvent[] = [];
+    for await (const e of adapter().streamTurn({ model: "claude-haiku-4.5", messages: [{ role: "user", content: "hi" }], thinking: { type: "enabled", budgetTokens: 4_096 }, tools: TOOLS }, ctx(s.url))) events.push(e);
+    expect(error(events)?.error.message).toMatch(/does not declare reasoning support/);
+    expect(s.requests).toHaveLength(0);
+  });
+
+  test("effort on Opus 4.5 maps to a budget, so it gets the beta too", async () => {
+    expect(await betasOf({ model: "claude-opus-4.5", effort: "high", tools: TOOLS })).toContain(INTERLEAVED_THINKING_BETA);
+  });
+
+  test("no tools -> no beta (there is nothing to interleave between)", async () => {
+    expect(await betasOf({ thinking: { type: "enabled", budgetTokens: 4_096 } })).not.toContain(INTERLEAVED_THINKING_BETA);
+  });
+
+  test("no thinking -> no beta", async () => {
+    expect(await betasOf({ tools: TOOLS })).not.toContain(INTERLEAVED_THINKING_BETA);
+  });
+
+  test("an adaptive-thinking row never gets it (adaptive interleaves on its own)", async () => {
+    expect(await betasOf({ model: "claude-sonnet-5", thinking: { type: "adaptive" }, tools: TOOLS })).not.toContain(INTERLEAVED_THINKING_BETA);
+    // Sonnet 5 rejects `enabled`; the adapter rewrites it to adaptive, and the header follows the body.
+    expect(await betasOf({ model: "claude-sonnet-5", thinking: { type: "enabled", budgetTokens: 4_096 }, tools: TOOLS })).not.toContain(INTERLEAVED_THINKING_BETA);
+  });
+
+  test("a host that already sends it gets it ONCE", async () => {
+    const s = start(() => sse(messageStart + textBlock(0, "ok") + ending("end_turn")));
+    const withHostBeta = createAnthropicMessagesAdapter({ catalog: loadCatalog(), betas: [INTERLEAVED_THINKING_BETA] });
+    for await (const _ of withHostBeta.streamTurn({ model: "claude-sonnet-4.5", messages: [{ role: "user", content: "hi" }], thinking: { type: "enabled", budgetTokens: 4_096 }, tools: TOOLS }, ctx(s.url))) void _;
+    expect(s.requests[0]!.headers["anthropic-beta"]).toBe(INTERLEAVED_THINKING_BETA);
   });
 });
