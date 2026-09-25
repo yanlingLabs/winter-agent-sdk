@@ -388,3 +388,36 @@ describe("xAI's FLAT error dialect (WS-23): `{code, error: \"<message>\"}` besid
     expect(at400.message).toBe(`HTTP 400 — ${invalidKey.slice(0, 200)}`);
   });
 });
+
+describe("the flat dialect is recognised STRICTLY (WS-23 fix round 1, I1/I2)", () => {
+  test("a Fastify-style body is NOT the flat dialect: it keeps the raw-body snippet, so the real detail survives", () => {
+    // `{statusCode, code, error, message}` also carries a string `error` — the reason phrase — with the
+    // detail in `message`. Read as xAI's shape, the message collapsed to `HTTP 400 — Bad Request`.
+    const fastify = JSON.stringify({ statusCode: 400, code: "FST_ERR_VALIDATION", error: "Bad Request", message: "body/model must be string" });
+    const err = normalizeHttpError(400, h(), fastify);
+    expect([err.code, err.retryable]).toEqual(["bad_request", false]);
+    expect(err.message).toBe(`HTTP 400 — ${fastify}`);
+    expect(err.message).toContain("body/model must be string");
+    // …and no provider code is lifted off it, exactly as before WS-23 (`error` is not an envelope object).
+    expect("providerCode" in err).toBe(false);
+    expect(parseProviderErrorCode(fastify)).toBeUndefined();
+    // The same style at a 401 keeps "revoked" in view instead of the bare reason phrase.
+    const revoked = JSON.stringify({ statusCode: 401, error: "Unauthorized", message: "your key has been revoked" });
+    expect(normalizeHttpError(401, h(), revoked).message).toContain("your key has been revoked");
+  });
+
+  test("only `{error}` and `{error, code}` are the flat dialect — one extra key and the body reads as before", () => {
+    const withExtra = JSON.stringify({ code: "Client specified an invalid argument", error: "Incorrect API key provided: xa***Jm.", request_id: "r-1" });
+    const err = normalizeHttpError(400, h(), withExtra);
+    expect([err.code, "providerCode" in err, err.message]).toEqual(["bad_request", false, `HTTP 400 — ${withExtra}`]);
+  });
+
+  test("the wrong-key reading is ANCHORED: the phrase quoted mid-message is an ordinary 400, not `auth`", () => {
+    const quoted = JSON.stringify({ code: "Client specified an invalid argument", error: "Invalid tool name `Incorrect API key provided`: names must match ^[a-zA-Z0-9_-]+$" });
+    const err = normalizeHttpError(400, h(), quoted);
+    expect([err.code, err.providerCode]).toEqual(["bad_request", "Client specified an invalid argument"]);
+    expect(toSdkAssistantMessageError(err)).toBe("invalid_request");
+    // Leading whitespace before the real sentence still reads as the credential rejection.
+    expect(normalizeHttpError(400, h(), JSON.stringify({ error: "  Incorrect API key provided: xa***Jm." })).code).toBe("auth");
+  });
+});

@@ -76,8 +76,11 @@ export function parseProviderErrorCode(body: string): string | undefined {
  * INVALID_ARGUMENT's), carried verbatim as `providerCode` like every other dialect's code — never
  * translated into a name the body did not send.
  *
- * `undefined` for anything that is not exactly this shape, the structured envelope included, which is
- * what keeps every existing dialect's reading untouched.
+ * `undefined` for anything that is not EXACTLY this shape — the keys are `{error}` or `{error, code}`
+ * and nothing else (fix round 1, I1). A string `error` alone is not enough: a Fastify-style body
+ * (`{statusCode, code, error: "Bad Request", message: "<the real detail>"}`) also has one, and reading
+ * it as this dialect replaced the raw-body snippet with the bare reason phrase, dropping the detail
+ * for every adapter that shares this normalizer. Anything else keeps the pre-WS-23 reading.
  */
 function parseFlatError(body: string): { message: string; code?: string } | undefined {
   let parsed: unknown;
@@ -86,9 +89,10 @@ function parseFlatError(body: string): { message: string; code?: string } | unde
   } catch {
     return undefined;
   }
-  if (parsed === null || typeof parsed !== "object") return undefined;
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
   const record = parsed as { error?: unknown; code?: unknown };
   if (typeof record.error !== "string" || record.error.length === 0) return undefined;
+  if (Object.keys(record).some((key) => key !== "error" && key !== "code")) return undefined;
   return { message: record.error, ...(typeof record.code === "string" && record.code.length > 0 ? { code: record.code } : {}) };
 }
 
@@ -97,11 +101,14 @@ function parseFlatError(body: string): { message: string; code?: string } | unde
  * — reusing OpenAI's own sentence for it ("Incorrect API key provided", which OpenAI sends as a 401).
  * By status alone that is `bad_request`, which tells a user their request was malformed when their
  * key is wrong, and makes `validateViaModels` report an unreachable endpoint instead of an invalid
- * credential. Matched ONLY on the flat dialect and only on this sentence: a message heuristic, kept
- * as narrow as the evidence it rests on, and a live-gate item (the WS-23 probe's bad-key step).
+ * credential. Matched ONLY on the flat dialect and only when the message BEGINS with this sentence
+ * (fix round 1, I2: unanchored, a 400 quoting the phrase mid-message — an invalid tool name, a
+ * validation error echoing input — was misread as a credential failure). A message heuristic, kept as
+ * narrow as the evidence it rests on (three independent reports of the same body), and a live-gate
+ * item (the WS-23 probe's bad-key step).
  */
 function isFlatCredentialRejection(status: number, flat: { message: string } | undefined): boolean {
-  return status === 400 && flat !== undefined && /\bincorrect api key provided\b/i.test(flat.message);
+  return status === 400 && flat !== undefined && /^\s*incorrect api key provided\b/i.test(flat.message);
 }
 
 /**
