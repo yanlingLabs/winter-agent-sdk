@@ -251,7 +251,7 @@ describe("encrypted reasoning REPLAYS across turns (WS-23 item 5)", () => {
       const fromCaps = adapter.capabilities(from);
       expect(fromCaps.continuationDomain).toBe(key);
       const verdict = classifySwitch(
-        { providerId: "xai", modelKey: key, family: "openai", continuationDomain: fromCaps.continuationDomain, readableState: fromCaps.readableState, continuation: from.reasoning!.continuation },
+        { providerId: "xai", modelKey: key, family: "openai", continuationDomain: fromCaps.continuationDomain!, readableState: fromCaps.readableState, continuation: from.reasoning!.continuation },
         { providerId: "openai", modelKey: to.key, family: "openai", readableState: "none", continuation: "none" },
       );
       expect([key, verdict.lossClass]).toEqual([key, "warned-lossy"]);
