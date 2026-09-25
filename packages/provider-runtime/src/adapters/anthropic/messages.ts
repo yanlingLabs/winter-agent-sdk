@@ -591,6 +591,25 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
     if (!thinkingFieldDecided) base = mapped.value;
   }
 
+  // WS-23 (item 8): A REJECTION THAT DEPENDS ON TWO PARAMETERS AT ONCE. Opus 5 accepts
+  // `thinking: {type: "disabled"}` at low/medium/high effort and rejects it at xhigh/max
+  // (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting). The row records it
+  // in the SAME `unsupportedParameters` vocabulary as every token above, as a CONJUNCTION:
+  // `thinking.type.disabled+output_config.effort.<tier>` -- `+` joins two ordinary tokens and the pair
+  // is rejected only together. It is read against the effort tier this request actually resolved to
+  // (`outputConfigEffort`, after the numeric mapping), never the raw request value.
+  //
+  // REWRITTEN TO ADAPTIVE, NOT REFUSED -- the same evidenced-rewrite rule as `enabled` -> adaptive on a
+  // row that rejects `enabled`. Why this direction: effort is the dial a Winter session actually moves
+  // (per turn, per message), while a `disabled` arm usually arrives as a standing session option
+  // (`maxThinkingTokens: 0`) set once; refusing would turn every xhigh/max turn of such a session into a
+  // typed failure for a combination the caller never chose as a pair. Opus 5's thinking is ON by
+  // default, so adaptive is what the model does when `thinking` is left alone -- the rewrite asks for
+  // exactly that, explicitly, rather than omitting the field and relying on the default.
+  if (req.thinking?.type === "disabled" && outputConfigEffort !== undefined && unsupported.has(`thinking.type.disabled+output_config.effort.${outputConfigEffort}`)) {
+    base = { type: "adaptive" };
+  }
+
   // Computed ONCE, shared by the fallback gate below AND the display step further down (fix round 2,
   // Minor 2): whether this row's OWN evidence can actually produce a `display` value for a requested
   // summary. `req.requestSummary === true` alone is not enough to justify sending an otherwise-omitted

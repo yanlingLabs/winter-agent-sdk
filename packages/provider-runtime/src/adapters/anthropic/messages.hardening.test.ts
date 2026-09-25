@@ -305,3 +305,45 @@ describe("WS-23 item 7: a `console` session speaks bearer the way the `anthropic
     expect(s.requests[0]!.headers["anthropic-beta"] ?? "").not.toContain(CONSOLE_BEARER.betaHeader);
   });
 });
+
+describe("WS-23 item 8: the catalog's Opus 5 clamp and the dashed aliases", () => {
+  const catalog = loadCatalog();
+  const opus5 = findDescriptor(catalog, "anthropic", "claude-opus-5")!;
+  const body = (over: Partial<TurnRequest>) => buildRequestBody({ model: "claude-opus-5", messages: [{ role: "user", content: "hi" }], ...over }, opus5, {});
+
+  test("the compiled Opus 5 rows (anthropic + console) carry the conjunction tokens", () => {
+    for (const provider of ["anthropic", "console"]) {
+      const row = findDescriptor(catalog, provider, "claude-opus-5")!;
+      expect(row.unsupportedParameters).toContain("thinking.type.disabled+output_config.effort.xhigh");
+      expect(row.unsupportedParameters).toContain("thinking.type.disabled+output_config.effort.max");
+    }
+  });
+
+  test("disabled + xhigh / max -> adaptive (never the documented 400); the effort still rides", () => {
+    for (const effort of ["xhigh", "max"] as const) {
+      const b = body({ thinking: { type: "disabled" }, effort });
+      expect(b["thinking"]).toEqual({ type: "adaptive" });
+      expect(b["output_config"]).toEqual({ effort });
+    }
+    // A NUMERIC effort resolving to the top tier is read after the mapping, the same way.
+    expect(body({ thinking: { type: "disabled" }, effort: 100 })["thinking"]).toEqual({ type: "adaptive" });
+  });
+
+  test("disabled at low/medium/high (or with no effort) stays disabled -- the row accepts it there", () => {
+    for (const effort of ["low", "medium", "high"] as const) expect(body({ thinking: { type: "disabled" }, effort })["thinking"]).toEqual({ type: "disabled" });
+    expect(body({ thinking: { type: "disabled" } })["thinking"]).toEqual({ type: "disabled" });
+  });
+
+  test("a row WITHOUT the token is untouched: Opus 4.8 keeps disabled at xhigh", () => {
+    const opus48 = findDescriptor(catalog, "anthropic", "claude-opus-4.8")!;
+    expect(buildRequestBody({ model: "claude-opus-4.8", messages: [{ role: "user", content: "hi" }], thinking: { type: "disabled" }, effort: "xhigh" }, opus48, {})["thinking"]).toEqual({ type: "disabled" });
+  });
+
+  test("the dashed ids claude writes into its transcripts resolve to the dotted rows, on both providers", () => {
+    for (const provider of ["anthropic", "console"]) {
+      for (const [dashed, dotted] of [["claude-opus-4-6", "claude-opus-4.6"], ["claude-opus-4-7", "claude-opus-4.7"], ["claude-opus-4-8", "claude-opus-4.8"], ["claude-sonnet-4-6", "claude-sonnet-4.6"]] as const) {
+        expect(findDescriptor(catalog, provider, dashed)?.key).toBe(`${provider}/${dotted}`);
+      }
+    }
+  });
+});
