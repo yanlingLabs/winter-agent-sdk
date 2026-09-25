@@ -49,6 +49,23 @@ export function isToolScopedHookEvent(event: HookEvent): boolean {
   return TOOL_SCOPED_HOOK_EVENTS.has(event);
 }
 
+// WS-23: claude's matcher SUBJECTS for the lifecycle events that have one -- a `SessionStart` group
+// written `"matcher": "startup|resume"` is filtered on the input's `source`, a `SubagentStop` group on
+// its `agent_type`, and so on. Before WS-23 Winter never consulted a matcher on these (§1.3's "match
+// by event name only"), which was harmless while nothing fired SessionStart with `source: "compact"`;
+// now that something does, a claude-format `startup`-only hook would otherwise start running after
+// every compaction. The subject is read from the invocation payload (runner.ts); a caller that
+// supplies none keeps the old "every group matches" answer, so nothing that never passed a subject
+// changes.
+export const MATCHER_SUBJECT_FIELD: Readonly<Partial<Record<HookEvent, string>>> = {
+  SessionStart: "source",
+  SubagentStart: "agent_type",
+  SubagentStop: "agent_type",
+  PreCompact: "trigger",
+  PostCompact: "trigger",
+  Notification: "notification_type",
+};
+
 // One flattened, per-hook registration — WS-08 §2's illustrative `{matcher?, hooks: HookHandler[]}`
 // shape is flattened to one SourcedHookEntry PER hook callback/command-spec at build time (the
 // reducer/runner operate per-hook, not per-matcher-entry group), extending reducer.ts's own minimal
@@ -70,14 +87,30 @@ export interface SourcedHookEntry extends HookParticipant {
   // what makes the entry it will need survive the settings loader instead of being parsed and
   // thrown away -- the alternative was a builder that produces entries no executor could ever run.
   command?: string;
+  /**
+   * WS-23: fail CLOSED on PreToolUse/PermissionRequest -- an error, a timeout or a malformed output
+   * from THIS hook denies the call (runner.ts's `failClosedDenial`) instead of contributing nothing.
+   * Absent = the long-standing non-blocking default. Set from `HookCallbackMatcher.failClosed` (per
+   * callback matcher, riding the wire as `RuntimeHookMatcherGroup.failClosed`) or from a settings /
+   * plugin command handler's own `failClosed: true`.
+   */
+  failClosed?: boolean;
+  /**
+   * WS-23: the plugin's own root directory, for a plugin-sourced command hook -- what
+   * `${CLAUDE_PLUGIN_ROOT}` is substituted with in `command` and exported as in the hook's
+   * environment (command-invoker.ts). Absent on every non-plugin entry.
+   */
+  pluginRoot?: string;
 }
 
 export interface HookRegistry {
   // Returns every registration for `event`, in WS-08 §2's merged deterministic order, filtered by
-  // matcher (§2.1) when `event` is tool-scoped. `toolName` is ignored for non-tool-scoped events
-  // (their matcher, if any is nonsensically present, is never consulted — §1.3) and should be
-  // omitted by callers that know the event isn't tool-scoped; if omitted for a tool-scoped event, a
+  // matcher (§2.1) when `event` is tool-scoped. If `toolName` is omitted for a tool-scoped event, a
   // matcher-bearing entry is defensively excluded (never crashes, never over-matches).
+  //
+  // WS-23: for an event in MATCHER_SUBJECT_FIELD the second argument is that event's SUBJECT
+  // (`source`, `agent_type`, ...) instead, and a matcher filters on it; OMITTED, every group matches
+  // (the pre-WS-23 answer). For every other event the matcher is still never consulted (§1.3).
   matching(event: HookEvent, toolName?: string): SourcedHookEntry[];
 }
 
@@ -92,12 +125,54 @@ export interface HookRegistry {
 // trust-gated.
 const SOURCE_RANK: Record<HookSource, number> = { managed: 0, user: 1, project: 2, local: 3, sdk: 4, plugin: 5 };
 
-function matcherApplies(matcher: string | undefined, toolName: string | undefined): boolean {
-  if (matcher === undefined) return true; // WS-08 §2.1: "absent = matches every occurrence."
+// --- WS-23: REGEX MATCHERS ---------------------------------------------------------------------------
+//
+// The glob grammar above was the WHOLE matcher language, and claude's own matcher language is a
+// regular expression: a claude-format plugin or settings hook written `Edit|Write`, `mcp__.*` or `.*`
+// matched NOTHING here, silently -- so a user's deny hook never fired (inv-hooks-mcp A2, measured).
+// Both languages are honoured now, in this order, compiled ONCE per entry at registry build:
+//
+//   1. absent or ""                   -> every occurrence (claude's own "" = all).
+//   2. no regex-only metacharacter    -> the WS-08 §2.1 glob path above, UNCHANGED: an exact name,
+//      (letters, digits, `_`, `-`, `*`;  `*`, `mcp__srv__*`, `Tool(*)`. Deliberately first: read as a regex,
+//      a trailing `(*)` is allowed)
+//                                        `mcp__srv__*` would mean "mcp__srv_" plus any run of `_`,
+//                                        which is not what anyone who wrote it meant.
+//   3. anything else                  -> a RegExp over the WHOLE tool name, `^(?:<pattern>)$`.
+//
+// ANCHORED, a stated divergence: claude tests an unanchored `new RegExp(pattern)`, under which
+// `Write` inside a larger pattern also matches `NotebookWrite`-style names nobody listed. A hook
+// matcher SELECTS which calls a hook gates, so "matches exactly the names the pattern spells" is the
+// predictable reading; `.*` and `mcp__.*` mean the same either way.
+//
+// A pattern that will not compile logs ONE warning (at build, so once per registry, never per call)
+// and matches NOTHING -- the same inert posture a malformed glob always had, now said out loud.
+const REGEX_ONLY_METACHARACTERS = /[.()[\]{}+?^$|\\]/;
+
+type CompiledMatcher = (toolName: string) => boolean;
+
+function compileMatcher(matcher: string, warn: (line: string) => void): CompiledMatcher {
+  // `Tool(*)` is the permission grammar's own bare-equivalent spelling (WS-07 §3), not a regex group
+  // -- read as a regex `(*)` does not even compile -- so its trailing `(*)` is not evidence of regex.
+  if (!REGEX_ONLY_METACHARACTERS.test(matcher.replace(/\(\*\)$/, ""))) {
+    const parsed = parseRule(matcher);
+    if (!parsed.isBareEquivalent) return () => false; // unreachable without `(`, kept as the grammar's own inert answer
+    return (toolName) => matchesRule(parsed, { toolName, input: {} }, { direction: "denyAsk" });
+  }
+  let re: RegExp;
+  try {
+    re = new RegExp(`^(?:${matcher})$`);
+  } catch (err) {
+    warn(`winter: hook matcher ${JSON.stringify(matcher)} is not a valid regular expression, so its hooks will never run: ${err instanceof Error ? err.message : String(err)}`);
+    return () => false;
+  }
+  return (toolName) => re.test(toolName);
+}
+
+function matcherApplies(compiled: CompiledMatcher | undefined, toolName: string | undefined): boolean {
+  if (compiled === undefined) return true; // WS-08 §2.1: "absent = matches every occurrence."
   if (toolName === undefined) return false; // defensive: a tool-scoped call with no known tool name never matches a SCOPED matcher.
-  const parsed = parseRule(matcher);
-  if (!parsed.isBareEquivalent) return false; // malformed matcher grammar (has rule CONTENT, not just a tool-identity string) -> inert, see this file's header.
-  return matchesRule(parsed, { toolName, input: {} }, { direction: "denyAsk" });
+  return compiled(toolName);
 }
 
 // Finding 4 (P2 fix-wave, IMPORTANT): WS-08 §2's own table binds project-sourced hooks to "the same
@@ -130,11 +205,23 @@ function matcherApplies(matcher: string | undefined, toolName: string | undefine
 // obligation, exactly like P2-H's own rule-side precedent.
 export interface HookRegistryOptions {
   trustedWorkspace?: boolean;
+  /** WS-23: where a matcher that will not compile is reported, once. Defaults to stderr. */
+  warn?: (line: string) => void;
 }
 
 export function buildHookRegistry(entries: SourcedHookEntry[], opts?: HookRegistryOptions): HookRegistry {
   const trustedWorkspace = opts?.trustedWorkspace === true;
-  const gated = trustedWorkspace ? entries : entries.filter((e) => e.source !== "project" && e.source !== "local");
+  const warn = opts?.warn ?? ((line: string) => console.error(line));
+  // WS-23: `""` is claude's spelling of "every occurrence", so it is normalised to ABSENT here -- the
+  // one spelling everything downstream already reads that way (engine.ts's alias-identity probe
+  // counts only `matcher !== undefined` entries as tool-SCOPED, and a match-all hook must not count).
+  const normalised = entries.map((e): SourcedHookEntry => {
+    if (e.matcher !== "") return e;
+    const rest: SourcedHookEntry = { ...e };
+    delete rest.matcher;
+    return rest;
+  });
+  const gated = trustedWorkspace ? normalised : normalised.filter((e) => e.source !== "project" && e.source !== "local");
   // Explicit index-tiebreak stable sort (rather than relying on Array.prototype.sort's ES2019+
   // stability guarantee implicitly) — self-documents "registration order within one source" as an
   // intentional invariant, not an accident of engine behavior.
@@ -142,12 +229,26 @@ export function buildHookRegistry(entries: SourcedHookEntry[], opts?: HookRegist
     .map((entry, index) => ({ entry, index }))
     .sort((a, b) => SOURCE_RANK[a.entry.source] - SOURCE_RANK[b.entry.source] || a.index - b.index)
     .map(({ entry }) => entry);
+  // Compiled once per DISTINCT pattern (so a bad one warns once, however many entries share it).
+  const compiledByPattern = new Map<string, CompiledMatcher>();
+  const compiledFor = (matcher: string | undefined): CompiledMatcher | undefined => {
+    if (matcher === undefined) return undefined;
+    let compiled = compiledByPattern.get(matcher);
+    if (compiled === undefined) {
+      compiled = compileMatcher(matcher, warn);
+      compiledByPattern.set(matcher, compiled);
+    }
+    return compiled;
+  };
+  for (const entry of sorted) if (isToolScopedHookEvent(entry.event) || MATCHER_SUBJECT_FIELD[entry.event] !== undefined) compiledFor(entry.matcher);
 
   return {
     matching(event, toolName) {
       const forEvent = sorted.filter((e) => e.event === event);
-      if (!isToolScopedHookEvent(event)) return forEvent; // §1.3: matcher never consulted for these.
-      return forEvent.filter((e) => matcherApplies(e.matcher, toolName));
+      if (isToolScopedHookEvent(event)) return forEvent.filter((e) => matcherApplies(compiledFor(e.matcher), toolName));
+      // WS-23: a lifecycle event with a subject, and the caller named one -- see MATCHER_SUBJECT_FIELD.
+      if (MATCHER_SUBJECT_FIELD[event] !== undefined && toolName !== undefined) return forEvent.filter((e) => matcherApplies(compiledFor(e.matcher), toolName));
+      return forEvent; // §1.3: matcher never consulted for these.
     },
   };
 }

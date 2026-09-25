@@ -89,14 +89,41 @@ describe("command-invoker: dispatch", () => {
   });
 });
 
-describe("command-invoker: the WS-08 §10 stdin contract", () => {
-  test("the request payload arrives on stdin as JSON, verbatim -- and is NOT interpolated into the command", async () => {
+describe("command-invoker: claude's stdin contract (WS-23)", () => {
+  test("stdin carries claude's snake_case hook input -- and nothing from the request is interpolated into the command", async () => {
     const dir = fixtureDir();
     const out = join(dir, "captured.json");
-    const invoker = createCommandHookInvoker([entry({ command: `cat > ${JSON.stringify(out)}; echo '{}'` })], { next: recordingNext().invoker, cwd: dir });
-    await invoker.invoke(REQUEST, freshSignal());
+    const invoker = createCommandHookInvoker([entry({ command: `cat > ${JSON.stringify(out)}; echo '{}'` })], {
+      next: recordingNext().invoker,
+      cwd: dir,
+      transcriptPath: "/tmp/transcript.jsonl",
+      permissionMode: () => "acceptEdits",
+    });
+    await invoker.invoke({ ...REQUEST, agentID: "agent-7", payload: { extra_field: 1 } }, freshSignal());
     expect(existsSync(out)).toBe(true);
-    expect(JSON.parse(readFileSync(out, "utf8"))).toEqual(REQUEST as unknown as Record<string, unknown>);
+    expect(JSON.parse(readFileSync(out, "utf8"))).toEqual({
+      session_id: "s-1",
+      transcript_path: "/tmp/transcript.jsonl",
+      cwd: dir,
+      permission_mode: "acceptEdits",
+      agent_id: "agent-7",
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      tool_input: { command: "ls" },
+      tool_use_id: "tu-1",
+      extra_field: 1,
+    });
+  });
+
+  test("an event's own fields ride the payload in claude's spelling (PostToolUse's tool_response)", async () => {
+    const dir = fixtureDir();
+    const out = join(dir, "captured.json");
+    const invoker = createCommandHookInvoker([entry({ event: "PostToolUse", command: `cat > ${JSON.stringify(out)}` })], { next: recordingNext().invoker, cwd: dir });
+    await invoker.invoke({ ...REQUEST, event: "PostToolUse", payload: { tool_response: "file contents" } }, freshSignal());
+    const input = JSON.parse(readFileSync(out, "utf8")) as Record<string, unknown>;
+    expect(input["hook_event_name"]).toBe("PostToolUse");
+    expect(input["tool_response"]).toBe("file contents");
+    expect(input["transcript_path"]).toBe(""); // no transcript to name -> claude's required field, empty
   });
 
   test("a hook that never reads stdin still succeeds -- EPIPE on the write is normal, not a failure", async () => {
@@ -122,6 +149,43 @@ describe("command-invoker: the WS-08 §10 stdin contract", () => {
     });
     expect(await invoker.invoke(REQUEST, freshSignal())).toEqual({ v: "declared" });
   });
+
+  test("CLAUDE_PROJECT_DIR and its brand-named twin are exported for every hook", async () => {
+    const dir = fixtureDir();
+    const invoker = createCommandHookInvoker([entry({ command: `printf '{"c":"%s","w":"%s"}' "$CLAUDE_PROJECT_DIR" "$ACME_PROJECT_DIR"` })], {
+      next: recordingNext().invoker,
+      cwd: dir,
+      projectDir: "/work/project",
+      brand: { envPrefix: "ACME_" },
+      env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin" },
+    });
+    expect(await invoker.invoke(REQUEST, freshSignal())).toEqual({ c: "/work/project", w: "/work/project" });
+  });
+
+  test("a plugin hook gets ${CLAUDE_PLUGIN_ROOT} substituted in its command AND exported (with the brand twin)", async () => {
+    const dir = fixtureDir();
+    const pluginRoot = join(dir, "my-plugin");
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(join(pluginRoot, "hooks"), { recursive: true });
+    script(join(pluginRoot, "hooks"), "run.sh", `printf '{"env":"%s","twin":"%s"}' "$CLAUDE_PLUGIN_ROOT" "$ACME_PLUGIN_ROOT"`);
+    const invoker = createCommandHookInvoker([entry({ command: "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", pluginRoot })], {
+      next: recordingNext().invoker,
+      cwd: dir,
+      brand: { envPrefix: "ACME_" },
+      env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin" },
+    });
+    expect(await invoker.invoke(REQUEST, freshSignal())).toEqual({ env: pluginRoot, twin: pluginRoot });
+  });
+
+  test("a NON-plugin hook gets no CLAUDE_PLUGIN_ROOT and no substitution", async () => {
+    const dir = fixtureDir();
+    const invoker = createCommandHookInvoker([entry({ command: `printf '{"root":"%s"}' "\${CLAUDE_PLUGIN_ROOT:-unset}"` })], {
+      next: recordingNext().invoker,
+      cwd: dir,
+      env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin" },
+    });
+    expect(await invoker.invoke(REQUEST, freshSignal())).toEqual({ root: "unset" });
+  });
 });
 
 describe("command-invoker: exit-code and output semantics (WS-08 §8)", () => {
@@ -138,10 +202,22 @@ describe("command-invoker: exit-code and output semantics (WS-08 §8)", () => {
     expect(await invoker.invoke(REQUEST, freshSignal())).toEqual({});
   });
 
-  test("exit 0 + UNPARSEABLE stdout -> an error of that hook (§8 row 3), never a silently-ignored output", async () => {
+  test("exit 0 + a `{`-led stdout that does not parse -> an error of that hook (§8 row 3), never a silently-ignored output", async () => {
     const dir = fixtureDir();
-    const invoker = createCommandHookInvoker([entry({ command: "echo not json at all" })], { next: recordingNext().invoker, cwd: dir });
+    const invoker = createCommandHookInvoker([entry({ command: "echo '{not json'" })], { next: recordingNext().invoker, cwd: dir });
     await expect(invoker.invoke(REQUEST, freshSignal())).rejects.toThrow("unparseable output");
+  });
+
+  test("exit 0 + PLAIN-TEXT stdout -> claude's plain-text form: an acknowledgement on PreToolUse, CONTEXT on UserPromptSubmit/SessionStart", async () => {
+    const dir = fixtureDir();
+    const invoker = createCommandHookInvoker([entry({ command: "echo remember the style guide" })], { next: recordingNext().invoker, cwd: dir });
+    expect(await invoker.invoke(REQUEST, freshSignal())).toEqual({});
+    expect(await invoker.invoke({ ...REQUEST, event: "UserPromptSubmit" }, freshSignal())).toEqual({
+      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "remember the style guide" },
+    });
+    expect(await invoker.invoke({ ...REQUEST, event: "SessionStart" }, freshSignal())).toEqual({
+      hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: "remember the style guide" },
+    });
   });
 
   test("a NON-ZERO exit is an error of that hook, carrying the code and a stderr tail", async () => {
@@ -157,13 +233,27 @@ describe("command-invoker: exit-code and output semantics (WS-08 §8)", () => {
     }
   });
 
-  test("NO exit code carries a special meaning -- exit 2 is an error like any other, never a block", async () => {
+  test("exit 2 BLOCKS with stderr as the reason, in the shape each event already understands (WS-23 ruling)", async () => {
     const dir = fixtureDir();
-    const invoker = createCommandHookInvoker([entry({ command: `echo '{"decision":"deny"}'; exit 2` })], { next: recordingNext().invoker, cwd: dir });
-    // Even with a well-formed deny on stdout, a non-zero exit is an ERROR: the "exit 2 blocks"
-    // convention is in neither this spec nor the pinned artifact, and honouring it would let a hook
-    // deny a tool through an undocumented side channel.
-    await expect(invoker.invoke(REQUEST, freshSignal())).rejects.toThrow("exited with code 2");
+    const invoker = createCommandHookInvoker([entry({ command: `echo '{"ignored":true}'; echo 'rm is not allowed here' >&2; exit 2` })], { next: recordingNext().invoker, cwd: dir });
+    // stdout is ignored on exit 2 -- the block is the answer, stderr is its reason.
+    expect(await invoker.invoke(REQUEST, freshSignal())).toEqual({ decision: "block", reason: "rm is not allowed here" });
+    for (const event of ["UserPromptSubmit", "Stop", "SubagentStop", "PostToolUse", "PostToolUseFailure"] as const) {
+      expect(await invoker.invoke({ ...REQUEST, event }, freshSignal())).toEqual({ decision: "block", reason: "rm is not allowed here" });
+    }
+    expect(await invoker.invoke({ ...REQUEST, event: "PermissionRequest" }, freshSignal())).toEqual({
+      hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "deny", message: "rm is not allowed here" } },
+    });
+    // Nothing to block: the user is still shown what the script said.
+    expect(await invoker.invoke({ ...REQUEST, event: "SessionStart" }, freshSignal())).toEqual({ systemMessage: "rm is not allowed here" });
+  });
+
+  test("exit 2 with an empty stderr still blocks", async () => {
+    const dir = fixtureDir();
+    const invoker = createCommandHookInvoker([entry({ command: "exit 2" })], { next: recordingNext().invoker, cwd: dir });
+    const out = (await invoker.invoke(REQUEST, freshSignal())) as { decision: string; reason: string };
+    expect(out.decision).toBe("block");
+    expect(out.reason.length).toBeGreaterThan(0);
   });
 
   test("a command that cannot be spawned at all rejects rather than hanging", async () => {
@@ -211,6 +301,35 @@ describe("command-invoker: composed with runHooks (WS-08 §8's failure rows, end
     // thrown invoker into a decision would turn every broken hook script into a tool block.
     expect(composite.decision).toBeUndefined();
     expect(audit.map((a) => a.outcome)).toEqual(["error"]);
+  });
+
+  test("exit 2 through runHooks is a real DENY carrying stderr as the reason", async () => {
+    const dir = fixtureDir();
+    const entries = [entry({ command: "echo 'protected path' >&2; exit 2" })];
+    const composite = await runHooks("PreToolUse", { toolName: "Bash", toolUseID: "tu-1", input: { command: "ls" } }, ctx(createCommandHookInvoker(entries, { next: recordingNext().invoker, cwd: dir }), entries));
+    expect(composite.decision).toBe("deny");
+    expect(composite.message).toBe("protected path");
+  });
+
+  test("a FAIL-CLOSED command hook that fails (exit 3) is a DENY naming the hook -- the opt-in inverts §8 row 1", async () => {
+    const dir = fixtureDir();
+    const entries = [entry({ command: "exit 3", failClosed: true })];
+    const composite = await runHooks("PreToolUse", { toolName: "Bash", toolUseID: "tu-1", input: { command: "ls" } }, ctx(createCommandHookInvoker(entries, { next: recordingNext().invoker, cwd: dir }), entries));
+    expect(composite.decision).toBe("deny");
+    expect(composite.message).toContain(REQUEST.hookId);
+    expect(composite.message).toContain("fail-closed");
+  });
+
+  test("the hook_response lifecycle carries the process output, and suppressOutput blanks stdout there", async () => {
+    const dir = fixtureDir();
+    const responses: Array<{ stdout?: string; stderr?: string; exitCode?: number }> = [];
+    const lifecycle = { started: () => {}, response: (info: { stdout?: string; stderr?: string; exitCode?: number }) => { responses.push({ ...(info.stdout !== undefined ? { stdout: info.stdout } : {}), ...(info.stderr !== undefined ? { stderr: info.stderr } : {}), ...(info.exitCode !== undefined ? { exitCode: info.exitCode } : {}) }); } };
+    const loud = [entry({ id: "loud", command: `echo 'note' >&2; echo '{"systemMessage":"hi"}'` })];
+    await runHooks("PreToolUse", { toolName: "Bash", input: {} }, { ...ctx(createCommandHookInvoker(loud, { next: recordingNext().invoker, cwd: dir }), loud), lifecycle });
+    const quiet = [entry({ id: "quiet", command: `echo '{"suppressOutput":true}'` })];
+    await runHooks("PreToolUse", { toolName: "Bash", input: {} }, { ...ctx(createCommandHookInvoker(quiet, { next: recordingNext().invoker, cwd: dir }), quiet), lifecycle });
+    expect(responses[0]).toEqual({ stdout: '{"systemMessage":"hi"}\n', stderr: "note\n", exitCode: 0 });
+    expect(responses[1]).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   });
 
   test("a command hook and a callback hook compose in one runHooks pass, in registry order", async () => {

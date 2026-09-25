@@ -77,7 +77,10 @@ export function pluginHookEntries(bundles: readonly PluginBundle[]): HookEntries
         settings: { hooks: bundle.hooks },
       },
     ]);
-    for (const entry of built.entries) entries.push({ ...entry, source: PLUGIN_HOOK_SOURCE, id: `plugin:${bundle.name}:${entry.id}` });
+    // WS-23: `pluginRoot` rides every entry so the command invoker can substitute and export
+    // `${CLAUDE_PLUGIN_ROOT}` -- claude-format plugin hooks are written as
+    // `"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh"`, and without it they run a path that does not exist.
+    for (const entry of built.entries) entries.push({ ...entry, source: PLUGIN_HOOK_SOURCE, id: `plugin:${bundle.name}:${entry.id}`, pluginRoot: bundle.path });
     rejected.push(...built.rejected);
   }
   return { entries, rejected };

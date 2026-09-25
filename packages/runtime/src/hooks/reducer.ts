@@ -90,6 +90,23 @@ export interface HookOutcomeFields {
   // transformedInput/transformedOutput; a suggested permission update is not a value multiple hooks
   // incrementally refine the way an input/output transform is.
   updatedPermissions?: PermissionUpdate[];
+  // --- WS-23: the envelope fields the runner used to read nowhere ---------------------------------
+  //
+  // All four are CONTRIBUTIONS, never decisions: none of them changes the strictness rank, and an
+  // error/timeout/skipped outcome carries none of them (the §8 failure matrix is unchanged).
+  //
+  // `blockReason`: a `decision: "block"` on an event whose block has a meaning of its own --
+  // UserPromptSubmit (drop the prompt), Stop/SubagentStop (keep the turn going with the reason as
+  // feedback). Accumulated like extraContext: two Stop hooks that both object both get heard.
+  blockReason?: string;
+  // `continue: false` (+ `stopReason`): end the turn. `preventContinuation` is the boolean; the
+  // reason is optional on the wire, so it is carried separately rather than as its presence.
+  preventContinuation?: boolean;
+  stopReason?: string;
+  // `systemMessage`: a notice for the HUMAN (the host renders it), never model context.
+  systemMessage?: string;
+  // `suppressOutput`: hide this hook's own stdout from the host-visible `hook_response` frame.
+  suppressOutput?: boolean;
 }
 
 export type HookOutcome =
@@ -156,6 +173,13 @@ export interface HookComposite {
   // T10: see HookOutcomeFields.updatedPermissions's own comment — scalar-slot attribution (the
   // WINNING decision's own value), not transform-chain composition.
   updatedPermissions?: PermissionUpdate[];
+  // WS-23 (see HookOutcomeFields): accumulated, ordered and attributed exactly like extraContext --
+  // rule 4's unconditional accumulation, because none of them is a decision a stricter one overrides.
+  blockReasons?: AttributedContext[];
+  systemMessages?: AttributedContext[];
+  // The FIRST hook to ask for the turn to stop wins the reason (a scalar, like `message`); any later
+  // one adds nothing a host could act on differently.
+  preventContinuation?: { hookId: string; hookName?: string; reason?: string };
   lifecycleMessages: HookLifecycleRecord[];
 }
 
@@ -183,6 +207,9 @@ export function reduceHookOutcomes(results: HookOutcomeEntry[]): HookComposite {
   let updatedPermissions: PermissionUpdate[] | undefined;
   const extraContext: AttributedContext[] = [];
   const classifierContext: AttributedContext[] = [];
+  const blockReasons: AttributedContext[] = [];
+  const systemMessages: AttributedContext[] = [];
+  let preventContinuation: HookComposite["preventContinuation"];
   const lifecycleMessages: HookLifecycleRecord[] = [];
 
   for (const { participant, outcome } of results) {
@@ -206,6 +233,13 @@ export function reduceHookOutcomes(results: HookOutcomeEntry[]): HookComposite {
     }
     if (outcome.classifierContext !== undefined) {
       classifierContext.push({ hookId: participant.id, ...(participant.name !== undefined ? { hookName: participant.name } : {}), context: outcome.classifierContext });
+    }
+    // WS-23: the same unconditional, attributed accumulation for the envelope contributions.
+    const attribution = { hookId: participant.id, ...(participant.name !== undefined ? { hookName: participant.name } : {}) };
+    if (outcome.blockReason !== undefined) blockReasons.push({ ...attribution, context: outcome.blockReason });
+    if (outcome.systemMessage !== undefined) systemMessages.push({ ...attribution, context: outcome.systemMessage });
+    if (outcome.preventContinuation === true && preventContinuation === undefined) {
+      preventContinuation = { ...attribution, ...(outcome.stopReason !== undefined ? { reason: outcome.stopReason } : {}) };
     }
 
     if (outcome.kind === "decision") {
@@ -250,6 +284,9 @@ export function reduceHookOutcomes(results: HookOutcomeEntry[]): HookComposite {
     ...(message !== undefined ? { message } : {}),
     ...(interrupt !== undefined ? { interrupt } : {}),
     ...(updatedPermissions !== undefined ? { updatedPermissions } : {}),
+    ...(blockReasons.length > 0 ? { blockReasons } : {}),
+    ...(systemMessages.length > 0 ? { systemMessages } : {}),
+    ...(preventContinuation !== undefined ? { preventContinuation } : {}),
     lifecycleMessages,
   };
 }
