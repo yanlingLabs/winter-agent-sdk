@@ -21734,6 +21734,322 @@
       "modelFamily": "qwen"
     },
     {
+      "key": "bedrock/amazon.nova-lite-v1:0",
+      "providerId": "bedrock",
+      "upstreamId": "amazon.nova-lite-v1:0",
+      "displayName": "Amazon Nova Lite",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 300000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-lite.html — Amazon Nova Lite context window 300000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 5000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-lite.html — Amazon Nova Lite per-model card maximum output 5000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "pdf"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html — Amazon Nova Lite supports text, image, video, pdf inputs; PDF is mapped from document support",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html — Amazon Nova Lite text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-lite.html — Amazon Nova Lite bedrock-runtime card lists client-side tool calling",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-lite.html — Amazon Nova Lite bedrock-runtime card lists client-side tool calling",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "structuredOutput": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-lite.html — Amazon Nova Lite bedrock-runtime card lists structured outputs as Not Supported; prompt-only JSON is not schema-constrained output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-lite.html — Amazon Nova Lite card lists explicit prompt caching supported, up to 4 checkpoints, 5-minute TTL, 20K-token Nova cap",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "amazon.nova-lite",
+      "modelFamily": "nova"
+    },
+    {
+      "key": "bedrock/amazon.nova-micro-v1:0",
+      "providerId": "bedrock",
+      "upstreamId": "amazon.nova-micro-v1:0",
+      "displayName": "Amazon Nova Micro",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-micro.html — Amazon Nova Micro context window 128000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 5000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-micro.html — Amazon Nova Micro per-model card maximum output 5000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html — Amazon Nova Micro supports text inputs; PDF is mapped from document support",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html — Amazon Nova Micro text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-micro.html — Amazon Nova Micro bedrock-runtime card lists client-side tool calling",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-micro.html — Amazon Nova Micro bedrock-runtime card lists client-side tool calling",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "structuredOutput": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-micro.html — Amazon Nova Micro bedrock-runtime card lists structured outputs as Not Supported; prompt-only JSON is not schema-constrained output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-micro.html — Amazon Nova Micro card lists explicit prompt caching supported, up to 4 checkpoints, 5-minute TTL, 20K-token Nova cap",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "amazon.nova-micro",
+      "modelFamily": "nova"
+    },
+    {
+      "key": "bedrock/amazon.nova-premier-v1:0",
+      "providerId": "bedrock",
+      "upstreamId": "amazon.nova-premier-v1:0",
+      "displayName": "Amazon Nova Premier",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-premier.html — Amazon Nova Premier context window 1000000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 25000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-premier.html — Amazon Nova Premier per-model card maximum output 25000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "pdf"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html — Amazon Nova Premier supports text, image, video, pdf inputs; PDF is mapped from document support",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html — Amazon Nova Premier text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-premier.html — Amazon Nova Premier bedrock-runtime card lists client-side tool calling",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-premier.html — Amazon Nova Premier bedrock-runtime card lists client-side tool calling",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "structuredOutput": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-premier.html — Amazon Nova Premier bedrock-runtime card lists structured outputs as Not Supported; prompt-only JSON is not schema-constrained output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-premier.html — Amazon Nova Premier card lists explicit prompt caching supported, up to 4 checkpoints, 5-minute TTL, 20K-token Nova cap",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-premier.html — Nova Premier model card explicitly lists Reasoning: Supported",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T11:00:00Z"
+        },
+        "efforts": [],
+        "continuation": "none"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "amazon.nova-premier",
+      "modelFamily": "nova"
+    },
+    {
+      "key": "bedrock/amazon.nova-pro-v1:0",
+      "providerId": "bedrock",
+      "upstreamId": "amazon.nova-pro-v1:0",
+      "displayName": "Amazon Nova Pro",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 300000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-pro.html — Amazon Nova Pro context window 300000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 5000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-pro.html — Amazon Nova Pro per-model card maximum output 5000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "pdf"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html — Amazon Nova Pro supports text, image, video, pdf inputs; PDF is mapped from document support",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html — Amazon Nova Pro text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-pro.html — Amazon Nova Pro bedrock-runtime card lists client-side tool calling",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-pro.html — Amazon Nova Pro bedrock-runtime card lists client-side tool calling",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "structuredOutput": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-pro.html — Amazon Nova Pro bedrock-runtime card lists structured outputs as Not Supported; prompt-only JSON is not schema-constrained output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-pro.html — Amazon Nova Pro card lists explicit prompt caching supported, up to 4 checkpoints, 5-minute TTL, 20K-token Nova cap",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "amazon.nova-pro",
+      "modelFamily": "nova"
+    },
+    {
       "key": "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0",
       "providerId": "bedrock",
       "upstreamId": "anthropic.claude-3-5-sonnet-20241022-v2:0",
@@ -22099,6 +22415,94 @@
       "status": "candidate",
       "canonicalModelId": "gpt-oss-120b",
       "modelFamily": "gpt-oss"
+    },
+    {
+      "key": "bedrock/us.amazon.nova-2-lite-v1:0",
+      "providerId": "bedrock",
+      "upstreamId": "us.amazon.nova-2-lite-v1:0",
+      "displayName": "Amazon Nova 2 Lite (US Geo)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-2-lite.html — Amazon Nova 2 Lite (US Geo) context window 1000000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 65536,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/nova/latest/nova2-userguide/what-is-nova-2.html — Nova 2 model family can generate up to 65,536 tokens; model card rounds this to 64K",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video",
+          "pdf"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/nova/latest/nova2-userguide/what-is-nova-2.html — Amazon Nova 2 Lite (US Geo) supports text, image, video, pdf inputs; PDF is mapped from document support",
+        "confidence": "inferred",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/nova/latest/nova2-userguide/what-is-nova-2.html — Amazon Nova 2 Lite (US Geo) text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-2-lite.html — Amazon Nova 2 Lite (US Geo) bedrock-runtime card lists client-side tool calling",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-2-lite.html — Amazon Nova 2 Lite (US Geo) bedrock-runtime card lists client-side tool calling",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "structuredOutput": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-2-lite.html — Amazon Nova 2 Lite (US Geo) bedrock-runtime card lists structured outputs as Not Supported; prompt-only JSON is not schema-constrained output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-2-lite.html — Amazon Nova 2 Lite (US Geo) card lists explicit prompt caching supported, up to 4 checkpoints, 5-minute TTL, 20K-token Nova cap",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T11:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.aws.amazon.com/nova/latest/nova2-userguide/extended-thinking.html — Nova 2 Lite extended thinking available and disabled by default",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T11:00:00Z"
+        },
+        "efforts": [],
+        "continuation": "none"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "amazon.nova-2-lite",
+      "modelFamily": "nova"
     },
     {
       "key": "blackbox/claude-fable-5",
