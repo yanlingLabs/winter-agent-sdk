@@ -5,13 +5,18 @@
 // can only assume, because xAI documents these facts thinly or not at all:
 //   1. the SSE event vocabulary `api.x.ai/v1/responses` really streams (xAI enumerates none; its own
 //      OpenAI-SDK example reads BOTH `response.reasoning_text.delta` and
-//      `response.reasoning_summary_text.delta`, and Winter's mapper surfaces only the second);
+//      `response.reasoning_summary_text.delta`; Winter's mapper surfaces both since fix round 1, and
+//      the per-type counts show which one xAI actually sends);
 //   2. that a reasoning item comes back with `encrypted_content`, and that replaying it verbatim on a
 //      `store: false` follow-up is accepted;
 //   3. a function-call round trip on the Responses shape;
-//   4. a multi-agent turn (the Responses-only row), with no tools;
-//   5. whether an effortless `grok-4.6` turn (no `include` sent) still returns encrypted state — the
-//      case Winter's include-only-when-reasoning-is-requested rule leaves uncovered;
+//   4. a multi-agent turn (the Responses-only row) with no tools — and no tool surface on the wire —
+//      then a follow-up REPLAYING its encrypted items (4b), since multi-agent's documented multi-turn
+//      path is `previous_response_id`, which Winter never uses;
+//   5. that effortless turns get the encrypted item back now that an opaque-continuation row asks for
+//      it on every turn (fix round 1, I3): `grok-4.6` (5a), and the two rows that take NO effort at all,
+//      `grok-4.20-0309-reasoning` (5b) and `grok-build-0.1` (5c) — the rows whose `continuation` claim
+//      rests on this answer;
 //   6. the ERROR body shape and status for a wrong key (free: it is refused before inference).
 //
 // IT DRIVES THE SHIPPED WIRING, not a hand-built request: `createShippedAdapters(loadCatalog())`'s
@@ -28,8 +33,8 @@
 // vendor might echo a key into (the wrong-key step uses a fake key, and prints the message's
 // leading words only).
 //
-// COST: five small generations (four on grok-4.7/4.6 at effort `low` where one applies, one
-// multi-agent at 4 agents). Keep the prompts tiny.
+// COST: nine small generations (grok-4.7 at effort `low`, three effortless one-word turns, two
+// multi-agent turns at 4 agents). Keep the prompts tiny.
 //
 // Usage (from the worktree root):
 //   WINTER_XAI_PROBE=1 bun run scripts/probe-xai-responses.ts
@@ -73,7 +78,8 @@ function describeRequest(body: unknown): string {
   try {
     const b = JSON.parse(body) as { model?: unknown; include?: unknown; reasoning?: unknown; input?: unknown; tools?: unknown; store?: unknown; max_output_tokens?: unknown };
     const replayed = Array.isArray(b.input) ? b.input.filter((i) => (i as { type?: unknown } | null)?.type === "reasoning").length : 0;
-    const tools = Array.isArray(b.tools) ? b.tools.length : 0;
+    // "absent" is the M2 shape: a tool-less request sends no tool surface at all.
+    const tools = Array.isArray(b.tools) ? String(b.tools.length) : "absent";
     return `model=${String(b.model)} include=${JSON.stringify(b.include)} reasoning=${JSON.stringify(b.reasoning ?? null)} store=${String(b.store)} replayed_reasoning_items=${replayed} tools=${tools}${b.max_output_tokens !== undefined ? " max_output_tokens=set" : ""}`;
   } catch {
     return "(unparseable body)";
@@ -292,15 +298,34 @@ async function main(): Promise<void> {
       console.log("\n=== 3b. SKIPPED: turn 3a produced no tool call");
     }
 
-    // 4. The Responses-only multi-agent row, no tools, 4 agents.
-    await runTurn("4. grok-4.20-multi-agent-0309 (effort low = 4 agents, no tools)", adapter, ctx, {
-      model: "grok-4.20-multi-agent-0309",
-      effort: "low",
-      messages: [{ role: "user", content: "In one sentence: why is the sky blue?" }],
-    });
+    // 4. The Responses-only multi-agent row, no tools, 4 agents — then a follow-up replaying its items.
+    const MULTI = "grok-4.20-multi-agent-0309";
+    const q4 = "In one sentence: why is the sky blue?";
+    const multi = await runTurn("4a. grok-4.20-multi-agent-0309 (effort low = 4 agents, no tools)", adapter, ctx, { model: MULTI, effort: "low", messages: [{ role: "user", content: q4 }] });
+    if (multi.nativeItems !== undefined && multi.nativeItems.length > 0) {
+      await runTurn("4b. multi-agent follow-up REPLAYING 4a's encrypted items (store: false)", adapter, ctx, {
+        model: MULTI,
+        effort: "low",
+        messages: [
+          { role: "user", content: q4 },
+          { role: "assistant", content: multi.text, nativeState: { family: "openai", continuationDomain: `xai/${MULTI}`, items: multi.nativeItems } },
+          { role: "user", content: "Now say it in five words." },
+        ],
+      });
+    } else {
+      console.log("\n=== 4b. SKIPPED: 4a returned no encrypted item to replay — the multi-agent row's `opaque-provider-state` claim is then UNSUPPORTED (a finding)");
+    }
 
-    // 5. grok-4.6 with NO effort and NO thinking: Winter sends no `include`. Does encrypted state come back anyway?
-    await runTurn("5. grok-4.6 effortless turn (no include sent)", adapter, ctx, { model: "grok-4.6", messages: [{ role: "user", content: "Reply with OK." }] });
+    // 5. EFFORTLESS turns. Since fix round 1 (I3) an opaque-continuation row sends `include` on every
+    // turn, so each should come back with an encrypted item. For 5b/5c that answer is the whole basis
+    // of the row's `continuation: "opaque-provider-state"`; "native_state: none" there is a finding.
+    for (const [label, model] of [
+      ["5a. grok-4.6 effortless turn (include sent, no reasoning object)", "grok-4.6"],
+      ["5b. grok-4.20-0309-reasoning (takes no effort) — does the encrypted item come back?", "grok-4.20-0309-reasoning"],
+      ["5c. grok-build-0.1 (takes no effort) — does the encrypted item come back?", "grok-build-0.1"],
+    ] as const) {
+      await runTurn(label, adapter, ctx, { model, messages: [{ role: "user", content: "Reply with OK." }] });
+    }
 
     // 6. A WRONG key (a fake literal, never the real one): the error body's shape and status, and Winter's classification.
     const fakeKey: CredentialRef = { kind: "inline", value: "xai-winter-probe-not-a-real-key-0000000000" };
