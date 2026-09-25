@@ -7,7 +7,7 @@
 // vocabulary, the capability read, and the endpoint-policy refusals that happen before a URL exists.
 import { describe, expect, test } from "bun:test";
 import { ANTHROPIC_DEFAULT_BASE_URL, createAnthropicMessagesAdapter, mapAnthropicEffort, toWireMessages } from "./index.ts";
-import { blockBindingBetaFor, buildHeaders, buildRequestBody, promptCachingLayout } from "./messages.ts";
+import { anthropicWireModelId, blockBindingBetaFor, buildHeaders, buildRequestBody, promptCachingLayout } from "./messages.ts";
 import { ProviderRequestError } from "../../http.ts";
 import { createEndpointPolicy } from "../../endpoint-policy.ts";
 import type { CredentialMaterial, CredentialRef, ProviderContext, TurnRequest } from "../../types.ts";
@@ -585,6 +585,102 @@ describe("effort via output_config.effort, per-row thinking rules, and forced to
       const mappedValue = mapped as { ok: true; value: { type: "enabled"; budget_tokens: number; outputConfigEffort: string } };
       expect(body["thinking"]).toEqual({ type: mappedValue.value.type, budget_tokens: mappedValue.value.budget_tokens });
       expect(body["output_config"]).toEqual({ effort: mappedValue.value.outputConfigEffort });
+    });
+  });
+});
+
+// Fix round 3 (live-gate finding, PRE-EXISTING bug -- not introduced by any earlier round): seven
+// Claude rows carry a DOTTED upstream id (claude-opus-4.5/4.6/4.7/4.8, claude-sonnet-4.5/4.6,
+// claude-haiku-4.5, both anthropic and console), and the registry sends that id verbatim as `model`.
+// Anthropic's API 404s it -- the dashed spelling is the real wire id
+// (https://platform.claude.com/docs/en/models/opus-4-7/overview: "Model ID: claude-opus-4-7"). Fixed
+// at the wire (`anthropicWireModelId`), never in the catalog (the key IS the upstream id, WS-13 §8.3).
+describe("anthropicWireModelId (fix round 3)", () => {
+  test("the seven real dotted ids all rewrite to their documented dashed form", () => {
+    // Every example the vendor page and the bug report itself name, asserted directly against the
+    // pure function -- the cheapest possible proof the regex is exactly right, before trusting it
+    // inside a request body below.
+    expect(anthropicWireModelId("claude-opus-4.5")).toBe("claude-opus-4-5");
+    expect(anthropicWireModelId("claude-opus-4.6")).toBe("claude-opus-4-6");
+    expect(anthropicWireModelId("claude-opus-4.7")).toBe("claude-opus-4-7");
+    expect(anthropicWireModelId("claude-opus-4.8")).toBe("claude-opus-4-8");
+    expect(anthropicWireModelId("claude-sonnet-4.5")).toBe("claude-sonnet-4-5");
+    expect(anthropicWireModelId("claude-sonnet-4.6")).toBe("claude-sonnet-4-6");
+    expect(anthropicWireModelId("claude-haiku-4.5")).toBe("claude-haiku-4-5");
+  });
+
+  test("a DATED id is unchanged -- no dot at all, so the pattern never matches", () => {
+    expect(anthropicWireModelId("claude-haiku-4-5-20251001")).toBe("claude-haiku-4-5-20251001");
+  });
+
+  test("an ALREADY-DASHED id is unchanged", () => {
+    expect(anthropicWireModelId("claude-opus-4-8")).toBe("claude-opus-4-8");
+    expect(anthropicWireModelId("claude-sonnet-5")).toBe("claude-sonnet-5");
+  });
+
+  test("a third-party Anthropic-dialect id with its OWN dot is unchanged -- this is not a general dot-to-dash transform", () => {
+    // `glm-5.3` and `MiniMax-M2.7` do not even start with "claude-", so the anchored pattern cannot
+    // match regardless of where their own "." sits; `deepseek-flash` has no dot at all.
+    expect(anthropicWireModelId("glm-5.3")).toBe("glm-5.3");
+    expect(anthropicWireModelId("MiniMax-M2.7")).toBe("MiniMax-M2.7");
+    expect(anthropicWireModelId("deepseek-flash")).toBe("deepseek-flash");
+  });
+
+  describe("inside a real request body", () => {
+    const req = (over: Partial<TurnRequest> = {}): TurnRequest => ({ model: "m", messages: [{ role: "user", content: "hi" }], ...over });
+
+    // Opus 4.8's real catalog shape: dotted upstreamId, `effortRequest` present, rejects `enabled` but
+    // not `adaptive` (same family as the Opus 4.7/4.8 row in the brief's own table). Unlike every other
+    // fixture in this file, `key` is the REAL catalog key (`anthropic/claude-opus-4.8`), not a
+    // `-shaped` synthetic one -- deliberate here, since the bug is specifically about the dotted id's
+    // own spelling, and a fixture spelled any other way would prove nothing about it.
+    const opus48Shaped = descriptor({
+      key: "anthropic/claude-opus-4.8",
+      upstreamId: "claude-opus-4.8",
+      unsupportedParameters: ["temperature", "top_p", "top_k", "thinking.type.enabled"],
+      reasoning: { supported: evidence(true), efforts: ["low", "medium", "high", "xhigh", "max"], continuation: "opaque-provider-state", effortRequest: evidence({ field: "output_config.effort" as const }) },
+    });
+
+    // The console provider's row carries the IDENTICAL dotted spelling (real catalog data), and
+    // `anthropicWireModelId` never reads `providerId` at all -- proved here against the actual
+    // fixture rather than left as a claim about the regex.
+    const consoleOpus48Shaped = descriptor({
+      key: "console/claude-opus-4.8",
+      providerId: "console",
+      upstreamId: "claude-opus-4.8",
+      unsupportedParameters: ["temperature", "top_p", "top_k", "thinking.type.enabled"],
+      reasoning: { supported: evidence(true), efforts: ["low", "medium", "high", "xhigh", "max"], continuation: "opaque-provider-state", effortRequest: evidence({ field: "output_config.effort" as const }) },
+    });
+
+    test("a dotted row's request body carries the DASHED model, even though the descriptor is looked up by the dotted id", () => {
+      const body = buildRequestBody(req({ model: opus48Shaped.upstreamId }), opus48Shaped, {});
+      expect(body["model"]).toBe("claude-opus-4-8");
+    });
+
+    test("the count body ALSO carries the dashed model -- same helper, same call site's own function", () => {
+      const body = buildRequestBody(req({ model: opus48Shaped.upstreamId }), opus48Shaped, {}, "count");
+      expect(body["model"]).toBe("claude-opus-4-8");
+    });
+
+    test("descriptor-dependent behaviour still applies when the request names the DOTTED id: effort -> output_config on claude-opus-4.8", () => {
+      // The whole point of fixing this at the wire rather than the catalog: `findDescriptor` (called
+      // with the UNCHANGED `req.model`) still finds the row by its real, dotted key, so every
+      // capability this file reads off it -- `effortRequest`, `unsupportedParameters`, efforts -- keeps
+      // working exactly as it did before this fix, on the SAME dotted id the caller actually sends.
+      const body = buildRequestBody(req({ model: opus48Shaped.upstreamId, effort: "high" }), opus48Shaped, {});
+      expect(body["model"]).toBe("claude-opus-4-8");
+      expect(body["thinking"]).toEqual({ type: "adaptive" });
+      expect(body["output_config"]).toEqual({ effort: "high" });
+    });
+
+    test("a non-dotted row's request body is untouched (regression guard against the whole test suite above)", () => {
+      const body = buildRequestBody(req({ model: "claude-sonnet-5" }), descriptor(), {});
+      expect(body["model"]).toBe("claude-sonnet-5");
+    });
+
+    test("the fix is provider-blind: the SAME dotted id under the console provider also gets the dashed wire id", () => {
+      const body = buildRequestBody(req({ model: consoleOpus48Shaped.upstreamId }), consoleOpus48Shaped, {});
+      expect(body["model"]).toBe("claude-opus-4-8");
     });
   });
 });
