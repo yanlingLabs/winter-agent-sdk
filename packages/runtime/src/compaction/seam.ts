@@ -48,6 +48,14 @@ export interface CompactionInput {
    * here reaches a model it had not already reached.
    */
   prefixRequest?: ProviderRequest;
+  /**
+   * WS-23: WHY this compaction runs, beyond the pinned `trigger`. `"overflow"` is the reactive recovery
+   * after the provider refused the history as too long: re-sending that same history (the prefix path)
+   * would be refused the same way ("If the input alone already exceeds the model's context window, the
+   * API returns a 400"), so such a compaction always takes the redacted request. Absent means an
+   * ordinary threshold or `/compact` compaction.
+   */
+  reason?: "overflow";
 }
 
 export interface CompactionResult {

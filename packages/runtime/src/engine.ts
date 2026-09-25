@@ -6262,7 +6262,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     };
   };
 
-  const performCompaction = async (trigger: "auto" | "manual", customInstructions: string | null): Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }> => {
+  // WS-23: `opts.reason: "overflow"` is for the reactive recovery after a context-overflow refusal --
+  // the summary then never re-sends the refused history (see `CompactionInput.reason`).
+  const performCompaction = async (trigger: "auto" | "manual", customInstructions: string | null, opts: { reason?: "overflow" } = {}): Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }> => {
     if (compactionController === undefined) {
       return { ok: false, error: "No compaction controller is configured for this session (R5-4: the compaction vehicle is supplied by the host; the engine never summarizes on its own)." };
     }
@@ -6274,7 +6276,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const forwarded = (pre.extraContext ?? []).map((c) => c.context).filter((t) => typeof t === "string" && t.length > 0);
     const effectiveInstructions = [customInstructions, ...forwarded].filter((t): t is string => typeof t === "string" && t.length > 0).join("\n\n");
 
-    const prefixRequest = compactionPrefixRequest();
+    const prefixRequest = opts.reason === "overflow" ? undefined : compactionPrefixRequest();
     let result: CompactionResult;
     try {
       result = await compactionController.compact({
@@ -6286,6 +6288,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // session is generating with, not the one it started on.
         provider: activeProvider,
         ...(prefixRequest !== undefined ? { prefixRequest } : {}),
+        ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
       });
     } catch (err) {
       // A failed compaction is REPORTED, never fatal: the turn continues on the un-compacted history

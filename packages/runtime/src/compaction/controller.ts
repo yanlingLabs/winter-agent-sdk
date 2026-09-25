@@ -14,7 +14,7 @@
 // the legitimate second compaction of a turn that genuinely grew past the threshold twice.
 import { DEFAULT_COMPACTION_THRESHOLD } from "@yanlinglabs/winter-agent-sdk";
 import type { CompactionController, CompactionInput, CompactionResult } from "./seam.ts";
-import type { ContextAccountant, ProviderMessage } from "../engine.ts";
+import { isProviderTurnError, type ContextAccountant, type ProviderMessage } from "../engine.ts";
 import { DEFAULT_RETAINED_PAIRS, evidencedToolNames, selectRetention } from "./retention.ts";
 import { buildSummaryInstruction, CARRIED_SUMMARY_NOTE, redactForSummary, retainedExchangesNote, summarize, summarizeOverPrefix, WINTER_PREFIX_SUMMARY_INSTRUCTION, WINTER_SUMMARY_INSTRUCTION } from "./summarizer.ts";
 
@@ -108,10 +108,25 @@ export function createCompactionController(opts: CompactionControllerOptions = {
 
       // WS-23: when the engine hands over its own outbound request, the summary REUSES it -- the whole
       // conversation reads from the prompt cache, and the carried summary stays verbatim (the model is
-      // told to summarise only what follows it). A tool call instead of text falls back to the
-      // redacted request below, on the same provider and model.
+      // told to summarise only what follows it). Three things fall back to the redacted request below,
+      // on the same provider and model:
+      //   - an OVERFLOW-driven compaction never tries the prefix at all: that exact history was just
+      //     refused as too long, and would be again;
+      //   - a provider failure on the prefix request (any `ProviderTurnError` -- a 400 on a placement
+      //     rule, an overflow the threshold did not foresee): the redacted request is smaller and
+      //     carries no tools, system blocks or thinking, so it can succeed where the prefix could not;
+      //   - a tool call instead of text.
+      // Anything else (an interrupt, a programming error) still propagates.
       const scoped = [prefixInstruction, ...(carried !== null ? [CARRIED_SUMMARY_NOTE] : []), ...(plan.retained.length > 0 ? [retainedExchangesNote(pairs)] : [])].join(" ");
-      const overPrefix = input.prefixRequest !== undefined ? await summarizeOverPrefix(input.provider, input.prefixRequest, buildSummaryInstruction(input.customInstructions, scoped)) : undefined;
+      let overPrefix: string | undefined;
+      if (input.prefixRequest !== undefined && input.reason !== "overflow") {
+        try {
+          overPrefix = await summarizeOverPrefix(input.provider, input.prefixRequest, buildSummaryInstruction(input.customInstructions, scoped));
+        } catch (err) {
+          if (!isProviderTurnError(err)) throw err;
+          overPrefix = undefined;
+        }
+      }
       const fresh = overPrefix ?? (await summarize(input.provider, redacted, buildSummaryInstruction(input.customInstructions, instruction)));
       const summary = carried === null ? fresh : `${carried}\n\n${fresh}`;
       lastSummary = summary;

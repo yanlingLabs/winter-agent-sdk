@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import type { WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "../protocol/channel.ts";
-import { createContextAccountant, runEngine, type EngineOptions, type ModelDescription, type ProviderMessage, type ProviderRequest, type ProviderTurn } from "../engine.ts";
+import { createContextAccountant, ProviderTurnError, runEngine, type EngineOptions, type ModelDescription, type ProviderMessage, type ProviderRequest, type ProviderTurn } from "../engine.ts";
 import { stubExecutor } from "../provider/mock.ts";
 import { createCompactionController } from "./controller.ts";
 import { CARRIED_SUMMARY_NOTE, retainedExchangesNote, WINTER_PREFIX_SUMMARY_INSTRUCTION } from "./summarizer.ts";
@@ -89,6 +89,72 @@ describe("the controller's prefix-reusing summary (WS-23 item 4)", () => {
     const second = await controller.compact({ messages: again, trigger: "auto", customInstructions: null, accountant: createContextAccountant(), provider, prefixRequest: { messages: again } });
     expect(seen[1]!.messages.at(-1)).toEqual({ role: "user", content: `${WINTER_PREFIX_SUMMARY_INSTRUCTION} ${CARRIED_SUMMARY_NOTE} ${retainedExchangesNote(1)}` });
     expect(second.summary).toBe("summary 1\n\nsummary 2");
+  });
+});
+
+describe("fallbacks: the prefix is an optimisation, never a new way for compaction to fail (WS-23 fix round 1, C1)", () => {
+  const prefix: ProviderRequest = { messages: history(6), tools: [{ name: "Bash", description: "run", inputSchema: { type: "object" } }], systemBlocks: [{ text: "SYS", cacheScope: "org" }], system: "SYS" };
+
+  test("a provider 400 on the prefix request falls back to the redacted, tool-less summary", async () => {
+    const seen: ProviderRequest[] = [];
+    const result = await createCompactionController({ retainedPairs: 2 }).compact({
+      messages: history(6),
+      trigger: "auto",
+      customInstructions: null,
+      accountant: createContextAccountant(),
+      provider: {
+        async generate(req): Promise<ProviderTurn> {
+          seen.push(req);
+          if (seen.length === 1) throw new ProviderTurnError("provider request failed (bad_request): HTTP 400 — prompt is too long", { status: 400, code: "bad_request", retryable: false });
+          return { kind: "text", text: "redacted summary" };
+        },
+      },
+      prefixRequest: prefix,
+    });
+    expect(result.summary).toBe("redacted summary");
+    expect(seen).toHaveLength(2);
+    expect(seen[1]!.tools).toBeUndefined();
+    expect(seen[1]!.systemBlocks).toBeUndefined();
+  });
+
+  test("an OVERFLOW-driven compaction never sends the full history: one redacted request, only the part being replaced", async () => {
+    const seen: ProviderRequest[] = [];
+    const result = await createCompactionController({ retainedPairs: 2 }).compact({
+      messages: history(6),
+      trigger: "auto",
+      reason: "overflow",
+      customInstructions: null,
+      accountant: createContextAccountant(),
+      provider: {
+        async generate(req): Promise<ProviderTurn> {
+          seen.push(req);
+          return { kind: "text", text: "redacted summary" };
+        },
+      },
+      prefixRequest: prefix,
+    });
+    expect(result.summary).toBe("redacted summary");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.tools).toBeUndefined();
+    // Four of the six exchanges are summarised; the two retained ones never reach the summariser.
+    expect(seen[0]!.messages).toHaveLength(8);
+    expect(JSON.stringify(seen[0]!.messages)).not.toContain("question 5");
+  });
+
+  test("a non-provider failure (a programming error) still propagates rather than being papered over", async () => {
+    const run = createCompactionController({ retainedPairs: 2 }).compact({
+      messages: history(6),
+      trigger: "auto",
+      customInstructions: null,
+      accountant: createContextAccountant(),
+      provider: {
+        async generate(): Promise<ProviderTurn> {
+          throw new TypeError("bug");
+        },
+      },
+      prefixRequest: prefix,
+    });
+    await expect(run).rejects.toThrow("bug");
   });
 });
 
