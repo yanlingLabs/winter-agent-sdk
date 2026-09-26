@@ -7,7 +7,7 @@
 // fixture keeps `createFixtureMcpServer` (the shared, zod-free server builder) and adds the two
 // things that one lacks: a transport PER SESSION, and an HTTP gate in front of them.
 import { randomUUID } from "node:crypto";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { createFixtureMcpServer, type FixtureToolResult } from "../../mcp/test-fixtures.ts";
 
 export interface ExaFixtureCall {
@@ -22,6 +22,8 @@ export interface ExaFixtureHttpRequest {
   search: string;
   apiKey: string | null;
   sessionId: string | null;
+  /** The JSON-RPC method a POST carried (`initialize`, `tools/call`, a `server/discover` probe, ...); null otherwise. */
+  rpcMethod: string | null;
 }
 
 export interface ExaFixtureOptions {
@@ -88,7 +90,8 @@ export async function withExaFixture<T>(options: ExaFixtureOptions, fn: (fixture
     idleTimeout: 0,
     async fetch(req) {
       const url = new URL(req.url);
-      const record: ExaFixtureHttpRequest = { method: req.method, search: url.search, apiKey: req.headers.get("x-api-key"), sessionId: req.headers.get("mcp-session-id") };
+      const rpcMethod = req.method === "POST" ? await req.clone().json().then((body: unknown) => ((body as { method?: unknown } | null)?.method as string | undefined) ?? null, () => null) : null;
+      const record: ExaFixtureHttpRequest = { method: req.method, search: url.search, apiKey: req.headers.get("x-api-key"), sessionId: req.headers.get("mcp-session-id"), rpcMethod };
       requests.push(record);
       const gated = await options.gate?.(record);
       if (gated !== undefined) return gated;

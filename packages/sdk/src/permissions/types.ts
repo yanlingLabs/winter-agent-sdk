@@ -322,6 +322,21 @@ export interface PermissionDeniedHookInput extends BaseHookInput {
   tool_use_id: string;
   reason: string;
 }
+// WS-23: fired by a SUBAGENT's own engine where the main session fires SessionStart / Stop (a child
+// engine is a full engine with `agent_id` set). Field set as claude 2.1.282 declares it.
+export interface SubagentStartHookInput extends BaseHookInput {
+  hook_event_name: "SubagentStart";
+  agent_id: string;
+  agent_type: string;
+}
+export interface SubagentStopHookInput extends BaseHookInput {
+  hook_event_name: "SubagentStop";
+  stop_hook_active: boolean;
+  agent_id: string;
+  agent_transcript_path: string;
+  agent_type: string;
+  last_assistant_message?: string;
+}
 // Forward-compatible catch-all for the 21 HookEvent members not individually typed above — never
 // constructed by this phase's engine (nothing fires them at P2), but a real value of this shape
 // could still arrive over a future settings/config round-trip (WS-08 §1: unknown event names are
@@ -341,6 +356,8 @@ export type HookInput =
   | NotificationHookInput
   | PermissionRequestHookInput
   | PermissionDeniedHookInput
+  | SubagentStartHookInput
+  | SubagentStopHookInput
   | GenericHookInput;
 
 // --- HookJSONOutput — the callback's return value (derived-shapes item (b), verbatim envelope) ---
@@ -380,6 +397,14 @@ export interface UserPromptSubmitHookSpecificOutput {
 }
 export interface StopHookSpecificOutput {
   hookEventName: "Stop";
+  additionalContext?: string;
+}
+export interface SubagentStartHookSpecificOutput {
+  hookEventName: "SubagentStart";
+  additionalContext?: string;
+}
+export interface SubagentStopHookSpecificOutput {
+  hookEventName: "SubagentStop";
   additionalContext?: string;
 }
 export interface SessionStartHookSpecificOutput {
@@ -423,6 +448,8 @@ export type HookSpecificOutput =
   | PostToolUseFailureHookSpecificOutput
   | UserPromptSubmitHookSpecificOutput
   | StopHookSpecificOutput
+  | SubagentStartHookSpecificOutput
+  | SubagentStopHookSpecificOutput
   | SessionStartHookSpecificOutput
   | NotificationHookSpecificOutput
   | PermissionRequestHookSpecificOutput
@@ -454,9 +481,21 @@ export type HookCallback = (
 ) => Promise<HookJSONOutput>;
 
 export interface HookCallbackMatcher {
-  matcher?: string; // tool-identity matcher (WS-08 §2.1 grammar); absent = matches every occurrence.
+  // Tool-identity matcher: an exact name, the WS-08 §2.1 glob families (`*`, `mcp__srv__*`), or
+  // (WS-23) a regular expression matched against the WHOLE tool name (`Edit|Write`, `mcp__.*`).
+  // Absent or `""` = matches every occurrence.
+  matcher?: string;
   hooks: HookCallback[];
   timeout?: number; // doc-asserted (item (a)/(f)): UNIT IS SECONDS, scope is every hook in this matcher.
+  /**
+   * WS-23: FAIL CLOSED. Default off, so a hook that errors stays a non-blocking error exactly as
+   * before. When true, and the event is `PreToolUse` or `PermissionRequest`, a callback that throws,
+   * times out or returns a malformed output DENIES the call, with a reason naming the hook -- the
+   * posture a SECURITY hook needs (a floor that crashes must not wave the call through). Every hook
+   * in this matcher shares it, like `timeout`. Ignored on every other event: none of them decides a
+   * call, so there is nothing for "closed" to mean there.
+   */
+  failClosed?: boolean;
 }
 
 // --- Task 10 (WS-08 §10, verbatim request shape + Winter's own hookId/hookName addition) ---

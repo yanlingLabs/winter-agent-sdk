@@ -133,6 +133,10 @@ export interface RuntimeHookMatcherGroup {
   // relying on the type checker to catch it). Absent entirely (not just an empty array) when no
   // group in this event has any hook name worth carrying — see query.ts's own builder.
   hookNames?: Array<string | null>;
+  // WS-23: `HookCallbackMatcher.failClosed`, carried verbatim (a plain boolean survives JSON). Absent
+  // unless the host set it to true -- see query.ts's builder -- so a session that never opts in sends
+  // the byte-identical config it always did.
+  failClosed?: boolean;
 }
 
 // Keyed by an OPEN string, deliberately NOT the closed `HookEvent` union `Options.hooks` itself uses
@@ -185,7 +189,7 @@ export interface SandboxSettingsConfig {
 //
 // `McpServerConfigForProcessTransport` deliberately excludes the one variant options.ts's own
 // `McpServerConfig` union adds on top (`McpSdkServerConfigWithInstance`, carrying a live,
-// non-serializable `@modelcontextprotocol/sdk` object) -- exactly matching the pinned OFFICIAL SDK's
+// non-serializable MCP SDK server object) -- exactly matching the pinned OFFICIAL SDK's
 // own twin-union split for the identical reason (derived-shapes-p4.md item (a)): a live instance can
 // never cross this package's own process/wire boundary (query.ts's `--config-json` argv). This is
 // the type RuntimeConfig.mcpServers below actually carries, and the type Lane A (Task 4)/Task 3
@@ -196,6 +200,20 @@ export interface McpServerToolPolicy {
   permission_policy?: "always_allow" | "always_ask" | "always_deny";
   org_max_permission?: "allow" | "ask" | "blocked"; // doc-asserted: drives the auto-mode isOrgAskCeiling gate
 }
+/**
+ * WS-23, WINTER-OWNED (no counterpart on the pinned official shape): how the runtime's MCP client
+ * negotiates the protocol revision with ONE server (MCP TS SDK v2, protocol revision 2026-07-28).
+ *
+ * - `"legacy"` -- the plain 2025 `initialize` handshake, byte-identical to the v1 client.
+ * - `"auto"` -- probe `server/discover` first; a server that offers 2026-07-28 gets the modern era,
+ *   anything else falls back to `initialize`.
+ * - `{ pin: "<revision>" }` -- the modern era at exactly that revision, or the connect fails (typed).
+ *
+ * Absent means the per-transport default the runtime owns (`mcp/client.ts`'s
+ * `resolveVersionNegotiation`): `"auto"` for `http`, `"legacy"` for `stdio` and `sse`. The negotiated
+ * revision is reported per server on the `mcp_status` control response.
+ */
+export type McpVersionNegotiation = "legacy" | "auto" | { pin: string };
 export interface McpStdioServerConfig {
   type?: "stdio"; // the ONLY optional discriminant of the four transport variants (derived-shapes item (a))
   command: string;
@@ -203,6 +221,7 @@ export interface McpStdioServerConfig {
   env?: Record<string, string>;
   timeout?: number; // milliseconds; values below 1000ms are doc-asserted ignored (derived-shapes item (a))
   alwaysLoad?: boolean;
+  versionNegotiation?: McpVersionNegotiation; // WS-23, Winter-owned -- see McpVersionNegotiation
 }
 export interface McpHttpServerConfig {
   type: "http";
@@ -211,6 +230,7 @@ export interface McpHttpServerConfig {
   tools?: McpServerToolPolicy[]; // present on http/sse only -- absent from stdio (no remote-admin-policy surface for a local child process)
   timeout?: number;
   alwaysLoad?: boolean;
+  versionNegotiation?: McpVersionNegotiation; // WS-23, Winter-owned -- see McpVersionNegotiation
 }
 export interface McpSSEServerConfig {
   type: "sse";
@@ -219,6 +239,7 @@ export interface McpSSEServerConfig {
   tools?: McpServerToolPolicy[];
   timeout?: number;
   alwaysLoad?: boolean;
+  versionNegotiation?: McpVersionNegotiation; // WS-23, Winter-owned -- see McpVersionNegotiation
 }
 // Phase 4 Task 3 (WS-04 addendum -- "sdk_mcp_call host-side bridge", ledgered in T2's own report
 // concern 1 "PLAN GAP"): a JSON-safe mirror of registry.ts's own McpToolDefinition, WINTER-OWNED and
@@ -552,6 +573,8 @@ export interface RuntimeConfig {
   includePartialMessages?: boolean;
   maxBudgetUsd?: number;
   providerStallTimeoutMs?: number;
+  /** WS-23: `Options.maxOutputTokens`, carried to every main-loop `TurnRequest`. See its own doc. */
+  maxOutputTokens?: number;
   keychainService?: string;
   autoClassifier?: AutoClassifierConfig;
   advisor?: AdvisorConfig;

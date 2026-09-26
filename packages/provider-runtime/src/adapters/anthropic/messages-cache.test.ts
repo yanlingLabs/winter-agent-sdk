@@ -98,7 +98,7 @@ describe("per-message effort (WS-23 item 1)", () => {
     expect(beta).toBe("mid-conversation-output-config-2026-07-01");
     const policy = createEndpointPolicy(ANTHROPIC_DEFAULT_BASE_URL, { generated: true });
     if (!policy.ok) throw new Error(policy.reason);
-    const headers = await buildHeaders(ctx(), undefined, policy.policy, { betas: ["mid-conversation-output-config-2026-07-01"] }, true, {}, [beta!]);
+    const headers = await buildHeaders(ctx(), [beta], policy.policy, { betas: ["mid-conversation-output-config-2026-07-01"] }, true, {});
     // Deduped against the host's own list: one header value, never the alias claude 2.1.282 sends.
     expect(headers["anthropic-beta"]).toBe("mid-conversation-output-config-2026-07-01");
   });

@@ -351,6 +351,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "together/meta-llama/Llama-3.3-70B-Instruct-Turbo",
       "xai/grok-4.20-0309-non-reasoning",
       "xai/grok-4.20-0309-reasoning",
+      "xai/grok-4.20-multi-agent-0309",
       "xai/grok-4.3",
       "xai/grok-4.5",
       "xai/grok-4.6",
@@ -971,8 +972,9 @@ describe("WS-13b §2: the widened catalog", () => {
     ["kimi-coding", "winter.anthropic-messages", "subscription"],
     ["minimax", "winter.openai-chat-completions", "token"],
     ["minimax-anthropic", "winter.anthropic-messages", "token"],
-    // The api-key rows.
-    ["xai", "winter.openai-chat-completions", "token"],
+    // The api-key rows. `xai` moved to the Responses adapter in WS-23 (xAI's preferred API, the one
+    // with replayable encrypted reasoning, and the only one its multi-agent model is served on).
+    ["xai", "winter.openai-responses", "token"],
     ["cline", "winter.openai-chat-completions", "token"],
     ["clinepass", "winter.openai-chat-completions", "subscription"],
     ["kilocode", "winter.openai-chat-completions", "token"],
@@ -1527,4 +1529,62 @@ test("OpenRouter's interactive GPT-5 rows keep their provider-specific reasoning
       pricing,
     ]);
   }
+});
+
+describe("WS-23: the api-key `xai` provider speaks Responses, and its rows say what that surface carries", () => {
+  const xaiRows = catalog.models.filter((m) => m.providerId === "xai");
+
+  test("the provider row routes through the Responses adapter at xAI's own API root, and the subscription row stays on its proxy's Chat Completions", () => {
+    const xai = catalog.providers.find((p) => p.id === "xai")!;
+    expect([xai.adapterId, ADAPTER_PROTOCOL[xai.adapterId], xai.protocols, xai.defaultEndpoints["api"]]).toEqual([
+      "winter.openai-responses",
+      "openai-responses",
+      ["openai-responses", "openai-chat-completions"],
+      "https://api.x.ai/v1",
+    ]);
+    // Its `/v1/responses` has never been probed, so it is not moved on inference from the api-key row.
+    expect(catalog.providers.find((p) => p.id === "xai-oauth")!.adapterId).toBe("winter.xai-oauth");
+    for (const row of catalog.models.filter((m) => m.providerId === "xai-oauth")) expect([row.key, row.endpoints]).toEqual([row.key, ["chat"]]);
+  });
+
+  test("every reasoning-capable xai row carries OPAQUE continuation (the encrypted reasoning item), never plaintext or none", () => {
+    const reasoning = xaiRows.filter((m) => m.reasoning?.supported.value === true);
+    // Seven of the eight: `grok-4.20-0309-non-reasoning` is the one row without a reasoning block.
+    expect(reasoning.length).toBe(xaiRows.length - 1);
+    for (const row of reasoning) expect([row.key, row.reasoning!.continuation]).toEqual([row.key, "opaque-provider-state"]);
+    expect(xaiRows.find((m) => m.key === "xai/grok-4.20-0309-non-reasoning")!.reasoning).toBeUndefined();
+  });
+
+  test("a readable summary is claimed for grok-4.7 alone, with the documented request field", () => {
+    const withSummary = xaiRows.filter((m) => m.reasoning?.readableState !== undefined).map((m) => m.key);
+    expect(withSummary).toEqual(["xai/grok-4.7"]);
+    const row = xaiRows.find((m) => m.key === "xai/grok-4.7")!;
+    expect(row.reasoning!.readableState!.value).toBe("summary");
+    expect(row.reasoning!.summaryRequest!.value).toEqual({ field: "reasoning.summary", values: ["detailed", "auto", "concise"] });
+  });
+
+  test("the multi-agent row is Responses-only, has no client-side tools, and names the two parameters the adapter refuses before sending", () => {
+    const row = xaiRows.find((m) => m.key === "xai/grok-4.20-multi-agent-0309")!;
+    // The model page's own "Model name" is the wire id; the guide's undated spelling resolves as an alias.
+    expect([row.upstreamId, row.aliases[0]]).toEqual(["grok-4.20-multi-agent-0309", "grok-4.20-multi-agent"]);
+    expect(row.endpoints).toEqual(["responses"]);
+    expect(row.toolCalling.value).toBe("none");
+    // The Responses spellings: `responsesTurn` puts exactly these names in `parametersInPlay`.
+    expect(row.unsupportedParameters).toEqual(["max_output_tokens", "tools"]);
+    expect(row.reasoning!.efforts).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(row.reasoning!.defaultEffort).toBeUndefined();
+  });
+
+  test("the two knob-less reasoning rows keep an EMPTY effort vocabulary — xAI documents no effort for them, so none is invented", () => {
+    for (const key of ["xai/grok-4.20-0309-reasoning", "xai/grok-build-0.1"]) {
+      const row = xaiRows.find((m) => m.key === key)!;
+      expect([key, row.reasoning!.supported.value, row.reasoning!.efforts, row.reasoning!.defaultEffort]).toEqual([key, true, [], undefined]);
+    }
+  });
+
+  test("every xai row lists the surfaces its adapter routes: both, except the Responses-only multi-agent row", () => {
+    for (const row of xaiRows) {
+      expect([row.key, row.endpoints]).toEqual([row.key, row.key === "xai/grok-4.20-multi-agent-0309" ? ["responses"] : ["chat", "responses"]]);
+    }
+  });
 });

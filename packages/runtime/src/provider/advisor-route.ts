@@ -66,8 +66,13 @@ const ADVISOR_FAMILY_DEFAULTS: Readonly<Record<string, string>> = {
  * This gate is CLAUDE-ONLY on purpose. It is D13/D14's rule, which is about one vendor's consumer
  * login; widening it to every family would refuse local models for reasons that have nothing to do
  * with them.
+ *
+ * WS-23 (review I-3): `console-profile` joins the list. WS-20 split the Console arm into its own
+ * `console` provider whose only auth kind is `console-profile` -- the SAME Console login this gate's
+ * own refusal text already names as admissible ("an Anthropic Console OAuth login"), now spelled by a
+ * separate row. Without it a Console reviewer was refused before any request, whatever the user held.
  */
-const WINTER_CLAUDE_REVIEWER_AUTH_KINDS: readonly ProviderAuthKind[] = ["api-key", "oauth-approved", "cloud-credential-chain"];
+const WINTER_CLAUDE_REVIEWER_AUTH_KINDS: readonly ProviderAuthKind[] = ["api-key", "oauth-approved", "console-profile", "cloud-credential-chain"];
 
 export interface AdvisorRouteInput {
   catalog: WinterCatalog;

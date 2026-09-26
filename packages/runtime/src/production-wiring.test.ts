@@ -684,7 +684,7 @@ describe("fix round 19: run-folder MCP servers' tools are offered to the model",
     for (let k = 0; k < 3000 && session.results() < n; k++) await new Promise((r) => setTimeout(r, 10));
   }
 
-  function initOf(msgs: SdkMessage[]): { tools?: string[]; mcp_servers?: Array<{ name: string; status: string }> } {
+  function initOf(msgs: SdkMessage[]): { tools?: string[]; mcp_servers?: Array<{ name: string; status: string; protocolVersion?: string }> } {
     return msgs.find((m) => m.type === "system" && (m as { subtype?: string }).subtype === "init") as never;
   }
 
@@ -740,7 +740,8 @@ describe("fix round 19: run-folder MCP servers' tools are offered to the model",
         await untilResults(session, 1);
         const msgs = await session.finish();
         const init = initOf(msgs);
-        expect(init.mcp_servers).toEqual([{ name: "quick", status: "connected" }]);
+        // WS-23: a live connection reports the revision it negotiated (the fixture is a legacy stdio server).
+        expect(init.mcp_servers).toEqual([{ name: "quick", status: "connected", protocolVersion: "2025-11-25" }]);
         expect(init.tools).toContain("mcp__quick__gate_ping");
         expect(session.requestTools[0]).toContain("mcp__quick__gate_ping");
         expect(JSON.stringify(msgs.filter((m) => m.type === "user"))).toContain("PONG-quick");

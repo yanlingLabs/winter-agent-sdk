@@ -204,7 +204,9 @@ async function* codexTurn(req: TurnRequest, ctx: ProviderContext, options: Codex
       endpoint,
       ctx,
       options,
-      body: JSON.stringify(buildResponsesBody(req, reasoning, descriptor)),
+      // The codex backend REQUIRES the tool trio even with no tools (a live 400 otherwise, `responses.ts`
+      // header) — the one surface `buildResponsesBody` does not omit it for.
+      body: JSON.stringify(buildResponsesBody(req, reasoning, descriptor, { requireToolFields: true })),
       queue,
       beforeAttempt: async () => {
         // A known subscription window is waited out BEFORE the request rather than discovered by

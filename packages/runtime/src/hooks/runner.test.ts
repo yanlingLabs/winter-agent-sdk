@@ -361,13 +361,15 @@ describe("runHooks -- PermissionRequest decisions (WS-08 §6; T9-CARRY-3 reconci
   });
 });
 
-describe("runHooks -- schema-validation seam (WS-07 §10.6-2 / WS-08 §3: invalid transform = hook contract error)", () => {
-  test("NO_SCHEMAS_YET_VALIDATOR accepts anything (P2: no schemas exist yet)", () => {
+describe("runHooks -- schema-validation seam (WS-23: an invalid transform is a DENY naming the hook)", () => {
+  test("NO_SCHEMAS_YET_VALIDATOR accepts anything (the default for a caller that supplies no validator)", () => {
     expect(NO_SCHEMAS_YET_VALIDATOR.validate("Bash", { command: "anything" })).toEqual({ valid: true });
   });
 
-  test("a rejecting validator double turns an invalid transform into that hook's contract error -- the ORIGINAL input proceeds to the next hook untouched", async () => {
-    const rejecting: ToolInputValidator = { validate: () => ({ valid: false, reason: "does not match tool schema" }) };
+  test("a rejecting validator turns an invalid PreToolUse transform into a DENY naming the hook -- no transform survives and every later hook is skipped", async () => {
+    // Rejects the hook's rewrite only: the ORIGINAL input is valid, so the invalid rewrite is the
+    // hook's own failure (fix round 1, M1).
+    const rejecting: ToolInputValidator = { validate: (_t, input) => (input["command"] === "invalid-shape" ? { valid: false, reason: "does not match tool schema" } : { valid: true }) };
     const { invoker, requests } = sequenceInvoker([
       { hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput: { command: "invalid-shape" } } },
       { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } },
@@ -378,10 +380,27 @@ describe("runHooks -- schema-validation seam (WS-07 §10.6-2 / WS-08 §3: invali
       { toolName: "Bash", input: { command: "original" } },
       ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse"), entry("h2", "PreToolUse")]), invoker, validator: rejecting, audit }),
     );
-    expect(records[0]!.outcome).toBe("error");
-    expect(requests[1]!.input).toEqual({ command: "original" }); // h1's invalid transform never took effect -- h2 sees the ORIGINAL input
-    expect(composite.transformedInput).toBeUndefined(); // h1's rejected transform never reaches the composite either
-    expect(composite.decision).toBe("allow"); // h2 still ran and contributed normally
+    expect(records[0]!.outcome).toBe("decision");
+    expect(records[0]!.decision).toBe("deny");
+    expect(records[1]!.outcome).toBe("skipped"); // a deny short-circuits, as any deny does
+    expect(requests).toHaveLength(1);
+    expect(composite.decision).toBe("deny");
+    expect(composite.transformedInput).toBeUndefined();
+    expect(composite.message).toContain('"h1"');
+    expect(composite.message).toContain("does not match tool schema");
+  });
+
+  test("a PermissionRequest allow whose updatedInput fails the schema is a DENY too -- never an allow running an unvalidated input", async () => {
+    const rejecting: ToolInputValidator = { validate: (_t, input) => (input["command"] === "x" ? { valid: false, reason: "bad shape" } : { valid: true }) };
+    const { invoker } = sequenceInvoker([{ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow", updatedInput: { command: "x" } } } }]);
+    const composite = await runHooks(
+      "PermissionRequest",
+      { toolName: "Bash", input: { command: "original" } },
+      ctxWith({ registry: fakeRegistry([entry("pr1", "PermissionRequest")]), invoker, validator: rejecting }),
+    );
+    expect(composite.decision).toBe("deny");
+    expect(composite.transformedInput).toBeUndefined();
+    expect(composite.message).toContain("bad shape");
   });
 });
 

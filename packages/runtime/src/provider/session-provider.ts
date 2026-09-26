@@ -39,8 +39,10 @@ import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import type { CredentialRef, ProviderConnectionConfig, ProviderSelection, RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import type { CredentialStore, ModelInfo, ProviderContext, ProviderRegistry, ResolvedModel } from "@yanlinglabs/winter-provider-runtime";
 import {
+  ANTHROPIC_CONSOLE_ACCOUNT_ID,
   CredentialResolutionError,
   WinterProviderResolutionError,
+  anthropicCredentialRef,
   createCompositeCredentialStore,
   createEndpointResolver,
   createEnvCredentialStore,
@@ -437,9 +439,11 @@ export function createProductionCredentialStore(config: RuntimeConfig, env: Reco
  *     `applyPrivilegedHeaders` still has something to gate.
  *
  * "Serves more than one provider" is deliberately computed from the catalog rather than hard-coded,
- * and the fixture asserts BOTH directions (`openai`/`anthropic` get no baseUrl; `deepseek` and a
- * local runner do). If a future catalog row put a second provider on `winter.openai-responses`, that
- * fixture fails loudly rather than the endpoint being demoted silently.
+ * and the fixture asserts BOTH directions (`google`/`bedrock` get no baseUrl; `deepseek` and a
+ * local runner do). `anthropic` (P6.5) and `openai` (WS-23, when `xai` joined it on
+ * `winter.openai-responses`) each crossed from the first group to the second, and the fixture failed
+ * loudly both times; since P7a the copy is stamped `"reviewed"`, so crossing no longer demotes the
+ * endpoint (it pins that too).
  *
  * P7a (WS-13b §10, closing the M-1 partial): every profile this function returns with a `baseUrl`
  * now says WHERE that URL came from. The copy is `"reviewed"`; anything the operator supplied is
@@ -646,11 +650,20 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       // P7a (D19 / R-7a-8) -- KEYCHAIN BLOCK, second half. The SAME single source the store above
       // reads: a cross-provider record and the store that opens it must never name different
       // services, or the credential is written where nothing will look for it.
-      authRef: providerCredentialRef({
-        providerId: resolved.providerId,
-        accountId: DEFAULT_PROVIDER_ACCOUNT_ID,
-        ...(sessionKeychainService !== undefined ? { service: sessionKeychainService } : {}),
-      }),
+      //
+      // WS-23 (review I-3): the `console` provider's record is NOT `console:default`. Its bearer is the
+      // console broker's own `anthropic:console` (`ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT`) -- the one
+      // account `ant auth print-credentials` writes and the Anthropic adapter honours a bearer under.
+      // `console:default` is written by nothing, so an advisor, a subagent or a GPT -> Console switch
+      // on the default rung ended in a typed `no-credential` every time.
+      authRef:
+        resolved.providerId === "console"
+          ? anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID, sessionKeychainService)
+          : providerCredentialRef({
+              providerId: resolved.providerId,
+              accountId: DEFAULT_PROVIDER_ACCOUNT_ID,
+              ...(sessionKeychainService !== undefined ? { service: sessionKeychainService } : {}),
+            }),
       ...(connection !== undefined ? { connection } : {}),
       source: "provider-record",
       crossProvider,

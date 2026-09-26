@@ -422,6 +422,8 @@ function buildRuntimeHooksConfig(hooks: Partial<Record<HookEvent, HookCallbackMa
         // Omitted entirely when every hook in this group is unnamed — matches this whole file's own
         // conditional-spread convention (never send a key whose value carries no information).
         ...(hookNames.some((n) => n !== null) ? { hookNames } : {}),
+        // WS-23: only a real opt-in crosses the wire; `false` and absent both mean the default.
+        ...(group.failClosed === true ? { failClosed: true } : {}),
       };
     });
   }
@@ -500,6 +502,11 @@ function makeHookHandler(hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>
       // (§8's own row), and ok:false — the bridge rejects, runner.ts's invokeWithTimeout classifies
       // it as {kind:"error"}, and evaluation continues with whatever OTHER hooks/stages apply —
       // exactly like an unhandled-subtype or a transport failure would.
+      //
+      // WS-23: "continues" is the DEFAULT, not the rule. A matcher the host marked `failClosed`
+      // (a security floor) turns this same `hook_threw` into a DENY on PreToolUse/PermissionRequest
+      // -- decided runtime-side (hooks/runner.ts), which is why nothing here changes shape: the
+      // wrapper only reports that the callback threw, the runner knows whether that must close.
       const message = err instanceof Error ? err.message : String(err);
       console.error(`winter: hook callback threw for '${req.event}' (hookId '${req.hookId}'): ${message}`);
       return { ok: false, error: { code: "hook_threw", message } };
@@ -708,6 +715,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.includePartialMessages !== undefined ? { includePartialMessages: options.includePartialMessages } : {}),
     ...(options.maxBudgetUsd !== undefined ? { maxBudgetUsd: options.maxBudgetUsd } : {}),
     ...(options.providerStallTimeoutMs !== undefined ? { providerStallTimeoutMs: options.providerStallTimeoutMs } : {}),
+    ...(options.maxOutputTokens !== undefined ? { maxOutputTokens: options.maxOutputTokens } : {}),
     // P7a fix r1 (Important-1): emitted from the RESOLVED PROFILE, not from the deprecated option.
     //
     // Every runtime consumer of the keychain service still reads this top-level key

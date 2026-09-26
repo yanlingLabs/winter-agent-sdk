@@ -16,7 +16,11 @@ export const PROTOCOL_VERSION = "1.0" as const;
 // Winter-only additions beyond the pinned 5-member enum, which this field's own bare-`string` type
 // (never a closed literal union, matching item (b)'s own finding: "a BARE, UNTYPED string status,
 // not the richer 5-member literal union") accommodates without contradiction.
-export interface WireMcpServerStatus { name: string; status: string; }
+// WS-23: `protocolVersion` -- the revision a server's LIVE connection negotiated (`2025-11-25`, or
+// `2026-07-28` when the per-server `versionNegotiation` selected the modern era). Winter-owned and
+// optional: absent whenever there is no live connection, so a frame without one is byte-identical to
+// before the field existed.
+export interface WireMcpServerStatus { name: string; status: string; protocolVersion?: string; }
 
 export interface InitFrame { type: "init"; protocolVersion: ProtocolVersion; sessionId: string; cwd: string;
   model: string; permissionMode: string; tools: string[];
@@ -670,6 +674,24 @@ export interface SDKSessionStateChangedMessage {
   [k: string]: unknown;
 }
 
+/**
+ * WS-23: claude 2.1.282's `SDKInformationalMessage` -- "generic text banner emitted by the loop --
+ * non-error status lines, hook feedback (e.g. a UserPromptSubmit hook's block reason)". Winter had no
+ * text-notice frame at all; this is the one a hook's `systemMessage`, a blocked prompt's reason and a
+ * hook's `continue: false` ride to the host. `prevent_continuation` is set when the notice is the
+ * reason the turn is ending.
+ */
+export interface SDKInformationalMessage {
+  type: "system";
+  subtype: "informational";
+  content: string;
+  level: "info" | "notice" | "suggestion" | "warning";
+  tool_use_id?: string;
+  prevent_continuation?: boolean;
+  uuid: string;
+  session_id: string;
+}
+
 export type SdkMessage =
   // Phase 5 Task 2 (derived-shapes-p5.md item (b), `sdk.d.ts:4853-4913`): the LOADED-SURFACE fields.
   // `output_style` and `skills` are REQUIRED on the pin -- Task 1's own finding is that a Winter
@@ -712,6 +734,7 @@ export type SdkMessage =
   | SDKStatusMessage
   | SDKCompactBoundaryMessage
   | SDKSessionStateChangedMessage
+  | SDKInformationalMessage
   | BackgroundTaskMessage
   // Phase 6 Task 3: the provider-facing family. Listed BEFORE the open catch-all at the end of this
   // union so each stays independently discriminable on `type`/`subtype`.
@@ -766,7 +789,9 @@ export type SdkMessage =
       is_error?: boolean;
       result?: string;
       structured_output?: unknown;
-      terminal_reason?: "structured_output_retry_exhausted" | "api_error" | string;
+      // WS-23: `refusal` (a model/classifier refusal), `prompt_too_long` (context overflow that reactive
+      // compaction could not recover) and `pause_turn_limit` (a paused turn that would not resume).
+      terminal_reason?: "structured_output_retry_exhausted" | "api_error" | "refusal" | "prompt_too_long" | "pause_turn_limit" | string;
       api_error_status?: number | null;
       /** THIS turn's main-loop usage -- claude's `result.usage` (dist-session fixes C1); see `WireResultUsage`. */
       usage?: WireResultUsage;

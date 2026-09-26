@@ -223,7 +223,7 @@
       "upstreamId": "claude-opus-5",
       "displayName": "Claude Opus 5",
       "aliases": [],
-      "$comment": "ADDED by Lane X, beyond T2's seed. `opus` is one of the four PINNED aliases `packages/runtime/src/provider/selection.ts` routes to the `anthropic` provider (`PINNED_ANTHROPIC_ALIASES`), and with no row carrying it the alias resolved to a typed `unknown-model` refusal — a hole the seed's `sonnet`/`haiku` rows hid. The capability facts are upstream's at the pin; the prices are the vendor's own page. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-5/overview — actual Claude API wire model ID claude-opus-5. https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — thinking defaults on; disabled allowed only at low/medium/high, rejected at xhigh/max. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor July 24, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. ",
+      "$comment": "ADDED by Lane X, beyond T2's seed. `opus` is one of the four PINNED aliases `packages/runtime/src/provider/selection.ts` routes to the `anthropic` provider (`PINNED_ANTHROPIC_ALIASES`), and with no row carrying it the alias resolved to a typed `unknown-model` refusal — a hole the seed's `sonnet`/`haiku` rows hid. The capability facts are upstream's at the pin; the prices are the vendor's own page. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-5/overview — actual Claude API wire model ID claude-opus-5. https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — thinking defaults on; disabled allowed only at low/medium/high, rejected at xhigh/max. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor July 24, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. WS-23 (2026-09-25): `thinking.type.disabled+output_config.effort.xhigh` / `.max` -- a CONJUNCTION token (`+` joins two ordinary tokens): disabled thinking is rejected only together with those efforts (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting; the model page's 'disabled allowed only at low/medium/high'). The Anthropic adapter's `buildThinking` rewrites such a request to adaptive thinking rather than sending a documented 400. ",
       "endpoints": [
         "chat"
       ],
@@ -390,7 +390,9 @@
         "temperature",
         "top_p",
         "top_k",
-        "thinking.type.enabled"
+        "thinking.type.enabled",
+        "thinking.type.disabled+output_config.effort.xhigh",
+        "thinking.type.disabled+output_config.effort.max"
       ],
       "status": "candidate",
       "deferredToolLoading": {
@@ -957,8 +959,10 @@
       "providerId": "anthropic",
       "upstreamId": "claude-opus-4.6",
       "displayName": "Claude Opus 4.6",
-      "aliases": [],
-      "$comment": "Fix wave (scoped re-review, item 3, 2026-09-17): this row is added to the overlay SOLELY to carry `promptCaching` -- I3 tightened provider-runtime's `promptCachingLayout` (packages/provider-runtime/src/adapters/anthropic/messages.ts) to require an explicit per-row `promptCaching.value === true`, and this key had none: it was pure upstream extraction, which cannot see a capability upstream's own registry never states. Every OTHER field below is that SAME upstream extraction, copied verbatim (identical source/sourceRef/confidence/observedAt to what open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6 already produced) -- nothing here re-verifies context window, modalities or tool calling, and because mergeLayers merges at the ROW level (its own header: \"the overlay wins intentionally; a re-sync MUST NEVER overwrite it\"), a future upstream re-sync will no longer refresh ANY field of this key, not just `promptCaching`. `promptCaching` itself is `official-doc`/`declared`, reusing `anthropic/claude-fable-5-1`'s own already-admitted citation under its own precedent for this class of fact ('...Messages API mechanics... architectural facts of the wire protocol, shared by every current Claude model...'): prompt caching (`cache_control` marking on a Messages API request) is exactly such a wire-level mechanic, not a per-model measurement, so the SAME citation applies without a fresh per-row pricing-page confirmation like the sibling rows (haiku-4-5-20251001/opus-5/sonnet-5/fable-5-1) each cite for themselves. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-4-6/overview — actual Claude API wire model ID claude-opus-4-6 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; enabled/budget_tokens remains accepted but deprecated; disabled turns off. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor February 5, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. ",
+      "aliases": [
+        "claude-opus-4-6"
+      ],
+      "$comment": "Fix wave (scoped re-review, item 3, 2026-09-17): this row is added to the overlay SOLELY to carry `promptCaching` -- I3 tightened provider-runtime's `promptCachingLayout` (packages/provider-runtime/src/adapters/anthropic/messages.ts) to require an explicit per-row `promptCaching.value === true`, and this key had none: it was pure upstream extraction, which cannot see a capability upstream's own registry never states. Every OTHER field below is that SAME upstream extraction, copied verbatim (identical source/sourceRef/confidence/observedAt to what open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6 already produced) -- nothing here re-verifies context window, modalities or tool calling, and because mergeLayers merges at the ROW level (its own header: \"the overlay wins intentionally; a re-sync MUST NEVER overwrite it\"), a future upstream re-sync will no longer refresh ANY field of this key, not just `promptCaching`. `promptCaching` itself is `official-doc`/`declared`, reusing `anthropic/claude-fable-5-1`'s own already-admitted citation under its own precedent for this class of fact ('...Messages API mechanics... architectural facts of the wire protocol, shared by every current Claude model...'): prompt caching (`cache_control` marking on a Messages API request) is exactly such a wire-level mechanic, not a per-model measurement, so the SAME citation applies without a fresh per-row pricing-page confirmation like the sibling rows (haiku-4-5-20251001/opus-5/sonnet-5/fable-5-1) each cite for themselves. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-4-6/overview — actual Claude API wire model ID claude-opus-4-6 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; enabled/budget_tokens remains accepted but deprecated; disabled turns off. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor February 5, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. WS-23 (2026-09-25): alias `claude-opus-4-6` is the vendor's own API id for this model (its model overview page); a transcript the claude binary wrote records that dashed id, and without the alias it resolved to no row, so an old session's thinking was stripped into `<recovered_reasoning>` text on resume. The key and upstream id stay dotted (a stored-tag migration is out of scope); the adapter already sends the dashed id on the wire. ",
       "endpoints": [
         "chat"
       ],
@@ -1083,8 +1087,10 @@
       "providerId": "anthropic",
       "upstreamId": "claude-opus-4.7",
       "displayName": "Claude Opus 4.7",
-      "aliases": [],
-      "$comment": "Fix wave (scoped re-review, item 3, 2026-09-17): this row is added to the overlay SOLELY to carry `promptCaching` -- I3 tightened provider-runtime's `promptCachingLayout` (packages/provider-runtime/src/adapters/anthropic/messages.ts) to require an explicit per-row `promptCaching.value === true`, and this key had none: it was pure upstream extraction, which cannot see a capability upstream's own registry never states. Every OTHER field below is that SAME upstream extraction, copied verbatim (identical source/sourceRef/confidence/observedAt to what open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7 already produced) -- nothing here re-verifies context window, modalities or tool calling, and because mergeLayers merges at the ROW level (its own header: \"the overlay wins intentionally; a re-sync MUST NEVER overwrite it\"), a future upstream re-sync will no longer refresh ANY field of this key, not just `promptCaching`. `promptCaching` itself is `official-doc`/`declared`, reusing `anthropic/claude-fable-5-1`'s own already-admitted citation under its own precedent for this class of fact ('...Messages API mechanics... architectural facts of the wire protocol, shared by every current Claude model...'): prompt caching (`cache_control` marking on a Messages API request) is exactly such a wire-level mechanic, not a per-model measurement, so the SAME citation applies without a fresh per-row pricing-page confirmation like the sibling rows (haiku-4-5-20251001/opus-5/sonnet-5/fable-5-1) each cite for themselves. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-4-7/overview — actual Claude API wire model ID claude-opus-4-7 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; can set thinking.type adaptive or disabled. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor April 16, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. ",
+      "aliases": [
+        "claude-opus-4-7"
+      ],
+      "$comment": "Fix wave (scoped re-review, item 3, 2026-09-17): this row is added to the overlay SOLELY to carry `promptCaching` -- I3 tightened provider-runtime's `promptCachingLayout` (packages/provider-runtime/src/adapters/anthropic/messages.ts) to require an explicit per-row `promptCaching.value === true`, and this key had none: it was pure upstream extraction, which cannot see a capability upstream's own registry never states. Every OTHER field below is that SAME upstream extraction, copied verbatim (identical source/sourceRef/confidence/observedAt to what open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7 already produced) -- nothing here re-verifies context window, modalities or tool calling, and because mergeLayers merges at the ROW level (its own header: \"the overlay wins intentionally; a re-sync MUST NEVER overwrite it\"), a future upstream re-sync will no longer refresh ANY field of this key, not just `promptCaching`. `promptCaching` itself is `official-doc`/`declared`, reusing `anthropic/claude-fable-5-1`'s own already-admitted citation under its own precedent for this class of fact ('...Messages API mechanics... architectural facts of the wire protocol, shared by every current Claude model...'): prompt caching (`cache_control` marking on a Messages API request) is exactly such a wire-level mechanic, not a per-model measurement, so the SAME citation applies without a fresh per-row pricing-page confirmation like the sibling rows (haiku-4-5-20251001/opus-5/sonnet-5/fable-5-1) each cite for themselves. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-4-7/overview — actual Claude API wire model ID claude-opus-4-7 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; can set thinking.type adaptive or disabled. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor April 16, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. WS-23 (2026-09-25): alias `claude-opus-4-7` is the vendor's own API id for this model (its model overview page); a transcript the claude binary wrote records that dashed id, and without the alias it resolved to no row, so an old session's thinking was stripped into `<recovered_reasoning>` text on resume. The key and upstream id stay dotted (a stored-tag migration is out of scope); the adapter already sends the dashed id on the wire. ",
       "endpoints": [
         "chat"
       ],
@@ -1215,8 +1221,10 @@
       "providerId": "anthropic",
       "upstreamId": "claude-opus-4.8",
       "displayName": "Claude Opus 4.8",
-      "aliases": [],
-      "$comment": "Fix wave (scoped re-review, item 3, 2026-09-17): this row is added to the overlay SOLELY to carry `promptCaching` -- I3 tightened provider-runtime's `promptCachingLayout` (packages/provider-runtime/src/adapters/anthropic/messages.ts) to require an explicit per-row `promptCaching.value === true`, and this key had none: it was pure upstream extraction, which cannot see a capability upstream's own registry never states. Every OTHER field below is that SAME upstream extraction, copied verbatim (identical source/sourceRef/confidence/observedAt to what open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8 already produced) -- nothing here re-verifies context window, modalities or tool calling, and because mergeLayers merges at the ROW level (its own header: \"the overlay wins intentionally; a re-sync MUST NEVER overwrite it\"), a future upstream re-sync will no longer refresh ANY field of this key, not just `promptCaching`. `promptCaching` itself is `official-doc`/`declared`, reusing `anthropic/claude-fable-5-1`'s own already-admitted citation under its own precedent for this class of fact ('...Messages API mechanics... architectural facts of the wire protocol, shared by every current Claude model...'): prompt caching (`cache_control` marking on a Messages API request) is exactly such a wire-level mechanic, not a per-model measurement, so the SAME citation applies without a fresh per-row pricing-page confirmation like the sibling rows (haiku-4-5-20251001/opus-5/sonnet-5/fable-5-1) each cite for themselves. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-4-8/overview — actual Claude API wire model ID claude-opus-4-8 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; can set thinking.type adaptive or disabled. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor May 28, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. ",
+      "aliases": [
+        "claude-opus-4-8"
+      ],
+      "$comment": "Fix wave (scoped re-review, item 3, 2026-09-17): this row is added to the overlay SOLELY to carry `promptCaching` -- I3 tightened provider-runtime's `promptCachingLayout` (packages/provider-runtime/src/adapters/anthropic/messages.ts) to require an explicit per-row `promptCaching.value === true`, and this key had none: it was pure upstream extraction, which cannot see a capability upstream's own registry never states. Every OTHER field below is that SAME upstream extraction, copied verbatim (identical source/sourceRef/confidence/observedAt to what open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8 already produced) -- nothing here re-verifies context window, modalities or tool calling, and because mergeLayers merges at the ROW level (its own header: \"the overlay wins intentionally; a re-sync MUST NEVER overwrite it\"), a future upstream re-sync will no longer refresh ANY field of this key, not just `promptCaching`. `promptCaching` itself is `official-doc`/`declared`, reusing `anthropic/claude-fable-5-1`'s own already-admitted citation under its own precedent for this class of fact ('...Messages API mechanics... architectural facts of the wire protocol, shared by every current Claude model...'): prompt caching (`cache_control` marking on a Messages API request) is exactly such a wire-level mechanic, not a per-model measurement, so the SAME citation applies without a fresh per-row pricing-page confirmation like the sibling rows (haiku-4-5-20251001/opus-5/sonnet-5/fable-5-1) each cite for themselves. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-4-8/overview — actual Claude API wire model ID claude-opus-4-8 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; can set thinking.type adaptive or disabled. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor May 28, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. WS-23 (2026-09-25): alias `claude-opus-4-8` is the vendor's own API id for this model (its model overview page); a transcript the claude binary wrote records that dashed id, and without the alias it resolved to no row, so an old session's thinking was stripped into `<recovered_reasoning>` text on resume. The key and upstream id stay dotted (a stored-tag migration is out of scope); the adapter already sends the dashed id on the wire. ",
       "endpoints": [
         "chat"
       ],
@@ -1475,8 +1483,10 @@
       "providerId": "anthropic",
       "upstreamId": "claude-sonnet-4.6",
       "displayName": "Claude Sonnet 4.6",
-      "aliases": [],
-      "$comment": "Fix wave (scoped re-review, item 3, 2026-09-17): this row is added to the overlay SOLELY to carry `promptCaching` -- I3 tightened provider-runtime's `promptCachingLayout` (packages/provider-runtime/src/adapters/anthropic/messages.ts) to require an explicit per-row `promptCaching.value === true`, and this key had none: it was pure upstream extraction, which cannot see a capability upstream's own registry never states. Every OTHER field below is that SAME upstream extraction, copied verbatim (identical source/sourceRef/confidence/observedAt to what open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6 already produced) -- nothing here re-verifies context window, modalities or tool calling, and because mergeLayers merges at the ROW level (its own header: \"the overlay wins intentionally; a re-sync MUST NEVER overwrite it\"), a future upstream re-sync will no longer refresh ANY field of this key, not just `promptCaching`. `promptCaching` itself is `official-doc`/`declared`, reusing `anthropic/claude-fable-5-1`'s own already-admitted citation under its own precedent for this class of fact ('...Messages API mechanics... architectural facts of the wire protocol, shared by every current Claude model...'): prompt caching (`cache_control` marking on a Messages API request) is exactly such a wire-level mechanic, not a per-model measurement, so the SAME citation applies without a fresh per-row pricing-page confirmation like the sibling rows (haiku-4-5-20251001/opus-5/sonnet-5/fable-5-1) each cite for themselves. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/sonnet-4-6/overview — actual Claude API wire model ID claude-sonnet-4-6 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; enabled/budget_tokens remains accepted but deprecated; disabled turns off. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor February 17, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. ",
+      "aliases": [
+        "claude-sonnet-4-6"
+      ],
+      "$comment": "Fix wave (scoped re-review, item 3, 2026-09-17): this row is added to the overlay SOLELY to carry `promptCaching` -- I3 tightened provider-runtime's `promptCachingLayout` (packages/provider-runtime/src/adapters/anthropic/messages.ts) to require an explicit per-row `promptCaching.value === true`, and this key had none: it was pure upstream extraction, which cannot see a capability upstream's own registry never states. Every OTHER field below is that SAME upstream extraction, copied verbatim (identical source/sourceRef/confidence/observedAt to what open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6 already produced) -- nothing here re-verifies context window, modalities or tool calling, and because mergeLayers merges at the ROW level (its own header: \"the overlay wins intentionally; a re-sync MUST NEVER overwrite it\"), a future upstream re-sync will no longer refresh ANY field of this key, not just `promptCaching`. `promptCaching` itself is `official-doc`/`declared`, reusing `anthropic/claude-fable-5-1`'s own already-admitted citation under its own precedent for this class of fact ('...Messages API mechanics... architectural facts of the wire protocol, shared by every current Claude model...'): prompt caching (`cache_control` marking on a Messages API request) is exactly such a wire-level mechanic, not a per-model measurement, so the SAME citation applies without a fresh per-row pricing-page confirmation like the sibling rows (haiku-4-5-20251001/opus-5/sonnet-5/fable-5-1) each cite for themselves. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/sonnet-4-6/overview — actual Claude API wire model ID claude-sonnet-4-6 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; enabled/budget_tokens remains accepted but deprecated; disabled turns off. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor February 17, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. WS-23 (2026-09-25): alias `claude-sonnet-4-6` is the vendor's own API id for this model (its model overview page); a transcript the claude binary wrote records that dashed id, and without the alias it resolved to no row, so an old session's thinking was stripped into `<recovered_reasoning>` text on resume. The key and upstream id stay dotted (a stored-tag migration is out of scope); the adapter already sends the dashed id on the wire. ",
       "endpoints": [
         "chat"
       ],
@@ -5176,9 +5186,10 @@
         "grok-4.20-beta-0309-non-reasoning",
         "grok-4.20-non-reasoning-gv2"
       ],
-      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.20-non-reasoning. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Its templated detail page displays a generic Reasoning capability, conflicting with the explicit non-reasoning model name; reasoning block omitted pending probe. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. Upstream's two `targetFormat: \"openai-responses\"` siblings are now representable (WS-23): `grok-4.6` is its own overlay row and `grok-4.20-multi-agent-0309` is a Responses-only row; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.20-non-reasoning. The catalog's xai provider declared Chat Completions until WS-23 and now speaks Responses (same host and key).  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Its templated detail page displays a generic Reasoning capability, conflicting with the explicit non-reasoning model name; reasoning block omitted pending probe. — WS-23 (2026-09-25): the `xai` provider now routes through `winter.openai-responses`, so `endpoints` lists both surfaces the family routes (the `openai/*` convention) rather than only Chat Completions.",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 1000000,
@@ -5270,9 +5281,10 @@
         "grok-4.20-experimental-beta-latest",
         "grok-4.20-reasoning-gv2"
       ],
-      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.20. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Model page does not document an effort vocabulary for this exact model, so efforts is empty. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. Upstream's two `targetFormat: \"openai-responses\"` siblings are now representable (WS-23): `grok-4.6` is its own overlay row and `grok-4.20-multi-agent-0309` is a Responses-only row; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.20. The catalog's xai provider declared Chat Completions until WS-23 and now speaks Responses (same host and key).  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. — WS-23 (2026-09-25): the `xai` provider now routes through `winter.openai-responses`, so `endpoints` lists both surfaces the family routes (the `openai/*` convention) rather than only Chat Completions. Continuation (WS-23): `opaque-provider-state` — on Responses the reasoning item carries `encrypted_content` when `include: [\"reasoning.encrypted_content\"]` is sent and is replayed unchanged in the next `input` (https://docs.x.ai/developers/model-capabilities/text/reasoning, \"Encrypted Reasoning Content\"). Effort (WS-23 fix of the \"supported, no efforts, continuation none\" incoherence): the model page says \"Reasoning: Yes\", but https://docs.x.ai/developers/model-capabilities/text/reasoning names `reasoning_effort` only for `grok-4.7`, `grok-4.6`, `grok-4.5` (and the multi-agent model's agent count), so this model reasons with NO documented effort knob and `efforts` stays empty — an effort or `thinking` request is refused before the request rather than guessed. What was incoherent was `continuation: \"none\"`, now `opaque-provider-state` per the note above. Since WS-23 fix round 1 the adapter asks for `include` on EVERY turn of an opaque-continuation row, effort or not, so the item is requested here although no effort can be named. LIVE-GATE ITEM: that xAI returns it for this model (WS-23 probe step 5b/5c); if it does not, `continuation` goes back to `none`.",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 1000000,
@@ -5337,7 +5349,7 @@
           "observedAt": "2026-09-25T08:40:00Z"
         },
         "efforts": [],
-        "continuation": "none"
+        "continuation": "opaque-provider-state"
       },
       "pricing": {
         "value": {
@@ -5354,6 +5366,110 @@
       "status": "candidate"
     },
     {
+      "key": "xai/grok-4.20-multi-agent-0309",
+      "providerId": "xai",
+      "upstreamId": "grok-4.20-multi-agent-0309",
+      "displayName": "Grok 4.20 Multi-Agent Beta",
+      "aliases": [
+        "grok-4.20-multi-agent",
+        "grok-4.20-multi-agent-latest",
+        "grok-4.20-multi-agent-beta-latest",
+        "grok-4.20-multi-agent-experimental-beta-0304",
+        "grok-4.20-multi-agent-experimental-beta-latest",
+        "grok-4.20-multi-agent-beta-0309"
+      ],
+      "$comment": "WS-23 (2026-09-25), authored from the catalog-owning session's refresh row with its `notes` folded in here. Model page: https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — \"Model name: `grok-4.20-multi-agent-0309`\" with `grok-4.20-multi-agent` as its first alias, which is the spelling the multi-agent guide tells callers to use (https://docs.x.ai/developers/model-capabilities/text/multi-agent). The dated model name is the wire id and the undated spelling resolves through `aliases`. RESPONSES-ONLY: \"The multi-agent model does **not** work with the OpenAI Chat Completions API\" (guide, Limitations), so `endpoints` is `[\"responses\"]` and the row is legal only because the `xai` provider now routes through `winter.openai-responses` (catalog-integrity I2). TOOLS: \"Client-side tools (function calling) and custom tools are not currently supported by the multi-agent model variant\" — the model page's generic \"Function calling: Yes\" is overridden by that specific limitation, so `toolCalling` is `none` and `tools` is in `unsupportedParameters`, which the Responses adapter checks BEFORE sending (a typed `capability` refusal, never a vendor 400). OUTPUT LIMIT: \"The `max_tokens` parameter is not currently supported by the multi-agent model variant\"; on Responses that field is `max_output_tokens`, the name the adapter checks. EFFORT: `reasoning.effort` selects the AGENT COUNT (\"low\"/\"medium\" = 4 agents, \"high\"/\"xhigh\" = 16), not reasoning depth; no default is documented, so none is recorded. CONTINUATION: the guide's multi-turn path is `previous_response_id`, which Winter never uses (stateless, `store: false`); sub-agent state \"is encrypted and included in the response only when `use_encrypted_content` is set\" (the xAI SDK's name for `include: [\"reasoning.encrypted_content\"]`), so the row records `opaque-provider-state`. UNVERIFIED LIVE: whether the encrypted items come back and are accepted on a `store: false` replay is what the WS-23 probe steps 4a/4b check; if they do not, this becomes `none`. Beta: \"The API interface and behavior may change\". xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models).",
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page context window 1,000,000 tokens",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page Modalities: Text, Image input",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page Modalities: Text output",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/model-capabilities/text/multi-agent — multi-agent limitations: client-side/custom function calling unsupported; built-in server tools only",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/model-capabilities/text/multi-agent — client-side/custom function tools unsupported",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page Structured outputs capability",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/models/grok-4.20-multi-agent-0309 — model page lists Cached tokens input rate; prompt caching available",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T08:40:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.x.ai/developers/model-capabilities/text/multi-agent — reasoning.effort low/medium selects 4 agents, high/xhigh selects 16; previous_response_id supports multi-turn",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T08:40:00Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "continuation": "opaque-provider-state"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 1.25,
+          "outputPerMTokUsd": 2.5,
+          "cacheReadPerMTokUsd": 0.2
+        },
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/developers/pricing — grok-4.20-multi-agent-0309 Standard global short-context rate (<200k prompt tokens): $1.25 input, $0.20 cached input, $2.50 output per 1M; >=200k the entire request is charged $2.50/$0.40/$5.00. US-regional 1.1x applies only to models currently on that endpoint, listed as grok-4.7 and grok-4.6; not this model (re-read 2026-09-25, WS-23).",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T17:09:48Z"
+      },
+      "unsupportedParameters": [
+        "max_output_tokens",
+        "tools"
+      ],
+      "status": "candidate"
+    },
+    {
       "key": "xai/grok-4.3",
       "providerId": "xai",
       "upstreamId": "grok-4.3",
@@ -5361,9 +5477,10 @@
       "aliases": [
         "grok-4.3-latest"
       ],
-      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.3. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Detail page lists none/low/medium/high/xhigh, default low. Its prose only names none/low/medium/high; xhigh appears in the detailed effort list. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://docs.x.ai/developers/pricing — US regional availability currently only grok-4.7 and grok-4.6",
+      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. Upstream's two `targetFormat: \"openai-responses\"` siblings are now representable (WS-23): `grok-4.6` is its own overlay row and `grok-4.20-multi-agent-0309` is a Responses-only row; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.3. The catalog's xai provider declared Chat Completions until WS-23 and now speaks Responses (same host and key).  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. Detail page lists none/low/medium/high/xhigh, default low. Its prose only names none/low/medium/high; xhigh appears in the detailed effort list. — WS-23 (2026-09-25): the `xai` provider now routes through `winter.openai-responses`, so `endpoints` lists both surfaces the family routes (the `openai/*` convention) rather than only Chat Completions. — 2026-09-25 audit fix (0.0.24): https://docs.x.ai/developers/pricing — US regional availability currently only grok-4.7 and grok-4.6 Continuation (WS-23): `opaque-provider-state` — on Responses the reasoning item carries `encrypted_content` when `include: [\"reasoning.encrypted_content\"]` is sent and is replayed unchanged in the next `input` (https://docs.x.ai/developers/model-capabilities/text/reasoning, \"Encrypted Reasoning Content\").",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 1000000,
@@ -5434,7 +5551,7 @@
           "high",
           "xhigh"
         ],
-        "continuation": "plaintext",
+        "continuation": "opaque-provider-state",
         "defaultEffort": "low"
       },
       "pricing": {
@@ -5461,9 +5578,10 @@
         "grok-code-fast",
         "grok-code-fast-1-0825"
       ],
-      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. The two `targetFormat: \"openai-responses\"` siblings are omitted rather than reshaped; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-build-0.1. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. xAI's May 15 retirement page says grok-code-fast-1 redirects to grok-4.3, whereas this model page lists it as a grok-build-0.1 alias; live resolution of that alias needs checking (https://docs.x.ai/developers/migration/may-15-retirement). Model page does not document an effort vocabulary for this exact model, so efforts is empty. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://docs.x.ai/developers/pricing — US regional availability currently only grok-4.7 and grok-4.6",
+      "$comment": "Read from the pinned entry's own accepted literals — only the provider's `executor` is unrepresentable. Upstream's two `targetFormat: \"openai-responses\"` siblings are now representable (WS-23): `grok-4.6` is its own overlay row and `grok-4.20-multi-agent-0309` is a Responses-only row; see the provider row's comment. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-build-0.1. The catalog's xai provider declared Chat Completions until WS-23 and now speaks Responses (same host and key).  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. xAI's May 15 retirement page says grok-code-fast-1 redirects to grok-4.3, whereas this model page lists it as a grok-build-0.1 alias; live resolution of that alias needs checking (https://docs.x.ai/developers/migration/may-15-retirement). — WS-23 (2026-09-25): the `xai` provider now routes through `winter.openai-responses`, so `endpoints` lists both surfaces the family routes (the `openai/*` convention) rather than only Chat Completions. — 2026-09-25 audit fix (0.0.24): https://docs.x.ai/developers/pricing — US regional availability currently only grok-4.7 and grok-4.6 Continuation (WS-23): `opaque-provider-state` — on Responses the reasoning item carries `encrypted_content` when `include: [\"reasoning.encrypted_content\"]` is sent and is replayed unchanged in the next `input` (https://docs.x.ai/developers/model-capabilities/text/reasoning, \"Encrypted Reasoning Content\"). Effort (WS-23 fix of the \"supported, no efforts, continuation none\" incoherence): the model page says \"Reasoning: Yes\", but https://docs.x.ai/developers/model-capabilities/text/reasoning names `reasoning_effort` only for `grok-4.7`, `grok-4.6`, `grok-4.5` (and the multi-agent model's agent count), so this model reasons with NO documented effort knob and `efforts` stays empty — an effort or `thinking` request is refused before the request rather than guessed. What was incoherent was `continuation: \"none\"`, now `opaque-provider-state` per the note above. Since WS-23 fix round 1 the adapter asks for `include` on EVERY turn of an opaque-continuation row, effort or not, so the item is requested here although no effort can be named. LIVE-GATE ITEM: that xAI returns it for this model (WS-23 probe step 5b/5c); if it does not, `continuation` goes back to `none`.",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 256000,
@@ -5528,7 +5646,7 @@
           "observedAt": "2026-09-25T08:40:00Z"
         },
         "efforts": [],
-        "continuation": "none"
+        "continuation": "opaque-provider-state"
       },
       "pricing": {
         "value": {
@@ -7123,9 +7241,10 @@
       "upstreamId": "grok-4.6",
       "displayName": "Grok 4.6",
       "aliases": [],
-      "$comment": "P6.6 Task 1b (WS-13c owed row): the `grok` family's `grok-4.6` slot already resolves canonicalModelId `grok-4.6` through the existing `xai-oauth/grok-4.6` (subscription) row; this row makes the SAME canonical model servable on the plain token-priced `xai` provider too, so families.json needs no canonicalModelId change here — only the slot's citation prose is updated to record that the owed row is now verified. FOUND on https://docs.x.ai/docs/models (retrieved 2026-09-07): the Text API pricing table lists `grok-4.6` at $2.00/$6.00 per 1M input/output tokens (<200k prompt tokens) and $4.00/$12.00 (>=200k), a 500k context window, beside \"For everything else, including code, use Grok 4.6. It is the most intelligent and fastest model we've built.\" No subscription/OAuth gating language sets `grok-4.6` apart from the other rows in the same plain pricing table (grok-4.5, grok-4.3, grok-4.20-*, grok-build-0.1 — the last of which the `xai` provider already carries as `xai/grok-build-0.1`), so this is the plain API-key surface, distinct from the `xai-oauth` sibling's Grok Build subscription entitlement. `reasoning.supported` mirrors `xai-oauth/grok-4.6`'s own already-admitted evidence (xAI Grok Build's own model catalogue at the pinned commit, `derived-shapes-p6b-xai.md` §6) since both rows describe the identical vendor model. `toolCalling`/`nativeTools`/`inputModalities` are ALSO inherited from that sibling row, each at `confidence: \"inferred\"` rather than the sibling's `\"declared\"` — fix r1 (I-2, I-3) found that the sibling's own citations for these three fields do not check out against a direct re-read of `https://docs.x.ai/docs/models` (no tool-calling statement anywhere on it) and `derived-shapes-p6b-xai.md` §6 (no modality data at all, and its own text hints at image input via \"web search / image description\"). Values are carried forward rather than dropped (general-API grounds for tool-calling; the sibling's admission for modalities), with the gap disclosed in each field's own `sourceRef`; the same two downgrades were applied to the `xai-oauth/grok-4.6` and `xai-oauth/grok-4.5` sibling rows in the same fix round, since the overlay is this lane's to correct during the phase. `contextWindow` and `pricing` (now including the published `cacheReadPerMTokUsd`, fix r1 I-1) are independently confirmed on this task's own fetch of the same allowed page, so they carry a fresh `sourceRef` rather than inheriting the sibling's. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.6. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Chat Completions does not carry encrypted reasoning ciphertext; Grok 4.7 Responses does, so continuation is 'none' for this chat provider. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "$comment": "P6.6 Task 1b (WS-13c owed row): the `grok` family's `grok-4.6` slot already resolves canonicalModelId `grok-4.6` through the existing `xai-oauth/grok-4.6` (subscription) row; this row makes the SAME canonical model servable on the plain token-priced `xai` provider too, so families.json needs no canonicalModelId change here — only the slot's citation prose is updated to record that the owed row is now verified. FOUND on https://docs.x.ai/docs/models (retrieved 2026-09-07): the Text API pricing table lists `grok-4.6` at $2.00/$6.00 per 1M input/output tokens (<200k prompt tokens) and $4.00/$12.00 (>=200k), a 500k context window, beside \"For everything else, including code, use Grok 4.6. It is the most intelligent and fastest model we've built.\" No subscription/OAuth gating language sets `grok-4.6` apart from the other rows in the same plain pricing table (grok-4.5, grok-4.3, grok-4.20-*, grok-build-0.1 — the last of which the `xai` provider already carries as `xai/grok-build-0.1`), so this is the plain API-key surface, distinct from the `xai-oauth` sibling's Grok Build subscription entitlement. `reasoning.supported` mirrors `xai-oauth/grok-4.6`'s own already-admitted evidence (xAI Grok Build's own model catalogue at the pinned commit, `derived-shapes-p6b-xai.md` §6) since both rows describe the identical vendor model. `toolCalling`/`nativeTools`/`inputModalities` are ALSO inherited from that sibling row, each at `confidence: \"inferred\"` rather than the sibling's `\"declared\"` — fix r1 (I-2, I-3) found that the sibling's own citations for these three fields do not check out against a direct re-read of `https://docs.x.ai/docs/models` (no tool-calling statement anywhere on it) and `derived-shapes-p6b-xai.md` §6 (no modality data at all, and its own text hints at image input via \"web search / image description\"). Values are carried forward rather than dropped (general-API grounds for tool-calling; the sibling's admission for modalities), with the gap disclosed in each field's own `sourceRef`; the same two downgrades were applied to the `xai-oauth/grok-4.6` and `xai-oauth/grok-4.5` sibling rows in the same fix round, since the overlay is this lane's to correct during the phase. `contextWindow` and `pricing` (now including the published `cacheReadPerMTokUsd`, fix r1 I-1) are independently confirmed on this task's own fetch of the same allowed page, so they carry a fresh `sourceRef` rather than inheriting the sibling's. — 2026-09-25 refresh: Model and aliases documented at https://docs.x.ai/developers/models/grok-4.6. The catalog's xai provider declared Chat Completions until WS-23 and now speaks Responses (same host and key).  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Continuation (WS-23): on Responses the reasoning item comes back with `encrypted_content` when `include: [\"reasoning.encrypted_content\"]` is sent, and is passed back unchanged in the next request's `input` (https://docs.x.ai/developers/model-capabilities/text/reasoning, \"Encrypted Reasoning Content\"), so `continuation` is `opaque-provider-state`; Chat Completions \"has no field for the ciphertext\" (same page). The penalty/stop names stay recorded but are moot on Responses, which Winter never sends them on. — WS-23 (2026-09-25): the `xai` provider now routes through `winter.openai-responses`, so `endpoints` lists both surfaces the family routes (the `openai/*` convention) rather than only Chat Completions.",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 500000,
@@ -7195,7 +7314,7 @@
           "high",
           "xhigh"
         ],
-        "continuation": "plaintext",
+        "continuation": "opaque-provider-state",
         "defaultEffort": "high"
       },
       "pricing": {
@@ -8252,8 +8371,10 @@
       "providerId": "console",
       "upstreamId": "claude-opus-4.6",
       "displayName": "Claude Opus 4.6",
-      "aliases": [],
-      "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). Fix wave (scoped re-review, item 3, 2026-09-17): `promptCaching` backfilled here too -- see the sibling `anthropic/<id>` overlay row's own comment for the evidence tier and rationale (I3 tightened the adapter gate to require this declaration per row). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-4-6/overview — actual Claude API wire model ID claude-opus-4-6 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; enabled/budget_tokens remains accepted but deprecated; disabled turns off. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor February 5, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. ",
+      "aliases": [
+        "claude-opus-4-6"
+      ],
+      "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). Fix wave (scoped re-review, item 3, 2026-09-17): `promptCaching` backfilled here too -- see the sibling `anthropic/<id>` overlay row's own comment for the evidence tier and rationale (I3 tightened the adapter gate to require this declaration per row). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-4-6/overview — actual Claude API wire model ID claude-opus-4-6 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; enabled/budget_tokens remains accepted but deprecated; disabled turns off. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor February 5, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. WS-23 (2026-09-25): alias `claude-opus-4-6` is the vendor's own API id for this model (its model overview page); a transcript the claude binary wrote records that dashed id, and without the alias it resolved to no row, so an old session's thinking was stripped into `<recovered_reasoning>` text on resume. The key and upstream id stay dotted (a stored-tag migration is out of scope); the adapter already sends the dashed id on the wire. ",
       "endpoints": [
         "chat"
       ],
@@ -8378,8 +8499,10 @@
       "providerId": "console",
       "upstreamId": "claude-opus-4.7",
       "displayName": "Claude Opus 4.7",
-      "aliases": [],
-      "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). Fix wave (scoped re-review, item 3, 2026-09-17): `promptCaching` backfilled here too -- see the sibling `anthropic/<id>` overlay row's own comment for the evidence tier and rationale (I3 tightened the adapter gate to require this declaration per row). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-4-7/overview — actual Claude API wire model ID claude-opus-4-7 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; can set thinking.type adaptive or disabled. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor April 16, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. ",
+      "aliases": [
+        "claude-opus-4-7"
+      ],
+      "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). Fix wave (scoped re-review, item 3, 2026-09-17): `promptCaching` backfilled here too -- see the sibling `anthropic/<id>` overlay row's own comment for the evidence tier and rationale (I3 tightened the adapter gate to require this declaration per row). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-4-7/overview — actual Claude API wire model ID claude-opus-4-7 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; can set thinking.type adaptive or disabled. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor April 16, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. WS-23 (2026-09-25): alias `claude-opus-4-7` is the vendor's own API id for this model (its model overview page); a transcript the claude binary wrote records that dashed id, and without the alias it resolved to no row, so an old session's thinking was stripped into `<recovered_reasoning>` text on resume. The key and upstream id stay dotted (a stored-tag migration is out of scope); the adapter already sends the dashed id on the wire. ",
       "endpoints": [
         "chat"
       ],
@@ -8510,8 +8633,10 @@
       "providerId": "console",
       "upstreamId": "claude-opus-4.8",
       "displayName": "Claude Opus 4.8",
-      "aliases": [],
-      "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). Fix wave (scoped re-review, item 3, 2026-09-17): `promptCaching` backfilled here too -- see the sibling `anthropic/<id>` overlay row's own comment for the evidence tier and rationale (I3 tightened the adapter gate to require this declaration per row). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-4-8/overview — actual Claude API wire model ID claude-opus-4-8 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; can set thinking.type adaptive or disabled. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor May 28, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. ",
+      "aliases": [
+        "claude-opus-4-8"
+      ],
+      "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). Fix wave (scoped re-review, item 3, 2026-09-17): `promptCaching` backfilled here too -- see the sibling `anthropic/<id>` overlay row's own comment for the evidence tier and rationale (I3 tightened the adapter gate to require this declaration per row). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-4-8/overview — actual Claude API wire model ID claude-opus-4-8 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; can set thinking.type adaptive or disabled. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor May 28, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. WS-23 (2026-09-25): alias `claude-opus-4-8` is the vendor's own API id for this model (its model overview page); a transcript the claude binary wrote records that dashed id, and without the alias it resolved to no row, so an old session's thinking was stripped into `<recovered_reasoning>` text on resume. The key and upstream id stay dotted (a stored-tag migration is out of scope); the adapter already sends the dashed id on the wire. ",
       "endpoints": [
         "chat"
       ],
@@ -8650,7 +8775,7 @@
       "upstreamId": "claude-opus-5",
       "displayName": "Claude Opus 5",
       "aliases": [],
-      "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-5/overview — actual Claude API wire model ID claude-opus-5. https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — thinking defaults on; disabled allowed only at low/medium/high, rejected at xhigh/max. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor July 24, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. ",
+      "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/opus-5/overview — actual Claude API wire model ID claude-opus-5. https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, xhigh, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — thinking defaults on; disabled allowed only at low/medium/high, rejected at xhigh/max. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor July 24, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. WS-23 (2026-09-25): `thinking.type.disabled+output_config.effort.xhigh` / `.max` -- a CONJUNCTION token (`+` joins two ordinary tokens): disabled thinking is rejected only together with those efforts (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting; the model page's 'disabled allowed only at low/medium/high'). The Anthropic adapter's `buildThinking` rewrites such a request to adaptive thinking rather than sending a documented 400. ",
       "endpoints": [
         "chat"
       ],
@@ -8817,7 +8942,9 @@
         "temperature",
         "top_p",
         "top_k",
-        "thinking.type.enabled"
+        "thinking.type.enabled",
+        "thinking.type.disabled+output_config.effort.xhigh",
+        "thinking.type.disabled+output_config.effort.max"
       ],
       "status": "candidate",
       "deferredToolLoading": {
@@ -8961,8 +9088,10 @@
       "providerId": "console",
       "upstreamId": "claude-sonnet-4.6",
       "displayName": "Claude Sonnet 4.6",
-      "aliases": [],
-      "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). Fix wave (scoped re-review, item 3, 2026-09-17): `promptCaching` backfilled here too -- see the sibling `anthropic/<id>` overlay row's own comment for the evidence tier and rationale (I3 tightened the adapter gate to require this declaration per row). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/sonnet-4-6/overview — actual Claude API wire model ID claude-sonnet-4-6 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; enabled/budget_tokens remains accepted but deprecated; disabled turns off. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor February 17, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. ",
+      "aliases": [
+        "claude-sonnet-4-6"
+      ],
+      "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). Fix wave (scoped re-review, item 3, 2026-09-17): `promptCaching` backfilled here too -- see the sibling `anthropic/<id>` overlay row's own comment for the evidence tier and rationale (I3 tightened the adapter gate to require this declaration per row). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/sonnet-4-6/overview — actual Claude API wire model ID claude-sonnet-4-6 (catalog dotted family-first key is intentionally mapped by daemon). https://platform.claude.com/docs/en/build-with-claude/effort — output_config.effort values low, medium, high, max, default high. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — adaptive thinking defaults off; enabled/budget_tokens remains accepted but deprecated; disabled turns off. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor February 17, 2027; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. WS-23 (2026-09-25): alias `claude-sonnet-4-6` is the vendor's own API id for this model (its model overview page); a transcript the claude binary wrote records that dashed id, and without the alias it resolved to no row, so an old session's thinking was stripped into `<recovered_reasoning>` text on resume. The key and upstream id stay dotted (a stored-tag migration is out of scope); the adapter already sends the dashed id on the wire. ",
       "endpoints": [
         "chat"
       ],
@@ -21174,9 +21303,10 @@
       "upstreamId": "grok-4.7",
       "displayName": "Grok 4.7",
       "aliases": [],
-      "$comment": "Model and aliases documented at https://docs.x.ai/developers/models/grok-4.7. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Chat Completions does not carry encrypted reasoning ciphertext; Grok 4.7 Responses does, so continuation is 'none' for this chat provider. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "$comment": "Model and aliases documented at https://docs.x.ai/developers/models/grok-4.7. The catalog's xai provider declared Chat Completions until WS-23 and now speaks Responses (same host and key).  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Continuation (WS-23): on Responses the reasoning item comes back with `encrypted_content` when `include: [\"reasoning.encrypted_content\"]` is sent, and is passed back unchanged in the next request's `input` (https://docs.x.ai/developers/model-capabilities/text/reasoning, \"Encrypted Reasoning Content\"), so `continuation` is `opaque-provider-state`; Chat Completions \"has no field for the ciphertext\" (same page). The penalty/stop names stay recorded but are moot on Responses, which Winter never sends them on. — WS-23 (2026-09-25): the `xai` provider now routes through `winter.openai-responses`, so `endpoints` lists both surfaces the family routes (the `openai/*` convention) rather than only Chat Completions. Readable state (WS-23): `summary`, grok-4.7 only — xAI documents summarizations for this model and no other. `grok-4.7` also returns `encrypted_content` on every Responses response \"whether or not `include` lists it\" (reasoning page, \"Always returned for grok-4.7\"). Which SSE event carries the summary text is unconfirmed (xAI's own OpenAI-SDK example reads both `response.reasoning_text.delta` and `response.reasoning_summary_text.delta`); Winter's mapper surfaces both as this row's summary since WS-23 fix round 1, and the probe's event counts show which one xAI sends.",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 500000,
@@ -21246,8 +21376,29 @@
           "high",
           "xhigh"
         ],
-        "continuation": "plaintext",
-        "defaultEffort": "high"
+        "continuation": "opaque-provider-state",
+        "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.x.ai/developers/model-capabilities/text/reasoning — \"For `grok-4.7`, we expose summarizations of the model's internal reasoning\" (Summarized Reasoning Content); https://docs.x.ai/developers/rest-api-reference/inference/responses — the example reasoning output item carries `summary: [{ type: \"summary_text\", … }]`",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T17:09:48Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "detailed",
+              "auto",
+              "concise"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.x.ai/developers/rest-api-reference/inference/responses — `reasoning.summary`: \"Possible values are `auto`, `concise` and `detailed`. Only included for compatibility. The model shall always return `detailed`.\" `detailed` is listed FIRST because the adapter sends the first value, and it is the one the model returns regardless",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T17:09:48Z"
+        }
       },
       "pricing": {
         "value": {
@@ -21276,9 +21427,10 @@
         "grok-4.5-latest",
         "grok-build-latest"
       ],
-      "$comment": "Model and aliases documented at https://docs.x.ai/developers/models/grok-4.5. The catalog's xai provider currently declares Chat Completions; xAI also offers Responses.  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Chat Completions does not carry encrypted reasoning ciphertext; Grok 4.7 Responses does, so continuation is 'none' for this chat provider. Conflict: https://docs.x.ai/developers/models/grok-4.5 lists xhigh on its detail page, but https://docs.x.ai/developers/model-capabilities/text/reasoning says xhigh on 4.5 is treated as high; efforts omit xhigh because it is not a distinct behavior. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25).",
+      "$comment": "Model and aliases documented at https://docs.x.ai/developers/models/grok-4.5. The catalog's xai provider declared Chat Completions until WS-23 and now speaks Responses (same host and key).  No model-specific max output token cap was found. xAI's models page says logprobs/top_logprobs on grok-4.20 and newer are silently ignored, not rejected (https://docs.x.ai/developers/models). Legacy Anthropic-compatible POST /v1/messages remains documented but fully deprecated (https://docs.x.ai/developers/rest-api-reference/inference/legacy); unauthenticated POST today returned 401 after validating the request, so route exists but successful inference was not verified. POST /anthropic returned 404. https://docs.x.ai/developers/model-capabilities/text/reasoning says presencePenalty, frequencyPenalty, and stop return an error on reasoning models (snake_case names recorded for the Chat Completions wire). Continuation (WS-23): on Responses the reasoning item comes back with `encrypted_content` when `include: [\"reasoning.encrypted_content\"]` is sent, and is passed back unchanged in the next request's `input` (https://docs.x.ai/developers/model-capabilities/text/reasoning, \"Encrypted Reasoning Content\"), so `continuation` is `opaque-provider-state`; Chat Completions \"has no field for the ciphertext\" (same page). The penalty/stop names stay recorded but are moot on Responses, which Winter never sends them on. Conflict: https://docs.x.ai/developers/models/grok-4.5 lists xhigh on its detail page, but https://docs.x.ai/developers/model-capabilities/text/reasoning says xhigh on 4.5 is treated as high; efforts omit xhigh because it is not a distinct behavior. — WS-23 (2026-09-25): the `xai` provider now routes through `winter.openai-responses`, so `endpoints` lists both surfaces the family routes (the `openai/*` convention) rather than only Chat Completions.",
       "endpoints": [
-        "chat"
+        "chat",
+        "responses"
       ],
       "contextWindow": {
         "value": 500000,
@@ -21347,7 +21499,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext",
+        "continuation": "opaque-provider-state",
         "defaultEffort": "high"
       },
       "pricing": {

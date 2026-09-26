@@ -68,7 +68,7 @@ export type { RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, Sandbo
 // `RuntimeAgentDefinition` is intentionally NOT re-exported under the bare name `AgentDefinition`
 // (options.ts's own export above owns that name) -- see protocol/config.ts's own header for why the
 // two differ by exactly one field (`permissionMode`).
-export type { McpServerConfigForProcessTransport, AgentMcpServerSpec, RuntimeAgentDefinition } from "./protocol/config.ts";
+export type { McpServerConfigForProcessTransport, McpVersionNegotiation, AgentMcpServerSpec, RuntimeAgentDefinition } from "./protocol/config.ts";
 
 // Wire protocol (WS-02 §3: owned by the sdk, the runtime depends on it — never the reverse).
 // Previously reachable only via the runtime; now the sdk's own public surface.
@@ -147,6 +147,8 @@ export type {
   // turn-over signal (and because it is env-gated, a host must be able to type-check for a frame it
   // will only ever see when it asks for it).
   SDKSessionStateChangedMessage,
+  // WS-23: the text-notice frame (a hook's systemMessage, a blocked prompt's reason).
+  SDKInformationalMessage,
   // Phase 6 Task 3 (R6-5/R6-D, derived-shapes-p6.md items (a)/(b)): the provider-facing frame family
   // plus the Winter-DECLARED wire vocabularies it carries. Named on the barrel because a host that
   // renders live tokens must be able to discriminate `stream_event` and reach inside `event`, and
@@ -305,6 +307,8 @@ export type {
   NotificationHookInput,
   PermissionRequestHookInput,
   PermissionDeniedHookInput,
+  SubagentStartHookInput,
+  SubagentStopHookInput,
   GenericHookInput,
   HookInput,
   AsyncHookJSONOutput,
@@ -315,6 +319,8 @@ export type {
   PostToolUseFailureHookSpecificOutput,
   UserPromptSubmitHookSpecificOutput,
   StopHookSpecificOutput,
+  SubagentStartHookSpecificOutput,
+  SubagentStopHookSpecificOutput,
   SessionStartHookSpecificOutput,
   NotificationHookSpecificOutput,
   PermissionRequestHookSpecificOutput,

@@ -4,7 +4,9 @@
 // conformed to the Winter seam. The request shape's required-field set is Norma's LIVE-VERIFIED
 // finding (2026-06-13 against the codex backend: `tools`, `tool_choice`, `parallel_tool_calls`,
 // `store`, `include` are all required — omitting any of them is an HTTP 400), and it is carried over
-// intact rather than re-derived from documentation.
+// intact rather than re-derived from documentation — FOR THAT BACKEND. Since WS-23 (fix round 1, M2)
+// the tool trio is omitted on a tool-less request everywhere else, where the public Responses API
+// makes all three optional; `store` and `include` are still always sent. See `buildResponsesBody`.
 //
 // Three things this file does that the port did not, each because a Winter ruling requires it:
 //
@@ -58,6 +60,37 @@ import {
 } from "./shared.ts";
 
 export const OPENAI_API_BASE_URL = "https://api.openai.com/v1";
+
+/**
+ * The adapter's compiled-in vendor endpoint, for THIS turn's provider — which is only ever OpenAI's.
+ *
+ * WS-23: `winter.openai-responses` serves more than one provider now (`openai`, `xai`), so
+ * "the adapter's own default" stopped meaning "the provider's own endpoint". `api.openai.com` is
+ * OpenAI's host; handing it to an `xai` connection with no `baseUrl` sent an xAI key to OpenAI,
+ * silently, which is the no-silent-fallback rule broken at its most expensive. Every other provider
+ * gets NO fallback: its endpoint comes from its own catalog row (`generatedBaseUrls`, wired by
+ * `createShippedAdapters`) or its connection profile, and with neither the turn is refused typed.
+ */
+function vendorFallbackFor(ctx: ProviderContext): string | undefined {
+  return ctx.connection.providerId === "openai" ? OPENAI_API_BASE_URL : undefined;
+}
+
+/**
+ * The adapter's options for THIS turn's provider: OpenAI's account identifiers only for `openai`
+ * (WS-23 fix round 1, M5).
+ *
+ * `organization`/`project` are construction options, so on an adapter shared by two vendors they
+ * were one value for both: a host that configured them for OpenAI would send `OpenAI-Organization`
+ * and `OpenAI-Project` — its OpenAI account topology — to `api.x.ai` on every xAI turn. The endpoint
+ * gate (`applyPrivilegedHeaders`) cannot catch that, because xAI's endpoint is a REVIEWED one. Same
+ * rule `xai-oauth.ts` applies by stripping them at construction; here it is per turn, because the
+ * provider is only known per turn.
+ */
+function optionsForProvider(options: OpenAiAdapterOptions, ctx: ProviderContext): OpenAiAdapterOptions {
+  if (ctx.connection.providerId === "openai") return options;
+  const { organization: _organization, project: _project, ...rest } = options;
+  return rest;
+}
 
 // --- request mapping --------------------------------------------------------------------------------
 
@@ -162,19 +195,37 @@ function mapToolChoice(choice: TurnRequest["toolChoice"]): unknown {
  * deviation from the port, which sent a default string. Global Constraints forbid vendor prompt
  * text, and inventing a Winter one would put an instruction in front of the model that no caller
  * asked for; codex-rs itself skips the field when it is empty.
+ *
+ * THE TOOL TRIO (`tools`, `tool_choice`, `parallel_tool_calls`) IS OMITTED WHEN THE REQUEST HAS NO
+ * TOOLS (WS-23 fix round 1, M2) — all three are optional on the public Responses API (OpenAI's and
+ * xAI's reference alike), and a model that takes no client tools (xAI's multi-agent row) should not
+ * be sent an empty tool surface it never documented accepting. The ONE exception is the codex
+ * backend, where the trio is REQUIRED: omitting any of them was an HTTP 400 (Norma's live finding,
+ * 2026-06-13, this file's header). `codex-oauth.ts` passes `requireToolFields: true`; nothing else
+ * does.
  */
-export function buildResponsesBody(req: TurnRequest, reasoning: ReasoningPlan, descriptor: WinterModelDescriptor | undefined): Record<string, unknown> {
+export function buildResponsesBody(
+  req: TurnRequest,
+  reasoning: ReasoningPlan,
+  descriptor: WinterModelDescriptor | undefined,
+  opts: { requireToolFields?: boolean } = {},
+): Record<string, unknown> {
   const reasoningObject =
     reasoning.enabled && (reasoning.effort !== undefined || reasoning.summary !== undefined)
       ? { ...(reasoning.effort !== undefined ? { effort: reasoning.effort } : {}), ...(reasoning.summary !== undefined ? { summary: reasoning.summary } : {}) }
       : undefined;
+  const sendToolFields = opts.requireToolFields === true || (req.tools?.length ?? 0) > 0;
   return {
     model: req.model,
     ...(req.system !== undefined && req.system.length > 0 ? { instructions: req.system } : {}),
     input: mapResponsesInput(req.messages),
-    tools: mapResponsesTools(req.tools),
-    tool_choice: mapToolChoice(req.toolChoice),
-    parallel_tool_calls: descriptor?.parallelTools?.value === false ? false : true,
+    ...(sendToolFields
+      ? {
+          tools: mapResponsesTools(req.tools),
+          tool_choice: mapToolChoice(req.toolChoice),
+          parallel_tool_calls: descriptor?.parallelTools?.value === false ? false : true,
+        }
+      : {}),
     store: false,
     stream: true,
     include: reasoning.wantsEncryptedContent ? ["reasoning.encrypted_content"] : [],
@@ -224,8 +275,16 @@ export function responsesCompletionEvent(descriptor: WinterModelDescriptor | und
 }
 
 export class ResponsesStreamMapper {
-  /** The event this stream's descriptor says completes a response. Injected so the mapper never reaches for a catalog itself. */
-  constructor(private readonly completionEvent: string = "response.completed") {}
+  /**
+   * `completionEvent`: the event this stream's descriptor says completes a response. `readableState`:
+   * the descriptor's own reading of what the model's reasoning TEXT is (WS-23 fix round 1, M1) — it
+   * decides whether `response.reasoning_text.delta` is raw exposed reasoning or a summary. Both are
+   * injected so the mapper never reaches for a catalog itself.
+   */
+  constructor(
+    private readonly completionEvent: string = "response.completed",
+    private readonly readableState: "none" | "summary" | "full-exposed" = "none",
+  ) {}
 
   private sawToolCall = false;
   private sawRefusal = false;
@@ -268,6 +327,19 @@ export class ResponsesStreamMapper {
         // A provider-produced SUMMARY. It rides the sidecar and the Winter-only frame, never
         // `assistant.message.content` (R6-8).
         return delta.length > 0 ? [{ type: "thinking_summary_delta", text: delta }] : [];
+      }
+      case "response.reasoning_text.delta": {
+        // WS-23 fix round 1 (M1): the reasoning TEXT channel. OpenAI uses it for raw chain of thought
+        // (its open-weight models); xAI's own streaming example reads it beside the summary event for
+        // grok-4.7, whose page calls that text "summarizations of the model's internal reasoning". It
+        // used to fall into the ignore branch, so a model that streamed its readable reasoning here
+        // showed none. Where it lands is the ROW's claim, not this event's name: `full-exposed` is the
+        // complete trace (which may suppress a switch warning downstream, so it is never assumed);
+        // anything else is treated as a summary, the conservative reading. Same destination rule as
+        // the summary: never `assistant.message.content` (R6-8).
+        const delta = typeof payload.delta === "string" ? payload.delta : "";
+        if (delta.length === 0) return [];
+        return [this.readableState === "full-exposed" ? { type: "thinking_exposed_delta", text: delta } : { type: "thinking_summary_delta", text: delta }];
       }
       case "response.output_item.added":
         return this.onItemAdded(payload);
@@ -499,7 +571,8 @@ export interface ResponsesTurnPlan {
 export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: AbortSignal | undefined): AsyncIterable<ProviderEvent> {
   const queue = plan.queue ?? new EventQueue();
   const policy = makeRetryPolicy(plan.options);
-  const mapper = new ResponsesStreamMapper(responsesCompletionEvent(plan.options.descriptors?.(plan.model, plan.ctx.connection.providerId)));
+  const descriptor = plan.options.descriptors?.(plan.model, plan.ctx.connection.providerId);
+  const mapper = new ResponsesStreamMapper(responsesCompletionEvent(descriptor), descriptor?.reasoning?.readableState?.value ?? "none");
   let response: Response;
   try {
     response = yield* pumpEvents(
@@ -573,21 +646,21 @@ export function createResponsesAdapter(options: OpenAiAdapterOptions): ProviderA
     protocol: "openai-responses",
 
     async validateCredential(ref: CredentialRef, ctx: ProviderContext): Promise<CredentialStatus> {
-      const endpoint = resolveEndpoint(ctx, options, OPENAI_API_BASE_URL);
+      const endpoint = resolveEndpoint(ctx, options, vendorFallbackFor(ctx));
       const auth = await resolveAuth(ctx, "bearer");
-      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
+      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(optionsForProvider(options, ctx)), identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       return validateViaModels(ref, ctx, endpoint, headers, options, auth.material !== null);
     },
 
     async listModels(ctx: DiscoveryContext): Promise<ModelCatalogResult> {
-      const endpoint = resolveEndpoint(ctx, options, OPENAI_API_BASE_URL);
+      const endpoint = resolveEndpoint(ctx, options, vendorFallbackFor(ctx));
       const auth = await resolveAuth(ctx, "bearer");
-      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
+      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(optionsForProvider(options, ctx)), identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       return fetchOpenAiModels(ctx, endpoint, headers, options);
     },
 
     streamTurn(req: TurnRequest, ctx: ProviderContext): AsyncIterable<ProviderEvent> {
-      return responsesTurn(req, ctx, options, OPENAI_API_BASE_URL, (base) => `${base}/responses`);
+      return responsesTurn(req, ctx, optionsForProvider(options, ctx), vendorFallbackFor(ctx), (base) => `${base}/responses`);
     },
 
     mapEffort(effort: TurnRequest["effort"], model: WinterModelDescriptor) {

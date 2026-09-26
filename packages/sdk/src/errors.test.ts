@@ -45,3 +45,13 @@ test("SessionNotFoundError carries its reason", () => {
   expect(new SessionNotFoundError("not_found", "x").reason).toBe("not_found");
   expect(new SessionNotFoundError("ambiguous", "x").reason).toBe("ambiguous");
 });
+
+test("WS-23 (M-1): an is_error result naming a terminal_reason throws `<terminal_reason>: <result>`, never `result error: success`", () => {
+  const base = { type: "result" as const, subtype: "success", is_error: true, permission_denials: [] };
+  expect(new ResultError({ ...base, terminal_reason: "refusal", result: "I can't help with that." }).message).toBe("refusal: I can't help with that.");
+  expect(new ResultError({ ...base, terminal_reason: "prompt_too_long", result: "The conversation no longer fits." }).message).toBe("prompt_too_long: The conversation no longer fits.");
+  expect(new ResultError({ ...base, terminal_reason: "pause_turn_limit", result: "still going" }).message).toBe("pause_turn_limit: still going");
+  // The two pre-existing spellings are unchanged.
+  expect(new ResultError({ ...base, terminal_reason: "api_error", result: "HTTP 529" }).message).toBe("provider request failed: HTTP 529");
+  expect(new ResultError({ ...base, subtype: "error_during_execution" }).message).toBe("result error: error_during_execution");
+});
