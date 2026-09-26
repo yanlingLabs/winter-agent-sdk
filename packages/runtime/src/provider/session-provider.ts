@@ -561,6 +561,17 @@ export function resolveSessionKeychainService(config: RuntimeConfig): string | u
   return config.brand?.keychainService ?? config.keychainService;
 }
 
+/**
+ * WS-23 (reasoning-state): the cross-family decoration caps. 4,000 characters is about 1,100 tokens at
+ * the ~3.5 characters/token the fit check estimates with -- room for a Claude turn's summarized
+ * thinking or a Responses summary in full (both are typically a few hundred to two thousand characters),
+ * and a hard stop for an open model's raw trace, which can run to tens of thousands. 24,000 in total is
+ * about 6,900 tokens: under 4% of a 200k window and under 6% of a 128k one, so even a history made
+ * mostly of another family's turns leaves the target its window.
+ */
+export const MAX_DECORATION_CHARS = 4_000;
+export const DECORATION_CHAR_BUDGET = 24_000;
+
 export function buildSessionProvider(opts: SessionProviderOptions): SessionProviderWiring {
   const { config, env } = opts;
   const sessionKeychainService = resolveSessionKeychainService(config);
@@ -578,7 +589,12 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   // conservative placeholder its own header says it is (no decoration at all), so selecting it here
   // would leave every cross-family decoration Lane C built inert in production while its unit tests
   // stayed green.
-  const renderer: HistoryRenderer = createHistoryRenderer(registry);
+  //
+  // WS-23 (reasoning-state, user decision): a message another model produced keeps its readable reasoning
+  // as a `<recovered_reasoning>` decoration -- BOUNDED, so a long cross-family history cannot spend the
+  // target's window on quoted reasoning. The renderer spends the budget NEWEST FIRST and drops the
+  // oldest material once it runs out (the reasoning closest to the current work is the useful part).
+  const renderer: HistoryRenderer = createHistoryRenderer(registry, { maxDecorationChars: MAX_DECORATION_CHARS, decorationCharBudget: DECORATION_CHAR_BUDGET });
   const chain = opts.chain ?? ((): ContinuationChain => new Map());
 
   // THE SESSION'S PROVIDER, AS A STATE (fix wave round 2, R-E1). Three states, and the difference
