@@ -345,7 +345,24 @@ function sameModelFamily(a: ContinuityEndpoint, b: ContinuityEndpoint, catalog: 
  * `opts.catalog ?? loadCatalog()` pattern) -- every production caller omits it and gets the real
  * compiled catalog, loaded once and memoised.
  */
-export function reviewModelSwitch(args: { entries: SessionStoreEntry[]; sidecarRecords: ProviderStateRecord[]; from: ContinuityEndpoint; to: ContinuityEndpoint; truncated?: boolean; catalog?: WinterCatalog }): SwitchReview {
+export function reviewModelSwitch(args: {
+  entries: SessionStoreEntry[];
+  sidecarRecords: ProviderStateRecord[];
+  from: ContinuityEndpoint;
+  to: ContinuityEndpoint;
+  truncated?: boolean;
+  catalog?: WinterCatalog;
+  /**
+   * WS-24 (follow-up 5): whether THIS switch aborts a running turn before its final state exists
+   * (§8.3's immediate switch) -- the caller's own fact, never derivable from the snapshot
+   * `switchFactsFor` reads (its own `midTurnAbort` stays `false` for exactly that reason). The
+   * engine already knows this at its own `classifySwitch` call site (`announceLossyTransfer`,
+   * `reason === "interrupt"`); this review had no way to receive the identical fact for the
+   * PRE-FLIGHT confirmation, so an interrupt-driven switch was never classified as one here.
+   * Defaults to `false` -- an ordinary switch, not one following an interrupt.
+   */
+  midTurnAbort?: boolean;
+}): SwitchReview {
   const sameProfile = args.from.providerId === args.to.providerId && args.from.modelKey === args.to.modelKey;
   if (sameProfile) return { prompt: false, skipped: "same-profile" };
   const catalog = catalogFor(args.catalog);
@@ -366,6 +383,8 @@ export function reviewModelSwitch(args: { entries: SessionStoreEntry[]; sidecarR
     ...(unreadableMedia > 0 ? { unreadableMedia } : {}),
     ...(serverToolBlocks > 0 ? { serverToolBlocks } : {}),
     ...(fit !== undefined && !fit.fits ? { compaction: { estimatedTokens: fit.estimatedTokens, window: fit.window } } : {}),
+    // WS-24 (follow-up 5): the caller's own fact, threaded through -- never the snapshot's.
+    ...(args.midTurnAbort === true ? { midTurnAbort: true } : {}),
   };
   const classification = classifySwitch(args.from, args.to, verdict);
   const fitFields = fit !== undefined ? { fits: fit.fits, estimatedTokens: fit.estimatedTokens, window: fit.window } : {};
