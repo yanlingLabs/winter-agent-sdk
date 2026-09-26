@@ -1,3 +1,3 @@
 # WS-23: every test run refuses a non-loopback connection -- see scripts/test-network-guard.ts.
 [test]
-preload = ["./scripts/test-network-guard.ts"]
+preload = ["../../scripts/test-network-guard.ts"]
