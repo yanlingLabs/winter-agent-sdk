@@ -82,6 +82,19 @@ describe("children inherit the block: shell doors, spread environments, no-env n
     expect(r.code).toBe(0);
   });
 
+  test("fix round 1: exec(cmd, null, cb) still calls back, and util.promisify(exec) keeps its {stdout} shape -- both carrying the proxy", async () => {
+    const r = await nested(`
+      const cp = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const viaNull = await new Promise((resolve) => cp.default.exec("env", null, (_e, out) => resolve(String(out))));
+      if (!viaNull.includes("HTTPS_PROXY=http://127.0.0.1:")) throw new Error("exec(cmd, null, cb) ran without the proxy");
+      const { stdout } = await promisify(cp.default.exec)("env");
+      if (typeof stdout !== "string" || !stdout.includes("HTTPS_PROXY=http://127.0.0.1:")) throw new Error("promisified exec lost its shape or the proxy");`);
+    expect(r.out).not.toContain("without the proxy");
+    expect(r.out).not.toContain("lost its shape");
+    expect(r.code).toBe(0);
+  });
+
   test("inside withNpmRegistryAccess, the registry reaches a shell child's NO_PROXY too (the write-through survives)", async () => {
     const r = await nested(`
       const { withNpmRegistryAccess } = await import(${JSON.stringify(REGISTRY)});

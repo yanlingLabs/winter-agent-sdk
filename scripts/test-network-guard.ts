@@ -53,6 +53,7 @@ import tls from "node:tls";
 import http from "node:http";
 import https from "node:https";
 import childProcess from "node:child_process";
+import { promisify } from "node:util";
 import { NPM_REGISTRY_HOST, npmRegistryAccessOpen } from "./test-network-registry.ts";
 
 export const ALLOW_REAL_NETWORK_ENV = "WINTER_TEST_ALLOW_REAL_NETWORK";
@@ -304,13 +305,21 @@ if (process.env[ALLOW_REAL_NETWORK_ENV] !== "1") {
     // WS-24: the SHELL doors, `(command, options?, callback?)` -- no argv to preload into (a shell string is
     // never rewritten), so only the environment: the options object, when there is one, is the first plain
     // object after the command; with none, one carrying `process.env` is inserted before any callback.
+    // Fix round 1: a LEADING `null`/`undefined` options argument (`exec(cmd, null, cb)`, a common spelling)
+    // is REPLACED, never shifted right -- inserting before it made the callback the third-after argument,
+    // lost it, and hung the caller. `util.promisify(exec)` reads `exec[util.promisify.custom]`, which is
+    // copied onto the wrapper so the promisified form keeps its `{stdout, stderr}` shape.
     for (const name of ["exec", "execSync"]) {
       const original = cp[name]!;
-      cp[name] = (command: unknown, ...rest: unknown[]) => {
+      const wrapped = (command: unknown, ...rest: unknown[]) => {
         const at = rest.findIndex((a) => typeof a === "object" && a !== null && !Array.isArray(a));
         if (at !== -1) return original(command, ...rest.map((a, i) => (i === at ? withEnv(a as { env?: unknown }) : a)));
+        if (rest.length > 0 && (rest[0] === null || rest[0] === undefined)) return original(command, withEnv(undefined), ...rest.slice(1));
         return original(command, withEnv(undefined), ...rest);
       };
+      const custom = (original as unknown as Record<symbol, unknown>)[promisify.custom];
+      if (custom !== undefined) Object.defineProperty(wrapped, promisify.custom, { value: custom, configurable: true });
+      cp[name] = wrapped;
     }
     for (const name of ["spawn", "spawnSync", "execFile", "execFileSync"]) {
       const original = cp[name]!;
