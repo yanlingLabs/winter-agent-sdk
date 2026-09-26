@@ -121,8 +121,8 @@ describe("(a) the layout with a client tool_search_call and a stored-definitions
   test("[reasoning, tool_search_call, reasoning] goes back in that order; the output follows from the stored copy", () => {
     const schema = { type: "object", properties: { q: { type: "string" } } };
     const tools = [
-      { name: "ToolSearch", description: "ToolSearch tool", inputSchema: schema, toolSearch: true },
-      { name: "Lookup", description: "Lookup tool", inputSchema: schema, deferLoading: true },
+      { name: "ToolSearch", description: "ToolSearch tool", inputSchema: schema, toolSearch: true as const },
+      { name: "Lookup", description: "Lookup tool", inputSchema: schema, deferLoading: true as const },
     ];
     const input = mapResponsesInput(
       [
