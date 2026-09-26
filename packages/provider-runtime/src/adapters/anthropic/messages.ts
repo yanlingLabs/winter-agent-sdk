@@ -758,8 +758,20 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
   // typed failure for a combination the caller never chose as a pair. Opus 5's thinking is ON by
   // default, so adaptive is what the model does when `thinking` is left alone -- the rewrite asks for
   // exactly that, explicitly, rather than omitting the field and relying on the default.
+  //
+  // WS-23 (anthropic-cache fix round 2): the tier is not only the TOP-LEVEL one. Under per-message effort
+  // the top-level value stays frozen and a switch rides an effort-only `system` marker, so a session
+  // frozen at `high` that switches to `max` would otherwise send `thinking: disabled` beside a `max`
+  // marker -- the very pair the row rejects. Every marker's level in the body is checked too, and any
+  // rejected pair takes the same rewrite. DELIBERATE CACHE COST: this changes `thinking` on the request
+  // that carries the switch ("changing thinking parameters" invalidates the messages cache), one miss,
+  // accepted because the alternative is a 400.
+  const effortLevels = [
+    ...(outputConfigEffort !== undefined ? [outputConfigEffort] : []),
+    ...req.messages.flatMap((m) => (m.role === "system" && m.outputConfig !== undefined ? [m.outputConfig.effort] : [])),
+  ];
   let rewroteDisabled = false;
-  if (req.thinking?.type === "disabled" && outputConfigEffort !== undefined && unsupported.has(`thinking.type.disabled+output_config.effort.${outputConfigEffort}`)) {
+  if (req.thinking?.type === "disabled" && effortLevels.some((level) => unsupported.has(`thinking.type.disabled+output_config.effort.${level}`))) {
     base = { type: "adaptive" };
     rewroteDisabled = true;
   }

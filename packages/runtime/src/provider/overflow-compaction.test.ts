@@ -69,6 +69,10 @@ test("overflow -> reactive compaction on the REDACTED request (never the refused
     expect(JSON.stringify(summary["messages"])).not.toContain("third");
     // The retry runs on the compacted history and the turn ends on its answer.
     expect(JSON.stringify(fake.requests[4]!.body["messages"])).toContain("SUMMARY-OF-EARLIER-TURNS");
+    // The compaction rewrote the history the last fingerprint described, so the retry opts into cache
+    // diagnostics afresh rather than naming a response whose prefix is gone.
+    expect(fake.requests[1]!.body["diagnostics"]).toEqual({ previous_message_id: "msg_fake" });
+    expect(fake.requests[4]!.body["diagnostics"]).toEqual({ previous_message_id: null });
     const results = messages.filter((m) => m.type === "result") as Array<Record<string, unknown>>;
     expect(results.at(-1)).toMatchObject({ subtype: "success", is_error: false, result: "recovered" });
   } finally {

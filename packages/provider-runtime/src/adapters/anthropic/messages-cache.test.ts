@@ -9,7 +9,7 @@ import { ProviderRequestError } from "../../http.ts";
 import { createEndpointPolicy } from "../../endpoint-policy.ts";
 import type { CredentialMaterial, CredentialRef, ProviderContext, ProviderEvent, ProviderMessageLike, TurnRequest } from "../../types.ts";
 import type { WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
-import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
+import { loadCatalog, stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 
 const evidence = <T>(value: T) => ({ value, source: "official-doc" as const, confidence: "declared" as const });
 
@@ -375,5 +375,29 @@ describe("cache diagnostics (WS-23 item 8)", () => {
         expect(logs.some((l) => l["kind"] === "provider.cache_miss")).toBe(false);
       });
     }
+  });
+});
+
+// --- WS-23 fix round 2: hardening's Opus 5 disabled+xhigh/max rewrite sees per-message markers ---------
+
+describe("the Opus 5 `disabled` + xhigh/max rewrite reads the effort MARKERS too (fix round 2)", () => {
+  const opus5 = (): WinterModelDescriptor => loadCatalog().models.find((m) => m.key === "anthropic/claude-opus-5")!;
+  const withMarker = (level: string): ProviderMessageLike[] => [
+    { role: "system", content: [], outputConfig: { effort: "high" } },
+    { role: "user", content: "one" },
+    { role: "assistant", content: "r1" },
+    marker(level),
+    { role: "user", content: "two" },
+  ];
+
+  test("frozen `high`, `thinking: disabled` and a `max` marker -> `thinking: adaptive` (the pair the row rejects never reaches the wire)", () => {
+    const body = buildRequestBody({ model: "claude-opus-5", messages: withMarker("max"), effort: "high", thinking: { type: "disabled" } }, opus5(), {});
+    expect(body["output_config"]).toEqual({ effort: "high" });
+    expect((body["thinking"] as { type: string }).type).toBe("adaptive");
+  });
+
+  test("frozen `high` with a `medium` marker stays `disabled`", () => {
+    const body = buildRequestBody({ model: "claude-opus-5", messages: withMarker("medium"), effort: "high", thinking: { type: "disabled" } }, opus5(), {});
+    expect(body["thinking"]).toEqual({ type: "disabled" });
   });
 });
