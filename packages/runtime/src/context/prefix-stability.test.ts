@@ -157,8 +157,9 @@ describe("the cached prefix on the wire, turns 1 -> 2 with a tool round, a ToolS
       // THE BETA SET IS CONSTANT (fix round 1, I1): per-message effort and block binding on every request.
       expect(beta).toBe(first!.beta);
     }
-    // WS-23 midconv: the tool-change beta rides every request too (the row documents changes by reference).
-    expect(first!.beta!.split(",").sort()).toEqual(["mid-conversation-output-config-2026-07-01", "mid-conversation-tool-changes-2026-07-01", "thinking-binding-controls-2026-08-01"]);
+    // WS-23 midconv: the tool-change beta rides every request too -- the inline one, which "covers all
+    // reference-based changes" (the row documents tools defined by value).
+    expect(first!.beta!.split(",").sort()).toEqual(["inline-tools-2026-09-15", "mid-conversation-output-config-2026-07-01", "thinking-binding-controls-2026-08-01"]);
     // The deferred tool is declared up front, and stays declared the same way after it loads.
     expect((first!.body["tools"] as Block[]).find((t) => t["name"] === DEFERRED)).toMatchObject({ defer_loading: true });
 

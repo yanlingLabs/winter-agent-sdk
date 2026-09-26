@@ -275,6 +275,36 @@ describe("the tool epoch, by value (a row with `inlineToolDefinitions`)", () => 
   });
 });
 
+describe("the documented tool-change errors (inline)", () => {
+  test("a 400 `tool_name_conflict` (a definition reusing a server tool's name) falls back once to today's rebuild, like any refused change", async () => {
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => void errors.push(args.join(" "));
+    try {
+      addTool("zz_midconv_a");
+      const { requests } = await drive({
+        describe: INLINE_ROW,
+        steps: [{ user: "one" }, { act: () => addTool("aa_midconv_late") }, { user: "two" }],
+        generate: (req) => {
+          if (req.messages.some((m) => m.toolChanges?.add.some((a) => a.type === "definition") === true)) {
+            throw new ProviderTurnError('provider request failed (bad_request): HTTP 400 — {"type":"error","error":{"type":"invalid_request_error","message":"tool name is already used by a different type of tool","details":{"error_code":"tool_name_conflict"}}}', { status: 400, code: "bad_request", retryable: false });
+          }
+          return { kind: "text", text: "ok" };
+        },
+      });
+      expect(requests.map((r) => [r.toolChanges ?? false, changesOf(r).length])).toEqual([
+        [true, 0],
+        [true, 1],
+        [false, 0],
+      ]);
+      expect(names(requests[2]!)).toContain("aa_midconv_late");
+      expect(errors.filter((e) => e.includes("refused a mid-conversation tool change"))).toHaveLength(1);
+    } finally {
+      console.error = original;
+    }
+  });
+});
+
 describe("no mechanism", () => {
   test("a row without the evidence keeps today's rebuild: the live list, sorted, no opt-in, no bookkeeping", async () => {
     addTool("zz_midconv_a");

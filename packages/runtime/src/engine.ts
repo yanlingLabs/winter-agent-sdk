@@ -567,7 +567,8 @@ function isPerMessageEffortRejection(err: unknown): boolean {
  */
 function isToolChangeRejection(err: unknown): boolean {
   if (!isProviderTurnError(err) || (err.status !== 400 && err.status !== 422)) return false;
-  return /mid-conversation-tool-changes|inline-tools|tool_addition|tool_removal|tool_definition|tool_reference_unresolved|tool_name_conflict|available_tools_limit_exceeded|additional_tools|allowed_tools/i.test(err instanceof Error ? err.message : "");
+  // The bounded error snippet is the raw body, so a documented `error.details.error_code` is matched too.
+  return /mid-conversation-tool-changes|inline-tools|tool_addition|tool_removal|tool_definition|tool_reference_unresolved|tool_name_conflict|available_tools_limit_exceeded|cannot yet be defined in a message|additional_tools|allowed_tools/i.test(err instanceof Error ? err.message : "");
 }
 
 /**
