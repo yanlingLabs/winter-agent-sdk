@@ -22,7 +22,7 @@ import { loadCatalog, modelFamilyOf, OTHER_FAMILY_ID, type WinterCatalog } from 
 import type { ProviderStateRecord } from "./claude-ready.ts";
 import type { ContinuityEndpoint } from "./domains.ts";
 import { classifySwitch, type SwitchClassification, type SwitchFacts } from "./warnings.ts";
-import { DECORATION_CHAR_BUDGET, estimateTokensFromChars, fitVerdict, type FitVerdict } from "./fit.ts";
+import { DECORATION_CHAR_BUDGET, estimateTextTokens, estimateTokensFromChars, estimateValueTokens, fitVerdict, type FitVerdict } from "./fit.ts";
 import { isServerToolBlockType } from "./renderer.ts";
 import { DEFAULT_COMPACTION_THRESHOLD } from "@yanlinglabs/winter-agent-sdk";
 
@@ -399,21 +399,22 @@ function lineageBlocks(lineage: Node[], entries: SessionStoreEntry[]): Array<{ t
 
 /**
  * The conversation's fit on the target, or `undefined` when the target's row declares no window. The
- * conversation's own characters (every message since the last compaction, plus the target's own native
- * state that would replay), the decoration budget when another model's turns are in it, and the
- * allowance for the system prompt and tools -- against `window x threshold - maxOutput`.
+ * conversation's own content (every message since the last compaction -- images and documents at their
+ * per-item cost, review r1 I-2 -- plus the target's own native state that would replay), the decoration
+ * budget when another model's turns are in it, and the allowance for the system prompt and tools --
+ * against `window x threshold`, the auto-compaction trigger's own rule (I-1).
  */
 function fitOnTarget(entries: SessionStoreEntry[], lineage: Node[], sidecarRecords: ProviderStateRecord[], to: ContinuityEndpoint, row: WinterCatalog["models"][number] | undefined): FitVerdict | undefined {
   const window = row?.contextWindow?.value;
   if (typeof window !== "number") return undefined;
   const byUuid = new Map(entries.filter((e) => typeof e.uuid === "string").map((e) => [e.uuid as string, e]));
   const byAnchor = groupByAnchor(sidecarRecords);
-  let chars = 0;
+  let tokens = 0;
   let foreign = false;
   for (const node of lineage) {
     const message = (byUuid.get(node.uuid) as { message?: unknown } | undefined)?.message;
     if (!isRecord(message)) continue;
-    chars += typeof message.content === "string" ? message.content.length : JSON.stringify(message.content ?? "").length;
+    tokens += typeof message.content === "string" ? estimateTextTokens(message.content) : estimateValueTokens(message.content ?? "");
     if (node.type !== "assistant") continue;
     const records = byAnchor.get(node.uuid) ?? [];
     const origin = originOf(records);
@@ -421,9 +422,8 @@ function fitOnTarget(entries: SessionStoreEntry[], lineage: Node[], sidecarRecor
       foreign = true;
       continue;
     }
-    for (const record of records) if (record.kind === "native-state" || record.kind === "reasoning-blocks") chars += JSON.stringify(record.payload).length;
+    for (const record of records) if (record.kind === "native-state" || record.kind === "reasoning-blocks") tokens += estimateValueTokens(record.payload);
   }
-  if (foreign) chars += DECORATION_CHAR_BUDGET;
-  const maxOutput = row?.maxOutputTokens?.value;
-  return fitVerdict(estimateTokensFromChars(chars) + SYSTEM_AND_TOOLS_ALLOWANCE_TOKENS, window, DEFAULT_COMPACTION_THRESHOLD, typeof maxOutput === "number" ? maxOutput : undefined);
+  if (foreign) tokens += estimateTokensFromChars(DECORATION_CHAR_BUDGET);
+  return fitVerdict(tokens + SYSTEM_AND_TOOLS_ALLOWANCE_TOKENS, window, DEFAULT_COMPACTION_THRESHOLD);
 }

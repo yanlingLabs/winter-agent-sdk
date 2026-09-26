@@ -85,7 +85,7 @@ import { getDefaultMessagingRuntime, UnattributableSenderError, classifyDelivery
 import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, SystemPromptBlock, ToolChangeSet, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 // P6 fix wave (Ruling E-2): the two PURE continuity functions the switch point calls. Value imports
 // from the provider-runtime barrel, one direction (runtime -> provider-runtime), same as every adapter.
-import { DECORATION_CHAR_BUDGET, ESTIMATE_CHARS_PER_TOKEN, ESTIMATE_MARGIN, WinterProviderResolutionError, classifySwitch, isServerToolBlockType, estimateTokensFromChars, fitBudgetTokens, fitVerdict, isWinterBookkeepingItem, reasoningBlockItems, separateReasoningBlocks, type FitVerdict } from "@yanlinglabs/winter-provider-runtime";
+import { DECORATION_CHAR_BUDGET, ESTIMATE_CHARS_PER_TOKEN, ESTIMATE_MARGIN, WinterProviderResolutionError, classifySwitch, isServerToolBlockType, estimateTextTokens, estimateTokensFromChars, estimateValueTokens, fitBudgetTokens, fitVerdict, isWinterBookkeepingItem, reasoningBlockItems, separateReasoningBlocks, type FitVerdict } from "@yanlinglabs/winter-provider-runtime";
 export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
@@ -7287,39 +7287,37 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return typeof raw === "number" && Number.isFinite(raw) && raw > 0 && raw <= 1 ? raw : DEFAULT_COMPACTION_THRESHOLD;
   };
 
-  /** The live model's window budget, or `undefined` when its row declares no window (nothing to check against). */
-  const liveWindow = (): { window: number; maxOutputTokens: number | undefined } | undefined => {
-    const described = currentModelDescription();
-    if (described?.contextWindow === undefined) return undefined;
-    return { window: described.contextWindow, maxOutputTokens: config.maxOutputTokens ?? described.maxOutputTokens };
-  };
+  /** The live model's window, or `undefined` when its row declares none (nothing to check against). */
+  const liveWindow = (): number | undefined => currentModelDescription()?.contextWindow;
 
   /**
    * The fit of one outbound request on the live model. Counted: the system prompt, the tool specs, every
    * message's content, and the native state of the model's OWN replies (it replays); a history that holds
-   * another model's replies is charged the whole decoration budget the renderer may add for them.
+   * another model's replies is charged the whole decoration budget the renderer may add for them. Images
+   * and documents are charged per item, never by their bytes (review r1, I-2); non-ASCII text at about a
+   * token per character (M-6).
    */
   const requestFit = (system: string, tools: readonly ProviderToolSpec[], outbound: readonly ProviderMessage[]): FitVerdict | undefined => {
-    const target = liveWindow();
-    if (target === undefined) return undefined;
+    const window = liveWindow();
+    if (window === undefined) return undefined;
     const owns = ownedBy(currentProviderIdentity?.modelKey ?? currentModel);
-    let chars = system.length + (tools.length > 0 ? JSON.stringify(tools).length : 0);
+    let tokens = estimateTextTokens(system) + (tools.length > 0 ? estimateValueTokens(tools) : 0);
     let foreign = false;
     for (const message of outbound) {
-      chars += typeof message.content === "string" ? message.content.length : JSON.stringify(message.content).length;
+      tokens += typeof message.content === "string" ? estimateTextTokens(message.content) : estimateValueTokens(message.content);
       if (message.role !== "assistant") continue;
       if (!owns(message)) foreign = true;
-      else if (message.nativeState !== undefined) chars += JSON.stringify(message.nativeState.items).length;
+      else if (message.nativeState !== undefined) tokens += estimateValueTokens(message.nativeState.items);
     }
-    if (foreign) chars += DECORATION_CHAR_BUDGET;
-    return fitVerdict(estimateTokensFromChars(chars), target.window, compactionThreshold(), target.maxOutputTokens);
+    if (foreign) tokens += estimateTokensFromChars(DECORATION_CHAR_BUDGET);
+    return fitVerdict(tokens, window, compactionThreshold());
   };
 
   /** The most characters a summarizer on the live model may be sent, for a compaction that must fit it. */
   const summarizerInputChars = (): number | undefined => {
-    const target = liveWindow();
-    if (target === undefined) return undefined;
-    return Math.floor((fitBudgetTokens(target.window, compactionThreshold(), target.maxOutputTokens) * ESTIMATE_CHARS_PER_TOKEN) / ESTIMATE_MARGIN);
+    const window = liveWindow();
+    if (window === undefined) return undefined;
+    return Math.floor((fitBudgetTokens(window, compactionThreshold()) * ESTIMATE_CHARS_PER_TOKEN) / ESTIMATE_MARGIN);
   };
 
   /**

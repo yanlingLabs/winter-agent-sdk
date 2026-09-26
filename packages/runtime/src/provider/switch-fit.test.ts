@@ -139,8 +139,8 @@ describe("the switch fit check (WS-23 decision 5)", () => {
     expect(source.requests).toHaveLength(0);
     expect(target.summaries).toBe(1);
     const summaryRequest = target.requests.find((r) => isCompactionSummaryRequest(r))!;
-    // Bounded: (40000 * 0.9 - 1000) tokens at 3.5 chars/token with 10% margin, plus the instruction itself.
-    expect(JSON.stringify(summaryRequest.messages).length).toBeLessThan(Math.floor(((40_000 * 0.9 - 1_000) * 3.5) / 1.1) + 4_000);
+    // Bounded: 40000 x 0.9 tokens (the trigger's own rule, review r1 I-1) at 3.5 chars/token with 10% margin, plus the instruction itself.
+    expect(JSON.stringify(summaryRequest.messages).length).toBeLessThan(Math.floor((40_000 * 0.9 * 3.5) / 1.1) + 4_000);
     expect(String(summaryRequest.messages.at(-1)!.content)).toContain("earliest");
     const main = target.requests.at(-1)!;
     expect(JSON.stringify(main.messages[0]!.content)).toContain("SUMMARY by target");

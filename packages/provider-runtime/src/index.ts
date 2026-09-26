@@ -170,6 +170,10 @@ export {
   ESTIMATE_MARGIN,
   MAX_DECORATION_CHARS,
   estimateTokensFromChars,
+  estimateTextTokens,
+  estimateValueTokens,
+  IMAGE_TOKENS,
+  DOCUMENT_PAGE_TOKENS,
   fitBudgetTokens,
   fitVerdict,
 } from "./continuity/index.ts";
