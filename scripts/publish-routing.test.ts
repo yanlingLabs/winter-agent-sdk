@@ -59,12 +59,22 @@ function setupNodeUserconfig(dir: string, registryUrl: string, scope = "@yanling
   return path;
 }
 
-/** `npm publish <tarball> --dry-run` under one userconfig; returns the `Publishing to …` line. */
+/**
+ * `npm publish <tarball> --dry-run` under one userconfig; returns the `Publishing to …` line.
+ *
+ * `--offline` (release CI fix): npm 11's dry-run also asks the target registry about the version --
+ * a real connection to GitHub Packages, carrying the fake token, which the test network guard rightly
+ * fails. npm 10 (the Node 18 the release job pins) never asked, so this passed in CI and failed on any
+ * newer npm. The registry is RESOLVED from config either way, which is all this gate reads; `--offline`
+ * keeps the "no network" promise above true on every npm. `update_notifier=false` for the same reason:
+ * npm's own "is there a newer npm" check goes to registry.npmjs.org on a fresh cache, except where `CI`
+ * is set (npm switches it off there itself, which is why CI never saw it).
+ */
 async function dryRunTarget(tarballPath: string, userconfig: string, extraArgs: string[] = []): Promise<string> {
-  const proc = Bun.spawn(["npm", "publish", tarballPath, "--dry-run", ...extraArgs], {
+  const proc = Bun.spawn(["npm", "publish", tarballPath, "--dry-run", "--offline", ...extraArgs], {
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, NPM_CONFIG_USERCONFIG: userconfig, NODE_AUTH_TOKEN: "test-token-not-a-credential" },
+    env: { ...process.env, NPM_CONFIG_USERCONFIG: userconfig, NODE_AUTH_TOKEN: "test-token-not-a-credential", npm_config_update_notifier: "false" },
   });
   const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
   const line = (stdout + stderr).split("\n").find((l) => l.includes("Publishing to"));
@@ -172,11 +182,11 @@ describe.skipIf(!ENABLED)("publish routing: each job reaches its own registry (r
     writeFileSync(join(projectDir, ".npmrc"), `@yanlinglabs:registry=${GITHUB_PACKAGES}\n`);
     const sdk = packed.find((p) => p.name === "@yanlinglabs/winter-agent-sdk")!;
 
-    const proc = Bun.spawn(["npm", "publish", sdk.tarballPath, "--dry-run", "--access", "public"], {
+    const proc = Bun.spawn(["npm", "publish", sdk.tarballPath, "--dry-run", "--offline", "--access", "public"], { // --offline: see dryRunTarget
       cwd: projectDir,
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, NPM_CONFIG_USERCONFIG: userconfig, NODE_AUTH_TOKEN: "test-token-not-a-credential" },
+      env: { ...process.env, NPM_CONFIG_USERCONFIG: userconfig, NODE_AUTH_TOKEN: "test-token-not-a-credential", npm_config_update_notifier: "false" },
     });
     const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     const line = (stdout + stderr).split("\n").find((l) => l.includes("Publishing to")) ?? "";
@@ -190,11 +200,11 @@ describe.skipIf(!ENABLED)("publish routing: each job reaches its own registry (r
     const dir = mkdtempSync(join(scratch, "repo-"));
     const userconfig = setupNodeUserconfig(dir, NPMJS);
     const sdk = packed.find((p) => p.name === "@yanlinglabs/winter-agent-sdk")!;
-    const proc = Bun.spawn(["npm", "publish", sdk.tarballPath, "--dry-run", "--access", "public"], {
+    const proc = Bun.spawn(["npm", "publish", sdk.tarballPath, "--dry-run", "--offline", "--access", "public"], { // --offline: see dryRunTarget
       cwd: fileURLToPath(new URL("..", import.meta.url)),
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, NPM_CONFIG_USERCONFIG: userconfig, NODE_AUTH_TOKEN: "test-token-not-a-credential" },
+      env: { ...process.env, NPM_CONFIG_USERCONFIG: userconfig, NODE_AUTH_TOKEN: "test-token-not-a-credential", npm_config_update_notifier: "false" },
     });
     const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     const line = (stdout + stderr).split("\n").find((l) => l.includes("Publishing to")) ?? "";
