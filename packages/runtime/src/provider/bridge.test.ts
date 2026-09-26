@@ -47,7 +47,21 @@ describe("the fold: what a turn accumulates", () => {
         { type: "done", stopReason: "end_turn" },
       ]),
     );
-    expect(turn).toEqual({ kind: "text", text: "hello", usage: { inputTokens: 10, outputTokens: 3 }, stopReason: "end_turn", content: [{ type: "text", text: "hello" }] });
+    // WS-23 (anthropic-cache): the response's own id rides the turn (the next request's diagnostics reference).
+    expect(turn).toEqual({ kind: "text", text: "hello", usage: { inputTokens: 10, outputTokens: 3 }, stopReason: "end_turn", content: [{ type: "text", text: "hello" }], responseId: "m1" });
+  });
+
+  test("WS-23 (anthropic-cache): the usage event's cache fields ride the folded usage verbatim", async () => {
+    const turn = await foldProviderStream(
+      scripted([
+        { type: "message_start", id: "m2" },
+        { type: "text_delta", text: "ok" },
+        { type: "usage", inputTokens: 1, outputTokens: 1, cacheWriteTokens: 248, cacheWrite1hTokens: 100, cacheMiss: { type: "tools_changed", missedInputTokens: 500 }, thinkingBlocksDropped: 1 },
+        { type: "done", stopReason: "end_turn" },
+      ]),
+    );
+    expect(turn.usage).toEqual({ inputTokens: 1, outputTokens: 1, cacheWriteTokens: 248, cacheWrite1hTokens: 100, cacheMiss: { type: "tools_changed", missedInputTokens: 500 }, thinkingBlocksDropped: 1 });
+    expect(turn.responseId).toBe("m2");
   });
 
   test("a stream with TEXT AND CALLS folds to a tool_use turn that KEEPS the text", async () => {

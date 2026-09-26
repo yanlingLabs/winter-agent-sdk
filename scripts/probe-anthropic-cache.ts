@@ -17,11 +17,8 @@
 // the real compaction controller and the real ToolSearch. A `fetch` observer prints, per request, the
 // request's SHAPE and the response's `message_start` usage and cache verdict.
 //
-// PREREQUISITE for step 5 and the per-request diagnostics: the cross-lane `bridge.ts` pass-through
-// (TurnRequest.cacheDiagnostics / cacheTtl / cacheKey; ProviderTurn.responseId; the usage fields) must
-// be applied. Without it NO request carries `diagnostics` ("not sent" on every line). With it, every
-// main-loop request does -- `null` on the first and right after the compaction -- and only the /compact
-// summary request (an auxiliary call, by design) shows "not sent".
+// DIAGNOSTICS: every main-loop request carries `diagnostics` (`null` on the first and right after the
+// compaction); only the /compact summary request (an auxiliary call, by design) shows "not sent".
 //
 // NOTHING SECRET IS EVER PRINTED. The key is read from the macOS Keychain -- the brand's DEV service
 // (`DEFAULT_KEYCHAIN_SERVICE` + `.dev`), account `anthropic:default` -- READ ONLY, through the runtime's

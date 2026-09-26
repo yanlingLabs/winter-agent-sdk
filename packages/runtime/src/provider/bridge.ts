@@ -200,6 +200,12 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
         ...(input.thinking !== undefined ? { thinking: input.thinking } : {}),
         ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
+        // WS-23 (anthropic-cache): the prompt-cache fields, verbatim -- each adapter decides from its
+        // own catalog evidence whether its wire takes one (Anthropic: `cacheTtl`, `cacheDiagnostics`;
+        // OpenAI Responses/Codex: `cacheKey`).
+        ...(input.cacheTtl !== undefined ? { cacheTtl: input.cacheTtl } : {}),
+        ...(input.cacheDiagnostics !== undefined ? { cacheDiagnostics: input.cacheDiagnostics } : {}),
+        ...(input.cacheKey !== undefined ? { cacheKey: input.cacheKey } : {}),
         ...(input.signal !== undefined ? { signal: input.signal } : {}),
         // Ask for a readable SUMMARY only where the model's own evidence says HOW to ask.
         //
@@ -287,6 +293,9 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
   let stopReason: ProviderStopReason | undefined;
   let stopDetails: { category: string | null; explanation: string | null } | undefined;
   let nativeState: ProviderNativeState | undefined;
+  // WS-23 (anthropic-cache): the provider's own id for this response -- the next main-loop request's
+  // `cacheDiagnostics.previousMessageId`.
+  let responseId: string | undefined;
   const emitter = new StreamEventEmitter(sink);
   // Fix wave round 2 (R-E2): has the STREAM begun? Every event except the pre-stream observations
   // (`retry`, `rate_limit`, `auth_status`) and the failure itself marks it -- the same line
@@ -299,6 +308,7 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
       if (event.type !== "retry" && event.type !== "rate_limit" && event.type !== "auth_status" && event.type !== "error") committed = true;
       switch (event.type) {
         case "message_start":
+          if (event.id !== undefined) responseId = event.id;
           emitter.messageStart(event.id, event.model);
           break;
         case "text_delta": {
@@ -368,6 +378,10 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
             outputTokens: event.outputTokens,
             ...(event.cacheReadTokens !== undefined ? { cacheReadTokens: event.cacheReadTokens } : {}),
             ...(event.cacheWriteTokens !== undefined ? { cacheWriteTokens: event.cacheWriteTokens } : {}),
+            // WS-23 (anthropic-cache): the 1-hour share of the writes and the provider's cache verdict.
+            ...(event.cacheWrite1hTokens !== undefined ? { cacheWrite1hTokens: event.cacheWrite1hTokens } : {}),
+            ...(event.cacheMiss !== undefined ? { cacheMiss: event.cacheMiss } : {}),
+            ...(event.thinkingBlocksDropped !== undefined ? { thinkingBlocksDropped: event.thinkingBlocksDropped } : {}),
           };
           break;
         case "retry":
@@ -453,6 +467,7 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
     ...(thinking !== undefined ? { thinking } : {}),
     ...(nativeState !== undefined ? { nativeState } : {}),
     ...(content.length > 0 ? { content } : {}),
+    ...(responseId !== undefined ? { responseId } : {}),
   };
 
   // A turn with CALLS is a `tool_use` turn even when it also produced text -- and the text rides
