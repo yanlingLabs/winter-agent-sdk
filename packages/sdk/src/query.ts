@@ -176,8 +176,12 @@ export interface Query extends AsyncGenerator<SdkMessage> {
    * calls it before a switch to another provider whose model cannot hold the conversation, so the model
    * being left writes the summary. Rejects with `busy` while a turn (or another compaction) runs, and
    * with `compaction_failed` when there was nothing to compact or the summarizer failed.
+   *
+   * OPTIONAL on the interface (every `Query` this package returns has it): a host's own structural
+   * `Query` double -- the router's test peers, a daemon's fakes -- keeps type-checking without it, and a
+   * caller checks for it before calling.
    */
-  compact(opts?: { customInstructions?: string }): Promise<{ retainedCount: number }>;
+  compact?(opts?: { customInstructions?: string }): Promise<{ retainedCount: number }>;
   /**
    * Phase 6 Task 10 (derived-shapes-p6 item (d), `sdk.d.ts:2566`): the models this session may select.
    *

@@ -47,7 +47,7 @@ test("compact(): compacts on the live model when idle, resolves with what it kep
       before = requests.at(-1)!.messages.length;
       // Fired, not awaited (the ack arrives through this same read loop); the engine settles the
       // compaction before it starts the next turn.
-      compacted = gen.compact();
+      compacted = gen.compact!();
     }
     gates[results - 1]?.release();
   }
@@ -78,7 +78,7 @@ test("compact() with nothing to compact rejects typed, and the session carries o
   for await (const msg of gen) {
     if (msg.type !== "result") continue;
     // Fired, not awaited inside the loop: the rejection arrives through this same read loop.
-    pending = gen.compact().catch((e: unknown) => {
+    pending = gen.compact!().catch((e: unknown) => {
       failure = e;
     });
     setTimeout(release, 50);
