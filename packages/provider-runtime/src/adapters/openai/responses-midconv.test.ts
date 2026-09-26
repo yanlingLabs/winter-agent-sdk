@@ -145,7 +145,9 @@ describe("additional_tools and allowed_tools (WS-23 midconv addendum)", () => {
 
   test("`allowed_tools` restricts WITHOUT touching `tools`: the allowed functions, the native tool search, and every loaded deferred tool (namespaced ones by namespace)", () => {
     const row = searchRow({ allowed: true });
-    const restricted = body({ allowedTools: ["Bash"] }, row);
+    // The engine's list names ToolSearch too; on a client-search request it is `{"type": "tool_search"}`,
+    // never a function (the probe's dry run caught this).
+    const restricted = body({ allowedTools: ["Bash", "ToolSearch"] }, row);
     expect(restricted["tools"]).toEqual(body({}, row)["tools"]);
     expect(restricted["tool_choice"]).toEqual({ type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "Bash" }, { type: "tool_search" }, { type: "function", name: "NotebookEdit" }, { type: "namespace", name: "mcp__crm" }] });
     expect(body({ allowedTools: ["Bash"], toolChoice: { type: "any" } }, row)["tool_choice"]).toMatchObject({ type: "allowed_tools", mode: "required" });

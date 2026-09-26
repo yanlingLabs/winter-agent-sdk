@@ -366,8 +366,16 @@ function namespaceDescription(namespace: string): string {
  * structured output) outranks it: the model must call that one tool either way.
  */
 function allowedToolsChoice(req: TurnRequest, clientToolSearch: boolean): unknown {
-  const functions = (req.allowedTools ?? []).map((name) => ({ type: "function", name }));
   const search = clientToolSearch ? toolSearchIndex(req.tools) : undefined;
+  // Only names `tools` declares AS FUNCTIONS: ToolSearch is the native `tool_search` on a client-search
+  // request (named below by its own type), and a deferred tool is not declared at all.
+  const declared = new Map((req.tools ?? []).map((t) => [t.name, t] as const));
+  const functions = (req.allowedTools ?? [])
+    .filter((name) => {
+      const tool = declared.get(name);
+      return tool !== undefined && tool.deferLoading !== true && !(search !== undefined && tool.toolSearch === true);
+    })
+    .map((name) => ({ type: "function", name }));
   const loaded = new Set<string>();
   if (search !== undefined) {
     for (const message of req.messages) {
