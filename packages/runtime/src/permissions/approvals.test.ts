@@ -522,6 +522,38 @@ describe("revalidateApproval — the 5 revalidation axes", () => {
     expect(revalidateApproval(stamped, ctxFor(stamped))).toEqual({ ok: true });
   });
 
+  // WS-24: the durable key resolves a target exactly as the live path does (`resolveSymlinkEnds`). A
+  // link whose target does not exist has the same REAL target (the link's own path) whatever it points
+  // at, so a key built from the real target alone could not tell two such targets apart.
+  test("axis: paths — a link to a missing target, retargeted after issuance, is not covered by the approval", () => {
+    const workDir = realpathSync(mkdtempSync(join(tmpdir(), "winter-approvals-dangling-")));
+    symlinkSync(join(workDir, "missing-a", "file.txt"), join(workDir, "link"));
+
+    const store = createInMemoryApprovalStore();
+    const a = approval({ toolName: "Write", originalInput: { file_path: "link" }, issuedCwd: workDir });
+    store.record(a);
+    const stamped = store.get("req-1")!;
+    expect(revalidateApproval(stamped, ctxFor(stamped))).toEqual({ ok: true });
+
+    unlinkSync(join(workDir, "link"));
+    symlinkSync(join(workDir, "missing-b", "file.txt"), join(workDir, "link"));
+
+    expect(revalidateApproval(stamped, ctxFor(stamped))).toMatchObject({ ok: false, axis: "paths" });
+  });
+
+  test("axis: paths — a key for an ordinary path is the plain real target, as records written before WS-24 stamped it", () => {
+    const workDir = realpathSync(mkdtempSync(join(tmpdir(), "winter-approvals-plain-")));
+    writeFileSync(join(workDir, "file.txt"), "x");
+    const store = createInMemoryApprovalStore();
+    store.record(approval({ toolName: "Edit", originalInput: { file_path: "file.txt" }, issuedCwd: workDir }));
+    const stamped = store.get("req-1")!;
+    expect(stamped.issuedResolvedTargets).toEqual([join(workDir, "file.txt")]);
+    // A new file under a real directory (the leaf does not exist yet) keys the same way.
+    const fresh = approval({ requestId: "req-2", toolName: "Write", originalInput: { file_path: "new.txt" }, issuedCwd: workDir });
+    store.record(fresh);
+    expect(store.get("req-2")!.issuedResolvedTargets).toEqual([join(workDir, "new.txt")]);
+  });
+
   test("axis: runtime ownership mismatch (backendSessionId differs)", () => {
     const a = approval();
     const v = revalidateApproval(a, ctxFor(a, { backendSessionId: "some-other-backend" }));
