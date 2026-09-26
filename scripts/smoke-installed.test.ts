@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discoverPublishablePackages, type PackedPackage } from "./release-pack.ts";
 import { assertInstalledTreeIsDistOnly, deriveImportTargets, installableOnThisHost, runBinTarget, runSmoke, runtimesFor, thirdPartyRuntimeDependencies, type BinTarget, type SmokeResult } from "./smoke-installed.ts";
+import { withNpmRegistryAccess } from "./test-network-registry.ts";
 
 // --- P7a fix wave (item 11, N-3): the pack+install legs are OPT-IN outside CI --------------------
 //
@@ -194,7 +195,9 @@ describe("installableOnThisHost (P9a-5)", () => {
 describe.skipIf(!PACK_SMOKE_ENABLED)("runSmoke: the real pack -> install -> import cycle, under Bun (BLOCKING in ci.yml/release.yml)", () => {
   let result: SmokeResult;
   beforeAll(async () => {
-    result = await runSmoke({ runtimes: ["bun"] });
+    // The WHOLE run, not just the cache prime: the `--offline` install must read the same (empty,
+    // credential-free) npm config the prime wrote the cache under. See `test-network-registry.ts`.
+    result = await withNpmRegistryAccess(() => runSmoke({ runtimes: ["bun"] }));
   }, 120_000);
 
   test("every target imports cleanly -- this is the exact check that would have caught review r1's two Criticals", () => {
@@ -220,7 +223,7 @@ describe.skipIf(!PACK_SMOKE_ENABLED)("runSmoke: the Node leg is GREEN since the 
   // like a regression, and deleting it would have left the reversal unproven.
   let result: SmokeResult;
   beforeAll(async () => {
-    result = await runSmoke({ runtimes: ["node"] });
+    result = await withNpmRegistryAccess(() => runSmoke({ runtimes: ["node"] })); // as the Bun leg above
   }, 180_000);
 
   test("every Node-declared target imports cleanly under Node -- nothing fails", () => {

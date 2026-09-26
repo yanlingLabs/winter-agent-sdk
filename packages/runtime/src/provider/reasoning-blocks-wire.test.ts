@@ -27,6 +27,8 @@ import { describeCatalogModel } from "../production-wiring.ts";
 import { createSystemPromptAssembler } from "../context/assembler.ts";
 import { fakeAnthropicCatalog, startAnthropicFake, type AnthropicFake, type FakeResponse } from "./anthropic-fake.test-support.ts";
 import "../tools/impl/index.ts";
+import { isSandboxAvailable } from "../sandbox/spawn.ts";
+import { BASH_CANONICAL_NAME, bashDescriptionFor } from "../tools/descriptors/bash.ts";
 
 const MODEL = "anthropic/claude-opus-5-5";
 const GOLDEN_PATH = join(import.meta.dir, "reasoning-blocks-wire.golden.json");
@@ -164,6 +166,24 @@ function readGolden(): Golden {
   return JSON.parse(readFileSync(GOLDEN_PATH, "utf8")) as Golden;
 }
 
+/**
+ * A pre-move transcript line as THIS host would have written it. The golden was captured on macOS, and
+ * its `tool_epoch` froze the Bash description the engine renders there -- WITH the "Bash command sandbox"
+ * section, which `engine.ts`'s `bashSandboxFacts` renders only where `sandbox-exec` exists. Resumed on a
+ * host without it (the release workflow's ubuntu `publish` job), the live Bash spec is the plain
+ * description, so the engine rightly records a `tool_addition` for the changed definition -- a true
+ * statement about a session moved between hosts, and not what this file tests. The frozen description is
+ * a host fact like `<CWD>` and `<HOME>`, so it is materialised for the host the same way: every other byte
+ * of the line, and the whole line on macOS, is the golden's own.
+ */
+function forThisHost(line: string): string {
+  if (isSandboxAvailable() || line.trim() === "") return line;
+  const entry = JSON.parse(line) as { type?: string; attachment?: { type?: string; tools?: Array<{ name?: string; description?: string }> } };
+  if (entry.type !== "attachment" || entry.attachment?.type !== "tool_epoch" || entry.attachment.tools === undefined) return line;
+  entry.attachment.tools = entry.attachment.tools.map((tool) => (tool.name === BASH_CANONICAL_NAME ? { ...tool, description: bashDescriptionFor(undefined) } : tool));
+  return JSON.stringify(entry);
+}
+
 describe("Anthropic reasoning moves to the sidecar and the wire does not move (WS-23 reasoning-state item 1)", () => {
   test("live, resumed and pre-move-transcript sessions send the golden bytes", async () => {
     const live = await fixture();
@@ -233,7 +253,8 @@ describe("Anthropic reasoning moves to the sidecar and the wire does not move (W
     for (const [name, content] of Object.entries(golden.preMoveSession)) {
       const path = join(projectDir, name.replace("reasoning-split", "reasoning-old"));
       mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, content.split("<CWD>").join(fx.cwd).split("<HOME>").join(fx.home).split("reasoning-split").join("reasoning-old"), { mode: 0o600 });
+      const materialised = content.split("<CWD>").join(fx.cwd).split("<HOME>").join(fx.home).split("reasoning-split").join("reasoning-old");
+      writeFileSync(path, materialised.split("\n").map(forThisHost).join("\n"), { mode: 0o600 });
     }
     const transcriptBefore = readFileSync(join(projectDir, "reasoning-old.jsonl"), "utf8");
     await runSession(fx, "reasoning-old-resumed", ["turn three"], "reasoning-old");

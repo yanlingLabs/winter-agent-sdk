@@ -16,6 +16,7 @@ import { EMBEDDED_KILL_GRACE_MS, spawnEmbeddedWorker } from "./embedded-host.ts"
 import { MCP_SDK_TEST_SERVER_NAME, MCP_SDK_TEST_TOOL_NAME } from "./provider/mock.ts";
 import { startTracking, resetBackgroundTaskRuntimeForTest } from "./tools/impl/background-task-runtime.ts";
 import { resolveWorkerCommand, setHostWorkflowWorkerCommand } from "./workflows/sandbox.ts";
+import { isSandboxAvailable } from "./sandbox/spawn.ts";
 import { EMBEDDED_ABORT_END_INPUT_REQUEST_ID, EMBEDDED_ABORT_INTERRUPT_REQUEST_ID } from "./embedded-protocol.ts";
 
 const WORKER_ENTRY = join(import.meta.dir, "embedded-worker.ts");
@@ -262,6 +263,11 @@ describe("spawnEmbeddedWorker (one Worker per session)", () => {
   test("Bash runs from inside a Worker: the session's shell child (sandboxed where the host has sandbox-exec) spawns and answers", async () => {
     // Dispatch keeps Bash, and embedded, its shell child is spawned by a Worker thread of the host
     // process, on the Worker's own process.env -- measured here rather than assumed.
+    //
+    // Where the host has no `sandbox-exec` (Linux CI: the release workflow's `publish` job runs on
+    // ubuntu), a sandboxed Bash call is REFUSED by design (WS-12 §3, `tools/impl/bash.ts`: never a silent
+    // unsandboxed run), so the session turns the sandbox off there -- as transport-equivalence's own Lane C
+    // round does -- and the Worker's shell child still has to spawn and answer. On macOS it stays sandboxed.
     const messages = await drain(
       query({
         prompt: "go",
@@ -269,13 +275,16 @@ describe("spawnEmbeddedWorker (one Worker per session)", () => {
           model: "winter-test/lanec",
           cwd: tempDir("cwd"),
           env: sessionEnv(),
+          ...(isSandboxAvailable() ? {} : { sandbox: { enabled: false } }),
           spawnClaudeCodeProcess: (o) => spawnEmbeddedWorker({ workerEntry: WORKER_ENTRY, spawn: o }),
         },
       }),
     );
     const toolResult = messages.find((m) => (m as { type?: string }).type === "user") as { message: { content: Array<{ type: string; content?: unknown; is_error?: boolean }> } } | undefined;
-    expect(toolResult?.message.content[0]?.is_error ?? false).toBe(false);
+    // The tool result rides the failure message: CI's log showed only `is_error: true` last time.
+    expect(toolResult?.message.content[0]?.is_error ?? false, JSON.stringify(toolResult?.message.content[0]?.content)).toBe(false);
     expect(JSON.stringify(toolResult?.message.content[0]?.content)).toContain("winter-t8-lanec");
+    expect(JSON.stringify(toolResult?.message.content[0]?.content)).toContain(isSandboxAvailable() ? "[sandbox: sandboxed]" : "[sandbox: config-disabled]");
     expect(resultOf(messages)?.result).toBe("lane c done");
   }, 30_000);
 
