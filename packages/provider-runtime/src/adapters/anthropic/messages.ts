@@ -204,6 +204,7 @@ function referenceNames(block: Record<string, unknown>): string[] {
 }
 
 function toWireBlocks(block: ContentBlockLike, referable: Referable): Record<string, unknown>[] {
+  if (block.type === "tool_result") return toolResultWireBlocks(block, referable);
   if (block.type !== "tool_reference") return [toWireBlock(block, referable)];
   // WS-23: no longer a refusal. A `tool_reference` whose tool this request declares deferred is
   // Anthropic's own block and goes on the wire as one per name; anything else (a claude-written
@@ -228,29 +229,53 @@ function toWireBlock(block: ContentBlockLike, referable: Referable = NOTHING_REF
       return { type: "thinking", thinking: block.thinking, signature: block.signature };
     case "redacted_thinking":
       return { type: "redacted_thinking", data: block.data };
-    case "tool_result": {
-      // WS-23: a ToolSearch result's `loadedTools` becomes Anthropic's `tool_reference` blocks inside
-      // this result -- the documented "custom tool search implementation"
-      // (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) -- so the API
-      // expands the deferred definitions in place and `tools` never changes. Only for names this
-      // request declares deferred; with none, the result is byte-identical to before.
-      const rawLoaded = block["loadedTools"];
-      const loaded = Array.isArray(rawLoaded) ? rawLoaded.filter((n): n is string => typeof n === "string") : [];
-      const references = toolReferences(loaded, referable);
-      const inner = Array.isArray(block.content) ? block.content.flatMap((b) => toWireBlocks(b, referable)) : block.content;
-      const content = references.length === 0 ? inner : [...(typeof inner === "string" ? (inner.length > 0 ? [{ type: "text", text: inner }] : []) : inner), ...references];
-      // Winter's provisional markers (`interrupted`/`denied`/`deferred`/`loadFirst`) are BOOKKEEPING,
-      // not wire fields: the result's own content already carries what the model needs to read. Only
-      // `error` has a wire counterpart, and dropping it would tell the model a failed call succeeded.
-      // Spawn-surface parity (R-S4): a REAL executor error arrives as the block's own `is_error`
-      // (engine.ts) -- the same wire field, so either spelling maps to it.
-      const isError = (block as { error?: unknown }).error === true || (block as { is_error?: unknown }).is_error === true;
-      return { type: "tool_result", tool_use_id: block.tool_use_id, content, ...(isError ? { is_error: true } : {}) };
-    }
+    case "tool_result":
+      // Reached only through `toWireBlocks`, which may split a referencing result in two.
+      return toolResultWireBlocks(block, referable)[0]!;
     case "tool_reference":
       // Reached only through `toWireBlocks`, which expands a reference into one block per name.
       return toWireBlocks(block, referable)[0] ?? { type: "text", text: "[tools now callable]" };
   }
+}
+
+/**
+ * One engine `tool_result` -> the wire blocks it becomes: the result itself, then -- only for a result
+ * that carries `tool_reference` blocks -- the content it can no longer hold.
+ *
+ * WS-23: a ToolSearch result's `loadedTools` becomes Anthropic's `tool_reference` blocks inside this
+ * result -- the documented "custom tool search implementation"
+ * (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) -- so the API expands
+ * the deferred definitions in place and `tools` never changes. Only for names this request declares
+ * deferred; with none, the result is byte-identical to before.
+ *
+ * WS-23 (midconv, live gate on claude-opus-5-5): a result carrying `tool_reference` blocks must carry
+ * NOTHING ELSE. The docs' only shape is `"content": [{ "type": "tool_reference", "tool_name": … }]`, and
+ * the API refuses a result mixing them with text -- HTTP 400 "Tool definitions/code execution functions
+ * cannot be mixed with other content" -- on that request and, since the block stays in the history, on
+ * every later one: the session is bricked. So the result holds ONLY its references, and whatever else it
+ * carried (the tool's own text, a hook's `<system-reminder>` tail smooshed into it) follows it as
+ * ordinary blocks in the same user message, where text after a `tool_result` is legal. claude 2.1.282
+ * sends no text at all for a successful ToolSearch; Winter keeps its tool's text because it can name MCP
+ * servers still connecting or failed.
+ */
+function toolResultWireBlocks(block: Extract<ContentBlockLike, { type: "tool_result" }>, referable: Referable): Record<string, unknown>[] {
+  const rawLoaded = block["loadedTools"];
+  const loaded = Array.isArray(rawLoaded) ? rawLoaded.filter((n): n is string => typeof n === "string") : [];
+  const references = toolReferences(loaded, referable);
+  const inner = Array.isArray(block.content) ? block.content.flatMap((b) => toWireBlocks(b, referable)) : block.content;
+  // Winter's provisional markers (`interrupted`/`denied`/`deferred`/`loadFirst`) are BOOKKEEPING, not
+  // wire fields: the result's own content already carries what the model needs to read. Only `error` has
+  // a wire counterpart, and dropping it would tell the model a failed call succeeded. Spawn-surface parity
+  // (R-S4): a REAL executor error arrives as the block's own `is_error` (engine.ts) -- the same wire field,
+  // so either spelling maps to it.
+  const isError = (block as { error?: unknown }).error === true || (block as { is_error?: unknown }).is_error === true;
+  const flags = isError ? { is_error: true } : {};
+  // A nested `tool_reference` (a claude-written result, resumed) is a reference too; everything else moves out.
+  const innerBlocks = typeof inner === "string" ? (inner.length > 0 ? [{ type: "text", text: inner }] : []) : inner;
+  const nestedReferences = innerBlocks.filter((b) => b["type"] === "tool_reference");
+  if (references.length === 0 && nestedReferences.length === 0) return [{ type: "tool_result", tool_use_id: block.tool_use_id, content: inner, ...flags }];
+  const displaced = innerBlocks.filter((b) => b["type"] !== "tool_reference");
+  return [{ type: "tool_result", tool_use_id: block.tool_use_id, content: [...nestedReferences, ...references], ...flags }, ...displaced];
 }
 
 function normalizeContent(content: string | ContentBlockLike[], referable: Referable = NOTHING_REFERABLE): Record<string, unknown>[] {

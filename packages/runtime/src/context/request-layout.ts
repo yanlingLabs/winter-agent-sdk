@@ -186,6 +186,12 @@ export function foldTextIntoToolResult(result: ToolResultBlock, texts: TextBlock
 function joinAttachmentBlocks(prev: ContentBlock[], next: ContentBlock[]): ContentBlock[] {
   const last = prev[prev.length - 1];
   if (last?.type !== "tool_result") return [...prev, ...next];
+  // WS-23 (midconv, live gate): never into a ToolSearch result that loaded tools. Its `loadedTools` become
+  // `tool_reference` blocks on a deferred-loading row, and a result carrying those must carry nothing
+  // else (the API's 400 "Tool definitions/code execution functions cannot be mixed with other content").
+  // claude's own `IMe` refuses to fold into a reference-carrying result for the same reason; the
+  // attachment stays a text block after the result, in the same user message.
+  if ((last.loadedTools?.length ?? 0) > 0) return [...prev, ...next];
   if (next.some((b) => b.type === "text" && isSmooshExempt(b.text))) return [...prev, ...next];
   if (typeof last.content === "string" && next.every((b) => b.type === "text")) {
     // `IMe` with string content never returns null, and the text-only filter it applies to an

@@ -164,12 +164,45 @@ describe("deferred tools and tool_reference (WS-23 item 3)", () => {
 
   test("a ToolSearch result's `loadedTools` becomes Anthropic's tool_reference blocks inside that result -- only for names declared deferred", () => {
     const body = buildRequestBody({ model: "claude-opus-5-5", messages: searchResult(["NotebookEdit", "Bash", "Nope"]), tools: [tool("Bash"), tool("NotebookEdit", true)] }, deferredRow(), {});
-    const result = (body["messages"] as Array<{ content: Array<Record<string, unknown>> }>)[2]!.content[0]!;
-    expect(result).toEqual({
-      type: "tool_result",
-      tool_use_id: "ts1",
-      content: [{ type: "text", text: '{"matches":["NotebookEdit"]}' }, { type: "tool_reference", tool_name: "NotebookEdit" }],
-    });
+    // Live gate (claude-opus-5-5): a result carrying `tool_reference` blocks holds NOTHING else -- mixing
+    // is a 400 that bricks the session. The tool's own text follows the result in the same user message.
+    expect((body["messages"] as Array<{ content: Array<Record<string, unknown>> }>)[2]!.content).toEqual([
+      { type: "tool_result", tool_use_id: "ts1", content: [{ type: "tool_reference", tool_name: "NotebookEdit" }] },
+      { type: "text", text: '{"matches":["NotebookEdit"]}' },
+    ]);
+  });
+
+  test("live-gate regression: NO tool_result on the wire mixes `tool_reference` blocks with any other content -- not the tool's text, not a hook's smooshed reminder, not a nested claude reference, across several results", () => {
+    const history: ProviderMessageLike[] = [
+      { role: "user", content: "find tools" },
+      { role: "assistant", content: [{ type: "tool_use", id: "a", name: "ToolSearch", input: {} }, { type: "tool_use", id: "b", name: "ToolSearch", input: {} }, { type: "tool_use", id: "c", name: "Bash", input: {} }] },
+      {
+        role: "tool",
+        content: [
+          // The engine smooshes a hook's `<system-reminder>` tail into a string result.
+          { type: "tool_result", tool_use_id: "a", content: '{"matches":["NotebookEdit"]}\n\n<system-reminder>\nhook context\n</system-reminder>', loadedTools: ["NotebookEdit"] },
+          { type: "tool_result", tool_use_id: "b", content: [{ type: "text", text: "found" }, { type: "tool_reference", tool_name: "Grep" } as never], loadedTools: ["Grep"] },
+          { type: "tool_result", tool_use_id: "c", content: "plain output" },
+        ],
+      },
+    ];
+    const body = buildRequestBody({ model: "claude-opus-5-5", messages: history, tools: [tool("Bash"), tool("NotebookEdit", true), tool("Grep", true)] }, deferredRow(), {});
+    const messages = body["messages"] as Array<{ role: string; content: Array<Record<string, unknown>> }>;
+    let referencing = 0;
+    for (const message of messages) {
+      for (const block of message.content) {
+        if (block["type"] !== "tool_result" || !Array.isArray(block["content"])) continue;
+        const inner = block["content"] as Array<Record<string, unknown>>;
+        if (!inner.some((b) => b["type"] === "tool_reference")) continue;
+        referencing++;
+        expect(inner.every((b) => b["type"] === "tool_reference")).toBe(true);
+      }
+    }
+    expect(referencing).toBe(2);
+    // Every result first, then the displaced text, in order; the plain result is untouched.
+    expect(messages[2]!.content.map((b) => b["type"])).toEqual(["tool_result", "tool_result", "tool_result", "text", "text"]);
+    expect(messages[2]!.content[2]).toEqual({ type: "tool_result", tool_use_id: "c", content: "plain output" });
+    expect(messages[2]!.content[3]!["text"]).toContain("hook context");
   });
 
   test("with no deferred tool in the request, the same history serialises byte-identically to before (the bookkeeping field never reaches the wire)", () => {
