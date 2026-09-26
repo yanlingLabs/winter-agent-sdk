@@ -834,7 +834,7 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/sdk/src/options.ts:64": "DEFAULT_PLANS_DIRECTORY -- the default a session's `brand.projectDirName` replaces",
   "packages/sdk/src/options.ts:81": "DEFAULT_KEYCHAIN_SERVICE -- the default a host's own `brand.keychainService` replaces",
   "packages/sdk/src/query.ts:557": "the FALLBACK side of `options.brand?.envPrefix ?? WINTER_BRAND.envPrefix` (M-1's fix)",
-  "packages/sdk/src/query.ts:718": "a COMPARISON against the default, deciding whether to emit the deprecated top-level key",
+  "packages/sdk/src/query.ts:719": "a COMPARISON against the default, deciding whether to emit the deprecated top-level key",
   "packages/runtime/src/subagents/limits.ts:42": "a DEFAULT PARAMETER; the call site passes `brand ?? WINTER_BRAND` (review §5.1 names this correct)",
   "packages/runtime/src/subagents/limits.ts:58": "a DEFAULT PARAMETER; same call site, same override",
   "packages/runtime/src/subagents/watchdog.ts:12": "a DEFAULT PARAMETER; the call site passes the session brand",

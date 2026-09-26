@@ -700,6 +700,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.includePartialMessages !== undefined ? { includePartialMessages: options.includePartialMessages } : {}),
     ...(options.maxBudgetUsd !== undefined ? { maxBudgetUsd: options.maxBudgetUsd } : {}),
     ...(options.providerStallTimeoutMs !== undefined ? { providerStallTimeoutMs: options.providerStallTimeoutMs } : {}),
+    ...(options.maxOutputTokens !== undefined ? { maxOutputTokens: options.maxOutputTokens } : {}),
     // P7a fix r1 (Important-1): emitted from the RESOLVED PROFILE, not from the deprecated option.
     //
     // Every runtime consumer of the keychain service still reads this top-level key

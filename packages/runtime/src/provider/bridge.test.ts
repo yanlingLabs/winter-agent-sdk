@@ -47,7 +47,7 @@ describe("the fold: what a turn accumulates", () => {
         { type: "done", stopReason: "end_turn" },
       ]),
     );
-    expect(turn).toEqual({ kind: "text", text: "hello", usage: { inputTokens: 10, outputTokens: 3 }, stopReason: "end_turn" });
+    expect(turn).toEqual({ kind: "text", text: "hello", usage: { inputTokens: 10, outputTokens: 3 }, stopReason: "end_turn", content: [{ type: "text", text: "hello" }] });
   });
 
   test("a stream with TEXT AND CALLS folds to a tool_use turn that KEEPS the text", async () => {
@@ -158,6 +158,84 @@ describe("the fold: what a turn accumulates", () => {
       ]),
     );
     expect(turn.thinking).toBeUndefined();
+  });
+});
+
+describe("WS-23: the stream's own block order rides `turn.content`", () => {
+  // The interleaving Anthropic produces in an active tool loop with interleaved thinking: reasoning,
+  // a sentence, more reasoning, then the call. The per-kind buckets (`thinking.blocks`, `text`,
+  // `calls`) cannot express it; `content` must.
+  const INTERLEAVED: ProviderEvent[] = [
+    { type: "message_start", id: "m1" },
+    { type: "native_thinking_block", block: { type: "thinking", thinking: "first", signature: "sig-1" } },
+    { type: "text_delta", text: "Let me " },
+    { type: "text_delta", text: "look." },
+    { type: "native_thinking_block", block: { type: "thinking", thinking: "second", signature: "sig-2" } },
+    { type: "tool_call_start", id: "t1", name: "Read" },
+    { type: "tool_call_delta", id: "t1", argumentsJsonDelta: '{"file_path":"/x"}' },
+    { type: "tool_call_end", id: "t1" },
+    { type: "done", stopReason: "tool_use" },
+  ];
+
+  test("[thinking, text, thinking, tool_use] folds IN THAT ORDER, signatures untouched, text runs joined within their own block only", async () => {
+    const turn = await foldProviderStream(scripted(INTERLEAVED));
+    expect(turn.kind).toBe("tool_use");
+    expect(turn.content).toEqual([
+      { type: "thinking", thinking: "first", signature: "sig-1" },
+      { type: "text", text: "Let me look." },
+      { type: "thinking", thinking: "second", signature: "sig-2" },
+      { type: "tool_use", id: "t1", name: "Read", input: { file_path: "/x" } },
+    ]);
+    // The buckets are unchanged -- every existing consumer still reads them.
+    expect(turn.thinking?.blocks).toEqual([
+      { type: "thinking", thinking: "first", signature: "sig-1" },
+      { type: "thinking", thinking: "second", signature: "sig-2" },
+    ]);
+    expect(turn.kind === "tool_use" ? turn.text : undefined).toBe("Let me look.");
+  });
+
+  test("the persisted order and the streamed frames describe ONE sequence: content types == the sink's content_block_start types", async () => {
+    const rec = recordingSink();
+    const turn = await foldProviderStream(scripted(INTERLEAVED), rec.sink);
+    const streamed = rec.events.filter((e) => e.type === "content_block_start").map((e) => (e as { content_block: { type: string } }).content_block.type);
+    expect(turn.content?.map((b) => b.type as string)).toEqual(streamed);
+  });
+
+  test("text on both sides of a call stays two blocks around it; an empty text run is dropped; a repeated start is ONE call", async () => {
+    const turn = await foldProviderStream(
+      scripted([
+        { type: "text_delta", text: "" },
+        { type: "tool_call_start", id: "a", name: "Glob" },
+        { type: "tool_call_start", id: "a", name: "Glob" },
+        { type: "tool_call_delta", id: "a", argumentsJsonDelta: "{}" },
+        { type: "text_delta", text: "between" },
+        { type: "tool_call_start", id: "b", name: "Grep" },
+        { type: "done", stopReason: "tool_use" },
+      ]),
+    );
+    expect(turn.content).toEqual([
+      { type: "tool_use", id: "a", name: "Glob", input: {} },
+      { type: "text", text: "between" },
+      { type: "tool_use", id: "b", name: "Grep", input: {} },
+    ]);
+    expect(turn.kind === "tool_use" ? turn.calls.map((c) => c.id) : []).toEqual(["a", "b"]);
+  });
+
+  test("a foreign summary never enters `content` (R6-8 holds for the ordered list too)", async () => {
+    const turn = await foldProviderStream(
+      scripted([
+        { type: "thinking_summary_delta", text: "foreign reasoning" },
+        { type: "thinking_exposed_delta", text: "exposed reasoning" },
+        { type: "text_delta", text: "answer" },
+        { type: "done", stopReason: "end_turn" },
+      ]),
+    );
+    expect(turn.content).toEqual([{ type: "text", text: "answer" }]);
+  });
+
+  test("a stream with no content at all carries NO `content` key (absent, never `[]`)", async () => {
+    const turn = await foldProviderStream(scripted([{ type: "done", stopReason: "end_turn" }]));
+    expect("content" in turn).toBe(false);
   });
 });
 
@@ -330,7 +408,7 @@ describe("the observation channels", () => {
     expect(retries).toEqual([{ attempt: 1, maxRetries: 10, retryDelayMs: 2000, errorStatus: 529, error: "overloaded" }]);
     expect(rateLimits).toEqual([{ kind: "subscription-quota", info: { status: "allowed_warning" } }]);
     expect(authStatuses).toEqual([{ isAuthenticating: true, output: ["refreshing"] }]);
-    expect(turn).toEqual({ kind: "text", text: "done", stopReason: "end_turn" });
+    expect(turn).toEqual({ kind: "text", text: "done", stopReason: "end_turn", content: [{ type: "text", text: "done" }] });
   });
 
   test("an ABSENT retry status stays absent on the seam -- the frame producer is what maps it to null", async () => {
@@ -483,6 +561,33 @@ describe("the T3 identity history renderer", () => {
     const messages: ProviderMessage[] = [{ role: "user", content: "hello" }];
     const out = renderer.render(messages, chain, { family: "anthropic", readableState: "none" });
     expect(out[0]).toBe(messages[0]);
+  });
+});
+
+describe("WS-23 (M-5): stream order is kept for the Anthropic family ONLY", () => {
+  // Text AFTER a function call -- the shape Gemini's positional text-signature replay cannot take.
+  const TEXT_CALL_TEXT: ProviderEvent[] = [
+    { type: "text_delta", text: "Checking. " },
+    { type: "tool_call_start", id: "c1", name: "Read" },
+    { type: "tool_call_delta", id: "c1", argumentsJsonDelta: "{}" },
+    { type: "tool_call_end", id: "c1" },
+    { type: "text_delta", text: "Then summarising." },
+    { type: "done", stopReason: "tool_use" },
+  ];
+
+  test("a non-Anthropic family (google, openai) gets NO `content`: the engine keeps the pre-WS-23 joined-text assembly", async () => {
+    for (const family of ["google", "openai"] as const) {
+      const adapter = { ...scriptedAdapter(() => scripted(TEXT_CALL_TEXT)), family };
+      const turn = await adapterAsProvider(resolvedFor(adapter), fakeCtx(), { adapter }).generate({ messages: [{ role: "user", content: "hi" }] });
+      expect("content" in turn).toBe(false);
+      expect(turn.kind === "tool_use" ? turn.text : undefined).toBe("Checking. Then summarising.");
+    }
+  });
+
+  test("the Anthropic family keeps the stream order, text after the call included", async () => {
+    const adapter = { ...scriptedAdapter(() => scripted(TEXT_CALL_TEXT)), family: "anthropic" as const };
+    const turn = await adapterAsProvider(resolvedFor(adapter), fakeCtx(), { adapter }).generate({ messages: [{ role: "user", content: "hi" }] });
+    expect(turn.content?.map((b) => b.type as string)).toEqual(["text", "tool_use", "text"]);
   });
 });
 

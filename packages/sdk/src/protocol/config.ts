@@ -571,6 +571,8 @@ export interface RuntimeConfig {
   includePartialMessages?: boolean;
   maxBudgetUsd?: number;
   providerStallTimeoutMs?: number;
+  /** WS-23: `Options.maxOutputTokens`, carried to every main-loop `TurnRequest`. See its own doc. */
+  maxOutputTokens?: number;
   keychainService?: string;
   autoClassifier?: AutoClassifierConfig;
   advisor?: AdvisorConfig;

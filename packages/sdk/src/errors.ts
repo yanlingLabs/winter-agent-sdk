@@ -26,7 +26,17 @@ export class ResultError extends ProcessError {
     // NOT describe the failure. Capture (I) recorded the pinned runtime carrying the real reason in
     // its thrown message (`… returned an error result: <detail>`), and this is Winter's own spelling
     // of the same thing. Every other subtype is byte-identical to before.
-    super(result.terminal_reason === "api_error" ? `provider request failed: ${result.result ?? "unknown provider error"}` : `result error: ${result.subtype}`);
+    //
+    // WS-23 (review M-1): the same fault applied to every other `is_error` result that names a
+    // `terminal_reason` -- `refusal`, `prompt_too_long` and `pause_turn_limit` all land on
+    // `subtype: "success"` too, so they now throw `<terminal_reason>: <result>`, the reason first.
+    super(
+      result.terminal_reason === "api_error"
+        ? `provider request failed: ${result.result ?? "unknown provider error"}`
+        : result.is_error === true && typeof result.terminal_reason === "string" && result.terminal_reason.length > 0
+          ? `${result.terminal_reason}: ${result.result ?? result.subtype}`
+          : `result error: ${result.subtype}`,
+    );
     this.name = "ResultError";
   }
 }

@@ -533,6 +533,8 @@ export interface ProviderRequest {
   model?: string;
   effort?: TurnRequest["effort"];
   thinking?: TurnRequest["thinking"];
+  /** WS-23: the host's output-token ceiling (`RuntimeConfig.maxOutputTokens`). Absent -> the adapter's own default. */
+  maxOutputTokens?: number;
   /**
    * R6-6: TRUE cancellation. Aborted when this turn is interrupted, so an adapter can cancel
    * pre-header and mid-stream instead of running to completion behind an abandoned await. The same
@@ -610,8 +612,18 @@ export interface ProviderThinkingOutput {
   blocks?: ContentBlock[];
 }
 
-/** Why the provider stopped. Mirrors provider-runtime's `done` event so the bridge folds one into the other without a mapping table. */
-export type ProviderStopReason = "end_turn" | "tool_use" | "max_tokens" | "aborted" | "refusal";
+/**
+ * Why the provider stopped. Mirrors provider-runtime's `done` event so the bridge folds one into the
+ * other without a mapping table. WS-23 adds the two that are NOT an end of turn: `pause_turn` (the turn
+ * continues by re-sending) and `model_context_window_exceeded` (reactive compaction, then one retry).
+ */
+export type ProviderStopReason = "end_turn" | "tool_use" | "max_tokens" | "aborted" | "refusal" | "pause_turn" | "model_context_window_exceeded";
+
+/** WS-23: a refusal's own details (Anthropic's `stop_details`). `explanation` is display prose, never parsed. */
+export interface ProviderStopDetails {
+  category: string | null;
+  explanation: string | null;
+}
 
 /**
  * Phase 6 Task 3 (R6-F): the ONE error class the engine recognises as a PROVIDER failure.
@@ -657,7 +669,13 @@ export class ProviderTurnError extends Error {
    * binds a retry: a committed failure ends the turn on R6-F and never engages a candidate.
    */
   readonly committed: boolean | undefined;
-  constructor(message: string, opts: { status?: number; providerCode?: string; code?: string; retryable?: boolean; committed?: boolean; cause?: unknown } = {}) {
+  /**
+   * WS-23: the provider refused the request because the prompt does not fit the model's context
+   * window (Anthropic's 400 "prompt is too long"). The adapter's own verdict, carried by the bridge;
+   * the engine answers it with one reactive compaction and one retry. `undefined` for any other failure.
+   */
+  readonly contextOverflow: true | undefined;
+  constructor(message: string, opts: { status?: number; providerCode?: string; code?: string; retryable?: boolean; committed?: boolean; contextOverflow?: true; cause?: unknown } = {}) {
     super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined);
     this.name = "ProviderTurnError";
     if (opts.status !== undefined) Object.assign(this, { status: opts.status });
@@ -665,6 +683,7 @@ export class ProviderTurnError extends Error {
     this.code = opts.code;
     this.retryable = opts.retryable;
     this.committed = opts.committed;
+    this.contextOverflow = opts.contextOverflow;
   }
 }
 
@@ -717,9 +736,17 @@ export interface ProviderUsage {
 // before this field the text had nowhere to go and was silently discarded, losing a whole assistant
 // utterance from the transcript with nothing failing anywhere. It persists as a LEADING text block
 // ahead of the tool_use blocks, which is the order the model produced it in.
+//
+// WS-23 (block order): both kinds gain `content?`, the turn's assistant content IN STREAM ORDER --
+// thinking, text and tool_use blocks interleaved exactly as the model produced them. OPTIONAL AND
+// ADDITIVE: a provider that sets it (the adapter bridge's fold) is persisted and replayed in that
+// order; one that does not (every scripted double) keeps the per-kind assembly below
+// (`thinking.blocks`, then `text`, then `calls`), which is the same thing for any turn whose stream
+// was already in that order. `text`/`calls`/`thinking` stay authoritative for everything that is not
+// the persisted content (the result text, the tool dispatch loop, the sidecar summary).
 export type ProviderTurn =
-  | { kind: "text"; text: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState }
-  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; text?: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState };
+  | { kind: "text"; text: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; stopDetails?: ProviderStopDetails; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState; content?: ContentBlock[] }
+  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; text?: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; stopDetails?: ProviderStopDetails; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState; content?: ContentBlock[] };
   // Phase 6 Task 10 (R6-13): THE `rpc_probe` TURN KIND IS GONE.
   //
   // It was a P1-only scaffold whose whole purpose was to prove the runtime-originated control-RPC
@@ -733,6 +760,32 @@ export type ProviderTurn =
 
 export interface Provider {
   generate(input: ProviderRequest): Promise<ProviderTurn>;
+}
+
+/** WS-23 (M-7): the tool result a call gets when its turn stopped at the output limit, so the call was never run. */
+export const OUTPUT_LIMIT_TRUNCATED_CALL_TEXT =
+  "Error: this tool call was not run. Your response hit the output token limit (max_tokens) before the call's input was complete, so its arguments may be truncated. Issue the call again; if its input is large (a whole file, a long command), split it into smaller calls.";
+
+/** WS-23: the most times one user envelope re-sends a `pause_turn` response before ending typed. The vendor's own handling guide caps continuations at 5. */
+export const MAX_PAUSE_TURN_CONTINUATIONS = 5;
+
+/**
+ * WS-23 (block order): a turn's assistant content in STREAM ORDER (`ProviderTurn.content`), or
+ * `undefined` when the provider reported none -- the caller then falls back to the per-kind assembly.
+ *
+ * CHECKED, NOT TRUSTED: the tool loop answers `turn.calls`, so a `tool_use` turn's ordered content must
+ * name exactly those calls, in that order. A persisted `tool_use` with no `tool_result` after it (or a
+ * result for a call the content never carried) is a 400 on the very next request, so a list that
+ * disagrees with `calls` is ignored rather than persisted; likewise a `text` turn's content may carry
+ * no call at all.
+ */
+export function inStreamOrder(turn: ProviderTurn): ContentBlock[] | undefined {
+  const content = turn.content;
+  if (content === undefined || content.length === 0) return undefined;
+  const orderedCallIds = content.flatMap((block) => (block.type === "tool_use" ? [block.id] : []));
+  if (turn.kind === "text") return orderedCallIds.length === 0 ? content : undefined;
+  if (orderedCallIds.length !== turn.calls.length || orderedCallIds.some((id, i) => id !== turn.calls[i]!.id)) return undefined;
+  return content;
 }
 
 /**
@@ -7408,6 +7461,47 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       absorbHookComposite(composite, { hookName: stopHookName });
       return composite;
     };
+    // --- WS-23: the two ways a generation can stop WITHOUT ending the turn --------------------------
+    //
+    // CONTEXT OVERFLOW, reactive. The auto trigger (`maybeAutoCompact`, below) is a PREDICTION made
+    // from the last generation's usage; a single large tool result, a first request after a resume, or
+    // a model whose window the accountant under-estimates can still overflow. Anthropic reports that
+    // two ways -- a 400 "prompt is too long" before any output (`ProviderTurnError.contextOverflow`),
+    // and `stop_reason: "model_context_window_exceeded"` after the window filled mid-generation -- and
+    // both used to end a long code turn: the first as a bare api_error, the second silently, as if the
+    // model had finished. Both now take the SAME forced compaction `/compact` and the auto trigger use
+    // (`performCompaction`, never a second copy of it), then retry the round ONCE. `overflowRetryPending`
+    // is what makes it once: set by a successful reactive compaction, cleared by the next generation
+    // that does NOT overflow, so a turn that grows past the window again much later still recovers,
+    // while a retry that overflows immediately ends the turn with a typed `prompt_too_long` result.
+    //
+    // THE PARTIAL OUTPUT OF AN OVERFLOWED GENERATION IS DISCARDED, never persisted: nothing of it was
+    // consumed (no tool ran), and a truncated turn in the history is the model's own half-finished
+    // thought handed back to it as if it had meant it. Disclosed: a host that opted into
+    // `includePartialMessages` has already been shown its stream events.
+    //
+    // PAUSE_TURN, bounded. The vendor pauses a long SERVER-side tool loop and resumes it when the
+    // paused response is sent back; the turn is not over. `pauseContinuations` bounds the resends
+    // (the vendor's own guide recommends a cap; 5 is the figure it uses).
+    let overflowRetryPending = false;
+    let pauseContinuations = 0;
+    const recoverFromContextOverflow = async (): Promise<{ retry: true } | { retry: false; why: string }> => {
+      if (overflowRetryPending) return { retry: false, why: "the retry after a reactive compaction overflowed the context window again" };
+      const outcome = await performCompaction("auto", null);
+      if (!outcome.ok) return { retry: false, why: `the reactive compaction did not run (${outcome.error})` };
+      overflowRetryPending = true;
+      return { retry: true };
+    };
+    const contextOverflowResult = (why: string, status: number | null): NonNullable<typeof finalResult> => ({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      result: `The conversation no longer fits the model's context window: ${why}.`,
+      // claude's own `TerminalReason` spelling for this outcome (sdk.d.ts `TerminalReason`), so a host
+      // that already branches on it needs nothing new.
+      terminal_reason: "prompt_too_long",
+      api_error_status: status,
+    });
 
     roundLoop: while (true) {
       // Phase 5 Task 3 (R5-10): `outputFormat` with no seam fails LOUDLY, on the first round, before
@@ -7481,6 +7575,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             ...(currentModel !== undefined ? { model: currentModel } : {}),
             ...(config.effort !== undefined ? { effort: config.effort } : {}),
             ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
+            // WS-23: the host's own `max_tokens` override, when it set one (conditionally spread, so
+            // every existing request is byte-identical).
+            ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
             signal: turnAbort.signal,
             // R6-G: a MAIN-LOOP generation gets a sink. Auxiliary calls (the compaction summariser,
             // the classifier, the advisor, countTokens) build their own requests elsewhere and get
@@ -7531,6 +7628,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
               // Winter has no provider request id on this seam -- `null` is the pinned spelling for
               // its absence, never an invented value.
               request_id: null,
+              // WS-23: the vendor's own refusal details, when the response carried them. The pin types
+              // both fields `string | null` and optional; absent details stay absent.
+              ...(turn.stopDetails !== undefined ? { api_refusal_category: turn.stopDetails.category, api_refusal_explanation: turn.stopDetails.explanation } : {}),
               content: turn.kind === "text" ? turn.text : (turn.text ?? ""),
               uuid: randomUUID(),
               session_id: config.sessionId,
@@ -7538,6 +7638,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           });
         }
       } catch (err) {
+        // WS-23: a context-overflow REFUSAL (the 400, before any output) -- reactive compaction and one
+        // retry, ahead of the fallback check: another model with the same window would overflow on the
+        // same prompt, so this is never a reason to swap models.
+        if (isProviderTurnError(err) && err.contextOverflow === true && err.committed !== true) {
+          const recovery = await recoverFromContextOverflow();
+          if (recovery.retry) continue roundLoop;
+          finalResult = contextOverflowResult(recovery.why, err.status ?? null);
+          break roundLoop;
+        }
         // RULING E-3 (whole-branch I-1): a retryable-class provider failure -- `withRetry` has already
         // spent R6-6's budget on it -- engages the next fallback candidate and RE-RUNS this round on
         // it. Nothing was consumed: the catch sits before any tool executes, so re-generating is a
@@ -7561,6 +7670,61 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         break roundLoop;
       }
 
+      // WS-23: the generation filled the context window mid-output. Same recovery as the 400 above.
+      if (turn.stopReason === "model_context_window_exceeded") {
+        const recovery = await recoverFromContextOverflow();
+        if (recovery.retry) continue roundLoop;
+        finalResult = contextOverflowResult(recovery.why, null);
+        break roundLoop;
+      }
+      // A generation that did NOT overflow re-arms the one retry for any later overflow in this turn.
+      overflowRetryPending = false;
+
+      // WS-23: a REFUSAL ends the turn, TYPED, and its output is discarded rather than persisted.
+      //
+      // It used to fall through as an ordinary turn: a `text` refusal became a successful result, and a
+      // refusal that cut off mid-call became a `tool_use` turn whose half-streamed calls were EXECUTED.
+      // Anthropic's own guidance for a refusal is to surface it and not to treat the partial output as
+      // complete (https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons); keeping
+      // it out of the history is also what lets the next user message start from a context the model
+      // has not already refused once. The refusal frame above still carries the partial text for
+      // display. `is_error: true` because the request did not get an answer; `terminal_reason: "refusal"`
+      // is Winter's own spelling (claude's `TerminalReason` has no refusal member), and the category
+      // rides the frame, not the result.
+      if (turn.stopReason === "refusal") {
+        const partial = turn.kind === "text" ? turn.text : (turn.text ?? "");
+        finalResult = {
+          type: "result",
+          subtype: "success",
+          is_error: true,
+          result: partial.length > 0 ? partial : (turn.stopDetails?.explanation ?? "The model declined to respond to this request."),
+          terminal_reason: "refusal",
+        };
+        break roundLoop;
+      }
+
+      // WS-23: `pause_turn` -- persist the paused response and send the conversation back as it stands;
+      // the vendor resumes from the paused turn. Bounded by `MAX_PAUSE_TURN_CONTINUATIONS`.
+      //
+      // DISCLOSED LIMIT: only the vendor's SERVER tools pause, Winter sends none, and the Anthropic
+      // adapter does not carry the `server_tool_use` blocks a resume keys on -- so this path is
+      // unreachable today and a real resume would need those blocks preserved first. It exists so a
+      // pause is never again mistaken for the end of a turn.
+      if (turn.kind === "text" && turn.stopReason === "pause_turn") {
+        if (pauseContinuations >= MAX_PAUSE_TURN_CONTINUATIONS) {
+          finalResult = { type: "result", subtype: "success", is_error: true, result: turn.text, terminal_reason: "pause_turn_limit" };
+          break roundLoop;
+        }
+        pauseContinuations++;
+        const paused = inStreamOrder(turn) ?? [...(turn.thinking?.blocks ?? []), ...(turn.text.length > 0 ? [{ type: "text" as const, text: turn.text }] : [])];
+        if (paused.length > 0) {
+          output.write({ type: "data", message: { type: "assistant", message: { content: paused } } });
+          const pausedAnchor = await recordAssistant(paused, turnProvenance(turn));
+          messages.push({ role: "assistant", content: paused, ...(pausedAnchor !== undefined ? { uuid: pausedAnchor } : {}), ...providerAnnotations(turn) });
+        }
+        continue roundLoop;
+      }
+
       if (turn.kind === "text") {
         // Phase 6 Task 3 (R6-8): IN-DIALECT thinking blocks lead the content, carrying their REAL
         // signatures. `turn.thinking.blocks` is Anthropic-family only, by the seam's own contract --
@@ -7569,7 +7733,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // runtime materialises `signature: ""` on any thinking block that lacks one and replays it
         // verbatim, so a foreign summary written here would ride a fabricated signature (capture (F)).
         const thinkingBlocks = ("thinking" in turn ? turn.thinking?.blocks : undefined) ?? [];
-        const assistantBlocks: ContentBlock[] = [...thinkingBlocks, { type: "text", text: turn.text }];
+        // WS-23: the STREAM ORDER when the provider reported it (`ProviderTurn.content`), else the
+        // per-kind assembly. `inStreamOrder` returns undefined for an absent or empty list.
+        const ordered = inStreamOrder(turn);
+        const assistantBlocks: ContentBlock[] = ordered ?? [...thinkingBlocks, { type: "text", text: turn.text }];
         // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await —
         // the terminal result below is the sole durability barrier for this turn; P6 (partial
         // streaming) must revisit this ordering once intermediate frames become resumable state.
@@ -7619,7 +7786,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // one turn, and before it existed that text had nowhere to go and was silently discarded --
       // losing a whole assistant utterance from the transcript with nothing failing anywhere. It
       // persists as a LEADING text block, which is the order the model produced it in.
-      const toolUseBlocks: ContentBlock[] = [
+      //
+      // WS-23: THAT ORDER IS NOW THE STREAM'S OWN whenever the provider reported one
+      // (`ProviderTurn.content`). The per-kind assembly below is only correct for a turn whose blocks
+      // arrived thinking-first, text-second, calls-last; an interleaved `[thinking, text, thinking,
+      // tool_use]` response came out as `[thinking, thinking, text, tool_use]`, and replaying a tool
+      // loop's thinking out of place is the history edit Anthropic's preserved-thinking check exists
+      // to reject. The fallback survives for a provider that reports no order (every scripted double).
+      const toolUseBlocks: ContentBlock[] = inStreamOrder(turn) ?? [
         ...(("thinking" in turn ? turn.thinking?.blocks : undefined) ?? []),
         ...(turn.text !== undefined && turn.text.length > 0 ? [{ type: "text" as const, text: turn.text }] : []),
         ...turn.calls.map((c) => ({ type: "tool_use" as const, id: c.id, name: c.name, input: c.input })),
@@ -7641,12 +7815,24 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // exhausted). Its own flag rather than a re-derivation from `finalResult`, for exactly the
       // reason `toolThrowText` above is one -- `finalResult` has several other producers.
       let structuredTerminated = false;
+      // WS-23 (review M-7): a `tool_use` turn the provider cut off at its OUTPUT LIMIT (`max_tokens`)
+      // carries at least one call whose arguments stopped mid-stream -- the fold parses what arrived,
+      // or wraps it as `__winter_unparsed_arguments`, and the tool would run on a truncated input (a
+      // half-written file, a cut-off command). NONE of the round's calls runs: each gets an error
+      // result saying why, and the round loop continues so the model re-issues the call with room to
+      // finish it (splitting a large write if it has to). Counted as a round like any other, so
+      // `maxTurns` still bounds a model that keeps overrunning.
+      const truncatedByOutputLimit = turn.stopReason === "max_tokens";
       for (const call of turn.calls) {
         // WS-23: once a hook has stopped the turn, the round's remaining calls are not run -- each
         // still gets its tool_result (Ruling P1-G/P1-H's pairing invariant), saying why.
         const stoppedBy = currentTurnStop();
         if (stoppedBy !== undefined) {
           resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: `[not executed: the ${stoppedBy.hookName} hook stopped the turn]`, error: true });
+          continue;
+        }
+        if (truncatedByOutputLimit) {
+          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: OUTPUT_LIMIT_TRUNCATED_CALL_TEXT, is_error: true });
           continue;
         }
         // --- Phase 5 Task 3 (R5-10): the host-generated StructuredOutput tool -----------------------

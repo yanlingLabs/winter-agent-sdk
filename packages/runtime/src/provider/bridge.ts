@@ -199,6 +199,7 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
         ...(input.toolChoice !== undefined ? { toolChoice: input.toolChoice } : {}),
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
         ...(input.thinking !== undefined ? { thinking: input.thinking } : {}),
+        ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
         ...(input.signal !== undefined ? { signal: input.signal } : {}),
         // Ask for a readable SUMMARY only where the model's own evidence says HOW to ask.
         //
@@ -226,7 +227,16 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
       // real domain on the very NEXT generation and drop the state. Live native replay would be dead
       // while resumed sessions kept working (the chain rebuilds family/domain from the record) --
       // the common case broken, the rarer one fine, and nothing failing anywhere.
-      return stampNativeState(await foldProviderStream(stream, input.sink), {
+      const folded = await foldProviderStream(stream, input.sink);
+      // WS-23 (review M-5): the stream-order `content` is kept for the ANTHROPIC family only. Its
+      // purpose is replaying in-dialect thinking blocks in place, which no other family has; and at
+      // least one other family's serializer keys opaque state on the per-kind shape -- Gemini's
+      // text `thoughtSignature` is re-attached to the message's FIRST text part, assuming at most one
+      // per message, so a `[text, functionCall, text]` turn in stream order would put the trailing
+      // text's signature on the leading one. Dropping the key restores the pre-WS-23 assembly
+      // exactly (joined text, then calls) for every non-Anthropic family.
+      const turn: FoldedProviderTurn = adapter.family === "anthropic" || folded.content === undefined ? folded : (({ content: _ordered, ...rest }) => rest as FoldedProviderTurn)(folded);
+      return stampNativeState(turn, {
         providerId: resolved.providerId,
         modelKey: resolved.modelKey,
         family: adapter.family,
@@ -258,8 +268,24 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
   const calls: Array<{ id: string; name: string; input: unknown }> = [];
   const callOrder: string[] = [];
   const pendingCalls = new Map<string, { name: string; argumentsJson: string }>();
+  // WS-23 (block order): the turn's content IN THE ORDER THE STREAM PRODUCED IT, alongside the
+  // per-kind buckets above (which every existing consumer still reads). The buckets alone lose the
+  // interleaving: a `[thinking, text, thinking, tool_use]` response used to be persisted as
+  // `[thinking, thinking, text, tool_use]`, and Anthropic requires the thinking blocks of an active
+  // tool loop to come back UNMODIFIED and in place -- a reordered replay is exactly the history edit
+  // a block-binding row (Opus 5.5 / Fable 5.1) rejects, and it hands every other row a turn the model
+  // never wrote. A text run opens one text block and is closed by the next thinking block or call,
+  // the same boundary rule `StreamEventEmitter` already applies to the `stream_event` frames, so the
+  // persisted content and the streamed frames describe one sequence. Tool calls are placeholders
+  // here (their arguments are still streaming) and are materialised from `pendingCalls` at the end.
+  // CAVEAT: this is EVENT order, which equals wire order only for an adapter that emits each block when
+  // it completes; one that holds thinking to `message_stop` (see the Anthropic adapter's own note)
+  // would have its thinking placed last.
+  const ordered: Array<{ kind: "text"; text: string } | { kind: "block"; block: ContentBlock } | { kind: "call"; id: string }> = [];
+  let orderedTextOpen = false;
   let usage: ProviderUsage | undefined;
   let stopReason: ProviderStopReason | undefined;
+  let stopDetails: { category: string | null; explanation: string | null } | undefined;
   let nativeState: ProviderNativeState | undefined;
   const emitter = new StreamEventEmitter(sink);
   // Fix wave round 2 (R-E2): has the STREAM begun? Every event except the pre-stream observations
@@ -275,10 +301,17 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
         case "message_start":
           emitter.messageStart(event.id, event.model);
           break;
-        case "text_delta":
+        case "text_delta": {
           text += event.text;
+          const open = ordered[ordered.length - 1];
+          if (orderedTextOpen && open !== undefined && open.kind === "text") open.text += event.text;
+          else {
+            ordered.push({ kind: "text", text: event.text });
+            orderedTextOpen = true;
+          }
           emitter.textDelta(event.text);
           break;
+        }
         case "thinking_summary_delta":
           // FOREIGN reasoning. Accumulated for the sidecar's `summary` record and the Winter-only
           // frame; NEVER forwarded as a `stream_event` (there is no pinned raw event for a foreign
@@ -294,13 +327,21 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
           const block = coerceDialectThinkingBlock(event.block);
           if (block !== undefined) {
             thinkingBlocks.push(block);
+            ordered.push({ kind: "block", block });
+            orderedTextOpen = false;
             emitter.thinkingBlock(block);
           }
           break;
         }
         case "tool_call_start":
+          // A REPEATED start for an id already open is not a second call: `calls` below is built
+          // from `callOrder`, which would otherwise list it twice -- and so would `ordered`.
+          if (!pendingCalls.has(event.id)) {
+            callOrder.push(event.id);
+            ordered.push({ kind: "call", id: event.id });
+          }
           pendingCalls.set(event.id, { name: event.name, argumentsJson: "" });
-          callOrder.push(event.id);
+          orderedTextOpen = false;
           emitter.toolCallStart(event.id, event.name);
           break;
         case "tool_call_delta": {
@@ -350,6 +391,7 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
           break;
         case "done":
           stopReason = event.stopReason;
+          stopDetails = event.stopDetails;
           emitter.messageStop(event.stopReason);
           break;
         case "error":
@@ -369,6 +411,22 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
     const pending = pendingCalls.get(id);
     if (pending === undefined) continue;
     calls.push({ id, name: pending.name, input: parseToolArguments(pending.argumentsJson) });
+  }
+
+  // The ordered content, materialised. Each call is the SAME object `calls` carries (parsed once), and
+  // an empty text run -- a stream that opened a text block and never wrote into it -- is dropped:
+  // this endpoint family rejects an empty text block on replay, and it says nothing either way.
+  const callsById = new Map(calls.map((c) => [c.id, c]));
+  const content: ContentBlock[] = [];
+  for (const entry of ordered) {
+    if (entry.kind === "text") {
+      if (entry.text.length > 0) content.push({ type: "text", text: entry.text });
+    } else if (entry.kind === "block") {
+      content.push(entry.block);
+    } else {
+      const call = callsById.get(entry.id);
+      if (call !== undefined) content.push({ type: "tool_use", id: call.id, name: call.name, input: call.input });
+    }
   }
 
   // W18-15 (Phase 10b Lane S, S4): whether the ACCUMULATED exposed text is the model's WHOLE
@@ -391,8 +449,10 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
   const common = {
     ...(usage !== undefined ? { usage } : {}),
     ...(stopReason !== undefined ? { stopReason } : {}),
+    ...(stopDetails !== undefined ? { stopDetails } : {}),
     ...(thinking !== undefined ? { thinking } : {}),
     ...(nativeState !== undefined ? { nativeState } : {}),
+    ...(content.length > 0 ? { content } : {}),
   };
 
   // A turn with CALLS is a `tool_use` turn even when it also produced text -- and the text rides
@@ -531,6 +591,9 @@ function providerErrorToTurnError(error: ProviderError, committed = false): Prov
     code: error.code,
     retryable: error.retryable,
     committed,
+    // WS-23: the adapter's own context-overflow verdict, carried as a flag -- the engine's reactive
+    // compaction reads it, never the (capped, redacted) message text.
+    ...(error.contextOverflow === true ? { contextOverflow: true } : {}),
   });
 }
 

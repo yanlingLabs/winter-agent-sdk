@@ -39,11 +39,14 @@
 //      replayed byte-identically. `requestSummary` therefore only sets the descriptor's own
 //      `thinking.display` field -- it never re-routes the reasoning to another channel.
 //
-//   5. **Retry stops at the first byte, and the retry OBSERVATIONS still reach the consumer.**
-//      `withRetry` wraps only the fetch; `parseSse` runs outside it, so nothing past the first byte
-//      can be replayed (WS-13 §13). `withRetry`'s callback cannot `yield`, so its events are
-//      buffered and flushed ahead of the first stream event -- the same order a consumer would have
-//      seen, since every retry precedes the stream by construction.
+//   5. **Retry stops at the first COMMITTED frame, and the retry OBSERVATIONS still reach the consumer.**
+//      `withRetry` wraps the fetch AND the read up to the stream's first content-bearing frame
+//      (WS-23 item 4, `openCommittedStream`): `message_start` and `ping` show nobody anything, so an
+//      `overloaded_error` frame that arrives before any content is replayed under the same policy as
+//      a 529 status would be. Nothing past that line can be replayed (WS-13 §13). `withRetry`'s
+//      callback cannot `yield`, so its events are buffered and flushed ahead of the first stream event
+//      -- the same order a consumer would have seen, since every retry precedes the stream by
+//      construction.
 import type { WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { boundedFetch, ProviderRequestError } from "../../http.ts";
@@ -54,8 +57,8 @@ import { hostHeaders } from "../privileged-headers.ts";
 import { identityHeaderLookup, winterIdentityHeaders, winterUserAgent, type IdentityHeaderLookup } from "../../identity.ts";
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { containsImage } from "../content-blocks.ts";
-import { parseSse } from "../../sse.ts";
-import { ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, ANTHROPIC_CONSOLE_PROVIDER_ID, CONSOLE_BEARER } from "./console-oauth.ts";
+import { parseSse, type SseEvent } from "../../sse.ts";
+import { ANTHROPIC_BEARER_PROVIDER_IDS, ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, CONSOLE_BEARER } from "./console-oauth.ts";
 import type {
   ContentBlockLike,
   CredentialMaterial,
@@ -90,6 +93,31 @@ export const ANTHROPIC_API_VERSION = "2023-06-01";
  * `TurnRequest.maxOutputTokens` or the descriptor carries `maxOutputTokens` evidence.
  */
 export const ANTHROPIC_DEFAULT_MAX_TOKENS = 4096;
+
+/**
+ * WS-23: the wire `max_tokens` for a row that DOES declare its maximum output, when the request names
+ * none: this value, capped at the row's own maximum.
+ *
+ * WHY NOT THE ROW'S FULL MAXIMUM (which every request sent before this, 128K on the current Claude
+ * rows): `max_tokens` is not free even when the model stops early.
+ *   - RATE LIMITS. Anthropic's output-tokens-per-minute limiter reserves against `max_tokens` when a
+ *     request STARTS and settles to the real count when it ends
+ *     (https://platform.claude.com/docs/en/api/rate-limits), so a 128K ask on every tool round of a code
+ *     session spends OTPM headroom the turn never uses, and trips 429s sooner under parallel subagents.
+ *   - RUNAWAY BOUND. A generation that degenerates (a loop, a giant file written inline) is cut at
+ *     64K rather than 128K: half the latency and cost before the harness regains control.
+ *   - THE VENDOR'S OWN GUIDANCE for streaming callers is ~64K
+ *     (https://platform.claude.com/docs/en/build-with-claude/streaming, the `max_tokens` defaults).
+ * CLAUDE, FOR REFERENCE ONLY (parity is not a goal): the pinned 0.3.250 runtime sent 64000 for
+ * `claude-sonnet-5` (capture (F)); claude 2.1.282 sends 128000 on `claude-opus-5-5` (the WS-23
+ * capture). Winter diverges from the latter deliberately, for the reasons above; a turn that needs
+ * more asks for it (`TurnRequest.maxOutputTokens`) or a host raises the default
+ * (`AnthropicAdapterOptions.defaultMaxOutputTokens`).
+ *
+ * NO CATALOG FIELD FITS: the catalog carries each row's MAXIMUM (`maxOutputTokens`), not a
+ * recommended default, and inventing one per row would be a capability claim with no vendor evidence.
+ */
+export const ANTHROPIC_ROW_DEFAULT_MAX_TOKENS = 64_000;
 
 /**
  * The effort -> thinking-budget ladder.
@@ -128,6 +156,11 @@ export interface AnthropicAdapterOptions {
   retry?: RetryPolicyOptions;
   /** `anthropic-beta` values, joined with commas. A PROTOCOL header (R6-L): every endpoint needs it to be spoken to, and it names no account. */
   betas?: string[];
+  /**
+   * The HOST's default `max_tokens` when a request names none (WS-23): replaces
+   * `ANTHROPIC_ROW_DEFAULT_MAX_TOKENS` on a row that declares its maximum (and is capped at that
+   * maximum), and `ANTHROPIC_DEFAULT_MAX_TOKENS` on a row that declares none.
+   */
   defaultMaxOutputTokens?: number;
 }
 
@@ -422,7 +455,7 @@ type WireThinking =
   | { type: "adaptive"; display?: string; block_binding?: { prefix_mismatch_behavior: "drop_block" } };
 
 /** What `buildThinking` decided, plus the SIBLING `output_config.effort` value (independent of which thinking arm won -- see `mapAnthropicEffort`'s own doc comment). */
-type ThinkingBuild = { ok: true; value: WireThinking | undefined; outputConfigEffort?: string } | { ok: false; reason: string };
+type ThinkingBuild = { ok: true; value: WireThinking | undefined; outputConfigEffort?: string; rewroteDisabled?: true } | { ok: false; reason: string };
 
 /**
  * The `thinking` envelope (and, on a row that documents one, the sibling `output_config.effort`
@@ -558,6 +591,27 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
     if (!thinkingFieldDecided) base = mapped.value;
   }
 
+  // WS-23 (item 8): A REJECTION THAT DEPENDS ON TWO PARAMETERS AT ONCE. Opus 5 accepts
+  // `thinking: {type: "disabled"}` at low/medium/high effort and rejects it at xhigh/max
+  // (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting). The row records it
+  // in the SAME `unsupportedParameters` vocabulary as every token above, as a CONJUNCTION:
+  // `thinking.type.disabled+output_config.effort.<tier>` -- `+` joins two ordinary tokens and the pair
+  // is rejected only together. It is read against the effort tier this request actually resolved to
+  // (`outputConfigEffort`, after the numeric mapping), never the raw request value.
+  //
+  // REWRITTEN TO ADAPTIVE, NOT REFUSED -- the same evidenced-rewrite rule as `enabled` -> adaptive on a
+  // row that rejects `enabled`. Why this direction: effort is the dial a Winter session actually moves
+  // (per turn, per message), while a `disabled` arm usually arrives as a standing session option
+  // (`maxThinkingTokens: 0`) set once; refusing would turn every xhigh/max turn of such a session into a
+  // typed failure for a combination the caller never chose as a pair. Opus 5's thinking is ON by
+  // default, so adaptive is what the model does when `thinking` is left alone -- the rewrite asks for
+  // exactly that, explicitly, rather than omitting the field and relying on the default.
+  let rewroteDisabled = false;
+  if (req.thinking?.type === "disabled" && outputConfigEffort !== undefined && unsupported.has(`thinking.type.disabled+output_config.effort.${outputConfigEffort}`)) {
+    base = { type: "adaptive" };
+    rewroteDisabled = true;
+  }
+
   // Computed ONCE, shared by the fallback gate below AND the display step further down (fix round 2,
   // Minor 2): whether this row's OWN evidence can actually produce a `display` value for a requested
   // summary. `req.requestSummary === true` alone is not enough to justify sending an otherwise-omitted
@@ -606,7 +660,7 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
     base = { ...base, block_binding: { prefix_mismatch_behavior: "drop_block" } };
   }
 
-  return { ok: true, value: base, ...(outputConfigEffort !== undefined ? { outputConfigEffort } : {}) };
+  return { ok: true, value: base, ...(outputConfigEffort !== undefined ? { outputConfigEffort } : {}), ...(rewroteDisabled ? { rewroteDisabled: true as const } : {}) };
 }
 
 /**
@@ -677,7 +731,7 @@ export function anthropicWireModelId(id: string): string {
  * `fake.requests`, which is `provider-conformance`'s job for the actual wire proof (this file's own
  * header comment).
  */
-export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | undefined, opts: AnthropicAdapterOptions, purpose: "generate" | "count" = "generate"): Record<string, unknown> {
+export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | undefined, opts: AnthropicAdapterOptions, purpose: "generate" | "count" = "generate", onThinkingRewrite?: () => void): Record<string, unknown> {
   // Tools: WS-13 §8.1's three states. `emulated` is disabled for agent modes and `none` fails
   // negotiation -- neither is a reason to drop the tools and continue as plain chat.
   if (req.tools !== undefined && req.tools.length > 0 && descriptor !== undefined) {
@@ -723,6 +777,7 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
 
   const thinking = buildThinking(req, descriptor);
   if (!thinking.ok) throw capabilityRefusal(thinking.reason);
+  if (thinking.rewroteDisabled === true) onThinkingRewrite?.();
 
   // `max_tokens` has TWO AUTHORITATIVE sources -- what the caller asked for and what the model's row
   // declares -- and a third, this adapter's own fallback, which is authoritative over nothing.
@@ -740,17 +795,35 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   // is not a quantity this adapter has ever been told -- inventing a bigger fallback for it would be
   // exactly the unevidenced capability claim `ANTHROPIC_DEFAULT_MAX_TOKENS`'s own comment refuses to
   // make. In PRACTICE this rarely bites: every real Claude row in the catalog declares its own
-  // `maxOutputTokens` (128K on the 2026-09-25 rows), so `declaredMax` is populated before the fallback
+  // `maxOutputTokens` (128K on the 2026-09-25 rows), so the row's own ceiling applies before the fallback
   // is ever reached, and the flat, undeclared-only fallback below is reserved for an `allowUnlisted`
   // passthrough or a descriptor missing that one field -- exactly the situations `maxOutputTokens`
   // evidence exists to be threaded through instead of this adapter guessing at a ceiling.
-  const declaredMax = req.maxOutputTokens ?? descriptor?.maxOutputTokens?.value;
-  const fallbackMax = opts.defaultMaxOutputTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS;
+  //
+  // WS-23: A DECLARED ROW'S MAXIMUM IS A CEILING, NOT A DEFAULT. This used to send the row's full
+  // `maxOutputTokens` (128K) whenever the request named nothing; it now sends
+  // `ANTHROPIC_ROW_DEFAULT_MAX_TOKENS` (64K, see its comment for why) capped at that maximum, or the
+  // host's own `defaultMaxOutputTokens`. The budget-carrying `enabled` arm keeps its growth rule on this
+  // path too, and it grows by a FULL default's worth of answer: `budget + rowDefault`, capped at the row's
+  // maximum (review fix I-1: growing by the 4096 no-maximum fallback left a long-thinking code turn 4K
+  // of room to write its answer or its tool call). The `budget >= max_tokens` refusal below therefore
+  // fires only when the ROW cannot hold the budget, never because of a default nobody chose. An explicit
+  // `req.maxOutputTokens` still wins outright (and is still refused above the row's maximum).
+  const rowMax = descriptor?.maxOutputTokens?.value;
   const budget = thinking.value !== undefined && thinking.value.type === "enabled" ? thinking.value.budget_tokens : undefined;
-  if (req.maxOutputTokens !== undefined && descriptor?.maxOutputTokens?.value !== undefined && req.maxOutputTokens > descriptor.maxOutputTokens.value) {
-    throw capabilityRefusal(`requested max output ${req.maxOutputTokens} exceeds model "${descriptor.key}"'s declared maximum of ${descriptor.maxOutputTokens.value}`);
+  if (req.maxOutputTokens !== undefined && rowMax !== undefined && descriptor !== undefined && req.maxOutputTokens > rowMax) {
+    throw capabilityRefusal(`requested max output ${req.maxOutputTokens} exceeds model "${descriptor.key}"'s declared maximum of ${rowMax}`);
   }
-  const maxTokens = declaredMax ?? (budget !== undefined ? budget + fallbackMax : fallbackMax);
+  let maxTokens: number;
+  if (req.maxOutputTokens !== undefined) {
+    maxTokens = req.maxOutputTokens;
+  } else if (rowMax !== undefined) {
+    const rowDefault = Math.min(opts.defaultMaxOutputTokens ?? ANTHROPIC_ROW_DEFAULT_MAX_TOKENS, rowMax);
+    maxTokens = budget !== undefined && budget + rowDefault > rowDefault ? Math.min(rowMax, budget + rowDefault) : rowDefault;
+  } else {
+    const fallbackMax = opts.defaultMaxOutputTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS;
+    maxTokens = budget !== undefined ? budget + fallbackMax : fallbackMax;
+  }
   if (purpose === "count") {
     // A count carries the PROMPT and nothing else: no `stream`, no `max_tokens`, and therefore no
     // ceiling for a thinking budget to overrun. `output_config.effort` is deliberately left OFF this
@@ -813,6 +886,41 @@ export function blockBindingBetaFor(body: Record<string, unknown>, descriptor: W
   return descriptor?.reasoning?.blockBinding?.value?.beta;
 }
 
+/** The beta Anthropic gates interleaved thinking behind on a MANUAL-budget model. */
+export const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
+
+/**
+ * WS-23 (item 5): the interleaved-thinking beta, or `undefined` -- derived from the BODY this request
+ * actually carries (same discipline as `blockBindingBetaFor`, so the header can never claim a mode the
+ * body does not use).
+ *
+ * WHY: without it, a manual-budget model thinks ONCE, before its first tool call, and never between
+ * tool calls again for the rest of the turn -- a code loop reasons about the first call and then acts
+ * blind. Anthropic's extended-thinking docs gate interleaved thinking on this header for the manual
+ * `thinking: {type: "enabled", budget_tokens}` mode; adaptive thinking interleaves by itself and needs
+ * nothing (https://platform.claude.com/docs/en/build-with-claude/extended-thinking, "Interleaved
+ * thinking"; the 4.6 migration guide lists the header as removable once on adaptive).
+ *
+ * GATED ON CATALOG EVIDENCE, THREE WAYS:
+ *   - the row lists `thinking.type.adaptive` in `unsupportedParameters` -- it is a budget-ONLY model
+ *     (Opus 4.5, Sonnet 4.5, Haiku 4.5 on `anthropic` and `console`). No sibling
+ *     Anthropic-dialect row carries that token, so a third party never gets Anthropic's beta name;
+ *   - the body's thinking arm is `enabled` (a budget), the only mode the header changes;
+ *   - the body carries tools -- interleaving is BETWEEN tool calls, so without tools there is nothing
+ *     for the header to do.
+ * Disclosed, not relied on: with the header the vendor lets `budget_tokens` exceed `max_tokens` (it
+ * becomes the whole turn's thinking budget). This adapter still refuses `budget >= max_tokens` before
+ * the request, the conservative reading that holds with or without the header.
+ */
+export function interleavedThinkingBetaFor(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined): string | undefined {
+  if (descriptor === undefined || !descriptor.unsupportedParameters.includes("thinking.type.adaptive")) return undefined;
+  const thinking = body["thinking"];
+  if (thinking === null || typeof thinking !== "object" || (thinking as { type?: unknown }).type !== "enabled") return undefined;
+  const tools = body["tools"];
+  if (!Array.isArray(tools) || tools.length === 0) return undefined;
+  return INTERLEAVED_THINKING_BETA;
+}
+
 // --- endpoint + headers ---------------------------------------------------------------------------
 
 interface Endpoint {
@@ -853,11 +961,12 @@ function resolveEndpoint(ctx: ProviderContext, defaultBaseUrl: string): Endpoint
  * account-scoped header lands in the right place.
  */
 /**
- * Is this connection the Anthropic Console row, as opposed to a sibling third-party row sharing this
- * adapter (R6b-5)? The gate on the beta header (D20).
+ * Is this connection one of Anthropic's OWN rows -- `anthropic`, or (WS-23) the `console` row WS-20
+ * split out -- as opposed to a sibling third-party row sharing this adapter (R6b-5)? The gate on the
+ * bearer beta header (D20) and on the bearer's account guard. See `ANTHROPIC_BEARER_PROVIDER_IDS`.
  */
 function isConsoleProvider(ctx: ProviderContext): boolean {
-  return ctx.connection.providerId === ANTHROPIC_CONSOLE_PROVIDER_ID;
+  return ANTHROPIC_BEARER_PROVIDER_IDS.has(ctx.connection.providerId);
 }
 
 /**
@@ -876,7 +985,8 @@ async function resolveFreshMaterial(ctx: ProviderContext): Promise<CredentialMat
 }
 
 /**
- * `blockBindingBeta` is OPTIONAL, and it is a VALUE the caller computed, never a descriptor this
+ * `bodyBetas` (formerly `blockBindingBeta`; WS-23 widened it to a list so the interleaved-thinking
+ * beta rides the same door) is OPTIONAL, and each entry is a VALUE the caller computed, never a descriptor this
  * function reads for itself (fix round 2: see `blockBindingBetaFor`'s own comment for the bug that
  * made). `validateCredential`/`listModels` hit `/v1/models`, not a model-specific endpoint, and pass
  * `undefined` -- there is no row and no body to have derived a beta from.
@@ -885,10 +995,10 @@ async function resolveFreshMaterial(ctx: ProviderContext): Promise<CredentialMat
  * -- including this beta and its dedupe against `opts.betas` -- is otherwise unreachable without a
  * real or faked HTTP round trip, and `messages.test.ts` asserts it directly.
  */
-export async function buildHeaders(ctx: ProviderContext, blockBindingBeta: string | undefined, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean, identity: Record<string, string> = {}): Promise<Record<string, string>> {
+export async function buildHeaders(ctx: ProviderContext, bodyBetas: string | readonly (string | undefined)[] | undefined, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean, identity: Record<string, string> = {}): Promise<Record<string, string>> {
   const material = await resolveFreshMaterial(ctx);
   // P10a-4, AMENDED (Lane S round 3, Opus review): a `bearer` credential for the `anthropic` provider
-  // row is honoured ONLY under its own fixed account, `ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT`
+  // row (and, WS-23, the `console` row -- `isConsoleProvider`) is honoured ONLY under its own fixed account, `ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT`
   // (`anthropic:console`) -- never under `anthropic:default`, the account `winter login
   // --anthropic-key` writes the user's pasted API key to. Checked BEFORE anything else runs (no
   // header is built, no beta is added) and refused with a NAMED, TYPED reason rather than being
@@ -921,7 +1031,7 @@ export async function buildHeaders(ctx: ProviderContext, blockBindingBeta: strin
   // actually produces post-P10a-1. Scoped to `isConsoleProvider(ctx)` exactly as before: a sibling
   // row's `bearer` material still gets no vendor beta.
   //
-  // BLOCK BINDING (2026-09-25 fix round 1), a THIRD, independent beta source: `blockBindingBeta`, the
+  // BLOCK BINDING (2026-09-25 fix round 1), a THIRD, independent beta source: `bodyBetas`, the
   // caller's OWN precomputed decision (`blockBindingBetaFor`, called from `prepare()`/`countTokens()`
   // against the ACTUAL body those functions built) -- never re-derived from a descriptor here, which
   // is exactly the fix round 2 bug (this function used to read `descriptor?.reasoning?.blockBinding`
@@ -933,7 +1043,9 @@ export async function buildHeaders(ctx: ProviderContext, blockBindingBeta: strin
   const betas = [
     ...(opts.betas ?? []),
     ...((material?.kind === "oauth" || material?.kind === "bearer") && isConsoleProvider(ctx) ? [CONSOLE_BEARER.betaHeader] : []),
-    ...(blockBindingBeta !== undefined ? [blockBindingBeta] : []),
+    // WS-23: `bodyBetas` is every beta the caller derived from the BODY it built -- block binding and
+    // (item 5) interleaved thinking today -- one value or a list, `undefined` entries skipped.
+    ...(typeof bodyBetas === "string" ? [bodyBetas] : (bodyBetas ?? []).filter((beta): beta is string => beta !== undefined)),
   ].filter((value, index, all) => all.indexOf(value) === index);
   // HOST HEADERS FIRST, so nothing below can be silently overridden: spread LAST, a host header could
   // replace `anthropic-version` or `content-type`, and a wrong API version is a class of failure that
@@ -981,8 +1093,20 @@ interface OpenBlock {
   toolId: string | undefined;
 }
 
-/** Anthropic's stop reasons -> the seam's five. `stop_sequence` and anything unknown are an ordinary end of turn. */
-function toStopReason(raw: unknown): "end_turn" | "tool_use" | "max_tokens" | "refusal" {
+type AnthropicStopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "pause_turn" | "model_context_window_exceeded";
+
+/**
+ * Anthropic's stop reasons -> the seam's. `stop_sequence` and anything unknown are an ordinary end of turn.
+ *
+ * WS-23: `pause_turn` and `model_context_window_exceeded` used to fall into that default, and neither
+ * is one. Anthropic's own handling guide
+ * (https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons): `pause_turn` means the
+ * server paused a long-running server-tool loop and the turn resumes when the paused response is sent
+ * back; `model_context_window_exceeded` (4.5 and later) means the generation reached the model's
+ * CONTEXT WINDOW -- not `max_tokens`, the requested output cap -- and the conversation must be compacted
+ * before it can continue. Reporting either as `end_turn` ended a long code turn silently, mid-thought.
+ */
+function toStopReason(raw: unknown): AnthropicStopReason {
   switch (raw) {
     case "tool_use":
       return "tool_use";
@@ -990,8 +1114,46 @@ function toStopReason(raw: unknown): "end_turn" | "tool_use" | "max_tokens" | "r
       return "max_tokens";
     case "refusal":
       return "refusal";
+    case "pause_turn":
+      return "pause_turn";
+    case "model_context_window_exceeded":
+      return "model_context_window_exceeded";
     default:
       return "end_turn";
+  }
+}
+
+/**
+ * A refusal's `stop_details` (`message_delta.delta.stop_details`: `{type: "refusal", category,
+ * explanation}`, both nullable per the vendor's own SDK types), or `undefined` when the frame carried
+ * none. `category` is an OPEN set on the wire (new categories ship ahead of any schema), so it is kept
+ * as a string rather than narrowed; `explanation` is display prose and is never parsed.
+ */
+function readStopDetails(raw: unknown): { category: string | null; explanation: string | null } | undefined {
+  if (raw === null || typeof raw !== "object") return undefined;
+  const details = raw as { category?: unknown; explanation?: unknown };
+  return {
+    category: typeof details.category === "string" ? details.category : null,
+    explanation: typeof details.explanation === "string" ? details.explanation : null,
+  };
+}
+
+/**
+ * Anthropic's context-overflow 400, recognised on the FULL body before any snippet is taken.
+ *
+ * The API reports it as `invalid_request_error` -- the same structured code as every other malformed
+ * request -- with the message `prompt is too long: <n> tokens > <max> maximum`. The message IS the
+ * discriminator, so this reads the envelope's own `error.message` (never the scrubbed/capped snippet,
+ * which could truncate it away) and matches its documented leading phrase only.
+ */
+export function isAnthropicPromptTooLong(status: number, body: string): boolean {
+  if (status !== 400) return false;
+  try {
+    const parsed = JSON.parse(body) as { error?: { type?: unknown; message?: unknown } };
+    const message = parsed?.error?.message;
+    return typeof message === "string" && /^prompt is too long\b/i.test(message.trim());
+  } catch {
+    return false;
   }
 }
 
@@ -1010,6 +1172,67 @@ export function anthropicCaptureEvent(descriptor: WinterModelDescriptor | undefi
   return "block-stop";
 }
 
+/**
+ * WS-23 (item 4): reads an opened stream up to its FIRST COMMITTING frame and returns what it read.
+ *
+ * A committing frame is anything that is not `message_start` or `ping`: a content block, a
+ * `message_delta`, `message_stop`, or an `error` the retry policy cannot help. Up to it nothing has
+ * been shown to anyone -- `message_start` carries an id and a usage count, `ping` carries nothing --
+ * so a failure there is still safe to replay. Exactly ONE failure is turned into a retryable throw
+ * (review ruling I-2: a TRANSPORT failure in this window -- a torn connection, a stall, an abort -- keeps
+ * its pre-WS-23 behaviour and is NOT replayed: it is handed to the stream loop as a committed, final
+ * failure, whichever shape the tear takes on the host platform): an `error` frame whose type is `overloaded_error` (the vendor's documented transient state,
+ * HTTP 529 when it arrives as a status; https://platform.claude.com/docs/en/api/errors). Everything
+ * else is handed back, buffered, for the stream loop to treat exactly as it always has -- an
+ * unparseable frame, an ordinary content stream, a stream that ended early.
+ *
+ * On the retryable throw the abandoned stream is closed first (`return()` runs `parseSse`'s own
+ * `finally`, which cancels the reader), so a replay never leaves a connection draining behind it.
+ */
+async function openCommittedStream(stream: AsyncGenerator<SseEvent>): Promise<{ frames: AsyncGenerator<SseEvent>; buffered: SseEvent[] }> {
+  const buffered: SseEvent[] = [];
+  for (;;) {
+    let next: IteratorResult<SseEvent>;
+    try {
+      next = await stream.next();
+    } catch (err) {
+      // I-2: a transport failure is not this function's to replay. The stream loop sees the buffered
+      // frames and then this very error, exactly as it did before the read moved inside `withRetry`.
+      return { frames: rethrowing(err), buffered };
+    }
+    if (next.done === true) return { frames: stream, buffered };
+    const sse = next.value;
+    buffered.push(sse);
+    if (sse.event === "ping") continue;
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(sse.data) as Record<string, unknown>;
+    } catch {
+      return { frames: stream, buffered };
+    }
+    const type = typeof payload["type"] === "string" ? payload["type"] : sse.event;
+    if (type === "message_start") continue;
+    if (type === "error") {
+      const error = (payload["error"] ?? {}) as Record<string, unknown>;
+      if (error["type"] === "overloaded_error") {
+        await stream.return(undefined).catch(() => {});
+        throw new ProviderRequestError({
+          code: "server",
+          message: "the provider reported overloaded_error before any content was streamed",
+          providerCode: "overloaded_error",
+          retryable: true,
+        });
+      }
+    }
+    return { frames: stream, buffered };
+  }
+}
+
+// eslint-disable-next-line require-yield -- a generator that only rethrows, so the loop's own catch owns the failure
+async function* rethrowing(err: unknown): AsyncGenerator<SseEvent> {
+  throw err;
+}
+
 function malformed(detail: string): ProviderError {
   return { code: "bad_request", message: `the provider stream carried a frame this adapter could not decode: ${detail}`, retryable: false };
 }
@@ -1026,6 +1249,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
   const identityFor = (ctx: ProviderContext): Record<string, string> => winterIdentityHeaders((identityLookup ??= identityHeaderLookup(catalogOf())), ctx.connection.providerId);
   const timeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  let loggedThinkingRewrite = false;
 
   /**
    * Everything that must be decided BEFORE the network: the descriptor, the endpoint policy, the
@@ -1042,8 +1266,14 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     if (req.signal?.aborted === true) throw new ProviderRequestError({ code: "aborted", message: "provider request aborted by the caller", retryable: false });
     const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
     const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
-    const body = buildRequestBody(req, descriptor, opts);
-    const headers = await buildHeaders(ctx, blockBindingBetaFor(body, descriptor), endpoint.policy, opts, true, identityFor(ctx));
+    const body = buildRequestBody(req, descriptor, opts, "generate", () => {
+      // Review M-6: an explicit `disabled` the row forced back on is logged ONCE per adapter instance
+      // (the runtime builds one registry, and so one adapter, per session): ids only, never content.
+      if (loggedThinkingRewrite) return;
+      loggedThinkingRewrite = true;
+      ctx.log({ kind: "provider.thinking_rewrite.disabled_to_adaptive", providerId: ctx.connection.providerId, model: req.model });
+    });
+    const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor)], endpoint.policy, opts, true, identityFor(ctx));
     return { endpoint, body, headers, captureEvent: anthropicCaptureEvent(descriptor) };
   }
 
@@ -1063,10 +1293,19 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
 
     const policy = createRetryPolicy(opts.retry ?? {});
     const retryEvents: Array<Extract<ProviderEvent, { type: "retry" }>> = [];
-    let response: Response;
+    let bytes = 0;
+    // WS-23 (item 4): THE FIRST-BYTE LINE MOVED TO THE FIRST CONTENT FRAME. The stream is opened INSIDE
+    // `withRetry` and read up to its first committing frame (see `openCommittedStream`); a mid-stream
+    // `overloaded_error` that arrives before it -- after `message_start`, before any content block --
+    // is thrown there as a RETRYABLE failure, so the same policy (same budget, same backoff, same
+    // `retry` events) replays the request. Nothing had been yielded: `message_start` and `ping` are
+    // buffered, never forwarded, until the stream commits. Past that point every failure is final.
+    let opened: { frames: AsyncGenerator<SseEvent>; buffered: SseEvent[] };
     try {
-      response = await withRetry(
+      opened = await withRetry(
         async () => {
+          // M-8: the stream log counts the COMMITTED attempt's bytes, not every abandoned retry's too.
+          bytes = 0;
           const res = await boundedFetch(`${endpoint.base}/v1/messages`, {
             method: "POST",
             headers,
@@ -1076,10 +1315,26 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
             policy: endpoint.policy,
             ...(req.signal !== undefined ? { signal: req.signal } : {}),
           });
-          if (!res.ok) throw new ProviderRequestError(normalizeHttpError(res.status, res.headers, await res.text()));
-          // THE FIRST-BYTE LINE. Past this point `withRetry` refuses to replay, whatever fails.
+          if (!res.ok) {
+            const text = await res.text();
+            const normalized = normalizeHttpError(res.status, res.headers, text);
+            // WS-23: the context-overflow 400 is TYPED here, where the full body is still in hand, so
+            // the engine's reactive compaction reads a flag rather than re-parsing a capped message.
+            throw isAnthropicPromptTooLong(res.status, text) ? Object.assign(new ProviderRequestError(normalized), { contextOverflow: true as const }) : new ProviderRequestError(normalized);
+          }
+          if (res.body === null) throw new ProviderRequestError(malformed("a 200 response with no body at all"));
+          const opened = await openCommittedStream(
+            parseSse(res.body, {
+              stallTimeoutMs: ctx.stallTimeoutMs,
+              ...(req.signal !== undefined ? { signal: req.signal } : {}),
+              onBytes: (n) => {
+                bytes += n;
+              },
+            }),
+          );
+          // THE COMMIT LINE. Past this point `withRetry` refuses to replay, whatever fails.
           policy.commit();
-          return res;
+          return opened;
         },
         policy,
         (event) => retryEvents.push(event),
@@ -1092,12 +1347,6 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     }
     for (const event of retryEvents) yield event;
 
-    if (response.body === null) {
-      yield { type: "error", error: malformed("a 200 response with no body at all") };
-      return;
-    }
-
-    let bytes = 0;
     const blocks = new Map<number, OpenBlock>();
     /** Completed in-dialect blocks, in wire order, when the descriptor defers the capture to `message_stop`. */
     const heldThinking: unknown[] = [];
@@ -1105,17 +1354,18 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     let outputTokens = 0;
     let cacheReadTokens: number | undefined;
     let cacheWriteTokens: number | undefined;
-    let stopReason: "end_turn" | "tool_use" | "max_tokens" | "refusal" = "end_turn";
+    let stopReason: AnthropicStopReason = "end_turn";
+    let stopDetails: { category: string | null; explanation: string | null } | undefined;
     let sawMessageStop = false;
 
+    const { frames, buffered } = opened;
+    async function* replayThenRest(): AsyncGenerator<SseEvent> {
+      yield* buffered;
+      yield* frames;
+    }
+
     try {
-      for await (const sse of parseSse(response.body, {
-        stallTimeoutMs: ctx.stallTimeoutMs,
-        ...(req.signal !== undefined ? { signal: req.signal } : {}),
-        onBytes: (n) => {
-          bytes += n;
-        },
-      })) {
+      for await (const sse of replayThenRest()) {
         // `ping` NEVER reaches the consumer -- capture (F) observed the pinned runtime filtering it,
         // and the SSE layer's own stall clock already reset on its bytes.
         if (sse.event === "ping") continue;
@@ -1218,6 +1468,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
           case "message_delta": {
             const delta = (payload["delta"] ?? {}) as Record<string, unknown>;
             stopReason = toStopReason(delta["stop_reason"]);
+            stopDetails = readStopDetails(delta["stop_details"]);
             const usage = payload["usage"] as Record<string, unknown> | undefined;
             if (typeof usage?.["output_tokens"] === "number") outputTokens = usage["output_tokens"];
             if (typeof usage?.["input_tokens"] === "number") inputTokens = usage["input_tokens"];
@@ -1225,6 +1476,10 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
           }
           case "message_stop":
             sawMessageStop = true;
+            // WS-23 CAVEAT: a row that defers its capture to `message_stop` releases its thinking blocks
+            // AFTER every text/tool event of the turn, so the fold's stream-order `content` puts them
+            // LAST -- not wire order. No Anthropic row declares that completion event today; a row that
+            // ever does needs the blocks' wire indices carried before its `content` can be trusted.
             // Held blocks are released HERE, in wire order, for a row whose evidence names this as its
             // completion event. A stream that never reaches `message_stop` releases none of them --
             // the completion-event rule, stated the same way at whichever event the row names.
@@ -1238,8 +1493,9 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
               type: "error",
               error: {
                 // A mid-stream `error` frame is a SERVER-side failure of an already-started
-                // generation. It is never retryable here whatever it says: bytes have been consumed
-                // and R6-6 forbids replaying an effectful turn.
+                // generation. It is never retryable HERE whatever it says: content has been streamed
+                // and R6-6 forbids replaying an effectful turn. (An `overloaded_error` that arrives
+                // BEFORE any content never reaches this case -- `openCommittedStream` replays it.)
                 code: "server",
                 message: `the provider ended the stream with an error frame${providerCode !== undefined ? ` (${providerCode})` : ""}`,
                 retryable: false,
@@ -1275,7 +1531,9 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
       ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
     };
-    yield { type: "done", stopReason };
+    // `stopDetails` rides a refusal ONLY: the vendor documents the field as populated for
+    // `stop_reason: "refusal"` and `null` for every other reason.
+    yield { type: "done", stopReason, ...(stopReason === "refusal" && stopDetails !== undefined ? { stopDetails } : {}) };
   }
 
   return {
@@ -1294,7 +1552,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
       const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
       const body = buildRequestBody(req, descriptor, opts, "count");
-      const headers = await buildHeaders(ctx, blockBindingBetaFor(body, descriptor), endpoint.policy, opts, true, identityFor(ctx));
+      const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor)], endpoint.policy, opts, true, identityFor(ctx));
       const res = await boundedFetch(`${endpoint.base}/v1/messages/count_tokens`, {
         method: "POST",
         headers,

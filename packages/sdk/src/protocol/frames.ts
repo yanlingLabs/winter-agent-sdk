@@ -780,7 +780,9 @@ export type SdkMessage =
       is_error?: boolean;
       result?: string;
       structured_output?: unknown;
-      terminal_reason?: "structured_output_retry_exhausted" | "api_error" | string;
+      // WS-23: `refusal` (a model/classifier refusal), `prompt_too_long` (context overflow that reactive
+      // compaction could not recover) and `pause_turn_limit` (a paused turn that would not resume).
+      terminal_reason?: "structured_output_retry_exhausted" | "api_error" | "refusal" | "prompt_too_long" | "pause_turn_limit" | string;
       api_error_status?: number | null;
       /** THIS turn's main-loop usage -- claude's `result.usage` (dist-session fixes C1); see `WireResultUsage`. */
       usage?: WireResultUsage;
