@@ -427,6 +427,18 @@ export type ContentBlock =
   | { type: "redacted_thinking"; data: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
 
+/**
+ * WS-24: the text a FORK's ToolSearch result carries for loaded tools its frozen `tools` does not declare
+ * (the engine's `forkLoadedDefinitionsText`, on a row with `undeclaredToolCalls` evidence). Exported so
+ * the live probe that gathers that evidence (`scripts/probe-fork-undeclared-tool.ts`) sends these exact
+ * bytes rather than a lookalike.
+ */
+export function undeclaredToolDefinitionsText(definitions: readonly LoadedToolDefinition[]): string {
+  if (definitions.length === 0) return "";
+  const lines = definitions.map((d) => `<function>${JSON.stringify({ name: d.name, description: d.description, parameters: d.inputSchema })}</function>`);
+  return `\n\nThese loaded tools are not in this conversation's tool list, but you can call them by name; each one's input must match its parameters schema:\n<functions>\n${lines.join("\n")}\n</functions>`;
+}
+
 /** WS-23 (midconv, review I-2): one loaded tool's definition as it stood at load time (see `tool_result.loadedToolDefinitions`). */
 export interface LoadedToolDefinition {
   name: string;
@@ -5354,8 +5366,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const declared = new Set(exactRequestLayout.tools.map((t) => t.name));
     const missing = definitions.filter((d) => !declared.has(d.name));
     if (missing.length === 0) return "";
-    const lines = missing.map((d) => `<function>${JSON.stringify({ name: d.name, description: d.description, parameters: d.inputSchema })}</function>`);
-    return `\n\nThese loaded tools are not in this conversation's tool list, but you can call them by name; each one's input must match its parameters schema:\n<functions>\n${lines.join("\n")}\n</functions>`;
+    return undeclaredToolDefinitionsText(missing);
   };
   /** Canonical -> advertised: `loadedTools` names what `tools` carries, because that is what a `tool_reference` must name. */
   const advertisedNamesFor = (canonical: readonly string[] | undefined): string[] => {
