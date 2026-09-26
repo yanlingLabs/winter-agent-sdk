@@ -6,7 +6,9 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
-## 0.0.25
+## 0.0.26
+
+(0.0.25 was tagged but never published: its release workflow stopped at the test step, fixed below.)
 
 WS-23: every model, Claude included, now runs on this SDK (the official `claude` leg is retired
 from Winter). xAI moves to the Responses API; MCP moves to the TypeScript SDK v2; the hook system is
@@ -16,6 +18,11 @@ effort on Opus 5/5.5, Fable 5.1 and GPT-6), tool changes (Anthropic tool additio
 OpenAI `tool_search`/`additional_tools`/`allowed_tools`) and model switches; every model's reasoning state
 moves into the provider-state sidecar (the transcript becomes provider-neutral); the runtime ships as a
 publishable package, `@yanlinglabs/winter-agent-runtime`, with an embedded (in-process Worker) entry.
+
+### Release CI
+
+- The release smoke reaches registry.npmjs.org through a narrow, credential-free opt-in (`withNpmRegistryAccess`); every other test stays network-blocked.
+- Linux-host fixes for the embedded-Worker Bash test and the reasoning golden; the publish-routing dry runs are offline.
 
 ### Embedded runtime (WS-23)
 
