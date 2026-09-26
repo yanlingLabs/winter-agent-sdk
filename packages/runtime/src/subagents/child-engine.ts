@@ -518,6 +518,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
   // header note) is a concurrency re-check on the SAME childKey, never a fresh depth for the record.
   const { depth: spawnDepth } = checkAndRegisterSpawn({ parentKey: runCtx.parentAgentId ?? runCtx.parentSessionId, childKey: agentId, env, ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}) });
   let spawnRegistered = true;
+  // WS-24: the first generation's MCP server-name claims, until `startGeneration` owns them (its `runEngine` releases them).
+  let pendingServerRelease: (() => void) | undefined;
 
   try {
     // --- Model/effort resolution (WS-10 §3) -----------------------------------------------------
@@ -1496,6 +1498,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // WS-24: the first generation's servers, allocated (and their names claimed) here so a rename reaches
     // the child's first turn with the other definition warnings.
     let serverAllocation = allocateChildScopedServers(childScopedMcpServers, parentVisibleServers());
+    pendingServerRelease = serverAllocation.release;
     definitionWarnings.push(...serverAllocation.notes);
     const firstTurnText =
       req.fork === true
@@ -1773,9 +1776,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     startGeneration(generationConfig(inherit.policy.effectiveMode), initialMessages, firstTurnText, resolvedSystemPrompt, serverAllocation);
 
     spawnRegistered = false; // ownership of the depth/concurrency slot has moved into the generation's own settle()/stop()
+    pendingServerRelease = undefined; // ...and of the server-name claims, into its `runEngine`
     return handle;
   } catch (err) {
     if (spawnRegistered) releaseSpawn(agentId);
+    pendingServerRelease?.();
     throw err;
   }
 }
