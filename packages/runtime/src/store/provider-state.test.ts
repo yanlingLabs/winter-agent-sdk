@@ -103,9 +103,11 @@ describe("R6-7 crash pairs", () => {
     expect(chain.get("a")?.nativeState?.items).toEqual(["new"]);
   });
 
-  test("a native-state record with no continuationDomain falls back to the FAMILY, never a fabricated domain", () => {
+  // WS-23 (defect e): the floor is the producing MODEL, never the family string -- `"openai"` put xAI's and
+  // OpenAI's state in one pseudo-domain.
+  test("a native-state record with no continuationDomain falls back to its own MODEL KEY, never the family", () => {
     const chain = buildContinuationChain([record("a", "native-state", { items: [1] })], new Set(["a"]));
-    expect(chain.get("a")?.nativeState?.continuationDomain).toBe("openai");
+    expect(chain.get("a")?.nativeState?.continuationDomain).toBe("openai/o-test");
   });
 });
 
@@ -592,4 +594,161 @@ describe("round 2 / M3: a FORKED session carries its provider-state chain and id
         rmSync(cwd, { recursive: true, force: true });
       }
     }));
+});
+
+// --- WS-23 (reasoning-state): Anthropic thinking as a `reasoning-blocks` record ------------------------
+describe("WS-23: the `reasoning-blocks` kind", () => {
+  const CLAUDE = { sessionId: "sess", provider: "anthropic", model: "anthropic/claude-opus-5-5", family: "anthropic", continuationDomain: "anthropic/claude-opus-5-5" } as const;
+  const THINK = { type: "thinking", thinking: "look first", signature: "sig-a" };
+  const REDACTED = { type: "redacted_thinking", data: "OPAQUE" };
+
+  test("folds into `nativeState` as tagged items in `at` order, carrying the record's own family and domain", () => {
+    const records = [
+      toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 0, kind: "origin", payload: {} }),
+      toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 1, kind: "reasoning-blocks", payload: { blocks: [{ at: 2, block: REDACTED }, { at: 0, block: THINK }] } }),
+    ];
+    const link = buildContinuationChain(records, new Set(["a1"])).get("a1")!;
+    expect(link.nativeState).toEqual({
+      family: "anthropic",
+      continuationDomain: "anthropic/claude-opus-5-5",
+      items: [
+        { type: "winter.reasoning_block", at: 0, block: THINK },
+        { type: "winter.reasoning_block", at: 2, block: REDACTED },
+      ],
+    });
+  });
+
+  test("a `native-state` record on the same anchor neither erases nor is erased by the blocks, in either order", () => {
+    const blocks = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 2, kind: "reasoning-blocks", payload: { blocks: [{ at: 0, block: THINK }] } });
+    const native = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 1, kind: "native-state", payload: { items: ["opaque"] } });
+    for (const order of [
+      [native, blocks],
+      [blocks, native],
+    ]) {
+      const items = buildContinuationChain(order, new Set(["a1"])).get("a1")!.nativeState!.items;
+      expect(items).toContainEqual("opaque");
+      expect(items).toContainEqual({ type: "winter.reasoning_block", at: 0, block: THINK });
+      expect(items).toHaveLength(2);
+    }
+  });
+
+  test("a malformed payload folds to nothing (never a partial list of blocks)", () => {
+    const bad = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 1, kind: "reasoning-blocks", payload: { blocks: [{ at: 0, block: THINK }, { at: 1, block: { type: "thinking", thinking: "no signature" } }] } });
+    expect(buildContinuationChain([bad], new Set(["a1"])).get("a1")?.nativeState).toBeUndefined();
+  });
+
+  test("the record round-trips through the file codec; a kind this reader does not list is dropped (what an older runtime does with this one)", () =>
+    withTempHome((home) => {
+      const path = join(home, "s.provider-state.jsonl");
+      const written = appendProviderState(path, { ...CLAUDE, anchorUuid: "a1", itemIndex: 1, kind: "reasoning-blocks", payload: { blocks: [{ at: 0, block: THINK }] } });
+      appendFileSync(path, `${JSON.stringify({ ...written, uuid: "u-future", kind: "some-future-kind" })}\n`);
+      expect(readProviderState(path)).toEqual([written]);
+    }));
+});
+
+// --- WS-23 (reasoning-state, defect c): a big sidecar keeps its NEWEST records, never none --------------
+describe("WS-23: the bounded read lets the oldest records go instead of dropping the whole chain", () => {
+  test("past the kept-bytes bound, the oldest records are released and every newer one is kept", () =>
+    withTempHome((home) => {
+      const path = join(home, "s.provider-state.jsonl");
+      const written = Array.from({ length: 40 }, (_, i) => appendProviderState(path, { ...BASE, anchorUuid: `a-${i}`, kind: "native-state", payload: { items: [`opaque-${i}-${"x".repeat(200)}`] } }));
+      const lineBytes = Buffer.byteLength(JSON.stringify(written[39]));
+      const kept = readProviderState(path, { maxKeptBytes: lineBytes * 10 + 5 });
+      expect(kept).toEqual(written.slice(-10));
+      // The default bound reads everything back.
+      expect(readProviderState(path)).toEqual(written);
+    }));
+
+  test("an oversized line is skipped unbuffered; the records around it survive, across chunk boundaries", () =>
+    withTempHome((home) => {
+      const path = join(home, "s.provider-state.jsonl");
+      const before = appendProviderState(path, { ...BASE, anchorUuid: "a-1", kind: "origin", payload: {} });
+      appendFileSync(path, `${"y".repeat(3 * 1024 * 1024)}\n`);
+      const after = appendProviderState(path, { ...BASE, anchorUuid: "a-2", kind: "native-state", payload: { items: ["z".repeat(2 * 1024 * 1024)] } });
+      expect(readProviderState(path, { maxLineBytes: 2.5 * 1024 * 1024 })).toEqual([before, after]);
+    }));
+});
+
+// --- WS-23 (reasoning-state, layer 2): cache quirks keyed by model -------------------------------------
+describe("WS-23: the `effort`, `tool-epoch` and `tool-changes` kinds", () => {
+  const CLAUDE = { sessionId: "sess", provider: "anthropic", model: "anthropic/claude-opus-5-5", family: "anthropic" } as const;
+  test("fold onto the anchor's link: the effort annotations, the bookkeeping in write order, and when the reply landed", () => {
+    const origin = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 0, kind: "origin", payload: {}, timestamp: "2026-09-26T10:00:00.000Z" });
+    const effort = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 1, kind: "effort", payload: { effort: "high", perTurnEffort: "low" } });
+    const epoch = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 2, kind: "tool-epoch", payload: { type: "tool_epoch", mechanism: "anthropic-inline", modelKey: CLAUDE.model, tools: [] } });
+    const changes = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 3, kind: "tool-changes", payload: { type: "tool_changes", mechanism: "anthropic-inline", modelKey: CLAUDE.model, declare: [], remove: [], add: [] } });
+    const wrong = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 4, kind: "tool-epoch", payload: { type: "tool_changes" } });
+    const link = buildContinuationChain([origin, effort, epoch, changes, wrong], new Set(["a1"])).get("a1")!;
+    expect(link.recordedAt).toBe("2026-09-26T10:00:00.000Z");
+    expect(link.effort).toEqual({ effort: "high", perTurnEffort: "low" });
+    expect(link.bookkeeping!.map((b) => b.type)).toEqual(["tool_epoch", "tool_changes"]);
+  });
+});
+
+// --- WS-23 (reasoning-state): a FORK carries the new kinds with the rest of the chain ---------------------
+describe("WS-23: a forked session carries `reasoning-blocks`, `effort` and the tool epoch's records", () => {
+  test("every new kind is copied, re-owned and still anchored on the source's entry uuid, and folds on the fork", () =>
+    withTempHome(async (home) => {
+      const cwd = mkdtempSync(join(tmpdir(), "winter-ws23-fork-kinds-"));
+      try {
+        const anchor = "eeeeeeee-2222-4222-8222-222222222222";
+        const source = await resolveEngineSession({ config: { sessionId: "sess-ws23-fork", cwd, model: "m", permissionMode: "default" } as never, resolveWinterHome: () => home, env: {} });
+        source.store!.setProviderIdentity!({ providerId: "anthropic", modelKey: "anthropic/claude-opus-5-5", adapterId: "anthropic-messages", adapterVersion: "1.0.0", catalogVersion: "0.0.0-seed", authRefKind: "env" });
+        await source.store!.recordUserEntry("hello");
+        const base = { sessionId: "sess-ws23-fork", anchorUuid: anchor, provider: "anthropic", model: "anthropic/claude-opus-5-5", family: "anthropic", continuationDomain: "anthropic/claude-opus-5-5" };
+        await source.store!.recordProviderState!({ ...base, itemIndex: 0, kind: "origin", payload: {} });
+        await source.store!.recordProviderState!({ ...base, itemIndex: 1, kind: "reasoning-blocks", payload: { blocks: [{ at: 0, block: { type: "thinking", thinking: "t", signature: "SIG-FORK" } }] } });
+        await source.store!.recordProviderState!({ ...base, itemIndex: 2, kind: "effort", payload: { effort: "high", perTurnEffort: "low" } });
+        await source.store!.recordProviderState!({ ...base, itemIndex: 3, kind: "tool-epoch", payload: { type: "tool_epoch", mechanism: "anthropic-inline", modelKey: base.model, tools: [] } });
+        await source.store!.recordAssistantEntry([{ type: "text", text: "one" }], { uuid: anchor });
+        await source.store!.flush?.();
+
+        const forked = await resolveEngineSession({ config: { sessionId: "unused", cwd, model: "m", permissionMode: "default", resume: "sess-ws23-fork", forkSession: true } as never, resolveWinterHome: () => home, env: {} });
+        const records = await forked.store!.loadProviderState!();
+        expect(records.map((r) => r.kind)).toEqual(["origin", "reasoning-blocks", "effort", "tool-epoch"]);
+        for (const r of records) {
+          expect(r.sessionId).toBe(forked.config.sessionId);
+          expect(r.anchorUuid).toBe(anchor);
+        }
+        const link = buildContinuationChain(records, new Set([anchor])).get(anchor)!;
+        expect(link.nativeState?.items).toEqual([{ type: "winter.reasoning_block", at: 0, block: { type: "thinking", thinking: "t", signature: "SIG-FORK" } }]);
+        expect(link.effort).toEqual({ effort: "high", perTurnEffort: "low" });
+        expect(link.bookkeeping?.map((b) => b.type)).toEqual(["tool_epoch"]);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }));
+});
+
+// Review r1, I-4: the streamed read's MEMORY is bounded too, not only its result.
+describe("WS-23: a large sidecar is read in bounded memory", () => {
+  test("20,000 records under a bound that keeps ~100: the working list never holds more than about twice that", () =>
+    withTempHome((home) => {
+      const path = join(home, "big.provider-state.jsonl");
+      const one = JSON.stringify(toProviderStateRecord({ ...BASE, anchorUuid: "a", kind: "native-state", payload: { items: ["x".repeat(200)] } }));
+      const lines: string[] = [];
+      for (let i = 0; i < 20_000; i++) lines.push(one.replace('"anchorUuid":"a"', `"anchorUuid":"a-${i}"`));
+      writeFileSync(path, `${lines.join("\n")}\n`);
+      const stats = { peakRetained: 0 };
+      const kept = readProviderState(path, { maxKeptBytes: Buffer.byteLength(one) * 100, stats });
+      expect(kept.length).toBeGreaterThanOrEqual(95); // each real line is a few bytes longer than `one` (its anchor)
+      expect(kept.length).toBeLessThanOrEqual(101);
+      expect(kept.at(-1)!.anchorUuid).toBe("a-19999");
+      expect(stats.peakRetained).toBeLessThanOrEqual(2 * 101 + 1);
+    }));
+});
+
+// Review r1, M-1: the sticky decoration decisions fold per TARGET model.
+describe("WS-23: the `decoration` kind", () => {
+  test("folds per target model key: a decoration verbatim, or null for 'none was sent'", () => {
+    const base = { sessionId: "sess", anchorUuid: "a1", itemIndex: 0, kind: "decoration" as const };
+    const records = [
+      toProviderStateRecord({ ...base, provider: "openai", model: "openai/gpt-6-sol", family: "openai", payload: { text: "<recovered_reasoning …>x</recovered_reasoning>", door: "tag" } }),
+      toProviderStateRecord({ ...base, provider: "deepseek", model: "deepseek/deepseek-v4-pro", family: "openai", payload: { dropped: true } }),
+    ];
+    expect(buildContinuationChain(records, new Set(["a1"])).get("a1")!.decorations).toEqual({
+      "openai/gpt-6-sol": { text: "<recovered_reasoning …>x</recovered_reasoning>", door: "tag" },
+      "deepseek/deepseek-v4-pro": null,
+    });
+  });
 });

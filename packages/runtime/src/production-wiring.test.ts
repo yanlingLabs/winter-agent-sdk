@@ -176,6 +176,9 @@ describe("T8 production wiring: the guards it carries", () => {
         efforts: ["low", "medium", "high", "xhigh", "max"],
         defaultEffort: "medium",
         wire: { perMessageEffort: true, deferredToolLoading: true, midConversationSystem: true, toolChanges: "inline" },
+        // WS-23 (reasoning-state, decision 5): the switch fit check's budget and the accountant's limit.
+        contextWindow: 1_000_000,
+        maxOutputTokens: 128_000,
       });
       // Sonnet 5: effort via output_config, but neither per-message effort nor tool search.
       expect(wiring.engineOptions.describeModel("anthropic/claude-sonnet-5")?.wire).toBeUndefined();

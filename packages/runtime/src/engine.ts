@@ -23,6 +23,7 @@ import {
   // Phase 5 Task 2 (R5-3/R5-4): the session defaults are exported CONSTANTS, resolved here when the
   // corresponding RuntimeConfig field is absent -- never baked into the wire by query.ts.
   DEFAULT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_COMPACTION_THRESHOLD,
   DEFAULT_OUTPUT_STYLE,
   type InitPluginInfo,
   // Phase 6 Task 3 (R6-D): the wire vocabularies are declared ONCE, in the sdk. `ProviderRawStreamEvent`
@@ -84,7 +85,7 @@ import { getDefaultMessagingRuntime, UnattributableSenderError, classifyDelivery
 import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, SystemPromptBlock, ToolChangeSet, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 // P6 fix wave (Ruling E-2): the two PURE continuity functions the switch point calls. Value imports
 // from the provider-runtime barrel, one direction (runtime -> provider-runtime), same as every adapter.
-import { WinterProviderResolutionError, buildPortableHandoff, classifySwitch } from "@yanlinglabs/winter-provider-runtime";
+import { DECORATION_CHAR_BUDGET, ESTIMATE_CHARS_PER_TOKEN, ESTIMATE_MARGIN, WinterProviderResolutionError, classifySwitch, isServerToolBlockType, estimateTextTokens, estimateTokensFromChars, estimateValueTokens, fitBudgetTokens, fitVerdict, isWinterBookkeepingItem, reasoningBlockItems, separateReasoningBlocks, type FitVerdict } from "@yanlinglabs/winter-provider-runtime";
 export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
@@ -698,6 +699,11 @@ export interface ModelDescription {
   /** The row's own `reasoning.defaultEffort`: the level in force when no effort is named. */
   defaultEffort?: string;
   wire?: ModelWireFeatures;
+  /** WS-23 (reasoning-state, decision 5): the row's context window and output ceiling, in tokens -- the switch fit check's budget and the context accountant's limit after a switch. */
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  /** WS-23 (reasoning-state, decision 9): `false` when the row reads no images (its input modalities omit them). Absent: unknown, read as yes. */
+  readsImages?: boolean;
 }
 
 // --- Phase 5 Task 2 (R5-3): the provider seam extension -------------------------------------------
@@ -1043,6 +1049,32 @@ export function inStreamOrder(turn: ProviderTurn): ContentBlock[] | undefined {
   return content;
 }
 
+/** WS-23 (reasoning-state): the sidecar kinds that carry a turn's REASONING (retried once on a failed write, then warned about). */
+const REASONING_STATE_KINDS: ReadonlySet<string> = new Set(["native-state", "reasoning-blocks", "summary"]);
+
+/**
+ * WS-23 (reasoning-state): an assistant turn's content as the HOST sees it on the `assistant` frame --
+ * every in-dialect reasoning block keeps its readable text and loses its attestation: `signature` and
+ * `redacted_thinking.data` become `""`. Those bytes exist for one reader, the Anthropic API on the next
+ * request, and they reach it from the provider-state sidecar; a host (the daemon, a phone, a log) has no
+ * use for them and every copy is one more place an opaque token can leak from. The block SHAPES stay,
+ * so a host that renders "thinking…" or "[redacted]" keeps working.
+ */
+export function contentForHost(content: ContentBlock[]): ContentBlock[] {
+  if (!content.some((block) => block.type === "thinking" || block.type === "redacted_thinking")) return content;
+  return content.map((block) => (block.type === "thinking" ? { type: "thinking", thinking: block.thinking, signature: "" } : block.type === "redacted_thinking" ? { type: "redacted_thinking", data: "" } : block));
+}
+
+/**
+ * WS-23 (reasoning-state): the in-memory shape of an assistant entry's persisted content -- exactly what
+ * `rebuildProviderMessages` (store/resume.ts) rebuilds it as on a resume: a lone text block collapses to
+ * its string, anything else stays an array. Holding the same shape live keeps a live session's history
+ * and the same session's resumed history identical message for message.
+ */
+function asRebuiltContent(content: ContentBlock[]): string | ContentBlock[] {
+  return content.length === 1 && content[0]!.type === "text" ? content[0]!.text : content;
+}
+
 /**
  * Phase 6 (R6-9), widened by the fix wave: the session's RESOLVED provider identity as the engine
  * carries it -- the `MessageOrigin` half every `origin` record and `providerAnnotations` read, plus
@@ -1151,6 +1183,12 @@ export interface ContextAccountant {
    * the context reading would make the parent compact on a window it does not have.
    */
   recordDescendantUsage(usage: ProviderUsage): void;
+  /**
+   * WS-23 (reasoning-state, decision 5): the window moves with the model. A switch re-sources the limit
+   * from the TARGET's row -- the auto-compaction threshold used to keep reading the first model's window
+   * for the rest of the session. Optional: an injected accountant without it keeps its own limit.
+   */
+  setLimit?(limit: number): void;
 }
 
 // Re-exported so a lane reads the seam's default from the SAME module the seam itself lives in
@@ -1169,7 +1207,7 @@ function promptTokens(usage: ProviderUsage): number {
 }
 
 export function createContextAccountant(opts: ContextAccountantOptions = {}): ContextAccountant {
-  const limit = typeof opts.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0 ? opts.limit : DEFAULT_CONTEXT_WINDOW_TOKENS;
+  let limit = typeof opts.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0 ? opts.limit : DEFAULT_CONTEXT_WINDOW_TOKENS;
   let last = 0;
   // P5-J: the SECOND counter. `last` is overwritten per call (the context reading); `spent` only
   // ever accumulates. Every generation touches both; a descendant's usage touches only `spent`.
@@ -1189,6 +1227,10 @@ export function createContextAccountant(opts: ContextAccountantOptions = {}): Co
     },
     recordDescendantUsage(usage: ProviderUsage) {
       spent += promptTokens(usage) + usage.outputTokens;
+    },
+    setLimit(next: number) {
+      // The constructor's own rule: a non-positive or non-finite value is ignored.
+      if (Number.isFinite(next) && next > 0) limit = next;
     },
   };
 }
@@ -3059,11 +3101,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // re-derived from the history -- a compaction's kept messages need not carry any annotation, and a
   // first \`set_effort\` must not move a top-level value the session never sent. Seeded from the history
   // on resume; re-frozen only on a model change (the cache is cold then anyway).
+  //
+  // WS-23 (reasoning-state): seeded LAZILY, per model, by `planEffort` -- from the target model's OWN
+  // replies (the annotations are a cache quirk of one model), and only once the sidecar's `effort`
+  // records are folded back onto a resumed history, which happens after this point. Returning to a model
+  // re-seeds its own frozen value, so its cached prefix's top-level effort is what it was.
   let frozenEffort: { modelKey: string | undefined; value: string | undefined } | undefined;
-  {
-    const seeded = frozenEffortFromHistory(messages);
-    if (seeded !== undefined) frozenEffort = { modelKey: providerIdentity?.modelKey ?? config.model, value: seeded.value };
-  }
+  // WS-23 (reasoning-state): tool-epoch bookkeeping appended to the history but not yet persisted. It is
+  // written to the sidecar with the NEXT assistant entry, anchored to it (the reply to the request that
+  // introduced it), and put back right before that entry on a resume.
+  const pendingBookkeeping: AttachmentPayload[] = [];
+  // WS-23 (reasoning-state, decision 5): a model switch whose target has not sent its first request yet.
+  // That request is where the FIT CHECK runs (the system prompt and tools it will carry are known there),
+  // and `source` is the model the session LEFT -- the one that compacts when the history does not fit
+  // (user decision: the source pays). `source()` answers `undefined` when that model is out of reach
+  // (a resume onto another provider; the daemon compacts on the source before such a switch instead).
+  let pendingFitCheck: { from: string | undefined; source: () => Provider | undefined } | undefined;
   // WS-23 (midconv): the tool epoch's session state (context/tool-epoch.ts; `planToolsForRequest`).
   // `toolChangesRejected` is sticky, like `perMessageEffortRejected`: the API refused a tool change, so
   // every later request rebuilds `tools` (claude 2.1.282's own one-time fallback). `forceNewToolEpoch` is
@@ -3534,10 +3587,30 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * (every pre-P6 double, and any run before selection is wired in T10) writes no records at all and
    * behaves byte-identically to before this task.
    */
-  const recordAssistant = async (content: ContentBlock[], provenance?: { nativeState?: ProviderNativeState; summary?: string; material?: "exposed"; complete?: boolean }, effortStamp?: { effort?: string; perTurnEffort: string }): Promise<string | undefined> => {
-    if (!store) return undefined;
+  //
+  // WS-23 (reasoning-state): the TRANSCRIPT IS PROVIDER-NEUTRAL. An Anthropic-family turn's in-dialect
+  // `thinking` / `redacted_thinking` blocks (signatures and opaque data intact) leave the entry's content
+  // and ride a `reasoning-blocks` sidecar record instead, each block verbatim with `at`, its index in the
+  // stream-order content -- written ahead of the entry like every other record. The IN-MEMORY message
+  // matches what a resume rebuilds: the neutral content (collapsed as `rebuildProviderMessages` collapses
+  // it) and the blocks as tagged `nativeState` items, which the Anthropic adapter splices back into
+  // place on every request (provider-runtime `continuity/reasoning-blocks.ts`) -- so the wire does not
+  // move by a byte. The move happens only where the sidecar exists (a provider identity AND a store that
+  // records provider state, the `origin` record's own condition): a session with nowhere to put the
+  // blocks keeps them inline, exactly as before, rather than losing them.
+  const recordAssistant = async (
+    content: ContentBlock[],
+    provenance?: { nativeState?: ProviderNativeState; summary?: string; material?: "exposed"; complete?: boolean },
+    effortStamp?: { effort?: string; perTurnEffort: string },
+  ): Promise<{ uuid?: string; moved?: { content: string | ContentBlock[]; nativeState: ProviderNativeState } }> => {
+    if (!store) return {};
     const uuid = randomUUID();
     const identity = currentProviderIdentity;
+    let persisted = content;
+    let moved: { content: string | ContentBlock[]; nativeState: ProviderNativeState } | undefined;
+    // WS-23 (layer 2): whether the effort annotations went to the sidecar (then the entry carries none).
+    let effortInSidecar = false;
+    const recordedAt = (engineClock?.() ?? new Date()).toISOString();
     if (identity !== undefined && store.recordProviderState !== undefined) {
       const base = {
         sessionId: config.sessionId,
@@ -3548,8 +3621,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         ...(identity.continuationDomain !== undefined ? { continuationDomain: identity.continuationDomain } : {}),
       };
       // itemIndex ORDERS the records under one anchor: 0 is always the mandatory `origin`.
-      const records: ProviderStateRecordInput[] = [{ ...base, itemIndex: 0, kind: "origin", payload: {} }];
-      if (provenance?.nativeState !== undefined) records.push({ ...base, itemIndex: records.length, kind: "native-state", payload: { items: provenance.nativeState.items } });
+      const records: ProviderStateRecordInput[] = [{ ...base, itemIndex: 0, kind: "origin", payload: {}, timestamp: recordedAt }];
+      if (provenance?.nativeState !== undefined) {
+        // WS-23: Winter's own bookkeeping items (a Responses output layout) are persisted APART from the
+        // vendor's items, under `winter` -- an older runtime replays `payload.items` verbatim and must
+        // never send one; this one's reader (`buildContinuationChain`) folds both back together.
+        const vendor = provenance.nativeState.items.filter((item) => !isWinterBookkeepingItem(item));
+        const winter = provenance.nativeState.items.filter(isWinterBookkeepingItem);
+        records.push({ ...base, itemIndex: records.length, kind: "native-state", payload: { items: vendor, ...(winter.length > 0 ? { winter } : {}) } });
+      }
       if (provenance?.summary !== undefined)
         records.push({
           ...base,
@@ -3561,34 +3641,102 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // package's `switchFactsFor`) takes as "a provider summary, not complete-exposed" (P10b-7).
           payload: { text: provenance.summary, ...(provenance.material !== undefined ? { material: provenance.material, complete: provenance.complete === true } : {}) },
         });
-      for (const record of records) {
+      const separated = separateReasoningBlocks(content);
+      if (separated.blocks.length > 0) {
+        records.push({ ...base, itemIndex: records.length, kind: "reasoning-blocks", payload: { blocks: separated.blocks } });
+        persisted = separated.neutral;
+        const items = reasoningBlockItems(separated.blocks);
+        moved = {
+          content: asRebuiltContent(separated.neutral),
+          // The same stamp `buildContinuationChain` folds the record into on a resume.
+          nativeState: {
+            family: provenance?.nativeState?.family ?? identity.family,
+            continuationDomain: provenance?.nativeState?.continuationDomain ?? identity.continuationDomain ?? identity.modelKey,
+            items: [...(provenance?.nativeState?.items ?? []), ...items],
+          },
+        };
+      }
+      // WS-23 (layer 2): the CACHE QUIRKS of this model -- its effort annotations and the tool-epoch
+      // bookkeeping that preceded this reply -- ride the sidecar, keyed by this record's provider+model,
+      // never the provider-neutral transcript (see store/provider-state.ts).
+      if (effortStamp !== undefined) records.push({ ...base, itemIndex: records.length, kind: "effort", payload: { ...effortStamp } });
+      for (const attachment of pendingBookkeeping.splice(0)) {
+        records.push({ ...base, itemIndex: records.length, kind: attachment.type === TOOL_EPOCH_ATTACHMENT ? "tool-epoch" : "tool-changes", payload: attachment });
+      }
+      const unsaved: string[] = [];
+      for (const input of records) {
+        // The record's own uuid is minted ONCE, so a retry is the same record (an external store upserts
+        // on it) rather than a second one.
+        const record: ProviderStateRecordInput = { ...input, uuid: randomUUID() };
         try {
           await store.recordProviderState(record);
+          // Review r1, M-5: the entry leaves its effort fields to the sidecar only once the record is IN it.
+          if (record.kind === "effort") effortInSidecar = true;
         } catch {
           // Auxiliary, exactly like every other record* call here: a sidecar write failing must never
           // fail the turn. The consequence is a DEGRADED resume for that message, which the
-          // continuity warning already exists to report -- not a lost turn.
+          // continuity warning exists to report -- not a lost turn.
+          //
+          // WS-23 (reasoning-state, user decision): REASONING is no longer only a nice-to-have -- a
+          // Claude turn's thinking now lives nowhere else (the transcript is provider-neutral), and on
+          // the block-binding rows a lost block costs the next resume every later one. So a reasoning
+          // record gets ONE retry, and if that fails too the turn still completes but says so, visibly.
+          if (!REASONING_STATE_KINDS.has(record.kind)) continue;
+          try {
+            await store.recordProviderState(record);
+          } catch {
+            unsaved.push(record.kind);
+          }
         }
+      }
+      // Review r1, I-3: thinking that could not reach the sidecar is NEVER lost -- it goes into the
+      // transcript entry INLINE, where it lived before the move and where the reader still takes it
+      // (inline wins over any record). Only the other kinds (opaque native state, a summary) have no
+      // such fallback, and those are what the warning says a resume will miss.
+      const blocksKeptInline = unsaved.includes("reasoning-blocks");
+      if (blocksKeptInline) {
+        persisted = content;
+        moved = undefined;
+      }
+      if (unsaved.length > 0) {
+        const lost = unsaved.filter((kind) => kind !== "reasoning-blocks");
+        output.write({
+          type: "data",
+          message: {
+            type: "system",
+            subtype: "continuity_warning",
+            warning: "reasoning_state_unsaved",
+            // KINDS ONLY, never a payload (the records hold opaque provider state).
+            detail:
+              `Winter could not save this turn's reasoning state (${unsaved.join(", ")}) after one retry. The turn completed.` +
+              (blocksKeptInline ? " The model's thinking was kept in the conversation file instead, so nothing of it is lost." : "") +
+              (lost.length > 0 ? ` If this session is resumed, the model will continue without its own earlier reasoning for this turn (${lost.join(", ")}).` : ""),
+            uuid: randomUUID(),
+            session_id: config.sessionId,
+          },
+        });
       }
       // The in-memory half of the chain: origin + the readable summary, never the opaque state.
       // W18-15: `material`/`complete` ride alongside so `announceLossyTransfer`'s own lookup below
       // needs no extra sidecar re-read to tell a provider summary from complete exposed reasoning.
       sessionChain.set(uuid, {
         origin: { providerId: identity.providerId, modelKey: identity.modelKey, family: identity.family, ...(identity.continuationDomain !== undefined ? { continuationDomain: identity.continuationDomain } : {}) },
+        recordedAt,
         ...(provenance?.summary !== undefined ? { summary: provenance.summary } : {}),
         ...(provenance?.material !== undefined ? { material: provenance.material, complete: provenance.complete === true } : {}),
       });
     }
     try {
-      await store.recordAssistantEntry(content, { uuid, ...(effortStamp ?? {}) });
+      await store.recordAssistantEntry(persisted, { uuid, ...(effortInSidecar ? {} : (effortStamp ?? {})) });
     } catch {
       /* auxiliary — see comment above */
     }
     // RETURNED so the IN-MEMORY message can carry the same anchor the sidecar record names. Without
     // it a live session's history and the same session's RESUMED history would disagree on every
     // assistant message's `uuid` -- and the continuous-vs-resumed fidelity that resume.test.ts pins
-    // is exactly the property the continuation chain depends on.
-    return uuid;
+    // is exactly the property the continuation chain depends on. `moved` is the in-memory content and
+    // native state when the reasoning blocks went to the sidecar (see above).
+    return { uuid, ...(moved !== undefined ? { moved } : {}) };
   };
   const flushStore = async (): Promise<void> => {
     if (!store?.flush) return;
@@ -5445,6 +5593,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const notifications: SessionNotificationQueue = notificationQueueFor(config.sessionId);
   /** True from the moment a turn's envelope is claimed until its terminal result has been written. */
   let turnActive = false;
+  // WS-23 (reasoning-state, decision 5): the host-requested compaction (the `compact` control) while it
+  // runs -- a turn does not start until it settles -- and its runner, assigned once `performCompaction`
+  // exists (a control that arrives earlier is answered `busy`).
+  let controlCompaction: Promise<void> | undefined;
+  let compactOnControl: ((instructions: string | null) => Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }>) | undefined;
   /** True while the RUNNING turn is one a task notification started (no host input produced it). */
   let turnStartedByNotification = false;
   /** Set at the one place `userFrames.end()` is called -- nothing may be written after it. */
@@ -5957,6 +6110,42 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             if (interruptCurrentTurn.current === null) applyPendingEffort();
             continue;
           }
+          // --- WS-23 (reasoning-state, decision 5): `compact` -------------------------------------
+          //
+          // WINTER-ONLY. The host compacts the conversation NOW, on the model the session is live on --
+          // what the daemon asks of a child before a switch to another provider whose model cannot hold
+          // the conversation (the user's rule: the model being left pays for the compaction; the new
+          // incarnation then resumes from the compacted transcript). Refused `busy` while a turn runs or
+          // another compaction does; answered when the compaction has finished, with how many messages
+          // it kept. Reuses the session's own cached prefix where it can (`performCompaction`).
+          if (cf.subtype === "compact") {
+            const payload = cf.payload;
+            const raw = typeof payload === "object" && payload !== null ? (payload as { custom_instructions?: unknown }).custom_instructions : undefined;
+            const instructions = typeof raw === "string" && raw.length > 0 ? raw : null;
+            if (turnActive || controlCompaction !== undefined || compactOnControl === undefined) {
+              output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "busy", message: "a turn or another compaction is running (or the session has not started); ask again once it is idle" } });
+              continue;
+            }
+            const run = compactOnControl(instructions);
+            controlCompaction = run.then(
+              () => undefined,
+              () => undefined,
+            );
+            void run
+              .then(
+                (outcome) =>
+                  output.write(
+                    outcome.ok
+                      ? { type: "control_response", requestId: cf.requestId, ok: true, payload: { compacted: true, retained_count: outcome.retainedCount } }
+                      : { type: "control_response", requestId: cf.requestId, ok: false, error: { code: "compaction_failed", message: outcome.error } },
+                  ),
+                (err: unknown) => output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "compaction_failed", message: err instanceof Error ? err.message : String(err) } }),
+              )
+              .finally(() => {
+                controlCompaction = undefined;
+              });
+            continue;
+          }
           // --- Phase 6 Task 10 (R6-I): `list_models` and `account_info` ---------------------------
           //
           // `list_models` is PAYLOAD-FREE on the pin and is answered from the session's own registry
@@ -6375,6 +6564,35 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     });
     for (const [anchor, link] of resumedChain) sessionChain.set(anchor, link);
 
+    // WS-23 (reasoning-state, layer 2): each resumed reply's CACHE QUIRKS come back from the sidecar --
+    // its effort annotations onto the message (the markers derive from them), and the tool-epoch
+    // bookkeeping that preceded it back into the history right before it, where the live session had it.
+    // Inline annotations (a transcript a dev build wrote) win and are never merged with a record. Walked
+    // backwards so an insertion never moves an index still to be visited.
+    let restoredBookkeeping = false;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i]!;
+      if (message.role !== "assistant" || message.uuid === undefined) continue;
+      const link = resumedChain.get(message.uuid);
+      if (link === undefined) continue;
+      if (link.effort !== undefined && message.effort === undefined && message.perTurnEffort === undefined) Object.assign(message, link.effort);
+      if (link.bookkeeping !== undefined && link.bookkeeping.length > 0) {
+        const restored = link.bookkeeping.flatMap((payload) => {
+          const bookkeeping = attachmentMessage(payload as AttachmentPayload);
+          return bookkeeping !== undefined ? [bookkeeping] : [];
+        });
+        messages.splice(i, 0, ...restored);
+        restoredBookkeeping = restoredBookkeeping || restored.length > 0;
+      }
+    }
+    if (restoredBookkeeping) {
+      // A deferred tool a restored change announced by reference is callable again, as it was live (the
+      // setup-time seed above ran before the sidecar was read).
+      const byAdvertised = new Map([...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => [d.advertisedName, d.canonicalName] as const));
+      const seeded = [...referencedToolNames(messages, currentProviderIdentity?.modelKey ?? currentModel ?? null)].map((name) => byAdvertised.get(name) ?? name);
+      if (seeded.length > 0) loadedToolSet.load(seeded);
+    }
+
     // --- Phase 6 Task 10 review round 1 (D): A RESUME THAT CHANGES THE MODEL IS A SWITCH ----------
     //
     // R6-I's boundary rule was implemented for the `set_model` CONTROL REQUEST only, which reads as
@@ -6397,6 +6615,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // model changed, and a host with no frame could not know (disclosed, WS-13 §13).
     const resumedTo = currentProviderIdentity?.modelKey ?? currentModel ?? config.model;
     if (persisted !== undefined && resumedTo !== undefined && persisted.modelKey !== resumedTo) {
+      // WS-23 (decision 5): the first request of this run checks the fit. The source is reachable from
+      // here only when the switch seam can build it (the same provider; a cross-provider source is the
+      // daemon's to compact BEFORE the switch, through the `compact` control).
+      pendingFitCheck = {
+        from: persisted.modelKey,
+        source: () => {
+          const built = resolveModelSwitch?.(persisted.modelKey, currentOrigin());
+          return built !== undefined && !("refused" in built) ? built.provider : undefined;
+        },
+      };
+      resourceContextLimit();
       if (resolveModelSwitch !== undefined && currentProviderIdentity !== undefined) {
         const compared = resolveModelSwitch(currentProviderIdentity.modelKey, { providerId: persisted.providerId, modelKey: persisted.modelKey, family: "" });
         if (!("refused" in compared) && compared.from !== undefined) {
@@ -6690,7 +6919,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
   // WS-23: `opts.reason: "overflow"` is for the reactive recovery after a context-overflow refusal --
   // the summary then never re-sends the refused history (see `CompactionInput.reason`).
-  const performCompaction = async (trigger: "auto" | "manual", customInstructions: string | null, opts: { reason?: "overflow" } = {}): Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }> => {
+  // WS-23 (reasoning-state): `opts.provider` is the model that SUMMARIZES when it is not the live one (a
+  // switch's source model, decision 5); `opts.maxInputChars` bounds the summarizer's request for one
+  // smaller than the history (see `CompactionInput.maxInputChars`).
+  const performCompaction = async (trigger: "auto" | "manual", customInstructions: string | null, opts: { reason?: "overflow"; provider?: Provider; maxInputChars?: number } = {}): Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }> => {
     if (compactionController === undefined) {
       return { ok: false, error: "No compaction controller is configured for this session (R5-4: the compaction vehicle is supplied by the host; the engine never summarizes on its own)." };
     }
@@ -6712,10 +6944,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         customInstructions: effectiveInstructions.length > 0 ? effectiveInstructions : null,
         accountant: contextAccountant,
         // The LIVE provider (fix wave): after a `set_model` the summariser must run on the model the
-        // session is generating with, not the one it started on.
-        provider: activeProvider,
+        // session is generating with, not the one it started on -- unless the caller names another
+        // (WS-23: a switch's source model, which the user chose to pay for the compaction).
+        provider: opts.provider ?? activeProvider,
         ...(prefixRequest !== undefined ? { prefixRequest } : {}),
         ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+        ...(opts.maxInputChars !== undefined ? { maxInputChars: opts.maxInputChars } : {}),
       });
     } catch (err) {
       // A failed compaction is REPORTED, never fatal: the turn continues on the un-compacted history
@@ -6773,6 +7007,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
     messages.length = 0;
     messages.push({ role: "user", content: result.summary }, ...result.retained);
+    // WS-23 (reasoning-state): bookkeeping waiting for its reply is persisted only if the compacted
+    // history still holds it (a tool epoch the summary replaced is gone for good).
+    const kept = new Set(messages.flatMap((m) => (m.meta !== undefined ? [m.meta.attachment] : [])));
+    pendingBookkeeping.splice(0, pendingBookkeeping.length, ...pendingBookkeeping.filter((attachment) => kept.has(attachment)));
     lastCompactionTokens = contextAccountant.contextTokens();
     // WS-23: the history the last fingerprint described is gone; the next request opts in afresh.
     lastMainResponse = undefined;
@@ -6841,6 +7079,40 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
     return { ok: true, summary: result.summary, retainedCount: result.retained.length };
   };
+
+  /**
+   * WS-23 (reasoning-state, decision 5): the compaction a switch's fit check calls for. On the SOURCE
+   * model when it is reachable -- never reusing a request prefix (the last one was the source's, laid out
+   * for it) -- else on the target, whose summarizer is then bounded to what the target can read. One
+   * stderr line of counts says which, and why.
+   */
+  const compactForSwitch = async (check: { from: string | undefined; source: () => Provider | undefined }, fit: FitVerdict): Promise<boolean> => {
+    const source = check.source();
+    const to = currentProviderIdentity?.modelKey ?? currentModel ?? "";
+    const bound = source === undefined ? summarizerInputChars() : undefined;
+    console.error(
+      `winter: session ${config.sessionId} switched from ${check.from ?? "?"} to ${to} with about ${fit.estimatedTokens} tokens of context against a ${fit.window}-token window; compacting on ${source !== undefined ? `the source model (${check.from ?? "?"})` : `the target (${to}), because the source model is not reachable from this process`} first`,
+    );
+    // Review r1, I-3: the user is TOLD, not only the log: a summary replaces the older part of what they
+    // see the new model continue from. Counts and model ids only.
+    output.write({
+      type: "data",
+      message: {
+        type: "system",
+        subtype: "continuity_warning",
+        warning: "switch_compaction",
+        detail: `This conversation (about ${fit.estimatedTokens} tokens) is larger than ${to} can hold (a ${fit.window}-token window), so ${source !== undefined ? check.from ?? "the previous model" : to} is summarizing its older part before continuing. The most recent exchanges carry over as they are.`,
+        uuid: randomUUID(),
+        session_id: config.sessionId,
+      },
+    });
+    const outcome = await performCompaction("auto", null, { reason: "overflow", ...(source !== undefined ? { provider: source } : {}), ...(bound !== undefined ? { maxInputChars: bound } : {}) });
+    return outcome.ok;
+  };
+
+  // WS-23 (decision 5): the `compact` control's runner -- an AUTO compaction (the host asked, not the
+  // user), which reuses the session's cached prefix when it can.
+  compactOnControl = (instructions) => performCompaction("auto", instructions);
 
   // R5-14's `/compact [instructions]`: the MANUAL trigger, never subject to the auto re-entrancy
   // guard (a user asking twice gets two compactions).
@@ -7027,6 +7299,52 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return key !== undefined ? describeModel?.(key, currentProviderIdentity?.providerId) : undefined;
   };
 
+  // --- WS-23 (reasoning-state, decision 5): the model switch FIT CHECK ------------------------------
+  //
+  // A switch replays the conversation as it is (nothing is summarized or forked), so the target must be
+  // able to hold it. The check runs on the target's FIRST request, over that request as it will be sent
+  // (provider-runtime `continuity/fit.ts` has the estimate and the budget); when it does not fit, the
+  // SOURCE model compacts the history before the request goes out.
+
+  /** The session's compaction threshold, by the controller's own rule (a value outside (0, 1] is ignored). */
+  const compactionThreshold = (): number => {
+    const raw = config.compactionThreshold;
+    return typeof raw === "number" && Number.isFinite(raw) && raw > 0 && raw <= 1 ? raw : DEFAULT_COMPACTION_THRESHOLD;
+  };
+
+  /** The live model's window, or `undefined` when its row declares none (nothing to check against). */
+  const liveWindow = (): number | undefined => currentModelDescription()?.contextWindow;
+
+  /**
+   * The fit of one outbound request on the live model. Counted: the system prompt, the tool specs, every
+   * message's content, and the native state of the model's OWN replies (it replays); a history that holds
+   * another model's replies is charged the whole decoration budget the renderer may add for them. Images
+   * and documents are charged per item, never by their bytes (review r1, I-2); non-ASCII text at about a
+   * token per character (M-6).
+   */
+  const requestFit = (system: string, tools: readonly ProviderToolSpec[], outbound: readonly ProviderMessage[]): FitVerdict | undefined => {
+    const window = liveWindow();
+    if (window === undefined) return undefined;
+    const owns = ownedBy(currentProviderIdentity?.modelKey ?? currentModel);
+    let tokens = estimateTextTokens(system) + (tools.length > 0 ? estimateValueTokens(tools) : 0);
+    let foreign = false;
+    for (const message of outbound) {
+      tokens += typeof message.content === "string" ? estimateTextTokens(message.content) : estimateValueTokens(message.content);
+      if (message.role !== "assistant") continue;
+      if (!owns(message)) foreign = true;
+      else if (message.nativeState !== undefined) tokens += estimateValueTokens(message.nativeState.items);
+    }
+    if (foreign) tokens += estimateTokensFromChars(DECORATION_CHAR_BUDGET);
+    return fitVerdict(tokens, window, compactionThreshold());
+  };
+
+  /** The most characters a summarizer on the live model may be sent, for a compaction that must fit it. */
+  const summarizerInputChars = (): number | undefined => {
+    const window = liveWindow();
+    if (window === undefined) return undefined;
+    return Math.floor((fitBudgetTokens(window, compactionThreshold()) * ESTIMATE_CHARS_PER_TOKEN) / ESTIMATE_MARGIN);
+  };
+
   /**
    * WS-23: this generation's effort as the wire carries it.
    *
@@ -7050,16 +7368,21 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const vocabulary = described.efforts ?? [];
     const accepts = (effort: string): boolean => vocabulary.includes(effort);
     const key = currentProviderIdentity?.modelKey ?? currentModel;
-    if (frozenEffort === undefined || frozenEffort.modelKey !== key || (frozenEffort.value !== undefined && !(accepts(frozenEffort.value) && isNamedEffort(frozenEffort.value)))) {
-      frozenEffort = { modelKey: key, value: live };
+    const owns = ownedBy(key);
+    if (frozenEffort === undefined || frozenEffort.modelKey !== key) {
+      // WS-23 (reasoning-state): this model's OWN frozen value when its replies recorded one -- a resume,
+      // or a return after another model ran -- else the live level, as before.
+      const seeded = frozenEffortFromHistory(messages, owns);
+      frozenEffort = { modelKey: key, value: seeded !== undefined ? seeded.value : live };
     }
+    if (frozenEffort.value !== undefined && !(accepts(frozenEffort.value) && isNamedEffort(frozenEffort.value))) frozenEffort = { modelKey: key, value: live };
     const frozen = frozenEffort.value;
     const initial = frozen ?? described.defaultEffort;
     const effective = live ?? described.defaultEffort;
     if (initial === undefined || effective === undefined || !accepts(initial) || !accepts(effective)) return plain;
     return {
       topLevel: frozen !== undefined && isNamedEffort(frozen) ? frozen : undefined,
-      markers: { initial, live: effective, accepts },
+      markers: { initial, live: effective, accepts, owns },
       stamp: { ...(frozen !== undefined ? { effort: frozen } : {}), perTurnEffort: effective },
     };
   };
@@ -7376,7 +7699,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const wire = currentModelDescription()?.wire;
     const clientSearch = wire?.clientToolSearch === true && !nativeToolSearchRejected;
     const declareDeferred = specs.length > 0 && (wire?.deferredToolLoading === true || clientSearch);
-    const referenced = declareDeferred ? referencedToolNames(messages) : undefined;
+    const referenced = declareDeferred ? referencedToolNames(messages, currentProviderIdentity?.modelKey ?? currentModel ?? null) : undefined;
     const namespaced = (spec: ProviderToolSpec, canonicalName: string): ProviderToolSpec => {
       if (!clientSearch) return spec;
       const namespace = mcpNamespaceFor(spec.name, mcpServerOwningTool(canonicalName));
@@ -7428,12 +7751,42 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return undefined;
   };
 
-  /** Appends one bookkeeping entry to the history and the transcript (an attachment, like every other). */
+  /**
+   * Appends one bookkeeping entry to the history. WS-23 (reasoning-state): where the sidecar exists it is
+   * persisted THERE, with the next assistant entry (`pendingBookkeeping`) -- the tool list is a cache quirk
+   * of one model, not part of a provider-neutral transcript. A session with no sidecar keeps the transcript
+   * attachment, as before.
+   */
   const appendToolBookkeeping = async (attachment: ToolEpochAttachment | ToolChangesAttachment): Promise<void> => {
     const message = attachmentMessage(attachment);
     if (message === undefined) return;
     messages.push(message);
-    await recordAttachment(attachment);
+    if (currentProviderIdentity !== undefined && store?.recordProviderState !== undefined) pendingBookkeeping.push(attachment);
+    else await recordAttachment(attachment);
+  };
+
+  /** WS-23 (reasoning-state): whether a message is `key`'s own reply -- or carries no origin (a pre-P6 history, a session with no identity), which reads as the session's own. */
+  const ownedBy =
+    (key: string | undefined) =>
+    (message: ProviderMessage): boolean =>
+      message.origin === undefined || (message.origin.modelKey === key && (currentProviderIdentity === undefined || message.origin.providerId === currentProviderIdentity.providerId));
+
+  /**
+   * WS-23 (reasoning-state, decision 4): is this request a RETURN to `key` after another model ran, past
+   * `key`'s prompt-cache lifetime? Then its old tool epoch heads a prefix the provider no longer holds and a
+   * fresh epoch is the better start. Within the lifetime the old epoch resumes -- the model's cached prefix
+   * is still good up to where it left off -- and whatever changed since becomes change entries. A model
+   * that never left (its own reply is the newest) is not returning at all.
+   */
+  const returningPastCacheTtl = (key: string | undefined): boolean => {
+    const owns = ownedBy(key);
+    const newest = [...messages].reverse().find((m) => m.role === "assistant");
+    if (newest === undefined || owns(newest)) return false;
+    const ownNewest = [...messages].reverse().find((m) => m.role === "assistant" && m.origin !== undefined && owns(m));
+    const at = ownNewest?.uuid !== undefined ? sessionChain.get(ownNewest.uuid)?.recordedAt : undefined;
+    if (at === undefined) return true;
+    const ttlMs = promptCacheTtlFor(config) === "1h" ? 60 * 60_000 : 5 * 60_000;
+    return (engineClock?.() ?? new Date()).getTime() - Date.parse(at) > ttlMs;
   };
 
   /**
@@ -7459,14 +7812,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       await appendToolBookkeeping({ type: TOOL_EPOCH_ATTACHMENT, mechanism, modelKey: modelKey ?? null, tools: epochToolsFor(from, mechanism) });
       return activeToolEpoch(messages, mechanism, modelKey)!;
     };
-    let active = forceNewToolEpoch ? undefined : activeToolEpoch(messages, mechanism, modelKey);
+    let active = forceNewToolEpoch || returningPastCacheTtl(modelKey) ? undefined : activeToolEpoch(messages, mechanism, modelKey);
     let current = live;
     if (active === undefined) {
       active = await startEpoch(live);
       // Re-read: the new epoch retired the old one's references (`referencedToolNames`).
       current = providerToolSpecs();
     }
-    const referenced = (): Set<string> => referencedToolNames(messages);
+    const referenced = (): Set<string> => referencedToolNames(messages, modelKey ?? null);
     let changes = epochChangeMessages(messages, active.index, mechanism);
     let state = foldToolState(active.epoch, changes, referenced());
     let diff = diffToolState(current, state, mechanism, caps);
@@ -7489,7 +7842,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // bookkeeping, not a user turn, and must not let a change follow the paused assistant message.
     const lastReal = [...messages].reverse().find((m) => !isToolBookkeeping(m));
     if (diff.kind === "change" && lastReal?.role !== "assistant") {
-      await appendToolBookkeeping({ type: TOOL_CHANGES_ATTACHMENT, mechanism, ...diff.change });
+      await appendToolBookkeeping({ type: TOOL_CHANGES_ATTACHMENT, mechanism, modelKey: modelKey ?? null, ...diff.change });
       changes = epochChangeMessages(messages, active.index, mechanism);
       // A deferred tool announced by reference is callable from here on: load it, so the dispatch's
       // load-first check agrees with what the model was shown.
@@ -7695,7 +8048,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // No seam (a scripted double): the pre-fix shape, verbatim -- the string goes on the wire.
       if (next === undefined || next === currentModel) return;
       const from = currentModel;
+      // WS-23 (decision 5): one provider object serves both models here, so it is also the source.
+      const sameProvider = activeProvider;
+      pendingFitCheck = { from, source: () => sameProvider };
       currentModel = next;
+      resourceContextLimit();
       store?.recordProviderSwitch?.({ from: from ?? "", to: next, reason });
       output.write({
         type: "data",
@@ -7707,7 +8064,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // RULING E-2: classify and, when lossy, warn and hand off -- BEFORE the swap, because the handoff
     // and the classification read the SOURCE's messages and chain.
     if (resolution.from !== undefined) announceLossyTransfer(resolution.from, resolution.to, reason);
+    // WS-23 (decision 5): the model being left stays reachable for the fit check's compaction.
+    const sourceProvider = activeProvider;
+    pendingFitCheck = { from: currentProviderIdentity?.modelKey ?? currentModel, source: () => sourceProvider };
     installIdentity(resolution, reason);
+  }
+
+  /**
+   * WS-23 (reasoning-state, decision 5): re-sources the context accountant's limit from the LIVE model's
+   * row, when it declares a window -- the auto-compaction threshold used to keep reading the first model's
+   * window for the rest of the session. A hoisted declaration that reads only early state, because the
+   * pump can apply a switch before the rest of this function's constants exist.
+   */
+  function resourceContextLimit(): void {
+    const key = currentProviderIdentity?.modelKey ?? currentModel;
+    const window = key !== undefined ? describeModel?.(key, currentProviderIdentity?.providerId)?.contextWindow : undefined;
+    if (window !== undefined) contextAccountant.setLimit?.(window);
   }
 
   /**
@@ -7724,6 +8096,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // would reach the wire verbatim.
     currentModel = resolution.identity.modelKey;
     stampIdentity();
+    // WS-23 (decision 5): the accountant's window is the new model's.
+    resourceContextLimit();
     store?.recordProviderSwitch?.({ from, to: resolution.identity.modelKey, reason });
     output.write({
       type: "data",
@@ -7732,77 +8106,58 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   }
 
   /**
-   * RULING E-2's warning half: `classifySwitch` over the two endpoints with the facts THIS session
-   * can honestly state, and -- for a `warned-lossy` transfer -- the `cross_domain_replay_dropped`
-   * frame (counts and identity only, never content) plus the `handoff` sidecar record built by
-   * `buildPortableHandoff` (whole-branch M-6: the `handoff` kind gains its producer).
+   * RULING E-2's warning half, rewritten for WS-23 (reasoning-state, user decision 9): `classifySwitch`
+   * over the two endpoints with the facts THIS session can state, and -- for a transfer that loses
+   * something -- one `model_switch_lossy` continuity frame (counts and identity only, never content).
    *
-   * THE HANDOFF IS BUILT FIRST (the retired coordinator's own review C1 finding, kept): it is where
-   * §9.6's trimming happens, and only its `reasoningTruncated` flag may flip a would-be-lossless
-   * classification to lossy.
+   * ONLY WHAT THE TARGET CANNOT REPRESENT COUNTS: images or documents for a model that reads none, another
+   * vendor's server-tool steps (which reach the target as text), and a turn cut short by an interrupt. The
+   * source's reasoning is NOT lost -- it stays in the provider-state sidecar under its own continuation
+   * domain and replays if the session switches back -- so a plain cross-family switch no longer warns. A
+   * compaction the fit check runs is announced where it runs (the target's first request, `compactForSwitch`);
+   * the daemon's pre-flight review warns about it before the switch.
    *
-   * W18-15 (Phase 10b Lane S, S4): `exposedComplete` is now ASSERTED, from the SAME sidecar record
-   * `summaryAvailable` already reads -- the source's last recorded turn carries `material: "exposed"`
-   * (an open model's own raw reasoning, recorded because the family produces no summary of its own)
-   * and `complete: true` (a normal stop, nothing dropped). Before this, the write path recorded
-   * exposed reasoning as an indistinguishable plain summary, so a `full-exposed` source ALWAYS warned
-   * even when its whole trace carried untouched -- the DeepSeek -> GLM/GPT no-warning case this
-   * assertion is what makes reachable.
+   * The `handoff` sidecar record this used to write is GONE: its one reader was the retired official
+   * leg, and nothing has read it since.
    */
   function announceLossyTransfer(from: ContinuityEndpoint, to: ContinuityEndpoint, reason: "set_model" | "interrupt" | "fallback"): void {
-    const lastSource = [...messages].reverse().find((m) => m.role === "assistant" && m.origin?.modelKey === from.modelKey && m.uuid !== undefined);
-    // P7a fix r1 (Minor-2): the session's OWN instructions basename, ADDED to the §2.8 exclusion
-    // list. The declared option had no producer, so a reuser's `ACME.md` could reach a handoff's
-    // tool facts while the four names on that list -- Winter's own included -- were blocked.
-    const handoff = buildPortableHandoff(messages, sessionChain, from, { instructionsFile: sessionBrand.instructionsFile });
-    const sourceLink = lastSource?.uuid !== undefined ? sessionChain.get(lastSource.uuid) : undefined;
-    const summaryAvailable = sourceLink?.summary !== undefined;
-    const exposedComplete = sourceLink?.material === "exposed" && sourceLink.complete === true;
+    const readsImages = describeModel?.(to.modelKey, to.providerId)?.readsImages !== false;
+    let unreadableMedia = 0;
+    let serverToolBlocks = 0;
+    let completedToolResults = 0;
+    const visit = (blocks: readonly ContentBlock[]): void => {
+      for (const block of blocks) {
+        const type = (block as { type: string }).type;
+        if (!readsImages && (type === "image" || type === "document")) unreadableMedia++;
+        if (to.family !== "anthropic" && isServerToolBlockType(type)) serverToolBlocks++;
+        if (block.type === "tool_result") {
+          if ((block as { error?: unknown }).error !== true && (block as { is_error?: unknown }).is_error !== true && (block as { denied?: unknown }).denied !== true) completedToolResults++;
+          if (Array.isArray(block.content)) visit(block.content);
+        }
+      }
+    };
+    for (const message of messages) if (typeof message.content !== "string") visit(message.content);
     const classification = classifySwitch(from, to, {
-      summaryAvailable,
-      exposedComplete,
-      completedToolResults: handoff.sections.toolFacts.filter((fact) => fact.ok).length,
-      ...(handoff.reasoningTruncated ? { truncated: true } : {}),
+      completedToolResults,
+      ...(unreadableMedia > 0 ? { unreadableMedia } : {}),
+      ...(serverToolBlocks > 0 ? { serverToolBlocks } : {}),
       ...(reason === "interrupt" ? { midTurnAbort: true } : {}),
     });
     if (classification.lossClass !== "warned-lossy") return;
-    const dropped = messages.filter((m) => m.role === "assistant" && m.nativeState !== undefined && (to.continuationDomain === undefined || m.nativeState.continuationDomain !== to.continuationDomain)).length;
     output.write({
       type: "data",
       message: {
         type: "system",
         subtype: "continuity_warning",
-        warning: "cross_domain_replay_dropped",
+        warning: "model_switch_lossy",
         // COUNTS AND IDENTITY ONLY. `classification.warnings` is `warnings.ts`'s own prose, which by
-        // construction names ids and never a payload (`SwitchFacts` has no field one could arrive in).
-        // NO `anchor_uuid`: a per-run entry uuid would make the frame differ across transport legs
-        // and goldens (the trace normalizer keeps `anchor_uuid` deliberately); the handoff record
-        // below carries the anchor for a reader that needs it.
-        detail: `switching from ${from.modelKey} to ${to.modelKey}: ${dropped} assistant message${dropped === 1 ? "" : "s"} carrying native continuation state will not be replayed natively. ${classification.warnings.join(" ")}`,
+        // construction names ids and counts and never a payload (`SwitchFacts` has no field one could
+        // arrive in).
+        detail: `switching from ${from.modelKey} to ${to.modelKey}: ${classification.warnings.join(" ")}`,
         uuid: randomUUID(),
         session_id: config.sessionId,
       },
     });
-    if (lastSource?.uuid === undefined || store?.recordProviderState === undefined) return;
-    // The `handoff` record, anchored at the source's LAST entry (WS-05 §13: "a portable handoff
-    // summary is persisted as a `handoff` sidecar record"). Its consumer is the cross-runtime
-    // Claude-leg door, not the Winter renderer -- which decorates per message on its own -- so it is
-    // written and NOT attached to the next request. `itemIndex` 3 sits after the three per-turn
-    // kinds (origin 0, native-state 1, summary 2). Auxiliary: a failed write degrades the handoff,
-    // never the switch.
-    void Promise.resolve(
-      store.recordProviderState({
-        sessionId: config.sessionId,
-        anchorUuid: lastSource.uuid,
-        provider: from.providerId,
-        model: from.modelKey,
-        family: from.family,
-        ...(from.continuationDomain !== undefined ? { continuationDomain: from.continuationDomain } : {}),
-        itemIndex: 3,
-        kind: "handoff",
-        payload: { text: handoff.text, truncated: handoff.truncated, reasoningTruncated: handoff.reasoningTruncated, target: { providerId: to.providerId, modelKey: to.modelKey } },
-      }),
-    ).catch(() => {});
   }
 
   /**
@@ -7842,6 +8197,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     currentProviderIdentity = restored.identity;
     currentModel = restored.model;
     stampIdentity();
+    resourceContextLimit();
     const to = restored.identity?.modelKey ?? restored.model;
     store?.recordProviderSwitch?.({ from, to, reason: "fallback" });
     output.write({
@@ -7851,6 +8207,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   }
 
   for await (const userFrame of userFrames) {
+    // WS-23 (decision 5): a host-requested compaction finishes before any turn starts.
+    if (controlCompaction !== undefined) await controlCompaction;
     // SDK 0.0.16 Lane N. `turnActive` gates `pumpNotifications` (one notification turn at a time, and
     // never one that would race a host turn); `turnStartedByNotification` is what makes this an
     // UNSOLICITED turn rather than a host one -- it decides the second `system/init` frame below, the
@@ -8130,7 +8488,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       if (overflowRetryPending) return { retry: false, why: "the retry after a reactive compaction overflowed the context window again" };
       // WS-23 (anthropic-cache C1): `reason: "overflow"` -- the summary must NOT reuse the session's own
       // request prefix here, because that exact history was just refused as too long and would be again.
-      const outcome = await performCompaction("auto", null, { reason: "overflow" });
+      const bound = summarizerInputChars();
+      const outcome = await performCompaction("auto", null, { reason: "overflow", ...(bound !== undefined ? { maxInputChars: bound } : {}) });
       if (!outcome.ok) return { retry: false, why: `the reactive compaction did not run (${outcome.error})` };
       overflowRetryPending = true;
       return { retry: true };
@@ -8215,6 +8574,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // `ProviderTurnError`, so it lands on R6-F's result shape through the catch below.
         assertMessagesWithinCap(outboundMessages);
         const outboundSystem = requestSystem(assembled, context);
+        // WS-23 (reasoning-state, decision 5): the FIRST request after a model switch checks that the
+        // conversation fits the target. When it does not, the model the session left compacts it (the
+        // user's rule: the source pays; the target's own summarizer, bounded to what it can read, only
+        // when the source is out of reach), and the request is rebuilt over the compacted history.
+        if (pendingFitCheck !== undefined) {
+          const check = pendingFitCheck;
+          pendingFitCheck = undefined;
+          const fit = requestFit(outboundSystem.system, toolSpecs, outboundMessages);
+          if (fit !== undefined && !fit.fits && (await compactForSwitch(check, fit))) continue roundLoop;
+        }
         // WS-23: what compaction's summary reuses (see `compactionPrefixRequest`).
         const { tools: _declared, ...toolPlanRest } = toolPlan;
         lastMainRequestShape = { modelKey: currentProviderIdentity?.modelKey ?? currentModel, system: outboundSystem, userContextText: context.userContextText, tools: toolSpecs, toolPlan: toolPlanRest };
@@ -8442,9 +8811,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         resendingPausedTurn = true;
         const paused = inStreamOrder(turn) ?? [...(turn.thinking?.blocks ?? []), ...(turn.text.length > 0 ? [{ type: "text" as const, text: turn.text }] : [])];
         if (paused.length > 0) {
-          output.write({ type: "data", message: { type: "assistant", message: { content: paused } } });
-          const pausedAnchor = await recordAssistant(paused, turnProvenance(turn));
-          messages.push({ role: "assistant", content: paused, ...(pausedAnchor !== undefined ? { uuid: pausedAnchor } : {}), ...providerAnnotations(turn) });
+          output.write({ type: "data", message: { type: "assistant", message: { content: contentForHost(paused) } } });
+          const pausedRecord = await recordAssistant(paused, turnProvenance(turn));
+          messages.push({ role: "assistant", content: pausedRecord.moved?.content ?? paused, ...(pausedRecord.uuid !== undefined ? { uuid: pausedRecord.uuid } : {}), ...providerAnnotations(turn), ...(pausedRecord.moved !== undefined ? { nativeState: pausedRecord.moved.nativeState } : {}) });
         }
         continue roundLoop;
       }
@@ -8464,7 +8833,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await —
         // the terminal result below is the sole durability barrier for this turn; P6 (partial
         // streaming) must revisit this ordering once intermediate frames become resumable state.
-        output.write({ type: "data", message: { type: "assistant", message: { content: assistantBlocks } } });
+        output.write({ type: "data", message: { type: "assistant", message: { content: contentForHost(assistantBlocks) } } });
         // The in-memory history keeps the bare STRING when there is nothing but text -- that is the
         // shape `rebuildProviderMessages` collapses a single-text-block entry back to, and changing
         // it would make a resumed session's history differ from a continuous one's (resume.test.ts's
@@ -8473,8 +8842,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // names. A live session's history and the same session's RESUMED history must agree on every
         // assistant message's `uuid` -- that agreement is what the continuation chain is keyed on,
         // and resume.test.ts's continuous-vs-split fidelity test pins it.
-        const textAnchor = await recordAssistant(assistantBlocks, turnProvenance(turn), generationEffort);
-        messages.push({ role: "assistant", content: thinkingBlocks.length === 0 ? turn.text : assistantBlocks, ...(textAnchor !== undefined ? { uuid: textAnchor } : {}), ...providerAnnotations(turn), ...(generationEffort ?? {}) });
+        const textRecord = await recordAssistant(assistantBlocks, turnProvenance(turn), generationEffort);
+        messages.push({
+          role: "assistant",
+          content: textRecord.moved?.content ?? (thinkingBlocks.length === 0 ? turn.text : assistantBlocks),
+          ...(textRecord.uuid !== undefined ? { uuid: textRecord.uuid } : {}),
+          ...providerAnnotations(turn),
+          ...(textRecord.moved !== undefined ? { nativeState: textRecord.moved.nativeState } : {}),
+          ...(generationEffort ?? {}),
+        });
         finalResult = { type: "result", subtype: "success", is_error: false, result: turn.text };
         // WS-23: the Stop/SubagentStop hooks fire HERE for a plain answer (still before the terminal
         // result is written -- the single-shot wrapper is still reading, see the post-loop comment),
@@ -8524,9 +8900,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ];
       // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await — the
       // terminal result is the sole durability barrier; P6 (partial streaming) must revisit this.
-      output.write({ type: "data", message: { type: "assistant", message: { content: toolUseBlocks } } });
-      const callAnchor = await recordAssistant(toolUseBlocks, turnProvenance(turn), generationEffort);
-      messages.push({ role: "assistant", content: toolUseBlocks, ...(callAnchor !== undefined ? { uuid: callAnchor } : {}), ...providerAnnotations(turn), ...(generationEffort ?? {}) });
+      output.write({ type: "data", message: { type: "assistant", message: { content: contentForHost(toolUseBlocks) } } });
+      const callRecord = await recordAssistant(toolUseBlocks, turnProvenance(turn), generationEffort);
+      messages.push({
+        role: "assistant",
+        content: callRecord.moved?.content ?? toolUseBlocks,
+        ...(callRecord.uuid !== undefined ? { uuid: callRecord.uuid } : {}),
+        ...providerAnnotations(turn),
+        ...(callRecord.moved !== undefined ? { nativeState: callRecord.moved.nativeState } : {}),
+        ...(generationEffort ?? {}),
+      });
 
       const resultBlocks: ContentBlock[] = [];
       // Set (alongside `finalResult`) exactly when a call in THIS round throws — kept as its own

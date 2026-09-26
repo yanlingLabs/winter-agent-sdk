@@ -334,6 +334,8 @@ test("Phase 4 Task 2: unset strictMcpConfig/toolAliases/agents/forwardSubagentTe
   }
 });
 
+// WS-23: the remote servers name a RESERVED, never-resolving host (`.invalid`, RFC 2606). They used to name
+// `example.com`, and the in-process runtime really connected to it -- the test network guard caught it.
 test("Phase 4 Task 2: mcpServers' stdio/http/sse variants pass through --config-json completely unchanged", async () => {
   const capture = captureConfigJson();
   for await (const _msg of query({
@@ -341,8 +343,8 @@ test("Phase 4 Task 2: mcpServers' stdio/http/sse variants pass through --config-
     options: {
       mcpServers: {
         gh: { command: "gh-mcp-server", args: ["--stdio"], env: { TOKEN: "x" } },
-        remote: { type: "http", url: "https://example.com/mcp", timeout: 9000 },
-        sse: { type: "sse", url: "https://example.com/sse", alwaysLoad: true },
+        remote: { type: "http", url: "https://mcp.example.invalid/mcp", timeout: 9000 },
+        sse: { type: "sse", url: "https://mcp.example.invalid/sse", alwaysLoad: true },
       },
       spawnClaudeCodeProcess: capture.hook,
     },
@@ -353,8 +355,8 @@ test("Phase 4 Task 2: mcpServers' stdio/http/sse variants pass through --config-
   expect(capture.get()).toMatchObject({
     mcpServers: {
       gh: { command: "gh-mcp-server", args: ["--stdio"], env: { TOKEN: "x" } },
-      remote: { type: "http", url: "https://example.com/mcp", timeout: 9000 },
-      sse: { type: "sse", url: "https://example.com/sse", alwaysLoad: true },
+      remote: { type: "http", url: "https://mcp.example.invalid/mcp", timeout: 9000 },
+      sse: { type: "sse", url: "https://mcp.example.invalid/sse", alwaysLoad: true },
     },
   });
 });

@@ -158,7 +158,9 @@ describe("zai/* GLM reasoning evidence through the REAL catalog registry (SDK 0.
   // MODEL LINEAGE instead (WS-13c's `modelFamily`, via `modelFamilyOf` -- `zai/glm-5` is `"glm"`,
   // `deepseek/deepseek-v4-pro` is `"deepseek"`, `openai/gpt-5.6-luna` is `"gpt"`, all DIFFERENT),
   // so this table (the controller's own) now runs through the REAL catalog end to end.
-  test("GPT (openai/gpt-5.6-luna, summary records) -> deepseek/deepseek-v4-pro: prompts", () => {
+  // WS-23 (reasoning-state, decision 9): the review still RUNS for these pairs (different model lineages,
+  // never a family skip) -- it just no longer prompts over reasoning, which stays with the source.
+  test("GPT (openai/gpt-5.6-luna, summary records) -> deepseek/deepseek-v4-pro: reviewed, not skipped, and silent", () => {
     const registry = realCatalogRegistry();
     const gpt = realEndpoint(registry, "openai/gpt-5.6-luna");
     const deepseek = realEndpoint(registry, "deepseek/deepseek-v4-pro");
@@ -166,11 +168,13 @@ describe("zai/* GLM reasoning evidence through the REAL catalog registry (SDK 0.
     const records = [originRecord("a1", gpt), summaryRecord("a1", "gpt's own returned summary")];
     const review = reviewModelSwitch({ entries, sidecarRecords: records, from: gpt, to: deepseek });
     expect(review.skipped).toBeUndefined();
-    expect(review.prompt).toBe(true);
-    expect(review.classification?.lossClass).toBe("warned-lossy");
+    expect(review.prompt).toBe(false);
+    expect(review.classification?.lossClass).toBe("lossless-portable");
+    // The real rows declare windows, so the fit rides along.
+    expect(review.fits).toBe(true);
   });
 
-  test("GPT -> zai/glm-5: prompts", () => {
+  test("GPT -> zai/glm-5: reviewed, not skipped, and silent", () => {
     const registry = realCatalogRegistry();
     const gpt = realEndpoint(registry, "openai/gpt-5.6-luna");
     const glm = realEndpoint(registry, "zai/glm-5");
@@ -178,8 +182,8 @@ describe("zai/* GLM reasoning evidence through the REAL catalog registry (SDK 0.
     const records = [originRecord("a1", gpt), summaryRecord("a1", "gpt's own returned summary")];
     const review = reviewModelSwitch({ entries, sidecarRecords: records, from: gpt, to: glm });
     expect(review.skipped).toBeUndefined();
-    expect(review.prompt).toBe(true);
-    expect(review.classification?.lossClass).toBe("warned-lossy");
+    expect(review.prompt).toBe(false);
+    expect(review.classification?.lossClass).toBe("lossless-portable");
   });
 
   test("DeepSeek (complete exposed) -> zai/glm-5: silent, lossless-portable -- NOT a family skip", () => {
@@ -215,7 +219,8 @@ describe("zai/* GLM reasoning evidence through the REAL catalog registry (SDK 0.
     const review = reviewModelSwitch({ entries, sidecarRecords: records, from: sonnet, to: opus });
     expect(review.skipped).toBe("same-family");
     expect(review.prompt).toBe(false);
-    expect(review.classification).toBeUndefined();
+    // WS-23: classified first -- a same-family switch can still lose something (a conversation too big).
+    expect(review.classification?.warnings).toEqual([]);
   });
 
   test("a GPT Terra -> Luna pair: skipped same-family", () => {
@@ -260,7 +265,8 @@ describe("zai/* GLM reasoning evidence through the REAL catalog registry (SDK 0.
     expect(review.classification).toBeDefined();
   });
 
-  test("addendum 2: at the loss-matrix layer, GLM -> GPT stays silent with a COMPLETE exposed record, and prompts when the same turn's record is incomplete", () => {
+  // WS-23 (decision 9): an incomplete exposed trace is not a loss either -- it stays with GLM.
+  test("addendum 2: at the loss-matrix layer, GLM -> GPT stays silent with a COMPLETE exposed record, and (WS-23) with an incomplete one too", () => {
     const registry = realCatalogRegistry();
     const glm = realEndpoint(registry, "zai/glm-5");
     const gpt = realEndpoint(registry, "openai/gpt-5.6-luna");
@@ -274,9 +280,8 @@ describe("zai/* GLM reasoning evidence through the REAL catalog registry (SDK 0.
 
     const incompleteReview = reviewModelSwitch({ entries, sidecarRecords: [originRecord("a1", glm), summaryRecord("a1", "partial GLM trace", "exposed", false)], from: glm, to: gpt });
     expect(incompleteReview.skipped).toBeUndefined();
-    expect(incompleteReview.prompt).toBe(true);
-    expect(incompleteReview.classification?.lossClass).toBe("warned-lossy");
-    expect(incompleteReview.classification?.warnings.join(" ")).toContain("part of this turn's trace was not captured");
+    expect(incompleteReview.prompt).toBe(false);
+    expect(incompleteReview.classification?.warnings).toEqual([]);
   });
 
   test("addendum 1a: a GLM turn with an exposed sidecar record renders for a GPT destination as <recovered_reasoning kind=\"exposed\" .../>", () => {

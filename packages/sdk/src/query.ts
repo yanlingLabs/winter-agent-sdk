@@ -171,6 +171,18 @@ export interface Query extends AsyncGenerator<SdkMessage> {
    */
   setEffort(effort?: EffortLevel | null): Promise<void>;
   /**
+   * WS-23 -- WINTER-ONLY, additive: compact the conversation NOW, on the model the session is live on,
+   * and resolve once it has finished (`retainedCount`: the messages kept beside the summary). A host
+   * calls it before a switch to another provider whose model cannot hold the conversation, so the model
+   * being left writes the summary. Rejects with `busy` while a turn (or another compaction) runs, and
+   * with `compaction_failed` when there was nothing to compact or the summarizer failed.
+   *
+   * OPTIONAL on the interface (every `Query` this package returns has it): a host's own structural
+   * `Query` double -- the router's test peers, a daemon's fakes -- keeps type-checking without it, and a
+   * caller checks for it before calling.
+   */
+  compact?(opts?: { customInstructions?: string }): Promise<{ retainedCount: number }>;
+  /**
    * Phase 6 Task 10 (derived-shapes-p6 item (d), `sdk.d.ts:2566`): the models this session may select.
    *
    * A BARE ARRAY — no envelope, no default marker, no "current model" field; the current model is read
@@ -1221,6 +1233,12 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // WS-23: the same object payload shape as `set_model` -- an omitted argument stays omitted.
   gen.setEffort = async (effort?: EffortLevel | null) => {
     await sendControlRequest("set_effort", effort !== undefined ? { effort } : {});
+  };
+  // WS-23: Winter's own `compact` control subtype (snake_case payload, like every control payload).
+  gen.compact = async (opts?: { customInstructions?: string }) => {
+    const payload = await sendControlRequest("compact", opts?.customInstructions !== undefined ? { custom_instructions: opts.customInstructions } : {});
+    const retained = typeof payload === "object" && payload !== null ? (payload as { retained_count?: unknown }).retained_count : undefined;
+    return { retainedCount: typeof retained === "number" ? retained : 0 };
   };
   // Phase 6 Task 10: the pinned payload-free `list_models` (`sdk.d.ts:3855`) and Winter's own
   // `account_info`. A malformed/absent runtime payload degrades to an empty answer rather than a

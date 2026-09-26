@@ -56,6 +56,14 @@ export interface CompactionInput {
    * ordinary threshold or `/compact` compaction.
    */
   reason?: "overflow";
+  /**
+   * WS-23 (reasoning-state, decision 5): the most characters the SUMMARIZER's own request may carry, when
+   * the summarizing model is known to be smaller than the history -- a model switch whose target cannot
+   * hold the conversation, compacting on the target because the source is out of reach, or an overflow.
+   * The oldest part of the summarized window is left out until the rest fits, and the instruction says
+   * so; the retained tail is untouched. Absent: unbounded, as before.
+   */
+  maxInputChars?: number;
 }
 
 export interface CompactionResult {

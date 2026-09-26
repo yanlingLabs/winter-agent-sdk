@@ -14,8 +14,28 @@ export type { Decoration, DecorationDoor, DecorationInput, DecorationKind, Decor
 export { createEndpointResolver, endpointFromOrigin, readableStateOf, sameDomain, sameFamily, sameModel, shouldRequestSummary, summaryRequestOf } from "./domains.ts";
 export type { ContinuityEndpoint, DomainFacts, ReadableState } from "./domains.ts";
 
-export { applyDecorationToContent, createHistoryRenderer, stripOpaque } from "./renderer.ts";
-export type { ContinuationChainLike, ContinuationLinkLike, HistoryRendererOptions, HistoryTarget, MaterialKind, RenderReport, RenderedDecoration, WinterHistoryRenderer } from "./renderer.ts";
+export { applyDecorationToContent, createHistoryRenderer, isServerToolBlockType, stripOpaque } from "./renderer.ts";
+export type { ContinuationChainLike, ContinuationLinkLike, HistoryRendererOptions, HistoryTarget, MaterialKind, RenderReport, RenderedDecoration, StickyDecoration, StickyDecorations, WinterHistoryRenderer } from "./renderer.ts";
+
+// WS-23 (reasoning-state): Anthropic thinking carried in the sidecar, and put back in place on the wire.
+export {
+  REASONING_BLOCK_ITEM_TYPE,
+  coerceInDialectReasoningBlock,
+  contentWithReasoningBlocks,
+  hasInlineReasoning,
+  isReasoningBlockItem,
+  isWinterBookkeepingItem,
+  reasoningBlockItems,
+  reasoningBlocksOf,
+  reasoningBlocksVisibleText,
+  separateReasoningBlocks,
+  spliceReasoningBlocks,
+} from "./reasoning-blocks.ts";
+export type { InDialectReasoningBlock, ReasoningBlockAt, ReasoningBlockItem } from "./reasoning-blocks.ts";
+
+// WS-23 (reasoning-state, decision 5): the switch fit estimate.
+export { DECORATION_CHAR_BUDGET, DOCUMENT_PAGE_TOKENS, ESTIMATE_CHARS_PER_TOKEN, ESTIMATE_MARGIN, IMAGE_TOKENS, MAX_DECORATION_CHARS, estimateTextTokens, estimateTokensFromChars, estimateValueTokens, fitBudgetTokens, fitVerdict } from "./fit.ts";
+export type { FitVerdict } from "./fit.ts";
 
 export { classifySwitch } from "./warnings.ts";
 export type { LossClass, SwitchClassification, SwitchFacts } from "./warnings.ts";
@@ -41,5 +61,5 @@ export { toClaudeReady } from "./claude-ready.ts";
 export type { ProviderStateKind, ProviderStateRecord, ToClaudeReadyOptions, ToClaudeReadyResult } from "./claude-ready.ts";
 
 // Phase 10b Lane S, S7 (W18-20/21): the one pre-flight switch review.
-export { switchFactsFor, reviewModelSwitch } from "./switch-review.ts";
+export { SYSTEM_AND_TOOLS_ALLOWANCE_TOKENS, switchFactsFor, reviewModelSwitch } from "./switch-review.ts";
 export type { SwitchReview } from "./switch-review.ts";

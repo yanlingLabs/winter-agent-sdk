@@ -7,7 +7,7 @@
 import { test, expect, describe } from "bun:test";
 import type { ProviderAdapter, ProviderContext, ProviderEvent, ResolvedModel, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 import type { WireStreamEvent } from "@yanlinglabs/winter-agent-sdk";
-import { adapterAsProvider, createIdentityHistoryRenderer, foldProviderStream, ProviderTurnError } from "./bridge.ts";
+import { adapterAsProvider, createIdentityHistoryRenderer, foldProviderStream, ProviderTurnError, stampNativeState } from "./bridge.ts";
 import type { ProviderMessage, ProviderStreamSink } from "../engine.ts";
 
 async function* scripted(events: ProviderEvent[]): AsyncIterable<ProviderEvent> {
@@ -380,7 +380,9 @@ describe("R6-5: the raw stream-event translation", () => {
     expect(events.some((e) => e.type === "message_start")).toBe(false); // no message_start was scripted
   });
 
-  test("the four observed delta variants are the only ones produced", async () => {
+  // WS-23 (reasoning-state): `signature_delta` is no longer produced -- a host never receives a thinking
+  // block's signature (the next request gets it from the provider-state sidecar).
+  test("the three delta variants a host may see are the only ones produced -- never a signature", async () => {
     const { sink, events } = recordingSink();
     await foldProviderStream(
       scripted([
@@ -394,7 +396,8 @@ describe("R6-5: the raw stream-event translation", () => {
       sink,
     );
     const deltas = events.filter((e) => e.type === "content_block_delta") as Array<{ delta: { type: string } }>;
-    expect([...new Set(deltas.map((d) => d.delta.type))].sort()).toEqual(["input_json_delta", "signature_delta", "text_delta", "thinking_delta"]);
+    expect([...new Set(deltas.map((d) => d.delta.type))].sort()).toEqual(["input_json_delta", "text_delta", "thinking_delta"]);
+    expect(events.find((e) => e.type === "content_block_start")).toEqual({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } });
   });
 
   test("no sink means no work: the fold is identical for an AUXILIARY generation", async () => {
@@ -767,5 +770,16 @@ describe("live native replay: the turn's native state must be STAMPED with the r
     const adapter = scriptedAdapter(() => scripted([{ type: "text_delta", text: "x" }, { type: "done", stopReason: "end_turn" }]));
     const turn = await adapterAsProvider(resolvedFor(adapter), fakeCtx(), { adapter }).generate({ messages: [] });
     expect(turn.nativeState).toBeUndefined();
+  });
+});
+
+// WS-23 (reasoning-state, defect e): a row with no certified continuation domain stamps its MODEL KEY, so
+// its state is valid for that model alone -- never the family string (`"openai"` put xAI and OpenAI
+// state in one pseudo-domain).
+describe("stampNativeState's floor for a domain-less row", () => {
+  test("the model key, never the family", () => {
+    const turn = { kind: "text" as const, text: "x", nativeState: { family: "", continuationDomain: "", items: ["opaque"] } };
+    expect(stampNativeState(turn, { providerId: "xai", modelKey: "xai/grok-4.5", family: "openai" }).nativeState).toEqual({ family: "openai", continuationDomain: "xai/grok-4.5", items: ["opaque"] });
+    expect(stampNativeState(turn, { providerId: "openai", modelKey: "openai/gpt-6-sol", family: "openai", continuationDomain: "openai/gpt-6-sol" }).nativeState!.continuationDomain).toBe("openai/gpt-6-sol");
   });
 });

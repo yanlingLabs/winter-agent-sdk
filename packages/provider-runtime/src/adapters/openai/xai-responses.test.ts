@@ -240,10 +240,10 @@ describe("encrypted reasoning REPLAYS across turns (WS-23 item 5)", () => {
     }
   });
 
-  test("the switch warning a knob-less row raises now describes state the adapter CAPTURED, not state it never asked for (fix round 1, I3)", () => {
-    // The classifier is capability-driven (`continuation !== "none"` means "may hold state"), so the
-    // warning on leaving these rows stands — what I3 changes is that it is TRUE: the turn above asked
-    // for the item and the row's domain holds it. Pinned so the two facts cannot drift apart again.
+  test("the state a knob-less row carries is state the adapter CAPTURED, in the row's own domain (fix round 1, I3)", () => {
+    // I3: the turn above asked for the item and the row's domain holds it. WS-23 (reasoning-state,
+    // decision 9): leaving such a row no longer WARNS -- the state stays in the sidecar under that domain
+    // and replays on a switch back -- so what is pinned is the domain and the portable claim.
     const adapter = responsesAdapter();
     for (const key of ["xai/grok-4.20-0309-reasoning", "xai/grok-build-0.1"]) {
       const from = catalog.models.find((m) => m.key === key)!;
@@ -254,7 +254,8 @@ describe("encrypted reasoning REPLAYS across turns (WS-23 item 5)", () => {
         { providerId: "xai", modelKey: key, family: "openai", continuationDomain: fromCaps.continuationDomain!, readableState: fromCaps.readableState, continuation: from.reasoning!.continuation },
         { providerId: "openai", modelKey: to.key, family: "openai", readableState: "none", continuation: "none" },
       );
-      expect([key, verdict.lossClass]).toEqual([key, "warned-lossy"]);
+      expect([key, verdict.lossClass]).toEqual([key, "lossless-portable"]);
+      expect(verdict.portable.some((p) => p.includes(`${key}'s reasoning, kept for ${key}`))).toBe(true);
     }
   });
 

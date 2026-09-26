@@ -24,11 +24,15 @@ export interface ResponsesFakeRequest {
 export type ResponsesFakeItem =
   | { type: "text"; text: string }
   | { type: "function_call"; callId: string; name: string; arguments: Record<string, unknown>; namespace?: string }
-  | { type: "tool_search_call"; callId: string; arguments: Record<string, unknown> };
+  | { type: "tool_search_call"; callId: string; arguments: Record<string, unknown> }
+  /** WS-23 (reasoning-state): a completed reasoning item carrying encrypted state, its summary streamed part by part. */
+  | { type: "reasoning"; encrypted: string; summary?: string[] };
 
 export type ResponsesFakeAnswer =
   | { items: ResponsesFakeItem[]; usage?: { input_tokens: number; output_tokens: number; cached_tokens?: number } }
-  | { status: number; error: { message: string; type?: string; code?: string | null; param?: string | null } };
+  | { status: number; error: { message: string; type?: string; code?: string | null; param?: string | null } }
+  /** WS-23 review r1 (I-6): an in-stream failure -- `response.created`, then `response.failed` carrying `error`. */
+  | { streamFailure: { code: string; message: string } };
 
 export interface ResponsesFake {
   url: string;
@@ -57,6 +61,15 @@ function itemFrames(item: ResponsesFakeItem, index: number): string {
     return (
       frame({ type: "response.output_item.added", output_index: index, item: { ...wire, arguments: "" } }) +
       frame({ type: "response.output_item.done", output_index: index, item: { ...wire, arguments: JSON.stringify(item.arguments) } })
+    );
+  }
+  if (item.type === "reasoning") {
+    const id = `rs_${index}`;
+    const summary = item.summary ?? [];
+    return (
+      frame({ type: "response.output_item.added", output_index: index, item: { id, type: "reasoning", summary: [] } }) +
+      summary.map((text, part) => frame({ type: "response.reasoning_summary_text.delta", item_id: id, output_index: index, summary_index: part, delta: text })).join("") +
+      frame({ type: "response.output_item.done", output_index: index, item: { id, type: "reasoning", summary: summary.map((text) => ({ type: "summary_text", text })), encrypted_content: item.encrypted, status: "completed" } })
     );
   }
   // codex-rs's own round-trip fixture: `arguments` is an OBJECT on this item, not a JSON string.
@@ -88,6 +101,10 @@ export async function startResponsesFake(script: (request: ResponsesFakeRequest,
         return new Response(JSON.stringify({ error: { type: "invalid_request_error", code: null, param: null, ...answer.error } }), { status: answer.status, headers: { "content-type": "application/json" } });
       }
       const model = typeof body["model"] === "string" ? body["model"] : "gpt";
+      if ("streamFailure" in answer) {
+        const failed = frame({ type: "response.created", response: { id: `resp_${requests.length}`, model, output: [] } }) + frame({ type: "response.failed", response: { id: `resp_${requests.length}`, status: "failed", error: answer.streamFailure } });
+        return new Response(failed, { headers: { "content-type": "text/event-stream" } });
+      }
       let out = frame({ type: "response.created", response: { id: `resp_${requests.length}`, model, output: [] } });
       answer.items.forEach((item, i) => (out += itemFrames(item, i)));
       const usage = answer.usage ?? { input_tokens: 10, output_tokens: 2 };

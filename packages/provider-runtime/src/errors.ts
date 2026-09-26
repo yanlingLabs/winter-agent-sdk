@@ -263,10 +263,32 @@ export function normalizeHttpError(status: number, headers: Headers, body: strin
   }
   if (status === 408) return { code: "timeout", message, status, retryable: true, ...extra };
   if (status >= 500) return { code: "server", message, status, retryable: true, ...extra };
+  // WS-23 (reasoning-state): a prompt that does not fit the model's window is a CONTEXT OVERFLOW, the
+  // one refusal the engine can recover from by compacting -- on every surface, not only Anthropic's
+  // (whose adapter recognises its own "prompt is too long" envelope).
+  if (isContextOverflowRefusal(status, providerCode, flat?.message ?? body)) return { code: "bad_request", message, status, retryable: false, contextOverflow: true, ...extra };
   if (status >= 400) return { code: "bad_request", message, status, retryable: status === 409, ...extra };
   // A non-error status reaching here is a caller bug, not a provider condition; it is still typed
   // rather than thrown, so one mis-wired call site cannot take a stream down.
   return { code: "server", message: `${message} (unexpected non-error status)`, status, retryable: false, ...extra };
+}
+
+/**
+ * WS-23 (reasoning-state): the OpenAI-family context-overflow refusals, read off the FULL body before the
+ * snippet cap.
+ *   - OpenAI (Responses and Chat Completions): HTTP 400 with the structured code `context_length_exceeded`
+ *     (https://platform.openai.com/docs/guides/error-codes; the Responses message is "Your input exceeds
+ *     the context window of this model", the Chat Completions one "This model's maximum context length is
+ *     N tokens ...").
+ *   - xAI: HTTP 400 in its flat dialect, `"This model's maximum prompt length is N but the request contains
+ *     M tokens."` -- no structured code, so the documented leading phrase is the discriminator.
+ * 413 is included for a gateway that sends the same refusal as "payload too large". Anything else stays an
+ * ordinary `bad_request`: a false positive would compact a conversation over an unrelated error.
+ */
+function isContextOverflowRefusal(status: number, providerCode: string | undefined, message: string): boolean {
+  if (status !== 400 && status !== 413) return false;
+  if (providerCode === "context_length_exceeded") return true;
+  return /maximum (prompt|context) length is \d+/i.test(message) || /exceeds the context window/i.test(message);
 }
 
 /** True for anything already shaped as a normalized `ProviderError`. */

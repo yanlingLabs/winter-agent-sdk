@@ -272,6 +272,51 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   `additional_tools` / `allowed_tools`. `scripts/probe-anthropic-cache.ts` gains the tool-change phases
   and per-message effort on Opus 5.
 
+### Reasoning state in the sidecar, and switching models (WS-23 reasoning-state)
+
+- **A provider-neutral transcript.** An assistant entry now holds text and `tool_use` only. A Claude
+  turn's `thinking` / `redacted_thinking` blocks (signatures and opaque data intact) are stored in the
+  provider-state sidecar as a new `reasoning-blocks` record, each block with its position in the turn.
+  The Anthropic adapter puts them back in place on every request, so the wire is unchanged byte for
+  byte (a golden captured before the move pins it, live and resumed). A transcript written before the
+  move is read as it stands; its inline blocks win over any record. A session with no sidecar keeps
+  them inline.
+- **Per-model cache quirks move to the sidecar too.** An entry's `effort`/`perTurnEffort` and the tool
+  epoch's bookkeeping become `effort`, `tool-epoch` and `tool-changes` records, keyed by provider and
+  model. Effort markers, the frozen top-level effort and the tool epoch now read only the target
+  model's own records. Returning to a model within its prompt-cache lifetime (5 minutes, or an hour
+  when configured) resumes its tool epoch, with changes since recorded as change entries; past it, a
+  fresh epoch starts. (The transcript fields and attachments from dev builds are still read.)
+- **The switch fit check.** The first request after a model switch, in-runtime or at resume, is
+  estimated against the target's window × compaction threshold − max output (about 3.5 characters per
+  token, plus 10%). When the conversation does not fit, the model being left compacts it first. If
+  that model is out of reach, the target compacts, with its summarizer bounded to what it can read.
+  The context accountant's limit follows every switch. `describeModel` carries the row's window and
+  output ceiling.
+- **`Query.compact()`** (Winter-only): compacts now, on the live model, and resolves once done. A host
+  calls it before switching to another provider whose model cannot hold the conversation.
+- **What a switch loses** is only what the target cannot represent: images or documents for a model
+  that reads none (each becomes a note), another vendor's server-tool steps (flattened to text), a
+  compaction the fit check will run, and an interrupted turn. Reasoning stays with its model and
+  replays on a switch back, so a plain cross-family switch no longer warns. `reviewModelSwitch`
+  reports `{fits, estimatedTokens, window}`. The warning code is now `model_switch_lossy`, and the
+  `handoff` record is no longer written.
+- **Cross-family reasoning decorations are capped**: 4,000 characters each and 24,000 per request,
+  newest first.
+- **No frame carries a thinking signature or redacted data** (the host never needs them).
+- **A failed reasoning write** (`native-state`, `reasoning-blocks`, `summary`) is retried once. If it
+  still fails, the turn completes with a `reasoning_state_unsaved` continuity warning.
+- **Sidecar fixes.** A Responses turn keeps its reasoning items' places among its messages and calls,
+  and replays them interleaved. A replay refused with "could not decrypt/verify the encrypted content"
+  is retried once without the replayed reasoning. A sidecar past 64 MiB keeps its newest records
+  instead of dropping every turn. Summary parts are joined with a blank line. A row with no certified
+  domain uses its model key as its continuation domain, not the family string.
+- **OpenAI-family context overflow** (`context_length_exceeded`, xAI's maximum-prompt-length 400) is
+  typed `contextOverflow`, so reactive compaction recovers from it as it does on Anthropic.
+- `scripts/probe-switch-return.ts` (`WINTER_SWITCH_PROBE=1`, dry run available) drives Claude → GPT →
+  Claude live. `scripts/probe-xai-responses.ts` gains the multi-agent replay-order step
+  (`WINTER_XAI_PROBE_STEPS=order`).
+
 ## 0.0.24
 
 Fixes to the 0.0.23 catalog refresh from an independent audit (53 rows fact-checked against vendor pages), plus

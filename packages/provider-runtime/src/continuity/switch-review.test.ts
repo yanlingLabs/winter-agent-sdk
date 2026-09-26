@@ -70,21 +70,23 @@ function oneTurnEntries(assistantUuid: string): SessionStoreEntry[] {
 }
 
 describe("reviewModelSwitch (W18-20/21)", () => {
-  test("GPT (summary records) -> Claude: prompt, warned-lossy", () => {
+  // WS-23 (reasoning-state, decision 9): reasoning stays in the sidecar for the source, so a plain
+  // cross-family switch no longer prompts -- only what the target cannot represent does (below).
+  test("GPT (summary records) -> Claude: NO prompt -- GPT's reasoning is kept for GPT, not lost", () => {
     const entries = oneTurnEntries("a1");
     const records = [origin("a1", GPT.providerId, GPT.modelKey, GPT.family), summary("a1", "gpt's own summary")];
     const review = reviewModelSwitch({ entries, sidecarRecords: records, from: GPT, to: CLAUDE });
-    expect(review.prompt).toBe(true);
-    expect(review.classification?.lossClass).toBe("warned-lossy");
+    expect(review.prompt).toBe(false);
+    expect(review.classification?.lossClass).toBe("lossless-portable");
     expect(review.skipped).toBeUndefined();
   });
 
-  test("Claude (signed thinking, i.e. its own summary) -> DeepSeek: prompt", () => {
+  test("Claude (signed thinking) -> DeepSeek: no prompt", () => {
     const entries = oneTurnEntries("a1");
     const records = [origin("a1", CLAUDE.providerId, CLAUDE.modelKey, CLAUDE.family), summary("a1", "claude's summarized thinking")];
     const review = reviewModelSwitch({ entries, sidecarRecords: records, from: CLAUDE, to: DEEPSEEK });
-    expect(review.prompt).toBe(true);
-    expect(review.classification?.lossClass).toBe("warned-lossy");
+    expect(review.prompt).toBe(false);
+    expect(review.classification?.lossClass).toBe("lossless-portable");
   });
 
   test("DeepSeek (complete exposed) -> GLM: no prompt, lossless-portable", () => {
@@ -117,7 +119,8 @@ describe("reviewModelSwitch (W18-20/21)", () => {
       summary("a2", "incomplete trace two", "exposed", false),
     ];
     const review = reviewModelSwitch({ entries, sidecarRecords: records, from: DEEPSEEK, to: GPT });
-    expect(review.prompt).toBe(true);
+    // WS-23: an incomplete exposed trace is no longer a loss -- the trace stays with DeepSeek.
+    expect(review.prompt).toBe(false);
   });
 
   test("Sonnet -> Opus: skipped same-family (by MODEL LINEAGE, via the injected fixture catalog)", () => {
@@ -126,7 +129,8 @@ describe("reviewModelSwitch (W18-20/21)", () => {
     const review = reviewModelSwitch({ entries, sidecarRecords: records, from: SONNET, to: OPUS, catalog: FIXTURE_CATALOG });
     expect(review.prompt).toBe(false);
     expect(review.skipped).toBe("same-family");
-    expect(review.classification).toBeUndefined();
+    // WS-23: the classification is computed first now (a same-family switch can still lose something).
+    expect(review.classification?.warnings).toEqual([]);
   });
 
   test("Terra -> Luna: skipped same-family (by MODEL LINEAGE, via the injected fixture catalog)", () => {
@@ -167,11 +171,11 @@ describe("reviewModelSwitch (W18-20/21)", () => {
     expect(review.skipped).toBe("no-source-turns");
   });
 
-  test("truncated: true always prompts, even for an otherwise-lossless exposed source", () => {
+  test("WS-23: `truncated` (reasoning trimmed to fit) is accepted and no longer a loss -- the reasoning stays with the source", () => {
     const entries = oneTurnEntries("a1");
     const records = [origin("a1", DEEPSEEK.providerId, DEEPSEEK.modelKey, DEEPSEEK.family), summary("a1", "the whole raw trace", "exposed", true)];
     const review = reviewModelSwitch({ entries, sidecarRecords: records, from: DEEPSEEK, to: GLM, truncated: true });
-    expect(review.prompt).toBe(true);
+    expect(review.prompt).toBe(false);
   });
 
   test("same-profile (identical provider+model) is skipped BEFORE same-family, and before any classification", () => {
@@ -264,5 +268,53 @@ describe("switchFactsFor", () => {
       { type: "user", uuid: "f2-summary", parentUuid: "f2-boundary", isCompactSummary: true, message: { role: "user", content: "F2 SUMMARY" } },
     ];
     expect(switchFactsFor({ entries, sidecarRecords: [], from: CLAUDE }).completedToolResults).toBe(0);
+  });
+});
+
+// --- WS-23 (reasoning-state, decision 9): the four real losses, and the fit --------------------------------
+describe("reviewModelSwitch reports what the target cannot represent, and whether the conversation fits it", () => {
+  const withWindow = (key: string, providerId: string, window: number, image: boolean): WinterModelDescriptor => ({
+    ...familyRow(key, providerId, `family-${key}`),
+    inputModalities: { value: image ? ["text", "image"] : ["text"], source: "winter-default", confidence: "unknown" },
+    contextWindow: { value: window, source: "winter-default", confidence: "unknown" },
+    maxOutputTokens: { value: 1_000, source: "winter-default", confidence: "unknown" },
+  });
+  const catalogWith = (...rows: WinterModelDescriptor[]): WinterCatalog => ({ ...FIXTURE_CATALOG, models: [...FIXTURE_CATALOG.models, ...rows] });
+  const SMALL: ContinuityEndpoint = { providerId: "tiny", modelKey: "tiny/text-only", family: "openai", readableState: "none" };
+
+  test("the fit is reported whenever the target's row declares a window -- and a conversation that fits does not prompt", () => {
+    const review = reviewModelSwitch({ entries: oneTurnEntries("a1"), sidecarRecords: [origin("a1", GPT.providerId, GPT.modelKey, GPT.family)], from: GPT, to: SMALL, catalog: catalogWith(withWindow("tiny/text-only", "tiny", 200_000, true)) });
+    expect(review.fits).toBe(true);
+    expect(review.window).toBe(200_000);
+    expect(review.estimatedTokens).toBeGreaterThan(16_000);
+    expect(review.prompt).toBe(false);
+  });
+
+  test("a conversation too big for the target prompts, naming the compaction the source will run", () => {
+    const entries: SessionStoreEntry[] = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "x".repeat(200_000) } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "reply" }] } },
+    ];
+    const review = reviewModelSwitch({ entries, sidecarRecords: [origin("a1", GPT.providerId, GPT.modelKey, GPT.family)], from: GPT, to: SMALL, catalog: catalogWith(withWindow("tiny/text-only", "tiny", 64_000, true)) });
+    expect(review.fits).toBe(false);
+    expect(review.prompt).toBe(true);
+    expect(review.classification?.warnings[0]).toContain("will summarize its older part before the switch");
+  });
+
+  test("images for a text-only target, and another vendor's server-tool blocks, each prompt", () => {
+    const entries: SessionStoreEntry[] = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: [{ type: "text", text: "look" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "QUJD" } }] } },
+      {
+        type: "assistant",
+        uuid: "a1",
+        parentUuid: "u1",
+        message: { role: "assistant", content: [{ type: "server_tool_use", id: "srv_1", name: "web_search", input: { query: "q" } }, { type: "web_search_tool_result", tool_use_id: "srv_1", content: [{ type: "web_search_result", title: "T", url: "https://example.com" }] }, { type: "text", text: "found" }] },
+      },
+    ];
+    const review = reviewModelSwitch({ entries, sidecarRecords: [origin("a1", CLAUDE.providerId, CLAUDE.modelKey, CLAUDE.family)], from: CLAUDE, to: SMALL, catalog: catalogWith(withWindow("tiny/text-only", "tiny", 200_000, false)) });
+    expect(review.prompt).toBe(true);
+    const warnings = review.classification!.warnings.join(" ");
+    expect(warnings).toContain("cannot read images or documents: the 1 in this conversation");
+    expect(warnings).toContain("2 steps of anthropic's own server-side tools");
   });
 });

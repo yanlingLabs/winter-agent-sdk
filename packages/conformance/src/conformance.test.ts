@@ -428,12 +428,12 @@ const FIX_WAVE_ROWS: ConformanceRow[] = [
     bullet: "no silent cross-domain replay: a `warned-lossy` switch emits `continuity_warning: cross_domain_replay_dropped` (counts and identity only) and persists the `handoff` sidecar record built by `buildPortableHandoff` (§8.2 / WS-05 §13)",
     status: "new",
     citations: [
-      { file: `${RUNTIME}/provider/switch-seam.test.ts`, testName: "a CROSS-DOMAIN switch emits" },
-      { file: `${RUNTIME}/provider/switch-seam.test.ts`, testName: "sidecar record anchored at the source's last entry (M-6)" },
+      { file: `${RUNTIME}/provider/switch-seam.test.ts`, testName: "a CROSS-DOMAIN switch is announced, not warned about" },
       { file: `${RUNTIME}/provider/switch-seam.test.ts`, testName: "a SAME-DOMAIN switch (two models declaring one certified domain) is lossless" },
       { file: `${RUNTIME}/provider/switch-seam.test.ts`, testName: "parked MID-TURN and applied on interrupt" },
+      { file: `${RUNTIME}/provider/switch-return.test.ts`, testName: "within the cache lifetime: reasoning re-attaches" },
     ],
-    note: "The frame carries no anchor uuid (a per-run value); the record does. On the interrupt path the same value carries the matrix's mid-turn-abort loss (trigger 7), disclosed in WS-03.",
+    note: "WS-23 (reasoning-state, user decision 9) SUPERSEDES the bullet's warning half: a cross-domain switch no longer drops anything silently OR loudly -- the source's native state stays in the provider-state sidecar under its own continuation domain (never sent to the target) and replays on a switch back, and the `handoff` record is retired with the official leg that read it. What remains lossy (unreadable media, server tools, a fit-check compaction, an interrupted turn) warns as `model_switch_lossy`; the interrupt path carries the mid-turn-abort loss.",
   },
   {
     id: "WS13-I16",

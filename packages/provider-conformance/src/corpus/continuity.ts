@@ -41,14 +41,14 @@ import { fixtureCatalog, fixtureModel, fixtureProvider, fixtureReasoning, script
 /** The case ids. Stable strings: a report names them and a reader can trace each to its clause of the report. */
 export type ContinuityCaseId =
   // --- §12.3's eight REQUIRED named transitions -------------------------------------------------
-  | "claude-to-openai-warns"
-  | "openai-to-claude-warns"
-  | "gemini-to-openai-warns"
-  | "xai-to-openai-warns"
+  | "claude-to-openai-reasoning-kept"
+  | "openai-to-claude-reasoning-kept"
+  | "gemini-to-openai-reasoning-kept"
+  | "xai-to-openai-no-shared-domain"
   | "deepseek-to-openai-full-no-warning"
-  | "deepseek-to-openai-truncated-warns"
+  | "deepseek-to-openai-truncation-not-a-loss"
   | "same-provider-model-profile-no-warning"
-  | "same-provider-unverified-model-warns"
+  | "same-provider-unverified-model-not-native"
   // --- §12.3's per-pair procedure (its numbered checks 1-6) --------------------------------------
   | "switch-during-tool-loop-waits"
   | "source-receives-every-native-tool-result"
@@ -56,7 +56,7 @@ export type ContinuityCaseId =
   | "target-receives-available-portable-state"
   | "immediate-switch-cancels-rather-than-splices"
   // --- §12.4's security and privacy proofs ------------------------------------------------------
-  | "suppression-requires-affirmative-evidence"
+  | "reasoning-completeness-is-not-a-loss"
   | "opaque-state-never-in-a-warning-or-handoff"
   | "handoff-is-data-not-authority"
   | "exposed-reasoning-forwarded-only-when-policy-permits"
@@ -74,20 +74,23 @@ export interface ContinuityCaseSpec {
 }
 
 export const CONTINUITY_CASES: readonly ContinuityCaseSpec[] = [
-  { id: "claude-to-openai-warns", question: "does a Claude -> OpenAI switch warn, because a Claude signature cannot become an OpenAI reasoning item?", clause: "§12.3 / §8.5" },
-  { id: "openai-to-claude-warns", question: "does OpenAI -> Claude warn, with the provider names the other way round?", clause: "§12.3 / §8.5" },
-  { id: "gemini-to-openai-warns", question: "does Gemini -> OpenAI warn, a thought signature being Gemini-specific?", clause: "§12.3 / §8.5" },
-  { id: "xai-to-openai-warns", question: "does xAI -> OpenAI warn, similarly named encrypted reasoning still being xAI's?", clause: "§12.3 / §8.5" },
+  // WS-23 (reasoning-state, user decision 9): a switch replays the conversation as it is and each model's
+  // reasoning stays in the sidecar for that model, so a cross-family switch loses nothing the target can
+  // see -- these cases now pin that it is SILENT, and still never certifies a shared domain.
+  { id: "claude-to-openai-reasoning-kept", question: "does a Claude -> OpenAI switch stay silent, Claude's signed reasoning kept for Claude (never sent to OpenAI)?", clause: "§12.3 / WS-23 decision 9" },
+  { id: "openai-to-claude-reasoning-kept", question: "does OpenAI -> Claude stay silent the other way round?", clause: "§12.3 / WS-23 decision 9" },
+  { id: "gemini-to-openai-reasoning-kept", question: "does Gemini -> OpenAI stay silent, the thought signature kept for Gemini?", clause: "§12.3 / WS-23 decision 9" },
+  { id: "xai-to-openai-no-shared-domain", question: "does xAI -> OpenAI stay non-native (no shared domain) despite the shared wire family?", clause: "§12.3 / §8.5" },
   { id: "deepseek-to-openai-full-no-warning", question: "does DeepSeek -> OpenAI with COMPLETE forwarded reasoning raise no hidden-reasoning warning?", clause: "§12.3 / §8.4(2)" },
-  { id: "deepseek-to-openai-truncated-warns", question: "does truncation flip that same pair to a warned, lossy transfer?", clause: "§12.3 / §9.6" },
+  { id: "deepseek-to-openai-truncation-not-a-loss", question: "does trimmed reasoning stay a lossless transfer, the trace being kept for its source (WS-23)?", clause: "§12.3 / WS-23 decision 9" },
   { id: "same-provider-model-profile-no-warning", question: "does the identical provider/model/profile switch cleanly, with no warning?", clause: "§12.3" },
-  { id: "same-provider-unverified-model-warns", question: "does an uncertified model-to-model switch inside one provider refuse the lossless classification?", clause: "§12.3 / §8.5" },
+  { id: "same-provider-unverified-model-not-native", question: "does an uncertified model-to-model switch inside one provider refuse the NATIVE classification?", clause: "§12.3 / §8.5" },
   { id: "switch-during-tool-loop-waits", question: "does a switch requested during a live tool loop wait for turn completion by default?", clause: "§12.3(2) / §8.2" },
   { id: "source-receives-every-native-tool-result", question: "does the source provider receive every native tool result of the turn it owns?", clause: "§12.3(3) / §8.1" },
   { id: "target-never-receives-source-opaque-state", question: "is the source's opaque state absent from everything the target sees, in BOTH carriers?", clause: "§12.3(4) / §12.4" },
   { id: "target-receives-available-portable-state", question: "does the target receive the available summary and portable task state?", clause: "§12.3(5) / §9.3" },
   { id: "immediate-switch-cancels-rather-than-splices", question: "does an immediate switch cancel the source loop instead of splicing a foreign model into it?", clause: "§12.3(6) / §8.3" },
-  { id: "suppression-requires-affirmative-evidence", question: "is a no-warning classification reachable ONLY on proof of completeness, never on the absence of a denial?", clause: "§12.4 / §8.4(2)" },
+  { id: "reasoning-completeness-is-not-a-loss", question: "does an exposed source switch silently whatever its trace's completeness, the trace being kept for it (WS-23 decision 9)?", clause: "§12.4 / WS-23 decision 9" },
   { id: "opaque-state-never-in-a-warning-or-handoff", question: "can an encrypted payload reach a warning, a handoff or a render report at all?", clause: "§12.4" },
   { id: "handoff-is-data-not-authority", question: "is a handoff delimited, labelled as prior-model data, and unable to terminate its own block?", clause: "§12.4 / §9.3" },
   { id: "exposed-reasoning-forwarded-only-when-policy-permits", question: "is raw exposed reasoning withheld when policy forbids forwarding it?", clause: "§12.4 / §8.4(5)" },
@@ -209,24 +212,23 @@ function assert(condition: boolean, message: string): asserts condition {
 const chainOf = (entries: Record<string, { summary?: string }>): Map<string, { summary?: string }> => new Map(Object.entries(entries));
 
 export const CONTINUITY_CASE_IMPLS: Record<ContinuityCaseId, ContinuityCaseImpl> = {
-  "claude-to-openai-warns": ({ world }) => {
+  "claude-to-openai-reasoning-kept": ({ world }) => {
     const verdict = classifySwitch(world.endpoints.claudeA, world.endpoints.openai, { summaryAvailable: true, completedToolResults: 1 });
-    assert(verdict.lossClass === "warned-lossy", "a Claude -> OpenAI switch must be classified lossy");
-    assert(verdict.warnings.length > 0, "it must warn");
-    assert(verdict.portable.includes("the visible conversation"), "the warning must say the visible conversation survives");
+    assert(verdict.lossClass === "lossless-portable" && verdict.warnings.length === 0, "a Claude -> OpenAI switch loses nothing the target can see: silent, and never native");
+    assert(verdict.portable[0] === "the whole visible conversation, as it is", "the visible conversation crosses as it is");
+    assert(verdict.portable.some((p) => p.includes("kept for")), "and Claude's reasoning is named as kept for Claude");
   },
-  "openai-to-claude-warns": ({ world }) => {
+  "openai-to-claude-reasoning-kept": ({ world }) => {
     const verdict = classifySwitch(world.endpoints.openai, world.endpoints.claudeA, { summaryAvailable: true });
-    assert(verdict.lossClass === "warned-lossy", "an OpenAI -> Claude switch must be classified lossy");
-    assert(verdict.warnings[0]!.includes("openai") && verdict.warnings[0]!.includes("anthropic"), "the warning must name both providers, in the switch's own direction");
+    assert(verdict.lossClass === "lossless-portable" && verdict.warnings.length === 0, "an OpenAI -> Claude switch is silent too");
   },
-  "gemini-to-openai-warns": ({ world }) => {
-    assert(classifySwitch(world.endpoints.gemini, world.endpoints.openai, { summaryAvailable: true }).lossClass === "warned-lossy", "Gemini -> OpenAI must warn");
+  "gemini-to-openai-reasoning-kept": ({ world }) => {
+    assert(classifySwitch(world.endpoints.gemini, world.endpoints.openai, { summaryAvailable: true }).lossClass === "lossless-portable", "Gemini -> OpenAI is silent, and never native");
   },
-  "xai-to-openai-warns": ({ world }) => {
+  "xai-to-openai-no-shared-domain": ({ world }) => {
     const { xai, openai } = world.endpoints;
     assert(xai.family === openai.family, "the fixture must put xAI in OpenAI's own wire family, or the case proves nothing");
-    assert(classifySwitch(xai, openai, { summaryAvailable: true }).lossClass === "warned-lossy", "xAI -> OpenAI must warn despite the shared family and endpoint shape");
+    assert(classifySwitch(xai, openai, { summaryAvailable: true }).lossClass === "lossless-portable", "xAI -> OpenAI must NOT be native despite the shared family and endpoint shape");
     assert(!sameDomain(xai, openai), "and they must not share a continuation domain");
   },
   "deepseek-to-openai-full-no-warning": ({ world }) => {
@@ -234,23 +236,21 @@ export const CONTINUITY_CASE_IMPLS: Record<ContinuityCaseId, ContinuityCaseImpl>
     assert(verdict.lossClass === "lossless-portable", "complete exposed reasoning forwarded unmodified is not a lossy transfer");
     assert(verdict.warnings.length === 0, "and it must raise no warning at all");
   },
-  "deepseek-to-openai-truncated-warns": ({ world }) => {
+  "deepseek-to-openai-truncation-not-a-loss": ({ world }) => {
     const verdict = classifySwitch(world.endpoints.deepseek, world.endpoints.openai, { exposedComplete: true, truncated: true });
-    assert(verdict.lossClass === "warned-lossy", "truncation must flip the same pair to lossy");
-    assert(verdict.warnings.some((w) => w.includes("trimmed")), "and must say what was trimmed away");
+    assert(verdict.lossClass === "lossless-portable" && verdict.warnings.length === 0, "trimmed reasoning is not a loss: the trace stays with its source");
   },
   "same-provider-model-profile-no-warning": ({ world }) => {
     const verdict = classifySwitch(world.endpoints.openai, world.endpoints.openai, { summaryAvailable: true });
     assert(verdict.lossClass === "lossless-native" && verdict.warnings.length === 0, "the identical model must switch with no warning");
   },
-  "same-provider-unverified-model-warns": ({ world }) => {
+  "same-provider-unverified-model-not-native": ({ world }) => {
     for (const [from, to] of [
       [world.endpoints.openai, world.endpoints.openaiMini],
       [world.endpoints.claudeA, world.endpoints.claudeB],
     ] as const) {
       const verdict = classifySwitch(from, to, { summaryAvailable: true });
-      assert(verdict.lossClass === "warned-lossy", `${from.modelKey} -> ${to.modelKey} must refuse the lossless classification`);
-      assert(verdict.warnings.some((w) => w.includes("has not certified")), "and must say the provider being unchanged does not certify the pair");
+      assert(verdict.lossClass === "lossless-portable", `${from.modelKey} -> ${to.modelKey} must refuse the NATIVE classification (no certified shared domain)`);
     }
   },
 
@@ -287,7 +287,7 @@ export const CONTINUITY_CASE_IMPLS: Record<ContinuityCaseId, ContinuityCaseImpl>
     assert(handoff.sections.toolFacts.every((fact) => fact.ok && fact.name === "Read"), "each attributed to the call that produced it");
     assert(handoff.sections.artifacts.length === 3, "and the files they touched are the artifacts");
     const verdict = classifySwitch(world.endpoints.claudeA, world.endpoints.openai, { summaryAvailable: true, completedToolResults: 3 });
-    assert(verdict.portable.includes("3 completed tool results and their facts"), "the warning must name the completed results as portable");
+    assert(verdict.portable.includes("3 completed tool results"), "the classification must name the completed results as portable");
   },
   "target-never-receives-source-opaque-state": ({ world }) => {
     const renderer = createHistoryRenderer(world.registry);
@@ -324,7 +324,7 @@ export const CONTINUITY_CASE_IMPLS: Record<ContinuityCaseId, ContinuityCaseImpl>
     assert(verdict.lossClass === "warned-lossy", "an immediate switch is always lossy: the turn is unfinished");
     assert(verdict.warnings.some((w) => w.includes("cancelled before it finished")), "it must report the cancelled turn");
     assert(verdict.warnings.some((w) => w.includes("nothing that ran is undone")), "and say that side effects are not rolled back");
-    assert(verdict.portable.includes("1 completed tool result and their facts"), "completed tool facts are retained");
+    assert(verdict.portable.includes("1 completed tool result"), "completed tool facts are retained");
     const messages: ProviderMessageLike[] = [
       { role: "user", content: "do the work" },
       { role: "assistant", uuid: "m1", origin: { providerId: "anthropic", modelKey: "anthropic/claude-a", family: "anthropic" }, content: [{ type: "tool_use", id: "t-open", name: "Bash", input: { command: "make" } }] },
@@ -335,21 +335,15 @@ export const CONTINUITY_CASE_IMPLS: Record<ContinuityCaseId, ContinuityCaseImpl>
     assert(messages.length === before, "nothing may be appended to the conversation to make it look complete");
   },
 
-  "suppression-requires-affirmative-evidence": ({ world }) => {
-    // The structural half of the DeepSeek case. §8.4's second suppressing condition is an
-    // AFFIRMATIVE claim -- complete readable reasoning, forwarded unmodified -- so an unstated
-    // completeness must warn. Reading "not denied" as "proven" fails open exactly where production
-    // is silent: nothing writes exposed reasoning to the sidecar yet, so the realistic wiring states
-    // nothing and every DeepSeek switch would call itself lossless.
-    for (const facts of [{}, { summaryAvailable: true }, { completedToolResults: 2 }, { exposedComplete: false }]) {
+  "reasoning-completeness-is-not-a-loss": ({ world }) => {
+    // WS-23 (reasoning-state, user decision 9): the trace -- complete or not -- stays in the sidecar for
+    // the model that produced it, so its completeness no longer decides a warning. What still must hold:
+    // an exposed source is never classified NATIVE on the target.
+    for (const facts of [{}, { summaryAvailable: true }, { completedToolResults: 2 }, { exposedComplete: false }, { exposedComplete: true }]) {
       const verdict = classifySwitch(world.endpoints.deepseek, world.endpoints.openai, facts);
-      assert(verdict.lossClass === "warned-lossy", `an unproven completeness must not suppress the warning (facts: ${JSON.stringify(facts)})`);
-      assert(verdict.warnings.length > 0, "and it must actually warn");
+      assert(verdict.lossClass === "lossless-portable", `an exposed source's trace is kept for it, never lost and never native (facts: ${JSON.stringify(facts)})`);
+      assert(verdict.warnings.length === 0, "and it raises no warning");
     }
-    assert(
-      classifySwitch(world.endpoints.deepseek, world.endpoints.openai, { exposedComplete: true }).lossClass === "lossless-portable",
-      "while an explicit completeness claim is what earns the lossless classification",
-    );
   },
   "opaque-state-never-in-a-warning-or-handoff": ({ world }) => {
     const verdict = classifySwitch(world.endpoints.claudeA, world.endpoints.openai, { summaryAvailable: true, truncated: true, midTurnAbort: true, completedToolResults: 2 });
@@ -378,8 +372,9 @@ export const CONTINUITY_CASE_IMPLS: Record<ContinuityCaseId, ContinuityCaseImpl>
     assert(permitted[0]!.decoration?.text.includes("the complete readable trace") === true, "with policy permitting, complete exposed reasoning crosses");
     const blocked = createHistoryRenderer(world.registry, { allowExposedForwarding: false }).render([deepseekTurn], chain, world.targets.openai);
     assert(blocked[0]!.decoration === undefined, "with policy forbidding it, nothing crosses");
+    // WS-23 (decision 9): the withheld trace is still the source's own, kept for it -- not a loss to warn about.
     const verdict = classifySwitch(world.endpoints.deepseek, world.endpoints.openai, { exposedComplete: true, policyBlocksForwarding: true });
-    assert(verdict.warnings.some((w) => w.includes("policy forbids forwarding")), "and the user is told policy is why");
+    assert(verdict.warnings.length === 0, "a policy that keeps the trace home loses nothing the target was owed");
   },
   "memories-and-instruction-files-stay-out": ({ world }) => {
     const messages: ProviderMessageLike[] = [

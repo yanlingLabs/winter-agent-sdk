@@ -107,13 +107,16 @@ describe("the real catalog: same-model native replay survives, and nothing claim
     expect(endpoint.continuationDomain).toBeDefined();
   });
 
-  test("a cross-model switch between two real rows still warns -- the gate did not become a no-op", () => {
+  // WS-23 (reasoning-state, decision 9): the gate is what the target cannot represent -- reasoning is no
+  // longer one of those things -- so it is pinned on a real loss between two real rows.
+  test("a cross-model switch between two real rows still warns on a real loss -- the gate did not become a no-op", () => {
     const registry = realRegistry();
     const resolve = createEndpointResolver(registry);
     const rows = opaqueStateRows();
     const a = resolve({ providerId: rows[0]!.providerId, modelKey: rows[0]!.key, family: "openai" });
     const b = resolve({ providerId: rows[1]!.providerId, modelKey: rows[1]!.key, family: "openai" });
     expect(a.modelKey).not.toBe(b.modelKey);
-    expect(classifySwitch(a, b, { summaryAvailable: true }).lossClass).toBe("warned-lossy");
+    expect(classifySwitch(a, b, { summaryAvailable: true }).lossClass).toBe("lossless-portable");
+    expect(classifySwitch(a, b, { compaction: { estimatedTokens: 500_000, window: 200_000 } }).lossClass).toBe("warned-lossy");
   });
 });

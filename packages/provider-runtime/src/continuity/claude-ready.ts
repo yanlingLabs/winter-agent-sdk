@@ -44,7 +44,9 @@ import { sameDomain, type ContinuityEndpoint } from "./domains.ts";
  * own `ProviderStateRecord`, which is a superset) already satisfies; a caller with the real type
  * passes it here unchanged, no cast needed.
  */
-export type ProviderStateKind = "origin" | "native-state" | "summary" | "handoff";
+// WS-23 (reasoning-state): kept in step with the runtime's own list (store/provider-state.ts), where each
+// new kind is documented -- Anthropic thinking (`reasoning-blocks`) and the per-model cache quirks.
+export type ProviderStateKind = "origin" | "native-state" | "summary" | "handoff" | "reasoning-blocks" | "effort" | "tool-epoch" | "tool-changes";
 export interface ProviderStateRecord {
   type: string;
   uuid: string;

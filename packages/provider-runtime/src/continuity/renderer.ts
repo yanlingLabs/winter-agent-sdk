@@ -34,12 +34,19 @@ import type { ProviderRegistry } from "../registry.ts";
 import type { ContentBlockLike, MessageOrigin, ProviderMessageLike, ProviderNativeState } from "../types.ts";
 import { MIN_DECORATION_BODY_CHARS, buildDecoration, decorationOverhead, doorFor, type Decoration, type DecorationDoor } from "./decoration.ts";
 import { createEndpointResolver, sameDomain, sameModel, type ContinuityEndpoint, type ReadableState } from "./domains.ts";
+import { hasInlineReasoning, reasoningBlocksVisibleText } from "./reasoning-blocks.ts";
 
 /** The target of THIS request. Structurally the `target` argument of the runtime's frozen `HistoryRenderer` seam. */
 export interface HistoryTarget {
   family: string;
   continuationDomain?: string;
   readableState: ReadableState;
+  /**
+   * WS-23 (reasoning-state, decision 9): whether the target reads images and documents. `false` turns each
+   * one into a short note that it was there (the switch review warns about exactly this) instead of a
+   * request the adapter refuses outright. Absent: it does (the pre-WS-23 behaviour).
+   */
+  readsImages?: boolean;
   /**
    * The target model's OWN identity -- the resolved provider id and catalog key (runtime `bridge.ts`
    * passes `resolved.providerId`/`resolved.modelKey`). Read only by `sameModel`: a message produced by
@@ -124,6 +131,20 @@ export interface HistoryRendererOptions {
   allowExposedForwarding?: boolean;
   /** Called with every render's report. The frozen seam returns only messages; this is the side channel that keeps truncation observable through it. */
   onReport?: (report: RenderReport) => void;
+  /** Review r1, M-1: the decoration decisions already made per (message, target model) -- see pass 2. Absent: decided afresh every render. */
+  stickyDecorations?: StickyDecorations;
+}
+
+/** Review r1, M-1: what a target model was sent for one message's reasoning -- the decoration verbatim, or `null` for none. */
+export interface StickyDecoration {
+  text: string;
+  door: DecorationDoor;
+}
+
+/** The memory of those decisions, keyed by the decorated message's anchor and the TARGET model. */
+export interface StickyDecorations {
+  get(anchorUuid: string, target: { providerId: string; modelKey: string }): StickyDecoration | null | undefined;
+  set(anchorUuid: string, target: { providerId: string; modelKey: string; family: string }, decision: StickyDecoration | null): void;
 }
 
 /**
@@ -222,7 +243,7 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
         const { nativeState, content, strippedBlocks } = stripOpaque(message);
         if (nativeState !== undefined) report.droppedNativeState++;
         report.strippedInDialectBlocks += strippedBlocks;
-        const hadVisibleThinking = message.role === "assistant" && visibleThinkingText(message.content) !== undefined;
+        const hadVisibleThinking = message.role === "assistant" && ownThinkingText(message) !== undefined;
         if (hadVisibleThinking) report.withoutMaterial++;
         // Micro-round Minor 1: REAL reasoning content was just destroyed with no chance to carry it
         // as labelled material (there is no origin to attribute it to) -- `strippedBlocks` already
@@ -278,7 +299,10 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
       // to its OWN visible `thinking` text -- blocks joined in order, NEVER `signature` -- as ITS
       // summary. `source.readableState` (Claude's own catalog row: "summary") is what makes
       // `materialFor` classify this `kind: "summary"`, exactly like a captured sidecar summary would.
-      const material = materialFor(link, source, allowExposed, visibleThinkingText(message.content));
+      // WS-23 (reasoning-state): read from the message as it was BEFORE `stripOpaque` above, because
+      // since the move a Claude turn's thinking rides `nativeState` rather than its content -- and
+      // dropping the carrier must not also drop the readable decoration the user chose to keep.
+      const material = materialFor(link, source, allowExposed, ownThinkingText(message));
       if (material === undefined) {
         report.withoutMaterial++;
       } else {
@@ -295,10 +319,35 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
     // PASS 2: spend the decoration budget NEWEST FIRST. When it runs out the OLDEST material is
     // dropped rather than every decoration being shrunk to uselessness -- §9.6's ordering applied at
     // the message level, and, like every other loss here, reported rather than silent.
+    //
+    // Review r1, M-1: STICKY PER TARGET MODEL. What this target was already sent for a message -- a
+    // decoration's exact text, or that it got none -- is what it is sent again, so a history that grows
+    // (another model's stint appended, a back-and-forth switch) never moves bytes INSIDE a prefix the
+    // target has cached. Earlier decisions are charged against the budget first; only new messages are
+    // decided newest-first from what remains, and each new decision is remembered (the engine keeps them
+    // as layer-2 `decoration` records, keyed by the TARGET model).
+    const sticky = options.stickyDecorations !== undefined && target.providerId !== undefined && target.modelKey !== undefined ? { memory: options.stickyDecorations, target: { providerId: target.providerId, modelKey: target.modelKey, family: target.family } } : undefined;
+    const decided = (plan: (typeof plans)[number]): StickyDecoration | null | undefined => (sticky !== undefined && plan.anchorUuid !== undefined ? sticky.memory.get(plan.anchorUuid, sticky.target) : undefined);
     let remaining = options.decorationCharBudget;
+    if (remaining !== undefined) for (const plan of plans) remaining = Math.max(0, remaining - (decided(plan)?.text.length ?? 0));
     const door = doorFor(target);
     for (const plan of [...plans].reverse()) {
       const source = { providerId: plan.source.providerId, modelKey: plan.source.modelKey };
+      const earlier = decided(plan);
+      if (earlier === null) {
+        report.budgetDropped++;
+        report.truncated = true;
+        continue;
+      }
+      if (earlier !== undefined) {
+        if (earlier.door === "thinking-channel") report.thinkingChannelDecorations++;
+        report.decorations.push({ ...(plan.anchorUuid !== undefined ? { anchorUuid: plan.anchorUuid } : {}), source, kind: plan.material.kind, door: earlier.door, truncated: false });
+        out[plan.index] = { ...out[plan.index]!, decoration: { text: earlier.text, door: earlier.door } } as unknown as M;
+        continue;
+      }
+      const remember = (decision: StickyDecoration | null): void => {
+        if (sticky !== undefined && plan.anchorUuid !== undefined) sticky.memory.set(plan.anchorUuid, sticky.target, decision);
+      };
       const perDecoration = budgetFor(options.maxDecorationChars, remaining);
       // A budget that cannot hold the wrapper plus a usable body buys nothing: sending a delimiter
       // around three characters spends context and carries no meaning. Dropped, counted, and the
@@ -306,6 +355,7 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
       if (perDecoration !== undefined && perDecoration < decorationOverhead(source, door, plan.material.kind) + MIN_DECORATION_BODY_CHARS) {
         report.budgetDropped++;
         report.truncated = true;
+        remember(null);
         continue;
       }
       const decoration: Decoration = buildDecoration({
@@ -330,10 +380,15 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
       // the whole render, it happens at most once per index (one plan per message), and pass 1 has
       // already dropped any decoration the input carried.
       out[plan.index] = { ...current, decoration: { text: decoration.text, door: decoration.door } } as unknown as M;
+      remember({ text: decoration.text, door: decoration.door });
     }
 
+    // WS-23 (reasoning-state, decisions 8 and 9): what the target cannot represent becomes TEXT, never a
+    // silent drop and never a request the adapter must refuse -- another vendor's server-tool blocks, and
+    // images/documents for a model that cannot read them. Last, so it covers every message whatever its fate.
+    const representable = out.map((message) => representableFor(message, target));
     options.onReport?.(report);
-    return { messages: out, report };
+    return { messages: representable, report };
   }
 
   return {
@@ -377,6 +432,74 @@ function visibleThinkingText(content: string | ContentBlockLike[]): string | und
   if (typeof content === "string") return undefined;
   const texts = content.filter((b): b is Extract<ContentBlockLike, { type: "thinking" }> => b.type === "thinking").map((b) => b.thinking);
   return texts.length > 0 ? texts.join("\n\n") : undefined;
+}
+
+/**
+ * WS-23 (reasoning-state, decision 8): an Anthropic SERVER tool's own block -- its call (`server_tool_use`)
+ * or any of its results (`web_search_tool_result`, `web_fetch_tool_result`, `code_execution_tool_result`,
+ * ...). Only a claude-written transcript carries them (Winter's own WebSearch returns an ordinary
+ * `tool_result`), and no other vendor has a shape for them.
+ */
+export function isServerToolBlockType(type: string): boolean {
+  return type === "server_tool_use" || (type.endsWith("_tool_result") && type !== "tool_result");
+}
+
+const SERVER_TOOL_TEXT_CAP = 4_000;
+
+/** One server-tool block as the text another vendor's model reads. Titles and URLs for a search; the rest capped. */
+function serverToolText(block: Record<string, unknown>): string {
+  const type = String(block["type"]);
+  if (type === "server_tool_use") return `[server tool call: ${String(block["name"] ?? "tool")} ${capped(JSON.stringify(block["input"] ?? {}))}]`;
+  const content = block["content"];
+  if (Array.isArray(content) && content.every((r) => typeof r === "object" && r !== null && typeof (r as { url?: unknown }).url === "string")) {
+    const lines = content.map((r) => `- ${String((r as { title?: unknown }).title ?? "")} (${String((r as { url: string }).url)})`);
+    return capped(`[${type.replace(/_tool_result$/, "").replace(/_/g, " ")} results]\n${lines.join("\n")}`);
+  }
+  return capped(`[${type.replace(/_/g, " ")}] ${typeof content === "string" ? content : JSON.stringify(content ?? {})}`);
+}
+
+function capped(text: string): string {
+  return text.length > SERVER_TOOL_TEXT_CAP ? `${text.slice(0, SERVER_TOOL_TEXT_CAP)}...` : text;
+}
+
+const IMAGE_NOTE = "[an image was here; this model cannot read images]";
+const DOCUMENT_NOTE = "[a document was here; this model cannot read documents]";
+
+/** The message with every block the target cannot represent turned into text (by identity when nothing changes). */
+function representableFor<M extends ProviderMessageLike>(message: M, target: HistoryTarget): M {
+  if (typeof message.content === "string") return message;
+  const flattenServer = target.family !== "anthropic";
+  const dropMedia = target.readsImages === false;
+  if (!flattenServer && !dropMedia) return message;
+  let changed = false;
+  const mapBlocks = (blocks: readonly ContentBlockLike[]): ContentBlockLike[] =>
+    blocks.map((block): ContentBlockLike => {
+      const type = (block as { type: string }).type;
+      if (flattenServer && isServerToolBlockType(type)) {
+        changed = true;
+        return { type: "text", text: serverToolText(block as unknown as Record<string, unknown>) };
+      }
+      if (dropMedia && (type === "image" || type === "document")) {
+        changed = true;
+        return { type: "text", text: type === "image" ? IMAGE_NOTE : DOCUMENT_NOTE };
+      }
+      if (block.type === "tool_result" && Array.isArray(block.content)) {
+        const inner = mapBlocks(block.content);
+        return inner.some((b, i) => b !== (block.content as ContentBlockLike[])[i]) ? { ...block, content: inner } : block;
+      }
+      return block;
+    });
+  const content = mapBlocks(message.content);
+  return changed ? ({ ...message, content } as unknown as M) : message;
+}
+
+/**
+ * WS-23 (reasoning-state): a message's OWN readable thinking wherever it rides -- inline in the content
+ * (a transcript written before the move), else the sidecar-carried blocks on `nativeState`. Inline wins
+ * outright and the two are never concatenated, the same precedence the adapter's splice applies.
+ */
+function ownThinkingText(message: ProviderMessageLike): string | undefined {
+  return hasInlineReasoning(message.content) ? visibleThinkingText(message.content) : reasoningBlocksVisibleText(message.nativeState);
 }
 
 /**

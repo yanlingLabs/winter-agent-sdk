@@ -57,6 +57,7 @@ import { hostHeaders } from "../privileged-headers.ts";
 import { identityHeaderLookup, winterIdentityHeaders, winterUserAgent, type IdentityHeaderLookup } from "../../identity.ts";
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { containsImage } from "../content-blocks.ts";
+import { contentWithReasoningBlocks } from "../../continuity/reasoning-blocks.ts";
 import { parseSse, type SseEvent } from "../../sse.ts";
 import { ANTHROPIC_BEARER_PROVIDER_IDS, ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, CONSOLE_BEARER } from "./console-oauth.ts";
 import type {
@@ -383,7 +384,14 @@ export function toWireMessages(messages: ProviderMessageLike[], opts: { referabl
   const entries: WireEntryBuckets[] = [];
   for (const message of messages) {
     const role: WireEntryBuckets["role"] = message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user";
-    const own = normalizeContent(message.content, referable);
+    // WS-23 (reasoning-state): an assistant turn's `thinking` / `redacted_thinking` blocks ride the
+    // provider-state sidecar, not the transcript, and come back here on `nativeState` -- the renderer
+    // has already dropped them for any target outside the producing model's continuation domain. They
+    // are put back at their stream positions FIRST, before anything below reads the content (the
+    // leading-thinking hoist, the empty-message skip, the breakpoint placement), so the entry is the
+    // exact array the model produced and the cached prefix does not move by a byte. A transcript written
+    // before the move still carries its own blocks inline, and those win (`contentWithReasoningBlocks`).
+    const own = normalizeContent(role === "assistant" ? contentWithReasoningBlocks(message) : message.content, referable);
     // WS-23: a `system` message is its OWN wire entry, never merged into a neighbour and never merged
     // with another `system` message either. An effort-only marker has no content at all and is still
     // sent -- its `output_config` IS the message

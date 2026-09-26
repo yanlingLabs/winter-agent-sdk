@@ -59,7 +59,7 @@ export interface HistoryRenderer {
   render(
     messages: ProviderMessage[],
     chain: ContinuationChain,
-    target: { family: string; continuationDomain?: string; readableState: "none" | "summary" | "full-exposed"; providerId?: string; modelKey?: string },
+    target: { family: string; continuationDomain?: string; readableState: "none" | "summary" | "full-exposed"; providerId?: string; modelKey?: string; readsImages?: boolean },
   ): ProviderMessage[];
 }
 
@@ -168,6 +168,8 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
     // back as a quoted `<recovered_reasoning>` text block (provider-runtime `sameModel`).
     providerId: resolved.providerId,
     modelKey: resolved.modelKey,
+    // WS-23 (reasoning-state, decision 9): a model that reads no images gets a note in place of each one.
+    ...(Array.isArray(resolved.descriptor?.inputModalities?.value) ? { readsImages: resolved.descriptor.inputModalities.value.includes("image") } : {}),
   };
 
   return {
@@ -413,7 +415,10 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
           emitter.messageStop(event.stopReason);
           break;
         case "error":
-          throw providerErrorToTurnError(event.error, committed);
+          // Review r1, I-6: an overflow the stream reported before producing anything is not a committed
+          // turn -- nothing reached the host, nothing ran -- so the engine may compact and retry it, as it
+          // does for the same refusal on a 400.
+          throw providerErrorToTurnError(event.error, committed && !(event.error.contextOverflow === true && ordered.length === 0));
       }
     }
   } catch (err) {
@@ -523,11 +528,13 @@ class StreamEventEmitter {
     // A COMPLETE block arrives as one event, so it is emitted as start + its delta(s) + stop rather
     // than being withheld: a host rendering the stream must see the same content the completed
     // `assistant` message will carry.
-    this.emit({ type: "content_block_start", index: this.index, content_block: block as WireContentBlock });
-    if (block.type === "thinking") {
-      this.emit({ type: "content_block_delta", index: this.index, delta: { type: "thinking_delta", thinking: block.thinking } });
-      this.emit({ type: "content_block_delta", index: this.index, delta: { type: "signature_delta", signature: block.signature } });
-    }
+    //
+    // WS-23 (reasoning-state): WITHOUT its attestation -- no `signature_delta`, `signature: ""` and
+    // `data: ""` on the start frame -- exactly as the `assistant` frame carries it (engine.ts
+    // `contentForHost`). The signed bytes go back to the API from the provider-state sidecar; no host
+    // reads them, so no frame carries them.
+    this.emit({ type: "content_block_start", index: this.index, content_block: (block.type === "thinking" ? { type: "thinking", thinking: "", signature: "" } : { type: "redacted_thinking", data: "" }) as WireContentBlock });
+    if (block.type === "thinking") this.emit({ type: "content_block_delta", index: this.index, delta: { type: "thinking_delta", thinking: block.thinking } });
     this.emit({ type: "content_block_stop", index: this.index });
   }
 
@@ -651,6 +658,8 @@ export function stampNativeState(turn: FoldedProviderTurn, origin: MessageOrigin
   if (turn.nativeState === undefined) return turn;
   return {
     ...turn,
-    nativeState: { family: origin.family, continuationDomain: origin.continuationDomain ?? origin.family, items: turn.nativeState.items },
+    // WS-23 (defect e): a row with no certified domain stamps its MODEL KEY, never the family string --
+    // its state is valid for that model alone (the same floor `buildContinuationChain` applies on a resume).
+    nativeState: { family: origin.family, continuationDomain: origin.continuationDomain ?? origin.modelKey, items: turn.nativeState.items },
   };
 }

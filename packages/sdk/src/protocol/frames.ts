@@ -647,8 +647,21 @@ export interface SDKContinuityWarningMessage {
    * ANOTHER provider for which no credential is configured (Ruling E-1 / R-E3) -- the child then
    * runs on a deferred-refusal provider whose first generation is R6-F's result with no request,
    * never the parent's provider with a foreign model id on the parent's wire.
+   *
+   * WS-23 (reasoning-state) adds three, each shown to the user by the host: `model_switch_lossy` at a
+   * switch whose loss class is `warned-lossy`; `switch_compaction` when the conversation is summarized
+   * before a switch to a model that cannot hold it; `reasoning_state_unsaved` when a turn's reasoning
+   * records could not be written after one retry (the thinking is then kept inline in the transcript).
    */
-  warning: "provider_state_missing" | "provider_state_deleted" | "cross_domain_replay_dropped" | "sidecar_unreadable" | "child_provider_refused";
+  warning:
+    | "provider_state_missing"
+    | "provider_state_deleted"
+    | "cross_domain_replay_dropped"
+    | "sidecar_unreadable"
+    | "child_provider_refused"
+    | "model_switch_lossy"
+    | "switch_compaction"
+    | "reasoning_state_unsaved";
   detail: string;
   anchor_uuid?: string;
   uuid: string;
