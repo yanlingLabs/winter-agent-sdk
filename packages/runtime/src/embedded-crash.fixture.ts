@@ -10,11 +10,14 @@
 //   orphan-spin  -- a `sleep 60`, then spins synchronously at once (only `terminate()` ends the Worker,
 //                   and the engine's teardown never runs);
 //   orphan-throw -- a `sleep 60`, then an uncaught throw (a crash);
-//   group-done   -- a `sleep 0.2`, awaited, then `group-done <pid>` (the group was born AND ended).
+//   group-done   -- a `sleep 0.2`, awaited, then `group-done <pid>` (the group was born AND ended);
+//   task-group   -- a `sleep 60` tracked as a background TASK, so the embedded abort's synchronous
+//                   sweep (`killAllTaskProcessGroups`) kills it just before the session exits.
 // Never shipped: `*.fixture.ts` is not an export entry and is excluded from the declarations.
 import "./embedded-worker.ts";
 import { isMainThread } from "node:worker_threads";
 import { runCommand } from "./sandbox/spawn.ts";
+import { startTracking } from "./tools/impl/background-task-runtime.ts";
 
 declare const self: { addEventListener(type: "message", listener: (event: MessageEvent) => void): void };
 
@@ -25,7 +28,7 @@ if (!isMainThread) {
   self.addEventListener("message", (event: MessageEvent) => {
     if ((event.data as { kind?: string }).kind !== "stdin" || armed) return;
     armed = true;
-    if (mode === "orphan-spin" || mode === "orphan-throw" || mode === "group-done") {
+    if (mode === "orphan-spin" || mode === "orphan-throw" || mode === "group-done" || mode === "task-group") {
       const done = runCommand({
         command: mode === "group-done" ? "sleep 0.2" : "sleep 60",
         cwd: "/",
@@ -33,6 +36,7 @@ if (!isMainThread) {
         timeoutMs: 120_000,
         settings: { enabled: false },
         onSpawned: ({ pid }) => {
+          if (mode === "task-group") startTracking({ taskId: "fixture-task-group", kind: "bash", outputPath: "/dev/null", description: "sleep", pid });
           report(`group ${pid}\n`);
           if (mode === "orphan-throw") setTimeout(() => {
             throw new Error("fixture: crashed with a live process group");

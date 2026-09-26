@@ -180,7 +180,9 @@ export function spawnEmbeddedWorker(opts: SpawnEmbeddedWorkerOptions): EmbeddedW
       case "process-group":
         // Validated, because the host will later SIGKILL `-pgid`: a non-integer, 0, 1 or a negative id
         // would make that kill mean "my own group" or "every process I can signal".
-        if (!Number.isInteger(message.pgid) || message.pgid <= 1) return;
+        // Nor THIS process's own id: as a group, that is the host itself (the daemon checks it too, but a
+        // third-party host following the README kills what this lists).
+        if (!Number.isInteger(message.pgid) || message.pgid <= 1 || message.pgid === process.pid) return;
         if (message.op === "add") processGroups.add(message.pgid);
         else processGroups.delete(message.pgid);
         return;

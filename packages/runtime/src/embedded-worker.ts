@@ -26,6 +26,19 @@ import { runEmbeddedSession } from "./embedded.ts";
 import type { EmbeddedHostMessage, EmbeddedWorkerMessage } from "./embedded-protocol.ts";
 import { liveProcessGroups, onProcessGroupChange } from "./process-groups.ts";
 
+/**
+ * WS-24 fix round 1: how long a finished session's `exit` waits for its process groups' `remove`s. The
+ * engine's teardown KILLS them synchronously, but a group's release fires on its leader's `close`, a
+ * little later -- posting `exit` first let a clean close report groups "still running" to the host.
+ * Bounded: a group that outlives this is a real survivor, and the host is right to reap it.
+ */
+const EXIT_AFTER_GROUPS_SETTLE_MS = 250;
+
+async function groupsSettled(): Promise<void> {
+  const deadline = Date.now() + EXIT_AFTER_GROUPS_SETTLE_MS;
+  while (liveProcessGroups().length > 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+}
+
 declare const self: { onmessage: ((event: MessageEvent) => void) | null };
 
 function post(message: EmbeddedWorkerMessage): void {
@@ -85,6 +98,7 @@ function installEmbeddedWorker(): void {
       post({ kind: "stderr", chunk: `winter: fatal (embedded worker): ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n` });
       code = 1;
     }
+    await groupsSettled();
     post({ kind: "exit", code });
     process.exit(code);
   };

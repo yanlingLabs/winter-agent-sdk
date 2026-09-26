@@ -625,6 +625,20 @@ describe("WS-24: the session's process groups are mirrored to the host", () => {
     expect(proc.processGroups()).toEqual([]);
   }, 30_000);
 
+  test("fix round 1: a CLEAN close whose teardown killed a live group leaves nothing listed -- exit waits for the group's removal", async () => {
+    const { proc, reading, pid } = groupSession("task-group");
+    const group = await pid();
+    try {
+      expect(proc.processGroups()).toContain(group);
+      proc.kill(); // the abort's sweep SIGKILLs the task group synchronously; its leader closes a moment later
+      expect(await proc.exited).toEqual({ code: 0, signal: null });
+      await reading;
+      expect(proc.processGroups()).toEqual([]);
+    } finally {
+      reap(group);
+    }
+  }, 30_000);
+
   test("the host ignores a process-group message that names no real group leader (it would later be SIGKILLed as -pgid)", () => {
     const listeners: Array<(event: MessageEvent) => void> = [];
     const fake = {
@@ -642,7 +656,7 @@ describe("WS-24: the session's process groups are mirrored to the host", () => {
     const deliver = (data: unknown): void => {
       for (const listener of listeners) listener({ data } as MessageEvent);
     };
-    for (const pgid of [0, 1, -5, 3.5, Number.NaN]) deliver({ kind: "process-group", op: "add", pgid });
+    for (const pgid of [0, 1, -5, 3.5, Number.NaN, process.pid]) deliver({ kind: "process-group", op: "add", pgid });
     expect(proc.processGroups()).toEqual([]);
     deliver({ kind: "process-group", op: "add", pgid: 4242 });
     deliver({ kind: "process-group", op: "add", pgid: 4243 });
