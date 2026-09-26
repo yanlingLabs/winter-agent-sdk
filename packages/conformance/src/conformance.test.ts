@@ -263,7 +263,9 @@ const ADAPTER_ROWS: ConformanceRow[] = [
     bullet: "NO silent tool dropping, and NO silent provider fallback",
     status: "covered",
     citations: [
-      { file: `${CORPUS}/anthropic.test.ts`, testName: "a `tool_reference` block is a TYPED REFUSAL, never a silent drop" },
+      // WS-23: a `tool_reference` is Anthropic's own block now (custom tool search); the "never silent"
+      // half of this bullet is what the renamed corpus case still pins.
+      { file: `${CORPUS}/anthropic.test.ts`, testName: "a `tool_reference` block for a tool this request does not declare deferred becomes a legible note, never a silent drop" },
       { file: `${RUNTIME}/provider/selection.test.ts`, testName: "a candidate on ANOTHER PROVIDER is a typed error AT INIT" },
       // P6 fix wave (Ruling E-3): the fallback that DOES engage is announced, never silent.
       { file: `${SDK}/transport-equivalence.test.ts`, testName: "p6-fallback (R6-C through Ruling E-3)" },

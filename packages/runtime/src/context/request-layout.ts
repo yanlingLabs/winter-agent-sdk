@@ -29,6 +29,7 @@
 // history keeps claude's TRANSCRIPT order (prompt, then its attachments) so persistence and resume
 // see exactly what claude's transcript holds.
 import type { ContentBlock, ProviderMessage, ProviderToolSpec } from "../engine.ts";
+import { isSystemRoleAttachment } from "./attachments.ts";
 import type { SystemPromptBlock } from "@yanlinglabs/winter-provider-runtime";
 
 /** One userContext / systemContext entry, in the order it is rendered. */
@@ -87,7 +88,8 @@ function toBlocks(content: string | ContentBlock[]): ContentBlock[] {
 }
 
 function isUserRole(message: ProviderMessage): boolean {
-  return message.role !== "assistant";
+  // WS-23: a `system` message is its own wire entry and must never be merged into a user turn.
+  return message.role !== "assistant" && message.role !== "system";
 }
 
 /** claude's `SJn` stopping point: an assistant message, or a user message whose FIRST block is a `tool_result`. */
@@ -96,14 +98,18 @@ function isReorderStop(message: ProviderMessage): boolean {
   return Array.isArray(message.content) && message.content[0]?.type === "tool_result";
 }
 
-/** claude's `SJn` (reorderAttachmentsForAPI). */
-export function reorderAttachments(messages: readonly ProviderMessage[]): ProviderMessage[] {
+/**
+ * claude's `SJn` (reorderAttachmentsForAPI). WS-23: `stays` names attachments that keep their HISTORY
+ * position instead of bubbling up -- a system-role reminder must follow the user turn that triggered
+ * it, which is exactly where the engine appended it.
+ */
+export function reorderAttachments(messages: readonly ProviderMessage[], stays: (message: ProviderMessage) => boolean = () => false): ProviderMessage[] {
   if (!messages.some((m) => m.meta !== undefined)) return [...messages];
   const reversed: ProviderMessage[] = [];
   const pending: ProviderMessage[] = [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]!;
-    if (m.meta !== undefined) {
+    if (m.meta !== undefined && !stays(m)) {
       pending.push(m);
       continue;
     }
@@ -196,12 +202,29 @@ function joinAttachmentBlocks(prev: ContentBlock[], next: ContentBlock[]): Conte
  * Never mutates `history`. Assistant messages pass through untouched (their own merge is the
  * adapters' business, as before).
  */
-export function buildRequestMessages(history: readonly ProviderMessage[], userContextText?: string): ProviderMessage[] {
+export function buildRequestMessages(history: readonly ProviderMessage[], userContextText?: string, opts: { systemReminders?: boolean; effort?: EffortMarkerPlan } = {}): ProviderMessage[] {
   const withContext: ProviderMessage[] = userContextText !== undefined ? [{ role: "user", content: userContextText, isMeta: true }, ...history] : [...history];
-  const ordered = reorderAttachments(withContext);
+  // WS-23: on a model that takes mid-conversation system messages, a reminder whose renderer opted in
+  // rides as `role: "system"` (operator-level, and never merged into the user's own turn). The vendor's
+  // placement rule decides each one: it "must immediately follow a `user` turn ... and must either be
+  // the last entry in `messages` or be immediately followed by an `assistant` turn"
+  // (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages). One that
+  // cannot (a compaction's reminder after a retained assistant reply, or an interrupted turn with a
+  // second user message behind it) falls back to today's user-text form, deterministically.
+  const eligible = (message: ProviderMessage): boolean => opts.systemReminders === true && message.meta !== undefined && isSystemRoleAttachment(message.meta.attachment);
+  const reordered = reorderAttachments(withContext, eligible);
+  const ordered = opts.effort !== undefined ? withEffortMarkers(reordered, opts.effort) : reordered;
   const out: ProviderMessage[] = [];
-  for (const message of ordered) {
+  for (let index = 0; index < ordered.length; index++) {
+    const message = ordered[index]!;
     const prev = out[out.length - 1];
+    // A text-carrying system message may follow another one with content; never an effort-only
+    // marker ("adding a text-carrying message next to an effort-only one makes the whole group follow
+    // the content rule").
+    if (eligible(message) && prev !== undefined && (isUserRole(prev) || (prev.role === "system" && prev.outputConfig === undefined)) && systemMayPrecede(ordered, index)) {
+      out.push({ role: "system", content: message.content });
+      continue;
+    }
     if (prev === undefined || !isUserRole(message) || !isUserRole(prev)) {
       out.push({ ...message });
       continue;
@@ -213,7 +236,139 @@ export function buildRequestMessages(history: readonly ProviderMessage[], userCo
     const role: ProviderMessage["role"] = merged.some((b) => b.type === "tool_result") ? "tool" : "user";
     out[out.length - 1] = { role, content: merged };
   }
+  // WS-23 fix round 1 (I1): a LEADING effort-only marker at the level in force before any change (effort-
+  // only messages are "accepted anywhere in `messages`, including as the first entry",
+  // https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#limitations).
+  // It states nothing new, but it puts the per-message beta on EVERY request of the session, derived
+  // from the body as the adapter derives every beta -- the diagnostics page lists "the set of active
+  // `anthropic-beta` headers" among the prompt-affecting parameters, so a beta that appeared only on
+  // the request carrying a change would cost that request its comparison. claude 2.1.282 sends a
+  // turn-one effort equal to its top-level value too (loopback capture).
+  if (opts.effort !== undefined) out.unshift({ role: "system", content: [], outputConfig: { effort: opts.effort.initial } });
   return out;
+}
+
+// --- WS-23: per-message effort markers ----------------------------------------------------------------
+//
+// On a model whose row documents per-message effort, the top-level `output_config.effort` stays FROZEN
+// and every change rides an effort-only `system` message placed between the previous assistant reply
+// and the user message it applies to -- the documented placement
+// (https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta:
+// "The new level takes effect from the next `user` turn"). Changing the top-level value instead
+// "doesn't preserve cached prefixes from earlier turns" (same page).
+//
+// THE MARKERS ARE DERIVED, NEVER STORED. Every assistant message carries the level that was in force
+// for its turn (`perTurnEffort`), and the markers are a pure function of those annotations, the frozen
+// top-level value and the live level -- so turn N+1 re-derives turn N's markers byte-identically, and a
+// resumed session (whose rebuilt messages carry the same two fields off the transcript) derives them at
+// the same positions. That is claude's own resume rule (its bundle's `Gyo`/`lRt`: each user message
+// takes the effort of the assistant reply after it, `perTurnEffort ?? effort`, and a marker is emitted
+// only where the level changes), applied to live requests too so there is one code path.
+//
+// DIVERGENCE FROM claude 2.1.282, deliberate: claude attaches the effort to the system message it sends
+// AFTER the user message (its `# Environment` turn), and on the same request also moves the top-level
+// value -- the loopback capture shows both. After-the-user placement would apply the level from the
+// FOLLOWING user turn (a tool-result turn), not to the reply the user is waiting for, and moving the
+// top-level value restarts the cache; Winter follows the vendor's documented placement instead.
+
+/** WS-23: the per-message effort plan `buildRequestMessages` lays out -- see `withEffortMarkers`. */
+export interface EffortMarkerPlan {
+  /** The level in force before any marker: the frozen top-level value, or the model's default when none is sent. */
+  initial: string;
+  /** The level for the turn being generated now. */
+  live: string;
+  /** Levels the target row can take. */
+  accepts: (effort: string) => boolean;
+}
+
+/** A HUMAN turn start in the PRE-merge list: a user message that is neither an attachment nor the index-0 context. */
+function isTurnStart(m: ProviderMessage): boolean {
+  return m.role === "user" && m.meta === undefined && m.isMeta !== true;
+}
+
+/**
+ * `ordered` (the history AFTER the attachment reorder and BEFORE the user-turn merge) with an
+ * effort-only `system` marker before every human turn whose level differs from the one in force before
+ * it. Run before the merge on purpose (fix round 1, I2): after it, a prompt that follows an INTERRUPTED
+ * tool round is folded into the `tool` message ahead of it and is no longer recognisable as a turn
+ * start -- the change would silently not apply while the transcript recorded it. A marker is never
+ * merged, so it also keeps that prompt as its own user entry.
+ *
+ * PLACEMENT: before the turn's attachments when they bubbled up to the previous assistant reply (so
+ * the common case keeps its merged user entry), otherwise directly before the prompt. A turn with no
+ * annotated reply (a host-supplied or pre-WS-23 history) is left alone, and a level the row cannot take
+ * gets no marker -- both deterministic, so still byte-stable.
+ */
+export function withEffortMarkers(ordered: readonly ProviderMessage[], plan: EffortMarkerPlan): ProviderMessage[] {
+  const out: ProviderMessage[] = [];
+  let running = plan.initial;
+  for (let i = 0; i < ordered.length; i++) {
+    const message = ordered[i]!;
+    if (isTurnStart(message)) {
+      let level: string | undefined;
+      let sawAssistant = false;
+      let j = i + 1;
+      for (; j < ordered.length && !isTurnStart(ordered[j]!); j++) {
+        const next = ordered[j]!;
+        if (next.role !== "assistant") continue;
+        sawAssistant = true;
+        level = next.perTurnEffort ?? next.effort;
+        break;
+      }
+      // The turn being generated right now has no reply yet: it runs at the live level.
+      if (!sawAssistant && j >= ordered.length) level = plan.live;
+      if (level !== undefined && level !== running && plan.accepts(level)) {
+        // Back over this turn's own leading attachments, but only when they sit right after an
+        // assistant reply (they bubbled up to the top of the turn).
+        let at = out.length;
+        while (at > 0 && out[at - 1]!.meta !== undefined) at--;
+        if (at === out.length || !(at === 0 || out[at - 1]!.role === "assistant")) at = out.length;
+        out.splice(at, 0, { role: "system", content: [], outputConfig: { effort: level } });
+        running = level;
+      }
+    }
+    out.push(message);
+  }
+  return out;
+}
+
+/**
+ * WS-23: every tool name a ToolSearch result in `history` surfaced (`tool_result.loadedTools`, advertised
+ * names). A deferred tool in this set is referenced somewhere in the history, so it can stay declared
+ * `defer_loading: true`; a loaded tool outside it would be invisible to the model and is sent plainly.
+ */
+export function referencedToolNames(history: readonly ProviderMessage[]): Set<string> {
+  const names = new Set<string>();
+  for (const message of history) {
+    if (typeof message.content === "string") continue;
+    for (const block of message.content) {
+      if (block.type === "tool_result" && block.loadedTools !== undefined) for (const name of block.loadedTools) names.add(name);
+    }
+  }
+  return names;
+}
+
+/**
+ * The top-level effort the session sent, read back off a history: the newest ANNOTATED assistant
+ * message's own `effort` (absent means the session sent none at the top level). `undefined` when no
+ * assistant message is annotated at all -- nothing to restore.
+ */
+export function frozenEffortFromHistory(history: readonly ProviderMessage[]): { value: string | undefined } | undefined {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i]!;
+    if (m.role === "assistant" && (m.effort !== undefined || m.perTurnEffort !== undefined)) return { value: m.effort };
+  }
+  return undefined;
+}
+
+/** WS-23: the next non-reminder message after `index` is an assistant turn, or there is none. */
+function systemMayPrecede(ordered: readonly ProviderMessage[], index: number): boolean {
+  for (let j = index + 1; j < ordered.length; j++) {
+    const next = ordered[j]!;
+    if (next.meta !== undefined && isSystemRoleAttachment(next.meta.attachment)) continue;
+    return next.role === "assistant";
+  }
+  return true;
 }
 
 // --- the last request, per session (for the fork lane) ---------------------------------------------

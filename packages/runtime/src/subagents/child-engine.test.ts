@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type { WinterFrame, RuntimeConfig, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
 import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { runEngine, createContextAccountant, type Provider } from "../engine.ts";
+import { isCompactionSummaryRequest as isSummaryRequest } from "../compaction/summarizer.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { registerTool, unregisterToolForTest, buildAdvertisedSet, getRegisteredTool, type ToolExecutionContext } from "../tools/registry.ts";
 import { echoProvider, scriptedProvider, testProviderByName, recordedProviderSystems, resetRecordedProviderSystems, userMessageText } from "../provider/mock.ts";
@@ -33,6 +34,8 @@ import { registerDefaultChildEngineFactory } from "./register-default-factory.ts
 // Residual round 2 (R-2): the real entrypoint, because the entrypoint IS the defect.
 import { inMemoryProcess } from "../testing.ts";
 import { encodeFrame, splitFrames } from "@yanlinglabs/winter-agent-sdk";
+
+
 
 async function drain(source: AsyncIterable<WinterFrame>): Promise<WinterFrame[]> {
   const out: WinterFrame[] = [];
@@ -2441,7 +2444,7 @@ describe("child-engine.ts: I4 -- a settings-file hook governs a CHILD, and a chi
       let turn = 0;
       const childProvider: Provider = {
         async generate(input) {
-          if (input.system?.includes("compacting a conversation") === true) return { kind: "text", text: "SUMMARY" };
+          if (isSummaryRequest(input)) return { kind: "text", text: "SUMMARY" };
           turn++;
           if (turn === 1) return { kind: "tool_use", calls: [{ id: "child-1", name: "ReadNotifications", input: {} }], usage: { inputTokens: 950, outputTokens: 0 } };
           return { kind: "text", text: "child done", usage: { inputTokens: 950, outputTokens: 0 } };

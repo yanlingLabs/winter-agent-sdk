@@ -18,7 +18,9 @@ export interface ContinuationChainSource {
 
 /** The shape this mutates. Deliberately structural rather than importing `ProviderMessage` from `engine.ts` -- that direction is the circular one `store/` must not take. */
 export interface AttachableMessage {
-  role: "user" | "assistant" | "tool";
+  // `system` (WS-23) is outbound-only and never in a history this reads; widened so the engine's own
+  // `ProviderMessage[]` stays assignable.
+  role: "user" | "assistant" | "tool" | "system";
   uuid?: string;
   origin?: unknown;
   nativeState?: unknown;

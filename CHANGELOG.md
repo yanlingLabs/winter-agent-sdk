@@ -113,6 +113,91 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   `Stop`), and `SessionStart` with `source: "compact"` after a compaction.
 - `UserPromptSubmit` now fires before the prompt is recorded (so a blocked prompt never enters the transcript).
 
+### Claude in code mode (WS-23 Anthropic hardening)
+
+- **Block order is kept end to end.** A response's thinking, text and tool calls are persisted and replayed in
+  the order the model streamed them (`ProviderTurn.content`, additive); a `[thinking, text, thinking, tool_use]`
+  turn used to come back as `[thinking, thinking, text, tool_use]`. WebSearch's inner tool loop now replays a
+  round's thinking blocks too (it dropped them, a 400 on always-on-thinking models). Anthropic family only:
+  other families keep the joined-text assembly (Gemini's text signatures are positional).
+- **Context overflow recovers.** `model_context_window_exceeded` and the 400 "prompt is too long" (typed as
+  `ProviderError.contextOverflow`) trigger the engine's own compaction and one retry of the round; a second
+  overflow ends the turn with `terminal_reason: "prompt_too_long"`. The overflowed partial output is discarded.
+- **`pause_turn`** continues the turn (bounded at 5 resends) instead of ending it.
+- **Refusals are typed.** A `refusal` ends the turn with `is_error: true` and `terminal_reason: "refusal"`,
+  is not persisted, never executes a half-streamed tool call, and the refusal frame carries
+  `api_refusal_category` / `api_refusal_explanation` from the response's `stop_details`.
+- **`max_tokens`** defaults to 64000 capped at the row's maximum, not the row's full 128K. A thinking budget
+  grows it by a full 64000 of answer room (capped at the row). New disclosed option `Options.maxOutputTokens`
+  (-> `TurnRequest.maxOutputTokens`) overrides it; above the row's maximum it is refused typed.
+- **A tool call cut off by `max_tokens` never runs.** Every call of that turn gets an error result saying it
+  was truncated, and the model re-issues it.
+- **Mid-stream `overloaded_error`** arriving before any content is retried under the adapter's existing retry
+  policy; after content it stays a final, typed error. Only that error replays: a torn connection is still
+  final. The stream log counts only the committed attempt's bytes.
+- **`ResultError`** now reads `<terminal_reason>: <result>` for an `is_error` result that names a reason
+  (`refusal`, `prompt_too_long`, `pause_turn_limit`, `structured_output_retry_exhausted`); `api_error` keeps
+  `provider request failed: ...`.
+- **Interleaved thinking** on the budget-only 4.5 rows (Opus 4.5, Sonnet 4.5): `interleaved-thinking-2025-05-14`
+  rides a request that carries a thinking budget and tools.
+- **WebSearch works on Opus 5.5 / Fable 5.1.** The runtime runs the search for the tool's own input before any
+  model call and hands the results to the inner model; nothing is forced any more (a forced `tool_choice` is a
+  400 on those models). The output shape is unchanged. Behaviour change: when the inner model then fails
+  (not wired, provider or auth error, over budget mid-pass), the result keeps the search's links plus a
+  trailing note and is no longer `isError`; the search itself has been spent.
+- **Console bearer auth.** The `console` provider gets the same bearer treatment as `anthropic`: the
+  `oauth-2025-04-20` beta and the `anthropic:console` account guard. Winter still identifies as Winter. A
+  cross-provider Console target (advisor reviewer, stated auxiliary model, subagent) resolves to the broker's
+  `anthropic:console` record rather than a `console:default` nothing writes, and the Claude reviewer gate
+  admits the `console-profile` auth kind.
+- **Opus 5 disabled-at-xhigh/max** rewrites are logged once per session.
+
+### Catalog data
+
+- Dashed aliases (`claude-opus-4-6`, `-4-7`, `-4-8`, `claude-sonnet-4-6`) on the Opus 4.6/4.7/4.8 and Sonnet 4.6
+  rows (anthropic + console), so transcripts the claude binary wrote resolve to their rows.
+- Opus 5 records that disabled thinking is rejected at xhigh/max
+  (`thinking.type.disabled+output_config.effort.{xhigh,max}`, a conjunction token); the adapter sends adaptive
+  thinking for that combination instead of a request it knows will 400.
+
+### Tooling
+
+- `scripts/probe-anthropic-code.ts`: an opt-in live probe (`WINTER_ANTHROPIC_PROBE=1`) for the above.
+
+### Prompt caching and per-message effort (WS-23)
+
+- Effort can change while a session runs: `Query.setEffort(level)` (Winter's own `set_effort` control
+  request), validated against the model's vocabulary and applied at the next turn boundary. On Claude Fable
+  5.1, Opus 5.5 and Opus 5 the top-level `output_config.effort` stays fixed and the change rides a
+  per-message `system` marker (`mid-conversation-output-config-2026-07-01`), so the cached prefix survives;
+  if the API refuses the beta the session falls back, once and visibly, to changing the top-level value.
+  Elsewhere a change is a new top-level value.
+- Transcripts record claude's own `effort` / `perTurnEffort` on assistant entries, and a resumed session
+  rebuilds its effort markers at the same positions. Old transcripts replay unchanged.
+- The tool list sent to every provider is sorted by name. On Claude models that support tool search,
+  deferred tools are declared up front with `defer_loading` and ToolSearch surfaces them with
+  `tool_reference` blocks, so loading a tool no longer changes `tools` or invalidates the cache.
+- Compaction reuses the session's own request prefix (system blocks, tools, history), so the summary reads
+  from the cache instead of being the one uncached request of the session.
+- A fourth cache breakpoint lands on the previous request's write when a single request appends more than
+  the API's lookback window.
+- `promptCacheTtl: "1h"` (a new session option; default `"5m"`) caches the system prompt for an hour.
+  1-hour cache writes are counted separately and priced at 2x input; the result's `cache_creation` splits
+  writes by lifetime.
+- Claude API requests opt into cache diagnostics (`previous_message_id`); a reported cache miss or dropped
+  thinking block is logged once and appears on the result as the Winter-only `usage.cache_misses`.
+- Winter-authored reminders (the date change) ride as mid-conversation `system` messages on models that
+  document them; listings and notifications stay user text.
+- OpenAI Responses and Codex requests carry `prompt_cache_key` (the session id, plus the agent id for a
+  subagent).
+
+### Catalog data (prompt caching)
+
+- New optional evidence fields: `reasoning.perMessageEffort` (Fable 5.1, Opus 5.5, Opus 5),
+  `deferredToolLoading` (the Claude models in Anthropic's tool-search compatibility table),
+  `midConversationSystem` (Fable 5.1, Fable 5, Opus 5.5, Opus 5, Opus 4.8) and `promptCacheKey` (OpenAI
+  and Codex rows).
+
 ## 0.0.24
 
 Fixes to the 0.0.23 catalog refresh from an independent audit (53 rows fact-checked against vendor pages), plus

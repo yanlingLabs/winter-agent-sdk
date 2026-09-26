@@ -16,10 +16,13 @@ import type { RuntimeConfig, WinterFrame, ProtocolSdkMessage as SdkMessage } fro
 import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { runEngine, type Provider, type ProviderTurn } from "../engine.ts";
+import { isCompactionSummaryRequest as isSummaryRequest } from "./summarizer.ts";
 import { stubExecutor } from "../provider/mock.ts";
 import { resolveEngineSession, CLAUDE_COMPACT_SUMMARY_PREAMBLE } from "../store/dialect.ts";
 import { createCompactionController } from "./controller.ts";
 import type { CompactionController, CompactionInput, CompactionResult } from "./seam.ts";
+
+
 
 async function drain(source: AsyncIterable<WinterFrame>): Promise<WinterFrame[]> {
   const out: WinterFrame[] = [];
@@ -53,7 +56,7 @@ function overThresholdProvider(replies: string[], summary = "THE COMPACTED SUMMA
   let i = 0;
   return {
     async generate(input): Promise<ProviderTurn> {
-      if (input.system?.includes("compacting a conversation") === true) return { kind: "text", text: summary };
+      if (isSummaryRequest(input)) return { kind: "text", text: summary };
       const text = replies[Math.min(i++, replies.length - 1)] ?? "reply";
       return { kind: "text", text, usage: { inputTokens: 950, outputTokens: 0 } };
     },
@@ -223,7 +226,7 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
       const provider: Provider = {
         async generate(input): Promise<ProviderTurn> {
           generations++;
-          if (input.system?.includes("compacting a conversation") === true) return { kind: "text", text: "The user's lucky number is 4242." };
+          if (isSummaryRequest(input)) return { kind: "text", text: "The user's lucky number is 4242." };
           return { kind: "text", text: `reply ${generations}`, usage: { inputTokens: 950, outputTokens: 0 } };
         },
       };
@@ -291,7 +294,7 @@ describe("rider 17: a controller that returns the FULL INPUT is refused, and the
       const seenMessageCounts: number[] = [];
       const provider: Provider = {
         async generate(input): Promise<ProviderTurn> {
-          if (input.system?.includes("compacting a conversation") === true) return { kind: "text", text: "unused" };
+          if (isSummaryRequest(input)) return { kind: "text", text: "unused" };
           seenMessageCounts.push(input.messages.length);
           return { kind: "text", text: "reply", usage: { inputTokens: 950, outputTokens: 0 } };
         },

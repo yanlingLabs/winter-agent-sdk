@@ -76,9 +76,14 @@ export interface InnerModelRequest {
   /** The single user message. */
   prompt: string;
   /**
-   * PRESENT -> the BOUNDED TOOL LOOP. Round 1 is sent with `toolChoice: { type: "tool", name }`
-   * FORCED, so the model cannot answer from memory without consulting the tool even once; every
-   * later round is `auto`. ABSENT -> one generation with no tools.
+   * PRESENT -> the BOUNDED TOOL LOOP, every round `toolChoice: auto`. ABSENT -> one generation with no
+   * tools.
+   *
+   * WS-23: ROUND 1 IS NO LONGER FORCED. It used to be sent with `toolChoice: {type: "tool", name}` so
+   * the model could not answer from memory; Opus 5.5 and Fable 5.1 reject a forced choice (a documented
+   * 400, downgraded to `auto` by the Anthropic adapter), so on those models the "guarantee" silently
+   * became a suggestion. A caller that needs the tool to run at least once runs it itself before the
+   * pass and hands the model the result (WebSearch's seed search does exactly that).
    */
   tool?: InnerToolSpec;
   /** Required with `tool`. */
@@ -164,6 +169,30 @@ function addUsage(total: ProviderUsage, usage: ProviderUsage): ProviderUsage {
     ...(cacheRead > 0 ? { cacheReadTokens: cacheRead } : {}),
     ...(cacheWrite > 0 ? { cacheWriteTokens: cacheWrite } : {}),
   };
+}
+
+/**
+ * The assistant message an inner tool round is replayed as.
+ *
+ * WS-23: IT CARRIES THE ROUND'S THINKING, in the order the model produced it. This used to be
+ * `[text, ...calls]` alone, which dropped every thinking block -- harmless while thinking was off,
+ * and a hard 400 on a row whose thinking cannot be turned off (Opus 5.5, Fable 5/5.1: the request's
+ * `disabled` is rewritten to adaptive there, see the Anthropic adapter's `buildThinking`), where a
+ * tool loop's last assistant turn must replay its thinking blocks unmodified. The stream order
+ * (`turn.content`) is used when the provider reported one and it names exactly these calls -- the
+ * same check `engine.ts`'s `inStreamOrder` makes, reproduced here because this module may not
+ * value-import the engine (see the import note above); otherwise the thinking blocks lead, then the
+ * text, then the calls.
+ */
+function replayedContent(turn: Extract<ProviderTurn, { kind: "tool_use" }>, text: string, calls: ReadonlyArray<{ id: string; name: string; input: unknown }>): ContentBlock[] {
+  const content = Array.isArray(turn.content) ? turn.content : [];
+  const orderedIds = content.flatMap((block) => (block.type === "tool_use" ? [block.id] : []));
+  if (content.length > 0 && orderedIds.length === calls.length && orderedIds.every((id, i) => id === calls[i]!.id)) return content;
+  return [
+    ...(turn.thinking?.blocks ?? []),
+    ...(text.length > 0 ? [{ type: "text" as const, text }] : []),
+    ...calls.map((c) => ({ type: "tool_use" as const, id: c.id, name: c.name, input: c.input })),
+  ];
 }
 
 const ABORTED = Symbol("inner-model-aborted");
@@ -292,7 +321,7 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
   const tool = request.tool;
   const maxToolCalls = Math.max(1, Math.floor(request.maxToolCalls ?? 1));
 
-  const generate = async (forced: boolean): Promise<ProviderTurn | typeof ABORTED | { failure: InnerModelFailure }> => {
+  const generate = async (): Promise<ProviderTurn | typeof ABORTED | { failure: InnerModelFailure }> => {
     if (isAborted()) return ABORTED;
     // THE SESSION'S BUDGET, checked before EVERY inner generation. The main loop checks
     // `maxBudgetUsd` only before its own requests, so without this an inner pass is the one place a
@@ -309,7 +338,7 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
     const input: ProviderRequest = {
       messages: [...messages],
       ...(request.system !== undefined && request.system.length > 0 ? { system: request.system } : {}),
-      ...(tool !== undefined ? { tools: [{ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }], toolChoice: forced ? { type: "tool" as const, name: tool.name } : { type: "auto" as const } } : {}),
+      ...(tool !== undefined ? { tools: [{ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }], toolChoice: { type: "auto" as const } } : {}),
       ...(requestModel !== undefined ? { model: requestModel } : {}),
       thinking: { type: "disabled" },
       ...(signal !== undefined ? { signal } : {}),
@@ -345,7 +374,7 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
   try {
     // --- the single-shot shape ----------------------------------------------------------------------
     if (tool === undefined) {
-      const turn = await generate(false);
+      const turn = await generate();
       if (turn === ABORTED) return abortedFailure();
       if ("failure" in turn) return turn.failure;
       const text = turn.kind === "text" ? turn.text : (turn.text ?? "");
@@ -363,7 +392,7 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
     // mis-named call; past it the pass stops exactly as it does on a too-eager closing generation.
     const maxGenerations = maxToolCalls + 2;
     for (let round = 1; ; round++) {
-      const turn = await generate(round === 1);
+      const turn = await generate();
       if (turn === ABORTED) return abortedFailure();
       if ("failure" in turn) return turn.failure;
 
@@ -384,7 +413,7 @@ export async function runInnerModel(ctx: Pick<ToolExecutionContext, "sessionId" 
       // calls are NOT recorded as steps -- nothing ran and nothing was answered.
       if (closing || round >= maxGenerations) return succeed("tool-call-limit");
 
-      const toolUse: ContentBlock[] = [...(text.length > 0 ? [{ type: "text" as const, text }] : []), ...calls.map((c) => ({ type: "tool_use" as const, id: c.id, name: c.name, input: c.input }))];
+      const toolUse: ContentBlock[] = replayedContent(turn, text, calls);
       // `nativeState` rides with the assistant message so a family that needs its own opaque items
       // replayed beside a function call (and stamps them with its continuation domain) gets them;
       // `origin` lets the session's own renderer treat the message as in-domain.

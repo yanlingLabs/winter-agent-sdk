@@ -120,6 +120,17 @@ export function evidencedToolNames(retained: readonly ProviderMessage[]): string
   const ordered: string[] = [];
   for (const message of retained) {
     for (const block of blocksOf(message)) {
+      // WS-23: a retained ToolSearch result that surfaced a tool by reference is evidence too -- the
+      // model can see that tool in the retained history even if it never called it, so resetting it
+      // to "not loaded" would refuse a call the model was just told it could make.
+      if (block.type === "tool_result" && block.loadedTools !== undefined) {
+        for (const name of block.loadedTools) {
+          if (seen.has(name)) continue;
+          seen.add(name);
+          ordered.push(name);
+        }
+        continue;
+      }
       if (block.type !== "tool_use" || seen.has(block.name)) continue;
       seen.add(block.name);
       ordered.push(block.name);

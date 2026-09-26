@@ -168,7 +168,17 @@ describe("T8 production wiring: the guards it carries", () => {
     });
     try {
       const row = loadCatalog().models.find((m) => m.displayName.length > 0 && m.aliases.length > 0)!;
-      expect(wiring.engineOptions.describeModel(row.key)).toEqual({ displayName: row.displayName });
+      expect(wiring.engineOptions.describeModel(row.key)?.displayName).toBe(row.displayName);
+      // WS-23: the same lookup carries the row's effort vocabulary and its catalog-evidenced wire
+      // features, so the engine's request layout keys on the row the adapter reads.
+      expect(wiring.engineOptions.describeModel("anthropic/claude-opus-5-5")).toEqual({
+        displayName: "Claude Opus 5.5",
+        efforts: ["low", "medium", "high", "xhigh", "max"],
+        defaultEffort: "medium",
+        wire: { perMessageEffort: true, deferredToolLoading: true, midConversationSystem: true },
+      });
+      // Sonnet 5: effort via output_config, but neither per-message effort nor tool search.
+      expect(wiring.engineOptions.describeModel("anthropic/claude-sonnet-5")?.wire).toBeUndefined();
       // A provider-local id resolves UNDER ITS PROVIDER (E4): this row's id is also `console`'s, so
       // without a provider it would be ambiguous and name neither (`describe-model-provider.test.ts`).
       expect(wiring.engineOptions.describeModel(row.upstreamId, row.providerId)?.displayName).toBe(row.displayName);

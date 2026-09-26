@@ -115,6 +115,7 @@ const REPLAY_SCOPES = ["current-tool-loop", "current-turn", "selected-turns", "a
 const TOOL_LOOP_REQUIREMENTS = ["hard-error", "silent-degradation", "not-required"] as const;
 const EFFORT_REQUEST_FIELDS = ["output_config.effort"] as const;
 const BLOCK_BINDING_BETAS = ["thinking-binding-controls-2026-08-01"] as const;
+const PER_MESSAGE_EFFORT_BETAS = ["mid-conversation-output-config-2026-07-01"] as const;
 
 /**
  * The closed vocabularies, exported as ONE object so the JSON Schema can be checked against the
@@ -157,6 +158,7 @@ export const CATALOG_VOCABULARIES = {
   toolLoopRequirements: TOOL_LOOP_REQUIREMENTS,
   effortRequestFields: EFFORT_REQUEST_FIELDS,
   blockBindingBetas: BLOCK_BINDING_BETAS,
+  perMessageEffortBetas: PER_MESSAGE_EFFORT_BETAS,
 } as const satisfies Record<string, readonly string[]>;
 
 // --- secrets floor (WS-13 §6/§13, R6-10: "descriptors never contain secrets; a catalog test greps
@@ -405,6 +407,11 @@ function checkReasoning(errs: Errors, v: unknown, path: string): void {
     if (!isRecord(val)) return errs.add(p, `expected {beta}, got ${describe(val)}`);
     for (const key of Object.keys(val)) if (key !== "beta") errs.add(`${p}.${key}`, "unknown key");
     if (typeof val["beta"] !== "string" || !(BLOCK_BINDING_BETAS as readonly string[]).includes(val["beta"])) errs.add(`${p}.beta`, `unknown block-binding beta ${describe(val["beta"])}`);
+  }, false);
+  checkEvidence(errs, v["perMessageEffort"], `${path}.perMessageEffort`, (val, p) => {
+    if (!isRecord(val)) return errs.add(p, `expected {beta}, got ${describe(val)}`);
+    for (const key of Object.keys(val)) if (key !== "beta") errs.add(`${p}.${key}`, "unknown key");
+    if (typeof val["beta"] !== "string" || !(PER_MESSAGE_EFFORT_BETAS as readonly string[]).includes(val["beta"])) errs.add(`${p}.beta`, `unknown per-message effort beta ${describe(val["beta"])}`);
   }, false);
 }
 
@@ -740,6 +747,9 @@ function checkModel(errs: Errors, v: unknown, path: string): void {
   checkEvidence(errs, v["parallelTools"], `${path}.parallelTools`, evidenceBoolean, false);
   checkEvidence(errs, v["structuredOutput"], `${path}.structuredOutput`, evidenceBoolean, false);
   checkEvidence(errs, v["promptCaching"], `${path}.promptCaching`, evidenceBoolean, false);
+  checkEvidence(errs, v["deferredToolLoading"], `${path}.deferredToolLoading`, evidenceBoolean, false);
+  checkEvidence(errs, v["midConversationSystem"], `${path}.midConversationSystem`, evidenceBoolean, false);
+  checkEvidence(errs, v["promptCacheKey"], `${path}.promptCacheKey`, evidenceBoolean, false);
   checkEvidence(errs, v["classifierEligible"], `${path}.classifierEligible`, evidenceBoolean, false);
   checkEvidence(errs, v["pricing"], `${path}.pricing`, (val, p) => checkPricing(errs, val, p), false);
   if (v["reasoning"] !== undefined) checkReasoning(errs, v["reasoning"], `${path}.reasoning`);

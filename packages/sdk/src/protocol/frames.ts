@@ -69,6 +69,15 @@ export interface WireResultUsage {
   inference_geo: string;
   iterations: unknown[];
   speed: "standard" | "fast";
+  /**
+   * WS-23 -- WINTER-ONLY, additive, present only when there is something to say: each generation of
+   * this turn whose provider reported where its prompt prefix diverged from the previous request
+   * (Anthropic's `diagnostics.cache_miss_reason`: `type`, in Anthropic's own vocabulary only, and the
+   * estimated `missed_input_tokens` it cost), and/or that it dropped replayed thinking blocks
+   * (`thinking_blocks_dropped`, from `input_transformations` -- its own field, never a `type`). claude
+   * has no such field.
+   */
+  cache_misses?: Array<{ type?: string; missed_input_tokens?: number; thinking_blocks_dropped?: number }>;
 }
 
 export interface ControlCancelRequestFrame { type: "control_cancel_request"; requestId: string; }
@@ -780,7 +789,9 @@ export type SdkMessage =
       is_error?: boolean;
       result?: string;
       structured_output?: unknown;
-      terminal_reason?: "structured_output_retry_exhausted" | "api_error" | string;
+      // WS-23: `refusal` (a model/classifier refusal), `prompt_too_long` (context overflow that reactive
+      // compaction could not recover) and `pause_turn_limit` (a paused turn that would not resume).
+      terminal_reason?: "structured_output_retry_exhausted" | "api_error" | "refusal" | "prompt_too_long" | "pause_turn_limit" | string;
       api_error_status?: number | null;
       /** THIS turn's main-loop usage -- claude's `result.usage` (dist-session fixes C1); see `WireResultUsage`. */
       usage?: WireResultUsage;

@@ -273,7 +273,7 @@ describe("R6-4 contract: the bridge (Lanes A / B / N)", () => {
         yield { type: "done", stopReason: "end_turn" } as const;
       })(),
     );
-    expect(turn).toEqual({ kind: "text", text: "hi", stopReason: "end_turn" });
+    expect(turn).toEqual({ kind: "text", text: "hi", stopReason: "end_turn", content: [{ type: "text", text: "hi" }] });
   });
 
   test("the fold NEVER retries: `withRetry` is the adapter's, strictly before the first byte", async () => {

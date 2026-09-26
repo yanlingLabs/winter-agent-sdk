@@ -39,8 +39,10 @@ import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import type { CredentialRef, ProviderConnectionConfig, ProviderSelection, RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import type { CredentialStore, ModelInfo, ProviderContext, ProviderRegistry, ResolvedModel } from "@yanlinglabs/winter-provider-runtime";
 import {
+  ANTHROPIC_CONSOLE_ACCOUNT_ID,
   CredentialResolutionError,
   WinterProviderResolutionError,
+  anthropicCredentialRef,
   createCompositeCredentialStore,
   createEndpointResolver,
   createEnvCredentialStore,
@@ -648,11 +650,20 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       // P7a (D19 / R-7a-8) -- KEYCHAIN BLOCK, second half. The SAME single source the store above
       // reads: a cross-provider record and the store that opens it must never name different
       // services, or the credential is written where nothing will look for it.
-      authRef: providerCredentialRef({
-        providerId: resolved.providerId,
-        accountId: DEFAULT_PROVIDER_ACCOUNT_ID,
-        ...(sessionKeychainService !== undefined ? { service: sessionKeychainService } : {}),
-      }),
+      //
+      // WS-23 (review I-3): the `console` provider's record is NOT `console:default`. Its bearer is the
+      // console broker's own `anthropic:console` (`ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT`) -- the one
+      // account `ant auth print-credentials` writes and the Anthropic adapter honours a bearer under.
+      // `console:default` is written by nothing, so an advisor, a subagent or a GPT -> Console switch
+      // on the default rung ended in a typed `no-credential` every time.
+      authRef:
+        resolved.providerId === "console"
+          ? anthropicCredentialRef(ANTHROPIC_CONSOLE_ACCOUNT_ID, sessionKeychainService)
+          : providerCredentialRef({
+              providerId: resolved.providerId,
+              accountId: DEFAULT_PROVIDER_ACCOUNT_ID,
+              ...(sessionKeychainService !== undefined ? { service: sessionKeychainService } : {}),
+            }),
       ...(connection !== undefined ? { connection } : {}),
       source: "provider-record",
       crossProvider,
@@ -831,7 +842,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     // session is actually billed on. A per-token number for a seat is not a smaller error than no
     // number; it is a wrong one that reads as authoritative, so the row's own basis governs.
     if (result.provider.pricingBasis !== "token") return undefined;
-    const estimate = estimateCostUsd({ inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, ...(usage.cacheReadTokens !== undefined ? { cacheReadTokens: usage.cacheReadTokens } : {}), ...(usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: usage.cacheWriteTokens } : {}) }, result.descriptor);
+    const estimate = estimateCostUsd({ inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, ...(usage.cacheReadTokens !== undefined ? { cacheReadTokens: usage.cacheReadTokens } : {}), ...(usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: usage.cacheWriteTokens } : {}), ...(usage.cacheWrite1hTokens !== undefined ? { cacheWrite1hTokens: usage.cacheWrite1hTokens } : {}) }, result.descriptor);
     if (estimate.costBasis !== "list") return undefined;
     const apiProvider = apiProviderFor(result.providerId);
     const contextWindow = result.descriptor.contextWindow?.value;

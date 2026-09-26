@@ -13,7 +13,7 @@
 // the opaque ones". A summary is model-readable text and is persisted as such (the session JSONL is
 // the only sink for opaque provider state -- a Global Constraint), so the first provider phase that
 // adds an opaque field must NOT have to remember to come back here.
-import type { ContentBlock, Provider, ProviderMessage } from "../engine.ts";
+import type { ContentBlock, Provider, ProviderMessage, ProviderRequest } from "../engine.ts";
 
 export const WINTER_SUMMARY_INSTRUCTION =
   "You are compacting a conversation so that it can continue with less context. " +
@@ -23,6 +23,47 @@ export const WINTER_SUMMARY_INSTRUCTION =
   "Record work still outstanding as well as work completed. " +
   "Be concise but complete; never drop a fact to save words. " +
   "Output the summary text and nothing else.";
+
+/**
+ * WS-23: the same instruction for the PREFIX-REUSING summary, where it rides as the last user message
+ * after the session's own conversation (so "above", not "below") and the session's tools are still
+ * declared -- declared because removing them would change the cached prefix, which is the whole point.
+ */
+export const WINTER_PREFIX_SUMMARY_INSTRUCTION =
+  "The conversation above is being compacted so that it can continue with less context. " +
+  "Do not call any tools: reply with the summary text only. " +
+  "Summarize the conversation above as clear declarative statements of what is true and what was decided -- " +
+  "not as a paraphrase of the most recent message and not as an acknowledgement. " +
+  "Preserve every specific verbatim: numbers, names, file paths, identifiers, exact values, and any decision that was made or reversed. " +
+  "Record work still outstanding as well as work completed. " +
+  "Be concise but complete; never drop a fact to save words. " +
+  "Output the summary text and nothing else.";
+
+/**
+ * WS-23: is this provider request the summariser's, in either shape -- the redacted one (Winter's
+ * instruction as `system`) or the prefix-reusing one (the instruction as the final user message)?
+ * For a scripted double that must answer the summariser differently from the conversation; nothing in
+ * production branches on it.
+ */
+export function isCompactionSummaryRequest(req: Pick<ProviderRequest, "system" | "messages">): boolean {
+  if (req.system?.includes("compacting a conversation") === true) return true;
+  const last = req.messages.at(-1);
+  return last?.role === "user" && typeof last.content === "string" && last.content.startsWith(WINTER_PREFIX_SUMMARY_INSTRUCTION);
+}
+
+/** WS-23: appended when the conversation already opens with a summary this compaction carries forward VERBATIM. */
+export const CARRIED_SUMMARY_NOTE = "The conversation above begins with an earlier summary, which is kept verbatim; summarize only what happened after it.";
+
+/**
+ * WS-23: the prefix-reusing request shows the model the WHOLE conversation, including the exchanges the
+ * compaction keeps verbatim after the summary -- the redacted request only ever showed it the part
+ * being replaced. This sentence scopes the summary back to that part, so a compaction does not
+ * restate what stays in context anyway. It rides the appended instruction, so it costs the cache
+ * nothing.
+ */
+export function retainedExchangesNote(pairs: number): string {
+  return `The most recent ${pairs} user/assistant exchange${pairs === 1 ? "" : "s"} will be kept verbatim after your summary; summarize what precedes ${pairs === 1 ? "it" : "them"}, and include from ${pairs === 1 ? "it" : "them"} only what is needed to understand the earlier context.`;
+}
 
 /** How much of a tool call's own input is rendered into the summarizer's view of the transcript. */
 export const DEFAULT_TOOL_INPUT_PREVIEW_CHARS = 500;
@@ -120,6 +161,28 @@ export async function summarize(provider: Provider, messages: readonly ProviderM
   if (turn.kind !== "text") {
     throw new CompactionSummarizerError(`the summarizer provider answered with a ${turn.kind} turn instead of summary text`);
   }
+  const text = turn.text.trim();
+  if (text.length === 0) throw new CompactionSummarizerError("the summarizer provider returned an empty summary");
+  return text;
+}
+
+/**
+ * WS-23: one generation that REUSES the session's own request -- its system blocks, tools, model,
+ * reasoning settings and every message the main loop already sent, byte for byte -- with the
+ * instruction appended as the final user message, the way a byte-exact fork reuses its parent's
+ * prefix. The largest request of a session then reads its prefix from the prompt cache instead of
+ * paying for all of it again (the old shape sent `{messages, system}` with no cache blocks at all).
+ *
+ * Returns `undefined` when the model answered with a tool call despite the instruction: the session's
+ * tools are declared (dropping them, or forcing `tool_choice: none`, would change the cached prefix,
+ * https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching), so the
+ * caller falls back to the redacted, tool-less summary on the same provider and model rather than
+ * running a tool the summariser was never meant to run.
+ */
+export async function summarizeOverPrefix(provider: Provider, prefixRequest: ProviderRequest, instruction: string): Promise<string | undefined> {
+  const { sink: _sink, ...request } = prefixRequest;
+  const turn = await provider.generate({ ...request, messages: [...request.messages, { role: "user", content: instruction }] });
+  if (turn.kind !== "text") return undefined;
   const text = turn.text.trim();
   if (text.length === 0) throw new CompactionSummarizerError("the summarizer provider returned an empty summary");
   return text;

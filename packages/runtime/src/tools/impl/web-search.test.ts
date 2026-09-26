@@ -2,7 +2,7 @@
 // own model is a `scriptedProvider` double reached through a hand-registered `WebSessionRuntime`
 // (never a real `runEngine`, matching `_inner-model.test.ts`'s own unit-level convention -- the
 // engine-level "usage lands in the turn" claim is THAT file's, not this one's).
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { resolveWebToolsConfig, type ResolvedWebToolsConfig } from "@yanlinglabs/winter-agent-sdk";
 import "./web-search.ts";
 import { createWebSearchExecutor, MAX_DOMAIN_LIST_ENTRIES, WEB_SEARCH_RESULT_CAP } from "./web-search.ts";
@@ -10,14 +10,32 @@ import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } 
 import { createSessionReadState } from "../read-state.ts";
 import { registerWebSessionRuntime, resetWebSessionRuntimesForTest, type WebSessionRuntime } from "../../web/session-runtime.ts";
 import { scriptedProvider } from "../../provider/mock.ts";
-import type { Provider, ProviderTurn } from "../../engine.ts";
+import type { Provider, ProviderRequest, ProviderTurn } from "../../engine.ts";
 import { maxWebSearchesPerSessionEnvName, resetWebSearchBudgetForTest, webSearchBudgetRefusalText, webSearchCallsUsed } from "./_search-budget.ts";
 import { createExaBackendState, type ExaBackendState } from "./_exa-client.ts";
 import { advancedPayload, basicPayload, tooManyRequests, withExaFixture, type ExaFixture } from "./_exa-fixture.test-support.ts";
 import { resetExaSessionClientsForTest } from "./_exa-session-client.ts";
 import { INNER_MODEL_BUDGET_EXCEEDED_DETAIL } from "./_inner-model.ts";
+import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
+import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
+import { buildSessionProvider } from "../../provider/session-provider.ts";
+import { fakeAnthropicCatalog, startAnthropicFake } from "../../provider/anthropic-fake.test-support.ts";
 
 const SESSION_MODEL_KEY = "prova/session-model";
+
+// WS-23: HERMETIC BY CONSTRUCTION. The seed search runs before any model call, so a case that forgot
+// its fixture would reach Exa's real endpoint; every request in this file must stay on loopback.
+const realFetch = globalThis.fetch;
+beforeAll(() => {
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const target = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (target.hostname !== "127.0.0.1" && target.hostname !== "localhost") throw new Error(`hermetic test file: refused a request to ${target.origin}`);
+    return await realFetch(input, init);
+  }) as typeof fetch;
+});
+afterAll(() => {
+  globalThis.fetch = realFetch;
+});
 
 afterEach(() => {
   resetWebSessionRuntimesForTest();
@@ -51,14 +69,24 @@ interface RunDeps {
   fixture?: ExaFixture;
   state?: ExaBackendState;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /** Run the module's own REGISTERED singleton (proves real wiring). Only for a call that returns before any search -- the singleton points at Exa's real endpoint. */
+  singleton?: true;
 }
 
-/** Runs the executor: the module's own registered singleton when `deps` names no fixture (proves real wiring), else a fresh instance pointed at the fixture. */
+/**
+ * Runs the executor: the registered singleton when asked (`singleton`), else a fresh instance pointed at
+ * the fixture -- a DEFAULT one when the caller names none.
+ *
+ * WS-23: HERMETIC BY DEFAULT. The seed search now runs from the tool's own input BEFORE any model call,
+ * so a call that used to be answered by a scripted model without searching now searches -- and the
+ * singleton would take that to Exa's real endpoint.
+ */
 async function run(input: unknown, ctx: ToolExecutionContext, deps: RunDeps = {}): Promise<ToolResultPayload> {
-  if (deps.fixture === undefined) {
+  if (deps.singleton === true) {
     const executor = getRegisteredTool("WebSearch")!.executor!;
     return executor.execute(input, ctx);
   }
+  if (deps.fixture === undefined) return await withExaFixture({}, async (fixture) => run(input, ctx, { ...deps, fixture }));
   const executor = createWebSearchExecutor({
     ...(deps.state !== undefined ? { backendState: deps.state } : {}),
     exaClientOptions: { endpoint: deps.fixture.endpoint, ...(deps.state !== undefined ? { state: deps.state } : {}), ...(deps.sleep !== undefined ? { sleep: deps.sleep } : {}) },
@@ -150,7 +178,7 @@ describe("validation", () => {
 
 describe("wiring", () => {
   test("no web session runtime registered -> a typed error result, and the budget is NEVER touched (ordering fix: wiring is checked before the reservation)", async () => {
-    const result = await run({ query: "hello world" }, makeCtx("w-not-wired"));
+    const result = await run({ query: "hello world" }, makeCtx("w-not-wired"), { singleton: true });
     expect(result.isError).toBe(true);
     expect(result.output).toContain("no search runtime is wired up");
     expect(webSearchCallsUsed("w-not-wired")).toBe(0);
@@ -159,7 +187,7 @@ describe("wiring", () => {
   test("the search backend turned off for this session -> a plain (non-error) refusal, and the budget is NEVER touched", async () => {
     const ctx = makeCtx("w-disabled");
     runtimeWith("w-disabled", scriptedProvider([]), {}, { search: { enabled: false } });
-    const result = await run({ query: "hello world" }, ctx);
+    const result = await run({ query: "hello world" }, ctx, { singleton: true });
     expect(result.isError).toBeUndefined();
     expect(result.output).toBe("Web search is turned off for this session.");
     expect(webSearchCallsUsed("w-disabled")).toBe(0);
@@ -176,7 +204,10 @@ describe("wiring", () => {
     };
     registerWebSessionRuntime("w-throws", runtime);
     const result = await run({ query: "hello world" }, ctx);
-    expect(result.isError).toBe(true);
+    // WS-23: the seed search ran before the model was ever asked for, so its links are kept and the
+    // failure is appended as a sentence -- the thrown message itself never is.
+    expect(result.output).toContain("Links: ");
+    expect(result.output).toContain("could not be resolved");
     expect(result.output).not.toContain("boom");
     expect(result.output).not.toContain("exploded");
   });
@@ -187,19 +218,27 @@ describe("wiring", () => {
 // =====================================================================================================
 
 describe("a real pass against the Exa fixture", () => {
-  test("round 1 is forced (the fixture receives a call even though the scripted model never chose to), results assemble in stream order, and highlights never reach the outer model", async () => {
+  test("WS-23: the SEED search runs from the tool's own input before any model call -- nothing is forced, the model answers from the results it was handed, and highlights never reach the outer model", async () => {
     await withExaFixture({}, async (fixture) => {
       const state = createExaBackendState();
       const ctx = makeCtx("p-multi");
-      const provider = scriptedProvider([
-        { kind: "tool_use", calls: [call("c1", "bun 1.4 release notes")], text: "Let me check the release notes." },
+      const requests: ProviderRequest[] = [];
+      const scripted = scriptedProvider([
+        { kind: "tool_use", calls: [call("c1", "bun 1.4 changelog")], text: "Let me check the changelog too." },
         { kind: "text", text: "Bun 1.4 fixed two known regressions." },
       ]);
+      const provider: Provider = { generate: (input) => (requests.push(input), scripted.generate(input)) };
       runtimeWith("p-multi", provider);
       const result = await run({ query: "bun 1.4 release notes" }, ctx, { fixture, state });
       expect(result.isError).toBeUndefined();
+      // The seed is the fixture's FIRST call, on the outer query itself; the model's follow-up is second.
+      expect(fixture.calls.map((c) => c.args["query"])).toEqual(["bun 1.4 release notes", "bun 1.4 changelog"]);
+      // No round is forced: every inner request's choice is `auto`.
+      expect(requests.map((r) => r.toolChoice)).toEqual([{ type: "auto" }, { type: "auto" }]);
+      // The seed's results are in the model's FIRST prompt -- highlight included (the INNER model may read it).
+      expect(JSON.stringify(requests[0]!.messages)).toContain("This release fixes two regressions.");
       expect(result.output).toContain('Web search results for query: "bun 1.4 release notes"');
-      expect(result.output).toContain("Let me check the release notes.");
+      expect(result.output).toContain("Let me check the changelog too.");
       expect(result.output).toContain("Bun 1.4 fixed two known regressions.");
       expect(result.output).toContain("Links: ");
       expect(result.output).toContain("REMINDER: You MUST include the sources above");
@@ -218,7 +257,7 @@ describe("a real pass against the Exa fixture", () => {
     await withExaFixture({ respond: () => advancedPayload([]) }, async (fixture) => {
       const state = createExaBackendState();
       const ctx = makeCtx("p-empty");
-      const provider = scriptedProvider([{ kind: "tool_use", calls: [call("c1", "an obscure query")] }, { kind: "text", text: "nothing found" }]);
+      const provider = scriptedProvider([{ kind: "text", text: "nothing found" }]);
       runtimeWith("p-empty", provider);
       const result = await run({ query: "an obscure query" }, ctx, { fixture, state });
       expect(result.output).toContain("No links found.");
@@ -229,7 +268,7 @@ describe("a real pass against the Exa fixture", () => {
     await withExaFixture({}, async (fixture) => {
       const state = createExaBackendState();
       const ctx = makeCtx("p-domains");
-      const provider = scriptedProvider([{ kind: "tool_use", calls: [call("c1", "qq")] }, { kind: "text", text: "done" }]);
+      const provider = scriptedProvider([{ kind: "text", text: "done" }]);
       runtimeWith("p-domains", provider, {}, { blockedDomains: ["blocked.example"] });
       await run({ query: "qq", allowed_domains: ["good.example", "blocked.example"] }, ctx, { fixture, state });
       expect(fixture.calls).toHaveLength(1);
@@ -243,7 +282,8 @@ describe("a real pass against the Exa fixture", () => {
     await withExaFixture({}, async (fixture) => {
       const state = createExaBackendState();
       const ctx = makeCtx("p-domains-2");
-      const provider = scriptedProvider([{ kind: "tool_use", calls: [call("c1", "q1")] }, { kind: "tool_use", calls: [call("c2", "q2")] }, { kind: "text", text: "done" }]);
+      // The seed search plus ONE model follow-up: both must carry the caller's list and the floor.
+      const provider = scriptedProvider([{ kind: "tool_use", calls: [call("c1", "q1")] }, { kind: "text", text: "done" }]);
       runtimeWith("p-domains-2", provider, {}, { blockedDomains: ["floor.example"] });
       await run({ query: "qq", blocked_domains: ["caller.example"] }, ctx, { fixture, state });
       expect(fixture.calls).toHaveLength(2);
@@ -278,7 +318,8 @@ describe("a real pass against the Exa fixture", () => {
       async (fixture) => {
         const state = createExaBackendState();
         const ctx = makeCtx("p-mid-fail");
-        const provider = scriptedProvider([{ kind: "tool_use", calls: [call("c1", "q1")] }, { kind: "tool_use", calls: [call("c2", "q2")] }, { kind: "text", text: "done" }]);
+        // Search 1 is the seed (succeeds); search 2 is the model's follow-up (fails).
+        const provider = scriptedProvider([{ kind: "tool_use", calls: [call("c2", "q2")] }, { kind: "text", text: "done" }]);
         runtimeWith("p-mid-fail", provider);
         const result = await run({ query: "q1" }, ctx, { fixture, state });
         expect(result.output).toContain("Links: ");
@@ -292,7 +333,7 @@ describe("a real pass against the Exa fixture", () => {
       const state = createExaBackendState();
       const ctx = makeCtx("p-query-quota-429");
       const query = "what is the 429 quota policy for this API";
-      const provider = scriptedProvider([{ kind: "tool_use", calls: [call("c1", query)] }, { kind: "text", text: "done" }]);
+      const provider = scriptedProvider([{ kind: "text", text: "done" }]);
       runtimeWith("p-query-quota-429", provider);
       const result = await run({ query }, ctx, { fixture, state });
       expect(state.anonymousRateLimitedAt).toBeUndefined();
@@ -399,37 +440,41 @@ describe("zero successful searches", () => {
   // rule for claude's own deltas), so Winter's appended sentence ran straight into the model's last
   // word -- "doneWeb search error guidance...".
   test("an appended failure sentence is separated from the model's own trailing text, never glued to it", async () => {
-    await withExaFixture({ respond: () => ({ content: [{ type: "text", text: "an internal backend hiccup" }], isError: true }) }, async (fixture) => {
-      const state = createExaBackendState();
-      const ctx = makeCtx("zero-fail-separator");
-      runtimeWith("zero-fail-separator", scriptedProvider([call1Turn(), { kind: "text", text: "done" }]));
-      const result = await run({ query: "qq" }, ctx, { fixture, state });
-      expect(result.output).toContain("done\n\n");
-      expect(result.output).not.toMatch(/done\S/);
+    // The seed succeeds; the model writes "done" beside a follow-up call, and round 2's generate()
+    // fails (the script is spent) -- the pass's failure sentence must not run into "done".
+    const ctx = makeCtx("zero-fail-separator");
+    runtimeWith("zero-fail-separator", scriptedProvider([{ kind: "tool_use", calls: [call("c1", "qq")], text: "done" }]));
+    const result = await run({ query: "qq" }, ctx);
+    expect(result.output).toContain("done\n\n");
+    expect(result.output).not.toMatch(/done\S/);
+  });
+
+  test("WS-23: a model that never calls the inner tool STILL yields a real search -- the seed's links, and its own answer read from them (the old 'Web search was not performed' outcome is gone)", async () => {
+    await withExaFixture({}, async (fixture) => {
+      const ctx = makeCtx("zero-no-call");
+      const requests: ProviderRequest[] = [];
+      const scripted = scriptedProvider([{ kind: "text", text: "From the results: two regressions were fixed." }]);
+      runtimeWith("zero-no-call", { generate: (input) => (requests.push(input), scripted.generate(input)) });
+      const result = await run({ query: "hello world" }, ctx, { fixture });
+      expect(fixture.calls).toHaveLength(1);
+      expect(result.output).toContain("Links: ");
+      expect(result.output).toContain("From the results: two regressions were fixed.");
+      expect(result.output).not.toContain("not performed");
+      expect(JSON.stringify(requests[0]!.messages)).toContain("This release fixes two regressions.");
     });
   });
 
-  test("the model never even called the tool (an adapter that ignores the forced round 1) -> a plain 'not performed' result, never the model's own commentary dressed up as search results", async () => {
-    const ctx = makeCtx("zero-no-call");
-    runtimeWith("zero-no-call", scriptedProvider([{ kind: "text", text: "I already know the answer without searching." }]));
-    const result = await run({ query: "hello world" }, ctx);
-    expect(result.output).toBe("Web search was not performed: the search pass produced no search calls.");
-    expect(result.output).not.toContain("I already know");
-  });
-
-  test("REGRESSION: a pass with only text/unknown-tool steps that then FAILS outright must surface the real failure, never the generic 'not performed' message that would otherwise swallow it", async () => {
+  test("REGRESSION: a pass that FAILS outright after only text/unknown-tool steps surfaces the real failure -- after the seed search it already ran, which is kept", async () => {
     const ctx = makeCtx("zero-fail-with-text");
-    // Round 1: leading text + an unknown-tool-name call (attemptedSearches stays 0 -- neither is a
-    // real search). Only ONE turn is scripted, so round 2's generate() throws "no more scripted
-    // turns" -- the inner pass fails outright (`pass.ok === false`, code "provider-error") with
-    // ONLY text-shaped events recorded. Before the fix, `attemptedSearches === 0 && events.every(text)`
-    // fired regardless of `pass.ok` and replaced the real failure with the generic "not performed"
-    // text, discarding the actual reason the pass never completed.
+    // Round 1: leading text + an unknown-tool-name call. Only ONE turn is scripted, so round 2's
+    // generate() throws "no more scripted turns" -- the inner pass fails outright (`pass.ok === false`,
+    // code "provider-error"). The seed search is real, so its links stay and the failure is APPENDED
+    // (a completed search is never discarded -- the same rule as a budget stop), not a bare error.
     runtimeWith("zero-fail-with-text", scriptedProvider([{ kind: "tool_use", calls: [{ id: "u1", name: "NotWebSearch", input: {} }], text: "Let me check." }]));
     const result = await run({ query: "hello world" }, ctx);
-    expect(result.isError).toBe(true);
-    expect(result.output).not.toBe("Web search was not performed: the search pass produced no search calls.");
+    expect(result.output).toContain("Links: ");
     expect(result.output).toContain("the web search failed");
+    expect(result.output).not.toContain("not performed");
   });
 });
 
@@ -438,43 +483,53 @@ describe("zero successful searches", () => {
 // =====================================================================================================
 
 describe("the session cap (200 by default)", () => {
+  // ONE fixture per test: a session's search client is cached per session id, so every call of one
+  // session must reach the same backend.
   test("counted BEFORE the search runs: a validation failure spends nothing, a real call spends one", async () => {
-    const ctx = makeCtx("cap-order");
-    runtimeWith("cap-order", scriptedProvider([{ kind: "text", text: "answered without searching" }]));
-    await run({ query: "" }, ctx);
-    expect(webSearchCallsUsed("cap-order")).toBe(0);
-    await run({ query: "hello world" }, ctx);
-    expect(webSearchCallsUsed("cap-order")).toBe(1);
+    await withExaFixture({}, async (fixture) => {
+      const ctx = makeCtx("cap-order");
+      runtimeWith("cap-order", scriptedProvider([{ kind: "text", text: "answered from the seed" }]));
+      await run({ query: "" }, ctx, { fixture });
+      expect(webSearchCallsUsed("cap-order")).toBe(0);
+      await run({ query: "hello world" }, ctx, { fixture });
+      expect(webSearchCallsUsed("cap-order")).toBe(1);
+    });
   });
 
   test("SHARED with a child: the child's own call counts against the identical session id", async () => {
-    runtimeWith("cap-shared", scriptedProvider([{ kind: "text", text: "a" }, { kind: "text", text: "b" }]));
-    const parentCtx = makeCtx("cap-shared");
-    const childCtx = makeCtx("cap-shared", { agentId: "child-1" }); // same sessionId, distinct agentId
-    await run({ query: "from the parent" }, parentCtx);
-    await run({ query: "from the child" }, childCtx);
-    expect(webSearchCallsUsed("cap-shared")).toBe(2);
+    await withExaFixture({}, async (fixture) => {
+      runtimeWith("cap-shared", scriptedProvider([{ kind: "text", text: "a" }, { kind: "text", text: "b" }]));
+      const parentCtx = makeCtx("cap-shared");
+      const childCtx = makeCtx("cap-shared", { agentId: "child-1" }); // same sessionId, distinct agentId
+      await run({ query: "from the parent" }, parentCtx, { fixture });
+      await run({ query: "from the child" }, childCtx, { fixture });
+      expect(webSearchCallsUsed("cap-shared")).toBe(2);
+    });
   });
 
   test("the refusal is the exact verbatim text, as a plain RESULT (never isError)", async () => {
-    const ctx = makeCtx("cap-refusal", { env: { [maxWebSearchesPerSessionEnvName()]: "1" } });
-    runtimeWith("cap-refusal", scriptedProvider([{ kind: "text", text: "a" }]));
-    const first = await run({ query: "first" }, ctx);
-    expect(first.isError).toBeUndefined();
-    const second = await run({ query: "second" }, ctx);
-    expect(second).toEqual({ output: webSearchBudgetRefusalText(1, 1) });
-    // A THIRD call reads the SAME "1 of 1" -- the refusal never increments its own counter.
-    const third = await run({ query: "third" }, ctx);
-    expect(third).toEqual({ output: webSearchBudgetRefusalText(1, 1) });
+    await withExaFixture({}, async (fixture) => {
+      const ctx = makeCtx("cap-refusal", { env: { [maxWebSearchesPerSessionEnvName()]: "1" } });
+      runtimeWith("cap-refusal", scriptedProvider([{ kind: "text", text: "a" }]));
+      const first = await run({ query: "first" }, ctx, { fixture });
+      expect(first.isError).toBeUndefined();
+      const second = await run({ query: "second" }, ctx, { fixture });
+      expect(second).toEqual({ output: webSearchBudgetRefusalText(1, 1) });
+      // A THIRD call reads the SAME "1 of 1" -- the refusal never increments its own counter.
+      const third = await run({ query: "third" }, ctx, { fixture });
+      expect(third).toEqual({ output: webSearchBudgetRefusalText(1, 1) });
+    });
   });
 
   test("the env override is branded and effective", async () => {
-    const ctx = makeCtx("cap-env", { env: { [maxWebSearchesPerSessionEnvName()]: "2" } });
-    runtimeWith("cap-env", scriptedProvider([{ kind: "text", text: "a" }, { kind: "text", text: "b" }]));
-    await run({ query: "one" }, ctx);
-    await run({ query: "two" }, ctx);
-    const third = await run({ query: "three" }, ctx);
-    expect(third.output).toContain("2 of 2");
+    await withExaFixture({}, async (fixture) => {
+      const ctx = makeCtx("cap-env", { env: { [maxWebSearchesPerSessionEnvName()]: "2" } });
+      runtimeWith("cap-env", scriptedProvider([{ kind: "text", text: "a" }, { kind: "text", text: "b" }]));
+      await run({ query: "one" }, ctx, { fixture });
+      await run({ query: "two" }, ctx, { fixture });
+      const third = await run({ query: "three" }, ctx, { fixture });
+      expect(third.output).toContain("2 of 2");
+    });
   });
 });
 
@@ -538,13 +593,16 @@ describe("a session budget stop (distinct from a genuine abort)", () => {
     expect(source).not.toContain(`"${INNER_MODEL_BUDGET_EXCEEDED_DETAIL}"`);
   });
 
-  test("over budget from the very first generation -> a plain, non-error result naming the spending limit, never the generic interrupt wording", async () => {
+  test("already over budget -> a plain, non-error result naming the spending limit, never the generic interrupt wording -- and NO search runs at all", async () => {
+    await withExaFixture({}, async (fixture) => {
     const ctx = makeCtx("budget-from-start");
-    runtimeWith("budget-from-start", scriptedProvider([{ kind: "text", text: "unreachable -- the budget check runs before round 1's own generate()" }]), { budgetExceeded: () => true });
-    const result = await run({ query: "hello world" }, ctx);
+    runtimeWith("budget-from-start", scriptedProvider([{ kind: "text", text: "unreachable -- the budget check runs before the seed search" }]), { budgetExceeded: () => true });
+    const result = await run({ query: "hello world" }, ctx, { fixture });
+    expect(fixture.calls).toHaveLength(0);
     expect(result.isError).toBeUndefined();
     expect(result.output).toBe("Web search stopped: this session has reached its spending limit, so no further searches will run. Continue with the information already gathered.");
     expect(result.output.toLowerCase()).not.toContain("interrupt");
+    });
   });
 
   test("over budget AFTER one search already succeeded -> the completed search is kept and returned, with the budget note appended, never discarded", async () => {
@@ -552,9 +610,9 @@ describe("a session budget stop (distinct from a genuine abort)", () => {
     await withExaFixture(
       {
         respond: (call) => {
-          // Flips AS A SIDE EFFECT of the first search actually completing -- so round 1's own
-          // budget check (before this call) still passes, and it is round 2's check that stops the
-          // pass, reproducing "one search already ran, then the ceiling was crossed."
+          // Flips AS A SIDE EFFECT of the first search (the SEED) actually completing -- so the
+          // executor's own pre-search check still passes, and it is the inner pass's check before its
+          // first generation that stops it: "one search already ran, then the ceiling was crossed."
           exceeded = true;
           return basicPayload([{ title: "A", url: "https://a.example/", highlights: "hi" }]);
         },
@@ -562,7 +620,7 @@ describe("a session budget stop (distinct from a genuine abort)", () => {
       async (fixture) => {
         const state = createExaBackendState();
         const ctx = makeCtx("budget-after-one");
-        const provider = scriptedProvider([{ kind: "tool_use", calls: [call("c1", "qq")] }, { kind: "text", text: "unreachable -- round 2's own budget check stops the pass before this generation runs" }]);
+        const provider = scriptedProvider([{ kind: "text", text: "unreachable -- the inner pass's budget check stops it before this generation runs" }]);
         runtimeWith("budget-after-one", provider, { budgetExceeded: () => exceeded });
         const result = await run({ query: "qq" }, ctx, { fixture, state });
         expect(result.isError).toBeUndefined();
@@ -637,7 +695,7 @@ describe("the result cap", () => {
 // =====================================================================================================
 
 describe("the generation bound is exact", () => {
-  test("an inner model that names an unknown tool EVERY round terminates at exactly maxToolCalls + 2 generations, and the 'no successful search' honesty fires", async () => {
+  test("an inner model that names an unknown tool EVERY round terminates at exactly (cap - seed) + 2 generations, and the seed's real search is still reported", async () => {
     const ctx = makeCtx("bound-unknown-tool");
     let generations = 0;
     const provider: Provider = {
@@ -646,11 +704,12 @@ describe("the generation bound is exact", () => {
         return { kind: "tool_use", calls: [{ id: `u${generations}`, name: "NotWebSearch", input: {} }] };
       },
     };
-    // The default anonymous per-call cap is 3 (no key, no breaker override) -> maxGenerations = 3 + 2 = 5.
+    // The default anonymous per-call cap is 3 (no key, no breaker override); the seed spends one, so the
+    // inner pass's own bound is 2 -> maxGenerations = 2 + 2 = 4.
     runtimeWith("bound-unknown-tool", provider);
     const result = await run({ query: "hello world" }, ctx);
-    expect(generations).toBe(5);
-    expect(result).toEqual({ output: "Web search was not performed: the search pass produced no search calls." });
+    expect(generations).toBe(4);
+    expect(result.output).toContain("Links: ");
   });
 
   test("an inner model that emits an EMPTY calls array is terminal on round 1 -- exactly one generation", async () => {
@@ -665,6 +724,65 @@ describe("the generation bound is exact", () => {
     runtimeWith("bound-empty-calls", provider);
     const result = await run({ query: "hello world" }, ctx);
     expect(generations).toBe(1);
-    expect(result).toEqual({ output: "Web search was not performed: the search pass produced no search calls." });
+    expect(result.output).toContain("Links: ");
+  });
+});
+
+// =====================================================================================================
+// WS-23: WebSearch on the model that broke it -- the REAL Anthropic adapter, the compiled catalog's
+// own `claude-opus-5-5` row (forced tool_choice is a documented 400 there; thinking cannot be off).
+// =====================================================================================================
+
+describe("WS-23: WebSearch on Opus 5.5, through the real Anthropic adapter", () => {
+  test("the search RUNS (seeded), its results reach the model's request, nothing is forced, and the answer comes back in today's output shape", async () => {
+    const anthropic = await startAnthropicFake(() => ({ blocks: [{ type: "text", text: "Opus read the results: two regressions fixed." }], stopReason: "end_turn" }));
+    const realFetch = globalThis.fetch;
+    // Hermetic: the only endpoints this test may reach are its two loopback fakes.
+    let exaUrl = "";
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (!target.startsWith(anthropic.url) && (exaUrl === "" || !target.startsWith(new URL(exaUrl).origin))) throw new Error(`hermetic fixture: refused ${new URL(target).origin}`);
+      return await realFetch(input, init);
+    }) as typeof fetch;
+    try {
+      await withExaFixture({}, async (fixture) => {
+        exaUrl = fixture.endpoint;
+        const config = {
+          sessionId: "ws23-opus55-search",
+          cwd: "/tmp/ws23",
+          model: "anthropic/claude-opus-5-5",
+          persistSession: false,
+          provider: { providerId: "anthropic", authRef: { kind: "inline", value: "fixture" }, connection: { baseUrl: anthropic.url, local: true } },
+        } as RuntimeConfig;
+        const wiring = buildSessionProvider({ config, env: {}, catalog: fakeAnthropicCatalog(anthropic.url, ["anthropic/claude-opus-5-5"]), credentials: createMemoryCredentialStore() });
+        const ctx = makeCtx("ws23-opus55-search");
+        // The live model is the session's own catalog KEY, exactly as production's engine carries it;
+        // the bridge translates it to the wire id.
+        runtimeWith("ws23-opus55-search", wiring.provider, { sessionModel: () => ({ provider: wiring.provider, model: "anthropic/claude-opus-5-5" }) });
+        const result = await run({ query: "bun 1.4 release notes" }, ctx, { fixture });
+
+        // The search ran, on the tool's own input.
+        expect(fixture.calls.map((c) => c.args["query"])).toEqual(["bun 1.4 release notes"]);
+        // The model was asked ONCE, with the results in its user turn, and nothing forced.
+        expect(anthropic.requests).toHaveLength(1);
+        const body = anthropic.requests[0]!.body;
+        expect(body["model"]).toBe("claude-opus-5-5");
+        expect(body["tool_choice"]).toEqual({ type: "auto" });
+        expect(JSON.stringify(body["messages"])).toContain("This release fixes two regressions.");
+        // Thinking cannot be off on this row: the inner pass's `disabled` rides as adaptive + block binding.
+        expect(body["thinking"]).toMatchObject({ type: "adaptive" });
+        // Today's output shape: header, the links (title+url only), the model's text, the REMINDER.
+        expect(result.isError).toBeUndefined();
+        expect(result.output.startsWith('Web search results for query: "bun 1.4 release notes"')).toBe(true);
+        expect(result.output).toContain("Links: ");
+        expect(result.output).toContain("Opus read the results: two regressions fixed.");
+        expect(result.output).not.toContain("This release fixes two regressions.");
+        expect(result.output).not.toContain("not performed");
+        expect(result.output.endsWith("REMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.")).toBe(true);
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+      await anthropic.close();
+    }
   });
 });

@@ -231,6 +231,12 @@ export function buildResponsesBody(
     include: reasoning.wantsEncryptedContent ? ["reasoning.encrypted_content"] : [],
     ...(reasoningObject !== undefined ? { reasoning: reasoningObject } : {}),
     ...(req.maxOutputTokens !== undefined ? { max_output_tokens: req.maxOutputTokens } : {}),
+    // WS-23: one conversation's requests share a cache-routing key, where the row documents the field
+    // ("Use a stable `prompt_cache_key` to optimize cache routing for requests that share a reusable
+    // prefix", https://developers.openai.com/api/docs/guides/prompt-caching). The Codex backend takes
+    // it too -- the vendor's own client sets it to the session id on every request. `store: false`
+    // above is unchanged: this routes to a warm cache, it keeps nothing server-side.
+    ...(req.cacheKey !== undefined && descriptor?.promptCacheKey?.value === true ? { prompt_cache_key: req.cacheKey } : {}),
   };
 }
 

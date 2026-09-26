@@ -552,6 +552,15 @@ export interface Options {
   // DEFAULT_CONTEXT_WINDOW_TOKENS / DEFAULT_COMPACTION_THRESHOLD, applied runtime-side.
   contextWindowTokens?: number;
   compactionThreshold?: number;
+  /**
+   * WS-23 -- DISCLOSED WINTER option: how long the provider keeps this session's cached SYSTEM prompt.
+   * `"5m"` (the default, the vendor's own) or `"1h"` (written at twice the input price, worth it where
+   * idle gaps of 5-60 minutes are common: https://platform.claude.com/docs/en/build-with-claude/prompt-caching#1-hour-cache-duration).
+   * Applies to models whose catalog row documents prompt caching; the conversation's own rolling
+   * breakpoint stays at 5 minutes, which is the order the vendor requires (longer TTLs first). The
+   * host's choice; resolved runtime-side, so absent is byte-identical to before.
+   */
+  promptCacheTtl?: "5m" | "1h";
   // DISCLOSED WINTER option (RULING P5-A): host-declared workspace trust. Default false — a
   // repository must never self-trust (WS-07 §3.2), and nothing infers this from `settingSources`.
   // It sits ABOVE the pinned per-tier filter, never underneath it: capture (1) proved the pinned
@@ -646,6 +655,14 @@ export interface Options {
   maxBudgetUsd?: number;
   /** DISCLOSED WINTER option (R6-6): a stream silent for this long aborts as a typed `ProviderStallError`. Absent means DEFAULT_PROVIDER_STALL_TIMEOUT_MS. */
   providerStallTimeoutMs?: number;
+  /**
+   * DISCLOSED WINTER option (WS-23): the output-token ceiling (`max_tokens` on the Anthropic dialect)
+   * every main-loop generation asks for. Absent means the adapter's own default -- on a Claude row,
+   * 64000 capped at the row's declared maximum. A value above the row's maximum is refused typed,
+   * before the request. Forwarded as `TurnRequest.maxOutputTokens`, which an adapter treats as an
+   * explicit request (it wins over every default).
+   */
+  maxOutputTokens?: number;
   /** DISCLOSED WINTER option (R6-10): the macOS Keychain service every `{ kind: "keychain" }` ref resolves under. Absent means DEFAULT_KEYCHAIN_SERVICE. */
   keychainService?: string;
   /** DISCLOSED WINTER option (R6-14): the permission classifier's own model/credential, resolved through the SAME selection path as the session model. With none configured the worker serves only a `classifierEligible` model, else Manual fallback — never a silent weakening. */
