@@ -49,6 +49,18 @@ export interface ModelClassifierOptions {
   /** P7a fix wave (item 5, M-1): the running brand's instructions file, so the classifier prompt labels the operator's own file correctly. */
   instructionsFile?: string;
   /**
+   * WS-24 (M-1 fix round): whether this row's descriptor lists `tool_choice.tool` in its
+   * `unsupportedParameters` -- the SAME evidence `resolveToolChoice` (`adapters/anthropic/
+   * messages.ts`) gates its forced-choice-to-`auto` downgrade on (today: the anthropic/console Opus
+   * 5.5 and Fable 5.1 rows). ONLY on such a row does a text reply get the text-fallback path
+   * (`collapseTextFallback`): the request's own forced `tool_choice` is a documented lie for it, so a
+   * text reply is the expected shape of an honest answer, not a misbehaving model. Everywhere else, a
+   * text reply IS a misbehaving model (a real forced choice reached it and it ignored the tool
+   * anyway) and stays `no_tool_call` -- never given a chance to recover, which would otherwise let
+   * ANY model's ordinary refusal-to-call-the-tool quietly become a verdict. Defaults to `false`.
+   */
+  forcedToolChoiceUnsupported?: boolean;
+  /**
    * Test seam: observes what was actually sent and what came back, WITHOUT the classifier logging
    * anything itself. Nothing in this file writes to a log — a permission review's request contains
    * the envelope, and the envelope contains file paths and command lines.
@@ -103,7 +115,7 @@ export function createModelClassifier(opts: ModelClassifierOptions): ClassifierI
           controller.abort();
           return noVerdict("timeout");
         }
-        return collapseTurn(outcome);
+        return collapseTurn(outcome, opts.forcedToolChoiceUnsupported === true);
       } catch {
         // Every throw is the same answer, and the error itself is DISCARDED rather than logged or
         // attached: a provider error can quote a request body, and this request body is the action
@@ -118,18 +130,21 @@ export function createModelClassifier(opts: ModelClassifierOptions): ClassifierI
 }
 
 /** The turn -> verdict collapse, as a table. One arm per way a turn can fail to be an answer, each with its own reason code. */
-function collapseTurn(turn: ProviderTurn): ClassifierRawResult {
+function collapseTurn(turn: ProviderTurn, forcedToolChoiceUnsupported: boolean): ClassifierRawResult {
   // Checked FIRST, and on every kind: §10.6-5 names "safety refusal" as its own arm, and a refusal
   // that also happened to carry a tool call is still a refusal to review.
   if ("stopReason" in turn && turn.stopReason === "refusal") return noVerdict("refusal");
-  // WS-24 (follow-up 6): a text turn is no longer an automatic `no_tool_call`. On a row whose forced
-  // `tool_choice` the adapter must downgrade to an ordinary one (Opus 5.5 / Fable 5.1's documented
-  // 400 on a forced choice -- `anthropic/messages.ts`'s `resolveToolChoice`), this request reaches
-  // the model as an UNFORCED choice, and a model with no reason to call the tool may answer in plain
-  // text instead -- which used to fail every review on those two rows closed for a reason that has
-  // nothing to do with the action being judged. The prompt's own fallback instruction asks such a
-  // model for exactly one JSON object in the tool's shape; this is where that answer is recovered.
-  if (turn.kind === "text") return collapseTextFallback(turn.text);
+  // WS-24 (follow-up 6, gated by M-1 fix round): a text turn is no longer an automatic `no_tool_call`
+  // on a row whose forced `tool_choice` the adapter must downgrade to an ordinary one (Opus 5.5 /
+  // Fable 5.1's documented 400 on a forced choice -- `anthropic/messages.ts`'s `resolveToolChoice`).
+  // On such a row this request reaches the model as an UNFORCED choice, and a model with no reason to
+  // call the tool may answer in plain text instead -- which used to fail every review on those two
+  // rows closed for a reason that has nothing to do with the action being judged. The prompt's own
+  // fallback instruction asks such a model for exactly one JSON object in the tool's shape; this is
+  // where that answer is recovered. EVERYWHERE ELSE the request's forced choice is real, so a text
+  // reply means the model ignored it -- a genuine failure to answer, not this row's documented
+  // limitation -- and stays `no_tool_call` with no attempt to parse it as a verdict.
+  if (turn.kind === "text") return forcedToolChoiceUnsupported ? collapseTextFallback(turn.text) : noVerdict("no_tool_call");
   // The `unexpected_turn` arm used to live here for the engine's `rpc_probe` kind, which T10 removed
   // (R6-13). Its reason CODE went with it, and deliberately: `model-classifier.test.ts`'s own
   // "every declared reason code is reachable" test is what keeps this vocabulary honest, and a
