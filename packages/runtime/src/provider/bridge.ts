@@ -415,7 +415,10 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
           emitter.messageStop(event.stopReason);
           break;
         case "error":
-          throw providerErrorToTurnError(event.error, committed);
+          // Review r1, I-6: an overflow the stream reported before producing anything is not a committed
+          // turn -- nothing reached the host, nothing ran -- so the engine may compact and retry it, as it
+          // does for the same refusal on a 400.
+          throw providerErrorToTurnError(event.error, committed && !(event.error.contextOverflow === true && ordered.length === 0));
       }
     }
   } catch (err) {

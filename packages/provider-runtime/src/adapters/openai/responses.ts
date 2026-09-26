@@ -27,6 +27,7 @@
 //     `tool_call_*` triple. WS-13 §9 forbids dropping it silently, so it is a typed refusal.
 
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { createHash } from "node:crypto";
 import { parseSse } from "../../sse.ts";
 import { isWinterBookkeepingItem } from "../../continuity/reasoning-blocks.ts";
 import type { ContentBlockLike, CredentialRef, CredentialStatus, DiscoveryContext, ModelCatalogResult, ProviderAdapter, ProviderContext, ProviderEvent, ProviderMessageLike, TurnRequest } from "../../types.ts";
@@ -746,9 +747,13 @@ export class ResponsesStreamMapper {
       case "response.incomplete":
         return this.onCompleted(payload);
       case "response.failed":
-        return [{ type: "error", error: { code: "server", message: this.failureMessage(payload), retryable: false } }];
       case "error":
-        return [{ type: "error", error: { code: "server", message: this.failureMessage(payload), retryable: false } }];
+        // Review r1, I-6: a context overflow reported INSIDE the stream -- the Codex backend's shape, a
+        // `response.failed` / `error` event whose `error.code` is `context_length_exceeded` -- is the same
+        // typed `contextOverflow` a 400 carries, so the engine's reactive compaction reaches it too.
+        return this.failureCode(payload) === "context_length_exceeded"
+          ? [{ type: "error", error: { code: "bad_request", message: this.failureMessage(payload), retryable: false, providerCode: "context_length_exceeded", contextOverflow: true } }]
+          : [{ type: "error", error: { code: "server", message: this.failureMessage(payload), retryable: false } }];
       default:
         // Forward compatibility: an unknown event is ignored, exactly as the port did. The ONE
         // exception is an unrepresentable CALL, which arrives on `output_item.added`/`.done` and is
@@ -982,6 +987,14 @@ export class ResponsesStreamMapper {
     };
   }
 
+  /** The failure's own structured code (`response.error.code`, the `error` event's `error.code`, or its top-level `code`). */
+  private failureCode(payload: Record<string, unknown>): string | undefined {
+    const response = payload.response;
+    const error = response !== null && typeof response === "object" ? (response as { error?: unknown }).error : payload.error;
+    const code = error !== null && typeof error === "object" ? (error as { code?: unknown }).code : payload.code;
+    return typeof code === "string" ? code : undefined;
+  }
+
   private failureMessage(payload: Record<string, unknown>): string {
     const response = payload.response;
     const error = response !== null && typeof response === "object" ? (response as { error?: unknown }).error : payload.error;
@@ -1036,7 +1049,9 @@ export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: Abor
   let response: Response;
   // WS-23 (reasoning-state, defect b): the body actually sent -- the plan's, or, after the endpoint
   // refused a replayed reasoning item's encrypted content, the same body without the replayed reasoning.
-  let body = plan.body;
+  // Review r1, M-2: items an endpoint already refused to decrypt are not replayed again -- a permanently
+  // undecryptable item would otherwise cost one failed 400 on every later request of the session.
+  let body = withoutKnownUndecryptable(plan.body);
   let droppedReplay = false;
   for (;;) {
     try {
@@ -1076,6 +1091,7 @@ export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: Abor
       if (!droppedReplay && isEncryptedContentRejection(err)) {
         const stripped = withoutReplayedReasoning(body);
         if (stripped !== undefined) {
+          rememberUndecryptable(body);
           droppedReplay = true;
           body = stripped;
           plan.ctx.log({ kind: "provider.replay_dropped", providerId: plan.ctx.connection.providerId, model: plan.model, detail: { reason: "encrypted_content_rejected" } });
@@ -1116,6 +1132,56 @@ export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: Abor
   } catch (err) {
     yield errorEvent(err);
   }
+}
+
+/**
+ * Review r1, M-2: the replayed reasoning items an endpoint refused to decrypt, by a hash of their
+ * `encrypted_content` -- remembered for the process, bounded (oldest forgotten first). Adapters hold no
+ * session identity (and the seam is frozen), so the memory is per ITEM rather than a per-session flag,
+ * which is the same thing for the session that holds the item, and narrower: a later turn's own new
+ * reasoning still replays. Every item of a refused request is suspect -- the 400 does not say which one.
+ */
+const UNDECRYPTABLE = new Set<string>();
+const UNDECRYPTABLE_MAX = 4_096;
+
+function encryptedHash(item: unknown): string | undefined {
+  if (typeof item !== "object" || item === null || (item as { type?: unknown }).type !== "reasoning") return undefined;
+  const enc = (item as { encrypted_content?: unknown }).encrypted_content;
+  return typeof enc === "string" && enc.length > 0 ? createHash("sha256").update(enc).digest("hex") : undefined;
+}
+
+function rememberUndecryptable(body: string): void {
+  let input: unknown;
+  try {
+    input = (JSON.parse(body) as { input?: unknown }).input;
+  } catch {
+    return;
+  }
+  if (!Array.isArray(input)) return;
+  for (const item of input) {
+    const hash = encryptedHash(item);
+    if (hash === undefined) continue;
+    UNDECRYPTABLE.delete(hash);
+    UNDECRYPTABLE.add(hash);
+    if (UNDECRYPTABLE.size > UNDECRYPTABLE_MAX) UNDECRYPTABLE.delete(UNDECRYPTABLE.values().next().value!);
+  }
+}
+
+/** The body without any replayed reasoning item already known undecryptable (the body unchanged when none is). */
+function withoutKnownUndecryptable(body: string): string {
+  if (UNDECRYPTABLE.size === 0) return body;
+  let parsed: { input?: unknown };
+  try {
+    parsed = JSON.parse(body) as { input?: unknown };
+  } catch {
+    return body;
+  }
+  if (!Array.isArray(parsed.input)) return body;
+  const kept = parsed.input.filter((item) => {
+    const hash = encryptedHash(item);
+    return hash === undefined || !UNDECRYPTABLE.has(hash);
+  });
+  return kept.length === parsed.input.length ? body : JSON.stringify({ ...parsed, input: kept });
 }
 
 /**

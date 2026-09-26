@@ -103,15 +103,17 @@ function sidecarRecords(fx: Fx, sessionId: string): Array<{ kind: string; payloa
 }
 
 /** Turn one reasons, SAYS something, reasons again and calls Glob; the tool round answers plainly. */
-function interleavedTurn(request: ResponsesFakeRequest): ResponsesFakeAnswer {
+// `tag` keeps each test's encrypted items distinct: the adapter remembers an item an endpoint refused to
+// decrypt (review r1, M-2) for the life of the process, by its content.
+function interleavedTurn(request: ResponsesFakeRequest, tag = ""): ResponsesFakeAnswer {
   const raw = request.raw;
   if (raw.includes("turn two")) return { items: [{ type: "text", text: "done two" }] };
   if (raw.includes("function_call_output")) return { items: [{ type: "text", text: "done one" }] };
   return {
     items: [
-      { type: "reasoning", encrypted: "ENC-0", summary: ["First part.", "Second part."] },
+      { type: "reasoning", encrypted: `ENC-0${tag}`, summary: ["First part.", "Second part."] },
       { type: "text", text: "Let me look." },
-      { type: "reasoning", encrypted: "ENC-2" },
+      { type: "reasoning", encrypted: `ENC-2${tag}` },
       { type: "function_call", callId: "call_glob", name: "Glob", arguments: { pattern: "*.winter-none" } },
     ],
   };
@@ -119,13 +121,13 @@ function interleavedTurn(request: ResponsesFakeRequest): ResponsesFakeAnswer {
 
 describe("Responses reasoning state through the sidecar (WS-23 defects a, d)", () => {
   test("a resumed turn replays its reasoning items BETWEEN its message and its call, where the response put them", async () => {
-    const fx = await fixture((request) => interleavedTurn(request));
+    const fx = await fixture((request) => interleavedTurn(request, "-a"));
     await runSession(fx, "rs-a", ["turn one"]);
     await runSession(fx, "rs-a-resumed", ["turn two"], "rs-a");
     expect(fx.fake.requests).toHaveLength(3);
     const input = fx.fake.requests[2]!.body["input"] as Array<Record<string, unknown>>;
     const shape = input.map((item) => (item["type"] === "reasoning" ? `r:${String(item["encrypted_content"])}` : item["type"] === "message" ? `m:${String(item["role"])}` : String(item["type"])));
-    expect(shape).toEqual(["m:user", "r:ENC-0", "m:assistant", "r:ENC-2", "function_call", "function_call_output", "m:assistant", "m:user"]);
+    expect(shape).toEqual(["m:user", "r:ENC-0-a", "m:assistant", "r:ENC-2-a", "function_call", "function_call_output", "m:assistant", "m:user"]);
     expect(fx.fake.requests[2]!.raw).not.toContain("winter.");
 
     const records = sidecarRecords(fx, "rs-a");
@@ -142,13 +144,13 @@ describe("a refused replay is retried once without the replayed reasoning (WS-23
   test("the endpoint refuses the encrypted content; the SAME request goes again without it and the turn completes", async () => {
     const fx = await fixture((request) => {
       if (request.raw.includes("turn two") && request.raw.includes('"type":"reasoning"')) return { status: 400, error: { message: "Could not decrypt the provided encrypted_content" } };
-      return interleavedTurn(request);
+      return interleavedTurn(request, "-b1");
     });
     const frames = await runSession(fx, "rs-b", ["turn one", "turn two"]);
     // turn one: 2 requests; turn two: the refused one, then the retry.
     expect(fx.fake.requests).toHaveLength(4);
     const [refused, retried] = [fx.fake.requests[2]!, fx.fake.requests[3]!];
-    expect(refused.raw).toContain("ENC-0");
+    expect(refused.raw).toContain("ENC-0-b1");
     expect(retried.raw).not.toContain('"type":"reasoning"');
     // Nothing else changed between the two.
     const input = (r: typeof refused): unknown[] => (r.body["input"] as Array<{ type?: string }>).filter((i) => i.type !== "reasoning");
@@ -157,7 +159,7 @@ describe("a refused replay is retried once without the replayed reasoning (WS-23
   });
 
   test("never twice: a retry that is refused again ends the turn with the error", async () => {
-    const fx = await fixture((request) => (request.raw.includes("turn two") ? { status: 400, error: { message: "Could not decrypt the provided encrypted_content" } } : interleavedTurn(request)));
+    const fx = await fixture((request) => (request.raw.includes("turn two") ? { status: 400, error: { message: "Could not decrypt the provided encrypted_content" } } : interleavedTurn(request, "-b2")));
     const frames = await runSession(fx, "rs-b2", ["turn one", "turn two"]);
     expect(fx.fake.requests).toHaveLength(4);
     expect(lastResult(frames)).toMatchObject({ is_error: true });
@@ -169,5 +171,30 @@ describe("an OpenAI context_length_exceeded reaches the engine's overflow path (
     const fx = await fixture(() => ({ status: 400, error: { message: "Your input exceeds the context window of this model.", code: "context_length_exceeded", param: "input" } }));
     const frames = await runSession(fx, "rs-overflow", ["hello"]);
     expect(lastResult(frames)).toMatchObject({ is_error: true, terminal_reason: "prompt_too_long" });
+  });
+});
+
+describe("review r1: in-stream overflow (I-6) and a remembered undecryptable item (M-2)", () => {
+  test("a `response.failed` whose code is context_length_exceeded reaches the overflow path", async () => {
+    const fx = await fixture(() => ({ streamFailure: { code: "context_length_exceeded", message: "Your input exceeds the context window of this model." } }));
+    const frames = await runSession(fx, "rs-stream-overflow", ["hello"]);
+    expect(lastResult(frames)).toMatchObject({ is_error: true, terminal_reason: "prompt_too_long" });
+  });
+
+  test("items refused once are not replayed again: turn three sends them no more, and costs no second 400", async () => {
+    const refusedItems = new Set<string>();
+    const fx = await fixture((request) => {
+      const raw = request.raw;
+      if (raw.includes('"encrypted_content":"ENC-0-m2"')) {
+        refusedItems.add("ENC-0-m2");
+        return { status: 400, error: { message: "Could not decrypt the provided encrypted_content" } };
+      }
+      if (raw.includes("turn three")) return { items: [{ type: "text", text: "done three" }] };
+      return interleavedTurn(request, "-m2");
+    });
+    const frames = await runSession(fx, "rs-m2", ["turn one", "turn two", "turn three"]);
+    const refusals = fx.fake.requests.filter((r) => r.raw.includes('"encrypted_content":"ENC-0-m2"'));
+    expect(refusals).toHaveLength(1);
+    expect(lastResult(frames)).toMatchObject({ is_error: false, result: "done three" });
   });
 });

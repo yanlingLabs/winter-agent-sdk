@@ -30,7 +30,9 @@ export type ResponsesFakeItem =
 
 export type ResponsesFakeAnswer =
   | { items: ResponsesFakeItem[]; usage?: { input_tokens: number; output_tokens: number; cached_tokens?: number } }
-  | { status: number; error: { message: string; type?: string; code?: string | null; param?: string | null } };
+  | { status: number; error: { message: string; type?: string; code?: string | null; param?: string | null } }
+  /** WS-23 review r1 (I-6): an in-stream failure -- `response.created`, then `response.failed` carrying `error`. */
+  | { streamFailure: { code: string; message: string } };
 
 export interface ResponsesFake {
   url: string;
@@ -99,6 +101,10 @@ export async function startResponsesFake(script: (request: ResponsesFakeRequest,
         return new Response(JSON.stringify({ error: { type: "invalid_request_error", code: null, param: null, ...answer.error } }), { status: answer.status, headers: { "content-type": "application/json" } });
       }
       const model = typeof body["model"] === "string" ? body["model"] : "gpt";
+      if ("streamFailure" in answer) {
+        const failed = frame({ type: "response.created", response: { id: `resp_${requests.length}`, model, output: [] } }) + frame({ type: "response.failed", response: { id: `resp_${requests.length}`, status: "failed", error: answer.streamFailure } });
+        return new Response(failed, { headers: { "content-type": "text/event-stream" } });
+      }
       let out = frame({ type: "response.created", response: { id: `resp_${requests.length}`, model, output: [] } });
       answer.items.forEach((item, i) => (out += itemFrames(item, i)));
       const usage = answer.usage ?? { input_tokens: 10, output_tokens: 2 };
