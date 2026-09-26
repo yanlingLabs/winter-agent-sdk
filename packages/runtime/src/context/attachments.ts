@@ -99,9 +99,19 @@ export type AttachmentRenderer = (attachment: AttachmentPayload) => string | und
  */
 export interface AttachmentRendererOptions {
   wrap?: boolean;
+  /**
+   * WS-23: the attachment may ride as a MID-CONVERSATION `role: "system"` message on a model whose row
+   * documents them (`ModelWireFeatures.midConversationSystem`), instead of as user-turn text. OPT-IN,
+   * and only for text Winter itself AUTHORS: the vendor is explicit that a system message gives its
+   * text operator authority and must not carry "text from outside the conversation"
+   * (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#limitations).
+   * So the agent and skill listings (they fold in project, user and plugin descriptions verbatim) and
+   * task notifications (subagent output) stay user text; `date_change` is the built-in that qualifies.
+   */
+  systemRole?: boolean;
 }
 
-const renderers = new Map<string, { render: AttachmentRenderer; wrap: boolean }>();
+const renderers = new Map<string, { render: AttachmentRenderer; wrap: boolean; systemRole: boolean }>();
 
 /**
  * Registers (or replaces) the renderer for one attachment type. Another lane's types (task
@@ -109,7 +119,12 @@ const renderers = new Map<string, { render: AttachmentRenderer; wrap: boolean }>
  * with no further change.
  */
 export function registerAttachmentRenderer(type: string, renderer: AttachmentRenderer, options?: AttachmentRendererOptions): void {
-  renderers.set(type, { render: renderer, wrap: options?.wrap !== false });
+  renderers.set(type, { render: renderer, wrap: options?.wrap !== false, systemRole: options?.systemRole === true });
+}
+
+/** WS-23: whether this attachment's renderer opted into the mid-conversation `system` role. */
+export function isSystemRoleAttachment(attachment: AttachmentPayload): boolean {
+  return renderers.get(attachment.type)?.systemRole === true;
 }
 
 registerAttachmentRenderer("agent_listing_delta", (a) => {
@@ -136,7 +151,8 @@ registerAttachmentRenderer("skill_listing", (a) => {
   return neutralizeReminderTags(`${SKILL_LISTING_HEADER}\n\n${content}`);
 });
 
-registerAttachmentRenderer("date_change", (a) => (typeof a["newDate"] === "string" ? dateChangeText(a["newDate"]) : undefined));
+// Winter-authored end to end (only the date is data), so it may ride the system role (WS-23).
+registerAttachmentRenderer("date_change", (a) => (typeof a["newDate"] === "string" ? dateChangeText(a["newDate"]) : undefined), { systemRole: true });
 
 /** The wrapped model-facing text for an attachment, or `undefined` when there is none (an unknown type included). */
 export function renderAttachment(attachment: AttachmentPayload): string | undefined {

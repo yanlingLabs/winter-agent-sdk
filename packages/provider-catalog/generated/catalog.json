@@ -14407,6 +14407,20 @@
         "thinking.type.disabled"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
+      "midConversationSystem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
       "canonicalModelId": "claude-fable-5",
       "modelFamily": "claude"
     },
@@ -14557,6 +14571,15 @@
           "confidence": "declared",
           "observedAt": "2026-09-25T13:00:00Z",
           "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — \"A 400 error says a thinking block signature is invalid\": on Claude Fable 5.1 and Opus 5.5 a replayed thinking block is bound to the conversation (system, tools and earlier messages) and is rejected once that prefix changes (enforced for accounts created on or after 2026-08-31); the documented escape is the `thinking-binding-controls-2026-08-01` beta with `thinking.block_binding.prefix_mismatch_behavior: \"drop_block\"`. See also https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5 (\"Thinking blocks are tied to the model and the conversation\")."
+        },
+        "perMessageEffort": {
+          "value": {
+            "beta": "mid-conversation-output-config-2026-07-01"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T18:00:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, and Claude Opus 5, use a per-message effort change, which keeps the prompt cache\": a role:\"system\" message with empty content and output_config.effort, beta header mid-conversation-output-config-2026-07-01; \"Models without per-message effort, including Claude Fable 5, return a 400 error\". claude 2.1.282 sends the older alias per-turn-control-2026-07-01, which the page does not document."
         }
       },
       "pricing": {
@@ -14578,6 +14601,20 @@
         "tool_choice.tool"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
+      "midConversationSystem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
       "canonicalModelId": "claude-fable-5.1",
       "modelFamily": "claude"
     },
@@ -14676,6 +14713,13 @@
         "thinking.type.adaptive"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
       "canonicalModelId": "claude-haiku-4.5-20251001",
       "modelFamily": "claude"
     },
@@ -14774,6 +14818,13 @@
         "thinking.type.adaptive"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
       "canonicalModelId": "claude-haiku-4.5",
       "modelFamily": "claude"
     },
@@ -14898,6 +14949,13 @@
         "thinking.type.adaptive"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
       "canonicalModelId": "claude-opus-4.5",
       "modelFamily": "claude"
     },
@@ -15020,6 +15078,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
       "canonicalModelId": "claude-opus-4.6",
       "modelFamily": "claude"
     },
@@ -15148,6 +15213,13 @@
         "thinking.type.enabled"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
       "canonicalModelId": "claude-opus-4.7",
       "modelFamily": "claude"
     },
@@ -15276,6 +15348,20 @@
         "thinking.type.enabled"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
+      "midConversationSystem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
       "canonicalModelId": "claude-opus-4.8",
       "modelFamily": "claude"
     },
@@ -15424,6 +15510,15 @@
           "confidence": "declared",
           "observedAt": "2026-09-25T12:30:00Z",
           "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        },
+        "perMessageEffort": {
+          "value": {
+            "beta": "mid-conversation-output-config-2026-07-01"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T18:00:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, and Claude Opus 5, use a per-message effort change, which keeps the prompt cache\": a role:\"system\" message with empty content and output_config.effort, beta header mid-conversation-output-config-2026-07-01; \"Models without per-message effort, including Claude Fable 5, return a 400 error\". claude 2.1.282 sends the older alias per-turn-control-2026-07-01, which the page does not document."
         }
       },
       "pricing": {
@@ -15447,6 +15542,20 @@
         "thinking.type.disabled+output_config.effort.max"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
+      "midConversationSystem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
       "canonicalModelId": "claude-opus-5",
       "modelFamily": "claude"
     },
@@ -15606,6 +15715,15 @@
           "confidence": "declared",
           "observedAt": "2026-09-25T13:00:00Z",
           "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — \"A 400 error says a thinking block signature is invalid\": on Claude Fable 5.1 and Opus 5.5 a replayed thinking block is bound to the conversation (system, tools and earlier messages) and is rejected once that prefix changes (enforced for accounts created on or after 2026-08-31); the documented escape is the `thinking-binding-controls-2026-08-01` beta with `thinking.block_binding.prefix_mismatch_behavior: \"drop_block\"`. See also https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5 (\"Thinking blocks are tied to the model and the conversation\")."
+        },
+        "perMessageEffort": {
+          "value": {
+            "beta": "mid-conversation-output-config-2026-07-01"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T18:00:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, and Claude Opus 5, use a per-message effort change, which keeps the prompt cache\": a role:\"system\" message with empty content and output_config.effort, beta header mid-conversation-output-config-2026-07-01; \"Models without per-message effort, including Claude Fable 5, return a 400 error\". claude 2.1.282 sends the older alias per-turn-control-2026-07-01, which the page does not document."
         }
       },
       "pricing": {
@@ -15627,6 +15745,20 @@
         "tool_choice.tool"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
+      "midConversationSystem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
       "canonicalModelId": "claude-opus-5.5",
       "modelFamily": "claude"
     },
@@ -15742,6 +15874,13 @@
         "thinking.type.adaptive"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
       "canonicalModelId": "claude-sonnet-4.5",
       "modelFamily": "claude"
     },
@@ -15864,6 +16003,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
       "canonicalModelId": "claude-sonnet-4.6",
       "modelFamily": "claude"
     },
@@ -25238,6 +25384,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      },
       "canonicalModelId": "gpt-5.6-luna",
       "modelFamily": "gpt"
     },
@@ -25345,6 +25498,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      },
       "canonicalModelId": "gpt-5.6-sol",
       "modelFamily": "gpt"
     },
@@ -25452,6 +25612,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      },
       "canonicalModelId": "gpt-5.6-terra",
       "modelFamily": "gpt"
     },
@@ -25561,6 +25728,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      },
       "canonicalModelId": "gpt-6-astra",
       "modelFamily": "gpt"
     },
@@ -25670,6 +25844,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      },
       "canonicalModelId": "gpt-6-luna",
       "modelFamily": "gpt"
     },
@@ -25779,6 +25960,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      },
       "canonicalModelId": "gpt-6-sol",
       "modelFamily": "gpt"
     },
@@ -26522,6 +26710,20 @@
         "thinking.type.disabled"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
+      "midConversationSystem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
       "canonicalModelId": "claude-fable-5",
       "modelFamily": "claude"
     },
@@ -26672,6 +26874,15 @@
           "confidence": "declared",
           "observedAt": "2026-09-25T13:00:00Z",
           "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — \"A 400 error says a thinking block signature is invalid\": on Claude Fable 5.1 and Opus 5.5 a replayed thinking block is bound to the conversation (system, tools and earlier messages) and is rejected once that prefix changes (enforced for accounts created on or after 2026-08-31); the documented escape is the `thinking-binding-controls-2026-08-01` beta with `thinking.block_binding.prefix_mismatch_behavior: \"drop_block\"`. See also https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5 (\"Thinking blocks are tied to the model and the conversation\")."
+        },
+        "perMessageEffort": {
+          "value": {
+            "beta": "mid-conversation-output-config-2026-07-01"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T18:00:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, and Claude Opus 5, use a per-message effort change, which keeps the prompt cache\": a role:\"system\" message with empty content and output_config.effort, beta header mid-conversation-output-config-2026-07-01; \"Models without per-message effort, including Claude Fable 5, return a 400 error\". claude 2.1.282 sends the older alias per-turn-control-2026-07-01, which the page does not document."
         }
       },
       "pricing": {
@@ -26693,6 +26904,20 @@
         "tool_choice.tool"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
+      "midConversationSystem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
       "canonicalModelId": "claude-fable-5.1",
       "modelFamily": "claude"
     },
@@ -26791,6 +27016,13 @@
         "thinking.type.adaptive"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
       "canonicalModelId": "claude-haiku-4.5-20251001",
       "modelFamily": "claude"
     },
@@ -26889,6 +27121,13 @@
         "thinking.type.adaptive"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
       "canonicalModelId": "claude-haiku-4.5",
       "modelFamily": "claude"
     },
@@ -27013,6 +27252,13 @@
         "thinking.type.adaptive"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
       "canonicalModelId": "claude-opus-4.5",
       "modelFamily": "claude"
     },
@@ -27135,6 +27381,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
       "canonicalModelId": "claude-opus-4.6",
       "modelFamily": "claude"
     },
@@ -27263,6 +27516,13 @@
         "thinking.type.enabled"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
       "canonicalModelId": "claude-opus-4.7",
       "modelFamily": "claude"
     },
@@ -27391,6 +27651,20 @@
         "thinking.type.enabled"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
+      "midConversationSystem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
       "canonicalModelId": "claude-opus-4.8",
       "modelFamily": "claude"
     },
@@ -27539,6 +27813,15 @@
           "confidence": "declared",
           "observedAt": "2026-09-25T12:30:00Z",
           "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — the effort page's supportedModels list names claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5-20251101, claude-sonnet-5 and claude-sonnet-4-6: effort is requested through `output_config.effort` (Claude 4.7 and later reject a manual `thinking.budget_tokens`, https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#rejected-configurations)."
+        },
+        "perMessageEffort": {
+          "value": {
+            "beta": "mid-conversation-output-config-2026-07-01"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T18:00:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, and Claude Opus 5, use a per-message effort change, which keeps the prompt cache\": a role:\"system\" message with empty content and output_config.effort, beta header mid-conversation-output-config-2026-07-01; \"Models without per-message effort, including Claude Fable 5, return a 400 error\". claude 2.1.282 sends the older alias per-turn-control-2026-07-01, which the page does not document."
         }
       },
       "pricing": {
@@ -27562,6 +27845,20 @@
         "thinking.type.disabled+output_config.effort.max"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
+      "midConversationSystem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
       "canonicalModelId": "claude-opus-5",
       "modelFamily": "claude"
     },
@@ -27721,6 +28018,15 @@
           "confidence": "declared",
           "observedAt": "2026-09-25T13:00:00Z",
           "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — \"A 400 error says a thinking block signature is invalid\": on Claude Fable 5.1 and Opus 5.5 a replayed thinking block is bound to the conversation (system, tools and earlier messages) and is rejected once that prefix changes (enforced for accounts created on or after 2026-08-31); the documented escape is the `thinking-binding-controls-2026-08-01` beta with `thinking.block_binding.prefix_mismatch_behavior: \"drop_block\"`. See also https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5 (\"Thinking blocks are tied to the model and the conversation\")."
+        },
+        "perMessageEffort": {
+          "value": {
+            "beta": "mid-conversation-output-config-2026-07-01"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-25T18:00:00Z",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, and Claude Opus 5, use a per-message effort change, which keeps the prompt cache\": a role:\"system\" message with empty content and output_config.effort, beta header mid-conversation-output-config-2026-07-01; \"Models without per-message effort, including Claude Fable 5, return a 400 error\". claude 2.1.282 sends the older alias per-turn-control-2026-07-01, which the page does not document."
         }
       },
       "pricing": {
@@ -27742,6 +28048,20 @@
         "tool_choice.tool"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
+      "midConversationSystem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
       "canonicalModelId": "claude-opus-5.5",
       "modelFamily": "claude"
     },
@@ -27857,6 +28177,13 @@
         "thinking.type.adaptive"
       ],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
       "canonicalModelId": "claude-sonnet-4.5",
       "modelFamily": "claude"
     },
@@ -27979,6 +28306,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "deferredToolLoading": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T18:30:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
       "canonicalModelId": "claude-sonnet-4.6",
       "modelFamily": "claude"
     },
@@ -50450,6 +50784,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-4.1",
       "modelFamily": "gpt"
     },
@@ -50530,6 +50871,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-4.1-mini",
       "modelFamily": "gpt"
     },
@@ -50617,6 +50965,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-4.1-nano",
       "modelFamily": "gpt"
     },
@@ -50697,6 +51052,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-4o",
       "modelFamily": "gpt"
     },
@@ -50777,6 +51139,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-4o-2024-11-20",
       "modelFamily": "gpt"
     },
@@ -50857,6 +51226,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-4o-mini",
       "modelFamily": "gpt"
     },
@@ -50962,6 +51338,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-5.4",
       "modelFamily": "gpt"
     },
@@ -51074,6 +51457,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-5.4-mini",
       "modelFamily": "gpt"
     },
@@ -51186,6 +51576,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-5.4-nano",
       "modelFamily": "gpt"
     },
@@ -51273,6 +51670,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-5.4-pro",
       "modelFamily": "gpt"
     },
@@ -51378,6 +51782,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-5.5",
       "modelFamily": "gpt"
     },
@@ -51472,6 +51883,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-5.5-pro",
       "modelFamily": "gpt"
     },
@@ -51586,6 +52004,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-5.6",
       "modelFamily": "gpt"
     },
@@ -51700,6 +52125,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-5.6-luna",
       "modelFamily": "gpt"
     },
@@ -51814,6 +52246,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-5.6-sol",
       "modelFamily": "gpt"
     },
@@ -51928,6 +52367,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-5.6-terra",
       "modelFamily": "gpt"
     },
@@ -52078,6 +52524,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-6-astra",
       "modelFamily": "gpt"
     },
@@ -52229,6 +52682,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-6-luna",
       "modelFamily": "gpt"
     },
@@ -52380,6 +52840,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "gpt-6-sol",
       "modelFamily": "gpt"
     },
@@ -52482,6 +52949,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "o3",
       "modelFamily": "o-series"
     },
@@ -52576,6 +53050,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "o3-mini",
       "modelFamily": "o-series"
     },
@@ -52723,6 +53204,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-25T19:30:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
       "canonicalModelId": "o4-mini",
       "modelFamily": "o-series"
     },

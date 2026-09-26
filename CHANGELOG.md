@@ -164,6 +164,40 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 - `scripts/probe-anthropic-code.ts`: an opt-in live probe (`WINTER_ANTHROPIC_PROBE=1`) for the above.
 
+### Prompt caching and per-message effort (WS-23)
+
+- Effort can change while a session runs: `Query.setEffort(level)` (Winter's own `set_effort` control
+  request), validated against the model's vocabulary and applied at the next turn boundary. On Claude Fable
+  5.1, Opus 5.5 and Opus 5 the top-level `output_config.effort` stays fixed and the change rides a
+  per-message `system` marker (`mid-conversation-output-config-2026-07-01`), so the cached prefix survives;
+  if the API refuses the beta the session falls back, once and visibly, to changing the top-level value.
+  Elsewhere a change is a new top-level value.
+- Transcripts record claude's own `effort` / `perTurnEffort` on assistant entries, and a resumed session
+  rebuilds its effort markers at the same positions. Old transcripts replay unchanged.
+- The tool list sent to every provider is sorted by name. On Claude models that support tool search,
+  deferred tools are declared up front with `defer_loading` and ToolSearch surfaces them with
+  `tool_reference` blocks, so loading a tool no longer changes `tools` or invalidates the cache.
+- Compaction reuses the session's own request prefix (system blocks, tools, history), so the summary reads
+  from the cache instead of being the one uncached request of the session.
+- A fourth cache breakpoint lands on the previous request's write when a single request appends more than
+  the API's lookback window.
+- `promptCacheTtl: "1h"` (a new session option; default `"5m"`) caches the system prompt for an hour.
+  1-hour cache writes are counted separately and priced at 2x input; the result's `cache_creation` splits
+  writes by lifetime.
+- Claude API requests opt into cache diagnostics (`previous_message_id`); a reported cache miss or dropped
+  thinking block is logged once and appears on the result as the Winter-only `usage.cache_misses`.
+- Winter-authored reminders (the date change) ride as mid-conversation `system` messages on models that
+  document them; listings and notifications stay user text.
+- OpenAI Responses and Codex requests carry `prompt_cache_key` (the session id, plus the agent id for a
+  subagent).
+
+### Catalog data (prompt caching)
+
+- New optional evidence fields: `reasoning.perMessageEffort` (Fable 5.1, Opus 5.5, Opus 5),
+  `deferredToolLoading` (the Claude models in Anthropic's tool-search compatibility table),
+  `midConversationSystem` (Fable 5.1, Fable 5, Opus 5.5, Opus 5, Opus 4.8) and `promptCacheKey` (OpenAI
+  and Codex rows).
+
 ## 0.0.24
 
 Fixes to the 0.0.23 catalog refresh from an independent audit (53 rows fact-checked against vendor pages), plus

@@ -183,7 +183,39 @@ function capabilityRefusal(reason: string): ProviderRequestError {
  * because that is what "Anthropic-family blocks ride in-dialect with their real signatures" (R6-8)
  * means at the only place it can be enforced. Nothing here strips, re-signs or normalizes them.
  */
-function toWireBlock(block: ContentBlockLike): Record<string, unknown> {
+/**
+ * WS-23: the names a request may reference with `tool_reference` -- the tools it declares with
+ * `defer_loading: true`. A reference to anything else is not expandable ("Every tool referenced must
+ * have a corresponding tool definition in the top-level `tools` parameter", and an undeclared name is a
+ * 400 `tool_reference_unresolved`), so it is never sent.
+ */
+type Referable = ReadonlySet<string>;
+const NOTHING_REFERABLE: Referable = new Set();
+
+/** The wire `tool_reference` block for each referable name, in order, deduplicated. */
+function toolReferences(names: readonly string[], referable: Referable): Record<string, unknown>[] {
+  return [...new Set(names)].filter((name) => referable.has(name)).map((name) => ({ type: "tool_reference", tool_name: name }));
+}
+
+/** A `tool_reference` block's names, in either spelling: Winter's streaming `tool_names[]` or claude's own `tool_name` (a claude-written transcript on resume). */
+function referenceNames(block: Record<string, unknown>): string[] {
+  if (Array.isArray(block["tool_names"])) return (block["tool_names"] as unknown[]).filter((n): n is string => typeof n === "string");
+  return typeof block["tool_name"] === "string" ? [block["tool_name"]] : [];
+}
+
+function toWireBlocks(block: ContentBlockLike, referable: Referable): Record<string, unknown>[] {
+  if (block.type !== "tool_reference") return [toWireBlock(block, referable)];
+  // WS-23: no longer a refusal. A `tool_reference` whose tool this request declares deferred is
+  // Anthropic's own block and goes on the wire as one per name; anything else (a claude-written
+  // transcript resumed on a row without the evidence, or a tool no longer deferred) degrades to the
+  // same legible note every other serializer in this repo writes for it, never to a silent drop.
+  const names = referenceNames(block as unknown as Record<string, unknown>);
+  const wire = toolReferences(names, referable);
+  const rest = names.filter((name) => !referable.has(name));
+  return [...wire, ...(rest.length > 0 ? [{ type: "text", text: `[tools now callable: ${rest.join(", ")}]` }] : [])];
+}
+
+function toWireBlock(block: ContentBlockLike, referable: Referable = NOTHING_REFERABLE): Record<string, unknown> {
   switch (block.type) {
     case "text":
       return { type: "text", text: block.text };
@@ -197,7 +229,16 @@ function toWireBlock(block: ContentBlockLike): Record<string, unknown> {
     case "redacted_thinking":
       return { type: "redacted_thinking", data: block.data };
     case "tool_result": {
-      const content = Array.isArray(block.content) ? block.content.map(toWireBlock) : block.content;
+      // WS-23: a ToolSearch result's `loadedTools` becomes Anthropic's `tool_reference` blocks inside
+      // this result -- the documented "custom tool search implementation"
+      // (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) -- so the API
+      // expands the deferred definitions in place and `tools` never changes. Only for names this
+      // request declares deferred; with none, the result is byte-identical to before.
+      const rawLoaded = block["loadedTools"];
+      const loaded = Array.isArray(rawLoaded) ? rawLoaded.filter((n): n is string => typeof n === "string") : [];
+      const references = toolReferences(loaded, referable);
+      const inner = Array.isArray(block.content) ? block.content.flatMap((b) => toWireBlocks(b, referable)) : block.content;
+      const content = references.length === 0 ? inner : [...(typeof inner === "string" ? (inner.length > 0 ? [{ type: "text", text: inner }] : []) : inner), ...references];
       // Winter's provisional markers (`interrupted`/`denied`/`deferred`/`loadFirst`) are BOOKKEEPING,
       // not wire fields: the result's own content already carries what the model needs to read. Only
       // `error` has a wire counterpart, and dropping it would tell the model a failed call succeeded.
@@ -207,17 +248,14 @@ function toWireBlock(block: ContentBlockLike): Record<string, unknown> {
       return { type: "tool_result", tool_use_id: block.tool_use_id, content, ...(isError ? { is_error: true } : {}) };
     }
     case "tool_reference":
-      // A Winter-owned, STREAMING-ONLY block (engine.ts writes it straight to the output frame
-      // stream and never into a `ProviderMessage`). It has no wire counterpart, so it is a typed
-      // refusal rather than a silent drop -- the lane's "no silent tool-dropping" rule applies to
-      // history as much as to calls.
-      throw capabilityRefusal("a `tool_reference` block reached the Anthropic serializer; it is a Winter streaming-only block with no wire counterpart and is never silently dropped");
+      // Reached only through `toWireBlocks`, which expands a reference into one block per name.
+      return toWireBlocks(block, referable)[0] ?? { type: "text", text: "[tools now callable]" };
   }
 }
 
-function normalizeContent(content: string | ContentBlockLike[]): Record<string, unknown>[] {
+function normalizeContent(content: string | ContentBlockLike[], referable: Referable = NOTHING_REFERABLE): Record<string, unknown>[] {
   if (typeof content === "string") return content.length > 0 ? [{ type: "text", text: content }] : [];
-  return content.map(toWireBlock);
+  return content.flatMap((block) => toWireBlocks(block, referable));
 }
 
 /**
@@ -242,7 +280,9 @@ function normalizeContent(content: string | ContentBlockLike[]): Record<string, 
  * decorated: correct per message, wire-invalid once merged.
  */
 interface WireEntryBuckets {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
+  /** WS-23: a `system` entry's own `output_config` (the per-message effort change). Never set on another role. */
+  outputConfig?: { effort: string };
   /** `tool_result` blocks. This endpoint requires them at the START of the turn they ride. */
   results: Record<string, unknown>[];
   /** The LEADING run of in-dialect thinking blocks. With thinking enabled, no text may precede them. */
@@ -270,11 +310,26 @@ function fileBlocks(entry: WireEntryBuckets, blocks: Record<string, unknown>[]):
   for (; at < nonResults.length; at++) entry.rest.push(nonResults[at]!);
 }
 
-export function toWireMessages(messages: ProviderMessageLike[]): Array<{ role: "user" | "assistant"; content: Record<string, unknown>[] }> {
+/** One wire message. `output_config` rides only on a `system` entry (WS-23's per-message effort). */
+export type WireMessage = { role: "user" | "assistant" | "system"; content: Record<string, unknown>[]; output_config?: { effort: string } };
+
+export function toWireMessages(messages: ProviderMessageLike[], opts: { referableTools?: ReadonlySet<string> } = {}): WireMessage[] {
+  const referable = opts.referableTools ?? NOTHING_REFERABLE;
   const entries: WireEntryBuckets[] = [];
   for (const message of messages) {
-    const role: "user" | "assistant" = message.role === "assistant" ? "assistant" : "user";
-    const own = normalizeContent(message.content);
+    const role: WireEntryBuckets["role"] = message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user";
+    const own = normalizeContent(message.content, referable);
+    // WS-23: a `system` message is its OWN wire entry, never merged into a neighbour and never merged
+    // with another `system` message either. An effort-only marker has no content at all and is still
+    // sent -- its `output_config` IS the message
+    // (https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta).
+    // Merging one into the user turn after it (the pre-WS-23 `role !== "assistant"` rule) would have
+    // turned an operator instruction into user text and dropped the effort change entirely.
+    if (role === "system") {
+      if (own.length === 0 && message.outputConfig === undefined) continue;
+      entries.push({ role, ...(message.outputConfig !== undefined ? { outputConfig: { effort: message.outputConfig.effort } } : {}), results: [], leading: [], decorations: [], rest: own });
+      continue;
+    }
     if (own.length === 0 && message.decoration === undefined) continue;
 
     const last = entries[entries.length - 1];
@@ -301,8 +356,12 @@ export function toWireMessages(messages: ProviderMessageLike[]): Array<{ role: "
   // constraints first -- `tool_result` blocks at the start of their turn, in-dialect thinking ahead
   // of any text -- then the decorations in message order, then ordinary content.
   return entries
-    .map((entry) => ({ role: entry.role, content: [...entry.results, ...entry.leading, ...entry.decorations, ...entry.rest] }))
-    .filter((entry) => entry.content.length > 0);
+    .map((entry): WireMessage => ({
+      role: entry.role,
+      content: [...entry.results, ...entry.leading, ...entry.decorations, ...entry.rest],
+      ...(entry.outputConfig !== undefined ? { output_config: entry.outputConfig } : {}),
+    }))
+    .filter((entry) => entry.content.length > 0 || entry.output_config !== undefined);
 }
 
 // --- prompt caching (0.0.16 request layout) -------------------------------------------------------
@@ -336,27 +395,120 @@ export function promptCachingLayout(req: TurnRequest, descriptor: WinterModelDes
 
 const EPHEMERAL_CACHE_CONTROL = { type: "ephemeral" } as const;
 
-/** `systemBlocks` -> the wire `system` array, cache-marked per block scope. Empty blocks are dropped (claude's `filter(Boolean)`). */
-export function toWireSystemBlocks(blocks: readonly { text: string; cacheScope: "global" | "org" | null }[]): Record<string, unknown>[] {
+/**
+ * `systemBlocks` -> the wire `system` array, cache-marked per block scope. Empty blocks are dropped (claude's `filter(Boolean)`).
+ *
+ * WS-23: `ttl: "1h"` rides the SYSTEM breakpoints only, when the session asked for it; the messages'
+ * breakpoints stay at the default 5 minutes. That is the order the vendor requires ("cache entries
+ * with longer TTL must appear before shorter TTLs",
+ * https://platform.claude.com/docs/en/build-with-claude/prompt-caching#mixing-different-ttls), and the
+ * system prompt is the one prefix worth keeping across a long idle gap.
+ */
+export function toWireSystemBlocks(blocks: readonly { text: string; cacheScope: "global" | "org" | null }[], ttl?: "5m" | "1h"): Record<string, unknown>[] {
+  const cacheControl = ttl === "1h" ? { ...EPHEMERAL_CACHE_CONTROL, ttl: "1h" } : { ...EPHEMERAL_CACHE_CONTROL };
   return blocks
     .filter((block) => block.text.length > 0)
-    .map((block) => ({ type: "text", text: block.text, ...(block.cacheScope !== null ? { cache_control: { ...EPHEMERAL_CACHE_CONTROL } } : {}) }));
+    .map((block) => ({ type: "text", text: block.text, ...(block.cacheScope !== null ? { cache_control: { ...cacheControl } } : {}) }));
 }
 
-/** The message-level breakpoint: a copy of `messages` whose last message's last block carries the marker. */
-export function withMessageCacheMarker(messages: Array<{ role: "user" | "assistant"; content: Record<string, unknown>[] }>): Array<{ role: "user" | "assistant"; content: Record<string, unknown>[] }> {
-  if (messages.length === 0) return messages;
+/** Anthropic's own ceiling on `cache_control` breakpoints per request (https://platform.claude.com/docs/en/build-with-claude/prompt-caching). */
+export const MAX_CACHE_BREAKPOINTS = 4;
+
+/**
+ * WS-23: how many block POSITIONS a request may add after the previous request's write before the
+ * rolling breakpoint alone stops finding it. The API "checks at most 20 positions per breakpoint,
+ * counting the breakpoint itself", and "a run of consecutive `tool_use` blocks counts as one position,
+ * and so does a run of consecutive `tool_result` blocks"
+ * (https://platform.claude.com/docs/en/build-with-claude/prompt-caching, "The lookback window is 20
+ * blocks"). 15 leaves margin for a count that disagrees with the server's by a block or two.
+ */
+export const LOOKBACK_MARGIN_POSITIONS = 15;
+
+/** Where a breakpoint can go: message `m`'s block `b`. */
+interface BlockAt {
+  m: number;
+  b: number;
+}
+
+/**
+ * The last block in `messages[0..end)` a breakpoint may carry: the last block of the last
+ * CONTENT-BEARING message. An effort-only `system` marker has no content and is skipped -- it renders
+ * nothing at its position (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#limitations).
+ * An in-dialect thinking block cannot carry a marker; claude never ends a request on one either (the
+ * final message is the user's), so that only guards a host-supplied history.
+ */
+function lastMarkable(messages: readonly WireMessage[], end: number): BlockAt | undefined {
+  for (let m = end - 1; m >= 0; m--) {
+    const content = messages[m]!.content;
+    if (content.length === 0) continue;
+    const tail = content[content.length - 1]!;
+    if (tail["type"] === "thinking" || tail["type"] === "redacted_thinking") return undefined;
+    return { m, b: content.length - 1 };
+  }
+  return undefined;
+}
+
+/** The lookback's own count of positions strictly after `from` up to and including `to` (runs of `tool_use` / `tool_result` count once). */
+function positionsBetween(messages: readonly WireMessage[], from: BlockAt, to: BlockAt): number {
+  let count = 0;
+  let previousType: unknown;
+  for (let m = from.m; m <= to.m; m++) {
+    const content = messages[m]!.content;
+    const first = m === from.m ? from.b + 1 : 0;
+    const last = m === to.m ? to.b : content.length - 1;
+    for (let b = first; b <= last; b++) {
+      const type = content[b]!["type"];
+      if ((type === "tool_use" || type === "tool_result") && type === previousType) continue;
+      previousType = type;
+      count++;
+    }
+  }
+  return count;
+}
+
+function markAt(messages: WireMessage[], at: BlockAt): void {
+  const message = messages[at.m]!;
+  const content = message.content.slice();
+  content[at.b] = { ...content[at.b]!, cache_control: { ...EPHEMERAL_CACHE_CONTROL } };
+  messages[at.m] = { ...message, content };
+}
+
+/**
+ * The message-level breakpoints, within the `budget` the system blocks left.
+ *
+ *   - The ROLLING breakpoint on the last block of the last content-bearing message -- whatever the
+ *     engine appended last (tool results, a reminder, a hook's `additionalContext`) is the true tail.
+ *   - WS-23, the LOOKBACK breakpoint: exactly on the block the PREVIOUS request's rolling breakpoint
+ *     wrote -- the last markable block before the newest assistant message, since the previous
+ *     request ended right there -- when this request appended more than
+ *     `LOOKBACK_MARGIN_POSITIONS` positions after it. Past 20 the rolling breakpoint's lookback cannot
+ *     reach the previous write and the whole conversation is re-written; a breakpoint ON the previous
+ *     write is a guaranteed read ("a second breakpoint ... starts a second lookback window there",
+ *     same page), and it costs nothing extra: a breakpoint over an already-cached prefix is a read.
+ */
+export function withMessageCacheMarkers(messages: WireMessage[], budget: number): WireMessage[] {
   const out = messages.slice();
-  const last = out[out.length - 1]!;
-  if (last.content.length === 0) return out;
-  const content = last.content.slice();
-  const tail = content[content.length - 1]!;
-  // An in-dialect thinking block cannot carry a cache marker; claude never ends a request on one
-  // either (the final message is the user's), so this only guards a host-supplied history.
-  if (tail["type"] === "thinking" || tail["type"] === "redacted_thinking") return out;
-  content[content.length - 1] = { ...tail, cache_control: { ...EPHEMERAL_CACHE_CONTROL } };
-  out[out.length - 1] = { ...last, content };
+  if (budget <= 0) return out;
+  const tail = lastMarkable(out, out.length);
+  if (tail === undefined) return out;
+  markAt(out, tail);
+  if (budget < 2) return out;
+  let lastAssistant = -1;
+  for (let m = tail.m; m >= 0; m--) {
+    if (out[m]!.role === "assistant") {
+      lastAssistant = m;
+      break;
+    }
+  }
+  if (lastAssistant <= 0) return out;
+  const previousWrite = lastMarkable(out, lastAssistant);
+  if (previousWrite !== undefined && positionsBetween(out, previousWrite, tail) > LOOKBACK_MARGIN_POSITIONS) markAt(out, previousWrite);
   return out;
+}
+
+/** The single rolling message breakpoint (the pre-WS-23 behaviour, and the one a tight budget leaves). */
+export function withMessageCacheMarker(messages: WireMessage[]): WireMessage[] {
+  return withMessageCacheMarkers(messages, 1);
 }
 
 // --- capability resolution ------------------------------------------------------------------------
@@ -606,8 +758,20 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
   // typed failure for a combination the caller never chose as a pair. Opus 5's thinking is ON by
   // default, so adaptive is what the model does when `thinking` is left alone -- the rewrite asks for
   // exactly that, explicitly, rather than omitting the field and relying on the default.
+  //
+  // WS-23 (anthropic-cache fix round 2): the tier is not only the TOP-LEVEL one. Under per-message effort
+  // the top-level value stays frozen and a switch rides an effort-only `system` marker, so a session
+  // frozen at `high` that switches to `max` would otherwise send `thinking: disabled` beside a `max`
+  // marker -- the very pair the row rejects. Every marker's level in the body is checked too, and any
+  // rejected pair takes the same rewrite. DELIBERATE CACHE COST: this changes `thinking` on the request
+  // that carries the switch ("changing thinking parameters" invalidates the messages cache), one miss,
+  // accepted because the alternative is a 400.
+  const effortLevels = [
+    ...(outputConfigEffort !== undefined ? [outputConfigEffort] : []),
+    ...req.messages.flatMap((m) => (m.role === "system" && m.outputConfig !== undefined ? [m.outputConfig.effort] : [])),
+  ];
   let rewroteDisabled = false;
-  if (req.thinking?.type === "disabled" && outputConfigEffort !== undefined && unsupported.has(`thinking.type.disabled+output_config.effort.${outputConfigEffort}`)) {
+  if (req.thinking?.type === "disabled" && effortLevels.some((level) => unsupported.has(`thinking.type.disabled+output_config.effort.${level}`))) {
     base = { type: "adaptive" };
     rewroteDisabled = true;
   }
@@ -715,6 +879,88 @@ export function anthropicWireModelId(id: string): string {
   return id.replace(/^(claude-[a-z]+-\d+)\.(\d+)$/, "$1-$2");
 }
 
+/** One tool as the wire declares it; `defer_loading` only for a tool the engine withheld (WS-23). */
+function toWireTool(tool: NonNullable<TurnRequest["tools"]>[number]): Record<string, unknown> {
+  return { name: tool.name, description: tool.description, input_schema: tool.inputSchema, ...(tool.deferLoading === true ? { defer_loading: true } : {}) };
+}
+
+/**
+ * WS-23: the tools this request declares deferred -- the only names a `tool_reference` may name.
+ *
+ * Gated like every other capability here: a `defer_loading` tool on a row whose `deferredToolLoading`
+ * evidence does not document it, or a tool list with NO non-deferred tool ("At least one tool must
+ * have defer_loading=false", the tool-search page's own 400), is refused before the request. The
+ * engine never builds either, so this fires on a wiring bug only.
+ */
+function deferredToolNames(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): ReadonlySet<string> {
+  const deferred = (req.tools ?? []).filter((t) => t.deferLoading === true);
+  if (deferred.length === 0) return NOTHING_REFERABLE;
+  if (descriptor?.deferredToolLoading?.value !== true) {
+    throw capabilityRefusal(`model "${descriptor?.key ?? req.model}" does not document deferred tool loading (no \`deferredToolLoading\` evidence), so ${deferred.length} \`defer_loading\` tool(s) are refused before the request rather than sent and rejected upstream`);
+  }
+  if (deferred.length === req.tools!.length) {
+    throw capabilityRefusal("every tool in this request is deferred; Anthropic requires at least one tool without `defer_loading`");
+  }
+  return new Set(deferred.map((t) => t.name));
+}
+
+/** WS-23: an effort-only `system` marker -- no content, only `output_config`. */
+function isEffortOnlyMarker(message: ProviderMessageLike): boolean {
+  return message.role === "system" && message.outputConfig !== undefined && (typeof message.content === "string" ? message.content.length === 0 : message.content.length === 0);
+}
+
+/**
+ * WS-23: the per-message effort gate. A `system` message carrying `output_config` is refused BEFORE
+ * the request unless the row's own `reasoning.perMessageEffort` evidence documents the shape, and its
+ * level must be one of the row's own `reasoning.efforts` -- the vendor's own error for a model
+ * without the feature is a 400 ("output_config.effort requires a model that supports per-turn effort",
+ * https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta),
+ * and this file turns every documented 400 it can foresee into a typed local refusal (decision 1).
+ * The engine only ever produces a marker for a row with the evidence, so this fires on a wiring bug,
+ * never on an ordinary session.
+ */
+function assertPerMessageEffort(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): void {
+  const efforts = descriptor?.reasoning?.efforts ?? [];
+  for (const message of req.messages) {
+    if (message.role !== "system") continue;
+    // WS-23 item 7: a system message CARRYING TEXT needs the row's own `midConversationSystem`
+    // evidence -- Claude Sonnet 5 documents the opposite ("This feature is not available on Claude
+    // Sonnet 5"), and every other unlisted model is unverified.
+    const carriesText = typeof message.content === "string" ? message.content.length > 0 : message.content.length > 0;
+    if (carriesText && descriptor?.midConversationSystem?.value !== true) {
+      throw capabilityRefusal(`model "${descriptor?.key ?? req.model}" does not document mid-conversation system messages (no \`midConversationSystem\` evidence), so a \`role: "system"\` message is refused before the request rather than sent and rejected upstream`);
+    }
+    if (message.outputConfig === undefined) continue;
+    if (descriptor?.reasoning?.perMessageEffort === undefined) {
+      throw capabilityRefusal(`model "${descriptor?.key ?? req.model}" does not document per-message effort (no \`reasoning.perMessageEffort\` evidence), so a mid-conversation \`output_config.effort\` is refused before the request rather than sent and rejected upstream`);
+    }
+    if (!efforts.includes(message.outputConfig.effort)) {
+      throw capabilityRefusal(`per-message effort "${message.outputConfig.effort}" is not in model "${descriptor.key}"'s verified vocabulary (${efforts.join(", ")})`);
+    }
+  }
+}
+
+/**
+ * The per-message effort beta, or `undefined` -- derived from the BODY `buildRequestBody` produced,
+ * the same one-decision rule `blockBindingBetaFor` states: the header rides exactly when a message in
+ * the body carries `output_config`.
+ *
+ * The DOCUMENTED value (`mid-conversation-output-config-2026-07-01`), read off the row's evidence.
+ * claude 2.1.282 sends the older alias `per-turn-control-2026-07-01` (its binary maps
+ * `per_message_effort` to it, and the loopback capture shows it on the wire); the effort page names
+ * only the new value, so Winter sends that one and does not depend on an undocumented alias.
+ */
+export function perMessageEffortBetaFor(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined): string | undefined {
+  const messages = body["messages"];
+  if (!Array.isArray(messages) || !messages.some((m) => typeof m === "object" && m !== null && "output_config" in m)) return undefined;
+  return descriptor?.reasoning?.perMessageEffort?.value.beta;
+}
+
+/** Every body-derived beta, in a fixed order. One list, so `prepare()` and `countTokens()` cannot disagree about which ride. */
+function bodyBetas(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined): string[] {
+  return [perMessageEffortBetaFor(body, descriptor)].filter((b): b is string => b !== undefined);
+}
+
 /**
  * The pre-request capability gate. Returns the request body, or a typed refusal that never reaches the
  * network.
@@ -774,10 +1020,12 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   // descriptor)` unchanged from before this token vocabulary existed; a row's `unsupportedParameters`
   // is small, so the duplicate construction is not worth widening that signature for.
   const unsupported = new Set(descriptor?.unsupportedParameters ?? []);
+  const referableTools = deferredToolNames(req, descriptor);
 
   const thinking = buildThinking(req, descriptor);
   if (!thinking.ok) throw capabilityRefusal(thinking.reason);
   if (thinking.rewroteDisabled === true) onThinkingRewrite?.();
+  assertPerMessageEffort(req, descriptor);
 
   // `max_tokens` has TWO AUTHORITATIVE sources -- what the caller asked for and what the model's row
   // declares -- and a third, this adapter's own fallback, which is authoritative over nothing.
@@ -832,9 +1080,11 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
     // this adapter has no fixture proving it against.
     return {
       model: anthropicWireModelId(req.model),
-      messages: toWireMessages(req.messages),
+      // An effort-only marker renders nothing and `output_config` is deliberately off a count body
+      // (above), so the markers are dropped here rather than sent to an endpoint with no fixture.
+      messages: toWireMessages(req.messages.filter((m) => !isEffortOnlyMarker(m)), { referableTools }),
       ...(req.system !== undefined ? { system: req.system } : {}),
-      ...(req.tools !== undefined && req.tools.length > 0 ? { tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })) } : {}),
+      ...(req.tools !== undefined && req.tools.length > 0 ? { tools: req.tools.map(toWireTool) } : {}),
       ...(thinking.value !== undefined ? { thinking: thinking.value } : {}),
     };
   }
@@ -846,16 +1096,18 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   }
 
   const caching = promptCachingLayout(req, descriptor);
-  const wireMessages = toWireMessages(req.messages);
+  const wireMessages = toWireMessages(req.messages, { referableTools });
+  // The system blocks' own breakpoints (at most two: the static prefix and the dynamic rest) come out
+  // of the request's budget of four first; the messages get what is left.
+  const wireSystem = caching && req.systemBlocks !== undefined ? toWireSystemBlocks(req.systemBlocks, req.cacheTtl) : undefined;
+  const systemBreakpoints = wireSystem?.filter((block) => "cache_control" in block).length ?? 0;
   return {
     model: anthropicWireModelId(req.model),
     max_tokens: maxTokens,
-    messages: caching ? withMessageCacheMarker(wireMessages) : wireMessages,
+    messages: caching ? withMessageCacheMarkers(wireMessages, MAX_CACHE_BREAKPOINTS - systemBreakpoints) : wireMessages,
     stream: true,
-    ...(caching && req.systemBlocks !== undefined ? { system: toWireSystemBlocks(req.systemBlocks) } : req.system !== undefined ? { system: req.system } : {}),
-    ...(req.tools !== undefined && req.tools.length > 0
-      ? { tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })) }
-      : {}),
+    ...(wireSystem !== undefined ? { system: wireSystem } : req.system !== undefined ? { system: req.system } : {}),
+    ...(req.tools !== undefined && req.tools.length > 0 ? { tools: req.tools.map(toWireTool) } : {}),
     ...(req.toolChoice !== undefined ? { tool_choice: resolveToolChoice(req.toolChoice, unsupported) } : {}),
     ...(thinking.value !== undefined ? { thinking: thinking.value } : {}),
     // `output_config` is Anthropic's own top-level effort field (GA, no beta header:
@@ -864,6 +1116,40 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
     // than a merge -- a future second producer of `output_config` must merge into this key, not
     // overwrite it, exactly as a later reader of this comment is being told now.
     ...(thinking.outputConfigEffort !== undefined ? { output_config: { effort: thinking.outputConfigEffort } } : {}),
+    // WS-23: cache diagnostics, Claude API only ("Not available on Amazon Bedrock or Google Cloud",
+    // https://platform.claude.com/docs/en/build-with-claude/cache-diagnostics) -- and not the
+    // Anthropic-DIALECT sibling rows either, which are other vendors' endpoints. GA, no header.
+    ...(req.cacheDiagnostics !== undefined && descriptor !== undefined && CLAUDE_API_PROVIDER_IDS.has(descriptor.providerId)
+      ? { diagnostics: { previous_message_id: req.cacheDiagnostics.previousMessageId } }
+      : {}),
+  };
+}
+
+/**
+ * WS-23: the catalog providers that ARE Anthropic's own Claude API -- where cache diagnostics exist:
+ * `anthropic` (an API key) and `console` (a Console profile's bearer). Spelled out rather than read
+ * off `ANTHROPIC_CONSOLE_PROVIDER_ID`, which names the credential space (`"anthropic"`), not the
+ * catalog's `console` rows.
+ */
+const CLAUDE_API_PROVIDER_IDS: ReadonlySet<string> = new Set(["anthropic", "console"]);
+
+/**
+ * WS-23: Anthropic's cache verdict for one response, read off `message_start.message` -- where both
+ * fields arrive when streaming ("In streaming responses, `diagnostics` appears on the `message_start`
+ * event"; `input_transformations` likewise, https://platform.claude.com/docs/en/build-with-claude/preserved-thinking).
+ * `cache_miss_reason: null` is an inconclusive pending comparison and `diagnostics: null` means no
+ * divergence, so neither reports a miss. Unknown entry types are ignored ("later checks add values").
+ */
+export function readCacheVerdict(message: Record<string, unknown> | undefined): { cacheMiss?: { type: string; missedInputTokens?: number }; thinkingBlocksDropped?: number } {
+  const diagnostics = message?.["diagnostics"];
+  const reason = diagnostics !== null && typeof diagnostics === "object" ? (diagnostics as Record<string, unknown>)["cache_miss_reason"] : undefined;
+  const type = reason !== null && typeof reason === "object" ? (reason as Record<string, unknown>)["type"] : undefined;
+  const missed = reason !== null && typeof reason === "object" ? (reason as Record<string, unknown>)["cache_missed_input_tokens"] : undefined;
+  const transformations = message?.["input_transformations"];
+  const dropped = Array.isArray(transformations) ? transformations.filter((t) => t !== null && typeof t === "object" && (t as Record<string, unknown>)["type"] === "thinking_dropped").length : 0;
+  return {
+    ...(typeof type === "string" ? { cacheMiss: { type, ...(typeof missed === "number" ? { missedInputTokens: missed } : {}) } } : {}),
+    ...(dropped > 0 ? { thinkingBlocksDropped: dropped } : {}),
   };
 }
 
@@ -1273,7 +1559,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       loggedThinkingRewrite = true;
       ctx.log({ kind: "provider.thinking_rewrite.disabled_to_adaptive", providerId: ctx.connection.providerId, model: req.model });
     });
-    const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor)], endpoint.policy, opts, true, identityFor(ctx));
+    const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor), ...bodyBetas(body, descriptor)], endpoint.policy, opts, true, identityFor(ctx));
     return { endpoint, body, headers, captureEvent: anthropicCaptureEvent(descriptor) };
   }
 
@@ -1354,6 +1640,8 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     let outputTokens = 0;
     let cacheReadTokens: number | undefined;
     let cacheWriteTokens: number | undefined;
+    let cacheWrite1hTokens: number | undefined;
+    let cacheVerdict: ReturnType<typeof readCacheVerdict> = {};
     let stopReason: AnthropicStopReason = "end_turn";
     let stopDetails: { category: string | null; explanation: string | null } | undefined;
     let sawMessageStop = false;
@@ -1382,12 +1670,35 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
           case "message_start": {
             const message = payload["message"] as { id?: unknown; model?: unknown; usage?: Record<string, unknown> } | undefined;
             const usage = message?.usage;
+            cacheVerdict = readCacheVerdict(message as Record<string, unknown> | undefined);
+            // WS-23: ONE line per miss (and per dropped-thinking report) -- a closed-vocabulary type and
+            // token counts, never content.
+            if (cacheVerdict.cacheMiss !== undefined || cacheVerdict.thinkingBlocksDropped !== undefined) {
+              ctx.log({
+                kind: "provider.cache_miss",
+                providerId: ctx.connection.providerId,
+                model: req.model,
+                detail: {
+                  ...(cacheVerdict.cacheMiss !== undefined ? { type: cacheVerdict.cacheMiss.type } : {}),
+                  ...(cacheVerdict.cacheMiss?.missedInputTokens !== undefined ? { missedInputTokens: cacheVerdict.cacheMiss.missedInputTokens } : {}),
+                  ...(cacheVerdict.thinkingBlocksDropped !== undefined ? { thinkingBlocksDropped: cacheVerdict.thinkingBlocksDropped } : {}),
+                },
+              });
+            }
             if (typeof usage?.["input_tokens"] === "number") inputTokens = usage["input_tokens"];
             if (typeof usage?.["output_tokens"] === "number") outputTokens = usage["output_tokens"];
             // PROMPT-CACHING COUNTERS. Anthropic reports them as two separate fields on the same
             // usage object, and they are what makes cost accounting honest for a cached prompt.
             if (typeof usage?.["cache_read_input_tokens"] === "number") cacheReadTokens = usage["cache_read_input_tokens"];
             if (typeof usage?.["cache_creation_input_tokens"] === "number") cacheWriteTokens = usage["cache_creation_input_tokens"];
+            // WS-23: the 1-hour share of those writes, priced at its own rate. `cache_creation_input_tokens`
+            // "equals the sum of the values in the `cache_creation` object"
+            // (https://platform.claude.com/docs/en/build-with-claude/prompt-caching#1-hour-cache-duration).
+            const creation = usage?.["cache_creation"];
+            if (creation !== null && typeof creation === "object" && typeof (creation as Record<string, unknown>)["ephemeral_1h_input_tokens"] === "number") {
+              const oneHour = (creation as Record<string, number>)["ephemeral_1h_input_tokens"]!;
+              if (oneHour > 0) cacheWrite1hTokens = oneHour;
+            }
             yield {
               type: "message_start",
               ...(typeof message?.id === "string" ? { id: message.id } : {}),
@@ -1530,6 +1841,8 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       outputTokens,
       ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
       ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+      ...(cacheWrite1hTokens !== undefined ? { cacheWrite1hTokens } : {}),
+      ...cacheVerdict,
     };
     // `stopDetails` rides a refusal ONLY: the vendor documents the field as populated for
     // `stop_reason: "refusal"` and `null` for every other reason.
@@ -1552,7 +1865,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
       const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
       const body = buildRequestBody(req, descriptor, opts, "count");
-      const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor)], endpoint.policy, opts, true, identityFor(ctx));
+      const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor), ...bodyBetas(body, descriptor)], endpoint.policy, opts, true, identityFor(ctx));
       const res = await boundedFetch(`${endpoint.base}/v1/messages/count_tokens`, {
         method: "POST",
         headers,

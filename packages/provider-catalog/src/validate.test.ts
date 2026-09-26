@@ -234,6 +234,20 @@ describe("validateCatalog — evidence integrity", () => {
     expectRejected(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ beta: "thinking-binding-controls-2026-08-01", mode: "drop_block" })) } as never)] }), "unknown key");
   });
 
+  test("accepts a documented `perMessageEffort` beta, and rejects an unknown one or an extra key", () => {
+    const reasoning = (perMessageEffort: unknown) => ({
+      supported: { value: true, source: "official-doc", confidence: "declared" },
+      efforts: ["low", "high"],
+      continuation: "opaque-provider-state",
+      perMessageEffort,
+    });
+    const evidence = (value: unknown) => ({ value, source: "official-doc", confidence: "declared", sourceRef: "https://platform.claude.com/docs/en/build-with-claude/effort", observedAt: "2026-09-25T00:00:00Z" });
+    expect(validateCatalog(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ beta: "mid-conversation-output-config-2026-07-01" })) } as never)] })).ok).toBe(true);
+    // claude 2.1.282 sends the undocumented alias `per-turn-control-2026-07-01`; the catalog records only the documented value.
+    expectRejected(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ beta: "per-turn-control-2026-07-01" })) } as never)] }), "unknown per-message effort beta");
+    expectRejected(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ beta: "mid-conversation-output-config-2026-07-01", placement: "after-user" })) } as never)] }), "unknown key");
+  });
+
   test("rejects a defaultEffort the model's own `efforts` does not contain", () => {
     expectRejected(
       baseCatalog({
@@ -545,6 +559,7 @@ describe("JSON Schema / validator enum parity (Minor 9)", () => {
     ["toolLoopRequirements", "$defs.evidenceToolLoopRequirement.properties.value"],
     ["effortRequestFields", "$defs.evidenceEffortRequest.properties.value.properties.field"],
     ["blockBindingBetas", "$defs.evidenceBlockBinding.properties.value.properties.beta"],
+    ["perMessageEffortBetas", "$defs.evidencePerMessageEffort.properties.value.properties.beta"],
     ["pricingBases", "$defs.WinterProviderDescriptor.properties.pricingBasis"],
     ["admissionBases", "$defs.WinterProviderDescriptor.properties.admission.properties.basis"],
     ["admissionTiers", "$defs.WinterProviderDescriptor.properties.admission.properties.tier"],

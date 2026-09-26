@@ -69,6 +69,15 @@ export interface WireResultUsage {
   inference_geo: string;
   iterations: unknown[];
   speed: "standard" | "fast";
+  /**
+   * WS-23 -- WINTER-ONLY, additive, present only when there is something to say: each generation of
+   * this turn whose provider reported where its prompt prefix diverged from the previous request
+   * (Anthropic's `diagnostics.cache_miss_reason`: `type`, in Anthropic's own vocabulary only, and the
+   * estimated `missed_input_tokens` it cost), and/or that it dropped replayed thinking blocks
+   * (`thinking_blocks_dropped`, from `input_transformations` -- its own field, never a `type`). claude
+   * has no such field.
+   */
+  cache_misses?: Array<{ type?: string; missed_input_tokens?: number; thinking_blocks_dropped?: number }>;
 }
 
 export interface ControlCancelRequestFrame { type: "control_cancel_request"; requestId: string; }

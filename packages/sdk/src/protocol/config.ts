@@ -522,6 +522,8 @@ export interface RuntimeConfig {
   enableFileCheckpointing?: boolean;
   contextWindowTokens?: number;
   compactionThreshold?: number;
+  /** WS-23: the system prompt's cache lifetime (`Options.promptCacheTtl`); absent means the runtime's default, 5 minutes. */
+  promptCacheTtl?: "5m" | "1h";
   // RULING P5-A: the host-declared workspace-trust bit. engine.ts's `trustedWorkspace` const --
   // hard-`false` since P2, and shared by the permission evaluator, the hook registry, the MCP source
   // resolver and the child-rule mirror -- is derived from THIS field through

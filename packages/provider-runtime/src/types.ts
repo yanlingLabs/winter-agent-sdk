@@ -1,7 +1,9 @@
 // The provider-runtime seam — every adapter lane's import surface.
 //
 // FROZEN as of P6 T2's merge (R6-12): lanes ADD files under `adapters/<family>/`, never edit this
-// one. A lane that needs a change here stops with NEEDS_CONTEXT.
+// one. A lane that needs a change here stops with NEEDS_CONTEXT. WS-23's anthropic-cache lane was
+// assigned this file explicitly (the `system` message role, `outputConfig`, the cache fields on
+// `TurnRequest` and the richer `usage` event); every change it made is ADDITIVE and optional.
 //
 // STRUCTURAL RULE (R6-4): this package NEVER imports `winter-agent-runtime`. The engine's
 // `ProviderTurn`/`ProviderMessage`/`ContentBlock` stay defined in `engine.ts`, the runtime-side
@@ -138,8 +140,21 @@ export type ContentBlockLike =
   | { type: "tool_reference"; tool_names: string[] };
 
 export interface ProviderMessageLike {
-  role: "user" | "assistant" | "tool";
+  /**
+   * `system` (WS-23) is a MID-CONVERSATION system message: Anthropic's `role: "system"` entry inside
+   * `messages` (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages).
+   * The engine produces one only in an OUTBOUND request, never in its history, and only for a model
+   * whose catalog row documents it -- so an adapter for any other family never receives one.
+   */
+  role: "user" | "assistant" | "tool" | "system";
   content: string | ContentBlockLike[];
+  /**
+   * WS-23: a `system` message's own `output_config` -- the per-message effort change
+   * (https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta).
+   * An effort-only marker has EMPTY `content` and applies "from the next `user` turn". Only ever set on
+   * a `system` message, and only for a row whose `reasoning.perMessageEffort` evidence documents it.
+   */
+  outputConfig?: { effort: string };
   uuid?: string;
   origin?: MessageOrigin;
   nativeState?: ProviderNativeState;
@@ -179,7 +194,12 @@ export interface TurnRequest {
    */
   systemBlocks?: SystemPromptBlock[];
   messages: ProviderMessageLike[];
-  tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+  /**
+   * `deferLoading` (WS-23): declared but withheld until a `tool_reference` surfaces it (Anthropic's
+   * `defer_loading: true`). The engine sets it only for a row whose catalog evidence documents
+   * deferred tool loading, so no other family's adapter ever receives one.
+   */
+  tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown>; deferLoading?: true }>;
   toolChoice?: { type: "auto" } | { type: "any" } | { type: "tool"; name: string };
   /**
    * KEEPS `number`, unlike `Options.effort` (R6-E): a child carries numeric effort
@@ -194,6 +214,27 @@ export interface TurnRequest {
   signal?: AbortSignal;
   /** Ask the provider for a readable reasoning SUMMARY where its descriptor's `reasoning.summaryRequest` says how. Never a request for raw reasoning. */
   requestSummary?: boolean;
+  /**
+   * WS-23: the cache lifetime of the SYSTEM prompt's breakpoints. ABSENT means the provider's own
+   * default (5 minutes on Anthropic); `"1h"` is written at twice the input price
+   * (https://platform.claude.com/docs/en/build-with-claude/prompt-caching#1-hour-cache-duration). An
+   * adapter with no such control ignores it.
+   */
+  cacheTtl?: "5m" | "1h";
+  /**
+   * WS-23: Anthropic's cache diagnostics opt-in -- the PREVIOUS main-loop response's id, or `null` on
+   * a session's first request ("pass `previous_message_id: null` to opt in without a prior message to
+   * compare against", https://platform.claude.com/docs/en/build-with-claude/cache-diagnostics). GA,
+   * no beta header, Claude API only; an adapter or provider without it ignores the field.
+   */
+  cacheDiagnostics?: { previousMessageId: string | null };
+  /**
+   * WS-23: a stable key grouping one conversation's requests for the provider's cache routing
+   * (OpenAI's `prompt_cache_key`). The engine builds it from the session id (plus the agent id for a
+   * subagent); an adapter sends it only where the row's `promptCacheKey` evidence says the endpoint
+   * takes one.
+   */
+  cacheKey?: string;
 }
 
 /**
@@ -222,7 +263,26 @@ export type ProviderEvent =
    * normalized in its adapter (`inputTokens = prompt - cached`), so `input + cacheRead + cacheWrite`
    * is the whole prompt, counted once, for every provider.
    */
-  | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }
+  //
+  // WS-23: `cacheWrite1hTokens` is the part of `cacheWriteTokens` written at the 1-hour lifetime
+  // (Anthropic's `usage.cache_creation.ephemeral_1h_input_tokens`; `cache_creation_input_tokens` is
+  // the sum of both lifetimes). A SUBSET, never added on top -- it exists so a 1-hour write is priced
+  // at its own rate. Absent means every write was at the default lifetime.
+  //
+  // WS-23: `cacheMiss` is the provider's own verdict on where this request's prefix diverged from the
+  // previous one (Anthropic's `diagnostics.cache_miss_reason`: its `type` and the estimated
+  // `cache_missed_input_tokens`), and `thinkingBlocksDropped` counts the replayed thinking blocks the
+  // provider dropped (Anthropic's `input_transformations`). Both absent when there is nothing to say.
+  | {
+      type: "usage";
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      cacheWrite1hTokens?: number;
+      cacheMiss?: { type: string; missedInputTokens?: number };
+      thinkingBlocksDropped?: number;
+    }
   /**
    * R6-B: SUBSCRIPTION-QUOTA states ONLY, and the `kind` discriminant is what says so at the type
    * level. An HTTP 429 is NOT this event — capture (G) proved the pinned runtime emits zero
@@ -303,8 +363,12 @@ export interface ProviderContext {
   credentials: CredentialStore;
   authRef: CredentialRef;
   stallTimeoutMs: number;
-  /** Telemetry: provider/model identifiers and byte COUNTS only. Never content, never credential material, never opaque state (Global Constraints). */
-  log: (event: { kind: string; providerId: string; model?: string; bytes?: number }) => void;
+  /**
+   * Telemetry: provider/model identifiers and byte COUNTS only. Never content, never credential material, never opaque state (Global Constraints).
+   * WS-23: `detail` carries a closed-vocabulary label and token COUNTS (a cache-miss type and the
+   * tokens it cost) -- the same "identifiers and counts" rule, never text from the conversation.
+   */
+  log: (event: { kind: string; providerId: string; model?: string; bytes?: number; detail?: Record<string, string | number> }) => void;
 }
 
 export interface DiscoveryContext extends ProviderContext {

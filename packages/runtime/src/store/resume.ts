@@ -190,6 +190,11 @@ export interface DialectEntry {
   isApiErrorMessage?: boolean;
   // SDK 0.0.16 (P16-5/P16-6): claude's persisted attachment payload (`type: "attachment"` entries).
   attachment?: { type: string; [key: string]: unknown };
+  // WS-23: claude's own assistant-entry effort fields (written by claude 2.1.282 and by Winter's own
+  // `assistantEntry` since WS-23) -- carried onto the rebuilt assistant message so the effort markers
+  // re-derive at the positions the original requests had them.
+  effort?: string;
+  perTurnEffort?: string;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -217,6 +222,8 @@ export function toDialectEntries(raw: SessionStoreEntry[]): DialectEntry[] {
     const logicalParentUuid = typeof rawLogicalParentUuid === "string" ? rawLogicalParentUuid : undefined;
     const isCompactSummary = (e as { isCompactSummary?: unknown }).isCompactSummary === true;
     const isApiErrorMessage = (e as { isApiErrorMessage?: unknown }).isApiErrorMessage === true;
+    const rawEffort = (e as { effort?: unknown }).effort;
+    const rawPerTurnEffort = (e as { perTurnEffort?: unknown }).perTurnEffort;
     const rawAttachment = (e as { attachment?: unknown }).attachment;
     const attachment = isRecord(rawAttachment) && typeof rawAttachment.type === "string" ? (rawAttachment as { type: string; [key: string]: unknown }) : undefined;
     result.push({
@@ -231,6 +238,9 @@ export function toDialectEntries(raw: SessionStoreEntry[]): DialectEntry[] {
       ...(isCompactSummary ? { isCompactSummary: true as const } : {}),
       ...(isApiErrorMessage ? { isApiErrorMessage: true as const } : {}),
       ...(attachment !== undefined ? { attachment } : {}),
+      // claude types `perTurnEffort` as `string | null`; only a string is a level, so `null` is dropped.
+      ...(typeof rawEffort === "string" ? { effort: rawEffort } : {}),
+      ...(typeof rawPerTurnEffort === "string" ? { perTurnEffort: rawPerTurnEffort } : {}),
     });
   }
   return result;
@@ -644,10 +654,13 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
       // property check (which fires only on a literal assigned directly into a typed position) never
       // applies -- `messages.push` then only checks the STRUCTURAL fields it declares.
       const modelField = e.message?.model !== undefined ? { model: e.message.model } : {};
+      // WS-23: the effort annotations ride exactly like `model` above, and only when the entry has them
+      // -- an old transcript without the fields rebuilds byte-identically.
+      const effortFields = { ...(e.effort !== undefined ? { effort: e.effort } : {}), ...(e.perTurnEffort !== undefined ? { perTurnEffort: e.perTurnEffort } : {}) };
       if (Array.isArray(content) && content.length === 1 && isRecord(content[0]) && content[0]!.type === "text" && typeof content[0]!.text === "string") {
-        messages.push({ role: "assistant", content: content[0]!.text as string, uuid: e.uuid, ...modelField });
+        messages.push({ role: "assistant", content: content[0]!.text as string, uuid: e.uuid, ...modelField, ...effortFields });
       } else if (Array.isArray(content)) {
-        messages.push({ role: "assistant", content: content as ContentBlock[], uuid: e.uuid, ...modelField });
+        messages.push({ role: "assistant", content: content as ContentBlock[], uuid: e.uuid, ...modelField, ...effortFields });
       }
     }
     // Unknown entry types are skipped for provider context — never fed to a real provider.

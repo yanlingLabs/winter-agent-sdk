@@ -169,13 +169,16 @@ describe("Anthropic Messages: the live request", () => {
     });
   });
 
-  test("a `tool_reference` block is a TYPED REFUSAL, never a silent drop", async () => {
+  // WS-23 retired the refusal: a `tool_reference` is Anthropic's own block now (custom tool search).
+  // Where the request declares no deferred tool of that name -- this row documents no deferred loading
+  // at all -- it degrades to a legible note, never a silent drop and never an unexpandable reference.
+  test("a `tool_reference` block for a tool this request does not declare deferred becomes a legible note, never a silent drop", async () => {
     const adapter = testAnthropicAdapter();
     await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
-      await expect(
-        foldTurn(adapter, { model: ANTHROPIC_MODELS.main, messages: [{ role: "assistant", content: [{ type: "tool_reference", tool_names: ["Read"] }] }] }, testContext(fake.url)),
-      ).rejects.toThrow(/tool_reference/);
-      expect(fake.requests).toHaveLength(0);
+      await foldTurn(adapter, { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "go" }, { role: "assistant", content: [{ type: "tool_reference", tool_names: ["Read"] }] }, { role: "user", content: "next" }] }, testContext(fake.url));
+      expect(fake.requests).toHaveLength(1);
+      const messages = anthropicBody(fake.requests[0]!)["messages"] as Array<{ role: string; content: unknown }>;
+      expect(messages[1]).toEqual({ role: "assistant", content: [{ type: "text", text: "[tools now callable: Read]" }] });
     });
   });
 });

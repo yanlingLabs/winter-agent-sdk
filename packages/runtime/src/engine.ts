@@ -205,12 +205,15 @@ import {
   clearSessionRequestLayout,
   getSessionRequestLayout,
   joinSystemBlocks,
+  frozenEffortFromHistory,
   recordSessionRequestLayout,
+  referencedToolNames,
   registerSessionContextReload,
   renderSystemContext,
   renderUserContext,
   unregisterSessionContextReload,
   type ContextEntry,
+  type EffortMarkerPlan,
   type SessionRequestLayout,
 } from "./context/request-layout.ts";
 import { computeGitStatus } from "./context/git-status.ts";
@@ -371,7 +374,14 @@ export type ContentBlock =
   // above -- it is claude's own wire field, set on a REAL tool_result whose executor reported
   // `isError: true` (every provider adapter maps it: Anthropic/Bedrock carry it natively, the
   // OpenAI/Google families have no such field and keep the error text).
-  | { type: "tool_result"; tool_use_id: string; content: string | ContentBlock[]; is_error?: boolean; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean; loadFirst?: boolean }
+  //
+  // WS-23: `loadedTools` is a fourth piece of Winter bookkeeping -- the ADVERTISED names a ToolSearch
+  // call loaded. On a model whose row documents deferred tool loading the Anthropic adapter turns it
+  // into Anthropic's own `tool_reference` blocks inside this result (the "custom tool search"
+  // pattern), which is what surfaces a `defer_loading` tool without touching `tools`; every other
+  // adapter ignores it, like the markers above. Persisted with the block, so a resumed session keeps
+  // the references at the same positions and re-seeds its loaded set from them.
+  | { type: "tool_result"; tool_use_id: string; content: string | ContentBlock[]; is_error?: boolean; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean; loadFirst?: boolean; loadedTools?: string[] }
   // --- Phase 6 Task 3 (R6-3, derived-shapes-p6.md item (f)): the variants a real provider produces --
   //
   // NOT declared by the pinned artifact: `redacted_thinking`, a `type: 'thinking'` literal and
@@ -387,8 +397,10 @@ export type ContentBlock =
   //
   // OPAQUE FIELD DISCIPLINE (Global Constraints): `signature` and `redacted_thinking.data` ride
   // IN-DIALECT (the dialect itself defines them) and NOWHERE else -- never the advisor transcript,
-  // never the compaction summariser's input, never a log line, never an error message. The seam
-  // contract test asserts each of those negatives rather than trusting the comment.
+  // never the compaction summariser's REDACTED input, never a log line, never an error message. The
+  // seam contract test asserts each of those negatives rather than trusting the comment. (WS-23: the
+  // summariser's prefix-reusing request is the session's own request to the SAME provider, so its
+  // blocks ride in-dialect exactly as every main-loop request carries them -- not a new sink.)
   | { type: "thinking"; thinking: string; signature: string }
   | { type: "redacted_thinking"; data: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
@@ -398,8 +410,26 @@ export type ContentBlock =
 // results ride a "user" message, matching WS-03 §8 / the official SDK), but keeping tool results
 // on their own role here keeps accumulation/tool-round assertions simple and unambiguous.
 export interface ProviderMessage {
-  role: "user" | "assistant" | "tool";
+  /**
+   * `system` (WS-23) exists ONLY on an outbound request, never in this engine's own history: an
+   * effort-only marker (`outputConfig`) or, later, a mid-conversation system reminder, each inserted by
+   * the request layout for a model whose catalog row documents the shape. See `ProviderMessageLike`.
+   */
+  role: "user" | "assistant" | "tool" | "system";
   content: string | ContentBlock[];
+  /** WS-23: a `system` marker's per-message effort change. Never set on another role. */
+  outputConfig?: { effort: string };
+  /**
+   * WS-23 (claude's own transcript fields, `effort`/`perTurnEffort` on an assistant entry): the
+   * TOP-LEVEL effort the request that produced this assistant message sent, and the level actually IN
+   * FORCE for its turn. They differ only on a model with per-message effort, where the top-level value
+   * stays frozen and a change rides a `system` marker. Set on assistant messages only, and only when
+   * the session has a named effort at all -- so a session with none stays byte-identical. The markers
+   * of every later request are DERIVED from these two fields (`withEffortMarkers`), live and resumed
+   * alike, which is what keeps the cached prefix byte-stable across turns.
+   */
+  effort?: string;
+  perTurnEffort?: string;
   // --- Phase 6 Task 3 (R6-3): the per-message continuation annotations -----------------------------
   //
   // All four OPTIONAL and ADDITIVE: every pre-existing `{role, content}` literal in this repo (and
@@ -489,6 +519,73 @@ export function providerMessageContentToText(content: string | ContentBlock[]): 
     .join("\n");
 }
 
+/**
+ * WS-23: a provider 400 that refuses the per-message effort shape -- the beta header itself ("Unexpected
+ * value(s) `mid-conversation-output-config-2026-07-01` for the `anthropic-beta` header", the beta-headers
+ * page's own error) or the marker ("output_config.effort requires a model that supports per-turn
+ * effort", the effort page's). Matched on the bounded, credential-scrubbed message the adapter
+ * normalised; a false positive costs one retried request with no marker, never a wrong answer.
+ */
+function isPerMessageEffortRejection(err: unknown): boolean {
+  if (!isProviderTurnError(err) || err.status !== 400) return false;
+  return /mid-conversation-output-config|per-turn effort/i.test(err instanceof Error ? err.message : "");
+}
+
+/**
+ * WS-23: the session's system-prompt cache lifetime -- `RuntimeConfig.promptCacheTtl`, defaulted HERE
+ * and nowhere else. `"5m"` is the vendor's own default and what claude 2.1.282 uses with an API key;
+ * `"1h"` is the host's choice for sessions with long idle gaps (it is written at twice the input
+ * price). Only `"1h"` reaches a request, so a default session's requests are byte-identical to before.
+ */
+export function promptCacheTtlFor(config: { promptCacheTtl?: "5m" | "1h" }): "5m" | "1h" {
+  return config.promptCacheTtl === "1h" ? "1h" : "5m";
+}
+
+/**
+ * WS-23: the cache-routing key for one conversation -- the session id, and for a subagent the session
+ * id plus its agent id (a child's prefix is its own, so sharing the parent's key would only mix two
+ * prefixes under one routing group). Opaque ids only: nothing about the user or the content.
+ */
+export function promptCacheKeyFor(config: { sessionId: string; agentId?: string }): string {
+  return config.agentId === undefined ? config.sessionId : `${config.sessionId}:${config.agentId}`;
+}
+
+/** WS-23: a tool_result without its `loadedTools` bookkeeping (see the tool-round frame write). */
+function withoutLoadedTools(block: Extract<ContentBlock, { type: "tool_result" }>): ContentBlock {
+  const { loadedTools: _loaded, ...rest } = block;
+  return rest;
+}
+
+/** WS-23: a named effort tier -- the string half of `TurnRequest["effort"]`. */
+const NAMED_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export function isNamedEffort(value: unknown): value is (typeof NAMED_EFFORTS)[number] {
+  return typeof value === "string" && (NAMED_EFFORTS as readonly string[]).includes(value);
+}
+
+/**
+ * WS-23: the catalog facts about a model's WIRE that the engine's request layout keys on. Each is a
+ * catalog-evidence flag the production wiring reads off the model's row (`describeCatalogModel`);
+ * absent means "today's layout", which is every scripted double and every row without the evidence.
+ */
+export interface ModelWireFeatures {
+  /** `reasoning.perMessageEffort`: an effort change rides a `system` marker while the top-level value stays frozen. */
+  perMessageEffort?: true;
+  /** `deferredToolLoading`: every deferred tool is declared up front with `defer_loading: true`, and ToolSearch surfaces one by reference. */
+  deferredToolLoading?: true;
+  /** `midConversationSystem`: a reminder whose renderer opted in rides as a `role: "system"` message after the user turn it follows. */
+  midConversationSystem?: true;
+}
+
+/** What `EngineOptions.describeModel` knows about a model: its display name, its verified effort vocabulary, and its wire features. */
+export interface ModelDescription {
+  displayName?: string;
+  /** The row's own `reasoning.efforts`, verbatim -- `set_effort` validates a requested level against it. */
+  efforts?: string[];
+  /** The row's own `reasoning.defaultEffort`: the level in force when no effort is named. */
+  defaultEffort?: string;
+  wire?: ModelWireFeatures;
+}
+
 // --- Phase 5 Task 2 (R5-3): the provider seam extension -------------------------------------------
 //
 // P1 fixed `Provider.generate` at `{ messages }`. Two things P5 needs cross that boundary and had
@@ -529,6 +626,17 @@ export interface ProviderRequest {
    */
   tools?: ProviderToolSpec[];
   toolChoice?: TurnRequest["toolChoice"];
+  /** WS-23: the system prompt's cache lifetime, sent only when the session asked for `"1h"` (`promptCacheTtlFor`). */
+  cacheTtl?: "1h";
+  /**
+   * WS-23: cache diagnostics -- the previous MAIN-LOOP response's id on the same model, or `null` to
+   * opt in with nothing to compare against (a session's first request, after a compaction rewrote the
+   * history, after a model switch). Main-loop requests only: an auxiliary call in between would make
+   * the next comparison meaningless.
+   */
+  cacheDiagnostics?: { previousMessageId: string | null };
+  /** WS-23: this conversation's cache-routing key (`promptCacheKeyFor`) -- the session id, plus the agent id for a subagent. */
+  cacheKey?: string;
   /** The resolved model for THIS generation. Present once selection is wired; absent means "the provider's own configured default", which is what every pre-P6 double sees. */
   model?: string;
   effort?: TurnRequest["effort"];
@@ -560,6 +668,12 @@ export interface ProviderToolSpec {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /**
+   * WS-23: declared up front but WITHHELD from the model until a `tool_reference` surfaces it
+   * (Anthropic's `defer_loading: true`). Set only for a model whose row documents deferred tool
+   * loading (`ModelWireFeatures.deferredToolLoading`), so no other adapter ever receives one.
+   */
+  deferLoading?: true;
 }
 
 /**
@@ -727,6 +841,12 @@ export interface ProviderUsage {
   outputTokens: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
+  /** WS-23: the 1-hour-lifetime SUBSET of `cacheWriteTokens` (provider-runtime's `usage` event says why). */
+  cacheWrite1hTokens?: number;
+  /** WS-23: the provider's own verdict on where this request's prefix diverged from the previous one. */
+  cacheMiss?: { type: string; missedInputTokens?: number };
+  /** WS-23: replayed thinking blocks the provider dropped (Anthropic's `input_transformations`). */
+  thinkingBlocksDropped?: number;
 }
 
 // Phase 6 Task 3 (R6-3): both production kinds gain `usage`/`stopReason`/`thinking`/`nativeState`,
@@ -745,8 +865,10 @@ export interface ProviderUsage {
 // was already in that order. `text`/`calls`/`thinking` stay authoritative for everything that is not
 // the persisted content (the result text, the tool dispatch loop, the sidecar summary).
 export type ProviderTurn =
-  | { kind: "text"; text: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; stopDetails?: ProviderStopDetails; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState; content?: ContentBlock[] }
-  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; text?: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; stopDetails?: ProviderStopDetails; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState; content?: ContentBlock[] };
+  // WS-23: `responseId` is the provider's own id for this response (Anthropic's `message.id`), which the
+  // next main-loop request names as `cacheDiagnostics.previousMessageId`.
+  | { kind: "text"; text: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; stopDetails?: ProviderStopDetails; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState; content?: ContentBlock[]; responseId?: string }
+  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; text?: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; stopDetails?: ProviderStopDetails; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState; content?: ContentBlock[]; responseId?: string };
   // Phase 6 Task 10 (R6-13): THE `rpc_probe` TURN KIND IS GONE.
   //
   // It was a P1-only scaffold whose whole purpose was to prove the runtime-originated control-RPC
@@ -1001,7 +1123,13 @@ export interface SessionPersistence {
    * garbage-collectable) but never an entry without a record it needed. Omitted by every pre-P6
    * caller, in which case the writer mints its own exactly as before.
    */
-  recordAssistantEntry(content: ContentBlock[], opts?: { uuid?: string }): void | Promise<void>;
+  /**
+   * WS-23: `effort`/`perTurnEffort` are claude's own assistant-entry fields -- the top-level effort
+   * the request sent and the level in force for the turn. Present only when the session has a named
+   * effort; the store writes them as top-level entry fields, and resume carries them back onto the
+   * rebuilt message so the effort markers re-derive at the same positions.
+   */
+  recordAssistantEntry(content: ContentBlock[], opts?: { uuid?: string; effort?: string; perTurnEffort?: string }): void | Promise<void>;
   /**
    * R6-7: one provider-state record. MUST be called BEFORE `recordAssistantEntry` for the same
    * `anchorUuid` -- that ordering is the whole guarantee, and provider-state.ts's crash-pair fixture
@@ -1251,7 +1379,7 @@ export interface EngineOptions {
    * SDK 0.0.16: the model's display name for the `# Environment` section's model line, when the host
    * knows one (production wiring answers from the catalog). Absent => the bare-id line.
    */
-  describeModel?: (model: string, providerId?: string) => { displayName?: string } | undefined;
+  describeModel?: (model: string, providerId?: string) => ModelDescription | undefined;
   /** SDK 0.0.16: the engine's clock for the `currentDate` entry and the `date_change` fold. Tests only; absent => `new Date()`. */
   now?: () => Date;
   /**
@@ -2779,6 +2907,40 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // The engine's OWN turn history. Declared HERE (fix wave) rather than beside the resume fold
   // below, because the pump can service a `set_model` before that point and the switch reads it.
   const messages: ProviderMessage[] = initialMessages ? [...initialMessages] : [];
+  // --- WS-23: effort as a LIVE session value ----------------------------------------------------------
+  //
+  // `config.effort` is where the session STARTED; `liveEffort` is the level in force now. A `set_effort`
+  // arriving mid-turn is PARKED in `pendingEffort` and applied at the same quiescent boundary as a
+  // parked `set_model`, so one turn never runs at two levels -- which is also what lets every assistant
+  // message of a turn carry one `perTurnEffort`, the invariant `withEffortMarkers` derives from.
+  let liveEffort: TurnRequest["effort"] | undefined = config.effort;
+  let pendingEffort: { effort: TurnRequest["effort"] | undefined } | undefined;
+  // Sticky for the session: the API refused the per-message beta with a 400 (it may be limited to
+  // allowlisted accounts), so every later request changes the TOP-LEVEL value instead. See the
+  // generation catch.
+  let perMessageEffortRejected = false;
+  // What the in-flight generation sent, stamped onto the assistant message(s) it produces.
+  let generationEffort: { effort?: string; perTurnEffort: string } | undefined;
+  // WS-23 fix round 1 (M2): the TOP-LEVEL effort a per-message-effort session sends, frozen at its first
+  // such request (absent included: a session that named no effort keeps sending none) and held HERE, not
+  // re-derived from the history -- a compaction's kept messages need not carry any annotation, and a
+  // first \`set_effort\` must not move a top-level value the session never sent. Seeded from the history
+  // on resume; re-frozen only on a model change (the cache is cold then anyway).
+  let frozenEffort: { modelKey: string | undefined; value: string | undefined } | undefined;
+  {
+    const seeded = frozenEffortFromHistory(messages);
+    if (seeded !== undefined) frozenEffort = { modelKey: providerIdentity?.modelKey ?? config.model, value: seeded.value };
+  }
+  // WS-23: the last MAIN-LOOP response's id and the model it came from -- the next request's
+  // `cacheDiagnostics.previousMessageId`. Cleared by a compaction (the history it fingerprinted is gone).
+  let lastMainResponse: { id: string; modelKey: string | undefined } | undefined;
+  // WS-23: the last main-loop request's system, index-0 context and tools, for compaction to reuse.
+  let lastMainRequestShape: { modelKey: string | undefined; system: { system: string; systemBlocks?: SystemPromptBlock[] }; userContextText: string | undefined; tools: ProviderToolSpec[] } | undefined;
+  const applyPendingEffort = (): void => {
+    if (pendingEffort === undefined) return;
+    liveEffort = pendingEffort.effort;
+    pendingEffort = undefined;
+  };
   // P6 fix wave (Ruling E-2): the session's continuation chain AS THE ENGINE KNOWS IT -- the resumed
   // half (folded back by `attachContinuationChain`) plus every record this run wrote. The portable
   // handoff reads a source message's `summary` off it; nothing else does, and opaque native state is
@@ -3226,7 +3388,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * (every pre-P6 double, and any run before selection is wired in T10) writes no records at all and
    * behaves byte-identically to before this task.
    */
-  const recordAssistant = async (content: ContentBlock[], provenance?: { nativeState?: ProviderNativeState; summary?: string; material?: "exposed"; complete?: boolean }): Promise<string | undefined> => {
+  const recordAssistant = async (content: ContentBlock[], provenance?: { nativeState?: ProviderNativeState; summary?: string; material?: "exposed"; complete?: boolean }, effortStamp?: { effort?: string; perTurnEffort: string }): Promise<string | undefined> => {
     if (!store) return undefined;
     const uuid = randomUUID();
     const identity = currentProviderIdentity;
@@ -3272,7 +3434,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       });
     }
     try {
-      await store.recordAssistantEntry(content, { uuid });
+      await store.recordAssistantEntry(content, { uuid, ...(effortStamp ?? {}) });
     } catch {
       /* auxiliary — see comment above */
     }
@@ -3715,7 +3877,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // override, or the placeholder base); these are what a bare child model id resolves against and
       // what the child's own provider-state records identify themselves with.
       ...(currentProviderIdentity !== undefined ? { provider: { ...currentProviderIdentity } } : {}),
-      ...(config.effort !== undefined ? { effectiveEffort: config.effort } : {}),
+      // WS-23: the LIVE level, so a child spawned after a `set_effort` inherits what the parent runs at now.
+      ...(liveEffort !== undefined ? { effectiveEffort: liveEffort } : {}),
       ...(config.thinking !== undefined ? { effectiveThinking: config.thinking } : {}),
       sessionRoot,
     };
@@ -3801,6 +3964,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // own `messages` reference already uses in this same function).
       emitToolReference: (names: string[]): void => {
         loadedToolSet.load(names);
+        // WS-23: remembered for the call in flight, so its tool_result can carry `loadedTools`.
+        toolReferenceCollector?.push(...names);
         output.write({ type: "data", message: { type: "assistant", message: { content: [{ type: "tool_reference", tool_names: names }] } } });
       },
       session: {
@@ -4843,6 +5008,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return { eager: partition.eager.filter(ownServerTool), deferred: partition.deferred.filter(ownServerTool), hidden: partition.hidden.filter(ownServerTool) };
   };
   let advertisedPartition = computeAdvertisedPartition();
+  // WS-23: the names a ToolSearch call loaded, collected while that one call runs (see the execute site).
+  let toolReferenceCollector: string[] | undefined;
+  /** Canonical -> advertised: `loadedTools` names what `tools` carries, because that is what a `tool_reference` must name. */
+  const advertisedNamesFor = (canonical: readonly string[] | undefined): string[] => {
+    if (canonical === undefined || canonical.length === 0) return [];
+    const byCanonical = new Map([...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => [d.canonicalName, d.advertisedName] as const));
+    return [...new Set(canonical.map((name) => byCanonical.get(name) ?? name))];
+  };
+  // WS-23: a RESUMED history's ToolSearch results name the tools they loaded (`loadedTools`); the
+  // loaded set is re-seeded from them, so a tool the history already surfaced by reference stays
+  // callable after a resume instead of being refused as "deferred, not loaded".
+  {
+    const byAdvertised = new Map([...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => [d.advertisedName, d.canonicalName] as const));
+    const seeded = [...referencedToolNames(messages)].map((name) => byAdvertised.get(name) ?? name);
+    if (seeded.length > 0) loadedToolSet.load(seeded);
+  }
   const refreshAdvertisedPartition = (): void => {
     advertisedPartition = computeAdvertisedPartition();
     currentAdvertisedCanonicalNames = [...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => d.canonicalName);
@@ -5516,6 +5697,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // `set_model` was waiting for has arrived early -- apply it now rather than leaving the
             // session on a model the host has already asked it to leave.
             applyPendingModelSwitch("interrupt");
+            applyPendingEffort();
             continue;
           }
           // --- Phase 6 Task 3 (R6-I): `set_model` ------------------------------------------------
@@ -5566,6 +5748,48 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // so the switch takes effect immediately rather than waiting for a next envelope that may
             // never come. `interruptCurrentTurn.current` is non-null exactly while a turn is running.
             if (interruptCurrentTurn.current === null) applyPendingModelSwitch("set_model");
+            continue;
+          }
+          // --- WS-23: `set_effort` -------------------------------------------------------------------
+          //
+          // Winter-only (claude 2.1.282 changes effort through its `apply_flag_settings {effortLevel}`
+          // control request; Winter gives it a subtype of its own, the same shape as `set_model`):
+          // `{ effort?: string | null }`, where omitted, `null` and the literal `'default'` all reset to
+          // the level the session started with. VALIDATED HERE, not at request time: a level the
+          // current model does not document would otherwise surface later as a `capability` refusal
+          // that ends a turn, when the right answer is a typed refusal of this request.
+          //
+          // PARKED like `set_model`: a turn never runs at two levels, so every assistant message of a
+          // turn carries one `perTurnEffort` -- the invariant `withEffortMarkers` derives from.
+          if (cf.subtype === "set_effort") {
+            const payload = cf.payload;
+            const requested = typeof payload === "object" && payload !== null ? (payload as { effort?: unknown }).effort : payload;
+            const reset = requested === undefined || requested === null || requested === "default";
+            if (!reset && !isNamedEffort(requested)) {
+              output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "invalid_effort", message: `invalid effort: ${JSON.stringify(requested)} (expected one of low, medium, high, xhigh, max)` } });
+              continue;
+            }
+            const target: TurnRequest["effort"] | undefined = reset ? config.effort : (requested as TurnRequest["effort"]);
+            const liveKey = currentProviderIdentity?.modelKey ?? currentModel;
+            const vocabulary = liveKey !== undefined ? describeModel?.(liveKey, currentProviderIdentity?.providerId)?.efforts : undefined;
+            if (typeof target === "string" && vocabulary !== undefined && !vocabulary.includes(target)) {
+              output.write({
+                type: "control_response",
+                requestId: cf.requestId,
+                ok: false,
+                error: { code: "invalid_effort", message: `effort "${target}" is not in model "${liveKey}"'s verified vocabulary (${vocabulary.join(", ")})` },
+              });
+              continue;
+            }
+            output.write({ type: "control_response", requestId: cf.requestId, ok: true });
+            // A parked change back to the level already in force nets to nothing.
+            if (target === liveEffort) {
+              pendingEffort = undefined;
+              continue;
+            }
+            pendingEffort = { effort: target };
+            // IDLE is itself a quiescent boundary, exactly as for `set_model`.
+            if (interruptCurrentTurn.current === null) applyPendingEffort();
             continue;
           }
           // --- Phase 6 Task 10 (R6-I): `list_models` and `account_info` ---------------------------
@@ -6056,7 +6280,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ADVISOR_TOOL_NAME,
       createAdvisorExecutor({
         transcriptSource: {
-          getEntries: (): TranscriptEntry[] => messages.map((m) => ({ role: m.role, text: providerMessageContentToText(m.content) })),
+          // WS-23: a `system` message is outbound-only and never in `messages`; the flatMap keeps the
+          // reviewer's three-role transcript type honest without a cast.
+          getEntries: (): TranscriptEntry[] => messages.flatMap((m) => (m.role === "system" ? [] : [{ role: m.role, text: providerMessageContentToText(m.content) }])),
         },
         // The LIVE model key, not the session's start model: the per-family default is a statement
         // about the family the session is on NOW (D30 reads the session's model, and R13c-4 makes a
@@ -6261,7 +6487,38 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // check runs against a reading a real generation has since updated.
   let lastCompactionTokens: number | null = null;
 
-  const performCompaction = async (trigger: "auto" | "manual", customInstructions: string | null): Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }> => {
+  /**
+   * WS-23: the session's own outbound request for the history AS IT STANDS -- the system blocks, tools
+   * and index-0 context the main loop last sent, the live model and reasoning settings, and the
+   * outbound message list rebuilt exactly as the next main-loop request would build it (effort markers
+   * included). Handed to the compaction controller so the summary REUSES the cached prefix instead of
+   * being the one request of the session that carries no cache blocks at all.
+   *
+   * `undefined` before the first request of this run, and after a `set_model` that has not yet sent a
+   * request: the last shape was built for another model (its tools and system can differ per model),
+   * so reusing it would be neither a cache hit nor the right request.
+   */
+  const compactionPrefixRequest = (): ProviderRequest | undefined => {
+    const shape = lastMainRequestShape;
+    if (shape === undefined || shape.modelKey !== (currentProviderIdentity?.modelKey ?? currentModel)) return undefined;
+    const plan = planEffort();
+    const outbound = buildRequestMessages(messages, shape.userContextText, { systemReminders: systemRemindersOnWire(), ...(plan.markers !== undefined ? { effort: plan.markers } : {}) });
+    return {
+      messages: outbound,
+      ...(shape.system.system.length > 0 ? { system: shape.system.system } : {}),
+      ...(shape.system.systemBlocks !== undefined && shape.system.systemBlocks.length > 0 ? { systemBlocks: shape.system.systemBlocks } : {}),
+      ...(shape.tools.length > 0 ? { tools: shape.tools } : {}),
+      ...(currentModel !== undefined ? { model: currentModel } : {}),
+      ...(plan.topLevel !== undefined ? { effort: plan.topLevel } : {}),
+      ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
+      ...(promptCacheTtlFor(config) === "1h" ? { cacheTtl: "1h" as const } : {}),
+      cacheKey: promptCacheKeyFor(config),
+    };
+  };
+
+  // WS-23: `opts.reason: "overflow"` is for the reactive recovery after a context-overflow refusal --
+  // the summary then never re-sends the refused history (see `CompactionInput.reason`).
+  const performCompaction = async (trigger: "auto" | "manual", customInstructions: string | null, opts: { reason?: "overflow" } = {}): Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }> => {
     if (compactionController === undefined) {
       return { ok: false, error: "No compaction controller is configured for this session (R5-4: the compaction vehicle is supplied by the host; the engine never summarizes on its own)." };
     }
@@ -6274,6 +6531,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const forwarded = (pre.extraContext ?? []).map((c) => c.context).filter((t) => typeof t === "string" && t.length > 0);
     const effectiveInstructions = [customInstructions, ...forwarded].filter((t): t is string => typeof t === "string" && t.length > 0).join("\n\n");
 
+    const prefixRequest = opts.reason === "overflow" ? undefined : compactionPrefixRequest();
     let result: CompactionResult;
     try {
       result = await compactionController.compact({
@@ -6284,6 +6542,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // The LIVE provider (fix wave): after a `set_model` the summariser must run on the model the
         // session is generating with, not the one it started on.
         provider: activeProvider,
+        ...(prefixRequest !== undefined ? { prefixRequest } : {}),
+        ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
       });
     } catch (err) {
       // A failed compaction is REPORTED, never fatal: the turn continues on the un-compacted history
@@ -6342,6 +6602,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     messages.length = 0;
     messages.push({ role: "user", content: result.summary }, ...result.retained);
     lastCompactionTokens = contextAccountant.contextTokens();
+    // WS-23: the history the last fingerprint described is gone; the next request opts in afresh.
+    lastMainResponse = undefined;
 
     // Fix round 1 (M3): `preserved_messages` on the FRAME, built from the uuids the store just
     // minted -- previously unreachable, because `recordCompactBoundary` returned `void`, so a host
@@ -6579,7 +6841,53 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // the index-0 context prepended, attachments reordered and consecutive user-role turns merged,
   // exactly as claude 0.3.250 lays out its requests. SDK 0.0.16 retires P5-F's re-anchoring: nothing
   // is attached to the last user message any more, so a mid-turn compaction has nothing to strand.
-  const requestMessages = (context: SessionContext): ProviderMessage[] => buildRequestMessages(messages, context.userContextText);
+  const requestMessages = (context: SessionContext, effort?: EffortMarkerPlan): ProviderMessage[] =>
+    buildRequestMessages(messages, context.userContextText, { systemReminders: systemRemindersOnWire(), ...(effort !== undefined ? { effort } : {}) });
+  /** WS-23: whether opted-in reminders ride as mid-conversation `system` messages on the LIVE model. */
+  const systemRemindersOnWire = (): boolean => currentModelDescription()?.wire?.midConversationSystem === true;
+
+  /** WS-23: the LIVE model's catalog description (its effort vocabulary and wire features), or `undefined` for a scripted double. */
+  const currentModelDescription = (): ModelDescription | undefined => {
+    const key = currentProviderIdentity?.modelKey ?? currentModel;
+    return key !== undefined ? describeModel?.(key, currentProviderIdentity?.providerId) : undefined;
+  };
+
+  /**
+   * WS-23: this generation's effort as the wire carries it.
+   *
+   * On a model whose row documents per-message effort (`describeModel(...).wire.perMessageEffort`) the
+   * TOP-LEVEL value stays frozen (`frozenEffort`), and the level in force rides effort-only `system`
+   * markers laid out by `buildRequestMessages` -- a leading one at the frozen level on every request,
+   * and one before each human turn whose level changed. The level with no named effort is the row's
+   * own `defaultEffort`. Everywhere else -- no evidence, a numeric effort (a child definition's), no
+   * default to reason from, or after the API refused the beta -- a change is a new top-level value,
+   * the only option those models have, and a session with no effort sends none, exactly as before.
+   *
+   * RESUME RULE, decided here: the transcript's top-level value keeps the top-level slot (so the cached
+   * prefix can still match) and a different `config.effort` applies to the new turn through a marker.
+   */
+  const planEffort = (): { topLevel: TurnRequest["effort"] | undefined; markers?: EffortMarkerPlan; stamp?: { effort?: string; perTurnEffort: string } } => {
+    const live = liveEffort;
+    const plain = { topLevel: live, ...(typeof live === "string" ? { stamp: { effort: live, perTurnEffort: live } } : {}) };
+    if (typeof live === "number" || perMessageEffortRejected) return plain;
+    const described = currentModelDescription();
+    if (described?.wire?.perMessageEffort !== true) return plain;
+    const vocabulary = described.efforts ?? [];
+    const accepts = (effort: string): boolean => vocabulary.includes(effort);
+    const key = currentProviderIdentity?.modelKey ?? currentModel;
+    if (frozenEffort === undefined || frozenEffort.modelKey !== key || (frozenEffort.value !== undefined && !(accepts(frozenEffort.value) && isNamedEffort(frozenEffort.value)))) {
+      frozenEffort = { modelKey: key, value: live };
+    }
+    const frozen = frozenEffort.value;
+    const initial = frozen ?? described.defaultEffort;
+    const effective = live ?? described.defaultEffort;
+    if (initial === undefined || effective === undefined || !accepts(initial) || !accepts(effective)) return plain;
+    return {
+      topLevel: frozen !== undefined && isNamedEffort(frozen) ? frozen : undefined,
+      markers: { initial, live: effective, accepts },
+      stamp: { ...(frozen !== undefined ? { effort: frozen } : {}), perTurnEffort: effective },
+    };
+  };
 
   // --- the skill listing's session state (claude's `sentSkillNames`) -------------------------------
   //
@@ -6875,10 +7183,33 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     for (const descriptor of advertisedPartition.eager) {
       specs.push(toolSpecFor(descriptor));
     }
+    // WS-23: on a model whose row documents deferred tool loading, EVERY deferred tool is declared up
+    // front with `defer_loading: true` and ToolSearch surfaces one by reference (the result's
+    // `loadedTools`, which the adapter turns into `tool_reference` blocks) -- so loading a tool no
+    // longer changes `tools`, which sits first in the cached prefix and whose every change invalidates
+    // the whole cache (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching).
+    // "At least one tool must have defer_loading=false" (the tool-search page): with no eager tool at
+    // all (a narrow child pool) the old shape stands. A tool loaded with NO reference left in the
+    // history (a compaction summarised it away, or it was loaded on another model) is sent plainly --
+    // nothing would surface it otherwise.
+    const declareDeferred = specs.length > 0 && currentModelDescription()?.wire?.deferredToolLoading === true;
+    const referenced = declareDeferred ? referencedToolNames(messages) : undefined;
     for (const descriptor of advertisedPartition.deferred) {
-      if (!loadedToolSet.isLoaded(descriptor.canonicalName)) continue;
-      specs.push(toolSpecFor(descriptor));
+      const loaded = loadedToolSet.isLoaded(descriptor.canonicalName);
+      if (referenced === undefined) {
+        if (!loaded) continue;
+        specs.push(toolSpecFor(descriptor));
+        continue;
+      }
+      const spec = toolSpecFor(descriptor);
+      specs.push(!loaded || referenced.has(spec.name) ? { ...spec, deferLoading: true } : spec);
     }
+    // WS-23: a DETERMINISTIC order, by name (UTF-16 code units, locale-independent). Registration
+    // order moves with MCP connect order and module load order, so two processes -- or a session and
+    // its own resume -- could send the same set in a different order, and a reordered `tools` array is
+    // a whole-cache miss (the cache-diagnostics page's `tools_changed`: "tools were added, removed, or
+    // reordered"). claude 2.1.282 sends its own tools alphabetically too (loopback capture).
+    specs.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     offeredThisRequest = new Set([
       ...specs.map((spec) => spec.name),
       ...[...advertisedPartition.eager, ...advertisedPartition.deferred].flatMap((d) => [d.advertisedName, d.canonicalName]),
@@ -7276,6 +7607,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // unless a parked `set_model` supersedes it.
     restorePrimaryAfterFallback();
     applyPendingModelSwitch("set_model");
+    // WS-23: a parked `set_effort` lands at the same boundary, before this envelope's user message.
+    applyPendingEffort();
 
     // Finding 3 (P2 fix-wave, IMPORTANT): result.permission_denials, the array the frozen
     // derived-shapes doc calls "the record to trust ... the array is the ledger" (permission_denied
@@ -7288,7 +7621,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // claude's per-turn `result.usage` (a fresh QueryEngine's `totalUsage` per prompt in SDK mode):
     // the sum of THIS turn's main-loop generations -- not a subagent's, not a tool's inner pass, which
     // land on `modelUsage` instead. Stamped on this turn's terminal result, priced row or not.
-    const turnUsage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+    const turnUsage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cache_creation_1h_input_tokens: 0 };
+    // WS-23: this turn's cache verdicts, surfaced on the result only when there is one.
+    const turnCacheMisses: NonNullable<WireResultUsage["cache_misses"]> = [];
     // claude's full `NonNullableUsage` shape around the four real counts (frames.ts's WireResultUsage
     // says what each filled field means).
     const resultUsage = (): WireResultUsage => ({
@@ -7299,10 +7634,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       output_tokens: turnUsage.output_tokens,
       server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 },
       service_tier: "standard",
-      cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: turnUsage.cache_creation_input_tokens },
+      // WS-23: the lifetime split the provider reported (the 1-hour share is a subset of the writes).
+      cache_creation: { ephemeral_1h_input_tokens: turnUsage.cache_creation_1h_input_tokens, ephemeral_5m_input_tokens: turnUsage.cache_creation_input_tokens - turnUsage.cache_creation_1h_input_tokens },
       inference_geo: "",
       iterations: [],
       speed: "standard",
+      ...(turnCacheMisses.length > 0 ? { cache_misses: [...turnCacheMisses] } : {}),
     });
 
     // --- Phase 5 Task 3 (R5-14): command resolution, BEFORE the model sees the prompt -------------
@@ -7487,7 +7824,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     let pauseContinuations = 0;
     const recoverFromContextOverflow = async (): Promise<{ retry: true } | { retry: false; why: string }> => {
       if (overflowRetryPending) return { retry: false, why: "the retry after a reactive compaction overflowed the context window again" };
-      const outcome = await performCompaction("auto", null);
+      // WS-23 (anthropic-cache C1): `reason: "overflow"` -- the summary must NOT reuse the session's own
+      // request prefix here, because that exact history was just refused as too long and would be again.
+      const outcome = await performCompaction("auto", null, { reason: "overflow" });
       if (!outcome.ok) return { retry: false, why: `the reactive compaction did not run (${outcome.error})` };
       overflowRetryPending = true;
       return { retry: true };
@@ -7538,15 +7877,25 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       }
 
       let turn: ProviderTurn;
+      // WS-23: whether THIS generation carried per-message effort markers -- read by the catch's
+      // beta-rejection fallback, which must never fire for a request that sent none.
+      let sentPerMessageBeta = false;
       try {
         // A mid-turn compaction cleared the session context; this rebuilds it (same envelope input).
         const context = await ensureSessionContext(assembled, envelopeInput);
-        const outboundMessages = requestMessages(context);
+        const effortPlan = planEffort();
+        const outboundMessages = requestMessages(context, effortPlan.markers);
+        generationEffort = effortPlan.stamp;
+        // Fix round 1 (I1): every per-message request carries the leading marker, so the beta rides
+        // every such request -- and the fallback keys on exactly that.
+        sentPerMessageBeta = effortPlan.markers !== undefined;
         // P1 carry: the per-message cap, enforced BEFORE the request leaves the engine. Throws a
         // `ProviderTurnError`, so it lands on R6-F's result shape through the catch below.
         assertMessagesWithinCap(outboundMessages);
         const toolSpecs = providerToolSpecs();
         const outboundSystem = requestSystem(assembled, context);
+        // WS-23: what compaction's summary reuses (see `compactionPrefixRequest`).
+        lastMainRequestShape = { modelKey: currentProviderIdentity?.modelKey ?? currentModel, system: outboundSystem, userContextText: context.userContextText, tools: toolSpecs };
         // The layout a byte-exact fork (a later lane) will reuse: exactly what this request carries.
         recordSessionRequestLayout(config.sessionId, config.agentId, {
           ...(outboundSystem.system.length > 0 ? { system: outboundSystem.system } : {}),
@@ -7573,8 +7922,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // nothing), and a session with no tools is the shape every P1-P5 fixture uses.
             ...(toolSpecs.length > 0 ? { tools: toolSpecs } : {}),
             ...(currentModel !== undefined ? { model: currentModel } : {}),
-            ...(config.effort !== undefined ? { effort: config.effort } : {}),
+            // WS-23: the PLANNED top-level value (frozen on a per-message-effort row), never
+            // `config.effort` directly -- a `set_effort` moves the live level.
+            ...(effortPlan.topLevel !== undefined ? { effort: effortPlan.topLevel } : {}),
             ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
+            ...(promptCacheTtlFor(config) === "1h" ? { cacheTtl: "1h" as const } : {}),
+            cacheDiagnostics: { previousMessageId: lastMainResponse !== undefined && lastMainResponse.modelKey === (currentProviderIdentity?.modelKey ?? currentModel) ? lastMainResponse.id : null },
+            cacheKey: promptCacheKeyFor(config),
             // WS-23: the host's own `max_tokens` override, when it set one (conditionally spread, so
             // every existing request is byte-identical).
             ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
@@ -7591,6 +7945,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           break roundLoop;
         }
         turn = raced.value;
+        if ("responseId" in turn && turn.responseId !== undefined) lastMainResponse = { id: turn.responseId, modelKey: currentProviderIdentity?.modelKey ?? currentModel };
         // Phase 5 Task 2 (R5-3): the ONE place this run folds a generation's reported usage into
         // the session's context accounting. A provider that reports no usage (every P1/P3/P4 test
         // double, and any real provider family that omits it) simply leaves the accountant reading
@@ -7604,6 +7959,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           turnUsage.output_tokens += turn.usage.outputTokens;
           turnUsage.cache_read_input_tokens += turn.usage.cacheReadTokens ?? 0;
           turnUsage.cache_creation_input_tokens += turn.usage.cacheWriteTokens ?? 0;
+          turnUsage.cache_creation_1h_input_tokens += Math.min(turn.usage.cacheWrite1hTokens ?? 0, turn.usage.cacheWriteTokens ?? 0);
+          if (turn.usage.cacheMiss !== undefined || turn.usage.thinkingBlocksDropped !== undefined) {
+            turnCacheMisses.push({
+              ...(turn.usage.cacheMiss !== undefined ? { type: turn.usage.cacheMiss.type } : {}),
+              ...(turn.usage.cacheMiss?.missedInputTokens !== undefined ? { missed_input_tokens: turn.usage.cacheMiss.missedInputTokens } : {}),
+              ...(turn.usage.thinkingBlocksDropped !== undefined ? { thinking_blocks_dropped: turn.usage.thinkingBlocksDropped } : {}),
+            });
+          }
         }
         // --- Phase 6 Task 3 (R6-C): the pinned REFUSAL frames -----------------------------------
         //
@@ -7657,6 +8020,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // as it is for `withRetry` (retry.ts's first-byte rule): the host may already have been shown
         // text, and a second model re-answering behind it is the replay R6-6 forbids. Such a failure
         // ends the turn on R6-F, as it does for a session with no fallback at all.
+        // WS-23: the per-message effort beta REFUSED (it may be limited to allowlisted accounts). A 400
+        // is pre-first-byte, so re-running the round is a fresh request, never a replay; the session
+        // then changes the TOP-LEVEL value for the rest of its life, the only form left, and says so
+        // once. Sticky, so a second refusal cannot loop -- it surfaces like any other failure.
+        if (sentPerMessageBeta && !perMessageEffortRejected && isPerMessageEffortRejection(err)) {
+          perMessageEffortRejected = true;
+          console.error(`winter: the provider refused per-message effort (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now changes effort at the top level, which restarts the prompt cache on each change`);
+          continue roundLoop;
+        }
         if (isProviderTurnError(err) && err.retryable === true && err.committed !== true && engageFallback()) continue roundLoop;
         const text = err instanceof Error ? err.message : String(err);
         // Phase 6 Task 3 (R6-F, capture (I)): a PROVIDER failure lands on `subtype: "success"` with
@@ -7749,8 +8121,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // names. A live session's history and the same session's RESUMED history must agree on every
         // assistant message's `uuid` -- that agreement is what the continuation chain is keyed on,
         // and resume.test.ts's continuous-vs-split fidelity test pins it.
-        const textAnchor = await recordAssistant(assistantBlocks, turnProvenance(turn));
-        messages.push({ role: "assistant", content: thinkingBlocks.length === 0 ? turn.text : assistantBlocks, ...(textAnchor !== undefined ? { uuid: textAnchor } : {}), ...providerAnnotations(turn) });
+        const textAnchor = await recordAssistant(assistantBlocks, turnProvenance(turn), generationEffort);
+        messages.push({ role: "assistant", content: thinkingBlocks.length === 0 ? turn.text : assistantBlocks, ...(textAnchor !== undefined ? { uuid: textAnchor } : {}), ...providerAnnotations(turn), ...(generationEffort ?? {}) });
         finalResult = { type: "result", subtype: "success", is_error: false, result: turn.text };
         // WS-23: the Stop/SubagentStop hooks fire HERE for a plain answer (still before the terminal
         // result is written -- the single-shot wrapper is still reading, see the post-loop comment),
@@ -7801,8 +8173,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await — the
       // terminal result is the sole durability barrier; P6 (partial streaming) must revisit this.
       output.write({ type: "data", message: { type: "assistant", message: { content: toolUseBlocks } } });
-      const callAnchor = await recordAssistant(toolUseBlocks, turnProvenance(turn));
-      messages.push({ role: "assistant", content: toolUseBlocks, ...(callAnchor !== undefined ? { uuid: callAnchor } : {}), ...providerAnnotations(turn) });
+      const callAnchor = await recordAssistant(toolUseBlocks, turnProvenance(turn), generationEffort);
+      messages.push({ role: "assistant", content: toolUseBlocks, ...(callAnchor !== undefined ? { uuid: callAnchor } : {}), ...providerAnnotations(turn), ...(generationEffort ?? {}) });
 
       const resultBlocks: ContentBlock[] = [];
       // Set (alongside `finalResult`) exactly when a call in THIS round throws — kept as its own
@@ -8294,14 +8666,18 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // R6-6: the SAME per-turn signal `provider.generate` receives. The race still unwinds the
           // turn promptly; the signal is what stops the work the race walked away from.
           // The decision's explicit-approval marker rides to the executor's context beside the signal.
+          // WS-23: tool calls run one at a time, so a per-call collector is exact.
+          toolReferenceCollector = [];
           const raced = await raceInterrupt(tools.execute(executedCall, { signal: turnAbort.signal, ...(decision.explicitApproval !== undefined ? { explicitApproval: decision.explicitApproval } : {}) }), interruptSignal);
+          const loadedTools = advertisedNamesFor(toolReferenceCollector);
+          toolReferenceCollector = undefined;
           if (raced.kind === "interrupted") {
             interrupted = true;
             break;
           }
           // Spawn-surface parity (R-S4): an executor's `isError` rides the block as claude's own
           // `is_error: true` -- on the wire, into history, into persistence and into every adapter.
-          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: raced.value.output, ...(raced.value.isError === true ? { is_error: true } : {}) });
+          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: raced.value.output, ...(raced.value.isError === true ? { is_error: true } : {}), ...(loadedTools.length > 0 ? { loadedTools } : {}) });
           // Task 10 (WS-08 §5; PreToolUse/PostToolUse/PostToolUseFailure "fire at the tool round"):
           // contribution-capable, observational at P2 — its own transformedOutput/extraContext
           // fields still have no consumer (a future WS-08 task's job); `classifierContext` DOES have
@@ -8438,7 +8814,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // contract ("buffered data of the interrupted turn, then its terminal result").
       // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await — the
       // terminal result is the sole durability barrier; P6 (partial streaming) must revisit this.
-      output.write({ type: "data", message: { type: "user", message: { content: resultBlocks } } });
+      // WS-23: `loadedTools` is history/transcript bookkeeping for the wire's `tool_reference` blocks; a
+      // host already hears about the load through the streaming `tool_reference` frame, so the
+      // host-visible frame stays exactly as it was before the field existed.
+      output.write({ type: "data", message: { type: "user", message: { content: resultBlocks.map((b) => (b.type === "tool_result" && b.loadedTools !== undefined ? withoutLoadedTools(b) : b)) } } });
       messages.push({ role: "tool", content: resultBlocks });
       await recordUser(resultBlocks);
       // WS-23: this round's hook context, right AFTER its tool results -- the request builder folds a
