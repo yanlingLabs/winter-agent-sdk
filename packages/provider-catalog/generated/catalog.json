@@ -14439,6 +14439,13 @@
         "observedAt": "2026-09-26T00:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
       },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
+      },
       "canonicalModelId": "claude-fable-5",
       "modelFamily": "claude"
     },
@@ -14650,6 +14657,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-26T00:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-fable-5.1",
       "modelFamily": "claude"
@@ -15121,6 +15135,13 @@
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
       },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
+      },
       "canonicalModelId": "claude-opus-4.6",
       "modelFamily": "claude"
     },
@@ -15255,6 +15276,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-4.7",
       "modelFamily": "claude"
@@ -15415,6 +15443,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-26T00:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-4.8",
       "modelFamily": "claude"
@@ -15627,6 +15662,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-26T00:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-5",
       "modelFamily": "claude"
@@ -15848,6 +15890,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-26T00:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-5.5",
       "modelFamily": "claude"
@@ -16271,6 +16320,13 @@
         "thinking.type.enabled"
       ],
       "status": "candidate",
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
+      },
       "canonicalModelId": "claude-sonnet-5",
       "modelFamily": "claude"
     },
@@ -26874,6 +26930,13 @@
         "observedAt": "2026-09-26T00:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
       },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
+      },
       "canonicalModelId": "claude-fable-5",
       "modelFamily": "claude"
     },
@@ -27085,6 +27148,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-26T00:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-fable-5.1",
       "modelFamily": "claude"
@@ -27556,6 +27626,13 @@
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
       },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
+      },
       "canonicalModelId": "claude-opus-4.6",
       "modelFamily": "claude"
     },
@@ -27690,6 +27767,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-4.7",
       "modelFamily": "claude"
@@ -27850,6 +27934,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-26T00:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-4.8",
       "modelFamily": "claude"
@@ -28062,6 +28153,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-26T00:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-5",
       "modelFamily": "claude"
@@ -28283,6 +28381,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-26T00:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-5.5",
       "modelFamily": "claude"
@@ -28706,6 +28811,13 @@
         "thinking.type.enabled"
       ],
       "status": "candidate",
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
+      },
       "canonicalModelId": "claude-sonnet-5",
       "modelFamily": "claude"
     },

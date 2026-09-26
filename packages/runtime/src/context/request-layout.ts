@@ -164,6 +164,10 @@ export function foldTextIntoToolResult(result: ToolResultBlock, texts: TextBlock
   if (texts.length === 0) return result;
   const content = result.content;
   if (Array.isArray(content) && content.some((b) => b.type === "tool_reference")) return null;
+  // WS-23 (midconv, live gate): Winter's engine never holds `tool_reference` blocks -- it holds
+  // `loadedTools`, which the Anthropic adapter turns into them -- so the check above alone never fires
+  // for Winter's own results. A result that loaded tools refuses the fold the same way.
+  if ((result.loadedTools?.length ?? 0) > 0) return null;
   if (typeof content === "string") {
     const joined = [content.trim(), ...texts.map((t) => t.text.trim())].filter((s) => s.length > 0).join("\n\n");
     return { ...result, content: joined };

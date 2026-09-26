@@ -315,6 +315,14 @@ export interface WinterModelDescriptor {
    * `true` is the only meaningful value.
    */
   allowedToolsChoice?: CapabilityEvidence<boolean>;
+  /**
+   * WS-23 (midconv, live gate): whether the model takes an ASSISTANT PREFILL -- a request whose
+   * `messages` ends with an assistant turn. `false` is the meaningful value: "Prefilling assistant
+   * messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5"
+   * and on Claude Sonnet 5 (https://platform.claude.com/docs/en/models/opus-5-5/migration-guide), and on
+   * Claude Fable 5 / 5.1. An adapter refuses such a request typed instead of sending it. Absent = unknown.
+   */
+  assistantPrefill?: CapabilityEvidence<boolean>;
   reasoning?: ReasoningCapabilities;
   pricing?: CapabilityEvidence<ModelPricing>;
   /** R6-14: set only after the safety corpus passes live. A worker with no configured classifier route serves only when this is true AND `structuredOutput.confidence === "verified"`. */

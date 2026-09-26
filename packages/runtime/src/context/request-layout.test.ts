@@ -161,6 +161,8 @@ describe("the merged request (claude's Noe / mIt / IMe)", () => {
     const folded = foldTextIntoToolResult({ type: "tool_result", tool_use_id: "t", content: [{ type: "text", text: " a " }] }, [{ type: "text", text: " b" }]);
     expect(folded).toEqual({ type: "tool_result", tool_use_id: "t", content: [{ type: "text", text: "a\n\nb" }] });
     expect(foldTextIntoToolResult({ type: "tool_result", tool_use_id: "t", content: [{ type: "tool_reference", tool_names: ["X"] }] }, [{ type: "text", text: "b" }])).toBeNull();
+    // WS-23 midconv live gate: Winter's own results carry `loadedTools`, never the blocks -- refused too.
+    expect(foldTextIntoToolResult({ type: "tool_result", tool_use_id: "t", content: "listing", loadedTools: ["X"] }, [{ type: "text", text: "b" }])).toBeNull();
   });
 });
 

@@ -241,6 +241,7 @@
         "clientToolSearch": { "$ref": "#/$defs/evidenceBoolean" },
         "additionalToolsItem": { "$ref": "#/$defs/evidenceBoolean" },
         "allowedToolsChoice": { "$ref": "#/$defs/evidenceBoolean" },
+        "assistantPrefill": { "$ref": "#/$defs/evidenceBoolean" },
         "classifierEligible": { "$ref": "#/$defs/evidenceBoolean" },
         "pricing": { "$ref": "#/$defs/evidencePricing" },
         "reasoning": {

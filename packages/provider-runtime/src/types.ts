@@ -281,6 +281,13 @@ export interface TurnRequest {
    * leading effort marker). Anthropic only; every other adapter ignores it.
    */
   toolChanges?: true;
+  /**
+   * WS-23 (midconv): this request re-sends a `pause_turn` response so the vendor resumes it -- the ONE
+   * legitimate request that ends on an assistant turn ("send the paused response back as it stands",
+   * https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons). An adapter that refuses
+   * an assistant prefill exempts it. Set only by the engine's pause handling.
+   */
+  resumesPausedTurn?: true;
 }
 
 /**

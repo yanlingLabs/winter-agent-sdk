@@ -244,4 +244,5 @@ export const FIELD_PROVENANCE: readonly FieldProvenance[] = [
   { field: "model.clientToolSearch", provenance: "official-doc-derived", note: "OVERLAY ONLY, from OpenAI's tool-search guide (client `tool_search`, GPT-5.4+) and codex-rs's models.json `supports_search_tool` for codex-oauth" },
   { field: "model.additionalToolsItem", provenance: "official-doc-derived", note: "OVERLAY ONLY, from OpenAI's tool-search guide (`additional_tools`); no model list, so only where `clientToolSearch` is documented" },
   { field: "model.allowedToolsChoice", provenance: "official-doc-derived", note: "OVERLAY ONLY, from OpenAI's function-calling guide (`tool_choice: allowed_tools`); no model list, same rows as `additionalToolsItem`" },
+  { field: "model.assistantPrefill", provenance: "official-doc-derived", note: "OVERLAY ONLY, from the Opus 5.5 migration guide (a prefilled assistant turn is a 400 on Opus 4.6+, Opus 5.5, Sonnet 5) and the Fable 5.1 guide; only `false` is recorded" },
 ];

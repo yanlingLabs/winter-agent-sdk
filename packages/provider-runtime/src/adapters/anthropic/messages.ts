@@ -965,6 +965,23 @@ function deferredToolNames(req: TurnRequest, descriptor: WinterModelDescriptor |
   return new Set(deferred.map((t) => t.name));
 }
 
+/**
+ * WS-23 (midconv, live gate): a request ending on an ASSISTANT turn is an assistant prefill, which a row
+ * recording `assistantPrefill: false` rejects with a 400 ("This model does not support assistant message
+ * prefill. The conversation must end with a user message." -- claude-opus-5-5, live). Refused typed before
+ * the request, so a caller that builds one (the compaction fallback did) fails here, legibly, instead of
+ * at the vendor. A `system` message is not a turn for this rule; a token count is not a generation.
+ * A `pause_turn` resend also ends on the paused assistant turn, legitimately: the engine marks it
+ * (`req.resumesPausedTurn`) and it is exempt.
+ */
+function assertNoPrefill(req: TurnRequest, descriptor: WinterModelDescriptor | undefined, purpose: "generate" | "count"): void {
+  if (purpose !== "generate" || descriptor?.assistantPrefill?.value !== false || req.resumesPausedTurn === true) return;
+  const last = [...req.messages].reverse().find((m) => m.role !== "system");
+  if (last?.role === "assistant") {
+    throw capabilityRefusal(`model "${descriptor.key}" rejects an assistant prefill (\`assistantPrefill: false\`), so a request whose conversation ends on an assistant turn is refused before it is sent; it must end with a user message`);
+  }
+}
+
 /** WS-23 (midconv): every tool this request declares, deferred or not, plus those a tool-change message in it defines by value. */
 function declaredToolNames(req: TurnRequest): ReadonlySet<string> {
   const names = new Set((req.tools ?? []).map((t) => t.name));
@@ -1150,6 +1167,7 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   if (thinking.rewroteDisabled === true) onThinkingRewrite?.();
   assertPerMessageEffort(req, descriptor);
   assertToolChanges(req, descriptor);
+  assertNoPrefill(req, descriptor, purpose);
 
   // `max_tokens` has TWO AUTHORITATIVE sources -- what the caller asked for and what the model's row
   // declares -- and a third, this adapter's own fallback, which is authoritative over nothing.

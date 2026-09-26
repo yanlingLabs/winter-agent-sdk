@@ -703,6 +703,8 @@ export interface ProviderRequest {
   allowedTools?: string[];
   /** WS-23 (midconv): the conversation carries mid-conversation tool changes -- the opt-in rides every request (`TurnRequest.toolChanges`). */
   toolChanges?: true;
+  /** WS-23 (midconv): this request re-sends a `pause_turn` response (`TurnRequest.resumesPausedTurn`). */
+  resumesPausedTurn?: true;
   /** The resolved model for THIS generation. Present once selection is wired; absent means "the provider's own configured default", which is what every pre-P6 double sees. */
   model?: string;
   effort?: TurnRequest["effort"];
@@ -8050,6 +8052,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // (the vendor's own guide recommends a cap; 5 is the figure it uses).
     let overflowRetryPending = false;
     let pauseContinuations = 0;
+    let resendingPausedTurn = false;
     const recoverFromContextOverflow = async (): Promise<{ retry: true } | { retry: false; why: string }> => {
       if (overflowRetryPending) return { retry: false, why: "the retry after a reactive compaction overflowed the context window again" };
       // WS-23 (anthropic-cache C1): `reason: "overflow"` -- the summary must NOT reuse the session's own
@@ -8112,6 +8115,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // fallback below must never fire for a request that sent none.
       let sentToolChanges = false;
       let sentNativeToolSearch = false;
+      // WS-23 (midconv): this generation re-sends a paused turn (set by the `pause_turn` branch below).
+      const resumesPausedTurn = resendingPausedTurn;
+      resendingPausedTurn = false;
       try {
         // A mid-turn compaction cleared the session context; this rebuilds it (same envelope input).
         const context = await ensureSessionContext(assembled, envelopeInput);
@@ -8162,6 +8168,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // WS-23 (midconv): the tool epoch's per-request facts (see `planToolsForRequest`).
             ...(toolPlan.allowedTools !== undefined ? { allowedTools: toolPlan.allowedTools } : {}),
             ...(toolPlan.optIn === true ? { toolChanges: true as const } : {}),
+            ...(resumesPausedTurn ? { resumesPausedTurn: true as const } : {}),
             ...(currentModel !== undefined ? { model: currentModel } : {}),
             // WS-23: the PLANNED top-level value (frozen on a per-message-effort row), never
             // `config.effort` directly -- a `set_effort` moves the live level.
@@ -8348,6 +8355,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           break roundLoop;
         }
         pauseContinuations++;
+        resendingPausedTurn = true;
         const paused = inStreamOrder(turn) ?? [...(turn.thinking?.blocks ?? []), ...(turn.text.length > 0 ? [{ type: "text" as const, text: turn.text }] : [])];
         if (paused.length > 0) {
           output.write({ type: "data", message: { type: "assistant", message: { content: paused } } });
