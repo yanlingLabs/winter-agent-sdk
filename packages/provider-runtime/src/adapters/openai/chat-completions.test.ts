@@ -1,9 +1,11 @@
 // The Chat Completions mapping, as pure functions. The live half is in the conformance package.
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { ChatStreamMapper, buildChatBody, createChatCompletionsAdapter, mapChatMessages, mapChatTools, OPENAI_CHAT_BASE_URL } from "./chat-completions.ts";
 import { resolveReasoning } from "./shared.ts";
 import { collect, descriptor, soleError, testContext, testDiscoveryContext } from "./testing.ts";
+import { createShippedAdapters } from "../index.ts";
 import type { ProviderEvent, ProviderMessageLike, TurnRequest } from "../../types.ts";
 
 function req(overrides: Partial<TurnRequest> = {}): TurnRequest {
@@ -529,5 +531,53 @@ describe("the base URL is the PROVIDER's own, never the adapter's vendor's (WS-2
     const adapter = createChatCompletionsAdapter({ descriptors: () => undefined });
     await expect(adapter.validateCredential({ kind: "keychain", account: "openai:test" }, testContext({ providerId: "glm" }))).rejects.toThrow(/provider "glm" has no endpoint/);
     await expect(adapter.listModels(testDiscoveryContext({ providerId: "glm" }))).rejects.toThrow(/provider "glm" has no endpoint/);
+  });
+
+  // The SHIPPED wiring (`createShippedAdapters`): this is what a real session actually runs, and the
+  // discriminating check for whether the fix reaches production. Before this batch,
+  // `createChatCompletionsAdapter` had NO `generatedBaseUrls` at all (only the Responses adapter did),
+  // so a `deepseek`/`openrouter` connection with no `baseUrl` fell all the way to `vendorFallbackFor`
+  // and was refused -- or, pre-WS-24, silently sent to `api.openai.com`. The catalog's own rows are
+  // now wired the same way as Responses.
+  test("shipped wiring: `deepseek` with NO connection baseUrl reaches api.deepseek.com from the catalog row -- never api.openai.com", async () => {
+    const catalog = loadCatalog();
+    const adapter = createShippedAdapters(catalog).find((a) => a.id === "winter.openai-chat-completions")!;
+    const requests = stubFetch(chatSse);
+    const events = await collect(adapter.streamTurn({ model: "deepseek-chat", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "deepseek" })));
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+    expect(requests).toEqual([{ method: "POST", url: "https://api.deepseek.com/chat/completions" }]);
+  });
+
+  test("shipped wiring: `openrouter` with NO connection baseUrl reaches its own catalog row -- never api.openai.com", async () => {
+    const catalog = loadCatalog();
+    const adapter = createShippedAdapters(catalog).find((a) => a.id === "winter.openai-chat-completions")!;
+    const requests = stubFetch(chatSse);
+    const events = await collect(adapter.streamTurn({ model: "openai/gpt-4.1", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "openrouter" })));
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+    expect(requests).toEqual([{ method: "POST", url: "https://openrouter.ai/api/v1/chat/completions" }]);
+  });
+
+  // `openai` itself has no row on THIS adapter at all (its models run on `winter.openai-responses`),
+  // so the shipped `generatedBaseUrls` lookup answers `undefined` for it here and this adapter's
+  // `vendorFallbackFor` is unreachable in the shipped wiring (`resolveEndpoint`'s per-provider lookup
+  // REPLACES the fallback once it is wired, rather than preceding it -- a documented rule, not a gap):
+  // the outcome is still a typed refusal, never api.openai.com, which is what the no-silent-fallback
+  // rule actually requires. `vendorFallbackFor` remains live for a HAND-WIRED adapter with no
+  // `generatedBaseUrls` at all (the tests above), which is the only shape it was ever needed for.
+  test("shipped wiring: a provider the catalog does not put on this adapter (including `openai` itself) is refused typed, not routed to OpenAI", async () => {
+    const catalog = loadCatalog();
+    const adapter = createShippedAdapters(catalog).find((a) => a.id === "winter.openai-chat-completions")!;
+    const requests = stubFetch(chatSse);
+    const events = await collect(adapter.streamTurn({ model: "some-model", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "not-on-this-adapter" })));
+    const error = soleError(events).error;
+    expect([error.code, error.retryable]).toEqual(["capability", false]);
+    expect(error.message).toContain('provider "not-on-this-adapter" has no endpoint');
+    expect(requests).toEqual([]);
+
+    const openaiEvents = await collect(adapter.streamTurn({ model: "gpt-4.1", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "openai" })));
+    const openaiError = soleError(openaiEvents).error;
+    expect([openaiError.code, openaiError.retryable]).toEqual(["capability", false]);
+    expect(openaiError.message).toContain('provider "openai" has no endpoint');
+    expect(requests).toEqual([]);
   });
 });

@@ -197,7 +197,8 @@ describe("an xai REASONING turn's request body (WS-23 item 5)", () => {
   test("usage: the TOTAL-prompt report is normalized to the seam's convention (non-cached input, cached as cacheRead)", async () => {
     stubFetch(() => turnStream());
     const events = await collect(responsesAdapter().streamTurn(ask({ effort: "low" }), xaiCtx()));
-    expect(events.find((e) => e.type === "usage")).toEqual({ type: "usage", inputTokens: 32, cacheReadTokens: 8, outputTokens: 120 });
+    // WS-24 (follow-up 1): `output_tokens_details.reasoning_tokens` (the fixture's default, 110) now rides as `reasoningTokens`.
+    expect(events.find((e) => e.type === "usage")).toEqual({ type: "usage", inputTokens: 32, cacheReadTokens: 8, outputTokens: 120, reasoningTokens: 110 });
   });
 });
 

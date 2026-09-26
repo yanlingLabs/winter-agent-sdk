@@ -9,7 +9,7 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 ### Providers (WS-24)
 
 - `reasoning_tokens` joins the normalized `usage` event (`reasoningTokens`, additive) and threads through the Responses adapter (openai, codex-oauth and xai's API-key row, which all share it), the bridge's fold, and the result's `output_tokens_details.thinking_tokens` (previously hard-coded to 0). Anthropic reports no separate count and stays absent.
-- Chat Completions no longer falls back to `api.openai.com` for a provider with no resolved endpoint (`vendorFallbackFor`, mirroring the Responses adapter's WS-23 fix): every provider but `openai` itself is refused typed rather than silently routed to OpenAI's host.
+- Chat Completions no longer falls back to `api.openai.com` for a provider with no resolved endpoint (`vendorFallbackFor`, mirroring the Responses adapter's WS-23 fix): every provider but `openai` itself is refused typed rather than silently routed to OpenAI's host. The SHIPPED wiring also gained the per-provider `generatedBaseUrls` lookup the Responses adapter already had (`createShippedAdapters`, `adapters/index.ts`) -- this adapter serves 159 catalog rows across many providers, and had none at all, so any caller of `createShippedAdapters` that skips the runtime's own `connectionForProvider` reached the vendor fallback instead of the catalog's own reviewed endpoint.
 - Verified (no code change): a parallel tool batch renders as one assistant message on chat-completions dialects. Fix round 24 (2026-09-24, pre-dating this batch) already merges any run of consecutive assistant tool-call entries by adjacency alone, regardless of origin; added the brief's exact acceptance tests to `chat-completions.test.ts`.
 
 ## 0.0.27

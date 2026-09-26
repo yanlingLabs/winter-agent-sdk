@@ -198,3 +198,20 @@ describe("review r1: in-stream overflow (I-6) and a remembered undecryptable ite
     expect(lastResult(frames)).toMatchObject({ is_error: false, result: "done three" });
   });
 });
+
+describe("WS-24 (follow-up 1): reasoning_tokens threads end to end -- the real Responses adapter, the real engine, the real result frame", () => {
+  test("`output_tokens_details.reasoning_tokens` on the response becomes the result's `output_tokens_details.thinking_tokens`", async () => {
+    const fx = await fixture(() => ({ items: [{ type: "text", text: "hi" }], usage: { input_tokens: 40, output_tokens: 50, reasoning_tokens: 30 } }));
+    const frames = await runSession(fx, "rs-reasoning-tokens", ["hello"]);
+    const result = lastResult(frames)!;
+    expect(result["is_error"]).toBe(false);
+    expect((result["usage"] as { output_tokens_details: { thinking_tokens: number } }).output_tokens_details).toEqual({ thinking_tokens: 30 });
+  });
+
+  test("no `output_tokens_details` on the response -> the result's `thinking_tokens` stays 0, never invented", async () => {
+    const fx = await fixture(() => ({ items: [{ type: "text", text: "hi" }], usage: { input_tokens: 40, output_tokens: 50 } }));
+    const frames = await runSession(fx, "rs-no-reasoning-tokens", ["hello"]);
+    const result = lastResult(frames)!;
+    expect((result["usage"] as { output_tokens_details: { thinking_tokens: number } }).output_tokens_details).toEqual({ thinking_tokens: 0 });
+  });
+});
