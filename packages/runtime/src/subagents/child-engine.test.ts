@@ -4172,3 +4172,28 @@ describe("WS-24 fix round 1 (M2): a colliding in-process server's note is worded
     expect(text).not.toContain(`the session's "srv" is used`);
   });
 });
+
+// WS-24 (cross-lane, the phone review): a subagent's hook notice reaches the host THREADED -- carrying the
+// parent_tool_use_id of the call that spawned it -- so a host that threads by it (Winter's daemon) never
+// files a subagent's SubagentStop reason or `continue: false` on the main thread.
+describe("WS-24: a subagent's hook notice carries the spawning call's parent_tool_use_id", () => {
+  test("a SubagentStart systemMessage arrives on the parent's stream as system/informational with parent_tool_use_id", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "do it", runInBackground: false };
+    const { code, frames } = await driveParentAnswering(
+      { provider: echoProvider, parentHooks: { SubagentStart: [{ hookCount: 1, source: "sdk" }] } },
+      baseConfig({ sessionId: `ws24-notice-${randomUUID()}` }),
+      [
+        { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+        { kind: "text", text: "parent done" },
+      ],
+      (frame) => ((frame as { subtype?: string }).subtype === "hook" ? { ok: true, payload: { systemMessage: "the reviewer hook says hello" } } : { ok: true, payload: {} }),
+    );
+    expect(code).toBe(0);
+    const notices = dataMessages(frames).filter((m) => m.type === "system" && (m as { subtype?: string }).subtype === "informational") as Array<{ content?: string; parent_tool_use_id?: string }>;
+    const notice = notices.find((n) => String(n.content).includes("the reviewer hook says hello"));
+    expect(notice).toBeDefined();
+    expect(notice!.parent_tool_use_id).toBe("call-1");
+  }, 30_000);
+});
