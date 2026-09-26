@@ -242,15 +242,18 @@ const READ_CHUNK_BYTES = 1024 * 1024;
  * degrades record by record rather than all at once, and `buildContinuationChain` already treats a
  * missing record as "degrade this message to summary-level".
  *
- * BOUNDED MEMORY (WS-23): streamed in 1 MiB chunks, a line past `PROVIDER_STATE_MAX_LINE_BYTES` is
- * skipped without being buffered, and the kept records never exceed `PROVIDER_STATE_MAX_READ_BYTES` --
- * the oldest go first (see the constant). `limits` exists for tests.
+ * BOUNDED MEMORY (WS-23, review r1 I-4): streamed in 1 MiB chunks, a line past
+ * `PROVIDER_STATE_MAX_LINE_BYTES` is skipped without being buffered, and the records RETAINED never exceed
+ * `PROVIDER_STATE_MAX_READ_BYTES` (plus one compaction step's slack) -- the oldest are released AS THE
+ * READ GOES, and the released entries are cut out of the working list every time they pass half of it, so
+ * memory stays proportional to the bound, never to the file. `limits` exists for tests (`stats` reports
+ * the peak number of entries the list ever held).
  *
  * A missing file is an EMPTY chain, never a throw: "no sidecar" and "sidecar emptied" are
  * indistinguishable by design in the pinned store contract (`load()` may return `null` for both,
  * `sdk.d.ts:5302-5314`), so the filesystem path answers the same way its store-backed twin must.
  */
-export function readProviderState(path: string, limits: { maxKeptBytes?: number; maxLineBytes?: number } = {}): ProviderStateRecord[] {
+export function readProviderState(path: string, limits: { maxKeptBytes?: number; maxLineBytes?: number; stats?: { peakRetained: number } } = {}): ProviderStateRecord[] {
   const maxKept = limits.maxKeptBytes ?? PROVIDER_STATE_MAX_READ_BYTES;
   const maxLine = limits.maxLineBytes ?? PROVIDER_STATE_MAX_LINE_BYTES;
   let fd: number;
@@ -274,6 +277,13 @@ export function readProviderState(path: string, limits: { maxKeptBytes?: number;
       head++;
       released++;
     }
+    // The released head is DROPPED, not merely skipped: once it is half the list it is cut out, so the
+    // list never holds more than about twice what the bound keeps (amortised O(1) per record).
+    if (head > 0 && head * 2 >= kept.length) {
+      kept.splice(0, head);
+      head = 0;
+    }
+    if (limits.stats !== undefined && kept.length > limits.stats.peakRetained) limits.stats.peakRetained = kept.length;
   };
   try {
     const chunk = Buffer.alloc(READ_CHUNK_BYTES);

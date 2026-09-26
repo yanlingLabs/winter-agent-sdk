@@ -719,3 +719,21 @@ describe("WS-23: a forked session carries `reasoning-blocks`, `effort` and the t
       }
     }));
 });
+
+// Review r1, I-4: the streamed read's MEMORY is bounded too, not only its result.
+describe("WS-23: a large sidecar is read in bounded memory", () => {
+  test("20,000 records under a bound that keeps ~100: the working list never holds more than about twice that", () =>
+    withTempHome((home) => {
+      const path = join(home, "big.provider-state.jsonl");
+      const one = JSON.stringify(toProviderStateRecord({ ...BASE, anchorUuid: "a", kind: "native-state", payload: { items: ["x".repeat(200)] } }));
+      const lines: string[] = [];
+      for (let i = 0; i < 20_000; i++) lines.push(one.replace('"anchorUuid":"a"', `"anchorUuid":"a-${i}"`));
+      writeFileSync(path, `${lines.join("\n")}\n`);
+      const stats = { peakRetained: 0 };
+      const kept = readProviderState(path, { maxKeptBytes: Buffer.byteLength(one) * 100, stats });
+      expect(kept.length).toBeGreaterThanOrEqual(95); // each real line is a few bytes longer than `one` (its anchor)
+      expect(kept.length).toBeLessThanOrEqual(101);
+      expect(kept.at(-1)!.anchorUuid).toBe("a-19999");
+      expect(stats.peakRetained).toBeLessThanOrEqual(2 * 101 + 1);
+    }));
+});
