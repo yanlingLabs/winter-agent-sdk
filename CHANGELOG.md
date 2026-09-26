@@ -6,6 +6,28 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
+## 0.0.25
+
+WS-23: every model, Claude included, now runs on this SDK (the official `claude` leg is retired
+from Winter). xAI moves to the Responses API; MCP moves to the TypeScript SDK v2; the hook system is
+completed and can fail closed; the Anthropic path is hardened for code mode (stream-order content,
+context-overflow recovery, Console bearer auth); prompt caching holds across effort switches (per-message
+effort on Opus 5/5.5, Fable 5.1 and GPT-6), tool changes (Anthropic tool additions/removals/redefinitions,
+OpenAI `tool_search`/`additional_tools`/`allowed_tools`) and model switches; every model's reasoning state
+moves into the provider-state sidecar (the transcript becomes provider-neutral); the runtime ships as a
+publishable package, `@yanlinglabs/winter-agent-runtime`, with an embedded (in-process Worker) entry.
+
+### Embedded runtime (WS-23)
+
+- The runtime is published as `@yanlinglabs/winter-agent-runtime`. `runEmbeddedSession` (and its Bun
+  Worker entry, `./embedded-host`) runs one session in-process with no process globals: argv, env,
+  stdio and exit are parameters, and `main.ts` is a thin wrapper over the same function.
+- Every child spawn (stdio MCP servers, the workflow worker, Bash, Monitor, hooks) takes the session cwd
+  explicitly; a Worker has no cwd of its own. `process.chdir`/`process.umask(mask)` throw inside an
+  embedded session.
+- The workflow-worker command is injectable (a host embedding the runtime supplies its own).
+- The wrapper, runtime and platform packages are pinned to one exact version.
+
 ### xAI on the Responses API
 
 - The api-key `xai` provider (`https://api.x.ai/v1`) now runs on `winter.openai-responses` instead of
