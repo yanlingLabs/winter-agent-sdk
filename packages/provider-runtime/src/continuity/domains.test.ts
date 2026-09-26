@@ -269,6 +269,47 @@ describe("endpoint resolution through the registry", () => {
 });
 
 // Review round on E1 (dist-session fixes): the two edges `sameModel` now leans on.
+// WS-24 (follow-up 4): the whole `ContinuityEndpoint` used to be cached under the (provider, model)
+// key, so a second call for the SAME model with a DIFFERENT origin (a different stamped `family`, or
+// a different `continuationDomain` fallback) silently got the FIRST call's echoed values back. Only
+// the registry-derived half is cached now; `family` and the domain fallback are recombined from the
+// CURRENT origin on every call.
+describe("createEndpointResolver: `family` and the domain fallback are NEVER served stale from the cache", () => {
+  test("two origins for the SAME (provider, model) but DIFFERENT `family` each get their OWN family back", () => {
+    const provider = fixtureProvider({ id: "anthropic" });
+    const catalog = fixtureCatalog([provider], [fixtureModel({ key: "anthropic/c", providerId: "anthropic", reasoning: fixtureReasoning({ readableState: "summary", domain: ["anthropic/c"] }) })]);
+    const registry = createRegistry(catalog);
+    registry.register(scriptedAdapter({ id: "anthropic-adapter" }));
+    const resolve = createEndpointResolver(registry);
+    // A resumed/adopted transcript can stamp the SAME model under a different family label (the
+    // catalog's own "claude" lineage vs the adapter's "anthropic" wire family) -- the resolver must
+    // not care which came first.
+    const claudeStamped = resolve({ providerId: "anthropic", modelKey: "anthropic/c", family: "claude" });
+    const anthropicStamped = resolve({ providerId: "anthropic", modelKey: "anthropic/c", family: "anthropic" });
+    expect(claudeStamped.family).toBe("claude");
+    expect(anthropicStamped.family).toBe("anthropic");
+    // Neither call's family leaked into the other's.
+    expect(resolve({ providerId: "anthropic", modelKey: "anthropic/c", family: "claude" }).family).toBe("claude");
+  });
+
+  test("two origins for a model with NO continuation-domain evidence each keep their OWN stamped domain (the fallback), never the first caller's", () => {
+    // No `reasoning` block at all -> the registry's own `continuationDomain` is undefined
+    // (`continuationDomainOf`), which is exactly the condition that lets an origin's OWN stamped
+    // domain stand in (`domainFallbackEligible`).
+    const provider = fixtureProvider({ id: "openai" });
+    const catalog = fixtureCatalog([provider], [fixtureModel({ key: "openai/o-plain", providerId: "openai" })]);
+    const registry = createRegistry(catalog);
+    registry.register(scriptedAdapter({ id: "openai-adapter" }));
+    const resolve = createEndpointResolver(registry);
+    const first = resolve({ providerId: "openai", modelKey: "openai/o-plain", family: "openai", continuationDomain: "domain-one" });
+    const second = resolve({ providerId: "openai", modelKey: "openai/o-plain", family: "openai", continuationDomain: "domain-two" });
+    expect(first.continuationDomain).toBe("domain-one");
+    expect(second.continuationDomain).toBe("domain-two");
+    // A third call with no stamped domain at all gets none -- not "domain-one" left over from the first.
+    expect(resolve({ providerId: "openai", modelKey: "openai/o-plain", family: "openai" }).continuationDomain).toBeUndefined();
+  });
+});
+
 describe("createEndpointResolver: one cache entry per (provider, model), never per model string alone", () => {
   test("the SAME model string under two providers resolves to each provider's OWN facts", () => {
     // A bare provider-local id two providers both serve -- the shape an origin carries when its
