@@ -2282,7 +2282,10 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
       .map((line) => JSON.parse(line) as Record<string, unknown>);
   }
 
-  test("p6-set-model (R6-I through Ruling E-2): `setModel(supportedModels()[i].value)` between two turns puts the row's WIRE id on the wire, announces the switch with keys, warns about the cross-domain replay and writes the handoff record -- on every leg", async () => {
+  // WS-23 (reasoning-state, user decision 9): a cross-domain switch loses nothing the target can see (the
+  // source's reasoning stays in the sidecar for it), so it is announced but no longer WARNED about, and
+  // the dead `handoff` record is no longer written -- on every leg.
+  test("p6-set-model (R6-I through Ruling E-2): `setModel(supportedModels()[i].value)` between two turns puts the row's WIRE id on the wire, announces the switch with keys, raises no reasoning warning and writes no handoff record -- on every leg", async () => {
     const fake = await startScenarioFake();
     try {
       const sessionId = randomUUID();
@@ -2316,23 +2319,16 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
         const wire = fake.requests.filter((r) => r.path === "/v1/messages").map((r) => /"model":"([^"]+)"/.exec(r.body)?.[1]);
         expect(wire.slice(-1)[0]).toBe(SCENARIO_CHILD_WIRE_ID);
         expect(wire.includes(SCENARIO_CHILD_MODEL)).toBe(false);
-        // (b) THE FRAMES: the switch announced with BOTH ids as keys, preceded by the cross-domain
-        // warning (sonnet-5 declares a single-member continuation domain; the haiku row declares
-        // none), which names counts and identities only.
+        // (b) THE FRAMES: the switch announced with BOTH ids as keys -- and no continuity warning: the
+        // conversation carries over as it is and the source's reasoning stays in the sidecar for it.
         const kinds = result.trace.map((e) => e.kind);
-        expect(kinds.indexOf("system/continuity_warning")).toBeGreaterThan(-1);
-        expect(kinds.indexOf("system/continuity_warning")).toBeLessThan(kinds.indexOf("system/model_switch"));
+        expect(kinds.indexOf("system/continuity_warning")).toBe(-1);
         const switchFrame = result.trace.find((e) => e.kind === "system/model_switch")!.payload as { reason: string; from_model: string; to_model: string; provider: string };
         expect(switchFrame).toMatchObject({ reason: "set_model", from_model: SCENARIO_MODELS.anthropic, to_model: SCENARIO_CHILD_MODEL, provider: "anthropic" });
-        const warning = result.trace.find((e) => e.kind === "system/continuity_warning")!.payload as { warning: string; detail: string };
-        expect(warning.warning).toBe("cross_domain_replay_dropped");
-        expect(warning.detail).toContain(`switching from ${SCENARIO_MODELS.anthropic} to ${SCENARIO_CHILD_MODEL}`);
-        // (c) THE SIDECAR: the `handoff` record, anchored at the source's last entry, beside the origins.
+        // (c) THE SIDECAR: origins beside each entry, and no `handoff` record.
         const records = sidecarRecords(id);
-        const handoff = records.find((r) => r.kind === "handoff");
-        expect(handoff, `${leg}: no handoff record in the sidecar`).toBeDefined();
-        expect(handoff!.model).toBe(SCENARIO_MODELS.anthropic);
-        expect(records.some((r) => r.kind === "origin" && r.anchorUuid === handoff!.anchorUuid && r.model === SCENARIO_MODELS.anthropic)).toBe(true);
+        expect(records.some((r) => r.kind === "handoff"), `${leg}: a handoff record was written`).toBe(false);
+        expect(records.some((r) => r.kind === "origin" && r.model === SCENARIO_MODELS.anthropic)).toBe(true);
         // Post-switch origins name the NEW model: the second turn's entry.
         expect(records.some((r) => r.kind === "origin" && r.model === SCENARIO_CHILD_MODEL)).toBe(true);
       }

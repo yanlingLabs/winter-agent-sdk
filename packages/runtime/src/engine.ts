@@ -85,7 +85,7 @@ import { getDefaultMessagingRuntime, UnattributableSenderError, classifyDelivery
 import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, SystemPromptBlock, ToolChangeSet, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 // P6 fix wave (Ruling E-2): the two PURE continuity functions the switch point calls. Value imports
 // from the provider-runtime barrel, one direction (runtime -> provider-runtime), same as every adapter.
-import { DECORATION_CHAR_BUDGET, ESTIMATE_CHARS_PER_TOKEN, ESTIMATE_MARGIN, WinterProviderResolutionError, buildPortableHandoff, classifySwitch, estimateTokensFromChars, fitBudgetTokens, fitVerdict, isWinterBookkeepingItem, reasoningBlockItems, separateReasoningBlocks, type FitVerdict } from "@yanlinglabs/winter-provider-runtime";
+import { DECORATION_CHAR_BUDGET, ESTIMATE_CHARS_PER_TOKEN, ESTIMATE_MARGIN, WinterProviderResolutionError, classifySwitch, isServerToolBlockType, estimateTokensFromChars, fitBudgetTokens, fitVerdict, isWinterBookkeepingItem, reasoningBlockItems, separateReasoningBlocks, type FitVerdict } from "@yanlinglabs/winter-provider-runtime";
 export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
@@ -650,6 +650,8 @@ export interface ModelDescription {
   /** WS-23 (reasoning-state, decision 5): the row's context window and output ceiling, in tokens -- the switch fit check's budget and the context accountant's limit after a switch. */
   contextWindow?: number;
   maxOutputTokens?: number;
+  /** WS-23 (reasoning-state, decision 9): `false` when the row reads no images (its input modalities omit them). Absent: unknown, read as yes. */
+  readsImages?: boolean;
 }
 
 // --- Phase 5 Task 2 (R5-3): the provider seam extension -------------------------------------------
@@ -7963,77 +7965,58 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   }
 
   /**
-   * RULING E-2's warning half: `classifySwitch` over the two endpoints with the facts THIS session
-   * can honestly state, and -- for a `warned-lossy` transfer -- the `cross_domain_replay_dropped`
-   * frame (counts and identity only, never content) plus the `handoff` sidecar record built by
-   * `buildPortableHandoff` (whole-branch M-6: the `handoff` kind gains its producer).
+   * RULING E-2's warning half, rewritten for WS-23 (reasoning-state, user decision 9): `classifySwitch`
+   * over the two endpoints with the facts THIS session can state, and -- for a transfer that loses
+   * something -- one `model_switch_lossy` continuity frame (counts and identity only, never content).
    *
-   * THE HANDOFF IS BUILT FIRST (the retired coordinator's own review C1 finding, kept): it is where
-   * §9.6's trimming happens, and only its `reasoningTruncated` flag may flip a would-be-lossless
-   * classification to lossy.
+   * ONLY WHAT THE TARGET CANNOT REPRESENT COUNTS: images or documents for a model that reads none, another
+   * vendor's server-tool steps (which reach the target as text), and a turn cut short by an interrupt. The
+   * source's reasoning is NOT lost -- it stays in the provider-state sidecar under its own continuation
+   * domain and replays if the session switches back -- so a plain cross-family switch no longer warns. A
+   * compaction the fit check runs is announced where it runs (the target's first request, `compactForSwitch`);
+   * the daemon's pre-flight review warns about it before the switch.
    *
-   * W18-15 (Phase 10b Lane S, S4): `exposedComplete` is now ASSERTED, from the SAME sidecar record
-   * `summaryAvailable` already reads -- the source's last recorded turn carries `material: "exposed"`
-   * (an open model's own raw reasoning, recorded because the family produces no summary of its own)
-   * and `complete: true` (a normal stop, nothing dropped). Before this, the write path recorded
-   * exposed reasoning as an indistinguishable plain summary, so a `full-exposed` source ALWAYS warned
-   * even when its whole trace carried untouched -- the DeepSeek -> GLM/GPT no-warning case this
-   * assertion is what makes reachable.
+   * The `handoff` sidecar record this used to write is GONE: its one reader was the retired official
+   * leg, and nothing has read it since.
    */
   function announceLossyTransfer(from: ContinuityEndpoint, to: ContinuityEndpoint, reason: "set_model" | "interrupt" | "fallback"): void {
-    const lastSource = [...messages].reverse().find((m) => m.role === "assistant" && m.origin?.modelKey === from.modelKey && m.uuid !== undefined);
-    // P7a fix r1 (Minor-2): the session's OWN instructions basename, ADDED to the §2.8 exclusion
-    // list. The declared option had no producer, so a reuser's `ACME.md` could reach a handoff's
-    // tool facts while the four names on that list -- Winter's own included -- were blocked.
-    const handoff = buildPortableHandoff(messages, sessionChain, from, { instructionsFile: sessionBrand.instructionsFile });
-    const sourceLink = lastSource?.uuid !== undefined ? sessionChain.get(lastSource.uuid) : undefined;
-    const summaryAvailable = sourceLink?.summary !== undefined;
-    const exposedComplete = sourceLink?.material === "exposed" && sourceLink.complete === true;
+    const readsImages = describeModel?.(to.modelKey, to.providerId)?.readsImages !== false;
+    let unreadableMedia = 0;
+    let serverToolBlocks = 0;
+    let completedToolResults = 0;
+    const visit = (blocks: readonly ContentBlock[]): void => {
+      for (const block of blocks) {
+        const type = (block as { type: string }).type;
+        if (!readsImages && (type === "image" || type === "document")) unreadableMedia++;
+        if (to.family !== "anthropic" && isServerToolBlockType(type)) serverToolBlocks++;
+        if (block.type === "tool_result") {
+          if ((block as { error?: unknown }).error !== true && (block as { is_error?: unknown }).is_error !== true && (block as { denied?: unknown }).denied !== true) completedToolResults++;
+          if (Array.isArray(block.content)) visit(block.content);
+        }
+      }
+    };
+    for (const message of messages) if (typeof message.content !== "string") visit(message.content);
     const classification = classifySwitch(from, to, {
-      summaryAvailable,
-      exposedComplete,
-      completedToolResults: handoff.sections.toolFacts.filter((fact) => fact.ok).length,
-      ...(handoff.reasoningTruncated ? { truncated: true } : {}),
+      completedToolResults,
+      ...(unreadableMedia > 0 ? { unreadableMedia } : {}),
+      ...(serverToolBlocks > 0 ? { serverToolBlocks } : {}),
       ...(reason === "interrupt" ? { midTurnAbort: true } : {}),
     });
     if (classification.lossClass !== "warned-lossy") return;
-    const dropped = messages.filter((m) => m.role === "assistant" && m.nativeState !== undefined && (to.continuationDomain === undefined || m.nativeState.continuationDomain !== to.continuationDomain)).length;
     output.write({
       type: "data",
       message: {
         type: "system",
         subtype: "continuity_warning",
-        warning: "cross_domain_replay_dropped",
+        warning: "model_switch_lossy",
         // COUNTS AND IDENTITY ONLY. `classification.warnings` is `warnings.ts`'s own prose, which by
-        // construction names ids and never a payload (`SwitchFacts` has no field one could arrive in).
-        // NO `anchor_uuid`: a per-run entry uuid would make the frame differ across transport legs
-        // and goldens (the trace normalizer keeps `anchor_uuid` deliberately); the handoff record
-        // below carries the anchor for a reader that needs it.
-        detail: `switching from ${from.modelKey} to ${to.modelKey}: ${dropped} assistant message${dropped === 1 ? "" : "s"} carrying native continuation state will not be replayed natively. ${classification.warnings.join(" ")}`,
+        // construction names ids and counts and never a payload (`SwitchFacts` has no field one could
+        // arrive in).
+        detail: `switching from ${from.modelKey} to ${to.modelKey}: ${classification.warnings.join(" ")}`,
         uuid: randomUUID(),
         session_id: config.sessionId,
       },
     });
-    if (lastSource?.uuid === undefined || store?.recordProviderState === undefined) return;
-    // The `handoff` record, anchored at the source's LAST entry (WS-05 §13: "a portable handoff
-    // summary is persisted as a `handoff` sidecar record"). Its consumer is the cross-runtime
-    // Claude-leg door, not the Winter renderer -- which decorates per message on its own -- so it is
-    // written and NOT attached to the next request. `itemIndex` 3 sits after the three per-turn
-    // kinds (origin 0, native-state 1, summary 2). Auxiliary: a failed write degrades the handoff,
-    // never the switch.
-    void Promise.resolve(
-      store.recordProviderState({
-        sessionId: config.sessionId,
-        anchorUuid: lastSource.uuid,
-        provider: from.providerId,
-        model: from.modelKey,
-        family: from.family,
-        ...(from.continuationDomain !== undefined ? { continuationDomain: from.continuationDomain } : {}),
-        itemIndex: 3,
-        kind: "handoff",
-        payload: { text: handoff.text, truncated: handoff.truncated, reasoningTruncated: handoff.reasoningTruncated, target: { providerId: to.providerId, modelKey: to.modelKey } },
-      }),
-    ).catch(() => {});
   }
 
   /**

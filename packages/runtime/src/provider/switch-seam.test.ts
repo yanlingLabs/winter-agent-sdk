@@ -200,34 +200,15 @@ describe("Ruling E-2: `set_model` resolves FIRST and the switch rebuilds provide
     });
   });
 
-  test("a CROSS-DOMAIN switch emits `continuity_warning: cross_domain_replay_dropped` (counts and identity only) and writes the `handoff` sidecar record anchored at the source's last entry (M-6)", async () => {
+  // WS-23 (reasoning-state, user decision 9): a cross-domain switch loses nothing the target can see --
+  // the source's reasoning stays in the sidecar for the source -- so it no longer warns, and the dead
+  // `handoff` record (its one reader was the retired official leg) is no longer written.
+  test("a CROSS-DOMAIN switch is announced, not warned about, and writes NO `handoff` record (WS-23)", async () => {
     await withFake(async (fake) => {
       const r = await drive({ fake, catalog: twoDomainCatalog(fake.url), config: config(), steps: [{ user: "first" }, { setModel: { model: "prova/m2" }, expectOk: true }, { user: "second" }] });
-      const warnings = warningFrames(r.messages);
-      expect(warnings).toHaveLength(1);
-      expect(warnings[0]!.warning).toBe("cross_domain_replay_dropped");
-      const detail = String(warnings[0]!.detail);
-      expect(detail).toContain("switching from prova/m1 to prova/m2");
-      expect(detail).toContain("assistant message");
-      // `warnings.ts`'s own prose for a hidden-reasoning source whose state is bound to its provider.
-      expect(detail).toContain("starts a new reasoning context");
-      // Ordering: the warning precedes the switch announcement.
-      const kinds = r.messages.filter((m) => m.type === "system").map((m) => (m as { subtype: string }).subtype);
-      expect(kinds.indexOf("continuity_warning")).toBeLessThan(kinds.indexOf("model_switch"));
-      // The handoff record: kind `handoff`, anchored at the SOURCE's last assistant entry, produced
-      // by `buildPortableHandoff` (its delimiter is the proof), naming source and target.
-      const lastSourceOrigin = r.records.filter((rec) => rec.kind === "origin" && rec.model === "prova/m1").at(-1)!;
-      const handoff = r.records.find((rec) => rec.kind === "handoff");
-      expect(handoff).toBeDefined();
-      expect(handoff!.anchorUuid).toBe(lastSourceOrigin.anchorUuid);
-      expect(handoff!.model).toBe("prova/m1");
-      // The frame carries NO anchor (a per-run uuid would break cross-leg and golden comparison); the record does.
-      expect(warnings[0]!.anchor_uuid).toBeUndefined();
-      const payload = handoff!.payload as { text: string; target: { providerId: string; modelKey: string } };
-      expect(payload.text).toContain("<prior_model_handoff");
-      expect(payload.text).toContain("prova / prova/m1");
-      expect(payload.target).toEqual({ providerId: "prova", modelKey: "prova/m2" });
-      // The handoff is NOT put on the wire: the next request carries the user's own text only.
+      expect(warningFrames(r.messages)).toHaveLength(0);
+      expect(switchFrames(r.messages)).toHaveLength(1);
+      expect(r.records.some((rec) => rec.kind === "handoff")).toBe(false);
       expect(fake.requests[1]!.body).not.toContain("prior_model_handoff");
     });
   });
@@ -378,7 +359,8 @@ describe("Ruling E-2: a `set_model` parked MID-TURN and applied on interrupt", (
       // The warning carries the cancelled-turn loss (trigger 7), named in its detail.
       const warnings = warningFrames(dataMessages(frames));
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]!.warning).toBe("cross_domain_replay_dropped");
+      // WS-23 (decision 9): the one loss that remains here is the unfinished turn, under its own code.
+      expect(warnings[0]!.warning).toBe("model_switch_lossy");
       expect(String(warnings[0]!.detail)).toContain("cancelled before it finished");
       const kinds = dataMessages(frames).filter((m) => m.type === "system").map((m) => (m as { subtype: string }).subtype);
       expect(kinds.indexOf("continuity_warning")).toBeLessThan(kinds.indexOf("model_switch"));
@@ -793,10 +775,12 @@ describe("W18-15: a complete-exposed source classifies as lossless-portable (no 
     expect(switchFrames(messages)).toHaveLength(1);
   });
 
-  test("contrast: exposedComplete: false on the SAME shape DOES warn -- proving the suppression above is earned by the flag, not by the source family", async () => {
+  // WS-23 (reasoning-state, decision 9): an incomplete exposed trace is not a loss either -- the trace
+  // stays with its source in the sidecar -- so the flag no longer decides a warning.
+  test("WS-23: exposedComplete: false on the SAME shape is silent too -- reasoning stays with its source", async () => {
     const { run } = driveExposedSwitch({ exposed: "only part of the trace", exposedComplete: false });
     const messages = await run();
-    expect(warningFrames(messages)).toHaveLength(1);
-    expect(String(warningFrames(messages)[0]!.detail)).toContain("part of this turn's trace was not captured");
+    expect(warningFrames(messages)).toHaveLength(0);
+    expect(switchFrames(messages)).toHaveLength(1);
   });
 });

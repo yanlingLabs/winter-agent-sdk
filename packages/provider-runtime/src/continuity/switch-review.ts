@@ -22,6 +22,9 @@ import { loadCatalog, modelFamilyOf, OTHER_FAMILY_ID, type WinterCatalog } from 
 import type { ProviderStateRecord } from "./claude-ready.ts";
 import type { ContinuityEndpoint } from "./domains.ts";
 import { classifySwitch, type SwitchClassification, type SwitchFacts } from "./warnings.ts";
+import { DECORATION_CHAR_BUDGET, estimateTokensFromChars, fitVerdict, type FitVerdict } from "./fit.ts";
+import { isServerToolBlockType } from "./renderer.ts";
+import { DEFAULT_COMPACTION_THRESHOLD } from "@yanlinglabs/winter-agent-sdk";
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
@@ -279,7 +282,21 @@ export function switchFactsFor(args: { entries: SessionStoreEntry[]; sidecarReco
   };
 }
 
-export type SwitchReview = { prompt: boolean; skipped?: "same-family" | "no-source-turns" | "same-profile"; classification?: SwitchClassification };
+/**
+ * WS-23 (reasoning-state, decision 9): `fits`/`estimatedTokens`/`window` report the FIT of the
+ * conversation on the target -- present whenever the target's catalog row declares a window -- so the
+ * confirmation can say a compaction will run. The estimate covers the conversation plus an allowance for
+ * the system prompt and tools this review cannot see (`SYSTEM_AND_TOOLS_ALLOWANCE_TOKENS`); the engine
+ * re-checks with the real ones on the target's first request, and it is the engine's check that acts.
+ */
+export type SwitchReview = { prompt: boolean; skipped?: "same-family" | "no-source-turns" | "same-profile"; classification?: SwitchClassification; fits?: boolean; estimatedTokens?: number; window?: number };
+
+/**
+ * What the review charges for the request parts it cannot see: a code session's system prompt and tool
+ * definitions run to roughly this many tokens (Winter's own preset and built-in tools, measured on the
+ * wire by the engine's fit check). An estimate for a confirmation card, never a gate.
+ */
+export const SYSTEM_AND_TOOLS_ALLOWANCE_TOKENS = 16_000;
 
 // --- same-family, by MODEL LINEAGE (controller ruling, fix round 2) --------------------------------
 //
@@ -331,11 +348,82 @@ function sameModelFamily(a: ContinuityEndpoint, b: ContinuityEndpoint, catalog: 
 export function reviewModelSwitch(args: { entries: SessionStoreEntry[]; sidecarRecords: ProviderStateRecord[]; from: ContinuityEndpoint; to: ContinuityEndpoint; truncated?: boolean; catalog?: WinterCatalog }): SwitchReview {
   const sameProfile = args.from.providerId === args.to.providerId && args.from.modelKey === args.to.modelKey;
   if (sameProfile) return { prompt: false, skipped: "same-profile" };
-  if (sameModelFamily(args.from, args.to, catalogFor(args.catalog))) return { prompt: false, skipped: "same-family" };
+  const catalog = catalogFor(args.catalog);
 
+  // WS-23 (decision 9): only what the TARGET cannot represent is a loss, and each of the four is
+  // measured on the lineage since the last compaction (what the target would actually receive).
   const facts = switchFactsFor({ entries: args.entries, sidecarRecords: args.sidecarRecords, from: args.from });
-  if (facts.sourceTurns === 0) return { prompt: false, skipped: "no-source-turns" };
+  const row = catalog.models.find((m) => m.key === args.to.modelKey);
+  const lineage = lineageSinceLastBoundary(args.entries);
+  const blocks = lineageBlocks(lineage, args.entries);
+  const readsImages = row === undefined || row.inputModalities.value.includes("image");
+  const unreadableMedia = readsImages ? 0 : blocks.filter((b) => b.type === "image" || b.type === "document").length;
+  const toAnthropic = catalog.providers.find((p) => p.id === args.to.providerId)?.family === "anthropic";
+  const serverToolBlocks = toAnthropic ? 0 : blocks.filter((b) => isServerToolBlockType(b.type)).length;
+  const fit = fitOnTarget(args.entries, lineage, args.sidecarRecords, args.to, row);
+  const verdict: SwitchFacts = {
+    ...(facts.completedToolResults !== undefined ? { completedToolResults: facts.completedToolResults } : {}),
+    ...(unreadableMedia > 0 ? { unreadableMedia } : {}),
+    ...(serverToolBlocks > 0 ? { serverToolBlocks } : {}),
+    ...(fit !== undefined && !fit.fits ? { compaction: { estimatedTokens: fit.estimatedTokens, window: fit.window } } : {}),
+  };
+  const classification = classifySwitch(args.from, args.to, verdict);
+  const fitFields = fit !== undefined ? { fits: fit.fits, estimatedTokens: fit.estimatedTokens, window: fit.window } : {};
+  if (classification.lossClass !== "warned-lossy") {
+    // The pre-WS-23 skip reasons still name WHY nothing prompts, for a host that reports them.
+    if (sameModelFamily(args.from, args.to, catalog)) return { prompt: false, skipped: "same-family", classification, ...fitFields };
+    if (facts.sourceTurns === 0) return { prompt: false, skipped: "no-source-turns", classification, ...fitFields };
+  }
+  return { prompt: classification.lossClass === "warned-lossy", classification, ...fitFields };
+}
 
-  const classification = classifySwitch(args.from, args.to, { ...facts, ...(args.truncated === true ? { truncated: true } : {}) });
-  return { prompt: classification.lossClass === "warned-lossy", classification };
+/** Every content block of the lineage's messages, one level of `tool_result` content included. */
+function lineageBlocks(lineage: Node[], entries: SessionStoreEntry[]): Array<{ type: string }> {
+  const byUuid = new Map(entries.filter((e) => typeof e.uuid === "string").map((e) => [e.uuid as string, e]));
+  const out: Array<{ type: string }> = [];
+  const visit = (content: unknown): void => {
+    if (!Array.isArray(content)) return;
+    for (const block of content) {
+      if (!isRecord(block) || typeof block.type !== "string") continue;
+      out.push({ type: block.type });
+      if (block.type === "tool_result") visit(block.content);
+    }
+  };
+  for (const node of lineage) {
+    const message = (byUuid.get(node.uuid) as { message?: unknown } | undefined)?.message;
+    if (isRecord(message)) visit(message.content);
+  }
+  return out;
+}
+
+
+/**
+ * The conversation's fit on the target, or `undefined` when the target's row declares no window. The
+ * conversation's own characters (every message since the last compaction, plus the target's own native
+ * state that would replay), the decoration budget when another model's turns are in it, and the
+ * allowance for the system prompt and tools -- against `window x threshold - maxOutput`.
+ */
+function fitOnTarget(entries: SessionStoreEntry[], lineage: Node[], sidecarRecords: ProviderStateRecord[], to: ContinuityEndpoint, row: WinterCatalog["models"][number] | undefined): FitVerdict | undefined {
+  const window = row?.contextWindow?.value;
+  if (typeof window !== "number") return undefined;
+  const byUuid = new Map(entries.filter((e) => typeof e.uuid === "string").map((e) => [e.uuid as string, e]));
+  const byAnchor = groupByAnchor(sidecarRecords);
+  let chars = 0;
+  let foreign = false;
+  for (const node of lineage) {
+    const message = (byUuid.get(node.uuid) as { message?: unknown } | undefined)?.message;
+    if (!isRecord(message)) continue;
+    chars += typeof message.content === "string" ? message.content.length : JSON.stringify(message.content ?? "").length;
+    if (node.type !== "assistant") continue;
+    const records = byAnchor.get(node.uuid) ?? [];
+    const origin = originOf(records);
+    if (origin !== undefined && (origin.providerId !== to.providerId || origin.modelKey !== to.modelKey)) {
+      foreign = true;
+      continue;
+    }
+    for (const record of records) if (record.kind === "native-state" || record.kind === "reasoning-blocks") chars += JSON.stringify(record.payload).length;
+  }
+  if (foreign) chars += DECORATION_CHAR_BUDGET;
+  const maxOutput = row?.maxOutputTokens?.value;
+  return fitVerdict(estimateTokensFromChars(chars) + SYSTEM_AND_TOOLS_ALLOWANCE_TOKENS, window, DEFAULT_COMPACTION_THRESHOLD, typeof maxOutput === "number" ? maxOutput : undefined);
 }

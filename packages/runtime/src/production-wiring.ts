@@ -720,6 +720,8 @@ export function describeCatalogModel(catalog: WinterCatalog, model: string, prov
     // WS-23 (reasoning-state, decision 5): the switch fit check's budget and the accountant's limit.
     ...(typeof row.contextWindow?.value === "number" ? { contextWindow: row.contextWindow.value } : {}),
     ...(typeof row.maxOutputTokens?.value === "number" ? { maxOutputTokens: row.maxOutputTokens.value } : {}),
+    // WS-23 (decision 9): only the negative is stated -- a row that reads images needs nothing said.
+    ...(Array.isArray(row.inputModalities?.value) && !row.inputModalities.value.includes("image") ? { readsImages: false as const } : {}),
   };
   return Object.keys(description).length > 0 ? description : undefined;
 }

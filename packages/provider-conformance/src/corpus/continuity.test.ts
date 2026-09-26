@@ -32,14 +32,14 @@ describe("the continuity corpus (report §12.3 + §12.4)", () => {
   test("the eight NAMED transitions of §12.3 are all present, by name", () => {
     const ids = new Set(CONTINUITY_CASES.map((c) => c.id));
     for (const required of [
-      "claude-to-openai-warns",
-      "openai-to-claude-warns",
-      "gemini-to-openai-warns",
-      "xai-to-openai-warns",
+      "claude-to-openai-reasoning-kept",
+      "openai-to-claude-reasoning-kept",
+      "gemini-to-openai-reasoning-kept",
+      "xai-to-openai-no-shared-domain",
       "deepseek-to-openai-full-no-warning",
-      "deepseek-to-openai-truncated-warns",
+      "deepseek-to-openai-truncation-not-a-loss",
       "same-provider-model-profile-no-warning",
-      "same-provider-unverified-model-warns",
+      "same-provider-unverified-model-not-native",
     ] as const) {
       expect(ids.has(required)).toBe(true);
     }
@@ -60,13 +60,13 @@ describe("the continuity corpus (report §12.3 + §12.4)", () => {
 
   test("a FAILING case is reported with its own message, and the run continues past it", async () => {
     const report = await runContinuityCorpus({
-      "claude-to-openai-warns": () => {
+      "claude-to-openai-reasoning-kept": () => {
         throw new Error("deliberate");
       },
-      "openai-to-claude-warns": () => {},
+      "openai-to-claude-reasoning-kept": () => {},
     });
-    expect(report.outcomes.find((o) => o.id === "claude-to-openai-warns")).toMatchObject({ status: "failed", detail: "deliberate" });
-    expect(report.outcomes.find((o) => o.id === "openai-to-claude-warns")?.status).toBe("passed");
+    expect(report.outcomes.find((o) => o.id === "claude-to-openai-reasoning-kept")).toMatchObject({ status: "failed", detail: "deliberate" });
+    expect(report.outcomes.find((o) => o.id === "openai-to-claude-reasoning-kept")?.status).toBe("passed");
   });
 });
 

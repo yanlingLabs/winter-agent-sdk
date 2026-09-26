@@ -59,7 +59,7 @@ export interface HistoryRenderer {
   render(
     messages: ProviderMessage[],
     chain: ContinuationChain,
-    target: { family: string; continuationDomain?: string; readableState: "none" | "summary" | "full-exposed"; providerId?: string; modelKey?: string },
+    target: { family: string; continuationDomain?: string; readableState: "none" | "summary" | "full-exposed"; providerId?: string; modelKey?: string; readsImages?: boolean },
   ): ProviderMessage[];
 }
 
@@ -168,6 +168,8 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
     // back as a quoted `<recovered_reasoning>` text block (provider-runtime `sameModel`).
     providerId: resolved.providerId,
     modelKey: resolved.modelKey,
+    // WS-23 (reasoning-state, decision 9): a model that reads no images gets a note in place of each one.
+    ...(Array.isArray(resolved.descriptor?.inputModalities?.value) ? { readsImages: resolved.descriptor.inputModalities.value.includes("image") } : {}),
   };
 
   return {

@@ -616,3 +616,46 @@ describe("WS-23: a Claude turn whose thinking rides `nativeState` (the sidecar) 
     expect(wire).toContain(RECOVERED_REASONING_TAG);
   });
 });
+
+// --- WS-23 (reasoning-state, decisions 8 and 9): what the target cannot represent becomes text -------------
+describe("WS-23: another vendor's server tools and unreadable media reach the target as text", () => {
+  const serverTurn = (): ProviderMessageLike =>
+    ({
+      role: "assistant",
+      content: [
+        { type: "server_tool_use", id: "srv_1", name: "web_search", input: { query: "winter" } },
+        { type: "web_search_tool_result", tool_use_id: "srv_1", content: [{ type: "web_search_result", title: "Winter", url: "https://example.com/w" }] },
+        { type: "text", text: "found it" },
+      ],
+      origin: { providerId: "anthropic", modelKey: "anthropic/claude-a", family: "anthropic", continuationDomain: "anthropic/claude-a" },
+    }) as unknown as ProviderMessageLike;
+
+  test("to another vendor: the call and its results become text (titles and urls), the rest untouched", () => {
+    const [message] = createHistoryRenderer(buildRegistry()).render([serverTurn()], chainOf({}), OPENAI);
+    expect(message!.content).toEqual([
+      { type: "text", text: '[server tool call: web_search {"query":"winter"}]' },
+      { type: "text", text: "[web search results]\n- Winter (https://example.com/w)" },
+      { type: "text", text: "found it" },
+    ]);
+  });
+
+  test("to Anthropic itself: untouched", () => {
+    const original = serverTurn();
+    const [message] = createHistoryRenderer(buildRegistry()).render([original], chainOf({}), { ...CLAUDE_A, providerId: "anthropic", modelKey: "anthropic/claude-a" });
+    expect(message!.content).toEqual(original.content);
+  });
+
+  test("a model that reads no images gets a note in each image's place, nested ones included; one that does is untouched", () => {
+    const image = { type: "image" as const, source: { type: "base64" as const, media_type: "image/png", data: "QUJD" } };
+    const history: ProviderMessageLike[] = [
+      { role: "user", content: [{ type: "text", text: "look" }, image] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "t1", content: [image, { type: "text", text: "page 1" }] }] },
+    ];
+    const textOnly = createHistoryRenderer(buildRegistry()).render(history, chainOf({}), { ...OPENAI, readsImages: false });
+    expect(JSON.stringify(textOnly)).not.toContain("QUJD");
+    expect(textOnly[0]!.content).toEqual([{ type: "text", text: "look" }, { type: "text", text: "[an image was here; this model cannot read images]" }]);
+    expect((textOnly[1]!.content as Array<{ content: unknown }>)[0]!.content).toEqual([{ type: "text", text: "[an image was here; this model cannot read images]" }, { type: "text", text: "page 1" }]);
+    const vision = createHistoryRenderer(buildRegistry()).render(history, chainOf({}), OPENAI);
+    expect(vision[0]).toBe(history[0]!);
+  });
+});
