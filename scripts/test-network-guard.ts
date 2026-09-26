@@ -24,6 +24,11 @@
 // violation in the file named by `WINTER_TEST_NETWORK_GUARD_LOG`, and the parent's `afterEach` fails the
 // test that spawned it); and EVERY child -- a compiled binary, `curl`, a grandchild -- inherits the proxy
 // environment of the recording proxy below, unless it was handed an environment that drops it.
+//
+// THE ONE HOLE (release CI fix): the release gates that exist to reach the public npm registry open it for
+// the length of one call with `withNpmRegistryAccess` (`./test-network-registry.ts`, which says why the
+// hole is cut there and not in the proxy). Only `registry.npmjs.org`, only over HTTPS, never with a
+// credential; every other destination stays refused inside that call too.
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,6 +37,7 @@ import tls from "node:tls";
 import http from "node:http";
 import https from "node:https";
 import childProcess from "node:child_process";
+import { NPM_REGISTRY_HOST, npmRegistryAccessOpen } from "./test-network-registry.ts";
 
 export const ALLOW_REAL_NETWORK_ENV = "WINTER_TEST_ALLOW_REAL_NETWORK";
 
@@ -102,6 +108,26 @@ function hostOfArgs(args: unknown[]): string | undefined {
   return undefined;
 }
 
+/**
+ * Inside a `withNpmRegistryAccess` call: an HTTPS `fetch` to the public npm registry itself, carrying no
+ * credential. A request that names the registry but brings an `Authorization` or `Cookie` header is
+ * refused like any other destination -- the hole is for anonymous reads of public packages only.
+ */
+function npmRegistryFetchAllowed(input: unknown, init: RequestInit | undefined): boolean {
+  if (!npmRegistryAccessOpen()) return false;
+  const raw = typeof input === "string" ? input : input instanceof URL ? input.href : typeof input === "object" && input !== null ? (input as { url?: unknown }).url : undefined;
+  if (typeof raw !== "string") return false;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:" || url.hostname.toLowerCase() !== NPM_REGISTRY_HOST || url.username !== "" || url.password !== "") return false;
+  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  return !headers.has("authorization") && !headers.has("cookie");
+}
+
 function guardArgs<T extends (...args: never[]) => unknown>(via: string, original: T): T {
   return function (this: unknown, ...args: unknown[]) {
     const host = hostOfArgs(args);
@@ -114,7 +140,7 @@ if (process.env[ALLOW_REAL_NETWORK_ENV] !== "1") {
   const realFetch = globalThis.fetch;
   const guardedFetch = function (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) {
     const target = hostOfUrl(input);
-    if (target !== undefined && !isLocalHost(target.host)) {
+    if (target !== undefined && !isLocalHost(target.host) && !npmRegistryFetchAllowed(input, init)) {
       try {
         refuse("fetch", target.label);
       } catch (err) {

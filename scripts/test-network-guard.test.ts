@@ -3,11 +3,13 @@
 // Nothing leaves the machine: the in-process doors throw before connecting, and the proxy backstop
 // answers 403 itself.
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NPM_REGISTRY_HOST, npmRegistryAccessOpen, withNpmRegistryAccess } from "./test-network-registry.ts";
 
 const GUARD = join(import.meta.dir, "test-network-guard.ts");
+const REGISTRY = join(import.meta.dir, "test-network-registry.ts");
 
 async function nested(body: string): Promise<{ code: number; out: string }> {
   const dir = mkdtempSync(join(tmpdir(), "winter-guard-proof-"));
@@ -52,5 +54,69 @@ describe("the test network guard closes the doors review r1 found open", () => {
   test("loopback stays open", async () => {
     const r = await nested(`const s = Bun.serve({ port: 0, fetch: () => new Response("ok") }); try { await fetch(\`http://127.0.0.1:\${s.port}/\`); } finally { s.stop(true); }`);
     expect(r.code).toBe(0);
+  });
+});
+
+// The release CI fix: the one hole (`test-network-registry.ts`). Every case below is REFUSED before a
+// byte leaves -- the positive path (a real anonymous read of the registry) is what the network legs
+// themselves exercise (`smoke-installed.test.ts`, `compile-fixtures.test.ts`), under CI's flag.
+describe("the npm-registry hole is one host, one call, and never a credential", () => {
+  const inScope = (body: string): string => `const { withNpmRegistryAccess } = await import(${JSON.stringify(REGISTRY)});\nawait withNpmRegistryAccess(async () => {\n${body}\n});`;
+
+  test("outside a withNpmRegistryAccess call the registry is refused like any other host", async () => {
+    const r = await nested(`try { await fetch("https://${NPM_REGISTRY_HOST}/ajv"); } catch {}`);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain(`fetch -> https://${NPM_REGISTRY_HOST}`);
+  });
+
+  test("inside one, a registry request carrying an Authorization header is refused", async () => {
+    const r = await nested(inScope(`try { await fetch("https://${NPM_REGISTRY_HOST}/ajv", { headers: { Authorization: "Bearer not-a-real-token" } }); } catch {}`));
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain(`fetch -> https://${NPM_REGISTRY_HOST}`);
+  });
+
+  test("inside one, plain http to the registry and every OTHER host stay refused", async () => {
+    const http = await nested(inScope(`try { await fetch("http://${NPM_REGISTRY_HOST}/ajv"); } catch {}`));
+    expect(http.code).not.toBe(0);
+    expect(http.out).toContain(`fetch -> http://${NPM_REGISTRY_HOST}`);
+    const other = await nested(inScope(`try { await fetch("https://192.0.2.1/"); } catch {}`));
+    expect(other.code).not.toBe(0);
+    expect(other.out).toContain("192.0.2.1");
+  });
+
+  test("the environment a child inherits carries no registry credential, and is restored afterwards", async () => {
+    const planted: Record<string, string> = {
+      NODE_AUTH_TOKEN: "planted-node-auth-token",
+      NPM_TOKEN: "planted-npm-token",
+      NPM_CONFIG_USERCONFIG: "/nonexistent/planted-npmrc",
+      "npm_config_//registry.npmjs.org/:_authToken": "planted-config-token",
+    };
+    // Read by NAME, never by enumerating: Bun 1.3 leaves a proxy variable that was absent at startup and
+    // set later (the guard's own) out of `Object.keys(process.env)`, while 1.4 lists it.
+    const watched = [...Object.keys(planted), "npm_config_userconfig", "npm_config_globalconfig", "npm_config_registry", "NO_PROXY", "no_proxy", "HTTPS_PROXY"];
+    const read = (): Record<string, string | undefined> => Object.fromEntries(watched.map((name) => [name, process.env[name]]));
+    const before = read();
+    Object.assign(process.env, planted);
+    try {
+      const seen = await withNpmRegistryAccess(async () => {
+        expect(npmRegistryAccessOpen()).toBe(true);
+        for (const name of ["npm_config_userconfig", "npm_config_globalconfig"]) expect(readFileSync(process.env[name]!, "utf8")).toBe(""); // removed when the call settles
+        expect(Object.values({ ...process.env }).some((v) => typeof v === "string" && v.startsWith("planted-"))).toBe(false);
+        return read();
+      });
+      for (const name of Object.keys(planted)) expect(seen[name]).toBeUndefined();
+      expect(seen["npm_config_globalconfig"]).toBeString();
+      expect(seen["npm_config_globalconfig"]).not.toBe(seen["npm_config_userconfig"]); // npm refuses one file as both
+      expect(seen["npm_config_registry"]).toBe(`https://${NPM_REGISTRY_HOST}/`);
+      expect(seen["NO_PROXY"]!.split(",")).toContain(NPM_REGISTRY_HOST);
+      expect(seen["no_proxy"]!.split(",")).toContain(NPM_REGISTRY_HOST);
+      expect(seen["HTTPS_PROXY"]).toBe(before["HTTPS_PROXY"]); // every OTHER host still goes to the recording proxy
+      // Afterwards: the scope is closed, and every variable is back as it was (planted ones included).
+      expect(npmRegistryAccessOpen()).toBe(false);
+      expect(read()).toEqual({ ...before, ...planted });
+    } finally {
+      for (const name of Object.keys(planted)) delete process.env[name];
+    }
+    expect(read()).toEqual(before);
   });
 });

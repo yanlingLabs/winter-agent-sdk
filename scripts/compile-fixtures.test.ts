@@ -36,6 +36,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { compile, missingDistPackages } from "./compile-fixtures.ts";
 import { buildPackages } from "./build-packages.ts";
+import { withNpmRegistryAccess } from "./test-network-registry.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
@@ -168,7 +169,9 @@ test.skipIf(!NETWORK_LEGS_ENABLED)("P7a r3 (F1): the OFFICIAL fixture job's exac
     expect(missingDistPackages().length).toBeGreaterThan(0); // the precondition really is absent
 
     const { compileOfficialFixture } = await import("./compile-official-fixture.ts");
-    const r = await compileOfficialFixture();
+    // It fetches the pinned tarball from the npm registry and lets npm install that package's own
+    // dependencies from it: the registry is opened for this one call (`test-network-registry.ts`).
+    const r = await withNpmRegistryAccess(() => compileOfficialFixture());
     expect(r.ok, r.output).toBe(true);
     // ...and specifically NOT refused by the dist guard, which is the shape of the round-2 failure.
     expect(r.output).not.toContain("bun run build:packages");
