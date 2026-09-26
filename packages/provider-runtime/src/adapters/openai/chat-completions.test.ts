@@ -264,6 +264,19 @@ describe("ChatStreamMapper usage: normalized to the seam's convention", () => {
     const events = drive(new ChatStreamMapper(false), [{ choices: [], usage: { prompt_tokens: 40, completion_tokens: 2 } }]);
     expect(events.find((e) => e.type === "usage")).toEqual({ type: "usage", inputTokens: 40, outputTokens: 2 });
   });
+
+  // WS-24 (I-2): this dialect's own name for the same fact responses.ts's
+  // `output_tokens_details.reasoning_tokens` reports (DeepSeek's `deepseek-reasoner` and any other
+  // row that documents it over this wire) -- a subset of `completion_tokens`, never invented as 0.
+  test("completion_tokens_details.reasoning_tokens becomes reasoningTokens", () => {
+    const events = drive(new ChatStreamMapper(false), [{ choices: [], usage: { prompt_tokens: 100, completion_tokens: 50, completion_tokens_details: { reasoning_tokens: 30 } } }]);
+    expect(events.find((e) => e.type === "usage")).toEqual({ type: "usage", inputTokens: 100, outputTokens: 50, reasoningTokens: 30 });
+  });
+
+  test("no completion_tokens_details -> reasoningTokens is absent, never invented as 0", () => {
+    const events = drive(new ChatStreamMapper(false), [{ choices: [], usage: { prompt_tokens: 100, completion_tokens: 50 } }]);
+    expect(events.find((e) => e.type === "usage")).toEqual({ type: "usage", inputTokens: 100, outputTokens: 50 });
+  });
 });
 
 // R-S4: the OpenAI family has no error field on a tool reply -- the error TEXT is what carries it.

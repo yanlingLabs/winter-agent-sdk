@@ -333,16 +333,25 @@ export class ChatStreamMapper {
 
     const usage = payload.usage;
     if (usage !== null && typeof usage === "object") {
-      const u = usage as { prompt_tokens?: unknown; completion_tokens?: unknown; prompt_tokens_details?: unknown; prompt_cache_hit_tokens?: unknown };
+      const u = usage as { prompt_tokens?: unknown; completion_tokens?: unknown; prompt_tokens_details?: unknown; prompt_cache_hit_tokens?: unknown; completion_tokens_details?: unknown };
       const details = u.prompt_tokens_details !== null && typeof u.prompt_tokens_details === "object" ? (u.prompt_tokens_details as { cached_tokens?: unknown }).cached_tokens : undefined;
       // DeepSeek reports its cache hits under its own name; both are the same accounting fact.
       const cached = typeof details === "number" ? details : typeof u.prompt_cache_hit_tokens === "number" ? u.prompt_cache_hit_tokens : undefined;
+      // WS-24 (I-2): `completion_tokens_details.reasoning_tokens` -- the chat-completions dialect's
+      // own name for the SAME fact `responses.ts`'s `output_tokens_details.reasoning_tokens` reports
+      // (DeepSeek's `deepseek-reasoner` and any other row that documents it over this wire). A SUBSET
+      // of `completion_tokens`, never added on top. Absent when the row omits it.
+      const reasoning =
+        u.completion_tokens_details !== null && typeof u.completion_tokens_details === "object"
+          ? (u.completion_tokens_details as { reasoning_tokens?: unknown }).reasoning_tokens
+          : undefined;
       // Review r1 finding 5: `prompt_tokens` is the TOTAL prompt (DeepSeek's hit + miss included), and
       // the cached count a subset of it -- normalized to the seam's non-cached `inputTokens`.
       events.push({
         type: "usage",
         ...normalizedPromptUsage(typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0, cached),
         outputTokens: typeof u.completion_tokens === "number" ? u.completion_tokens : 0,
+        ...(typeof reasoning === "number" ? { reasoningTokens: reasoning } : {}),
       });
     }
 
