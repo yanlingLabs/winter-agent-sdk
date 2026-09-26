@@ -34,7 +34,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     cwd,
     home: "/home/test",
     sessionId: "11111111-2222-3333-4444-555555555555",
-    readState: createSessionReadState(),
+    readState: createSessionReadState({ cwd: process.cwd() }),
     emitFrame: () => {},
     permissions: { probeReadAccess: () => "silent" },
     tempDir: sessionTempDir,

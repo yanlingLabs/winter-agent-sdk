@@ -5,12 +5,14 @@
 // stranger installs. So the npm set is
 //
 //     the transitive workspace `dependencies` CLOSURE of the ROOTS,
-//     where the roots are: the wrapper, plus every package flagged as a HARNESS
+//     where the roots are: the wrapper, the runtime (WS-23), plus every package flagged as a HARNESS
 //
-// which today is five: `@yanlinglabs/winter-agent-sdk` and `@yanlinglabs/winter-provider-catalog`
-// (what `npm install @yanlinglabs/winter-agent-sdk` needs at run time), the two harness roots
-// `@yanlinglabs/winter-conformance` + `@yanlinglabs/winter-provider-conformance`, and
-// `@yanlinglabs/winter-provider-runtime`, which the second harness genuinely imports.
+// which today is seven: `@yanlinglabs/winter-agent-sdk` and `@yanlinglabs/winter-provider-catalog`
+// (what `npm install @yanlinglabs/winter-agent-sdk` needs at run time), its darwin-arm64 platform
+// package (an optionalDependency, P9a-3), the runtime `@yanlinglabs/winter-agent-runtime` (WS-23's
+// embedding root), the two harness roots `@yanlinglabs/winter-conformance` +
+// `@yanlinglabs/winter-provider-conformance`, and `@yanlinglabs/winter-provider-runtime`, which the
+// runtime and the second harness genuinely import.
 //
 // WHY THE HARNESSES ARE ROOTS (R-7b-5). P7a ruled "EXACTLY the wrapper's closure, no exceptions
 // mechanism", for a good reason worth restating: "the closure plus a list" degrades every time the
@@ -48,6 +50,16 @@ const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 /** The published wrapper -- the one package a public consumer installs by name. */
 export const NPM_ROOT_PACKAGE = "@yanlinglabs/winter-agent-sdk";
 
+/**
+ * WS-23: the runtime package, the SECOND package a host installs by name -- an embedding host (Winter's
+ * daemon runs chat and dispatch sessions in-process, one Worker per session) imports the engine itself
+ * rather than spawning the compiled binary. A ROOT, named here beside the wrapper, and deliberately not
+ * a third manifest flag: the rule stays "the closure of a written-down set of roots", so `npm: true` on
+ * anything outside that closure is still a refusal. Its own dependencies (the wrapper, the catalog, the
+ * provider runtime) are already in the closure, so this adds exactly one package to npm.
+ */
+export const NPM_EMBEDDING_ROOT_PACKAGE = "@yanlinglabs/winter-agent-runtime";
+
 /** Packages whose manifest declares `winter.publish.npm: true`, sorted. */
 export function npmPublishSet(root: string = REPO_ROOT): PublishablePackage[] {
   return discoverPublishablePackages(root).filter((p) => p.npm);
@@ -74,7 +86,7 @@ export function npmPublishSet(root: string = REPO_ROOT): PublishablePackage[] {
  * `release-gates.test.ts`. The parameter exists so that test can plant a synthetic graph -- a rule
  * that has only ever been evaluated on the one tree it was written for proves nothing.
  */
-export function npmRequiredClosure(root: string = REPO_ROOT, roots: readonly string[] = [NPM_ROOT_PACKAGE, ...npmHarnessSet(root)]): string[] {
+export function npmRequiredClosure(root: string = REPO_ROOT, roots: readonly string[] = [NPM_ROOT_PACKAGE, NPM_EMBEDDING_ROOT_PACKAGE, ...npmHarnessSet(root)]): string[] {
   const byName = new Map(discoverPublishablePackages(root).map((p) => [p.name, p]));
   const seen = new Set<string>();
   const visit = (name: string): void => {
@@ -156,7 +168,7 @@ export function npmHarnessSet(root: string = REPO_ROOT): string[] {
     .sort();
 }
 
-/** THE RULE, named: the closure of {wrapper} ∪ {harness roots}. Equals `npmPublishSet()` exactly. */
+/** THE RULE, named: the closure of {wrapper, runtime} ∪ {harness roots}. Equals `npmPublishSet()` exactly. */
 export function npmExpectedSet(root: string = REPO_ROOT): string[] {
   return npmRequiredClosure(root);
 }

@@ -73,7 +73,7 @@ function makeCtx(opts: CtxOptions = {}): { ctx: ToolExecutionContext; frames: un
     cwd: opts.cwd ?? "/tmp/winter-agent-test-cwd",
     home: opts.home ?? "/tmp/winter-agent-test-home-unused",
     sessionId: "test-session",
-    readState: createSessionReadState(),
+    readState: createSessionReadState({ cwd: process.cwd() }),
     emitFrame: (f) => {
       frames.push(f);
     },

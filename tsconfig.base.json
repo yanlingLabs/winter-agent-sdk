@@ -50,8 +50,26 @@
       "@yanlinglabs/winter-provider-conformance/fakes": [
         "./packages/provider-conformance/src/fakes/index.ts"
       ],
-      "winter-agent-runtime": [
+      "@yanlinglabs/winter-agent-runtime": [
         "./packages/runtime/src/index.ts"
+      ],
+      "@yanlinglabs/winter-agent-runtime/testing": [
+        "./packages/runtime/src/testing.ts"
+      ],
+      "@yanlinglabs/winter-agent-runtime/embedded": [
+        "./packages/runtime/src/embedded.ts"
+      ],
+      "@yanlinglabs/winter-agent-runtime/embedded-host": [
+        "./packages/runtime/src/embedded-host.ts"
+      ],
+      "@yanlinglabs/winter-agent-runtime/embedded-worker": [
+        "./packages/runtime/src/embedded-worker.ts"
+      ],
+      "@yanlinglabs/winter-agent-runtime/workflow-worker": [
+        "./packages/runtime/src/workflows/subprocess-entry.ts"
+      ],
+      "@yanlinglabs/winter-agent-runtime/version": [
+        "./packages/runtime/src/version.ts"
       ]
     }
   }

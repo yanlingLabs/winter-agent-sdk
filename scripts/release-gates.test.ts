@@ -31,7 +31,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { discoverPublishablePackages } from "./release-pack.ts";
-import { npmExpectedSet, npmHarnessSet, npmPublishSet, npmRequiredClosure } from "./npm-publish-set.ts";
+import { NPM_EMBEDDING_ROOT_PACKAGE, npmExpectedSet, npmHarnessSet, npmPublishSet, npmRequiredClosure } from "./npm-publish-set.ts";
 import { npmPublishArgs } from "./publish-npm-set.ts";
 
 const WORKFLOWS_DIR = fileURLToPath(new URL("../.github/workflows/", import.meta.url));
@@ -465,7 +465,7 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     expect(job.permissions).toEqual({ "id-token": "write", contents: "read" });
   });
 
-  test("item 5 / R-7b-5: the npm set is DATA, and it is EXACTLY the closure of {wrapper} + {harness roots}", () => {
+  test("item 5 / R-7b-5: the npm set is DATA, and it is EXACTLY the closure of {wrapper, runtime} + {harness roots}", () => {
     // npm gets what an out-of-repo consumer installs and nothing else. Two kinds of ROOT:
     //   * THE WRAPPER -- `npm install @yanlinglabs/winter-agent-sdk` must work;
     //   * THE HARNESS ROOTS (R-7b-5) -- `@yanlinglabs/winter-runtime-sdk` lives in its own repository
@@ -489,7 +489,11 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     // P9a-3: the closure now walks `optionalDependencies` too (M3's exact bug: the wrapper's
     // optional dependency on the darwin-arm64 platform package must be ON npm, or a consumer's
     // install names a package that 404s forever). That widens the closure by exactly one package.
+    //
+    // WS-23: the runtime is a ROOT of its own (`NPM_EMBEDDING_ROOT_PACKAGE`) -- an embedding host
+    // installs it by name -- and its dependencies were already in the closure, so exactly one more.
     expect(npmExpectedSet()).toEqual([
+      "@yanlinglabs/winter-agent-runtime",
       "@yanlinglabs/winter-agent-sdk",
       "@yanlinglabs/winter-agent-sdk-darwin-arm64",
       "@yanlinglabs/winter-conformance",
@@ -519,12 +523,14 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     // Every publishable package is now on npm -- which is exactly why the plants below exist: on THIS
     // tree the rule and "all of them" give the same answer, so only a synthetic tree can show it
     // refusing anything.
-    expect(npmPublishSet()).toHaveLength(6);
-    expect(discoverPublishablePackages()).toHaveLength(6);
-    // The one package outside the publishable set is outside it for a reason that has nothing to do
-    // with this flag: the PRIVATE runtime. The darwin-arm64 platform package is IN the set now
-    // (P9a-3 -- R-7-2's gap is closed, CI can build the binary it needs, P9a-4).
-    expect(discoverPublishablePackages().some((p) => p.name === "winter-agent-runtime")).toBe(false);
+    expect(npmPublishSet()).toHaveLength(7);
+    expect(discoverPublishablePackages()).toHaveLength(7);
+    // WS-23: the runtime -- until now the one package outside the publishable set -- is IN it, as an
+    // npm ROOT of its own (an embedding host installs it by name), not by some other package's
+    // closure. The darwin-arm64 platform package is IN the set too (P9a-3 -- R-7-2's gap is closed,
+    // CI can build the binary it needs, P9a-4).
+    expect(discoverPublishablePackages().some((p) => p.name === "@yanlinglabs/winter-agent-runtime")).toBe(true);
+    expect(npmRequiredClosure(undefined, [NPM_EMBEDDING_ROOT_PACKAGE])).toContain(NPM_EMBEDDING_ROOT_PACKAGE);
     expect(discoverPublishablePackages().some((p) => p.name.endsWith("-darwin-arm64"))).toBe(true);
   });
 

@@ -41,7 +41,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
   test("mcp_status reads McpServerStateSource.snapshot() directly, wire-mapping needsAuth -> 'needs-auth'", async () => {
     const server = createFixtureMcpServer(defaultFixtureSpec());
     const resolved: ResolvedMcpServerEntry[] = [{ name: "gh", origin: "explicit", config: { type: "sdk", name: "gh" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { gh: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { gh: server } });
     try {
       await lifecycle.start();
       const result = await handleMcpStatus({ stateSource: lifecycle.stateSource });
@@ -54,7 +54,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
   });
 
   test("mcp_reconnect: unknown server name fails closed with a structured error, never a throw across the RPC boundary", async () => {
-    const lifecycle = createMcpLifecycle({ servers: [], envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: [], envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
     try {
       const result = await handleMcpReconnect({ controlSeam: lifecycle.controlSeam }, { serverName: "nope" });
       expect(result.ok).toBe(false);
@@ -68,7 +68,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
     const inner = createFixtureMcpServer(defaultFixtureSpec());
     const { server, connectCount } = countingInProcessServer(inner);
     const resolved: ResolvedMcpServerEntry[] = [{ name: "gh", origin: "explicit", config: { type: "sdk", name: "gh" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { gh: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { gh: server } });
     try {
       await lifecycle.start();
       expect(connectCount()).toBe(1);
@@ -84,7 +84,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
 
   test("mcp_reconnect: a failing reconnect surfaces a structured mcp_reconnect_failed error (the seam's reconnect() throws, matching the pinned contract)", async () => {
     const resolved: ResolvedMcpServerEntry[] = [{ name: "broken", origin: "explicit", config: { command: "/no/such/binary-control-test" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
     try {
       await lifecycle.start();
       await lifecycle.stateSource.waitForPending(undefined, 500);
@@ -100,7 +100,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
     const inner = createFixtureMcpServer(defaultFixtureSpec());
     const { server, connectCount } = countingInProcessServer(inner);
     const resolved: ResolvedMcpServerEntry[] = [{ name: "gh", origin: "explicit", config: { type: "sdk", name: "gh" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { gh: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { gh: server } });
     try {
       await lifecycle.start();
       expect(connectCount()).toBe(1);
@@ -128,7 +128,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
   test("mcp_toggle on a never-connected server: treated as an ordinary reconnect rather than a hard error (disclosed edge case)", async () => {
     const resolved: ResolvedMcpServerEntry[] = [{ name: "brand-new", origin: "explicit", config: { type: "sdk", name: "brand-new" } }];
     const server = createFixtureMcpServer(defaultFixtureSpec());
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { "brand-new": server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { "brand-new": server } });
     try {
       // Toggle off BEFORE start() ever connects it -- disableSlot works on a "pending" slot too
       // (it never asserted a precondition on the current state).
@@ -144,7 +144,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
   });
 
   test("mcp_set_servers: adds a brand-new dynamic server and reports it in 'added'", async () => {
-    const lifecycle = createMcpLifecycle({ servers: [], envConfig: fastEnv({ connectTimeoutMs: 2000, timeoutMs: 2000 }), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: [], envConfig: fastEnv({ connectTimeoutMs: 2000, timeoutMs: 2000 }), elicitationAsk: NO_ELICIT });
     try {
       const { command, args } = stdioFixtureCommand();
       const result = await handleMcpSetServers({ controlSeam: lifecycle.controlSeam }, { servers: { newone: { command, args, env: {} } } });
@@ -157,7 +157,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
   });
 
   test("mcp_set_servers: an invalid entry (claudeai-proxy) is reported per-name in errors, without blocking other valid entries in the same call", async () => {
-    const lifecycle = createMcpLifecycle({ servers: [], envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: [], envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
     try {
       const server = createFixtureMcpServer(defaultFixtureSpec());
       const result = (await handleMcpSetServers(
@@ -179,7 +179,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
   test("mcp_set_servers: removes a dynamic server omitted from the new payload", async () => {
     const server = createFixtureMcpServer(defaultFixtureSpec());
     const resolved: ResolvedMcpServerEntry[] = [{ name: "gh", origin: "explicit", config: { type: "sdk", name: "gh" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { gh: server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { gh: server } });
     try {
       await lifecycle.start();
       expect(getRegisteredTool("mcp__gh__echo")).toBeDefined();
@@ -196,7 +196,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
   test("mcp_set_servers: a settings/project/plugin-origin server survives an omission untouched (derived-shapes-p4.md item (b))", async () => {
     const server = createFixtureMcpServer(defaultFixtureSpec());
     const resolved: ResolvedMcpServerEntry[] = [{ name: "from-settings", origin: "settings", config: { type: "sdk", name: "from-settings" } }];
-    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { "from-settings": server } });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { "from-settings": server } });
     try {
       await lifecycle.start();
       const result = await handleMcpSetServers({ controlSeam: lifecycle.controlSeam }, { servers: {} }); // an empty payload
@@ -212,6 +212,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
   test("mcp_set_servers: explicitly naming a settings-origin server in the payload DOES override it (the one documented way to displace one)", async () => {
     const inner = createFixtureMcpServer(defaultFixtureSpec());
     const lifecycle = createMcpLifecycle({
+      cwd: process.cwd(),
       servers: [{ name: "from-settings", origin: "settings", config: { type: "sdk", name: "from-settings" } }],
       envConfig: fastEnv({ connectTimeoutMs: 2000, timeoutMs: 2000 }),
       elicitationAsk: NO_ELICIT,
@@ -239,7 +240,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
   // throw, leaving a connected client in a `failed` slot with its process reaped no earlier than
   // dispose().
   test("M1: mcp_set_servers REFUSES the reserved name `winter` up front -- no slot, no spawn, no connect", async () => {
-    const lifecycle = createMcpLifecycle({ servers: [], envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: [], envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
     try {
       await lifecycle.start();
       const { command, args } = stdioFixtureCommand();
@@ -260,7 +261,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
   // brand's own standing server (`acme`) got past this guard and spawned a real child -- the exact
   // shape the M1 test above exists to prevent, re-opened for every name but Winter's.
   test("P7a (I-2): under a brand, mcp_set_servers refuses `acme` up front -- no slot, no spawn -- and `winter` is an ordinary name", async () => {
-    const lifecycle = createMcpLifecycle({ servers: [], envConfig: fastEnv(), elicitationAsk: NO_ELICIT, reservedServerName: "acme" });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: [], envConfig: fastEnv(), elicitationAsk: NO_ELICIT, reservedServerName: "acme" });
     try {
       await lifecycle.start();
       const { command, args } = stdioFixtureCommand();
@@ -293,6 +294,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
     });
     const servers: ResolvedMcpServerEntry[] = [{ name: "swap", origin: "explicit", config: { type: "sdk", name: "swap" } }];
     const lifecycle = createMcpLifecycle({
+      cwd: process.cwd(),
       servers,
       envConfig: fastEnv({ connectTimeoutMs: 2000, timeoutMs: 2000 }),
       elicitationAsk: NO_ELICIT,
@@ -321,6 +323,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
     });
     const servers: ResolvedMcpServerEntry[] = [{ name: "swapfail", origin: "explicit", config: { type: "sdk", name: "swapfail" } }];
     const lifecycle = createMcpLifecycle({
+      cwd: process.cwd(),
       servers,
       envConfig: fastEnv({ connectTimeoutMs: 300, timeoutMs: 300 }),
       elicitationAsk: NO_ELICIT,

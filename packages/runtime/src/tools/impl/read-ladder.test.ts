@@ -8,7 +8,7 @@ import { createSessionReadState } from "../read-state.ts";
 import type { ReadAccessProbe } from "../../permissions/evaluator.ts";
 import { evaluateReadLadder, recordPostOperationRead, DEFAULT_READ_LADDER_PROFILE, type ReadLadderDeps, type ReadLadderInput } from "./read-ladder.ts";
 
-function deps(probe: ReadAccessProbe = "silent", state = createSessionReadState()): ReadLadderDeps {
+function deps(probe: ReadAccessProbe = "silent", state = createSessionReadState({ cwd: process.cwd() })): ReadLadderDeps {
   return { readState: state, probeReadAccess: () => probe };
 }
 
@@ -31,21 +31,21 @@ describe("evaluateReadLadder -- defaults", () => {
 
 describe("evaluateReadLadder -- rung 1 (complete + fresh read)", () => {
   test("a complete read at the current mtime is eligible under strict, for 'edit'", () => {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     state.recordRead("/work/a.txt", { complete: true, mtimeMs: 1000 });
     const result = evaluateReadLadder(check({ profile: "strict" }), deps("deny", state));
     expect(result).toEqual({ eligible: true });
   });
 
   test("a complete read at the current mtime is eligible under relaxed, for 'overwrite'", () => {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     state.recordRead("/work/a.txt", { complete: true, mtimeMs: 1000 });
     const result = evaluateReadLadder(check({ operation: "overwrite", profile: "relaxed" }), deps("deny", state));
     expect(result).toEqual({ eligible: true });
   });
 
   test("rung 1 does not even consult the probe (a deny probe does not defeat an already-clean read)", () => {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     state.recordRead("/work/a.txt", { complete: true, mtimeMs: 1000 });
     let probed = false;
     const result = evaluateReadLadder(check(), { readState: state, probeReadAccess: () => ((probed = true), "deny") });
@@ -54,7 +54,7 @@ describe("evaluateReadLadder -- rung 1 (complete + fresh read)", () => {
   });
 
   test("a complete read at the current mtime is eligible even against a notebook path", () => {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     state.recordRead("/work/nb.ipynb", { complete: true, mtimeMs: 1000 });
     const result = evaluateReadLadder(check({ filePath: "/work/nb.ipynb", operation: "overwrite" }), deps("deny", state));
     expect(result).toEqual({ eligible: true });
@@ -84,14 +84,14 @@ describe("evaluateReadLadder -- rung 2 (never read, or partially read with no dr
   });
 
   test("strict + partially read, unchanged mtime, operation 'edit' -> ineligible", () => {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     state.recordRead("/work/a.txt", { complete: false, mtimeMs: 1000 });
     const result = evaluateReadLadder(check({ profile: "strict" }), deps("silent", state));
     expect(result.eligible).toBe(false);
   });
 
   test("relaxed + partially read, unchanged mtime, operation 'edit' + probe silent -> eligible", () => {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     state.recordRead("/work/a.txt", { complete: false, mtimeMs: 1000 });
     const result = evaluateReadLadder(check({ profile: "relaxed" }), deps("silent", state));
     expect(result).toEqual({ eligible: true });
@@ -112,7 +112,7 @@ describe("evaluateReadLadder -- the Write-overwrite-only override", () => {
   });
 
   test("a partial record, operation 'overwrite', unchanged mtime -> ineligible under relaxed too (override beats rung 2)", () => {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     state.recordRead("/work/a.txt", { complete: false, mtimeMs: 1000 });
     const result = evaluateReadLadder(check({ operation: "overwrite", profile: "relaxed" }), deps("silent", state));
     expect(result.eligible).toBe(false);
@@ -141,7 +141,7 @@ describe("evaluateReadLadder -- the Write-overwrite-only override", () => {
   });
 
   test("a partial record, operation 'edit', unchanged mtime, relaxed + silent -> eligible (override does not extend to 'edit')", () => {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     state.recordRead("/work/a.txt", { complete: false, mtimeMs: 1000 });
     const result = evaluateReadLadder(check({ operation: "edit", profile: "relaxed" }), deps("silent", state));
     expect(result).toEqual({ eligible: true });
@@ -150,7 +150,7 @@ describe("evaluateReadLadder -- the Write-overwrite-only override", () => {
 
 describe("evaluateReadLadder -- rung 3 (drift rescue, 'edit' only)", () => {
   function driftedState(): ReturnType<typeof createSessionReadState> {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     state.recordRead("/work/a.txt", { complete: true, mtimeMs: 1000 });
     return state;
   }
@@ -191,7 +191,7 @@ describe("evaluateReadLadder -- rung 3 (drift rescue, 'edit' only)", () => {
   });
 
   test("drifted + a PARTIAL prior record + operation 'edit' + unambiguous + silent -> still rescuable (override is overwrite-only)", () => {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     state.recordRead("/work/a.txt", { complete: false, mtimeMs: 1000 });
     const result = evaluateReadLadder(check({ operation: "edit", currentMtimeMs: 2000, hasUnambiguousCurrentMatch: true }), deps("silent", state));
     expect(result).toEqual({ eligible: true });
@@ -206,34 +206,34 @@ describe("evaluateReadLadder -- rung 3 (drift rescue, 'edit' only)", () => {
 
 describe("recordPostOperationRead", () => {
   test("'full' always records complete:true, regardless of any prior record", () => {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     state.recordRead("/work/a.txt", { complete: false, mtimeMs: 1 });
     recordPostOperationRead({ readState: state, probeReadAccess: () => "silent" }, "/work/a.txt", "full", 999);
     expect(state.lookup("/work/a.txt")).toEqual({ complete: true, mtimeMs: 999 });
   });
 
   test("'full' with no prior record at all still records complete:true", () => {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     recordPostOperationRead({ readState: state, probeReadAccess: () => "silent" }, "/work/new.txt", "full", 42);
     expect(state.lookup("/work/new.txt")).toEqual({ complete: true, mtimeMs: 42 });
   });
 
   test("'carryForward' preserves a prior complete:true", () => {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     state.recordRead("/work/a.txt", { complete: true, mtimeMs: 1 });
     recordPostOperationRead({ readState: state, probeReadAccess: () => "silent" }, "/work/a.txt", "carryForward", 999);
     expect(state.lookup("/work/a.txt")).toEqual({ complete: true, mtimeMs: 999 });
   });
 
   test("'carryForward' preserves a prior complete:false", () => {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     state.recordRead("/work/a.txt", { complete: false, mtimeMs: 1 });
     recordPostOperationRead({ readState: state, probeReadAccess: () => "silent" }, "/work/a.txt", "carryForward", 999);
     expect(state.lookup("/work/a.txt")).toEqual({ complete: false, mtimeMs: 999 });
   });
 
   test("'carryForward' with no prior record records complete:false (an unread-eligible relaxed edit still doesn't know the whole file)", () => {
-    const state = createSessionReadState();
+    const state = createSessionReadState({ cwd: process.cwd() });
     recordPostOperationRead({ readState: state, probeReadAccess: () => "silent" }, "/work/new.txt", "carryForward", 42);
     expect(state.lookup("/work/new.txt")).toEqual({ complete: false, mtimeMs: 42 });
   });

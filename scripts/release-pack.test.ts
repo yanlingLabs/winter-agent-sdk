@@ -17,9 +17,11 @@ import {
 
 /**
  * The publishable set, sorted -- discoverPublishablePackages's own contract. R-7-1's five JS
- * packages PLUS the darwin-arm64 platform package, publishable as of P9a-3 (R-7-2's gap closed).
+ * packages PLUS the darwin-arm64 platform package, publishable as of P9a-3 (R-7-2's gap closed),
+ * PLUS the runtime, publishable as of WS-23 (an embedding host installs it by name).
  */
 const EXPECTED_PACKAGE_NAMES = [
+  "@yanlinglabs/winter-agent-runtime",
   "@yanlinglabs/winter-agent-sdk",
   "@yanlinglabs/winter-agent-sdk-darwin-arm64",
   "@yanlinglabs/winter-conformance",
@@ -55,10 +57,11 @@ describe("findPackageManifests / discoverPublishablePackages against the real re
     for (const m of manifests) expect(m.split(/[\\/]/)).not.toContain("node_modules");
   });
 
-  test("the publishable set is exactly R-7-1's five JS packages PLUS the darwin-arm64 platform package (P9a-3) -- excludes only the private runtime", () => {
+  test("the publishable set is exactly R-7-1's five JS packages PLUS the darwin-arm64 platform package (P9a-3) PLUS the runtime (WS-23)", () => {
     const names = discoverPublishablePackages().map((p) => p.name);
     expect(names).toEqual(EXPECTED_PACKAGE_NAMES);
-    expect(names).not.toContain("winter-agent-runtime");
+    // WS-23: the runtime was the one private package; an embedding host now installs it by name.
+    expect(names).toContain("@yanlinglabs/winter-agent-runtime");
     // R-7-2's gap: the platform package existed but stayed unpublished (`private: true`) until this
     // binary could actually be produced by CI (P9a-4). It is IN the set now, by name.
     expect(names).toContain("@yanlinglabs/winter-agent-sdk-darwin-arm64");

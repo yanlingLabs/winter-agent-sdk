@@ -15,7 +15,7 @@ function fakeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     cwd: "/work",
     home: "/home/test",
     sessionId: "s1",
-    readState: createSessionReadState(),
+    readState: createSessionReadState({ cwd: process.cwd() }),
     emitFrame: () => {},
     permissions: { probeReadAccess: () => "silent" },
     tempDir: realpathSync(mkdtempSync(join(tmpdir(), "winter-taskoutput-tempdir-"))),

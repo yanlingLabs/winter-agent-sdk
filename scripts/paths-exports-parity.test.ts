@@ -60,14 +60,14 @@ function expectedFromExports(): Map<string, string> {
 /**
  * `paths` entries that name a package OUTSIDE the publishable set, with why each is legitimate.
  *
- * `winter-agent-runtime` is `"private": true` and never published, so it has no `exports` map to
- * agree with -- but in-repo code imports it by specifier, so it needs the mapping. Keyed with a
+ * EMPTY since WS-23: its one entry was the runtime package, which was private until an embedding host
+ * (Winter's daemon, one Worker per chat/dispatch session) needed to install it -- it is
+ * `@yanlinglabs/winter-agent-runtime` now, publishable, and its `paths` are checked like every other
+ * package's. Kept as the place a future private package records why it needs a mapping. Keyed with a
  * rationale for the same reason every other allowlist in this repo is: an entry nobody can explain
  * is an entry nobody can remove.
  */
-const NON_PUBLISHABLE_PATHS: Readonly<Record<string, string>> = {
-  "winter-agent-runtime": "the PRIVATE runtime package -- never published, so it has no exports map to agree with, but in-repo code imports it by specifier",
-};
+const NON_PUBLISHABLE_PATHS: Readonly<Record<string, string>> = {};
 
 describe("P7a pre-publish (item 4): tsconfig `paths` and package `exports` agree", () => {
   test("every publishable `exports` subpath has a `paths` entry pointing at the SAME source file", () => {
@@ -112,13 +112,14 @@ describe("P7a pre-publish (item 4): tsconfig `paths` and package `exports` agree
     }
   });
 
-  test("the parity is not vacuous: it covers every EXPORTS-BEARING publishable package and all twelve subpaths", () => {
+  test("the parity is not vacuous: it covers every EXPORTS-BEARING publishable package and all nineteen subpaths", () => {
     const expected = expectedFromExports();
     // 12 since SDK 0.0.3's `@yanlinglabs/winter-agent-sdk/tools` (R-8-1: Winter's default tools,
-    // declared once for both hosts). The literal is the tripwire -- a subpath added to `exports` with
-    // no `paths` entry, or vice versa, is caught by the two tests above only if this one keeps
-    // counting what they cover.
-    expect(expected.size).toBe(12);
+    // declared once for both hosts); 19 since WS-23 made the runtime publishable (`.`, `./testing`,
+    // `./embedded`, `./embedded-host`, `./embedded-worker`, `./workflow-worker`, `./version`). The
+    // literal is the tripwire -- a subpath added to `exports` with no `paths` entry, or vice versa, is
+    // caught by the two tests above only if this one keeps counting what they cover.
+    expect(expected.size).toBe(19);
     // P9a-3: the darwin-arm64 platform package is publishable but BIN-ONLY -- no `exports` map, so it
     // contributes zero specifiers here and must not be counted on the RHS (this test's own denominator
     // is "packages this parity check actually covers", not "every publishable package" -- the platform

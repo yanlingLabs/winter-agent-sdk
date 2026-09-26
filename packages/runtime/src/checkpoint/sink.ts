@@ -55,8 +55,11 @@ export interface FileCheckpointSinkOptions {
    * Resolves a RELATIVE candidate write path. `extractCandidateWritePaths` yields the path the tool
    * call carried, which is usually but not always absolute -- and the backup identity is the hash of
    * the ABSOLUTE path, so resolving late would file two spellings of one file as two histories.
+   *
+   * WS-23: REQUIRED -- it used to default to `process.cwd()`, which inside an embedded session's
+   * Worker is the host daemon's cwd, so a relative write path would have been filed under the wrong tree.
    */
-  cwd?: string;
+  cwd: string;
   /**
    * T8 rider 25 (SECURITY): extra roots the session was configured to write outside `cwd`
    * (`RuntimeConfig.additionalDirectories`). `rewind` refuses a record naming a path outside `cwd`
@@ -89,7 +92,7 @@ export interface FileCheckpointSinkOptions {
 
 export function createFileCheckpointSink(opts: FileCheckpointSinkOptions): FileCheckpointSink {
   const home = opts.home;
-  const cwd = opts.cwd ?? process.cwd();
+  const cwd = opts.cwd;
   const ownSession = opts.sessionUuid;
   // T8 rider 25: the rewind fence. Computed once here, from the same construction options the
   // session's own writes were resolved against, so the two can never disagree.

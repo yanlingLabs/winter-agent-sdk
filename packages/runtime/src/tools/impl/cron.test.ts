@@ -20,7 +20,7 @@ function makeCtx(cwd: string, opts?: { env?: Record<string, string | undefined> 
     cwd,
     home: "/home/test",
     sessionId: "cron-test-session",
-    readState: createSessionReadState(),
+    readState: createSessionReadState({ cwd: process.cwd() }),
     emitFrame: () => {},
     permissions: { probeReadAccess: () => "silent" },
     tempDir: join(cwd, ".tmp"),

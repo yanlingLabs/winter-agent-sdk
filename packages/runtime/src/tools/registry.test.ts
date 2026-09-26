@@ -328,7 +328,7 @@ describe("buildRegistryToolExecutor (the engine-facing adapter)", () => {
       emitFrame: () => {},
       sandboxSettings: {},
       session: { setCwd() {}, addBoundedRoot() {}, removeBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default", getSessionRoot: () => "/work", setSessionRoot() {} },
-      readState: createSessionReadState(),
+      readState: createSessionReadState({ cwd: process.cwd() }),
       getTempDir: () => {
         throw new Error("getTempDir should never be invoked by a stub/unregistered-name dispatch in this suite");
       },

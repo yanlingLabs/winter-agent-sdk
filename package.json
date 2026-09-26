@@ -29,7 +29,7 @@
     "@types/bun": "^1.3.0",
     "typescript": "^5.6.0",
     "@yanlinglabs/winter-agent-sdk": "workspace:*",
-    "winter-agent-runtime": "workspace:*",
+    "@yanlinglabs/winter-agent-runtime": "workspace:*",
     "@yanlinglabs/winter-conformance": "workspace:*",
     "@yanlinglabs/winter-provider-catalog": "workspace:*",
     "@yanlinglabs/winter-provider-runtime": "workspace:*",

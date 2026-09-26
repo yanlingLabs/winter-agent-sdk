@@ -76,13 +76,18 @@ describe("npmPublishOrder (review I1)", () => {
     // walked by the SAME edge-following order (`npmPublishOrder` now walks `optionalDependencies`
     // too), so it publishes BEFORE the sdk exactly like the catalog does (both are things the sdk's
     // own manifest names, required or not).
+    //
+    // WS-23 adds a seventh: the runtime, an embedding ROOT, which depends on the sdk, the catalog and
+    // the provider runtime -- so it publishes after all three, and never before the wrapper its own
+    // packed manifest pins exactly.
     const { npmPublishOrder } = await import("./npm-publish-set.ts");
     expect(npmPublishOrder().map((p) => p.name)).toEqual([
       "@yanlinglabs/winter-provider-catalog",
       "@yanlinglabs/winter-agent-sdk-darwin-arm64",
       "@yanlinglabs/winter-agent-sdk",
-      "@yanlinglabs/winter-conformance",
       "@yanlinglabs/winter-provider-runtime",
+      "@yanlinglabs/winter-agent-runtime",
+      "@yanlinglabs/winter-conformance",
       "@yanlinglabs/winter-provider-conformance",
     ]);
   });
@@ -99,7 +104,7 @@ describe("npmPublishOrder (review I1)", () => {
         : {},
     ).map((p) => p.name);
     expect(reversed.indexOf("@yanlinglabs/winter-agent-sdk")).toBeLessThan(reversed.indexOf("@yanlinglabs/winter-provider-catalog"));
-    expect(reversed).toHaveLength(6);
+    expect(reversed).toHaveLength(7);
   });
 
   test("no package appears before one it depends on -- the property, over the real graph", async () => {

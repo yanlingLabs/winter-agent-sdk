@@ -133,7 +133,7 @@ describe("checkReleaseVersion", () => {
     const r = checkReleaseVersion({});
     expect(r.ok, r.ok ? "" : r.reason).toBe(true);
     if (r.ok) {
-      expect(r.packages).toHaveLength(6);
+      expect(r.packages).toHaveLength(7); // WS-23: the runtime joined the publishable set
       expect(r.packages.map((p) => p.name)).toContain("@yanlinglabs/winter-agent-sdk-darwin-arm64");
       expect(checkReleaseVersion({ ref: `refs/tags/v${r.version}` }).ok).toBe(true);
     }

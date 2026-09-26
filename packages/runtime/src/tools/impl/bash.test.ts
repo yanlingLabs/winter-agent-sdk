@@ -25,7 +25,7 @@ function fakeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     cwd: resolvedCwd,
     home: "/home/test",
     sessionId: "s1",
-    readState: createSessionReadState(),
+    readState: createSessionReadState({ cwd: process.cwd() }),
     emitFrame: (f) => frames.push(f),
     permissions: { probeReadAccess: () => "silent" },
     tempDir: proj(),

@@ -280,7 +280,7 @@ test("WS-06 §6 obligation 3: TaskCreate/TaskGet/TaskList/TaskUpdate/CronDelete/
     cwd: "/work",
     home: "/home/test",
     sessionId: "t8-schema-identity",
-    readState: createSessionReadState(),
+    readState: createSessionReadState({ cwd: process.cwd() }),
     emitFrame: () => {},
     permissions: { probeReadAccess: () => "silent" as const },
     tempDir: "/work/.tmp",

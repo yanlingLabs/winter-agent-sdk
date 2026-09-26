@@ -45,7 +45,7 @@ import type { CanUseTool, PermissionMode } from "./permissions/types.ts";
 import type { Options, WinterMcpServerInstance } from "./options.ts";
 import type { ModelInfo } from "./protocol/config.ts";
 import { PROVIDER_STATE_FILE_SUFFIX } from "./store/session-store.ts";
-import { inMemoryProcess } from "winter-agent-runtime/testing";
+import { inMemoryProcess } from "@yanlinglabs/winter-agent-runtime/testing";
 import {
   echoProvider,
   stubExecutor,
@@ -79,7 +79,7 @@ import {
   recordedProviderSystems,
   resetRecordedProviderSystems,
   type ScenarioFake,
-} from "winter-agent-runtime";
+} from "@yanlinglabs/winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "@yanlinglabs/winter-conformance/trace";
 import type { MessagingIdleNoticePayload } from "./protocol/messaging.ts";
 

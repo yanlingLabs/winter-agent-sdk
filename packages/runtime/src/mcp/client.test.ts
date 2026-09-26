@@ -37,7 +37,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
     });
     let client: ConnectedMcpClient | undefined;
     try {
-      client = await connectMcpServer({ name: "greeter", config: { type: "sdk", name: "greeter" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+      client = await connectMcpServer({ cwd: process.cwd(), name: "greeter", config: { type: "sdk", name: "greeter" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
       expect(client.serverName).toBe("greeter");
       const tools = await client.listTools();
       expect(tools).toEqual([
@@ -60,7 +60,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
 
   test("an isError tool result is returned, not thrown", async () => {
     const server = createFixtureMcpServer(defaultFixtureSpec());
-    const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
     try {
       const result = await client.callTool("boom", {});
       expect(result).toEqual({ content: [{ type: "text", text: "boom" }], isError: true });
@@ -72,7 +72,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
 
   test("listResources + readResource: text inline, blob as base64 (no path-marker logic here -- that's the bridge tool's job)", async () => {
     const server = createFixtureMcpServer(defaultFixtureSpec());
-    const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
     try {
       const resources = await client.listResources();
       expect(resources.map((r) => r.uri).sort()).toEqual(["fixture://blob.bin", "fixture://text.txt"]);
@@ -94,7 +94,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
       ],
     };
     const server = createFixtureMcpServer(spec);
-    const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
     try {
       const tools = await client.listTools();
       expect(tools).toHaveLength(1);
@@ -126,7 +126,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
       seen.push(payload);
       return ask(payload);
     };
-    const client = await connectMcpServer({ name: "elicit-srv", config: { type: "sdk", name: "elicit-srv" }, connectTimeoutMs: 5000, elicitationAsk: wrappedAsk, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "elicit-srv", config: { type: "sdk", name: "elicit-srv" }, connectTimeoutMs: 5000, elicitationAsk: wrappedAsk, inProcessServer: server });
     try {
       const result = await client.callTool("ask", { q: "what is it" });
       const text = (result.content[0] as { text: string }).text;
@@ -155,7 +155,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
         },
       ],
     });
-    const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
     try {
       const result = await client.callTool("ask", {});
       expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ action: "decline" });
@@ -169,7 +169,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
     const server = createFixtureMcpServer({
       tools: [{ name: "slow", inputSchema: { type: "object", properties: {} }, handler: () => new Promise(() => {}) }], // never resolves
     });
-    const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
     try {
       const started = Date.now();
       await expect(client.callTool("slow", {}, { timeoutMs: 100 })).rejects.toBeTruthy();
@@ -181,7 +181,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
   });
 
   test("connecting with type 'sdk' but no inProcessServer supplied fails fast with a typed spawn_failed error", async () => {
-    await expect(connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 1000, elicitationAsk: NO_ELICIT })).rejects.toMatchObject({
+    await expect(connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 1000, elicitationAsk: NO_ELICIT })).rejects.toMatchObject({
       code: "spawn_failed",
     });
   });
@@ -191,7 +191,7 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
     const server = new Server({ name: "mutable", version: "1.0.0" }, { capabilities: { tools: {} } });
     server.setRequestHandler("tools/list", async () => ({ tools: [{ name: toolName, inputSchema: { type: "object", properties: {} } }] }));
     server.setRequestHandler("tools/call", async () => ({ content: [] }));
-    const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
     try {
       expect((await client.listTools()).map((t) => t.name)).toEqual(["v1"]);
       toolName = "v2";
@@ -207,7 +207,7 @@ describe("connectMcpServer: error classification", () => {
   test("a nonexistent stdio command classifies as spawn_failed", async () => {
     let error: unknown;
     try {
-      await connectMcpServer({ name: "s", config: { command: "/no/such/binary-winter-lane-a-test" }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
+      await connectMcpServer({ cwd: process.cwd(), name: "s", config: { command: "/no/such/binary-winter-lane-a-test" }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
     } catch (err) {
       error = err;
     }
@@ -224,7 +224,7 @@ describe("connectMcpServer: error classification", () => {
     try {
       let error: unknown;
       try {
-        await connectMcpServer({ name: "s", config: { type: "http", url: `http://127.0.0.1:${authServer.port}/mcp` }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
+        await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "http", url: `http://127.0.0.1:${authServer.port}/mcp` }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
       } catch (err) {
         error = err;
       }
@@ -241,7 +241,7 @@ describe("connectMcpServer: error classification", () => {
       const started = Date.now();
       let error: unknown;
       try {
-        await connectMcpServer({ name: "s", config: { type: "http", url: `http://127.0.0.1:${hungServer.port}/mcp` }, connectTimeoutMs: 150, elicitationAsk: NO_ELICIT });
+        await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "http", url: `http://127.0.0.1:${hungServer.port}/mcp` }, connectTimeoutMs: 150, elicitationAsk: NO_ELICIT });
       } catch (err) {
         error = err;
       }
@@ -255,7 +255,7 @@ describe("connectMcpServer: error classification", () => {
 
   test("real stdio connection succeeds end-to-end through connectMcpServer (cross-transport spot check)", async () => {
     const { command, args } = stdioFixtureCommand();
-    const client = await connectMcpServer({ name: "stdio-srv", config: { command, args, env: {} }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "stdio-srv", config: { command, args, env: {} }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
     try {
       const tools = await client.listTools();
       expect(tools.map((t) => t.name).sort()).toEqual(["boom", "echo", "env_dump"]);
@@ -268,7 +268,7 @@ describe("connectMcpServer: error classification", () => {
 
   test("real http connection succeeds end-to-end through connectMcpServer (cross-transport spot check)", async () => {
     await withHttpFixture(defaultFixtureSpec(), async (url) => {
-      const client = await connectMcpServer({ name: "http-srv", config: { type: "http", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
+      const client = await connectMcpServer({ cwd: process.cwd(), name: "http-srv", config: { type: "http", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
       try {
         const result = await client.callTool("echo", { text: "hi" });
         expect(result).toEqual({ content: [{ type: "text", text: "echo:hi" }] });
@@ -336,7 +336,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
 
   test("SSE end to end through connectMcpServer, against the hand-written legacy SSE fixture", async () => {
     await withSseFixture(defaultFixtureSpec(), async (url) => {
-      const client = await connectMcpServer({ name: "sse-srv", config: { type: "sse", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
+      const client = await connectMcpServer({ cwd: process.cwd(), name: "sse-srv", config: { type: "sse", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
       try {
         expect(client.protocolVersion).toBe(LEGACY_LATEST);
         expect((await client.listTools()).map((t) => t.name).sort()).toEqual(["boom", "echo"]);
@@ -350,7 +350,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
 
   test("'auto' against a LEGACY server settles on 2025-11-25 -- Streamable HTTP (the default) and stdio (opted in), both fixtures", async () => {
     await withHttpFixture(defaultFixtureSpec(), async (url) => {
-      const client = await connectMcpServer({ name: "h", config: { type: "http", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
+      const client = await connectMcpServer({ cwd: process.cwd(), name: "h", config: { type: "http", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
       try {
         expect(client.protocolVersion).toBe(LEGACY_LATEST);
         expect(await client.callTool("echo", { text: "a" })).toEqual({ content: [{ type: "text", text: "echo:a" }] });
@@ -361,7 +361,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
     // Both stdio fixtures: the v2-server one, and the dependency-free one that answers the probe
     // `-32601` the way a pre-2026 SDK server does.
     for (const { command, args } of [stdioFixtureCommand(), pingFixtureCommand({ label: "negotiation" })]) {
-      const client = await connectMcpServer({ name: "s", config: { command, args, versionNegotiation: "auto" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
+      const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { command, args, versionNegotiation: "auto" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
       try {
         expect(client.protocolVersion).toBe(LEGACY_LATEST);
         expect((await client.listTools()).length).toBeGreaterThan(0);
@@ -373,14 +373,14 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
 
   test("'auto' against a 2026-07-28-capable endpoint selects the modern era; 'legacy' against the SAME endpoint stays on 2025-11-25", async () => {
     await withModernHttpFixture(defaultFixtureSpec(), async (url) => {
-      const modern = await connectMcpServer({ name: "m", config: { type: "http", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
+      const modern = await connectMcpServer({ cwd: process.cwd(), name: "m", config: { type: "http", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
       try {
         expect(modern.protocolVersion).toBe(MODERN);
         expect(await modern.callTool("echo", { text: "m" })).toEqual({ content: [{ type: "text", text: "echo:m" }] });
       } finally {
         await modern.close();
       }
-      const legacy = await connectMcpServer({ name: "l", config: { type: "http", url: url.toString(), versionNegotiation: "legacy" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
+      const legacy = await connectMcpServer({ cwd: process.cwd(), name: "l", config: { type: "http", url: url.toString(), versionNegotiation: "legacy" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
       try {
         expect(legacy.protocolVersion).toBe(LEGACY_LATEST);
         expect(await legacy.callTool("echo", { text: "l" })).toEqual({ content: [{ type: "text", text: "echo:l" }] });
@@ -393,7 +393,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
   test("a { pin } the server does not offer fails the connect as handshake_failed -- never a silent fallback to the legacy handshake", async () => {
     let error: unknown;
     try {
-      await connectMcpServer({ name: "p", config: { ...pingFixtureCommand({ label: "pin" }), versionNegotiation: { pin: MODERN } }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
+      await connectMcpServer({ cwd: process.cwd(), name: "p", config: { ...pingFixtureCommand({ label: "pin" }), versionNegotiation: { pin: MODERN } }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
     } catch (err) {
       error = err;
     }
@@ -404,7 +404,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
   test("input_required (2026-07-28): an embedded elicitation reaches the SAME asker, and the server sees its answer on the retried call", async () => {
     await withModernHttpFixture(askingSpec(), async (url) => {
       const { ask, seen } = recordingAsker({ action: "accept", content: { ok: true } });
-      const client = await connectMcpServer({ name: "mrtr", config: { type: "http", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: ask });
+      const client = await connectMcpServer({ cwd: process.cwd(), name: "mrtr", config: { type: "http", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: ask });
       try {
         expect(client.protocolVersion).toBe(MODERN);
         const result = await client.callTool("confirm", {});
@@ -418,7 +418,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
 
   test("input_required with NO host callback: the deterministic decline reaches a modern server too -- never a hang", async () => {
     await withModernHttpFixture(askingSpec(), async (url) => {
-      const client = await connectMcpServer({ name: "mrtr", config: { type: "http", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
+      const client = await connectMcpServer({ cwd: process.cwd(), name: "mrtr", config: { type: "http", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
       try {
         const result = await client.callTool("confirm", {}, { timeoutMs: 5000 });
         expect(result).toEqual({ content: [{ type: "text", text: `answered:${JSON.stringify({ kind: "elicit", action: "decline" })}` }] });
@@ -442,7 +442,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
       ],
     });
     const { ask, seen } = recordingAsker({ action: "accept" });
-    const client = await connectMcpServer({ name: "urlsrv", config: { type: "sdk", name: "urlsrv" }, connectTimeoutMs: 5000, elicitationAsk: ask, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "urlsrv", config: { type: "sdk", name: "urlsrv" }, connectTimeoutMs: 5000, elicitationAsk: ask, inProcessServer: server });
     try {
       const result = await client.callTool("login", {});
       expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ action: "accept" });
@@ -464,7 +464,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
       ],
     });
     const { ask } = recordingAsker({ action: "accept", content: { nested: { not: "flat" } } });
-    const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: ask, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: ask, inProcessServer: server });
     try {
       const result = await client.callTool("ask", {});
       expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ action: "decline" });
@@ -478,7 +478,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
     const spec: FixtureServerSpec = { ...defaultFixtureSpec(), toolsListChanged: true };
     const server = createFixtureMcpServer(spec);
     let signals = 0;
-    const client = await connectMcpServer({ name: "lc", config: { type: "sdk", name: "lc" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server, onToolListChanged: () => void signals++ });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "lc", config: { type: "sdk", name: "lc" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server, onToolListChanged: () => void signals++ });
     try {
       await server.sendToolListChanged();
       for (let i = 0; i < 100 && signals === 0; i++) await new Promise((r) => setTimeout(r, 10));
@@ -493,7 +493,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
     const spec: FixtureServerSpec = { ...defaultFixtureSpec(), toolsListChanged: true };
     await withModernHttpFixture(spec, async (url, notify) => {
       let signals = 0;
-      const client = await connectMcpServer({ name: "lc", config: { type: "http", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, onToolListChanged: () => void signals++ });
+      const client = await connectMcpServer({ cwd: process.cwd(), name: "lc", config: { type: "http", url: url.toString() }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, onToolListChanged: () => void signals++ });
       try {
         expect(client.protocolVersion).toBe(MODERN);
         // The listen stream is opened just after connect; announce until it is up (bounded). Each
@@ -516,7 +516,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
       for (const versionNegotiation of ["auto", "legacy"] as const) {
         let error: unknown;
         try {
-          await connectMcpServer({ name: "s", config: { type: "http", url: `http://127.0.0.1:${authServer.port}/mcp`, versionNegotiation }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
+          await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "http", url: `http://127.0.0.1:${authServer.port}/mcp`, versionNegotiation }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
         } catch (err) {
           error = err;
         }
@@ -525,7 +525,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
       }
       let sseError: unknown;
       try {
-        await connectMcpServer({ name: "s", config: { type: "sse", url: `http://127.0.0.1:${authServer.port}/sse` }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
+        await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sse", url: `http://127.0.0.1:${authServer.port}/sse` }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
       } catch (err) {
         sseError = err;
       }
@@ -541,7 +541,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
     try {
       let error: unknown;
       try {
-        await connectMcpServer({ name: "s", config: { type: "http", url: `http://127.0.0.1:${limited.port}/mcp`, versionNegotiation: "legacy" }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
+        await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "http", url: `http://127.0.0.1:${limited.port}/mcp`, versionNegotiation: "legacy" }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
       } catch (err) {
         error = err;
       }
@@ -612,7 +612,7 @@ describe("WS-23 fix round 1: 'auto' retries once as 'legacy' on a fresh transpor
       const connectTimeoutMs = 3000;
       const started = Date.now();
       try {
-        const client = await connectMcpServer({ name: "raw", config: { type: "http", url: srv.url }, connectTimeoutMs, elicitationAsk: NO_ELICIT });
+        const client = await connectMcpServer({ cwd: process.cwd(), name: "raw", config: { type: "http", url: srv.url }, connectTimeoutMs, elicitationAsk: NO_ELICIT });
         try {
           expect(client.protocolVersion).toBe("2025-06-18");
           expect(await client.callTool("t1", {})).toEqual({ content: [{ type: "text", text: "ok" }] });
@@ -639,7 +639,7 @@ describe("WS-23 fix round 1: 'auto' retries once as 'legacy' on a fresh transpor
     try {
       let error: unknown;
       try {
-        await connectMcpServer({ name: "raw", config: { type: "http", url: srv.url }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
+        await connectMcpServer({ cwd: process.cwd(), name: "raw", config: { type: "http", url: srv.url }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
       } catch (err) {
         error = err;
       }
@@ -653,7 +653,7 @@ describe("WS-23 fix round 1: 'auto' retries once as 'legacy' on a fresh transpor
   test("a { pin } is never retried as legacy -- the refusal stands", async () => {
     const srv = rawLegacyHttpServer("500-text");
     try {
-      await expect(connectMcpServer({ name: "raw", config: { type: "http", url: srv.url, versionNegotiation: { pin: MODERN } }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT })).rejects.toMatchObject({ code: "handshake_failed" });
+      await expect(connectMcpServer({ cwd: process.cwd(), name: "raw", config: { type: "http", url: srv.url, versionNegotiation: { pin: MODERN } }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT })).rejects.toMatchObject({ code: "handshake_failed" });
       expect(srv.methods).not.toContain("initialize");
     } finally {
       srv.stop();
@@ -667,7 +667,7 @@ describe("WS-23 fix round 1: 'auto' retries once as 'legacy' on a fresh transpor
     for (const versionNegotiation of ["auto", "legacy"] as const) {
       let error: unknown;
       try {
-        await connectMcpServer({ name: "gone", config: { type: "http", url, versionNegotiation }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
+        await connectMcpServer({ cwd: process.cwd(), name: "gone", config: { type: "http", url, versionNegotiation }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
       } catch (err) {
         error = err;
       }
@@ -678,7 +678,7 @@ describe("WS-23 fix round 1: 'auto' retries once as 'legacy' on a fresh transpor
   test("a server that advertises capabilities {} still has its tools (all pages) and resources listed -- v2 alone would return []", async () => {
     const srv = rawLegacyHttpServer("500-text", {});
     try {
-      const client = await connectMcpServer({ name: "nocaps", config: { type: "http", url: srv.url, versionNegotiation: "legacy" }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
+      const client = await connectMcpServer({ cwd: process.cwd(), name: "nocaps", config: { type: "http", url: srv.url, versionNegotiation: "legacy" }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
       try {
         expect((await client.listTools()).map((t) => t.name)).toEqual(["t1", "t2"]);
         expect((await client.listResources()).map((r) => r.uri)).toEqual(["file:///r"]);
@@ -692,7 +692,7 @@ describe("WS-23 fix round 1: 'auto' retries once as 'legacy' on a fresh transpor
 
   test("a server that declares nothing and answers -32601 to tools/list simply has no tools (not a failed connection)", async () => {
     const server = new Server({ name: "bare", version: "1.0.0" }, { capabilities: {} });
-    const client = await connectMcpServer({ name: "bare", config: { type: "sdk", name: "bare" }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "bare", config: { type: "sdk", name: "bare" }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT, inProcessServer: server });
     try {
       expect(await client.listTools()).toEqual([]);
       expect(await client.listResources()).toEqual([]);

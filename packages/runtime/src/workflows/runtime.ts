@@ -64,7 +64,7 @@ export interface WorkerProcess {
   kill(): void;
 }
 
-export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; winterHome?: string; brand?: SandboxBrand }) => WorkerProcess;
+export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; winterHome?: string; brand?: SandboxBrand; cwd?: string }) => WorkerProcess;
 
 /**
  * The production spawner: `sandbox-exec -p <profile> <worker>`, its own process-group leader.
@@ -87,7 +87,10 @@ export function realWorkerSpawner(opts: { sandbox?: boolean } = {}): WorkerSpawn
           ...(spawnOpts.brand !== undefined ? { brand: spawnOpts.brand } : {}),
         })
       : command;
-    const child = spawnProcess(spawnTarget.file, spawnTarget.args, { stdio: ["pipe", "pipe", "pipe"], detached: true });
+    // WS-23: the session's cwd, STATED. The worker reads nothing relative to it (the parent resolves
+    // every path), but an unstated cwd inherits the host process's -- a daemon's, for an embedded
+    // session -- and no child of a session should start outside that session's tree.
+    const child = spawnProcess(spawnTarget.file, spawnTarget.args, { stdio: ["pipe", "pipe", "pipe"], detached: true, ...(spawnOpts.cwd !== undefined ? { cwd: spawnOpts.cwd } : {}) });
     return {
       stdin: child.stdin!,
       stdout: child.stdout!,
@@ -267,6 +270,7 @@ export class WorkflowRuntime {
     // class): the RESOLVED root is passed too, so a `<PREFIX>HOME` whose basename is not the brand's gets
     // its own `<root>/run` deny -- the profile emits both anchors.
     const worker = this.spawnWorker(command, {
+      cwd: input.cwd,
       home: parentOf(this.deps.session.winterHome),
       winterHome: this.deps.session.winterHome,
       ...(this.deps.session.brand !== undefined ? { brand: this.deps.session.brand } : {}),

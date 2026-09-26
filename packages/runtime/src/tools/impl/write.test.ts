@@ -21,7 +21,7 @@ function makeCtx(cwd: string, opts?: { readState?: SessionReadState; probe?: Rea
     cwd,
     home: "/home/test",
     sessionId: "test-session",
-    readState: opts?.readState ?? createSessionReadState(),
+    readState: opts?.readState ?? createSessionReadState({ cwd: process.cwd() }),
     emitFrame: () => {},
     permissions: { probeReadAccess: () => opts?.probe ?? "silent" },
     tempDir: "/unused",
@@ -118,7 +118,7 @@ describe("Write -- new files have no precondition", () => {
   test("records a full (complete:true) read after creating a new file", async () => {
     const { dir, cleanup } = fixtureDir();
     try {
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       const filePath = join(dir, "new.txt");
       await writeExecutor().execute({ file_path: "new.txt", content: "x" }, makeCtx(dir, { readState: state }));
       const record = state.lookup(filePath);
@@ -155,7 +155,7 @@ describe("Write -- overwriting an existing file honors the ladder", () => {
     try {
       const filePath = join(dir, "existing.txt");
       writeFileSync(filePath, "original");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       state.recordRead(filePath, { complete: true, mtimeMs: statSync(filePath).mtimeMs });
       const result = await writeExecutor().execute({ file_path: "existing.txt", content: "changed" }, makeCtx(dir, { readState: state }));
       expect(result.isError).toBeUndefined();
@@ -173,7 +173,7 @@ describe("Write -- overwriting an existing file honors the ladder", () => {
     try {
       const filePath = join(dir, "existing.txt");
       writeFileSync(filePath, "original");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       state.recordRead(filePath, { complete: false, mtimeMs: statSync(filePath).mtimeMs });
       const result = await writeExecutor().execute({ file_path: "existing.txt", content: "changed" }, makeCtx(dir, { readState: state, probe: "silent" }));
       expect(result.isError).toBe(true);
@@ -207,7 +207,7 @@ describe("Write -- overwriting an existing file honors the ladder", () => {
     try {
       const filePath = join(dir, "existing.txt");
       writeFileSync(filePath, "original");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       state.recordRead(filePath, { complete: true, mtimeMs: statSync(filePath).mtimeMs });
       utimesSync(filePath, new Date(Date.now() + 10_000), new Date(Date.now() + 10_000));
       const result = await writeExecutor().execute({ file_path: "existing.txt", content: "changed" }, makeCtx(dir, { readState: state, probe: "silent" }));
@@ -235,7 +235,7 @@ describe("Write -- overwriting an existing file honors the ladder", () => {
     try {
       const filePath = join(dir, "existing.txt");
       writeFileSync(filePath, "original");
-      const state = createSessionReadState();
+      const state = createSessionReadState({ cwd: process.cwd() });
       state.recordRead(filePath, { complete: true, mtimeMs: statSync(filePath).mtimeMs });
       await writeExecutor().execute({ file_path: "existing.txt", content: "changed" }, makeCtx(dir, { readState: state }));
       const record = state.lookup(filePath);
