@@ -7824,7 +7824,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     let pauseContinuations = 0;
     const recoverFromContextOverflow = async (): Promise<{ retry: true } | { retry: false; why: string }> => {
       if (overflowRetryPending) return { retry: false, why: "the retry after a reactive compaction overflowed the context window again" };
-      const outcome = await performCompaction("auto", null);
+      // WS-23 (anthropic-cache C1): `reason: "overflow"` -- the summary must NOT reuse the session's own
+      // request prefix here, because that exact history was just refused as too long and would be again.
+      const outcome = await performCompaction("auto", null, { reason: "overflow" });
       if (!outcome.ok) return { retry: false, why: `the reactive compaction did not run (${outcome.error})` };
       overflowRetryPending = true;
       return { retry: true };
