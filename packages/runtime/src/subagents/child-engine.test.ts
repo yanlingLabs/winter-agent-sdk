@@ -3895,3 +3895,119 @@ describe("WS-24 item 1: a subagent waits for its own servers before its first re
     }
   }, 30_000);
 });
+
+// WS-24 item 2: a subagent's object-form server under a name the session already uses no longer
+// clobbers the session's registrations. It used to register its tools over the parent's in the one
+// process-wide registry (replacing the parent's descriptors AND executors while it ran), and its
+// teardown unregistered them, so the parent lost its own server's tools. The child's server is now
+// connected under a fresh name and the parent's registrations are never touched.
+describe("WS-24 item 2: a subagent's same-named server never clobbers the parent's", () => {
+  test("parent and subagent both declare `srv`: the child gets its own under a new name, the parent's `srv` survives the child's run AND teardown", async () => {
+    const BG = "ws24_spawn_nowait";
+    const WAIT = "ws24_wait_child_server";
+    const JOIN = "ws24_join_child";
+    const WAIT_GONE = "ws24_wait_child_teardown";
+    const CHILD_TOOL = "mcp__srv_2__shout";
+    const PARENT_TOOL = "mcp__srv__hello";
+    let handle: { result(): Promise<unknown> } | undefined;
+    const probe = (name: string, run: (input: unknown, ctx: ToolExecutionContext) => Promise<string>) =>
+      registerTool({
+        descriptor: {
+          canonicalName: name, advertisedName: name, source: "builtin", inputSchema: { type: "object" },
+          description: "ws24 probe", exposure: "eager", permissionClass: "read",
+          availability: {}, capabilityRequirements: [], disposition: "implement-now",
+        },
+        executor: { async execute(input: unknown, ctx: ToolExecutionContext) { return { output: await run(input, ctx) }; } },
+      });
+    const poll = async (done: () => boolean): Promise<string> => {
+      for (let n = 0; n < 500; n++) {
+        if (done()) return "ready";
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      return "timeout";
+    };
+    probe(BG, async (input, ctx) => {
+      if (!ctx.session.spawnChild) return "no spawnChild";
+      handle = await ctx.session.spawnChild(input as SpawnChildRequest);
+      return "spawned";
+    });
+    probe(WAIT, () => poll(() => getRegisteredTool(CHILD_TOOL) !== undefined));
+    probe(JOIN, async () => {
+      await handle?.result();
+      return "joined";
+    });
+    probe(WAIT_GONE, () => poll(() => getRegisteredTool(CHILD_TOOL) === undefined));
+    cleanupToolNames.push(BG, WAIT, JOIN, WAIT_GONE);
+
+    let releaseChild: () => void = () => {};
+    const childGate = new Promise<void>((resolve) => {
+      releaseChild = resolve;
+    });
+    const childTools: string[][] = [];
+    let childFirstTurn = "";
+    const childProvider: Provider = {
+      async generate(request) {
+        childTools.push((request.tools ?? []).map((t) => t.name));
+        if (childFirstTurn === "") childFirstTurn = userMessageText(request.messages.find((m) => m.role === "user"));
+        await childGate;
+        return { kind: "text", text: "child done" };
+      },
+    };
+    const parentSpec = { tools: [{ name: "hello", description: "greets", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text" as const, text: "HELLO-parent" }] }) }], resources: [] };
+    const childSpec = { tools: [{ name: "shout", description: "uppercases", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text" as const, text: "SHOUT-child" }] }) }], resources: [] };
+    await withHttpFixture(parentSpec, async (parentUrl) => {
+      await withHttpFixture(childSpec, async (childUrl) => {
+        const req: SpawnChildRequest = {
+          parentToolUseId: "p1", prompt: "hold your server", runInBackground: false,
+          definition: { description: "child with its own srv", prompt: "persona", mcpServers: [{ srv: { type: "http", url: childUrl.href } }] },
+        };
+        const parentTools: string[][] = [];
+        const toolResults: string[] = [];
+        let n = 0;
+        const parentProvider: Provider = {
+          async generate(request) {
+            parentTools.push((request.tools ?? []).map((t) => t.name));
+            const last = request.messages[request.messages.length - 1];
+            if (last?.role === "tool") toolResults.push(JSON.stringify(last.content));
+            n++;
+            if (n === 1) return { kind: "tool_use", calls: [{ id: "p1", name: BG, input: req }] };
+            if (n === 2) return { kind: "tool_use", calls: [{ id: "p2", name: WAIT, input: {} }] };
+            if (n === 3) {
+              // The child's server is registered: the parent is still offered its OWN `srv`, never the child's.
+              releaseChild();
+              return { kind: "tool_use", calls: [{ id: "p3", name: JOIN, input: {} }] };
+            }
+            if (n === 4) return { kind: "tool_use", calls: [{ id: "p4", name: WAIT_GONE, input: {} }] };
+            // The child's lifecycle is disposed: the parent's `srv` is still registered AND still runs.
+            if (n === 5) return { kind: "tool_use", calls: [{ id: "p5", name: PARENT_TOOL, input: {} }] };
+            return { kind: "text", text: "parent done" };
+          },
+        };
+        registerChildEngineFactory(createChildEngineFactory({ provider: childProvider }));
+        const { host, runtime } = createInMemoryChannel();
+        const done = runEngine({
+          config: baseConfig({ sessionId: "ws24-srv-clobber", toolSearchEnabled: false, mcpServers: { srv: { type: "http", url: parentUrl.href } } }),
+          input: runtime.input,
+          output: runtime.output,
+          provider: parentProvider,
+        });
+        host.output.write({ type: "user", text: "go" });
+        host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+        await drain(host.input);
+        expect(await done).toBe(0);
+
+        expect(toolResults[1]).toContain("ready"); // the child's own server did register (as srv_2)
+        expect(toolResults[3]).toContain("ready"); // ...and was torn down with the child
+        for (const tools of parentTools) {
+          expect(tools).toContain(PARENT_TOOL);
+          expect(tools).not.toContain(CHILD_TOOL);
+        }
+        expect(toolResults[4]).toContain("HELLO-parent");
+        // The child sees ONE `srv` -- its own, under its new name -- and is told why.
+        expect(childTools[0]).toContain(CHILD_TOOL);
+        expect(childTools[0]).not.toContain(PARENT_TOOL);
+        expect(childFirstTurn).toContain('this agent\'s own "srv" is connected as "srv_2"');
+      });
+    });
+  }, 30_000);
+});

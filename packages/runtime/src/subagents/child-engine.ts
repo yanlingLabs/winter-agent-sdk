@@ -105,7 +105,7 @@ import { runEngine, createContextAccountant, type ContextAccountant, type Engine
 import { createInMemoryChannel, type FrameSink } from "../protocol/channel.ts";
 import { STRUCTURED_OUTPUT_TOOL_NAME } from "../structured/seam.ts";
 import { toolActivityDescription } from "./activity.ts";
-import { getRegisteredTool, listRegisteredTools } from "../tools/registry.ts";
+import { getRegisteredTool, listRegisteredTools, mcpServerHasRegistrations } from "../tools/registry.ts";
 import { buildChildTranscriptWriter, childTranscriptSubpath, TranscriptWriter } from "../store/dialect.ts";
 import { toDialectEntries, rebuildProviderMessages } from "../store/resume.ts";
 import type {
@@ -387,6 +387,95 @@ export interface ChildEngineFactoryDeps {
   compactionControllerFactory?: () => CompactionController;
 }
 
+// --- WS-24: a subagent's own object-form MCP servers never take a name another lifecycle holds ------
+//
+// THE BUG. MCP tools live in ONE process-wide registry keyed by their model-facing name,
+// `mcp__<server>__<tool>`. A subagent whose definition declared an object-form server under a name the
+// session already used (`srv`) registered its tools over the parent's -- replacing the parent's
+// descriptors and executors for EVERYONE while it ran -- and its teardown then unregistered them, so
+// the parent lost `srv` until a reconnect. Two siblings declaring the same inline name did the same to
+// each other.
+//
+// WHY RENAME, NOT A PER-ENGINE REGISTRY. An overlay registry would let the subagent keep the name, but
+// every consumer resolves a tool name against the process-wide registry directly: the engine's
+// offered-tool, availability and interaction checks (`getRegisteredTool` in engine.ts), the advertised
+// partition and ToolSearch's pool (`partitionAdvertisedTools` -> `listRegisteredTools`,
+// toolsearch/exposure.ts), `LoadedToolSet.load`, the permission rule parser (permissions/ruleset.ts),
+// the hook input validator (hooks/input-validator.ts), the approval store's path extraction
+// (permissions/approvals.ts) and the MCP scope filter (`mcpServerOwningTool`). Threading a scope through
+// all of them is a seven-module change for a collision that is rare. So a COLLIDING inline server gets a
+// fresh name (`srv_2`, ...) for this subagent, the subagent is told so on its first turn, and nothing any
+// other lifecycle registered is ever touched. A name that collides with nothing is kept as declared.
+//
+// "In use" is: a server the parent run can see (its board, pending ones included, and what it inherits),
+// a name some live MCP server in this process is registered under, or a name another LIVE subagent's
+// own lifecycle holds (`liveChildScopedServerNames` -- it may still be connecting, with nothing
+// registered yet). A name is held for exactly one GENERATION: claimed when the generation's servers are
+// allocated, released once its `runEngine` has fully returned (its lifecycle's `dispose()`, which
+// unregisters the name, runs inside that teardown -- releasing any earlier would let a sibling register
+// the name and then lose it to this generation's late unregister).
+//
+// AN IN-PROCESS (`sdk`) SERVER IS NOT RENAMED. Its calls go back to the host BY NAME (`sdk_mcp_call`),
+// so a colliding one can only mean the host's instance the session already has: it is dropped from the
+// subagent's own set (the session's server of that name is used, as a string entry would), with a note.
+const liveChildScopedServerNames = new Set<string>();
+
+type ChildMcpServers = NonNullable<RuntimeConfig["mcpServers"]>;
+
+interface ChildServerAllocation {
+  /** The servers this generation connects itself, under the names it holds. */
+  servers: ChildMcpServers;
+  /** Declared name -> the name it is connected under (only for servers this generation connects). */
+  actual: Map<string, string>;
+  /** One legible line per server not connected under its declared name. */
+  notes: string[];
+  /** Releases every name this allocation claimed. Idempotent. */
+  release: () => void;
+}
+
+function allocateChildScopedServers(declared: ChildMcpServers, parentVisible: ReadonlySet<string>, prefer?: ReadonlyMap<string, string>): ChildServerAllocation {
+  const claimed: string[] = [];
+  const inUse = (name: string): boolean => liveChildScopedServerNames.has(name) || parentVisible.has(name) || mcpServerHasRegistrations(name);
+  const servers: ChildMcpServers = {};
+  const actual = new Map<string, string>();
+  const notes: string[] = [];
+  const claim = (name: string): void => {
+    liveChildScopedServerNames.add(name);
+    claimed.push(name);
+  };
+  for (const [name, cfg] of Object.entries(declared)) {
+    if (cfg.type === "sdk") {
+      if (inUse(name)) {
+        notes.push(`mcpServers declares the in-process server "${name}", which this session already has -- the session's "${name}" is used`);
+        continue;
+      }
+      claim(name);
+      servers[name] = cfg;
+      actual.set(name, name);
+      continue;
+    }
+    const free = (candidate: string): boolean => !inUse(candidate) && (candidate === name || !(candidate in declared));
+    let pick = prefer?.get(name);
+    if (pick === undefined || !free(pick)) pick = free(name) ? name : undefined;
+    for (let n = 2; pick === undefined; n++) if (free(`${name}_${n}`)) pick = `${name}_${n}`;
+    claim(pick);
+    servers[pick] = cfg;
+    actual.set(name, pick);
+    if (pick !== name) notes.push(`mcpServers declares "${name}", which is already in use in this session -- this agent's own "${name}" is connected as "${pick}" (its tools are named mcp__${pick}__<tool>)`);
+  }
+  let released = false;
+  return {
+    servers,
+    actual,
+    notes,
+    release: () => {
+      if (released) return;
+      released = true;
+      for (const name of claimed) liveChildScopedServerNames.delete(name);
+    },
+  };
+}
+
 export function createChildEngineFactory(deps: ChildEngineFactoryDeps): ChildEngineFactory {
   return (runCtx: ChildEngineRunContext): ChildEngineDeps => ({
     spawn(req: SpawnChildRequest, inherit: ChildInheritance): Promise<ChildHandle> {
@@ -620,7 +709,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       }
       for (const [name, cfg] of Object.entries(spec)) childScopedMcpServers[name] = cfg;
     }
-    const hasChildScopedMcpServers = Object.keys(childScopedMcpServers).length > 0;
+    // WS-24: the servers are ALLOCATED (named, and their names claimed) per generation, right before it
+    // starts -- see `allocateChildScopedServers`. The declared names shadow the parent's same-named
+    // servers in this child's own scope (below, `inheritedMcpServerNames`), so it sees one `srv`, its own.
+    const ownServerNames = new Set(Object.entries(childScopedMcpServers).filter(([, cfg]) => cfg.type !== "sdk").map(([name]) => name));
+    const parentVisibleServers = (): Set<string> => new Set(parentMcp?.visibleServerNames?.() ?? []);
 
     // --- Isolation (WS-10 §8) --------------------------------------------------------------------
     // Review r2 finding 5 (whole-branch): NO "a configured WorktreeCreate hook counts" carve-out
@@ -723,7 +816,10 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // its own forwarded frames (WS-10 §4), never a second settlement of THIS promise (a native
     // Promise's `resolve` is itself idempotent, so calling `resolveResultOnce` again from a later
     // generation is a harmless no-op, never a second, conflicting value).
-    function startGeneration(config: RuntimeConfig, initialMessages: ProviderMessage[], liveText: string, agentSystemPrompt?: string): void {
+    function startGeneration(config: RuntimeConfig, initialMessages: ProviderMessage[], liveText: string, agentSystemPrompt: string | undefined, servers: ChildServerAllocation): void {
+      // WS-24: this generation's own servers, under the names it holds (released once `runEngine` returns).
+      const ownServers = Object.keys(servers.servers).length > 0;
+      if (ownServers) config = { ...config, mcpServers: servers.servers };
       const channel = createInMemoryChannel();
       currentSink = channel.host.output;
       const startedAt = Date.now();
@@ -1121,12 +1217,16 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // resolve the OWNING session's lifecycle (ctx.sessionId, per I1), so those child-scoped
         // servers are CALLABLE from inside the child but not browsable through ListMcpResources --
         // disclosed, not silent.
-        ...(!hasChildScopedMcpServers && parentMcp?.stateSource !== undefined ? { mcpServerStateSource: parentMcp.stateSource } : {}),
-        ...(!hasChildScopedMcpServers && parentMcp?.controlSeam !== undefined ? { mcpControlSeam: parentMcp.controlSeam } : {}),
+        ...(!ownServers && parentMcp?.stateSource !== undefined ? { mcpServerStateSource: parentMcp.stateSource } : {}),
+        ...(!ownServers && parentMcp?.controlSeam !== undefined ? { mcpControlSeam: parentMcp.controlSeam } : {}),
         // Fix round 20/21: EVERY child -- with or without servers of its own -- inherits the parent's
         // visible-server set, so the scope recurses to grandchildren (engine.ts's
         // `computeAdvertisedPartition`). Scope only: never connected, never reported.
-        ...(parentMcp?.visibleServerNames !== undefined ? { inheritedMcpServerNames: parentMcp.visibleServerNames } : {}),
+        // WS-24: minus the names this child declares for itself -- its own server of that name is the one
+        // it sees (under whatever name `allocateChildScopedServers` gave it).
+        ...(parentMcp?.visibleServerNames !== undefined
+          ? { inheritedMcpServerNames: ownServerNames.size === 0 ? parentMcp.visibleServerNames : () => parentMcp.visibleServerNames!().filter((name) => !ownServerNames.has(name)) }
+          : {}),
         // Phase 5 Task 8: the SAME assembler the parent runs with. Without it a child's system
         // prompt is `agentSystemPrompt` verbatim (the engine's R5-16 fallback) -- a persona with no
         // minimal prompt, no dynamic sections, no WINTER.md and no memory block, which is a strictly
@@ -1194,7 +1294,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // message, never a replacement for one that has it.
         const reason = err instanceof Error && err.message.length > 0 ? err.message : String(err ?? "");
         settle("failed", reason.length > 0 ? `child engine exited: ${reason}` : "child engine process exited unexpectedly");
-      });
+      }).finally(servers.release);
 
       channel.host.output.write({ type: "user", text: liveText });
     }
@@ -1307,8 +1407,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       // `ChildInheritance`. The assembler applies it; this is only the channel.
       ...(inherit.outputStyle !== undefined ? { outputStyle: inherit.outputStyle } : {}),
       // I4: child-scoped servers only -- the parent's own declared servers are reached through the
-      // inherited state source below, never re-declared (and therefore never re-connected) here.
-      ...(hasChildScopedMcpServers ? { mcpServers: childScopedMcpServers } : {}),
+      // inherited state source below, never re-declared (and therefore never re-connected) here. WS-24:
+      // set per GENERATION by `startGeneration`, from that generation's own allocation.
     };
 
     // Phase 4 fix wave (C1 + I6): ONE generation's own RuntimeConfig -- `baseConfig` plus the mode
@@ -1393,6 +1493,10 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // `buildForkInitialMessages` appended to `initialMessages` above (consecutive user-role history
     // entries merge, and a `"tool"`-role message is user-role for that purpose), reproducing claude's
     // own single "tool_result + directive text" wire message without a bespoke merge here.
+    // WS-24: the first generation's servers, allocated (and their names claimed) here so a rename reaches
+    // the child's first turn with the other definition warnings.
+    let serverAllocation = allocateChildScopedServers(childScopedMcpServers, parentVisibleServers());
+    definitionWarnings.push(...serverAllocation.notes);
     const firstTurnText =
       req.fork === true
         ? buildForkDirectiveText({ prompt: req.prompt, ...(req.isolation === "worktree" ? { worktree: { parentRoot: inherit.sessionRoot, worktreeRoot: workspace.root } } : {}) })
@@ -1632,7 +1736,12 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // Under P4-J it survived a resume only because it sat in the rebuilt message history; now
         // that it rides `system`, a resume that omitted it would silently run a persona-less child --
         // exactly the C1 defect P4-J was created to fix, reintroduced by the move.
-        startGeneration(generationConfig(resumeMode), rebuilt, msg.body, resolvedSystemPrompt);
+        // WS-24: the names are re-claimed for this generation -- the same ones where still free; a name a
+        // sibling took while this child was idle is re-allocated, and the child is told.
+        const previous = serverAllocation.actual;
+        serverAllocation = allocateChildScopedServers(childScopedMcpServers, parentVisibleServers(), previous);
+        const moved = [...serverAllocation.actual].filter(([declared, name]) => previous.get(declared) !== name).map(([declared, name]) => `this agent's own "${declared}" is now connected as "${name}" (its tools are named mcp__${name}__<tool>)`);
+        startGeneration(generationConfig(resumeMode), rebuilt, moved.length > 0 ? `${msg.body}\n\n[winter: ${moved.join("; ")}]` : msg.body, resolvedSystemPrompt, serverAllocation);
         return { status: "resumed_and_delivered", messageId: msg.messageId };
       },
       async result(): Promise<ChildResult> {
@@ -1661,7 +1770,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     } catch {
       /* see above */
     }
-    startGeneration(generationConfig(inherit.policy.effectiveMode), initialMessages, firstTurnText, resolvedSystemPrompt);
+    startGeneration(generationConfig(inherit.policy.effectiveMode), initialMessages, firstTurnText, resolvedSystemPrompt, serverAllocation);
 
     spawnRegistered = false; // ownership of the depth/concurrency slot has moved into the generation's own settle()/stop()
     return handle;
