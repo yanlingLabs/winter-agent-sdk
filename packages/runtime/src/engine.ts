@@ -90,7 +90,7 @@ export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
 // direction `store/dialect.ts` has to avoid.
-import { PROVIDER_STATE_FILE_SUFFIX, type ContinuationLink, type ProviderStateRecord, type ProviderStateRecordInput } from "./store/provider-state.ts";
+import { PROVIDER_STATE_FILE_SUFFIX, rejectedFeaturesFrom, type ContinuationLink, type ProviderStateRecord, type ProviderStateRecordInput, type RejectableFeature } from "./store/provider-state.ts";
 // Review round 1 (M8): the two pure clusters this file used to inline. Both are plain functions of
 // their inputs -- `provider/stream-frames.ts` imports only the `ProviderStreamSink` TYPE from here, and
 // `store/continuation-attach.ts` imports nothing from here at all (its message shape is structural,
@@ -3090,10 +3090,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // message of a turn carry one `perTurnEffort`, the invariant `withEffortMarkers` derives from.
   let liveEffort: TurnRequest["effort"] | undefined = config.effort;
   let pendingEffort: { effort: TurnRequest["effort"] | undefined } | undefined;
-  // Sticky for the session: the API refused the per-message beta with a 400 (it may be limited to
-  // allowlisted accounts), so every later request changes the TOP-LEVEL value instead. See the
-  // generation catch.
-  let perMessageEffortRejected = false;
+  // Sticky: the API refused the per-message beta with a 400 (it may be limited to allowlisted
+  // accounts), so every later request to that model changes the TOP-LEVEL value instead. See the
+  // generation catch, and `featureRejected` below for how the four sticky refusals are kept.
   // What the in-flight generation sent, stamped onto the assistant message(s) it produces.
   let generationEffort: { effort?: string; perTurnEffort: string } | undefined;
   // WS-23 fix round 1 (M2): the TOP-LEVEL effort a per-message-effort session sends, frozen at its first
@@ -3118,16 +3117,36 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // (a resume onto another provider; the daemon compacts on the source before such a switch instead).
   let pendingFitCheck: { from: string | undefined; source: () => Provider | undefined } | undefined;
   // WS-23 (midconv): the tool epoch's session state (context/tool-epoch.ts; `planToolsForRequest`).
-  // `toolChangesRejected` is sticky, like `perMessageEffortRejected`: the API refused a tool change, so
-  // every later request rebuilds `tools` (claude 2.1.282's own one-time fallback). `forceNewToolEpoch` is
-  // set by a compaction: the prefix is new anyway, so the next request freezes the list afresh.
-  let toolChangesRejected = false;
-  // WS-23 (midconv): sticky too -- the API refused OpenAI's client `tool_search` (or a namespace), so the
-  // session goes back to today's shape: loaded deferred tools appended to `tools` as plain functions.
-  let nativeToolSearchRejected = false;
-  // WS-23 (midconv, fix round 1): sticky -- the API refused `tool_choice: allowed_tools`. Only the
-  // restriction goes: a withdrawn tool then starts a new epoch (today's rebuild), and the tool search stays.
-  let allowedToolsRejected = false;
+  // A refused tool change is sticky, like the refused per-message effort: every later request rebuilds
+  // `tools` (claude 2.1.282's own one-time fallback). So is a refused OpenAI client `tool_search` (or a
+  // namespace) -- loaded deferred tools go back to plain functions in `tools` -- and a refused
+  // `tool_choice: allowed_tools`, where only the restriction goes: a withdrawn tool then starts a new
+  // epoch (today's rebuild), and the tool search stays. `forceNewToolEpoch` is set by a compaction: the
+  // prefix is new anyway, so the next request freezes the list afresh.
+  //
+  // WS-24: the four refusals are kept PER PROVIDER+MODEL, never for the session as a whole -- one model's
+  // refusal says nothing about another's API (a `set_model` to a model whose row documents the feature
+  // tries it), and they are PERSISTED: a `feature-rejected` sidecar record rides the next assistant entry
+  // (`pendingRejections`), stamped with the refusing model's identity, and a resume reads them back
+  // (`rejectedFeaturesFrom`), so the resumed session does not spend a request re-learning each one.
+  // Identity-less sessions (a scripted double) key on the model string and keep them in memory only.
+  const rejectedFeatures = new Map<string, Set<RejectableFeature>>();
+  const featureKeyOf = (providerId: string | undefined, modelKey: string | undefined): string => `${providerId ?? ""}\u0000${modelKey ?? ""}`;
+  const liveFeatureKey = (): string =>
+    currentProviderIdentity !== undefined ? featureKeyOf(currentProviderIdentity.providerId, currentProviderIdentity.modelKey) : featureKeyOf(undefined, currentModel);
+  const featureRejected = (feature: RejectableFeature): boolean => rejectedFeatures.get(liveFeatureKey())?.has(feature) === true;
+  const markFeatureRejected = (key: string, feature: RejectableFeature): void => {
+    const set = rejectedFeatures.get(key) ?? new Set<RejectableFeature>();
+    set.add(feature);
+    rejectedFeatures.set(key, set);
+  };
+  /** Refusals not yet persisted -- written as `feature-rejected` records with the next assistant entry, under the REFUSING model's identity. */
+  const pendingRejections: Array<{ feature: RejectableFeature; provider: string; model: string; family: string }> = [];
+  const rejectFeature = (feature: RejectableFeature): void => {
+    markFeatureRejected(liveFeatureKey(), feature);
+    const identity = currentProviderIdentity;
+    if (identity !== undefined) pendingRejections.push({ feature, provider: identity.providerId, model: identity.modelKey, family: identity.family });
+  };
   let forceNewToolEpoch = false;
   let toolEpochRestartLogged = false;
   // WS-23: the last MAIN-LOOP response's id and the model it came from -- the next request's
@@ -3662,6 +3681,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       if (effortStamp !== undefined) records.push({ ...base, itemIndex: records.length, kind: "effort", payload: { ...effortStamp } });
       for (const attachment of pendingBookkeeping.splice(0)) {
         records.push({ ...base, itemIndex: records.length, kind: attachment.type === TOOL_EPOCH_ATTACHMENT ? "tool-epoch" : "tool-changes", payload: attachment });
+      }
+      // WS-24: a refusal is the REFUSING model's fact -- its own provider/model/family, not this entry's
+      // (a fallback may have produced this reply), and no continuation domain (it continues nothing).
+      for (const rejection of pendingRejections.splice(0)) {
+        records.push({ sessionId: config.sessionId, anchorUuid: uuid, provider: rejection.provider, model: rejection.model, family: rejection.family, itemIndex: records.length, kind: "feature-rejected", payload: { feature: rejection.feature } });
       }
       const unsaved: string[] = [];
       for (const input of records) {
@@ -6554,15 +6578,33 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // ONE identity read (fix wave, the T10 r1 duplicate): loaded here and handed to
     // `attachContinuationChain`, which used to re-read it for the zero-records case.
     const persisted = store.loadProviderIdentity !== undefined ? await store.loadProviderIdentity() : undefined;
+    // WS-24: the records the attach loads are also where a resumed session's sticky refusals live
+    // (`feature-rejected`), read over the WHOLE list -- so the one read is captured here rather than
+    // made twice.
+    let loadedProviderState: readonly ProviderStateRecord[] = [];
+    const sidecarSource = store;
     const resumedChain = await attachContinuationChain({
       messages,
-      store,
+      store: {
+        ...(sidecarSource.loadProviderState !== undefined
+          ? {
+              loadProviderState: async () => {
+                const records = await sidecarSource.loadProviderState!();
+                loadedProviderState = records;
+                return records;
+              },
+            }
+          : {}),
+        ...(sidecarSource.loadProviderIdentity !== undefined ? { loadProviderIdentity: () => sidecarSource.loadProviderIdentity!() } : {}),
+      },
       sessionId: config.sessionId,
       warn: (message) => output.write({ type: "data", message }),
       newUuid: randomUUID,
       identity: () => Promise.resolve(persisted),
     });
     for (const [anchor, link] of resumedChain) sessionChain.set(anchor, link);
+    // WS-24: each refusal back under the model that made it -- in memory only (already persisted).
+    for (const rejection of rejectedFeaturesFrom(loadedProviderState)) markFeatureRejected(featureKeyOf(rejection.provider, rejection.model), rejection.feature);
 
     // WS-23 (reasoning-state, layer 2): each resumed reply's CACHE QUIRKS come back from the sidecar --
     // its effort annotations onto the message (the markers derive from them), and the tool-epoch
@@ -7362,7 +7404,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const planEffort = (): { topLevel: TurnRequest["effort"] | undefined; markers?: EffortMarkerPlan; stamp?: { effort?: string; perTurnEffort: string } } => {
     const live = liveEffort;
     const plain = { topLevel: live, ...(typeof live === "string" ? { stamp: { effort: live, perTurnEffort: live } } : {}) };
-    if (typeof live === "number" || perMessageEffortRejected) return plain;
+    if (typeof live === "number" || featureRejected("per-message-effort")) return plain;
     const described = currentModelDescription();
     if (described?.wire?.perMessageEffort !== true) return plain;
     const vocabulary = described.efforts ?? [];
@@ -7697,7 +7739,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // the native `{"type": "tool_search", "execution": "client"}`), and an MCP tool carries its server's
     // `namespace`. "At least one tool must have defer_loading=false" holds there too (ToolSearch is one).
     const wire = currentModelDescription()?.wire;
-    const clientSearch = wire?.clientToolSearch === true && !nativeToolSearchRejected;
+    const clientSearch = wire?.clientToolSearch === true && !featureRejected("client-tool-search");
     const declareDeferred = specs.length > 0 && (wire?.deferredToolLoading === true || clientSearch);
     const referenced = declareDeferred ? referencedToolNames(messages, currentProviderIdentity?.modelKey ?? currentModel ?? null) : undefined;
     const namespaced = (spec: ProviderToolSpec, canonicalName: string): ProviderToolSpec => {
@@ -7741,12 +7783,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
   /** The LIVE model's tool-change mechanism and what it can express, or `undefined` for today's rebuild. */
   const toolChangeMechanism = (): { mechanism: ToolChangeMechanism; caps: ToolChangeCaps } | undefined => {
-    if (toolChangesRejected) return undefined;
+    if (featureRejected("tool-changes")) return undefined;
     const wire = currentModelDescription()?.wire;
     if (wire?.toolChanges === "inline") return { mechanism: "anthropic-inline", caps: {} };
     if (wire?.toolChanges === "reference") return { mechanism: "anthropic-reference", caps: {} };
     const additionalTools = wire?.additionalToolsItem === true;
-    const allowedTools = wire?.allowedToolsChoice === true && !allowedToolsRejected;
+    const allowedTools = wire?.allowedToolsChoice === true && !featureRejected("allowed-tools");
     if (additionalTools || allowedTools) return { mechanism: "openai", caps: { additionalTools, allowedTools } };
     return undefined;
   };
@@ -8720,8 +8762,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // is pre-first-byte, so re-running the round is a fresh request, never a replay; the session
         // then changes the TOP-LEVEL value for the rest of its life, the only form left, and says so
         // once. Sticky, so a second refusal cannot loop -- it surfaces like any other failure.
-        if (sentPerMessageBeta && !perMessageEffortRejected && isPerMessageEffortRejection(err)) {
-          perMessageEffortRejected = true;
+        if (sentPerMessageBeta && !featureRejected("per-message-effort") && isPerMessageEffortRejection(err)) {
+          rejectFeature("per-message-effort");
           console.error(`winter: the provider refused per-message effort (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now changes effort at the top level, which restarts the prompt cache on each change`);
           continue roundLoop;
         }
@@ -8733,19 +8775,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // WS-23 (midconv): OpenAI's client tool search REFUSED -- same one-time, sticky fallback, to the
         // shape every other row has (loaded deferred tools as plain functions). A new epoch, since the
         // frozen list carried the native tool search.
-        if (sentAllowedTools && !allowedToolsRejected && isAllowedToolsRejection(err)) {
-          allowedToolsRejected = true;
+        if (sentAllowedTools && !featureRejected("allowed-tools") && isAllowedToolsRejection(err)) {
+          rejectFeature("allowed-tools");
           console.error(`winter: the provider refused tool_choice allowed_tools (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} no longer restricts its callable set that way (its tool search is unaffected)`);
           continue roundLoop;
         }
-        if (sentNativeToolSearch && !nativeToolSearchRejected && isToolSearchRejection(err)) {
-          nativeToolSearchRejected = true;
+        if (sentNativeToolSearch && !featureRejected("client-tool-search") && isToolSearchRejection(err)) {
+          rejectFeature("client-tool-search");
           forceNewToolEpoch = true;
           console.error(`winter: the provider refused its client tool search (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now sends loaded deferred tools in its tool list`);
           continue roundLoop;
         }
-        if (sentToolChanges && !toolChangesRejected && isToolChangeRejection(err, sentToolChangeMessage)) {
-          toolChangesRejected = true;
+        if (sentToolChanges && !featureRejected("tool-changes") && isToolChangeRejection(err, sentToolChangeMessage)) {
+          rejectFeature("tool-changes");
           console.error(`winter: the provider refused a mid-conversation tool change (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now re-sends its tool list on each change, which restarts the prompt cache`);
           continue roundLoop;
         }

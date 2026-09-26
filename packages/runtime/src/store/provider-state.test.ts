@@ -16,8 +16,10 @@ import {
   PROVIDER_STATE_SUBPATH,
   appendProviderState,
   buildContinuationChain,
+  parseProviderStateLine,
   providerStateSidecarPath,
   readProviderState,
+  rejectedFeaturesFrom,
   toProviderStateRecord,
   type ProviderStateRecord,
 } from "./provider-state.ts";
@@ -750,5 +752,23 @@ describe("WS-23: the `decoration` kind", () => {
       "openai/gpt-6-sol": { text: "<recovered_reasoning …>x</recovered_reasoning>", door: "tag" },
       "deepseek/deepseek-v4-pro": null,
     });
+  });
+});
+
+// WS-24 (engine lane, item 5): a refused request feature, kept as a layer-2 record under the refusing model.
+describe("WS-24: `feature-rejected` records", () => {
+  const record = (feature: unknown, anchorUuid = "a") =>
+    toProviderStateRecord({ sessionId: "s", anchorUuid, provider: "anthropic", model: "anthropic/claude-opus-5-5", family: "anthropic", itemIndex: 0, kind: "feature-rejected", payload: { feature } });
+
+  test("round-trips through the line parser and reads back regardless of anchor", () => {
+    const parsed = parseProviderStateLine(JSON.stringify(record("tool-changes", "not-in-any-history")))!;
+    expect(parsed.kind).toBe("feature-rejected");
+    expect(rejectedFeaturesFrom([parsed])).toEqual([{ provider: "anthropic", model: "anthropic/claude-opus-5-5", feature: "tool-changes" }]);
+    // Never folded into an entry's link: it is a fact about a model, not about that entry.
+    expect(buildContinuationChain([parsed], new Set(["not-in-any-history"])).get("not-in-any-history")).toEqual({});
+  });
+
+  test("an unknown feature name is ignored, never guessed at", () => {
+    expect(rejectedFeaturesFrom([record("something-new"), record(42)])).toEqual([]);
   });
 });
