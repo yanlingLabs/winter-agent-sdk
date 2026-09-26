@@ -15,7 +15,7 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   `UserPromptSubmit`/`SessionStart`/`SubagentStart`) -- reaches the model at the next point the engine
   appends hook context (after a tool round, with the next prompt, after a compaction) as an
   `async_hook_response` `<system-reminder>`, never mid-request; a `systemMessage` is also the host's
-  `system/informational` notice. Bounded: its timeout is the handler's `timeout`, else `asyncTimeout`, else
+  `system/informational` notice. Bounded: its timeout is `asyncTimeout` when announced, else the handler's `timeout`, else
   10 minutes; at most 16 run at once per session (a 17th is refused and killed); at most 16 finished outputs
   wait for delivery (the oldest is dropped, and the model is told how many); texts are capped like every
   hook's; session end kills them. `async` on a fail-closed `PreToolUse`/`PermissionRequest` hook is refused at

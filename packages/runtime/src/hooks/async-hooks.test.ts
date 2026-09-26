@@ -160,11 +160,11 @@ function setup(entries: SourcedHookEntry[]): { invoker: ReturnType<typeof create
 describe("DECLARED async (a handler's `async: true`)", () => {
   test("the runner is answered at once; what the hook says arrives later through the queue", async () => {
     const { invoker, ctx } = setup([
-      { id: "h", event: "PostToolUse", source: "user", async: true, command: `sleep 0.4; echo '{"systemMessage":"lint clean","hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"0 warnings"}}'` },
+      { id: "h", event: "PostToolUse", source: "user", async: true, command: `sleep 1; echo '{"systemMessage":"lint clean","hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"0 warnings"}}'` },
     ]);
     const started = Date.now();
     const composite = await runHooks("PostToolUse", { toolUseID: "tu-1", toolName: "Edit", payload: { tool_response: "ok" } }, ctx);
-    expect(Date.now() - started).toBeLessThan(300);
+    expect(Date.now() - started).toBeLessThan(800); // the hook sleeps 1 s: it was not waited for
     expect(composite.decision).toBeUndefined();
     expect(invoker.asyncHooks.running()).toBe(1);
     await until(() => invoker.asyncHooks.running() === 0);
@@ -193,10 +193,10 @@ describe("DECLARED async (a handler's `async: true`)", () => {
 
 describe("ANNOUNCED async (a first stdout line `{\"async\": true}`)", () => {
   test("the runner is answered on that line; the rest of stdout is the hook's later output", async () => {
-    const { invoker, ctx } = setup([{ id: "h", event: "PostToolUse", source: "user", command: `echo '{"async":true,"asyncTimeout":5000}'; sleep 0.4; echo '{"systemMessage":"later"}'` }]);
+    const { invoker, ctx } = setup([{ id: "h", event: "PostToolUse", source: "user", command: `echo '{"async":true,"asyncTimeout":5000}'; sleep 1; echo '{"systemMessage":"later"}'` }]);
     const started = Date.now();
     const composite = await runHooks("PostToolUse", { toolUseID: "tu", toolName: "Bash" }, ctx);
-    expect(Date.now() - started).toBeLessThan(350);
+    expect(Date.now() - started).toBeLessThan(800); // the hook runs 1 s past its announcement
     expect(composite.decision).toBeUndefined();
     await until(() => invoker.asyncHooks.running() === 0);
     expect(invoker.asyncHooks.drain().outputs).toEqual([{ hookName: "PostToolUse:Bash", systemMessage: "later", toolUseID: "tu" }]);

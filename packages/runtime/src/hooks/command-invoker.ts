@@ -391,7 +391,9 @@ function adoptInBackground(proc: HookProcess, target: BackgroundTarget, stdoutOf
       () => ({ exitCode: null, stdout: "" }),
     ),
     kill: () => proc.kill(),
-    timeoutMs: target.declaredTimeoutMs ?? announcedTimeoutMs ?? DEFAULT_ASYNC_HOOK_TIMEOUT_MS,
+    // An ANNOUNCED `asyncTimeout` is the hook's own statement of its background budget, so it outranks the
+    // handler's generic `timeout` (which governed the synchronous wait up to that line).
+    timeoutMs: announcedTimeoutMs ?? target.declaredTimeoutMs ?? DEFAULT_ASYNC_HOOK_TIMEOUT_MS,
   });
 }
 

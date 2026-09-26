@@ -28,8 +28,8 @@
 // line from one is malformed output (runner.ts's strict mode denies; the invoker never backgrounds it).
 //
 // BOUNDED, like every other hook contribution (hooks/bounds.ts):
-//   - a TIMEOUT per job: the handler's own `timeout` (seconds, from the settings block), else the
-//     announced `asyncTimeout` (milliseconds, claude's unit), else `DEFAULT_ASYNC_HOOK_TIMEOUT_MS`.
+//   - a TIMEOUT per job: the announced `asyncTimeout` (milliseconds, claude's unit), else the handler's
+//     own `timeout` (seconds, from the settings block), else `DEFAULT_ASYNC_HOOK_TIMEOUT_MS`.
 //     A job past it is SIGKILLed (its whole process group) and says nothing;
 //   - a CAP on concurrent jobs (`MAX_RUNNING_ASYNC_HOOKS`): past it a new job is refused -- killed at
 //     once, never queued behind the others -- with one diagnostic line;
