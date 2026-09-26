@@ -84,7 +84,7 @@ import { getDefaultMessagingRuntime, UnattributableSenderError, classifyDelivery
 import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, SystemPromptBlock, ToolChangeSet, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 // P6 fix wave (Ruling E-2): the two PURE continuity functions the switch point calls. Value imports
 // from the provider-runtime barrel, one direction (runtime -> provider-runtime), same as every adapter.
-import { WinterProviderResolutionError, buildPortableHandoff, classifySwitch, reasoningBlockItems, separateReasoningBlocks } from "@yanlinglabs/winter-provider-runtime";
+import { WinterProviderResolutionError, buildPortableHandoff, classifySwitch, isWinterBookkeepingItem, reasoningBlockItems, separateReasoningBlocks } from "@yanlinglabs/winter-provider-runtime";
 export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
@@ -3537,7 +3537,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       };
       // itemIndex ORDERS the records under one anchor: 0 is always the mandatory `origin`.
       const records: ProviderStateRecordInput[] = [{ ...base, itemIndex: 0, kind: "origin", payload: {} }];
-      if (provenance?.nativeState !== undefined) records.push({ ...base, itemIndex: records.length, kind: "native-state", payload: { items: provenance.nativeState.items } });
+      if (provenance?.nativeState !== undefined) {
+        // WS-23: Winter's own bookkeeping items (a Responses output layout) are persisted APART from the
+        // vendor's items, under `winter` -- an older runtime replays `payload.items` verbatim and must
+        // never send one; this one's reader (`buildContinuationChain`) folds both back together.
+        const vendor = provenance.nativeState.items.filter((item) => !isWinterBookkeepingItem(item));
+        const winter = provenance.nativeState.items.filter(isWinterBookkeepingItem);
+        records.push({ ...base, itemIndex: records.length, kind: "native-state", payload: { items: vendor, ...(winter.length > 0 ? { winter } : {}) } });
+      }
       if (provenance?.summary !== undefined)
         records.push({
           ...base,
@@ -3559,7 +3566,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // The same stamp `buildContinuationChain` folds the record into on a resume.
           nativeState: {
             family: provenance?.nativeState?.family ?? identity.family,
-            continuationDomain: provenance?.nativeState?.continuationDomain ?? identity.continuationDomain ?? identity.family,
+            continuationDomain: provenance?.nativeState?.continuationDomain ?? identity.continuationDomain ?? identity.modelKey,
             items: [...(provenance?.nativeState?.items ?? []), ...items],
           },
         };

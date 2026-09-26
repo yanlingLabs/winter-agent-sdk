@@ -772,7 +772,27 @@ export async function openStream(plan: StreamingRequestPlan, policy: RetryPolicy
 /** Reads an error response's body (bounded by `boundedFetch` already) and normalizes it. Never logs the body. */
 export async function httpErrorFrom(response: Response): Promise<ProviderRequestError> {
   const body = await response.text().catch(() => "");
-  return new ProviderRequestError(normalizeHttpError(response.status, response.headers, body));
+  const error = new ProviderRequestError(normalizeHttpError(response.status, response.headers, body));
+  if (isEncryptedContentRefusal(response.status, body)) ENCRYPTED_CONTENT_REFUSALS.add(error);
+  return error;
+}
+
+/**
+ * WS-23 (reasoning-state, defect b): the endpoint refused a REPLAYED reasoning item's
+ * `encrypted_content` -- xAI's "Could not decrypt the provided encrypted_content" (intermittent on
+ * multi-agent replays, live gate 2026-09-26), OpenAI's "The encrypted content for item rs_... could not
+ * be verified". Recorded off the FULL body (the message is capped) in a WeakSet rather than as a field,
+ * because it is a fact only the Responses turn driver acts on (`streamResponsesTurn`), never a consumer.
+ */
+const ENCRYPTED_CONTENT_REFUSALS = new WeakSet<Error>();
+
+function isEncryptedContentRefusal(status: number, body: string): boolean {
+  if (status !== 400) return false;
+  return /\bencrypted/i.test(body) && /(could not|couldn't|cannot|can't|unable to|failed to)\s+(be\s+)?(decrypt|verif)/i.test(body);
+}
+
+export function isEncryptedContentRejection(err: unknown): boolean {
+  return err instanceof Error && ENCRYPTED_CONTENT_REFUSALS.has(err);
 }
 
 /** Turns anything thrown during a turn into the `error` event the fold converts to a `ProviderTurnError`. */

@@ -7,7 +7,7 @@
 import { test, expect, describe } from "bun:test";
 import type { ProviderAdapter, ProviderContext, ProviderEvent, ResolvedModel, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 import type { WireStreamEvent } from "@yanlinglabs/winter-agent-sdk";
-import { adapterAsProvider, createIdentityHistoryRenderer, foldProviderStream, ProviderTurnError } from "./bridge.ts";
+import { adapterAsProvider, createIdentityHistoryRenderer, foldProviderStream, ProviderTurnError, stampNativeState } from "./bridge.ts";
 import type { ProviderMessage, ProviderStreamSink } from "../engine.ts";
 
 async function* scripted(events: ProviderEvent[]): AsyncIterable<ProviderEvent> {
@@ -770,5 +770,16 @@ describe("live native replay: the turn's native state must be STAMPED with the r
     const adapter = scriptedAdapter(() => scripted([{ type: "text_delta", text: "x" }, { type: "done", stopReason: "end_turn" }]));
     const turn = await adapterAsProvider(resolvedFor(adapter), fakeCtx(), { adapter }).generate({ messages: [] });
     expect(turn.nativeState).toBeUndefined();
+  });
+});
+
+// WS-23 (reasoning-state, defect e): a row with no certified continuation domain stamps its MODEL KEY, so
+// its state is valid for that model alone -- never the family string (`"openai"` put xAI and OpenAI
+// state in one pseudo-domain).
+describe("stampNativeState's floor for a domain-less row", () => {
+  test("the model key, never the family", () => {
+    const turn = { kind: "text" as const, text: "x", nativeState: { family: "", continuationDomain: "", items: ["opaque"] } };
+    expect(stampNativeState(turn, { providerId: "xai", modelKey: "xai/grok-4.5", family: "openai" }).nativeState).toEqual({ family: "openai", continuationDomain: "xai/grok-4.5", items: ["opaque"] });
+    expect(stampNativeState(turn, { providerId: "openai", modelKey: "openai/gpt-6-sol", family: "openai", continuationDomain: "openai/gpt-6-sol" }).nativeState!.continuationDomain).toBe("openai/gpt-6-sol");
   });
 });

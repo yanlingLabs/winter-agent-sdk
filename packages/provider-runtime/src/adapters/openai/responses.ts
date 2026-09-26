@@ -28,6 +28,7 @@
 
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { parseSse } from "../../sse.ts";
+import { isWinterBookkeepingItem } from "../../continuity/reasoning-blocks.ts";
 import type { CredentialRef, CredentialStatus, DiscoveryContext, ModelCatalogResult, ProviderAdapter, ProviderContext, ProviderEvent, ProviderMessageLike, TurnRequest } from "../../types.ts";
 import {
   EventQueue,
@@ -41,6 +42,7 @@ import {
   fetchOpenAiModels,
   identityFor,
   imageDataUrl,
+  isEncryptedContentRejection,
   makeRetryPolicy,
   mapEffortAgainst,
   openStream,
@@ -141,11 +143,15 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
       if (typeof message.content === "string" ? message.content.length === 0 : message.content.length === 0) continue;
     }
     const outBefore = out.length;
-    if (message.role === "assistant" && message.nativeState !== undefined) {
-      // Replayed VERBATIM and never inspected: these are the provider's own completed items, and
-      // `items` is `unknown[]` precisely so nothing here is tempted to look inside.
-      for (const item of message.nativeState.items) out.push(item);
-    }
+    // WS-23 (reasoning-state, defect a): the turn's output layout, when it recorded one -- the reasoning
+    // items then go back BETWEEN the turn's own items (below, after they are mapped), not ahead of them.
+    const layout = message.role === "assistant" ? message.nativeState?.items.find(isResponsesLayoutItem) : undefined;
+    // Replayed VERBATIM and never inspected: these are the provider's own completed items, and `items`
+    // is `unknown[]` precisely so nothing here is tempted to look inside -- except to leave out Winter's
+    // own bookkeeping (`winter.`-typed), which is never a vendor item.
+    const vendorItems = message.role === "assistant" && message.nativeState !== undefined ? message.nativeState.items.filter((item) => !isWinterBookkeepingItem(item)) : [];
+    if (layout === undefined) for (const item of vendorItems) out.push(item);
+    const ownStart = out.length;
     // The Responses `input` has NO "tool" role — a tool result is a standalone
     // `function_call_output` item, and any residual text on such a message rides as a user message.
     // Emitting `role: "tool"` is a 400 (minor 4).
@@ -234,6 +240,7 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
       }
     }
     if (contentParts.length > 0) out.push({ type: "message", role: wireRole, content: contentParts });
+    if (layout !== undefined) out.push(...interleaveWithLayout(vendorItems, out.splice(ownStart), layout));
     // "after-user": the waiting update lands right after the user message it was placed before --
     // Codex's position (the tail of `input`, behind the prompt). Only a HUMAN message counts, never a
     // tool output.
@@ -549,6 +556,66 @@ export function responsesCompletionEvent(descriptor: WinterModelDescriptor | und
   return typeof declared === "string" && declared.trim().length > 0 ? declared.trim() : "response.completed";
 }
 
+/**
+ * WS-23 (reasoning-state, defect a): where a turn's reasoning items sat AMONG its other output items.
+ *
+ * A Responses turn's output is an ordered list -- `[reasoning, message, reasoning, function_call]` on a
+ * multi-agent xAI row, `[reasoning, function_call, reasoning, function_call]` on an interleaved tool
+ * loop -- and the vendor asks for "the provider's completed output items ... in their original order".
+ * The engine keeps a turn as text plus calls, so the reasoning items used to be replayed all together
+ * AHEAD of the turn: `[r, m, r]` went back as `[r, r, m]`, the leading suspect for xAI's intermittent
+ * "Could not decrypt the provided encrypted_content" on multi-agent replays. This item records the order
+ * -- `{r: k}` the k-th reasoning item, `{m: true}` a message, `{c: callId}` a call -- and rides the
+ * turn's `nativeState` beside the reasoning items. It is Winter BOOKKEEPING (`winter.` type): never
+ * replayed itself, and persisted apart from the vendor items so an older runtime never sees it.
+ * Emitted only when the order is not already reasoning-first.
+ */
+export const RESPONSES_LAYOUT_ITEM_TYPE = "winter.responses_layout" as const;
+export type ResponsesLayoutEntry = { r: number } | { m: true } | { c: string };
+export interface ResponsesLayoutItem {
+  type: typeof RESPONSES_LAYOUT_ITEM_TYPE;
+  order: ResponsesLayoutEntry[];
+}
+
+function isResponsesLayoutItem(item: unknown): item is ResponsesLayoutItem {
+  return typeof item === "object" && item !== null && (item as { type?: unknown }).type === RESPONSES_LAYOUT_ITEM_TYPE && Array.isArray((item as { order?: unknown }).order);
+}
+
+/**
+ * WS-23 (defect a): one assistant turn's own items (`own`, as the mapper produced them: messages and
+ * calls in the engine's order) and its reasoning items, merged into the response's original output
+ * order. Anything the layout does not place keeps the pre-layout behaviour: unplaced reasoning items
+ * lead, unplaced own items follow in their own order.
+ */
+function interleaveWithLayout(reasoning: readonly unknown[], own: readonly unknown[], layout: ResponsesLayoutItem): unknown[] {
+  const placedReasoning = new Set<number>();
+  const placedOwn = new Set<number>();
+  const merged: unknown[] = [];
+  const takeOwn = (match: (item: { type?: unknown; call_id?: unknown }) => boolean): void => {
+    const i = own.findIndex((item, n) => !placedOwn.has(n) && match(item as { type?: unknown; call_id?: unknown }));
+    if (i === -1) return;
+    placedOwn.add(i);
+    merged.push(own[i]);
+  };
+  for (const entry of layout.order) {
+    if ("r" in entry) {
+      if (typeof entry.r === "number" && entry.r >= 0 && entry.r < reasoning.length && !placedReasoning.has(entry.r)) {
+        placedReasoning.add(entry.r);
+        merged.push(reasoning[entry.r]);
+      }
+    } else if ("c" in entry) takeOwn((item) => (item.type === "function_call" || item.type === "tool_search_call") && item.call_id === entry.c);
+    else takeOwn((item) => item.type === "message");
+  }
+  return [...reasoning.filter((_, r) => !placedReasoning.has(r)), ...merged, ...own.filter((_, n) => !placedOwn.has(n))];
+}
+
+/** WS-23: which reasoning part a summary/reasoning-text delta belongs to -- its item and its index within it. */
+function partKey(payload: Record<string, unknown>, indexField: "summary_index" | "content_index"): string {
+  const item = typeof payload.item_id === "string" ? payload.item_id : typeof payload.output_index === "number" ? `#${payload.output_index}` : "";
+  const index = typeof payload[indexField] === "number" ? payload[indexField] : 0;
+  return `${item}:${index}`;
+}
+
 export class ResponsesStreamMapper {
   /**
    * `completionEvent`: the event this stream's descriptor says completes a response. `readableState`:
@@ -561,6 +628,21 @@ export class ResponsesStreamMapper {
     private readonly readableState: "none" | "summary" | "full-exposed" = "none",
     private readonly tools: ResponsesStreamTools = {},
   ) {}
+
+  /**
+   * WS-23 (reasoning-state, defect d): the summary part the last summary delta belonged to. A response's
+   * reasoning summary arrives as SEPARATE parts (one per `summary_index`, per reasoning item), each a
+   * paragraph of its own, and the fold concatenates every delta it is handed -- two parts of 51 and 47
+   * characters became one 98-character run-on. A blank line goes between parts, here, where the part
+   * boundary is still visible.
+   */
+  private lastSummaryPart: string | undefined;
+
+  private summaryDelta(part: string, delta: string): ProviderEvent[] {
+    const separate = this.lastSummaryPart !== undefined && this.lastSummaryPart !== part;
+    this.lastSummaryPart = part;
+    return separate ? [{ type: "thinking_summary_delta", text: "\n\n" }, { type: "thinking_summary_delta", text: delta }] : [{ type: "thinking_summary_delta", text: delta }];
+  }
 
   /** WS-23 (midconv): a client `tool_search_call` this request's ToolSearch answers. */
   private isClientToolSearch(itemType: string, item: Record<string, unknown>): boolean {
@@ -583,6 +665,12 @@ export class ResponsesStreamMapper {
    */
   private readonly reasoningItems: Array<{ index: number; arrival: number; item: unknown }> = [];
   private arrivals = 0;
+  /**
+   * WS-23 (reasoning-state, defect a): where the response put its OTHER output items -- each message and
+   * each call, by `output_index` -- so the replay can put the reasoning items back BETWEEN them rather
+   * than all ahead of the turn. See `RESPONSES_LAYOUT_ITEM_TYPE`.
+   */
+  private readonly otherItems: Array<{ index: number; arrival: number; entry: ResponsesLayoutEntry }> = [];
   /** Item ids already reported as unrepresentable, so `added` + `done` for one call is ONE error (minor 5). */
   private readonly reportedUnrepresentable = new Set<string>();
   /** item_id -> call_id, so an arguments delta (which carries only the item id) can name its call. */
@@ -610,7 +698,7 @@ export class ResponsesStreamMapper {
         const delta = typeof payload.delta === "string" ? payload.delta : "";
         // A provider-produced SUMMARY. It rides the sidecar and the Winter-only frame, never
         // `assistant.message.content` (R6-8).
-        return delta.length > 0 ? [{ type: "thinking_summary_delta", text: delta }] : [];
+        return delta.length > 0 ? this.summaryDelta(`summary:${partKey(payload, "summary_index")}`, delta) : [];
       }
       case "response.reasoning_text.delta": {
         // WS-23 fix round 1 (M1): the reasoning TEXT channel. OpenAI uses it for raw chain of thought
@@ -623,7 +711,7 @@ export class ResponsesStreamMapper {
         // the summary: never `assistant.message.content` (R6-8).
         const delta = typeof payload.delta === "string" ? payload.delta : "";
         if (delta.length === 0) return [];
-        return [this.readableState === "full-exposed" ? { type: "thinking_exposed_delta", text: delta } : { type: "thinking_summary_delta", text: delta }];
+        return this.readableState === "full-exposed" ? [{ type: "thinking_exposed_delta", text: delta }] : this.summaryDelta(`text:${partKey(payload, "content_index")}`, delta);
       }
       case "response.output_item.added":
         return this.onItemAdded(payload);
@@ -725,6 +813,7 @@ export class ResponsesStreamMapper {
       }
       return [];
     }
+    this.noteLayout(payload, itemType, item);
 
     if (this.isClientToolSearch(itemType, item)) {
       const callId = typeof item.call_id === "string" ? item.call_id : undefined;
@@ -763,6 +852,34 @@ export class ResponsesStreamMapper {
     return [];
   }
 
+  /** WS-23 (defect a): one message or call's place in the output, for the layout. */
+  private noteLayout(payload: Record<string, unknown>, itemType: string, item: Record<string, unknown>): void {
+    const index = typeof payload.output_index === "number" ? payload.output_index : Number.MAX_SAFE_INTEGER;
+    let entry: ResponsesLayoutEntry | undefined;
+    if (itemType === "message") entry = { m: true };
+    else if (itemType === "function_call" || itemType === "tool_search_call") {
+      const callId = typeof item.call_id === "string" ? item.call_id : undefined;
+      if (callId !== undefined) entry = { c: callId };
+    }
+    if (entry !== undefined) this.otherItems.push({ index, arrival: this.arrivals++, entry });
+  }
+
+  /**
+   * WS-23 (defect a): the layout item, or `undefined` when every reasoning item already came before
+   * every message and call -- the shape the replay produces without one (reasoning first), so the
+   * common turn's native state and its replay stay byte-identical to before.
+   */
+  private layoutFor(sorted: ReadonlyArray<{ index: number; arrival: number }>): ResponsesLayoutItem | undefined {
+    const all = [
+      ...sorted.map((entry, r) => ({ index: entry.index, arrival: entry.arrival, entry: { r } as ResponsesLayoutEntry })),
+      ...this.otherItems,
+    ].sort((a, b) => a.index - b.index || a.arrival - b.arrival);
+    const firstOther = all.findIndex((e) => !("r" in e.entry));
+    const lastReasoning = all.map((e) => "r" in e.entry).lastIndexOf(true);
+    if (firstOther === -1 || lastReasoning < firstOther) return undefined;
+    return { type: RESPONSES_LAYOUT_ITEM_TYPE, order: all.map((e) => e.entry) };
+  }
+
   private onCompleted(payload: Record<string, unknown>): ProviderEvent[] {
     if (this.completed) return [];
     this.completed = true;
@@ -773,8 +890,9 @@ export class ResponsesStreamMapper {
     // THE COMPLETION EVENT IS THE ONLY SOURCE OF NATIVE STATE. Emitted once, complete, in output
     // order — the order §5.3 requires them to be replayed in.
     if (this.reasoningItems.length > 0) {
-      const ordered = [...this.reasoningItems].sort((a, b) => a.index - b.index || a.arrival - b.arrival).map((entry) => entry.item);
-      events.push({ type: "native_state", items: ordered });
+      const sorted = [...this.reasoningItems].sort((a, b) => a.index - b.index || a.arrival - b.arrival);
+      const layout = this.layoutFor(sorted);
+      events.push({ type: "native_state", items: [...sorted.map((entry) => entry.item), ...(layout !== undefined ? [layout] : [])] });
     }
 
     const usage = record.usage;
@@ -892,35 +1010,57 @@ export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: Abor
   const descriptor = plan.options.descriptors?.(plan.model, plan.ctx.connection.providerId);
   const mapper = new ResponsesStreamMapper(responsesCompletionEvent(descriptor), descriptor?.reasoning?.readableState?.value ?? "none", plan.streamTools ?? {});
   let response: Response;
-  try {
-    response = yield* pumpEvents(
-      queue,
-      openStream(
-        {
-          url: plan.url,
-          headers: plan.headers,
-          body: plan.body,
-          policy: plan.endpoint.policy,
-          ctx: plan.ctx,
-          options: plan.options,
-          ...(signal !== undefined ? { signal } : {}),
-          ...(plan.beforeAttempt !== undefined ? { beforeAttempt: plan.beforeAttempt } : {}),
-          ...(plan.recover !== undefined ? { recover: plan.recover } : {}),
-          ...(plan.onRefused !== undefined ? { onRefused: plan.onRefused } : {}),
-        },
-        policy,
-        (event) => {
-          // R6-B: the quota manager is the ONE producer of `rate_limit`. It observes the retry here
-          // — before the backoff is taken — so a subscription-quota state reaches the host at the
-          // same moment the retry does, never after the turn.
-          if (event.type === "retry" && event.errorStatus === 429) plan.onRateLimited?.(event, queue);
-          queue.push(event);
-        },
-      ),
-    );
-  } catch (err) {
-    yield errorEvent(err);
-    return;
+  // WS-23 (reasoning-state, defect b): the body actually sent -- the plan's, or, after the endpoint
+  // refused a replayed reasoning item's encrypted content, the same body without the replayed reasoning.
+  let body = plan.body;
+  let droppedReplay = false;
+  for (;;) {
+    try {
+      response = yield* pumpEvents(
+        queue,
+        openStream(
+          {
+            url: plan.url,
+            headers: plan.headers,
+            body,
+            policy: plan.endpoint.policy,
+            ctx: plan.ctx,
+            options: plan.options,
+            ...(signal !== undefined ? { signal } : {}),
+            ...(plan.beforeAttempt !== undefined ? { beforeAttempt: plan.beforeAttempt } : {}),
+            ...(plan.recover !== undefined ? { recover: plan.recover } : {}),
+            ...(plan.onRefused !== undefined ? { onRefused: plan.onRefused } : {}),
+          },
+          policy,
+          (event) => {
+            // R6-B: the quota manager is the ONE producer of `rate_limit`. It observes the retry here
+            // — before the backoff is taken — so a subscription-quota state reaches the host at the
+            // same moment the retry does, never after the turn.
+            if (event.type === "retry" && event.errorStatus === 429) plan.onRateLimited?.(event, queue);
+            queue.push(event);
+          },
+        ),
+      );
+      break;
+    } catch (err) {
+      // WS-23 (reasoning-state, defect b): ONE retry of this request without the reasoning items it
+      // replayed, when the endpoint refused their encrypted content. Pre-stream (a 400 carries no
+      // stream), so no byte has been consumed and nothing is re-sent that already ran (R6-6). The turn
+      // then continues without the model's prior reasoning -- the visible conversation is intact -- rather
+      // than failing outright; the stored state is untouched, so a later request replays it again.
+      // Never twice: `droppedReplay` ends the loop on the next refusal of any kind.
+      if (!droppedReplay && isEncryptedContentRejection(err)) {
+        const stripped = withoutReplayedReasoning(body);
+        if (stripped !== undefined) {
+          droppedReplay = true;
+          body = stripped;
+          plan.ctx.log({ kind: "provider.replay_dropped", providerId: plan.ctx.connection.providerId, model: plan.model, detail: { reason: "encrypted_content_rejected" } });
+          continue;
+        }
+      }
+      yield errorEvent(err);
+      return;
+    }
   }
 
   if (response.body === null) {
@@ -952,6 +1092,23 @@ export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: Abor
   } catch (err) {
     yield errorEvent(err);
   }
+}
+
+/**
+ * WS-23 (reasoning-state, defect b): the request body with every replayed `reasoning` input item removed,
+ * or `undefined` when it replayed none (then there is nothing a retry could change). The body is Winter's
+ * own serialization, so a parse failure is impossible in practice and reads as "nothing to strip".
+ */
+function withoutReplayedReasoning(body: string): string | undefined {
+  let parsed: { input?: unknown };
+  try {
+    parsed = JSON.parse(body) as { input?: unknown };
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed.input)) return undefined;
+  const kept = parsed.input.filter((item) => !(typeof item === "object" && item !== null && (item as { type?: unknown }).type === "reasoning"));
+  return kept.length === parsed.input.length ? undefined : JSON.stringify({ ...parsed, input: kept });
 }
 
 // --- the adapter -------------------------------------------------------------------------------------------

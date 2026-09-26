@@ -157,6 +157,7 @@ export {
   contentWithReasoningBlocks,
   hasInlineReasoning,
   isReasoningBlockItem,
+  isWinterBookkeepingItem,
   reasoningBlockItems,
   reasoningBlocksOf,
   reasoningBlocksVisibleText,

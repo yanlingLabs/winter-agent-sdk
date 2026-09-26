@@ -42,6 +42,10 @@ export class ProviderRequestError extends Error implements ProviderError {
   declare readonly status?: number;
   declare readonly providerCode?: string;
   declare readonly retryAfterMs?: number;
+  // WS-23 (reasoning-state): carried like the three above, so a context-overflow verdict made by
+  // `normalizeHttpError` survives into the error the fold converts (it used to be dropped here, and only
+  // the Anthropic adapter, which re-assigns it by hand, ever delivered one).
+  declare readonly contextOverflow?: true;
   constructor(fields: ProviderError) {
     super(fields.message);
     this.name = "ProviderRequestError";
@@ -51,6 +55,7 @@ export class ProviderRequestError extends Error implements ProviderError {
       ...(fields.status !== undefined ? { status: fields.status } : {}),
       ...(fields.providerCode !== undefined ? { providerCode: fields.providerCode } : {}),
       ...(fields.retryAfterMs !== undefined ? { retryAfterMs: fields.retryAfterMs } : {}),
+      ...(fields.contextOverflow === true ? { contextOverflow: true } : {}),
     });
   }
 }

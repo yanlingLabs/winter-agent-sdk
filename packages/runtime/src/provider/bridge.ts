@@ -653,6 +653,8 @@ export function stampNativeState(turn: FoldedProviderTurn, origin: MessageOrigin
   if (turn.nativeState === undefined) return turn;
   return {
     ...turn,
-    nativeState: { family: origin.family, continuationDomain: origin.continuationDomain ?? origin.family, items: turn.nativeState.items },
+    // WS-23 (defect e): a row with no certified domain stamps its MODEL KEY, never the family string --
+    // its state is valid for that model alone (the same floor `buildContinuationChain` applies on a resume).
+    nativeState: { family: origin.family, continuationDomain: origin.continuationDomain ?? origin.modelKey, items: turn.nativeState.items },
   };
 }

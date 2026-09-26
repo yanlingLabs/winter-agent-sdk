@@ -123,3 +123,14 @@ export function reasoningBlocksVisibleText(state: ProviderNativeState | undefine
   const texts = reasoningBlocksOf(state).flatMap(({ block }) => (block.type === "thinking" ? [block.thinking] : []));
   return texts.length > 0 ? texts.join("\n\n") : undefined;
 }
+
+/**
+ * WS-23: any `nativeState` item Winter itself minted -- a `type` in the `winter.` namespace (the
+ * reasoning blocks above, the Responses output layout) -- as opposed to a vendor's own opaque item.
+ * Such an item is BOOKKEEPING: it is never replayed verbatim to a vendor, and it is persisted apart from
+ * the vendor items (`native-state`'s `payload.winter`) so an older runtime, which replays `payload.items`
+ * verbatim, never sees one.
+ */
+export function isWinterBookkeepingItem(item: unknown): boolean {
+  return isRecord(item) && typeof item.type === "string" && item.type.startsWith("winter.");
+}

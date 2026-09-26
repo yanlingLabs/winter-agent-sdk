@@ -24,10 +24,10 @@
 //      else. `subpath` is documented as opaque to the adapter, "just a storage-key suffix"
 //      (`sdk.d.ts:5203-5205`) -- a positive licence for a non-transcript key, not a silence.
 import { randomUUID } from "node:crypto";
-import { closeSync, constants as fsConstants, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeSync } from "node:fs";
+import { closeSync, constants as fsConstants, fstatSync, fsyncSync, mkdirSync, openSync, readSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { MessageOrigin, ProviderNativeState, ReasoningBlockAt } from "@yanlinglabs/winter-provider-runtime";
-import { coerceInDialectReasoningBlock, isReasoningBlockItem, reasoningBlockItems } from "@yanlinglabs/winter-provider-runtime";
+import { coerceInDialectReasoningBlock, isReasoningBlockItem, isWinterBookkeepingItem, reasoningBlockItems } from "@yanlinglabs/winter-provider-runtime";
 import { PROVIDER_STATE_FILE_SUFFIX } from "@yanlinglabs/winter-agent-sdk";
 
 /** The `SessionStoreEntry.type` discriminant every record carries. One string, one place. */
@@ -203,12 +203,25 @@ function endsMidLine(path: string): boolean {
 }
 
 /**
- * The sidecar's own size ceiling for a single read. A sidecar is one small record per assistant entry,
- * so 64 MiB is orders of magnitude above any real session; the bound exists because a resume that
- * reads an attacker-grown (or simply corrupt) file into memory unbounded is a denial of service with
- * no upper limit, and this file is read on EVERY resume.
+ * The most record bytes one read KEEPS. A sidecar is a few small records per assistant entry, so 64 MiB
+ * is orders of magnitude above any ordinary session; the bound exists because this file is read on
+ * EVERY resume and a file grown without limit (a very long session, a corrupt or attacker-grown file)
+ * must not be read into memory without limit.
+ *
+ * WS-23 (reasoning-state, defect c): a bound on what is KEPT, not a refusal of the file. The read used
+ * to throw past 64 MiB, and every caller turned the throw into an EMPTY chain -- one byte over the
+ * limit and a session lost the native state of every turn it had, including the ones it was about to
+ * continue from. Since the move of Anthropic thinking into the sidecar that is a session's whole
+ * reasoning. Now the file is streamed and, once the kept records pass the bound, the OLDEST are let go:
+ * the turns nearest the current work keep their state, and the oldest degrade to summary level (which
+ * `buildContinuationChain` already handles, record by record).
  */
 export const PROVIDER_STATE_MAX_READ_BYTES = 64 * 1024 * 1024;
+
+/** One line longer than this is not a record Winter wrote (a single turn's state is far smaller); it is skipped unread. */
+export const PROVIDER_STATE_MAX_LINE_BYTES = 16 * 1024 * 1024;
+
+const READ_CHUNK_BYTES = 1024 * 1024;
 
 /**
  * Reads a sidecar with BOUNDED REPAIR: a truncated final line is dropped and every earlier record is
@@ -220,39 +233,80 @@ export const PROVIDER_STATE_MAX_READ_BYTES = 64 * 1024 * 1024;
  * degrades record by record rather than all at once, and `buildContinuationChain` already treats a
  * missing record as "degrade this message to summary-level".
  *
+ * BOUNDED MEMORY (WS-23): streamed in 1 MiB chunks, a line past `PROVIDER_STATE_MAX_LINE_BYTES` is
+ * skipped without being buffered, and the kept records never exceed `PROVIDER_STATE_MAX_READ_BYTES` --
+ * the oldest go first (see the constant). `limits` exists for tests.
+ *
  * A missing file is an EMPTY chain, never a throw: "no sidecar" and "sidecar emptied" are
  * indistinguishable by design in the pinned store contract (`load()` may return `null` for both,
  * `sdk.d.ts:5302-5314`), so the filesystem path answers the same way its store-backed twin must.
  */
-export function readProviderState(path: string): ProviderStateRecord[] {
-  let raw: string;
+export function readProviderState(path: string, limits: { maxKeptBytes?: number; maxLineBytes?: number } = {}): ProviderStateRecord[] {
+  const maxKept = limits.maxKeptBytes ?? PROVIDER_STATE_MAX_READ_BYTES;
+  const maxLine = limits.maxLineBytes ?? PROVIDER_STATE_MAX_LINE_BYTES;
+  let fd: number;
   try {
-    const size = statSync(path).size;
-    if (size > PROVIDER_STATE_MAX_READ_BYTES) {
-      // Refuse rather than truncate: a partial read of a JSONL chain would silently produce a
-      // DIFFERENT chain, and a wrong chain is worse than an absent one (an absent one degrades
-      // loudly, through the continuity warning).
-      throw new ProviderStateTooLargeError(`provider-state sidecar exceeds ${PROVIDER_STATE_MAX_READ_BYTES} bytes: ${path}`);
-    }
-    raw = readFileSync(path, "utf8");
-  } catch (err) {
-    if (err instanceof ProviderStateTooLargeError) throw err;
+    fd = openSync(path, "r");
+  } catch {
     return [];
   }
-  const records: ProviderStateRecord[] = [];
-  for (const line of raw.split("\n")) {
-    if (line.length === 0) continue;
-    const record = parseProviderStateLine(line);
-    if (record !== undefined) records.push(record);
+  const kept: Array<{ record: ProviderStateRecord; bytes: number }> = [];
+  let head = 0;
+  let keptBytes = 0;
+  let released = 0;
+  const keep = (line: Buffer): void => {
+    if (line.length === 0) return;
+    const record = parseProviderStateLine(line.toString("utf8"));
+    if (record === undefined) return;
+    kept.push({ record, bytes: line.length });
+    keptBytes += line.length;
+    while (keptBytes > maxKept && head < kept.length) {
+      keptBytes -= kept[head]!.bytes;
+      head++;
+      released++;
+    }
+  };
+  try {
+    const chunk = Buffer.alloc(READ_CHUNK_BYTES);
+    let pending: Buffer[] = [];
+    let pendingBytes = 0;
+    let skipping = false;
+    for (;;) {
+      const n = readSync(fd, chunk, 0, chunk.length, null);
+      if (n === 0) break;
+      let from = 0;
+      for (;;) {
+        const nl = chunk.indexOf(0x0a, from);
+        if (nl === -1 || nl >= n) break;
+        if (!skipping) keep(Buffer.concat([...pending, chunk.subarray(from, nl)]));
+        pending = [];
+        pendingBytes = 0;
+        skipping = false;
+        from = nl + 1;
+      }
+      if (from < n && !skipping) {
+        pendingBytes += n - from;
+        if (pendingBytes > maxLine) {
+          // An oversized line: dropped whole, without buffering the rest of it.
+          skipping = true;
+          pending = [];
+          pendingBytes = 0;
+        } else pending.push(Buffer.from(chunk.subarray(from, n)));
+      }
+    }
+    // A final line with no newline is the torn write the bounded repair exists for; it parses only if
+    // it happens to be whole (a record written by a pre-fsync crash of the NEXT append), else it is skipped.
+    if (!skipping && pendingBytes > 0) keep(Buffer.concat(pending));
+  } catch {
+    // An unreadable file mid-stream: what was kept so far is still a valid (older-first) chain prefix.
+  } finally {
+    closeSync(fd);
   }
-  return records;
-}
-
-export class ProviderStateTooLargeError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ProviderStateTooLargeError";
+  if (released > 0) {
+    // COUNTS ONLY -- never a payload. One line per read that had to let records go.
+    console.error(`winter: provider-state sidecar ${basename(path)} holds more than ${maxKept} bytes of records; the ${released} oldest were not loaded, so their turns resume at summary level`);
   }
+  return kept.slice(head).map((entry) => entry.record);
 }
 
 /**
@@ -350,14 +404,19 @@ export function buildContinuationChain(records: readonly ProviderStateRecord[], 
         };
         break;
       case "native-state": {
-        const items = readNativeItems(record.payload);
+        // WS-23: plus Winter's own bookkeeping items (a Responses output layout), stored apart under
+        // `payload.winter` so an older runtime never replays one -- see engine.ts's `recordAssistant`.
+        const vendorItems = readNativeItems(record.payload);
+        const items = vendorItems !== undefined ? [...vendorItems, ...readWinterItems(record.payload)] : undefined;
         if (items !== undefined) {
           link.nativeState = {
             family: record.family,
-            // A native-state record without a domain is unreplayable by definition (R6-9 binds exact
-            // replay to a continuation DOMAIN, not to a family), so the family is the honest floor
-            // rather than a fabricated domain id.
-            continuationDomain: record.continuationDomain ?? record.family,
+            // A native-state record without a domain belongs to a row that certifies no shared domain
+            // (R6-9 binds exact replay to a continuation DOMAIN, not to a family), so its state is valid
+            // for the model that produced it and nothing else: the model key IS its domain.
+            // WS-23 (defect e): this used to be the FAMILY string, which put xAI and OpenAI state in the
+            // same pseudo-domain (`"openai"`) and made every count of "state that will not replay" wrong.
+            continuationDomain: record.continuationDomain ?? record.model,
             // WS-23: a later `native-state` record supersedes the earlier one's items, never the
             // anchor's sidecar-carried reasoning blocks (a separate record kind, whatever the order).
             items: [...items, ...(link.nativeState?.items.filter(isReasoningBlockItem) ?? [])],
@@ -374,7 +433,7 @@ export function buildContinuationChain(records: readonly ProviderStateRecord[], 
           const items = reasoningBlockItems(blocks);
           link.nativeState = {
             family: record.family,
-            continuationDomain: link.nativeState?.continuationDomain ?? record.continuationDomain ?? record.family,
+            continuationDomain: link.nativeState?.continuationDomain ?? record.continuationDomain ?? record.model,
             items: [...(link.nativeState?.items.filter((item) => !isReasoningBlockItem(item)) ?? []), ...items],
           };
         }
@@ -423,6 +482,12 @@ function readReasoningBlocks(payload: unknown): ReasoningBlockAt[] | undefined {
     out.push({ at, block });
   }
   return out;
+}
+
+function readWinterItems(payload: unknown): unknown[] {
+  if (typeof payload !== "object" || payload === null) return [];
+  const winter = (payload as { winter?: unknown }).winter;
+  return Array.isArray(winter) ? winter.filter(isWinterBookkeepingItem) : [];
 }
 
 function readSummaryText(payload: unknown): string | undefined {

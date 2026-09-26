@@ -24,7 +24,9 @@ export interface ResponsesFakeRequest {
 export type ResponsesFakeItem =
   | { type: "text"; text: string }
   | { type: "function_call"; callId: string; name: string; arguments: Record<string, unknown>; namespace?: string }
-  | { type: "tool_search_call"; callId: string; arguments: Record<string, unknown> };
+  | { type: "tool_search_call"; callId: string; arguments: Record<string, unknown> }
+  /** WS-23 (reasoning-state): a completed reasoning item carrying encrypted state, its summary streamed part by part. */
+  | { type: "reasoning"; encrypted: string; summary?: string[] };
 
 export type ResponsesFakeAnswer =
   | { items: ResponsesFakeItem[]; usage?: { input_tokens: number; output_tokens: number; cached_tokens?: number } }
@@ -57,6 +59,15 @@ function itemFrames(item: ResponsesFakeItem, index: number): string {
     return (
       frame({ type: "response.output_item.added", output_index: index, item: { ...wire, arguments: "" } }) +
       frame({ type: "response.output_item.done", output_index: index, item: { ...wire, arguments: JSON.stringify(item.arguments) } })
+    );
+  }
+  if (item.type === "reasoning") {
+    const id = `rs_${index}`;
+    const summary = item.summary ?? [];
+    return (
+      frame({ type: "response.output_item.added", output_index: index, item: { id, type: "reasoning", summary: [] } }) +
+      summary.map((text, part) => frame({ type: "response.reasoning_summary_text.delta", item_id: id, output_index: index, summary_index: part, delta: text })).join("") +
+      frame({ type: "response.output_item.done", output_index: index, item: { id, type: "reasoning", summary: summary.map((text) => ({ type: "summary_text", text })), encrypted_content: item.encrypted, status: "completed" } })
     );
   }
   // codex-rs's own round-trip fixture: `arguments` is an OBJECT on this item, not a JSON string.

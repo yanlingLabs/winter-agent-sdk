@@ -103,9 +103,11 @@ describe("R6-7 crash pairs", () => {
     expect(chain.get("a")?.nativeState?.items).toEqual(["new"]);
   });
 
-  test("a native-state record with no continuationDomain falls back to the FAMILY, never a fabricated domain", () => {
+  // WS-23 (defect e): the floor is the producing MODEL, never the family string -- `"openai"` put xAI's and
+  // OpenAI's state in one pseudo-domain.
+  test("a native-state record with no continuationDomain falls back to its own MODEL KEY, never the family", () => {
     const chain = buildContinuationChain([record("a", "native-state", { items: [1] })], new Set(["a"]));
-    expect(chain.get("a")?.nativeState?.continuationDomain).toBe("openai");
+    expect(chain.get("a")?.nativeState?.continuationDomain).toBe("openai/o-test");
   });
 });
 
@@ -641,5 +643,28 @@ describe("WS-23: the `reasoning-blocks` kind", () => {
       const written = appendProviderState(path, { ...CLAUDE, anchorUuid: "a1", itemIndex: 1, kind: "reasoning-blocks", payload: { blocks: [{ at: 0, block: THINK }] } });
       appendFileSync(path, `${JSON.stringify({ ...written, uuid: "u-future", kind: "some-future-kind" })}\n`);
       expect(readProviderState(path)).toEqual([written]);
+    }));
+});
+
+// --- WS-23 (reasoning-state, defect c): a big sidecar keeps its NEWEST records, never none --------------
+describe("WS-23: the bounded read lets the oldest records go instead of dropping the whole chain", () => {
+  test("past the kept-bytes bound, the oldest records are released and every newer one is kept", () =>
+    withTempHome((home) => {
+      const path = join(home, "s.provider-state.jsonl");
+      const written = Array.from({ length: 40 }, (_, i) => appendProviderState(path, { ...BASE, anchorUuid: `a-${i}`, kind: "native-state", payload: { items: [`opaque-${i}-${"x".repeat(200)}`] } }));
+      const lineBytes = Buffer.byteLength(JSON.stringify(written[39]));
+      const kept = readProviderState(path, { maxKeptBytes: lineBytes * 10 + 5 });
+      expect(kept).toEqual(written.slice(-10));
+      // The default bound reads everything back.
+      expect(readProviderState(path)).toEqual(written);
+    }));
+
+  test("an oversized line is skipped unbuffered; the records around it survive, across chunk boundaries", () =>
+    withTempHome((home) => {
+      const path = join(home, "s.provider-state.jsonl");
+      const before = appendProviderState(path, { ...BASE, anchorUuid: "a-1", kind: "origin", payload: {} });
+      appendFileSync(path, `${"y".repeat(3 * 1024 * 1024)}\n`);
+      const after = appendProviderState(path, { ...BASE, anchorUuid: "a-2", kind: "native-state", payload: { items: ["z".repeat(2 * 1024 * 1024)] } });
+      expect(readProviderState(path, { maxLineBytes: 2.5 * 1024 * 1024 })).toEqual([before, after]);
     }));
 });

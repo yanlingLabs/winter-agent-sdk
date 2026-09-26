@@ -9,7 +9,7 @@ import type { ProtocolSdkMessage as SdkMessage, RuntimeConfig, WinterFrame } fro
 import { ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, WinterProviderResolutionError, createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { createInMemoryChannel } from "../protocol/channel.ts";
-import { runEngine, type ContentBlock } from "../engine.ts";
+import { contentForHost, runEngine, type ContentBlock } from "../engine.ts";
 import { stubExecutor } from "./mock.ts";
 import { buildSessionProvider } from "./session-provider.ts";
 import { assistantEntry, userEntry, type SessionCtx } from "../store/dialect.ts";
@@ -123,9 +123,10 @@ describe("WS-23 item 1: [thinking, text, thinking, tool_use] keeps its order acr
 
       // The transcript.
       expect(run.recorded[0]).toEqual(INTERLEAVED_BLOCKS as ContentBlock[]);
-      // The assistant frame the host saw.
+      // The assistant frame the host saw: the same order, each block's attestation stripped (WS-23
+      // reasoning-state: the signature reaches the next request from the sidecar, never a host).
       const assistantFrame = run.messages.find((m) => m.type === "assistant") as { message: { content: unknown[] } };
-      expect(assistantFrame.message.content).toEqual(INTERLEAVED_BLOCKS);
+      expect(assistantFrame.message.content).toEqual(contentForHost(INTERLEAVED_BLOCKS as ContentBlock[]));
 
       // The replay: the second request's assistant turn is the SAME four blocks, in place, byte-identical
       // (the only addition the wire may make is the message-level cache marker on the LAST message,
