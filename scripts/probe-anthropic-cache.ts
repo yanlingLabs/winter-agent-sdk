@@ -73,9 +73,12 @@ const DRY_RUN = process.env["WINTER_ANTHROPIC_CACHE_PROBE_DRY_RUN"] === "1";
 const devKeychain = createKeychainCredentialStore(KEYCHAIN_SERVICE);
 const credentials: CredentialStore = {
   async get(ref: CredentialRef): Promise<CredentialMaterial | null> {
+    // Only a KEYCHAIN ref resolves, in the dry run too: a session that names no credential (the live gate
+    // found one -- `authRef` absent defaults to `{kind: "none"}`) must fail here exactly as it fails live.
+    if (ref.kind !== "keychain") return null;
     if (DRY_RUN) return { kind: "api-key", key: "dry-run-not-a-key" };
     // Every keychain ref resolves against the DEV service, whatever service the session names.
-    return ref.kind === "keychain" ? await devKeychain.get({ ...ref, service: KEYCHAIN_SERVICE }) : null;
+    return await devKeychain.get({ ...ref, service: KEYCHAIN_SERVICE });
   },
   async set(): Promise<void> {
     throw new Error("probe-anthropic-cache: the credential store is read-only");
@@ -93,6 +96,8 @@ interface Observed {
   sent: string;
   usage?: string;
   verdict?: string;
+  /** A non-2xx response's body, truncated -- the API's own error text (never a credential: the API does not echo keys). */
+  error?: string;
 }
 const observed: Observed[] = [];
 let currentLabel = "setup";
@@ -146,7 +151,12 @@ function describeStart(message: Record<string, unknown>): { usage: string; verdi
  * The dry run's canned Messages endpoint: ToolSearch, then the probe tool, then text for the ToolSearch
  * turn; text for everything else. Fabricated usage, flagged as such.
  */
-function cannedResponse(body: unknown): Response {
+function cannedResponse(body: unknown, headers: Headers): Response {
+  // The real API's answer to a request carrying no credential, so the dry run catches a session that
+  // names none (the live gate's 401s) before anything is spent.
+  if (headers.get("x-api-key") === null && headers.get("authorization") === null) {
+    return new Response(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "x-api-key header is required" } }), { status: 401, headers: { "content-type": "application/json" } });
+  }
   const request = JSON.parse(typeof body === "string" ? body : "{}") as { messages?: Array<{ role: string; content: unknown }> };
   const messages = request.messages ?? [];
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
@@ -175,12 +185,19 @@ function cannedResponse(body: unknown): Response {
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-  const response = DRY_RUN && url.includes("/v1/messages") ? cannedResponse(init?.body) : await originalFetch(input, init);
+  const requestHeaders = new Headers(init?.headers);
+  const response = DRY_RUN && url.includes("/v1/messages") ? cannedResponse(init?.body, requestHeaders) : await originalFetch(input, init);
   if (!url.includes("/v1/messages")) return response;
-  const headers = new Headers(init?.headers);
+  const headers = requestHeaders;
   const record: Observed = { label: currentLabel, status: response.status, sent: describeRequest(init?.body, headers.get("anthropic-beta") ?? "(none)") };
   observed.push(record);
-  if (!response.ok || response.body === null) return response;
+  if (!response.ok) {
+    // The error BODY, truncated: a 400 names the rule the request broke, which is the whole point of a probe.
+    const text = await response.clone().text().catch(() => "(unreadable body)");
+    record.error = text.length > 600 ? `${text.slice(0, 600)}…` : text;
+    return response;
+  }
+  if (response.body === null) return response;
   // Tee the stream: the adapter reads one branch, this observer reads message_start off the other.
   const [forAdapter, forObserver] = response.body.tee();
   void (async () => {
@@ -227,6 +244,9 @@ try {
     allowDangerouslySkipPermissions: true,
     toolSearchEnabled: true,
     capabilities: ["winter.mcp"],
+    // THE CREDENTIAL (live-gate fix): without `provider.authRef` the session defaults to `{kind: "none"}`
+    // and every request is a 401. The dev Keychain's `anthropic:default`, read through the read-only store above.
+    provider: { providerId: "anthropic", authRef: { kind: "keychain", account: "anthropic:default", service: KEYCHAIN_SERVICE } },
   };
   const wiring = buildSessionProvider({ config, env: {}, catalog, credentials });
   const identity = wiring.identity;
@@ -281,7 +301,7 @@ try {
 
   console.log("\n=== per request (request shape, then the response's message_start) ===");
   observed.forEach((o, i) => {
-    console.log(`\n#${i + 1} [${o.label}] HTTP ${o.status}\n  sent:    ${o.sent}\n  usage:   ${o.usage ?? "(no message_start)"}\n  verdict: ${o.verdict ?? "(none)"}`);
+    console.log(`\n#${i + 1} [${o.label}] HTTP ${o.status}\n  sent:    ${o.sent}\n  usage:   ${o.usage ?? "(no message_start)"}\n  verdict: ${o.verdict ?? "(none)"}${o.error !== undefined ? `\n  error:   ${o.error}` : ""}`);
   });
   console.log("\nREAD IT AS: turn 3's cache_read should stay close to turn 2's (the effort switch kept the prefix); turn 4's follow-up requests keep `tools` identical and read cache; the /compact summary request reads the conversation from cache.");
 } finally {
