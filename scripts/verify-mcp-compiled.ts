@@ -24,10 +24,21 @@
 // 500 -- an answer the v2 client refuses on its own, so the leg also proves Winter's one-shot legacy
 // retry (mcp/client.ts) survives compilation.
 //
+// WS-24 adds two legs:
+//   - `auto-exit`: stdio `auto` against a server that EXITS on the probe (the fixture's `--on-probe
+//     exit`) -- the binary must classify the death (`transport_closed`, read off the stdio transport)
+//     and respawn the server once as legacy;
+//   - `modern-http`: a 2026-07-28-capable Streamable HTTP endpoint (the v2 server package's
+//     `createMcpHandler`, via the runtime's own test fixture) reached on the http default -- the only
+//     leg that proves the MODERN era (the `server/discover` codec, `subscriptions/listen`, the
+//     era-specific result decoding) survives compilation; every other leg settles on 2025-11-25.
+//
 // WHAT IS ASSERTED, per leg (`legacy`, the stdio default; `auto` on stdio, whose in-place
-// `server/discover` probe the fixture answers `-32601`, so it must fall back; `http`):
-//   1. `system/init.mcp_servers` lists `ping` as `connected` at protocol revision 2025-11-25 — the v2
-//      client's handshake ran inside the binary and the negotiated version reached the status;
+// `server/discover` probe the fixture answers `-32601`, so it must fall back; `auto-exit`; `http`;
+// `modern-http`):
+//   1. `system/init.mcp_servers` lists `ping` as `connected` at the expected protocol revision
+//      (2025-11-25, or 2026-07-28 for `modern-http`) — the v2 client's handshake ran inside the binary
+//      and the negotiated version reached the status;
 //   2. `system/init.tools` offers `mcp__ping__gate_ping` — `tools/list` ran and registration worked;
 //   3. the model's SECOND request carries a `tool_result` containing `PONG-compiled-<leg>` — a real
 //      `tools/call` went out through the compiled client and its answer came back to the model.
@@ -39,6 +50,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRuntime } from "./build-runtime.ts";
 import { encodeFrame, splitFrames, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
+// The runtime's own 2026-07-28 fixture (a dev dependency of that package, resolved from its file).
+import { withModernHttpFixture } from "../packages/runtime/src/mcp/test-fixtures.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PING_FIXTURE = fileURLToPath(new URL("../packages/runtime/src/mcp/transports/__fixtures__/ping-server.mjs", import.meta.url));
@@ -120,11 +133,27 @@ function startLegacyHttpMcp(label: string): { url: string; methods: string[]; cl
   return { url: `http://127.0.0.1:${server.port}/mcp`, methods, close: () => server.stop(true) };
 }
 
-async function runLeg(binPath: string, leg: "legacy" | "auto" | "http"): Promise<void> {
+type Leg = "legacy" | "auto" | "auto-exit" | "http" | "modern-http";
+
+/** The `ping` server's config for a leg; `modernUrl` is the 2026-07-28 endpoint for `modern-http`. */
+function pingServerConfig(leg: Leg, label: string, legacyHttpUrl: string | undefined, modernUrl: string | undefined): Record<string, unknown> {
+  // `alwaysLoad`: startup waits for it, so it is `connected` in `system/init` by construction.
+  if (leg === "http") return { type: "http", url: legacyHttpUrl, alwaysLoad: true };
+  if (leg === "modern-http") return { type: "http", url: modernUrl, alwaysLoad: true };
+  return {
+    command: Bun.which("node") ?? process.execPath,
+    args: [PING_FIXTURE, "--label", label, ...(leg === "auto-exit" ? ["--on-probe", "exit"] : [])],
+    alwaysLoad: true,
+    ...(leg === "auto" || leg === "auto-exit" ? { versionNegotiation: "auto" } : {}),
+  };
+}
+
+async function runLeg(binPath: string, leg: Leg, modernUrl?: string): Promise<void> {
   const winterHome = mkdtempSync(join(tmpdir(), `winter-verify-mcp-${leg}-`));
   const fake = startFakeModel();
   const label = `compiled-${leg}`;
   const http = leg === "http" ? startLegacyHttpMcp(label) : undefined;
+  const expectedVersion = leg === "modern-http" ? "2026-07-28" : "2025-11-25";
   try {
     const config = {
       sessionId: `verify-mcp-compiled-${leg}`,
@@ -137,18 +166,7 @@ async function runLeg(binPath: string, leg: "legacy" | "auto" | "http"): Promise
       // No ambient settings: the one server is the one declared here.
       settingSources: [],
       strictMcpConfig: true,
-      mcpServers: {
-        // `alwaysLoad`: startup waits for it, so it is `connected` in `system/init` by construction.
-        ping:
-          http !== undefined
-            ? { type: "http", url: http.url, alwaysLoad: true }
-            : {
-                command: Bun.which("node") ?? process.execPath,
-                args: [PING_FIXTURE, "--label", label],
-                alwaysLoad: true,
-                ...(leg === "auto" ? { versionNegotiation: "auto" } : {}),
-              },
-      },
+      mcpServers: { ping: pingServerConfig(leg, label, http?.url, modernUrl) },
     };
     const proc = Bun.spawn([binPath, "--run", "--config-json", JSON.stringify(config)], {
       cwd: REPO_ROOT,
@@ -170,14 +188,16 @@ async function runLeg(binPath: string, leg: "legacy" | "auto" | "http"): Promise
     };
     if (init === undefined) fail("the compiled binary emitted no system/init");
     const ping = init!.mcp_servers?.find((s) => s.name === "ping");
-    if (ping?.status !== "connected") fail(`the stdio MCP server is not connected in system/init: ${JSON.stringify(init!.mcp_servers)}`);
-    if (ping!.protocolVersion !== "2025-11-25") fail(`expected the legacy fixture to negotiate 2025-11-25, got ${JSON.stringify(ping!.protocolVersion)}`);
+    if (ping?.status !== "connected") fail(`the MCP server is not connected in system/init: ${JSON.stringify(init!.mcp_servers)}`);
+    if (ping!.protocolVersion !== expectedVersion) fail(`expected the fixture to negotiate ${expectedVersion}, got ${JSON.stringify(ping!.protocolVersion)}`);
     if (!(init!.tools ?? []).includes(MCP_TOOL)) fail(`system/init.tools does not offer ${MCP_TOOL}`);
     if (fake.bodies.length < 2) fail(`the model was asked ${fake.bodies.length} time(s); the tool round never completed`);
     if (!fake.bodies[1]!.includes(`PONG-${label}`)) fail(`the model's second request carries no tool_result with PONG-${label} -- the tools/call never came back`);
     if (!JSON.stringify(messages).includes(FINAL_TEXT)) fail("the session never produced the final answer");
     if (exitCode !== 0) fail("the compiled binary exited non-zero");
     if (http !== undefined && (http.methods[0] !== "server/discover" || !http.methods.includes("initialize"))) fail(`the http leg did not probe then fall back: ${JSON.stringify(http.methods)}`);
+    // The death on the probe was classified inside the binary, and the one legacy respawn announced.
+    if (leg === "auto-exit" && !stderr.includes("failed the 'auto' version probe (transport_closed)")) fail("the auto-exit leg connected without the transport_closed legacy fallback being announced");
     console.log(`verify:mcp-compiled [${leg}] OK — connected at ${ping!.protocolVersion}, ${MCP_TOOL} offered, tools/call answered PONG-${label}`);
   } finally {
     fake.close();
@@ -194,8 +214,14 @@ if (import.meta.main) {
     await buildRuntime({ out: binPath });
     await runLeg(binPath, "legacy");
     await runLeg(binPath, "auto");
+    await runLeg(binPath, "auto-exit");
     await runLeg(binPath, "http");
-    console.log("verify:mcp-compiled OK — the compiled binary speaks MCP over stdio and Streamable HTTP through @modelcontextprotocol/client v2");
+    const modernLabel = "compiled-modern-http";
+    await withModernHttpFixture(
+      { tools: [{ name: "gate_ping", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text", text: `PONG-${modernLabel}` }] }) }] },
+      async (url) => runLeg(binPath, "modern-http", url.toString()),
+    );
+    console.log("verify:mcp-compiled OK — the compiled binary speaks MCP over stdio and Streamable HTTP, on both protocol eras, through @modelcontextprotocol/client v2");
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     // process.exitCode, never process.exit(): the `finally` must still delete the ~60 MB binary
