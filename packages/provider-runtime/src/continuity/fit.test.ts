@@ -19,6 +19,7 @@ describe("I-1: the budget is window x threshold, never less the row's maximum ou
       key: "minimax/m2-like",
       providerId: "minimax",
       upstreamId: "m2-like",
+      modelFamily: "minimax",
       canonicalModelId: "m2-like",
       displayName: "m2-like",
       aliases: [],

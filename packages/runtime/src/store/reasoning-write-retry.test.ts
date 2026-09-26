@@ -11,14 +11,15 @@ import { stubExecutor } from "../provider/mock.ts";
 import { appendProviderState, readProviderState, type ProviderStateRecordInput } from "./provider-state.ts";
 
 /** Drives one turn whose reply carries a thinking block, against a store whose `reasoning-blocks` writes fail `failures` times. */
-async function run(failures: number): Promise<{ frames: WinterFrame[]; attempts: ProviderStateRecordInput[]; written: ProviderStateRecordInput[]; entries: ContentBlock[][] }> {
+async function run(failures: number, failKind = "reasoning-blocks", effort?: string): Promise<{ frames: WinterFrame[]; attempts: ProviderStateRecordInput[]; written: ProviderStateRecordInput[]; entries: ContentBlock[][]; entryOpts: unknown[] }> {
+  const entryOpts: unknown[] = [];
   const attempts: ProviderStateRecordInput[] = [];
   const written: ProviderStateRecordInput[] = [];
   const entries: ContentBlock[][] = [];
   let left = failures;
   const { host, runtime } = createInMemoryChannel();
   const done = runEngine({
-    config: { sessionId: "s-retry", cwd: "/winter-fixture", model: "anthropic/claude-opus-5-5" },
+    config: { sessionId: "s-retry", cwd: "/winter-fixture", model: "anthropic/claude-opus-5-5", ...(effort !== undefined ? { effort } : {}) },
     input: runtime.input,
     output: runtime.output,
     provider: {
@@ -30,12 +31,13 @@ async function run(failures: number): Promise<{ frames: WinterFrame[]; attempts:
     providerIdentity: { providerId: "anthropic", modelKey: "anthropic/claude-opus-5-5", family: "anthropic" },
     store: {
       recordUserEntry() {},
-      recordAssistantEntry(content: ContentBlock[]) {
+      recordAssistantEntry(content: ContentBlock[], opts?: unknown) {
         entries.push(content);
+        entryOpts.push(opts);
       },
       recordProviderState(record: ProviderStateRecordInput) {
         attempts.push(record);
-        if (record.kind === "reasoning-blocks" && left > 0) {
+        if (record.kind === failKind && left > 0) {
           left--;
           throw new Error("disk full");
         }
@@ -52,7 +54,7 @@ async function run(failures: number): Promise<{ frames: WinterFrame[]; attempts:
   host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
   await done;
   await reader;
-  return { frames, attempts, written, entries };
+  return { frames, attempts, written, entries, entryOpts };
 }
 
 const warnings = (frames: WinterFrame[]): Array<{ warning: string; detail: string }> =>
@@ -74,15 +76,29 @@ describe("a failed reasoning write (WS-23 decision 6)", () => {
     expect(entries).toEqual([[{ type: "text", text: "answer" }]]);
   });
 
-  test("the retry fails too: the turn COMPLETES, and one visible warning names the kind -- never the payload", async () => {
-    const { frames, written } = await run(2);
+  test("the retry fails too: the turn COMPLETES, the thinking is kept INLINE in the entry (never lost), and one warning says so -- never the payload", async () => {
+    const { frames, written, entries } = await run(2);
     expect(written.filter((r) => r.kind === "reasoning-blocks")).toHaveLength(0);
     expect(result(frames)).toMatchObject({ is_error: false, result: "answer" });
+    // Review r1, I-3: the reader already takes inline blocks, so a resume replays this thinking.
+    expect(entries).toEqual([[{ type: "thinking", thinking: "reasoned", signature: "sig-1" }, { type: "text", text: "answer" }]]);
     const [warning, ...rest] = warnings(frames);
     expect(rest).toEqual([]);
     expect(warning!.warning).toBe("reasoning_state_unsaved");
     expect(warning!.detail).toContain("reasoning-blocks");
+    expect(warning!.detail).toContain("kept in the conversation file");
     expect(JSON.stringify(frames)).not.toContain("sig-1");
+  });
+});
+
+describe("review r1 M-5: the effort fields leave the entry only once their record is in the sidecar", () => {
+  test("a failed effort write keeps them on the entry; a written one does not", async () => {
+    const failed = await run(1, "effort", "high");
+    expect(failed.written.some((r) => r.kind === "effort")).toBe(false);
+    expect(failed.entryOpts[0]).toMatchObject({ effort: "high", perTurnEffort: "high" });
+    const ok = await run(0, "effort", "high");
+    expect(ok.written.some((r) => r.kind === "effort")).toBe(true);
+    expect(ok.entryOpts[0]).not.toHaveProperty("effort");
   });
 });
 

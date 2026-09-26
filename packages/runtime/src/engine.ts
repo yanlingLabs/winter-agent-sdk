@@ -3659,10 +3659,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // WS-23 (layer 2): the CACHE QUIRKS of this model -- its effort annotations and the tool-epoch
       // bookkeeping that preceded this reply -- ride the sidecar, keyed by this record's provider+model,
       // never the provider-neutral transcript (see store/provider-state.ts).
-      if (effortStamp !== undefined) {
-        records.push({ ...base, itemIndex: records.length, kind: "effort", payload: { ...effortStamp } });
-        effortInSidecar = true;
-      }
+      if (effortStamp !== undefined) records.push({ ...base, itemIndex: records.length, kind: "effort", payload: { ...effortStamp } });
       for (const attachment of pendingBookkeeping.splice(0)) {
         records.push({ ...base, itemIndex: records.length, kind: attachment.type === TOOL_EPOCH_ATTACHMENT ? "tool-epoch" : "tool-changes", payload: attachment });
       }
@@ -3673,6 +3670,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         const record: ProviderStateRecordInput = { ...input, uuid: randomUUID() };
         try {
           await store.recordProviderState(record);
+          // Review r1, M-5: the entry leaves its effort fields to the sidecar only once the record is IN it.
+          if (record.kind === "effort") effortInSidecar = true;
         } catch {
           // Auxiliary, exactly like every other record* call here: a sidecar write failing must never
           // fail the turn. The consequence is a DEGRADED resume for that message, which the
@@ -3690,7 +3689,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           }
         }
       }
+      // Review r1, I-3: thinking that could not reach the sidecar is NEVER lost -- it goes into the
+      // transcript entry INLINE, where it lived before the move and where the reader still takes it
+      // (inline wins over any record). Only the other kinds (opaque native state, a summary) have no
+      // such fallback, and those are what the warning says a resume will miss.
+      const blocksKeptInline = unsaved.includes("reasoning-blocks");
+      if (blocksKeptInline) {
+        persisted = content;
+        moved = undefined;
+      }
       if (unsaved.length > 0) {
+        const lost = unsaved.filter((kind) => kind !== "reasoning-blocks");
         output.write({
           type: "data",
           message: {
@@ -3698,7 +3707,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             subtype: "continuity_warning",
             warning: "reasoning_state_unsaved",
             // KINDS ONLY, never a payload (the records hold opaque provider state).
-            detail: `the provider-state sidecar could not record this turn's reasoning (${unsaved.join(", ")}) after one retry; the turn completed, and this session keeps it in memory, but a resumed session will not replay it natively.`,
+            detail:
+              `Winter could not save this turn's reasoning state (${unsaved.join(", ")}) after one retry. The turn completed.` +
+              (blocksKeptInline ? " The model's thinking was kept in the conversation file instead, so nothing of it is lost." : "") +
+              (lost.length > 0 ? ` If this session is resumed, the model will continue without its own earlier reasoning for this turn (${lost.join(", ")}).` : ""),
             uuid: randomUUID(),
             session_id: config.sessionId,
           },
@@ -7081,6 +7093,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     console.error(
       `winter: session ${config.sessionId} switched from ${check.from ?? "?"} to ${to} with about ${fit.estimatedTokens} tokens of context against a ${fit.window}-token window; compacting on ${source !== undefined ? `the source model (${check.from ?? "?"})` : `the target (${to}), because the source model is not reachable from this process`} first`,
     );
+    // Review r1, I-3: the user is TOLD, not only the log: a summary replaces the older part of what they
+    // see the new model continue from. Counts and model ids only.
+    output.write({
+      type: "data",
+      message: {
+        type: "system",
+        subtype: "continuity_warning",
+        warning: "switch_compaction",
+        detail: `This conversation (about ${fit.estimatedTokens} tokens) is larger than ${to} can hold (a ${fit.window}-token window), so ${source !== undefined ? check.from ?? "the previous model" : to} is summarizing its older part before continuing. The most recent exchanges carry over as they are.`,
+        uuid: randomUUID(),
+        session_id: config.sessionId,
+      },
+    });
     const outcome = await performCompaction("auto", null, { reason: "overflow", ...(source !== undefined ? { provider: source } : {}), ...(bound !== undefined ? { maxInputChars: bound } : {}) });
     return outcome.ok;
   };
