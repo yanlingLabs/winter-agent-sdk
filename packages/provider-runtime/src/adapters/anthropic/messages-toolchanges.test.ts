@@ -67,11 +67,14 @@ describe("tool_addition / tool_removal on the wire (WS-23 midconv)", () => {
     });
   });
 
-  test("the rolling breakpoint lands on the BLOCK, never inside a definition (the docs: one or the other, not both)", () => {
+  test("review I-1: the rolling breakpoint never lands on a tool-change message -- it stays on the preceding user turn, where the next request still finds it", () => {
     const marked = withMessageCacheMarker(toWireMessages(history));
-    const last = marked[3]!.content.at(-1)!;
-    expect(last["cache_control"]).toEqual({ type: "ephemeral" });
-    expect((last["tool"] as { definition: Record<string, unknown> }).definition).not.toHaveProperty("cache_control");
+    expect(JSON.stringify(marked[3])).not.toContain("cache_control");
+    expect(marked[2]!.content.at(-1)!["cache_control"]).toEqual({ type: "ephemeral" });
+    // The next request (a reply, then a new prompt) moves the rolling breakpoint forward; the change
+    // message itself is byte-identical on both.
+    const next = withMessageCacheMarker(toWireMessages([...history, { role: "assistant", content: "r2" }, { role: "user", content: "three" }]));
+    expect(JSON.stringify(next[3])).toBe(JSON.stringify(marked[3]));
   });
 
   test("the beta: the inline one on an inline row (it covers references), the reference one otherwise -- and on EVERY opted-in request, change or not", () => {

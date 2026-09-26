@@ -228,18 +228,40 @@ export function buildRequestMessages(history: readonly ProviderMessage[], userCo
   const reordered = reorderAttachments(withContext, (message) => eligible(message) || isToolBookkeeping(message));
   const ordered = opts.effort !== undefined ? withEffortMarkers(reordered, opts.effort) : reordered;
   const out: ProviderMessage[] = [];
+  // WS-23 (midconv, review C-1): tool-change messages waiting for their legal position (see below).
+  const pendingChanges: ProviderMessage[] = [];
+  const mayFollow = (prev: ProviderMessage | undefined): boolean => prev !== undefined && (isUserRole(prev) || (prev.role === "system" && prev.outputConfig === undefined));
+  const flushChanges = (): void => {
+    if (pendingChanges.length === 0 || !mayFollow(out[out.length - 1])) return;
+    out.push(...pendingChanges);
+    pendingChanges.length = 0;
+  };
   for (let index = 0; index < ordered.length; index++) {
     const message = ordered[index]!;
+    // A change that waited behind a later user turn lands right before the reply that follows it.
+    if (message.role === "assistant") flushChanges();
     const prev = out[out.length - 1];
     // WS-23 (midconv): a tool-change entry of the ACTIVE epoch becomes the vendor's tool-change message
     // (an empty-content `system` message the adapter renders); every other bookkeeping entry -- the
     // epoch itself, a change from an earlier epoch, or any of them on a model with no mechanism -- is
-    // dropped. Before the merge, so neither ever joins a user turn. Only after a user-role turn: both
-    // vendors place a change there, and the engine never appends one anywhere else.
+    // dropped. Before the merge, so neither ever joins a user turn.
+    //
+    // PLACEMENT (review C-1): a system message carrying content "must immediately follow a `user` turn"
+    // AND "must precede an `assistant` turn or end the array"
+    // (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages). The engine
+    // appends a change right before the generation it applies to, but a generation that then FAILS or is
+    // interrupted records no reply, so the next prompt would land right behind the change -- `[..., user,
+    // system(change), user]`, a placement 400 on every later request. So a change whose next real message
+    // (reminders and bookkeeping skipped) is not an assistant turn is CARRIED FORWARD past the user turns
+    // that follow it, to just before the next reply (or the end). Decided from the history alone, so every
+    // later request lays it out at the same place.
     if (isToolBookkeeping(message)) {
-      if (isToolChangesMessage(message) && opts.toolChanges?.render.has(message) === true && prev !== undefined && (isUserRole(prev) || (prev.role === "system" && prev.outputConfig === undefined))) {
+      if (isToolChangesMessage(message) && opts.toolChanges?.render.has(message) === true) {
         const wire = toolChangesWireMessage(message);
-        if (wire !== undefined) out.push(wire);
+        if (wire !== undefined) {
+          if (pendingChanges.length === 0 && mayFollow(prev) && systemMayPrecede(ordered, index)) out.push(wire);
+          else pendingChanges.push(wire);
+        }
       }
       continue;
     }
@@ -261,6 +283,7 @@ export function buildRequestMessages(history: readonly ProviderMessage[], userCo
     const role: ProviderMessage["role"] = merged.some((b) => b.type === "tool_result") ? "tool" : "user";
     out[out.length - 1] = { role, content: merged };
   }
+  flushChanges();
   // WS-23 fix round 1 (I1): a LEADING effort-only marker at the level in force before any change (effort-
   // only messages are "accepted anywhere in `messages`, including as the first entry",
   // https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#limitations).

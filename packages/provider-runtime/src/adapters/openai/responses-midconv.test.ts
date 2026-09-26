@@ -89,7 +89,22 @@ const searchTools: TurnRequest["tools"] = [
 const searchHistory: ProviderMessageLike[] = [
   { role: "user", content: "find the order tools" },
   { role: "assistant", content: [{ type: "tool_use", id: "ts_1", name: "ToolSearch", input: { query: "orders" } }] },
-  { role: "tool", content: [{ type: "tool_result", tool_use_id: "ts_1", content: '{"matches":["mcp__crm__list_orders","NotebookEdit"]}', loadedTools: ["mcp__crm__list_orders", "NotebookEdit"] }] },
+  {
+    role: "tool",
+    content: [
+      {
+        type: "tool_result",
+        tool_use_id: "ts_1",
+        content: '{"matches":["mcp__crm__list_orders","NotebookEdit"]}',
+        loadedTools: ["mcp__crm__list_orders", "NotebookEdit"],
+        // What the engine stores at load time (review I-2): the definitions as they stood then.
+        loadedToolDefinitions: [
+          { name: "mcp__crm__list_orders", description: "mcp__crm__list_orders tool", inputSchema: { type: "object", properties: { q: { type: "string" } } }, namespace: "mcp__crm" },
+          { name: "NotebookEdit", description: "NotebookEdit tool", inputSchema: { type: "object", properties: { q: { type: "string" } } } },
+        ],
+      },
+    ],
+  },
   { role: "assistant", content: [{ type: "tool_use", id: "fc_1", name: "mcp__crm__list_orders", input: { q: "open" } }] },
   { role: "tool", content: [{ type: "tool_result", tool_use_id: "fc_1", content: "3 orders" }] },
 ];
@@ -124,6 +139,15 @@ describe("client tool search (WS-23 midconv item 4)", () => {
     expect(input[4]).toEqual({ type: "function_call", call_id: "fc_1", name: "list_orders", namespace: "mcp__crm", arguments: '{"q":"open"}' });
   });
 
+  test("review I-2: the history renders from the STORED definitions -- a tool whose server disconnected, or that was redefined since, leaves every earlier tool_search_output and namespaced call byte-identical", () => {
+    const at = (tools: NonNullable<TurnRequest["tools"]>) => JSON.stringify((body({ tools })["input"] as unknown[]).slice(0, 6));
+    const live = at(searchTools!);
+    // The MCP server went away: neither of its tools is in the live list any more.
+    expect(at(searchTools!.filter((t) => !t.name.startsWith("mcp__crm__")))).toBe(live);
+    // A new description for a loaded tool: the history still shows the one the model was given.
+    expect(at(searchTools!.map((t) => (t.name === "mcp__crm__list_orders" ? { ...t, description: "reworded" } : t)))).toBe(live);
+  });
+
   test("the codex backend keeps its required tool trio", () => {
     const b = body({}, searchRow(), { requireToolFields: true });
     expect(b).toHaveProperty("tool_choice", "auto");
@@ -143,13 +167,13 @@ describe("additional_tools and allowed_tools (WS-23 midconv addendum)", () => {
     expect(input[1]).toEqual({ type: "additional_tools", role: "developer", tools: [{ type: "function", name: "Late", description: "Late tool", parameters: { type: "object" }, strict: false }] });
   });
 
-  test("`allowed_tools` restricts WITHOUT touching `tools`: the allowed functions, the native tool search, and every loaded deferred tool (namespaced ones by namespace)", () => {
+  test("`allowed_tools` restricts WITHOUT touching `tools`, and lists FUNCTIONS ONLY (live L1): never `tool_search`, never a namespace -- a loaded namespaced tool by the name it was loaded as", () => {
     const row = searchRow({ allowed: true });
-    // The engine's list names ToolSearch too; on a client-search request it is `{"type": "tool_search"}`,
-    // never a function (the probe's dry run caught this).
+    // The engine's list names ToolSearch too; on a client-search request it is the native tool, unlisted.
     const restricted = body({ allowedTools: ["Bash", "ToolSearch"] }, row);
     expect(restricted["tools"]).toEqual(body({}, row)["tools"]);
-    expect(restricted["tool_choice"]).toEqual({ type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "Bash" }, { type: "tool_search" }, { type: "function", name: "NotebookEdit" }, { type: "namespace", name: "mcp__crm" }] });
+    expect(restricted["tool_choice"]).toEqual({ type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "Bash" }, { type: "function", name: "NotebookEdit" }, { type: "function", name: "list_orders" }] });
+    expect(JSON.stringify(restricted["tool_choice"])).not.toMatch(/"type":"(tool_search|namespace)"/);
     expect(body({ allowedTools: ["Bash"], toolChoice: { type: "any" } }, row)["tool_choice"]).toMatchObject({ type: "allowed_tools", mode: "required" });
     // A forced choice (the classifier, structured output) outranks the restriction.
     expect(body({ allowedTools: ["Bash"], toolChoice: { type: "tool", name: "Bash" } }, row)["tool_choice"]).toEqual({ type: "function", name: "Bash" });

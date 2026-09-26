@@ -15,9 +15,12 @@
 // adds an opaque field must NOT have to remember to come back here.
 import type { ContentBlock, Provider, ProviderMessage, ProviderRequest } from "../engine.ts";
 
+// WS-23 (midconv, fix round 1): the instruction is the request's FINAL USER TURN (no prefill: see
+// `summaryRequestMessages`), sent once, so it reads the conversation "above" -- it used to be the system
+// prompt, pointing "below", and then went out twice.
 export const WINTER_SUMMARY_INSTRUCTION =
   "You are compacting a conversation so that it can continue with less context. " +
-  "Summarize the messages below as clear declarative statements of what is true and what was decided -- " +
+  "Summarize the conversation above as clear declarative statements of what is true and what was decided -- " +
   "not as a paraphrase of the most recent message and not as an acknowledgement. " +
   "Preserve every specific verbatim: numbers, names, file paths, identifiers, exact values, and any decision that was made or reversed. " +
   "Record work still outstanding as well as work completed. " +
@@ -48,7 +51,7 @@ export const WINTER_PREFIX_SUMMARY_INSTRUCTION =
 export function isCompactionSummaryRequest(req: Pick<ProviderRequest, "system" | "messages">): boolean {
   if (req.system?.includes("compacting a conversation") === true) return true;
   const last = req.messages.at(-1);
-  return last?.role === "user" && typeof last.content === "string" && last.content.startsWith(WINTER_PREFIX_SUMMARY_INSTRUCTION);
+  return last?.role === "user" && typeof last.content === "string" && (last.content.startsWith(WINTER_PREFIX_SUMMARY_INSTRUCTION) || last.content.startsWith(WINTER_SUMMARY_INSTRUCTION));
 }
 
 /** WS-23: appended when the conversation already opens with a summary this compaction carries forward VERBATIM. */
@@ -153,8 +156,8 @@ export function redactForSummary(messages: readonly ProviderMessage[], opts: { t
  * TURN. The summarised window often ends on an assistant reply, and a request that ends there is an
  * assistant PREFILL, which newer models refuse outright ("This model does not support assistant message
  * prefill. The conversation must end with a user message.", HTTP 400) -- the fallback summary, the one
- * that exists for when the prefix request cannot run, then failed too. So the instruction is ALSO the
- * final user turn: the window as it was, then the ask. A window that already ends on a user message
+ * that exists for when the prefix request cannot run, then failed too. So the instruction is the final
+ * user turn: the window as it was, then the ask (and nowhere else -- fix round 1). A window that already ends on a user message
  * gets the same trailing turn (the adapters merge adjacent user messages), so the shape is one rule.
  * The prefix-reusing request (`summarizeOverPrefix`) already ends with its instruction as a user turn.
  */
@@ -176,8 +179,9 @@ export class CompactionSummarizerError extends Error {}
  * a turn of the conversation -- recording it would leave the trigger reading a number that describes
  * the compaction rather than the context it was meant to shrink.
  */
-export async function summarize(provider: Provider, messages: readonly ProviderMessage[], system: string): Promise<string> {
-  const turn = await provider.generate({ messages: summaryRequestMessages(messages, system), system });
+export async function summarize(provider: Provider, messages: readonly ProviderMessage[], instruction: string): Promise<string> {
+  // The instruction goes out ONCE, as the final user turn (fix round 1): no system prompt as well.
+  const turn = await provider.generate({ messages: summaryRequestMessages(messages, instruction) });
   if (turn.kind !== "text") {
     throw new CompactionSummarizerError(`the summarizer provider answered with a ${turn.kind} turn instead of summary text`);
   }

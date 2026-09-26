@@ -213,17 +213,19 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   tool-result turn it follows and replayed at that position, so every request is a byte prefix of the
   next. A resumed session rebuilds both from its transcript. Everywhere else `tools` is rebuilt per
   request, as before.
-  - **Anthropic, by reference** (Fable 5/5.1, Opus 4.8/5/5.5 on `anthropic` and `console`): a late tool is
-    declared `defer_loading` after the frozen list and announced with a `tool_addition` reference; a
-    withdrawn tool gets a `tool_removal`. The `role: "system"` message goes after the user turn, never
-    after a paused assistant turn, and the beta rides every request.
+  - **Anthropic, by reference** (Fable 5/5.1, Opus 4.8/5/5.5 on `anthropic` and `console`): a late eager
+    tool is declared `defer_loading` after the frozen list and announced with a `tool_addition` reference;
+    a late DEFERRED tool is only declared there and stays deferred until ToolSearch loads it; a withdrawn
+    tool gets a `tool_removal`. The `role: "system"` message follows a user turn and precedes the reply
+    (after a failed or interrupted generation it moves past the next prompt), never follows a paused
+    assistant turn, and never carries the cache breakpoint. The beta rides every request.
   - **Anthropic, by value** (the same rows, Claude API only): a late tool is a `tool_definition`
     addition, and a changed description or schema is a new definition under the same name. Only the
     `inline-tools-2026-09-15` beta is sent.
   - **OpenAI** (`openai` gpt-5.4 and later): a late tool is an `additional_tools` developer item. A
     withdrawn tool, or one the live permission mode excludes, leaves the callable set through
-    `tool_choice: {"type": "allowed_tools", …}`, so a mode switch changes only `tool_choice`. A forced
-    choice still wins.
+    `tool_choice: {"type": "allowed_tools", …}` (function entries only), so a mode switch changes only
+    `tool_choice`. A forced choice still wins; a refused `allowed_tools` turns off only itself.
   - A change the row cannot express (a new definition on a reference-only row) starts a new epoch, and
     is logged once. A refused change (the beta, a block, `tool_name_conflict`,
     `tool_reference_unresolved`, `available_tools_limit_exceeded`, …) falls back once, for the rest of the
@@ -231,11 +233,16 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 - **OpenAI client tool search** (`openai` gpt-5.4 and later, and every `codex-oauth` row): ToolSearch is sent
   as `{"type": "tool_search", "execution": "client"}`. Deferred tools are not declared in `tools`; a
   search's tools come back in `tool_search_output` (with `defer_loading`), and MCP tools are grouped in an
-  `mcp__<server>` namespace. A `tool_search_call` is accepted, and no longer fails the turn. A namespaced
-  call maps back to Winter's full name. A refused search falls back once to today's shape.
+  `mcp__<server>` namespace. The loaded definitions are stored on the ToolSearch result, and the history
+  replays them from there, so a server that disconnects or a tool that changes never rewrites an earlier
+  output. A `tool_search_call` is accepted, and no longer fails the turn. A namespaced call maps back to
+  Winter's full name. A refused search falls back once to today's shape.
+- **Codex caching.** Codex requests now send `session-id`, `thread-id` and `x-client-request-id` (the
+  conversation's cache key): codex-rs says the ChatGPT backend "derives cache affinity from the Responses
+  session-id header", and without it the live probe read no cached tokens on any codex request.
 - New seam fields, all additive and optional: `ProviderMessageLike.toolChanges`,
   `TurnRequest.tools[].namespace` / `.toolSearch`, `TurnRequest.allowedTools` / `.toolChanges` /
-  `.resumesPausedTurn`.
+  `.resumesPausedTurn`; on the engine side, `tool_result.loadedToolDefinitions`.
 
 ### Fixes from the Anthropic live gate (claude-opus-5-5)
 
@@ -245,8 +252,8 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   the session. Sessions already saved in the mixed shape are fixed when sent. A reference to a tool
   that no longer exists is dropped; a result left empty reads "[Tool references removed - tools no
   longer available]".
-- The no-prefix compaction fallback ends with the instruction as a user turn and never starts on an
-  assistant turn. It had ended on an assistant reply, which newer models refuse as a prefill. New
+- The no-prefix compaction fallback sends its instruction once, as the final user turn, and never starts
+  on an assistant turn. It had ended on an assistant reply, which newer models refuse as a prefill. New
   evidence `assistantPrefill: false` (Opus 4.6 and later, Sonnet 5, Fable 5/5.1) makes the Anthropic
   adapter refuse such a request, typed, except for a `pause_turn` resend.
 - `scripts/probe-anthropic-cache.ts` now names its credential (every request had been a 401) and prints

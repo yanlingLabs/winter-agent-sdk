@@ -9,6 +9,7 @@ import type { WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { createContextAccountant, runEngine, type ContextAccountant, type EngineOptions, type EngineProviderIdentity, type ModelDescription, type Provider, type ProviderMessage, type ProviderRequest, type ResolveModelSwitch } from "../engine.ts";
 import { createCompactionController } from "../compaction/controller.ts";
+import { isCompactionSummaryRequest } from "../compaction/summarizer.ts";
 import { stubExecutor } from "./mock.ts";
 
 const SRC: EngineProviderIdentity = { providerId: "big", modelKey: "big/src", family: "custom" };
@@ -27,8 +28,7 @@ function scripted(name: string, reply: string): Provider & { requests: ProviderR
     summaries: 0,
     async generate(req: ProviderRequest) {
       provider.requests.push({ ...req, messages: structuredClone(req.messages) });
-      const last = req.messages.at(-1);
-      const asked = typeof last?.content === "string" && /summar/i.test(last.content) && (req.system ?? "").length > 0 && req.tools === undefined;
+      const asked = isCompactionSummaryRequest(req);
       if (asked) {
         provider.summaries++;
         return { kind: "text" as const, text: `SUMMARY by ${name}` };
@@ -138,7 +138,7 @@ describe("the switch fit check (WS-23 decision 5)", () => {
     await drive({ source, target, startOn: DST, sourceReachable: false, persisted: { providerId: SRC.providerId, modelKey: SRC.modelKey }, initialMessages: history, steps: [{ user: "resumed" }] });
     expect(source.requests).toHaveLength(0);
     expect(target.summaries).toBe(1);
-    const summaryRequest = target.requests.find((r) => /summar/i.test(String(r.messages.at(-1)?.content)))!;
+    const summaryRequest = target.requests.find((r) => isCompactionSummaryRequest(r))!;
     // Bounded: (40000 * 0.9 - 1000) tokens at 3.5 chars/token with 10% margin, plus the instruction itself.
     expect(JSON.stringify(summaryRequest.messages).length).toBeLessThan(Math.floor(((40_000 * 0.9 - 1_000) * 3.5) / 1.1) + 4_000);
     expect(String(summaryRequest.messages.at(-1)!.content)).toContain("earliest");

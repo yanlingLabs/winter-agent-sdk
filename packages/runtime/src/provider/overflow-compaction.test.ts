@@ -63,7 +63,8 @@ test("overflow -> reactive compaction on the REDACTED request (never the refused
     // THE POINT: the summary request is NOT the refused request plus an instruction.
     expect(JSON.stringify(summary)).not.toContain(WINTER_PREFIX_SUMMARY_INSTRUCTION.slice(0, 40));
     expect(summary["tools"]).toBeUndefined();
-    expect(JSON.stringify(summary["system"])).toContain("compacting a conversation");
+    // Fix round 1: the instruction goes out once, as the last user turn (below), not as the system prompt too.
+    expect(JSON.stringify(summary["system"] ?? "")).not.toContain("compacting a conversation");
     expect((summary["messages"] as unknown[]).length).toBeLessThanOrEqual((overflowed["messages"] as unknown[]).length);
     // WS-23 midconv live gate: it ENDS WITH A USER TURN -- Opus 5.5 refuses an assistant prefill with a
     // 400 ("The conversation must end with a user message"), which failed this fallback live.
