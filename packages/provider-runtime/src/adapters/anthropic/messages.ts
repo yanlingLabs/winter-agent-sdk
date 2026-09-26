@@ -293,7 +293,13 @@ function toolResultWireBlocks(block: Extract<ContentBlockLike, { type: "tool_res
 
 function normalizeContent(content: string | ContentBlockLike[], referable: Referable = NOTHING_REFERABLE): Record<string, unknown>[] {
   if (typeof content === "string") return content.length > 0 ? [{ type: "text", text: content }] : [];
-  return content.flatMap((block) => toWireBlocks(block, referable));
+  const out = content.flatMap((block) => toWireBlocks(block, referable));
+  // WS-23 (midconv, fix round 2): a message whose only content was references to tools that are GONE
+  // says so -- claude's placeholder -- rather than vanishing: an empty message is dropped from the wire,
+  // which merged its neighbours into one turn (the conformance corpus's "never a silent drop" case). The
+  // tool_result path does the same inside `toolResultWireBlocks`.
+  if (out.length === 0 && content.some((b) => b.type === "tool_reference")) return [{ type: "text", text: TOOL_REFERENCES_REMOVED_TEXT }];
+  return out;
 }
 
 /**

@@ -182,6 +182,16 @@ describe("deferred tools and tool_reference (WS-23 item 3)", () => {
     expect((body["messages"] as Array<{ content: Array<Record<string, unknown>> }>)[2]!.content).toEqual([{ type: "tool_result", tool_use_id: "t", content: "[Tool references removed - tools no longer available]" }]);
   });
 
+  test("fix round 2: an ASSISTANT message whose only content referenced a gone tool keeps its turn, as the placeholder -- never dropped (which merged the user turns around it)", () => {
+    const history: ProviderMessageLike[] = [{ role: "user", content: "go" }, { role: "assistant", content: [{ type: "tool_reference", tool_name: "mcp__gone__tool" } as never] }, { role: "user", content: "next" }];
+    const body = buildRequestBody({ model: "claude-opus-5-5", messages: history, tools: [tool("Bash")] }, deferredRow(), {});
+    expect(body["messages"]).toEqual([
+      { role: "user", content: [{ type: "text", text: "go" }] },
+      { role: "assistant", content: [{ type: "text", text: "[Tool references removed - tools no longer available]" }] },
+      expect.objectContaining({ role: "user" }),
+    ]);
+  });
+
   test("a session ALREADY ON DISK in the rejected shape is healed at send time: the same stored history now goes out references-only, its text as siblings", () => {
     // Exactly what 2ddc238 persisted: the ToolSearch listing with a hook reminder smooshed into it, plus
     // `loadedTools` (the references were the adapter's, never stored), and a claude-written mixed result.
