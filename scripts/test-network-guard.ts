@@ -318,6 +318,8 @@ if (process.env[ALLOW_REAL_NETWORK_ENV] !== "1") {
         return original(command, withEnv(undefined), ...rest);
       };
       const custom = (original as unknown as Record<symbol, unknown>)[promisify.custom];
+      // The copied custom form calls Bun's ORIGINAL exec (so it skips withEnv) -- it still sees the proxy
+      // variables, through Bun's write-through to the real environment (see this file's header).
       if (custom !== undefined) Object.defineProperty(wrapped, promisify.custom, { value: custom, configurable: true });
       cp[name] = wrapped;
     }

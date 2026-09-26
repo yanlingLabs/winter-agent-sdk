@@ -39,7 +39,8 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 - **MCP connect failures are classified by cause.** New `McpConnectErrorCode`s: `version_mismatch` (a `{pin}`
   the server did not offer, or a server that named its versions and none is ours -- was `handshake_failed`)
   and `transport_closed` (a stdio server that exited by itself during the attempt -- was `handshake_failed`
-  on the probe, `unknown` during `initialize`). The `auto` legacy retry never spends a second connection on a
+  on the probe, `unknown` during `initialize`). `McpConnectErrorCode` is an open set that may grow again: a
+  host switching on it exhaustively needs a default branch. The `auto` legacy retry never spends a second connection on a
   version mismatch, and announces a fallback once per server and cause.
 - **stdio `auto` is safe on every legacy server**, and stays opt-in. A server that answers the
   `server/discover` probe, or ignores it (the transport now reads as stdio to the v2 client, so silence
@@ -53,6 +54,8 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 - **New public subpath `@yanlinglabs/winter-agent-runtime/mcp-client`**: `connectMcpServer`,
   `ConnectedMcpClient`, `McpConnectError` (+ its codes, the tool/resource shapes, `resolveVersionNegotiation`)
   and `createElicitationAsker` -- the runtime's own MCP client, for a host that talks to MCP servers itself.
+  Its `ConnectMcpServerOptions` is the host-shaped subset (`name`, a stdio/http/sse `config`,
+  `connectTimeoutMs`, `elicitationAsk`, `cwd`).
   It loads no engine state, so a host may import it on its main thread.
 - `verify:mcp-compiled` gains two legs: stdio `auto` against a server that exits on the probe, and a
   2026-07-28 Streamable HTTP endpoint (the modern era, compiled).
