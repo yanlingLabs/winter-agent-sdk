@@ -297,6 +297,7 @@ export type {
   HookSource,
   HookPermissionDecision,
   BaseHookInput,
+  McpToolProvenance,
   PreToolUseHookInput,
   PostToolUseHookInput,
   PostToolUseFailureHookInput,

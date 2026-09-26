@@ -1206,6 +1206,30 @@ test("a hook callback receives a reconstructed HookInput with cwd/session/tool i
   expect(response?.payload).toEqual(answer);
 });
 
+test("WS-24: an MCP tool's hook input names its server and bare tool (mcp_server_name / mcp_tool_name); a built-in's names neither", async () => {
+  const seen: HookInput[] = [];
+  for (const payload of [
+    fullHookPayload({ toolName: "mcp__winter__sessions__list", mcpServerName: "winter__sessions", mcpToolName: "list", requestId: "hook-1" }),
+    fullHookPayload({ requestId: "hook-1" }),
+  ]) {
+    const { proc } = recordingProcessWithHookRequest(payload);
+    const gen = query({
+      prompt: "hi",
+      options: {
+        cwd: "/work",
+        spawnClaudeCodeProcess: () => proc,
+        hooks: { PreToolUse: [{ hooks: [async (input) => (seen.push(input), {})] }] },
+      },
+    });
+    for await (const _msg of gen) {
+      /* drain */
+    }
+  }
+  expect(seen[0]).toMatchObject({ tool_name: "mcp__winter__sessions__list", mcp_server_name: "winter__sessions", mcp_tool_name: "list" });
+  expect("mcp_server_name" in seen[1]!).toBe(false);
+  expect("mcp_tool_name" in seen[1]!).toBe(false);
+});
+
 test("an unrecognized hookId answers ok:false, unknown_hook_id (a config/registry drift this handler defends against without crashing)", async () => {
   const payload = fullHookPayload({ hookId: "PreToolUse:sdk:0:99" });
   const { proc, writes } = recordingProcessWithHookRequest(payload);

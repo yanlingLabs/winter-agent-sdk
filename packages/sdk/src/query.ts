@@ -464,6 +464,11 @@ function buildHookInput(req: HookInvocationPayload, cwd: string): HookInput {
     ...(req.agentID !== undefined ? { agent_id: req.agentID } : {}),
     hook_event_name: req.event,
     ...(req.toolName !== undefined ? { tool_name: req.toolName } : {}),
+    // WS-24: which MCP server the tool belongs to (`McpToolProvenance`) -- mapped here AND in the
+    // runtime's `commandHookInput` (command-invoker.ts), the same "two builders, one shape" split as
+    // every other field of this input.
+    ...(req.mcpServerName !== undefined ? { mcp_server_name: req.mcpServerName } : {}),
+    ...(req.mcpToolName !== undefined ? { mcp_tool_name: req.mcpToolName } : {}),
     ...(req.input !== undefined ? { tool_input: req.input } : {}),
     ...(req.toolUseID !== undefined ? { tool_use_id: req.toolUseID } : {}),
     ...payload,

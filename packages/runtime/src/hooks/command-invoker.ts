@@ -172,6 +172,9 @@ export function commandHookInput(request: HookInvocationRequest, ctx: { cwd: str
     ...(request.agentID !== undefined ? { agent_id: request.agentID } : {}),
     hook_event_name: request.event,
     ...(request.toolName !== undefined ? { tool_name: request.toolName } : {}),
+    // WS-24: the MCP server behind the tool, and its own name there -- the sdk's `McpToolProvenance`.
+    ...(request.mcpServerName !== undefined ? { mcp_server_name: request.mcpServerName } : {}),
+    ...(request.mcpToolName !== undefined ? { mcp_tool_name: request.mcpToolName } : {}),
     ...(request.input !== undefined ? { tool_input: request.input } : {}),
     ...(request.toolUseID !== undefined ? { tool_use_id: request.toolUseID } : {}),
     ...payload,
