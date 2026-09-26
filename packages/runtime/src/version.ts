@@ -8,4 +8,4 @@
 // Hardcoded rather than read from package.json for the reason `SDK_VERSION` is (a `$bunfs` binary
 // cannot read a manifest by relative path); `version:sync` stamps it and `version.test.ts` pins it to
 // the manifest and to `RUNTIME_ENGINE_VERSION`.
-export const RUNTIME_VERSION = "0.0.26";
+export const RUNTIME_VERSION = "0.0.27";

@@ -6,9 +6,9 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
-## 0.0.26
+## 0.0.27
 
-(0.0.25 was tagged but never published: its release workflow stopped at the test step, fixed below.)
+(0.0.25 and 0.0.26 were tagged but never published: their release workflows stopped at the test step. 0.0.26 fixed the release smoke's registry access; 0.0.27 fixes one test that deleted the release job's own `NODE_AUTH_TOKEN`/`NPM_CONFIG_USERCONFIG` during cleanup.)
 
 WS-23: every model, Claude included, now runs on this SDK (the official `claude` leg is retired
 from Winter). xAI moves to the Responses API; MCP moves to the TypeScript SDK v2; the hook system is
