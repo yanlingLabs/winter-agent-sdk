@@ -4011,3 +4011,73 @@ describe("WS-24 item 2: a subagent's same-named server never clobbers the parent
     });
   }, 30_000);
 });
+
+// WS-24 fix round 1 (I1): a renamed server is still the server the definition named -- its own
+// `disallowedTools`, and the rules the parent's session writes against the declared name, keep binding.
+describe("WS-24 fix round 1 (I1): rules naming a renamed server's declared name still govern it", () => {
+  async function runRenamedChild(opts: { disallowedTools?: string[]; parentDeny?: string[] }): Promise<{ childResult: string; ran: number }> {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    let ran = 0;
+    const parentSpec = { tools: [{ name: "hello", description: "greets", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text" as const, text: "HELLO" }] }) }], resources: [] };
+    const childSpec = {
+      tools: [{ name: "shout", description: "uppercases", inputSchema: { type: "object", properties: {} }, handler: () => {
+        ran++;
+        return { content: [{ type: "text" as const, text: "SHOUT-child" }] };
+      } }],
+      resources: [],
+    };
+    let childResult = "";
+    await withHttpFixture(parentSpec, async (parentUrl) => {
+      await withHttpFixture(childSpec, async (childUrl) => {
+        const req: SpawnChildRequest = {
+          parentToolUseId: "call-1", prompt: "shout", runInBackground: false,
+          definition: {
+            description: "child with its own srv", prompt: "persona",
+            mcpServers: [{ srv: { type: "http", url: childUrl.href } }],
+            ...(opts.disallowedTools !== undefined ? { disallowedTools: opts.disallowedTools } : {}),
+          },
+        };
+        const childScript = scriptedProvider([
+          { kind: "tool_use", calls: [{ id: "c1", name: "mcp__srv_2__shout", input: {} }] },
+          { kind: "text", text: "child done" },
+        ]);
+        const childProvider: Provider = {
+          async generate(request) {
+            const tool = request.messages.find((m) => m.role === "tool");
+            if (tool !== undefined) childResult = JSON.stringify(tool.content);
+            return childScript.generate(request);
+          },
+        };
+        const { code } = await driveParent({ provider: childProvider, env: { MCP_CONNECTION_NONBLOCKING: "0" } }, baseConfig({
+          sessionId: `ws24-i1-${randomUUID()}`,
+          mcpServers: { srv: { type: "http", url: parentUrl.href } },
+          ...(opts.parentDeny !== undefined ? { permissions: { deny: opts.parentDeny } } : {}),
+        }), [
+          { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+          { kind: "text", text: "parent done" },
+        ]);
+        expect(code).toBe(0);
+      });
+    });
+    return { childResult, ran };
+  }
+
+  test("the definition's own disallowedTools ['mcp__srv__shout'] denies the child's mcp__srv_2__shout", async () => {
+    const { childResult, ran } = await runRenamedChild({ disallowedTools: ["mcp__srv__shout"] });
+    expect(ran).toBe(0);
+    expect(childResult).not.toContain("SHOUT-child");
+  }, 30_000);
+
+  test("a parent deny rule written against mcp__srv__shout governs the renamed server's tool too", async () => {
+    const { childResult, ran } = await runRenamedChild({ parentDeny: ["mcp__srv__shout"] });
+    expect(ran).toBe(0);
+    expect(childResult).not.toContain("SHOUT-child");
+  }, 30_000);
+
+  test("the control: with nothing naming it, the renamed server's tool runs", async () => {
+    const { childResult, ran } = await runRenamedChild({});
+    expect(ran).toBe(1);
+    expect(childResult).toContain("SHOUT-child");
+  }, 30_000);
+});

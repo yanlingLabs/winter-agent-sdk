@@ -1482,6 +1482,15 @@ export interface EngineOptions {
    * Round 20 carried the parent's board only, and only to a child with object-form servers.
    */
   inheritedMcpServerNames?: () => readonly string[];
+  /**
+   * WS-24: a SUBAGENT's own MCP servers connected under a name other than the one its definition
+   * declared (subagents/child-engine.ts's `allocateChildScopedServers` renames one that collides),
+   * as `{ actual: declared }`. Set by child-engine.ts only. A call to `mcp__<actual>__<tool>` is then
+   * ALSO governed by every permission rule and hook matcher written against `mcp__<declared>__<tool>`
+   * (strictest-of, like a tool alias), so a rename never lets a call escape a rule or hook that named
+   * the server as the author declared it.
+   */
+  mcpServerRenames?: Readonly<Record<string, string>>;
   // Phase 4 Task 3 (WS-09 §3): the live MCP server MUTATION seam (reconnect/toggle/setServers) --
   // Lane A's own real implementation; a fake for this task's own contract tests. Absent means the
   // three mutating subtypes answer a structured `mcp_unavailable` error (the subtype IS recognized;
@@ -2365,6 +2374,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     deferrableContextShare,
     mcpServerStateSource,
     inheritedMcpServerNames,
+    mcpServerRenames,
     mcpControlSeam,
     contextAccountant: injectedContextAccountant,
     systemPromptAssembler,
@@ -7986,6 +7996,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * includes the deferred names, so a deferred-but-unloaded tool still reaches the load-first
    * boundary and its "use ToolSearch" answer.
    */
+  /** WS-24: `mcp__<declared>[__tool]` for a call to a renamed own server (`EngineOptions.mcpServerRenames`), else `undefined`. */
+  const declaredMcpIdentity = (toolName: string): string | undefined => {
+    if (mcpServerRenames === undefined) return undefined;
+    for (const [actual, declared] of Object.entries(mcpServerRenames)) {
+      if (toolName === `mcp__${actual}`) return `mcp__${declared}`;
+      if (toolName.startsWith(`mcp__${actual}__`)) return `mcp__${declared}__${toolName.slice(`mcp__${actual}__`.length)}`;
+    }
+    return undefined;
+  };
   const toolNotOfferedRefusal = (toolName: string): string | undefined => {
     const offered = offeredThisRequest;
     if (offered === undefined) return undefined;
@@ -9198,24 +9217,33 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // frame and `result.permission_denials` entry (C2, B-M2, a subagent's excluded tools) -- none
           // of which executes. What is left is exactly the hole: a tool nothing else refuses that the
           // model was not offered (a server connected after the request was built).
-          const notOffered = aliasPermissionIdentities(call.name, config.toolAliases, sessionBrand).some(probeRule("deny")) ? undefined : toolNotOfferedRefusal(call.name);
+          // WS-24: the name this call's server was DECLARED under, when this subagent's own server was
+          // renamed (`EngineOptions.mcpServerRenames`) -- one more identity, governed strictest-of.
+          const declaredIdentity = declaredMcpIdentity(call.name);
+          const notOffered = [...aliasPermissionIdentities(call.name, config.toolAliases, sessionBrand), ...(declaredIdentity !== undefined ? [declaredIdentity] : [])].some(probeRule("deny"))
+            ? undefined
+            : toolNotOfferedRefusal(call.name);
           if (notOffered !== undefined) {
             resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: notOffered, is_error: true });
             continue;
           }
+          const identityProbes = {
+            deniedByRule: probeRule("deny"),
+            askedByRule: probeRule("ask"),
+            hookScoped: (candidate: string): boolean =>
+              (["PreToolUse", "PermissionRequest"] as const).some((event) => hookRegistry.matching(event, candidate).some((e) => e.matcher !== undefined)),
+            allowedByRule: probeRule("allow"),
+          };
+          const aliasIdentity = resolvePermissionIdentity(call.name, config.toolAliases, identityProbes, sessionBrand);
           const permissionCall: PermissionCall = {
-            toolName: resolvePermissionIdentity(
-              call.name,
-              config.toolAliases,
-              {
-                deniedByRule: probeRule("deny"),
-                askedByRule: probeRule("ask"),
-                hookScoped: (candidate: string): boolean =>
-                  (["PreToolUse", "PermissionRequest"] as const).some((event) => hookRegistry.matching(event, candidate).some((e) => e.matcher !== undefined)),
-                allowedByRule: probeRule("allow"),
-              },
-              sessionBrand,
-            ),
+            // WS-24: the declared spelling of a renamed server's tool joins the strictest-of choice, in
+            // the alias resolution's own probe order -- deny, ask, an explicit hook matcher, allow.
+            toolName:
+              declaredIdentity === undefined
+                ? aliasIdentity
+                : ([identityProbes.deniedByRule, identityProbes.askedByRule, identityProbes.hookScoped, identityProbes.allowedByRule]
+                    .map((probe) => [aliasIdentity, declaredIdentity].find(probe))
+                    .find((hit) => hit !== undefined) ?? aliasIdentity),
             input: permissionInput,
             toolUseId: call.id,
             // Phase 4 Task 3 (MUST 9): the identical agentID a child engine's own hook stage/audit

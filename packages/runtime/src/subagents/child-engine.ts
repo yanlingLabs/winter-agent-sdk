@@ -433,6 +433,20 @@ interface ChildServerAllocation {
   release: () => void;
 }
 
+/**
+ * WS-24 (fix round 1, I1): a tool-name rule entry (`mcp__srv`, `mcp__srv__tool`, `mcp__srv__*`,
+ * `mcp__srv__tool(...)`) re-pointed at the name its server was actually connected under, or
+ * `undefined` when it names none of the renamed servers. The declared name must end where the server
+ * segment ends, so `mcp__srv` never rewrites `mcp__srv_2__x`.
+ */
+function renameMcpReference(entry: string, renames: ReadonlyArray<readonly [declared: string, actual: string]>): string | undefined {
+  for (const [declared, actual] of renames) {
+    const prefix = `mcp__${declared}`;
+    if (entry === prefix || entry.startsWith(`${prefix}__`) || entry.startsWith(`${prefix}(`)) return `mcp__${actual}${entry.slice(prefix.length)}`;
+  }
+  return undefined;
+}
+
 function allocateChildScopedServers(declared: ChildMcpServers, parentVisible: ReadonlySet<string>, prefer?: ReadonlyMap<string, string>): ChildServerAllocation {
   const claimed: string[] = [];
   const inUse = (name: string): boolean => liveChildScopedServerNames.has(name) || parentVisible.has(name) || mcpServerHasRegistrations(name);
@@ -822,6 +836,20 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       // WS-24: this generation's own servers, under the names it holds (released once `runEngine` returns).
       const ownServers = Object.keys(servers.servers).length > 0;
       if (ownServers) config = { ...config, mcpServers: servers.servers };
+      // WS-24 (fix round 1, I1): a RENAMED server is still the one the definition named. Every
+      // `disallowedTools` entry naming it under its declared name is carried over to the name it runs
+      // under (the declared entry stays: it is harmless, and the parent's same-named server is out of
+      // this child's scope anyway) -- that covers both hiding it and denying it. Rules and hook matchers
+      // from every other layer (the parent's live rules, the settings seed, the hooks) are matched on
+      // the declared spelling too, by the engine (`EngineOptions.mcpServerRenames`).
+      const renames = [...servers.actual].filter(([declared, actual]) => declared !== actual);
+      if (renames.length > 0 && config.disallowedTools !== undefined) {
+        const carried = config.disallowedTools.flatMap((entry) => {
+          const renamed = renameMcpReference(entry, renames);
+          return renamed !== undefined ? [entry, renamed] : [entry];
+        });
+        config = { ...config, disallowedTools: [...new Set(carried)] };
+      }
       const channel = createInMemoryChannel();
       currentSink = channel.host.output;
       const startedAt = Date.now();
@@ -1226,6 +1254,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // `computeAdvertisedPartition`). Scope only: never connected, never reported.
         // WS-24: minus the names this child declares for itself -- its own server of that name is the one
         // it sees (under whatever name `allocateChildScopedServers` gave it).
+        ...(renames.length > 0 ? { mcpServerRenames: Object.fromEntries(renames.map(([declared, actual]) => [actual, declared])) } : {}),
         ...(parentMcp?.visibleServerNames !== undefined
           ? { inheritedMcpServerNames: ownServerNames.size === 0 ? parentMcp.visibleServerNames : () => parentMcp.visibleServerNames!().filter((name) => !ownServerNames.has(name)) }
           : {}),
