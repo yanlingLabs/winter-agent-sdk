@@ -5326,6 +5326,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       return [{ name: spec.name, description: spec.description, inputSchema: spec.inputSchema, ...(namespace !== undefined ? { namespace } : {}) }];
     });
   };
+  /**
+   * WS-24: the loaded definitions a FORK's frozen `tools` does not declare, as text for the loading call's
+   * own result -- `""` when there are none. The tool is callable (`offeredThisRequest`); this is how the
+   * model learns its input schema without the fork's shared prefix moving.
+   */
+  const forkLoadedDefinitionsText = (definitions: readonly LoadedToolDefinition[]): string => {
+    if (exactRequestLayout === undefined) return "";
+    const declared = new Set(exactRequestLayout.tools.map((t) => t.name));
+    const missing = definitions.filter((d) => !declared.has(d.name));
+    if (missing.length === 0) return "";
+    const lines = missing.map((d) => `<function>${JSON.stringify({ name: d.name, description: d.description, parameters: d.inputSchema })}</function>`);
+    return `\n\nThese loaded tools are not in this conversation's tool list, but you can call them by name; each one's input must match its parameters schema:\n<functions>\n${lines.join("\n")}\n</functions>`;
+  };
   /** Canonical -> advertised: `loadedTools` names what `tools` carries, because that is what a `tool_reference` must name. */
   const advertisedNamesFor = (canonical: readonly string[] | undefined): string[] => {
     if (canonical === undefined || canonical.length === 0) return [];
@@ -7734,18 +7747,20 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // a fresh render here gates the Agent tool's own description/schema on THIS run's `insideFork`
     // (the fork itself), which differs from what the PARENT actually advertised.
     //
-    // A fork that later ToolSearch-loads a deferred tool of its own still gets fresh specs appended
-    // for THAT (loadedToolSet changes are a real, later event this exact snapshot cannot have
-    // anticipated) -- see the loop below, reached only past this early return on the FIRST call; a
-    // later call re-enters this same short-circuit and returns the frozen list again, so a
-    // newly-loaded deferred tool from THIS run never actually reaches the wire under exact mode. That
-    // is a deliberate choice, not an oversight: the alternative (appending fresh specs after the exact
-    // ones) would make request 2 differ in SHAPE from request 1 by the appended count, and this run
-    // has no way to know whether the PARENT would render an identical spec for the same tool anyway
-    // (a fork's own `insideFork` gates differ from the parent's). A fork that needs a deferred tool it
-    // was not already using at fork time is the disclosed edge of this design.
+    // A tool the fork ToolSearch-loads ITSELF never joins `tools`: appending a spec would move the
+    // bytes the fork shares with its parent at the head of the cached prefix, and this run cannot know
+    // whether the parent would render the same spec anyway (a fork's own `insideFork` gates differ).
+    //
+    // WS-24: but it IS offered -- a fork may RUN the tools it loads. `offeredThisRequest` used to be the
+    // frozen names alone, so such a call answered "No such tool available". It now also holds every tool
+    // of the fork's own partition that the fork has loaded (its ToolSearch's `emitToolReference`), and the
+    // definition reaches the model after the shared prefix instead: in that ToolSearch call's own result
+    // (`forkLoadedDefinitionsText`, at the tool-round), whenever the frozen list does not already declare
+    // the tool (a deferred-loading row's layout declares every deferred tool up front, so there it does).
     if (exactRequestLayout !== undefined) {
-      offeredThisRequest = new Set(exactRequestLayout.tools.map((t) => t.name));
+      refreshAdvertisedPartition();
+      const ownLoaded = [...advertisedPartition.eager, ...advertisedPartition.deferred].filter((d) => loadedToolSet.isLoaded(d.canonicalName));
+      offeredThisRequest = new Set([...exactRequestLayout.tools.map((t) => t.name), ...ownLoaded.flatMap((d) => [d.advertisedName, d.canonicalName])]);
       return exactRequestLayout.tools;
     }
     // Fix round 19: every provider request re-derives the partition from the live registry and the
@@ -9482,6 +9497,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           const loadedTools = advertisedNamesFor(toolReferenceCollector);
           toolReferenceCollector = undefined;
           const loadedToolDefinitions = loadedDefinitionsFor(loadedTools);
+          // WS-24: a FORK's frozen `tools` cannot carry what it just loaded (see `providerToolSpecs`), so
+          // the definitions ride this result -- after the prefix the fork shares with its parent.
+          const forkDefinitionsText = exactRequestLayout !== undefined ? forkLoadedDefinitionsText(loadedToolDefinitions) : "";
           if (raced.kind === "interrupted") {
             interrupted = true;
             break;
@@ -9491,7 +9509,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           resultBlocks.push({
             type: "tool_result",
             tool_use_id: call.id,
-            content: raced.value.output,
+            content: forkDefinitionsText.length > 0 ? `${raced.value.output}${forkDefinitionsText}` : raced.value.output,
             ...(raced.value.isError === true ? { is_error: true } : {}),
             ...(loadedTools.length > 0 ? { loadedTools } : {}),
             ...(loadedToolDefinitions.length > 0 ? { loadedToolDefinitions } : {}),

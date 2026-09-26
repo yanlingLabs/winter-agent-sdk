@@ -317,3 +317,68 @@ describe("SDK 0.0.16 (P16-7): a fork's request is the parent's own captured layo
     expect(parsed.record.permission.effectiveMode).toBe("plan"); // the PARENT's own live mode, not a fixed "bubble" value
   });
 });
+
+// WS-24 (engine lane, item 4): a fork may RUN a tool it loads itself through ToolSearch. Its `tools` is
+// the parent's exact layout, so a deferred tool the fork loads mid-run is never appended to it (that
+// would move the prefix the fork shares with its parent for the cache) -- and the call used to be refused
+// "No such tool available". The tool is now offered to the fork, its definition rides the ToolSearch
+// result, and `tools` stays byte-identical.
+describe("WS-24: a fork runs the tools it loads itself, without changing its shared prefix", () => {
+  const DEFERRED = "zz_ws24_fork_deferred";
+  afterEach(() => unregisterToolForTest(DEFERRED));
+
+  test("on a row with no deferred-loading support: ToolSearch loads the tool, the call runs, `tools` never moves", async () => {
+    registerSpawnProbe();
+    let ran = 0;
+    registerTool({
+      descriptor: {
+        canonicalName: DEFERRED, advertisedName: DEFERRED, source: "sdk", deferred: true,
+        inputSchema: { type: "object", properties: { q: { type: "string" } } },
+        description: "a deferred tool the fork loads for itself", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: {
+        async execute() {
+          ran++;
+          return { output: "DEFERRED-RAN" };
+        },
+      },
+    });
+    const childRequests: CapturedChildRequest[] = [];
+    const childScript = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "fs-1", name: "ToolSearch", input: { query: `select:${DEFERRED}` } }] },
+      { kind: "tool_use", calls: [{ id: "fs-2", name: DEFERRED, input: { q: "x" } }] },
+      { kind: "text", text: "fork done" },
+    ]);
+    // The child's deferral activation comes from its environment (child-engine.ts's header).
+    registerChildEngineFactory(createChildEngineFactory({ provider: capturingProvider(childRequests, childScript), env: { ENABLE_TOOL_SEARCH: "true" } } as ChildEngineFactoryDeps));
+
+    const parentRequests: CapturedChildRequest[] = [];
+    const { host, runtime } = createInMemoryChannel();
+    const scripted = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "spawn-fork-1", name: SPAWN_PROBE, input: { parentToolUseId: "spawn-fork-1", prompt: "use the deferred tool", runInBackground: false, fork: true } }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    const done = runEngine({ config: baseConfig({ toolSearchEnabled: true, capabilities: ["winter.mcp"] }), input: runtime.input, output: runtime.output, provider: capturingProvider(parentRequests, scripted) });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    await drain(host.input);
+    expect(await done).toBe(0);
+
+    // The parent was offered ToolSearch and NOT the deferred tool, which is exactly what the fork inherits.
+    const parentTools = (parentRequests[0]!.tools ?? []).map((t) => t.name);
+    expect(parentTools).toContain("ToolSearch");
+    expect(parentTools).not.toContain(DEFERRED);
+
+    expect(childRequests).toHaveLength(3);
+    // `tools` is the parent's, byte-identical, on every fork request -- including after the load.
+    for (const req of childRequests) expect(JSON.stringify(req.tools ?? [])).toBe(JSON.stringify(parentRequests[0]!.tools ?? []));
+    const results = (req: CapturedChildRequest) => JSON.stringify(req.messages.filter((m) => m.role === "tool"));
+    // The definition reached the model in the ToolSearch result...
+    expect(results(childRequests[1]!)).toContain(`<function>{\\"name\\":\\"${DEFERRED}\\"`);
+    // ...and the call ran instead of answering "No such tool available".
+    expect(ran).toBe(1);
+    expect(results(childRequests[2]!)).toContain("DEFERRED-RAN");
+    expect(results(childRequests[2]!)).not.toContain("No such tool available");
+  });
+});
