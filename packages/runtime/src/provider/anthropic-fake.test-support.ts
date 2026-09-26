@@ -26,6 +26,8 @@ export interface AnthropicFakeRequest {
 /** One scripted content block, streamed the way the real endpoint streams it. */
 export type FakeBlock =
   | { type: "thinking"; thinking: string; signature: string }
+  /** WS-23 (reasoning-state): streamed as the real endpoint does -- the whole block on `content_block_start`, no delta. */
+  | { type: "redacted_thinking"; data: string }
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
 
@@ -54,6 +56,8 @@ function blockFrames(block: FakeBlock, index: number): string {
     out += sseFrame("content_block_start", { type: "content_block_start", index, content_block: { type: "thinking", thinking: "" } });
     out += sseFrame("content_block_delta", { type: "content_block_delta", index, delta: { type: "thinking_delta", thinking: block.thinking } });
     out += sseFrame("content_block_delta", { type: "content_block_delta", index, delta: { type: "signature_delta", signature: block.signature } });
+  } else if (block.type === "redacted_thinking") {
+    out += sseFrame("content_block_start", { type: "content_block_start", index, content_block: { type: "redacted_thinking", data: block.data } });
   } else if (block.type === "text") {
     out += sseFrame("content_block_start", { type: "content_block_start", index, content_block: { type: "text", text: "" } });
     out += sseFrame("content_block_delta", { type: "content_block_delta", index, delta: { type: "text_delta", text: block.text } });

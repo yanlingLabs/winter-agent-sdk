@@ -1,0 +1,418 @@
+{
+  "live": [
+    [
+      {
+        "role": "system",
+        "content": [],
+        "output_config": {
+          "effort": "high"
+        }
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "<system-reminder>\nAvailable agent types for the Agent tool:\n- claude: Catch-all for any task that doesn't fit a more specific agent. (Tools: *)\n- Explore: Read-only search agent for broad fan-out searches — when answering means sweeping many files, directories, or naming conventions and you only need the conclusion, not the file dumps. It reads excerpts rather than whole files, so it locates code; it doesn't review or audit it. Specify search breadth: \"medium\" for moderate exploration, \"very thorough\" for multiple locations and naming conventions. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\n- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. (Tools: *)\n- Plan: Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\n\nWhen you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently.\n</system-reminder>\n"
+          },
+          {
+            "type": "text",
+            "text": "<system-reminder>\nAs you answer the user's questions, you can use the following context:\n# currentDate\nToday's date is <DATE>.\n\n      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.\n</system-reminder>\n\n"
+          },
+          {
+            "type": "text",
+            "text": "turn one",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "role": "system",
+        "content": [],
+        "output_config": {
+          "effort": "high"
+        }
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "<system-reminder>\nAvailable agent types for the Agent tool:\n- claude: Catch-all for any task that doesn't fit a more specific agent. (Tools: *)\n- Explore: Read-only search agent for broad fan-out searches — when answering means sweeping many files, directories, or naming conventions and you only need the conclusion, not the file dumps. It reads excerpts rather than whole files, so it locates code; it doesn't review or audit it. Specify search breadth: \"medium\" for moderate exploration, \"very thorough\" for multiple locations and naming conventions. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\n- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. (Tools: *)\n- Plan: Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\n\nWhen you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently.\n</system-reminder>\n"
+          },
+          {
+            "type": "text",
+            "text": "<system-reminder>\nAs you answer the user's questions, you can use the following context:\n# currentDate\nToday's date is <DATE>.\n\n      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.\n</system-reminder>\n\n"
+          },
+          {
+            "type": "text",
+            "text": "turn one"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "look first",
+            "signature": "sig-a"
+          },
+          {
+            "type": "text",
+            "text": "Let me check."
+          },
+          {
+            "type": "thinking",
+            "thinking": "then glob",
+            "signature": "sig-b"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_glob",
+            "name": "Glob",
+            "input": {
+              "pattern": "*.winter-reasoning-none"
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_glob",
+            "content": "",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "role": "system",
+        "content": [],
+        "output_config": {
+          "effort": "high"
+        }
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "<system-reminder>\nAvailable agent types for the Agent tool:\n- claude: Catch-all for any task that doesn't fit a more specific agent. (Tools: *)\n- Explore: Read-only search agent for broad fan-out searches — when answering means sweeping many files, directories, or naming conventions and you only need the conclusion, not the file dumps. It reads excerpts rather than whole files, so it locates code; it doesn't review or audit it. Specify search breadth: \"medium\" for moderate exploration, \"very thorough\" for multiple locations and naming conventions. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\n- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. (Tools: *)\n- Plan: Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\n\nWhen you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently.\n</system-reminder>\n"
+          },
+          {
+            "type": "text",
+            "text": "<system-reminder>\nAs you answer the user's questions, you can use the following context:\n# currentDate\nToday's date is <DATE>.\n\n      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.\n</system-reminder>\n\n"
+          },
+          {
+            "type": "text",
+            "text": "turn one"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "look first",
+            "signature": "sig-a"
+          },
+          {
+            "type": "text",
+            "text": "Let me check."
+          },
+          {
+            "type": "thinking",
+            "thinking": "then glob",
+            "signature": "sig-b"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_glob",
+            "name": "Glob",
+            "input": {
+              "pattern": "*.winter-reasoning-none"
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_glob",
+            "content": ""
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "redacted_thinking",
+            "data": "REDACTED-OPAQUE-1"
+          },
+          {
+            "type": "thinking",
+            "thinking": "wrap up",
+            "signature": ""
+          },
+          {
+            "type": "text",
+            "text": "done one"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "turn two",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "role": "system",
+        "content": [],
+        "output_config": {
+          "effort": "high"
+        }
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "<system-reminder>\nAvailable agent types for the Agent tool:\n- claude: Catch-all for any task that doesn't fit a more specific agent. (Tools: *)\n- Explore: Read-only search agent for broad fan-out searches — when answering means sweeping many files, directories, or naming conventions and you only need the conclusion, not the file dumps. It reads excerpts rather than whole files, so it locates code; it doesn't review or audit it. Specify search breadth: \"medium\" for moderate exploration, \"very thorough\" for multiple locations and naming conventions. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\n- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. (Tools: *)\n- Plan: Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\n\nWhen you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently.\n</system-reminder>\n"
+          },
+          {
+            "type": "text",
+            "text": "<system-reminder>\nAs you answer the user's questions, you can use the following context:\n# currentDate\nToday's date is <DATE>.\n\n      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.\n</system-reminder>\n\n"
+          },
+          {
+            "type": "text",
+            "text": "turn one"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "look first",
+            "signature": "sig-a"
+          },
+          {
+            "type": "text",
+            "text": "Let me check."
+          },
+          {
+            "type": "thinking",
+            "thinking": "then glob",
+            "signature": "sig-b"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_glob",
+            "name": "Glob",
+            "input": {
+              "pattern": "*.winter-reasoning-none"
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_glob",
+            "content": ""
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "redacted_thinking",
+            "data": "REDACTED-OPAQUE-1"
+          },
+          {
+            "type": "thinking",
+            "thinking": "wrap up",
+            "signature": ""
+          },
+          {
+            "type": "text",
+            "text": "done one"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "turn two"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "plain two"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "turn three",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ]
+      }
+    ]
+  ],
+  "resumed": [
+    {
+      "role": "system",
+      "content": [],
+      "output_config": {
+        "effort": "high"
+      }
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "<system-reminder>\nAvailable agent types for the Agent tool:\n- claude: Catch-all for any task that doesn't fit a more specific agent. (Tools: *)\n- Explore: Read-only search agent for broad fan-out searches — when answering means sweeping many files, directories, or naming conventions and you only need the conclusion, not the file dumps. It reads excerpts rather than whole files, so it locates code; it doesn't review or audit it. Specify search breadth: \"medium\" for moderate exploration, \"very thorough\" for multiple locations and naming conventions. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\n- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. (Tools: *)\n- Plan: Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\n\nWhen you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently.\n</system-reminder>\n"
+        },
+        {
+          "type": "text",
+          "text": "<system-reminder>\nAs you answer the user's questions, you can use the following context:\n# currentDate\nToday's date is <DATE>.\n\n      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.\n</system-reminder>\n\n"
+        },
+        {
+          "type": "text",
+          "text": "turn one"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "look first",
+          "signature": "sig-a"
+        },
+        {
+          "type": "text",
+          "text": "Let me check."
+        },
+        {
+          "type": "thinking",
+          "thinking": "then glob",
+          "signature": "sig-b"
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_glob",
+          "name": "Glob",
+          "input": {
+            "pattern": "*.winter-reasoning-none"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_glob",
+          "content": ""
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "redacted_thinking",
+          "data": "REDACTED-OPAQUE-1"
+        },
+        {
+          "type": "thinking",
+          "thinking": "wrap up",
+          "signature": ""
+        },
+        {
+          "type": "text",
+          "text": "done one"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "turn two"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "plain two"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "turn three",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ]
+    }
+  ],
+  "preMoveSession": {
+    "reasoning-split.jsonl": "{\"type\":\"user\",\"uuid\":\"44ea8a5f-05c7-4a68-9852-81533ea1d29e\",\"parentUuid\":null,\"sessionId\":\"reasoning-split\",\"timestamp\":\"2026-09-26T04:25:44.347Z\",\"cwd\":\"<CWD>\",\"version\":\"0.0.24\",\"isSidechain\":false,\"message\":{\"role\":\"user\",\"content\":\"turn one\"}}\n{\"type\":\"attachment\",\"uuid\":\"529d893f-3762-483f-b624-e12849175d56\",\"parentUuid\":\"44ea8a5f-05c7-4a68-9852-81533ea1d29e\",\"sessionId\":\"reasoning-split\",\"timestamp\":\"2026-09-26T04:25:44.379Z\",\"cwd\":\"<CWD>\",\"version\":\"0.0.24\",\"isSidechain\":false,\"attachment\":{\"type\":\"agent_listing_delta\",\"addedTypes\":[\"claude\",\"Explore\",\"general-purpose\",\"Plan\"],\"addedLines\":[\"- claude: Catch-all for any task that doesn't fit a more specific agent. (Tools: *)\",\"- Explore: Read-only search agent for broad fan-out searches — when answering means sweeping many files, directories, or naming conventions and you only need the conclusion, not the file dumps. It reads excerpts rather than whole files, so it locates code; it doesn't review or audit it. Specify search breadth: \\\"medium\\\" for moderate exploration, \\\"very thorough\\\" for multiple locations and naming conventions. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\",\"- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. (Tools: *)\",\"- Plan: Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs. (Tools: All tools except Agent, Artifact, ExitPlanMode, Edit, Write, NotebookEdit)\"],\"removedTypes\":[],\"isInitial\":true,\"showConcurrencyNote\":true}}\n{\"type\":\"attachment\",\"uuid\":\"9803c610-9a11-4a9f-8089-08817cf0f42b\",\"parentUuid\":\"529d893f-3762-483f-b624-e12849175d56\",\"sessionId\":\"reasoning-split\",\"timestamp\":\"2026-09-26T04:25:44.380Z\",\"cwd\":\"<CWD>\",\"version\":\"0.0.24\",\"isSidechain\":false,\"attachment\":{\"type\":\"tool_epoch\",\"mechanism\":\"anthropic-inline\",\"modelKey\":\"anthropic/claude-opus-5-5\",\"tools\":[{\"name\":\"Agent\",\"description\":\"Spawn a subagent to carry a self-contained piece of a task on your behalf; each agent type brings its own specialization and its own tool access.\\n\\nThe agent types available to you right now are announced in a runtime-injected reminder earlier in this conversation.\\n\\nIf omitted, the general-purpose agent is used.\\n\\nWhen to use the Agent tool:\\n- The task is complex or long enough that doing it inline would spend a lot of your own context on intermediate steps you don't need to keep.\\n- The task is naturally delegable: a self-contained search, a focused piece of research, an isolated implementation step.\\n- Several pieces of work are independent of one another — batch their launches into one message so they proceed side by side instead of one after another.\\n\\nWriting the prompt:\\n- State the task and the result you expect concretely; the agent sees only what you put in `prompt`, never the rest of this conversation.\\n- Say what \\\"done\\\" looks like, including the form you want the answer back in.\\n- Do not ask a specialized agent type to do something outside its own specialization (for example, a read-only agent to make an edit) — pick a different type instead.\\n\\nBy default, an agent you launch runs in the BACKGROUND: this call returns right away with a task id, not the agent's own output, and you are notified later — as a task notification — when it finishes. Set run_in_background: false when your very next action depends on this agent's result and nothing else could usefully happen while it runs; that runs it in the foreground instead, so this call does not return until it finishes and its result comes back as this call's own output.\\n\\nWhen NOT to use the Agent tool:\\n- For something you can finish yourself in one or two tool calls — delegating adds a round trip for no benefit.\\n- When you need the result immediately and there is nothing else useful to do while waiting — that's what running it in the foreground is for, not a reason to skip the tool.\\n- To avoid doing the work yourself; a subagent is how you parallelize or offload genuinely separable work, not a way to skip it.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\",\"description\":\"A short (3-5 word) description of the task\"},\"prompt\":{\"type\":\"string\",\"description\":\"The task for the agent to perform\"},\"subagent_type\":{\"type\":\"string\",\"description\":\"The type of specialized agent to use for this task\"},\"model\":{\"type\":\"string\",\"enum\":[\"sonnet\",\"opus\",\"haiku\",\"fable\"],\"description\":\"Optional model override for this agent. Takes precedence over the agent definition's model frontmatter. If omitted, uses the agent definition's model, or inherits from the parent.\"},\"isolation\":{\"type\":\"string\",\"enum\":[\"worktree\",\"remote\"],\"description\":\"Isolation mode. \\\"worktree\\\" creates a temporary git worktree so the agent works on an isolated copy of the repo. \\\"remote\\\" launches the agent in a remote cloud environment (always runs in background; availability is gated).\"},\"run_in_background\":{\"type\":\"boolean\",\"description\":\"Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.\"}},\"required\":[\"description\",\"prompt\"]}},{\"name\":\"AskUserQuestion\",\"description\":\"Host resolves via canUseTool updatedInput.answers -- question prompting and permission are one protocol. Never auto-approved by allow rules/acceptEdits/auto/bypass; denied under dontAsk.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"questions\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":4,\"items\":{\"type\":\"object\",\"properties\":{\"question\":{\"type\":\"string\"},\"header\":{\"type\":\"string\",\"maxLength\":12},\"options\":{\"type\":\"array\",\"minItems\":2,\"maxItems\":4,\"items\":{\"type\":\"object\",\"properties\":{\"label\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"preview\":{\"type\":\"string\"}},\"required\":[\"label\",\"description\"]}},\"multiSelect\":{\"type\":\"boolean\"}},\"required\":[\"question\",\"header\",\"options\"]}},\"answers\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"string\"}},\"annotations\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"object\",\"properties\":{\"preview\":{\"type\":\"string\"},\"notes\":{\"type\":\"string\"}}}},\"metadata\":{\"type\":\"object\",\"properties\":{\"source\":{\"type\":\"string\"}}}},\"required\":[\"questions\"]}},{\"name\":\"Bash\",\"description\":\"Fresh shell per call; cwd changes persist only within allowed working directories; env exports do not persist. run_in_background returns a background task. Recognized read-only forms are built-in pre-approvals.\\n\\n## Bash command sandbox\\nBy default, Bash tool commands run in a sandbox. This sandbox controls which directories and network hosts commands may access or modify without an explicit override.\\n\\nThe sandbox has the following restrictions:\\nNetwork: {\\\"allowedHosts\\\":[]}\\n\\n - You should always default to running commands within the sandbox. Do NOT attempt to set `dangerouslyDisableSandbox: true` unless:\\n  - The user *explicitly* asks you to bypass sandbox\\n  - A specific command just failed and you see evidence of sandbox restrictions causing the failure. Note that commands can fail for many reasons unrelated to the sandbox (missing files, wrong arguments, network issues, etc.).\\n - Evidence of sandbox-caused failures includes:\\n  - \\\"Operation not permitted\\\" errors for file/network operations\\n  - Access denied to specific paths outside allowed directories\\n  - Network connection failures to non-whitelisted hosts\\n  - Unix socket connection errors\\n - When you see evidence of sandbox-caused failure:\\n  - Immediately retry with `dangerouslyDisableSandbox: true` (don't ask, just do it)\\n  - Briefly explain what sandbox restriction likely caused the failure.\\n  - This goes through the permission gate\\n - Treat each command you execute with `dangerouslyDisableSandbox: true` individually. Even if you have recently run a command with this setting, you should default to running future commands within the sandbox.\\n - Do not suggest adding sensitive paths like ~/.bashrc, ~/.zshrc, ~/.ssh/*, or credential files to the sandbox allowlist.\\n - For temporary files, always use the `$TMPDIR` environment variable. TMPDIR is automatically set to the correct sandbox-writable directory in sandbox mode. Do NOT use `/tmp` directly - use `$TMPDIR` instead.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"},\"timeout\":{\"type\":\"number\",\"description\":\"ms; 2 min default, 10 min ordinary ceiling, declaration caps at 600000\"},\"description\":{\"type\":\"string\"},\"run_in_background\":{\"type\":\"boolean\"},\"dangerouslyDisableSandbox\":{\"type\":\"boolean\",\"description\":\"Set this to true to dangerously override sandbox mode and run commands without sandboxing.\"}},\"required\":[\"command\"]}},{\"name\":\"CronCreate\",\"description\":\"Schedules prompts, not OS cron. Returns id, human schedule, recurring, durable?.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"cron\":{\"type\":\"string\",\"description\":\"five-field local-time cron expression\"},\"prompt\":{\"type\":\"string\"},\"recurring\":{\"type\":\"boolean\",\"description\":\"default true; false = fire once, self-delete\"},\"durable\":{\"type\":\"boolean\",\"description\":\"default false; persists to scheduled_tasks.json in the project dot-directory\"}},\"required\":[\"cron\",\"prompt\"]}},{\"name\":\"CronDelete\",\"description\":\"Deletes a scheduled job by id only, never by expression.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"]}},{\"name\":\"CronList\",\"description\":\"Lists scheduled jobs.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}}},{\"name\":\"Edit\",\"description\":\"old_string is literal and normally unique; replace_all replaces every occurrence. Subject to the shared read-before-edit ladder and MUST retain Read-deny enforcement on the target.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"file_path\":{\"type\":\"string\"},\"old_string\":{\"type\":\"string\"},\"new_string\":{\"type\":\"string\"},\"replace_all\":{\"type\":\"boolean\"}},\"required\":[\"file_path\",\"old_string\",\"new_string\"]}},{\"name\":\"EnterPlanMode\",\"description\":\"Switches the session's permission mode to plan.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}}},{\"name\":\"EnterWorktree\",\"description\":\"name creates a temporary git worktree under the project's worktrees directory; path switches to a registered worktree under path rules. Changes session cwd + filesystem boundary.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"path\":{\"type\":\"string\"}}}},{\"name\":\"ExitPlanMode\",\"description\":\"Submits the plan to the approval path; permission-gated. Result carries plan/plan-file/flags.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"allowedPrompts\":{\"type\":\"array\",\"description\":\"deprecated, ignored\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\",\"enum\":[\"Bash\"]},\"prompt\":{\"type\":\"string\"}},\"required\":[\"tool\",\"prompt\"]}}},\"additionalProperties\":true}},{\"name\":\"ExitWorktree\",\"description\":\"remove refuses on uncommitted files/unmerged commits unless discard_changes: true.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"action\":{\"type\":\"string\",\"enum\":[\"keep\",\"remove\"]},\"discard_changes\":{\"type\":\"boolean\"}},\"required\":[\"action\"]}},{\"name\":\"Glob\",\"description\":\"Fast file-name glob matching. Max 100 paths, modification-time ordered, truncation/total metadata. .gitignore is NOT applied by default.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"pattern\":{\"type\":\"string\"},\"path\":{\"type\":\"string\"}},\"required\":[\"pattern\"]}},{\"name\":\"Grep\",\"description\":\"ripgrep-style regex search. Context/line-number options only matter for output_mode 'content'. Repository ignore rules are respected; directly naming an ignored file still searches it. Returns a structured result: mode, files, content/counts, applied limit/offset.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"pattern\":{\"type\":\"string\"},\"path\":{\"type\":\"string\"},\"glob\":{\"type\":\"string\"},\"output_mode\":{\"type\":\"string\",\"enum\":[\"content\",\"files_with_matches\",\"count\"]},\"-B\":{\"type\":\"number\"},\"-A\":{\"type\":\"number\"},\"-C\":{\"type\":\"number\"},\"context\":{\"type\":\"number\"},\"-n\":{\"type\":\"boolean\"},\"-i\":{\"type\":\"boolean\"},\"-o\":{\"type\":\"boolean\"},\"type\":{\"type\":\"string\"},\"head_limit\":{\"type\":\"number\",\"description\":\"default 250; 0 = unlimited\"},\"offset\":{\"type\":\"number\",\"description\":\"default 0\"},\"multiline\":{\"type\":\"boolean\"}},\"required\":[\"pattern\"]}},{\"name\":\"ListAgents\",\"description\":\"Names/refs, activity/status, addressing identity for children, teammates, eligible live peers; never an enumeration of exited transcripts.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"channel\":{\"type\":\"string\",\"maxLength\":256,\"description\":\"reserved\"},\"q\":{\"type\":\"string\",\"maxLength\":256,\"description\":\"reserved\"}}}},{\"name\":\"Monitor\",\"description\":\"Exactly one of command/ws. Stdout lines or WS frames re-enter the conversation as events; persistent = session-lifetime until TaskStop. Command half uses the Bash permission family; WS half has its own approval + network checks.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"description\":{\"type\":\"string\"},\"timeout_ms\":{\"type\":\"number\"},\"persistent\":{\"type\":\"boolean\"},\"command\":{\"type\":\"string\"},\"ws\":{\"type\":\"object\",\"properties\":{\"url\":{\"type\":\"string\"},\"protocols\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"url\"]}},\"required\":[\"description\",\"timeout_ms\",\"persistent\"]}},{\"name\":\"NotebookEdit\",\"description\":\"edit_mode defaults to 'replace'; 'insert' places after cell_id (or at start) and requires cell_type.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"notebook_path\":{\"type\":\"string\"},\"cell_id\":{\"type\":\"string\"},\"new_source\":{\"type\":\"string\"},\"cell_type\":{\"type\":\"string\",\"enum\":[\"code\",\"markdown\"]},\"edit_mode\":{\"type\":\"string\",\"enum\":[\"replace\",\"insert\",\"delete\"]}},\"required\":[\"notebook_path\",\"new_source\"]}},{\"name\":\"PushNotification\",\"description\":\"Local desktop notification now; phone push over Winter's own device transport once [WS-15] ships it.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"message\":{\"type\":\"string\",\"maxLength\":199},\"status\":{\"type\":\"string\",\"enum\":[\"proactive\"]}},\"required\":[\"message\",\"status\"]}},{\"name\":\"Read\",\"description\":\"Reads a file with line windowing; images/notebooks/PDFs render as type-specific blocks. Oversized whole-file reads return a PARTIAL view continuable with offset/limit; an explicitly bounded range that still cannot fit errors. Reading a directory is an error.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"file_path\":{\"type\":\"string\"},\"offset\":{\"type\":\"number\"},\"limit\":{\"type\":\"number\"},\"pages\":{\"type\":\"string\",\"description\":\"one-based page range, e.g. '1-5'; max 20 PDF pages per call\"}},\"required\":[\"file_path\"]}},{\"name\":\"ReadNotifications\",\"description\":\"Drains Winter's own global-messaging notification queue ([WS-10]).\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}},{\"name\":\"ReportFindings\",\"description\":\"Most severe first. A structured review result channel, not a scanner.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"level\":{\"type\":\"string\",\"enum\":[\"low\",\"medium\",\"high\",\"xhigh\",\"max\"]},\"findings\":{\"type\":\"array\",\"maxItems\":32,\"items\":{\"type\":\"object\",\"properties\":{\"file\":{\"type\":\"string\"},\"line\":{\"type\":\"number\"},\"summary\":{\"type\":\"string\"},\"short_summary\":{\"type\":\"string\"},\"failure_scenario\":{\"type\":\"string\"},\"category\":{\"type\":\"string\"},\"verdict\":{\"type\":\"string\",\"enum\":[\"CONFIRMED\",\"PLAUSIBLE\"]},\"outcome\":{\"type\":\"string\",\"enum\":[\"fixed\",\"skipped\",\"no_change_needed\"]}},\"required\":[\"file\",\"summary\",\"failure_scenario\"]}}},\"required\":[\"findings\"]}},{\"name\":\"ScheduleWakeup\",\"description\":\"Delay clamped 60-3600s. Unless `stop`, delaySeconds/reason/prompt/noop are logically required.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"delaySeconds\":{\"type\":\"number\"},\"reason\":{\"type\":\"string\"},\"prompt\":{\"type\":\"string\"},\"stop\":{\"type\":\"boolean\"},\"noop\":{\"type\":\"boolean\"}}}},{\"name\":\"SendMessage\",\"description\":\"Resolves `to` against child registry, teammates, live peer registry; steers a running child, resumes an addressable completed/stopped child, wakes an idle live peer, queues for a running peer; never cold-resumes an arbitrary exited transcript.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"to\":{\"type\":\"string\",\"maxLength\":300,\"description\":\"no newline, no \\\"*\\\" broadcast\"},\"message\":{\"type\":\"string\",\"description\":\"required; defaults \\\"\\\" for pure idle subscription\"},\"summary\":{\"type\":\"string\",\"maxLength\":200},\"notify_when_idle\":{\"type\":\"boolean\",\"description\":\"one-shot; main conversation -> same-machine session only\"}},\"required\":[\"to\",\"message\"]}},{\"name\":\"Skill\",\"description\":\"Loads the named skill into the main conversation.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"skill\":{\"type\":\"string\"},\"args\":{\"type\":\"string\"}},\"required\":[\"skill\"]}},{\"name\":\"TaskCreate\",\"description\":\"Creates a row in the shared session task graph. Returns id/subject.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"subject\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"activeForm\":{\"type\":\"string\"},\"metadata\":{\"type\":\"object\",\"additionalProperties\":true}},\"required\":[\"subject\",\"description\"]}},{\"name\":\"TaskGet\",\"description\":\"Returns id, subject, description, status, blocks, blockedBy, or null.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"taskId\":{\"type\":\"string\"}},\"required\":[\"taskId\"]}},{\"name\":\"TaskList\",\"description\":\"Compact rows: id, subject, status, owner?, blockedBy.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}}},{\"name\":\"TaskOutput\",\"description\":\"Reads a background task's output, optionally waiting. Deprecated in favor of Read on the task's output file.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"task_id\":{\"type\":\"string\"},\"block\":{\"type\":\"boolean\"},\"timeout\":{\"type\":\"number\"}},\"required\":[\"task_id\",\"block\",\"timeout\"]}},{\"name\":\"TaskStop\",\"description\":\"Stops a background command/agent/teammate. At least one of task_id/shell_id is logically required.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"task_id\":{\"type\":\"string\"},\"shell_id\":{\"type\":\"string\",\"description\":\"deprecated\"}}}},{\"name\":\"TaskUpdate\",\"description\":\"Updates a task graph row; addBlocks/addBlockedBy are union-merges, not replacements.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"taskId\":{\"type\":\"string\"},\"subject\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"activeForm\":{\"type\":\"string\"},\"status\":{\"type\":\"string\",\"enum\":[\"pending\",\"in_progress\",\"completed\",\"deleted\"]},\"addBlocks\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"addBlockedBy\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"owner\":{\"type\":\"string\"},\"metadata\":{\"type\":\"object\",\"additionalProperties\":true}},\"required\":[\"taskId\"]}},{\"name\":\"WebFetch\",\"description\":\"Fetches a URL, converts the page to markdown, and answers `prompt` against it using a small fast model.\\n\\n- Fails on authenticated/private URLs — use an authenticated MCP tool or `gh` for those instead.\\n- HTTP is upgraded to HTTPS. Cross-host redirects are returned to you rather than followed; call again with the redirect URL.\\n- Responses are cached for 15 minutes per URL.\",\"inputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"url\":{\"type\":\"string\",\"format\":\"uri\",\"description\":\"The URL to fetch content from\"},\"prompt\":{\"type\":\"string\",\"description\":\"The prompt to run on the fetched content\"}},\"required\":[\"url\",\"prompt\"],\"additionalProperties\":false}},{\"name\":\"WebSearch\",\"description\":\"Search the web. Returns result blocks with titles and URLs.\\n\\n- The current month is September 2026 — use this when searching for recent information.\\n- `allowed_domains` / `blocked_domains` filter results.\\n- After answering from results, end with a \\\"Sources:\\\" list of the URLs you used as markdown links.\",\"inputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":2,\"description\":\"The search query to use\"},\"allowed_domains\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Only include search results from these domains\"},\"blocked_domains\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Never include search results from these domains\"}},\"required\":[\"query\"],\"additionalProperties\":false}},{\"name\":\"Workflow\",\"description\":\"At least one of script/name/scriptPath. resumeFromRunId reuses completed unchanged agent calls within the same session after the prior run stopped.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"script\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\",\"description\":\"ignored\"},\"title\":{\"type\":\"string\",\"description\":\"ignored\"},\"args\":{\"type\":\"object\",\"additionalProperties\":true},\"scriptPath\":{\"type\":\"string\",\"description\":\"takes precedence\"},\"resumeFromRunId\":{\"type\":\"string\"}}}},{\"name\":\"Write\",\"description\":\"Create or complete overwrite -- never append/merge. Same read-before-overwrite ladder as Edit for existing files; new files have no precondition. Honors Read-deny on the target.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"file_path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"}},\"required\":[\"file_path\",\"content\"]}},{\"name\":\"mcp__winter__list_agents\",\"description\":\"Names/refs, activity/status, addressing identity for children, teammates, eligible live peers; never an enumeration of exited transcripts.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"channel\":{\"type\":\"string\",\"maxLength\":256,\"description\":\"reserved\"},\"q\":{\"type\":\"string\",\"maxLength\":256,\"description\":\"reserved\"}}},\"deferLoading\":true},{\"name\":\"mcp__winter__send_message\",\"description\":\"Resolves `to` against child registry, teammates, live peer registry; steers a running child, resumes an addressable completed/stopped child, wakes an idle live peer, queues for a running peer; never cold-resumes an arbitrary exited transcript.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"to\":{\"type\":\"string\",\"maxLength\":300,\"description\":\"no newline, no \\\"*\\\" broadcast\"},\"message\":{\"type\":\"string\",\"description\":\"required; defaults \\\"\\\" for pure idle subscription\"},\"summary\":{\"type\":\"string\",\"maxLength\":200},\"notify_when_idle\":{\"type\":\"boolean\",\"description\":\"one-shot; main conversation -> same-machine session only\"}},\"required\":[\"to\",\"message\"]},\"deferLoading\":true}]}}\n{\"type\":\"assistant\",\"uuid\":\"9ee448b7-5819-4789-9f99-1074f7299cac\",\"parentUuid\":\"9803c610-9a11-4a9f-8089-08817cf0f42b\",\"sessionId\":\"reasoning-split\",\"timestamp\":\"2026-09-26T04:25:44.383Z\",\"cwd\":\"<CWD>\",\"version\":\"0.0.24\",\"isSidechain\":false,\"effort\":\"high\",\"perTurnEffort\":\"high\",\"message\":{\"id\":\"msg_winter_9ee448b7581947899f991074f7299cac\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"look first\",\"signature\":\"sig-a\"},{\"type\":\"text\",\"text\":\"Let me check.\"},{\"type\":\"thinking\",\"thinking\":\"then glob\",\"signature\":\"sig-b\"},{\"type\":\"tool_use\",\"id\":\"toolu_glob\",\"name\":\"Glob\",\"input\":{\"pattern\":\"*.winter-reasoning-none\"}}]}}\n{\"type\":\"user\",\"uuid\":\"f16fdc50-5005-4197-9679-f2cbf88b0781\",\"parentUuid\":\"9ee448b7-5819-4789-9f99-1074f7299cac\",\"sessionId\":\"reasoning-split\",\"timestamp\":\"2026-09-26T04:25:44.385Z\",\"cwd\":\"<CWD>\",\"version\":\"0.0.24\",\"isSidechain\":false,\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_glob\",\"content\":\"\"}]}}\n{\"type\":\"assistant\",\"uuid\":\"975be0f5-2cd7-4a21-a108-27a10bc02b2c\",\"parentUuid\":\"f16fdc50-5005-4197-9679-f2cbf88b0781\",\"sessionId\":\"reasoning-split\",\"timestamp\":\"2026-09-26T04:25:44.387Z\",\"cwd\":\"<CWD>\",\"version\":\"0.0.24\",\"isSidechain\":false,\"effort\":\"high\",\"perTurnEffort\":\"high\",\"message\":{\"id\":\"msg_winter_975be0f52cd74a21a10827a10bc02b2c\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"redacted_thinking\",\"data\":\"REDACTED-OPAQUE-1\"},{\"type\":\"thinking\",\"thinking\":\"wrap up\",\"signature\":\"\"},{\"type\":\"text\",\"text\":\"done one\"}]}}\n{\"type\":\"user\",\"uuid\":\"df45431c-efa8-4f50-95f4-c93ed6a288e1\",\"parentUuid\":\"975be0f5-2cd7-4a21-a108-27a10bc02b2c\",\"sessionId\":\"reasoning-split\",\"timestamp\":\"2026-09-26T04:25:44.388Z\",\"cwd\":\"<CWD>\",\"version\":\"0.0.24\",\"isSidechain\":false,\"message\":{\"role\":\"user\",\"content\":\"turn two\"}}\n{\"type\":\"assistant\",\"uuid\":\"cfb7648c-ddd1-4a7d-a473-8cd1c8540b7c\",\"parentUuid\":\"df45431c-efa8-4f50-95f4-c93ed6a288e1\",\"sessionId\":\"reasoning-split\",\"timestamp\":\"2026-09-26T04:25:44.391Z\",\"cwd\":\"<CWD>\",\"version\":\"0.0.24\",\"isSidechain\":false,\"effort\":\"high\",\"perTurnEffort\":\"high\",\"message\":{\"id\":\"msg_winter_cfb7648cddd14a7da4738cd1c8540b7c\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"plain two\"}]}}\n",
+    "reasoning-split.provider-state.jsonl": "{\"type\":\"winter_provider_state\",\"uuid\":\"13123115-2431-4490-92a7-03972749867c\",\"timestamp\":\"2026-09-26T04:25:44.383Z\",\"sessionId\":\"reasoning-split\",\"anchorUuid\":\"9ee448b7-5819-4789-9f99-1074f7299cac\",\"provider\":\"anthropic\",\"model\":\"anthropic/claude-opus-5-5\",\"family\":\"anthropic\",\"continuationDomain\":\"anthropic/claude-opus-5-5\",\"itemIndex\":0,\"kind\":\"origin\",\"payload\":{}}\n{\"type\":\"winter_provider_state\",\"uuid\":\"9ab7bba3-2472-430e-a0f3-7e8e36eef556\",\"timestamp\":\"2026-09-26T04:25:44.387Z\",\"sessionId\":\"reasoning-split\",\"anchorUuid\":\"975be0f5-2cd7-4a21-a108-27a10bc02b2c\",\"provider\":\"anthropic\",\"model\":\"anthropic/claude-opus-5-5\",\"family\":\"anthropic\",\"continuationDomain\":\"anthropic/claude-opus-5-5\",\"itemIndex\":0,\"kind\":\"origin\",\"payload\":{}}\n{\"type\":\"winter_provider_state\",\"uuid\":\"e2de24a9-3155-440d-acec-c0c5bc793a0b\",\"timestamp\":\"2026-09-26T04:25:44.390Z\",\"sessionId\":\"reasoning-split\",\"anchorUuid\":\"cfb7648c-ddd1-4a7d-a473-8cd1c8540b7c\",\"provider\":\"anthropic\",\"model\":\"anthropic/claude-opus-5-5\",\"family\":\"anthropic\",\"continuationDomain\":\"anthropic/claude-opus-5-5\",\"itemIndex\":0,\"kind\":\"origin\",\"payload\":{}}\n"
+  }
+}
