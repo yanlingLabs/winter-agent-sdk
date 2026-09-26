@@ -55,6 +55,23 @@ export const OPENAI_CHAT_BASE_URL = "https://api.openai.com/v1";
 export const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
+/**
+ * The adapter's compiled-in vendor endpoint, for THIS turn's provider — which is only ever OpenAI's.
+ *
+ * WS-24 (follow-up 2), mirroring `responses.ts`'s `vendorFallbackFor` (WS-23): this adapter serves
+ * every OpenAI-compatible dialect (DeepSeek, OpenRouter, Azure's deployment path, the twelve local
+ * servers, and any other row wired against it), so "the adapter's own default" is not "the
+ * provider's own endpoint" — it never was. Unconditionally handing every provider `api.openai.com`
+ * meant a chat-completions row shipped with no catalog `defaultEndpoints` entry and no connection
+ * `baseUrl` sent ITS OWN credential to OpenAI's host, silently, exactly the no-silent-fallback rule
+ * responses.ts was already fixed for. Every other provider gets NO fallback here: its endpoint comes
+ * from its own catalog row (`generatedBaseUrls`) or its connection profile, and with neither the
+ * turn is refused typed by `resolveEndpoint`.
+ */
+function vendorFallbackFor(ctx: ProviderContext): string | undefined {
+  return ctx.connection.providerId === "openai" ? OPENAI_CHAT_BASE_URL : undefined;
+}
+
 /** The `native_state` item DeepSeek-class exposed reasoning rides in. A Winter-shaped wrapper, because the text is ours to place — it is not an opaque provider object. */
 export interface ExposedReasoningItem {
   type: "winter.exposed_reasoning";
@@ -524,21 +541,21 @@ export function createChatCompletionsAdapter(options: ChatTurnOptions): Provider
     protocol: "openai-chat-completions",
 
     async validateCredential(ref: CredentialRef, ctx: ProviderContext): Promise<CredentialStatus> {
-      const endpoint = resolveEndpoint(ctx, options, OPENAI_CHAT_BASE_URL);
+      const endpoint = resolveEndpoint(ctx, options, vendorFallbackFor(ctx));
       const auth = await resolveAuth(ctx, options.authStyle ?? "bearer");
       const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       return validateViaModels(ref, ctx, endpoint, headers, options, auth.material !== null);
     },
 
     async listModels(ctx: DiscoveryContext): Promise<ModelCatalogResult> {
-      const endpoint = resolveEndpoint(ctx, options, OPENAI_CHAT_BASE_URL);
+      const endpoint = resolveEndpoint(ctx, options, vendorFallbackFor(ctx));
       const auth = await resolveAuth(ctx, options.authStyle ?? "bearer");
       const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       return fetchOpenAiModels(ctx, endpoint, headers, options);
     },
 
     streamTurn(req: TurnRequest, ctx: ProviderContext): AsyncIterable<ProviderEvent> {
-      return chatTurn(req, ctx, options, OPENAI_CHAT_BASE_URL, (endpoint) => `${endpoint.baseUrl}/chat/completions`);
+      return chatTurn(req, ctx, options, vendorFallbackFor(ctx), (endpoint) => `${endpoint.baseUrl}/chat/completions`);
     },
 
     mapEffort(effort: TurnRequest["effort"], model: WinterModelDescriptor) {

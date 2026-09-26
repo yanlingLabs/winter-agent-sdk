@@ -1,9 +1,9 @@
 // The Chat Completions mapping, as pure functions. The live half is in the conformance package.
 
-import { describe, expect, test } from "bun:test";
-import { ChatStreamMapper, buildChatBody, mapChatMessages, mapChatTools } from "./chat-completions.ts";
+import { afterEach, describe, expect, test } from "bun:test";
+import { ChatStreamMapper, buildChatBody, createChatCompletionsAdapter, mapChatMessages, mapChatTools, OPENAI_CHAT_BASE_URL } from "./chat-completions.ts";
 import { resolveReasoning } from "./shared.ts";
-import { descriptor } from "./testing.ts";
+import { collect, descriptor, soleError, testContext, testDiscoveryContext } from "./testing.ts";
 import type { ProviderEvent, ProviderMessageLike, TurnRequest } from "../../types.ts";
 
 function req(overrides: Partial<TurnRequest> = {}): TurnRequest {
@@ -399,9 +399,135 @@ describe("mapChatMessages: consecutive assistant messages merge into one (fix ro
   });
 });
 
+// WS-24 (follow-up 3): follow_up.md lists this as still open ("goes out as one assistant message per
+// call"), but fix round 24 (133ff79, 2026-09-24 -- above) already merges ANY run of consecutive
+// assistant messages by adjacency alone, with no gate on how the batch arrived (a claude-rebuilt
+// history, a fresh Winter-native switch-time render, or anything else). That is exactly what this
+// item asks for, so these two tests are the brief's own acceptance scenarios rather than a new fix:
+// a 3-call batch renders as one assistant message plus 3 tool messages, and an ordinary (non-batch)
+// history's rendered request is unaffected -- byte-identical to what `buildChatBody` always produced.
+describe("buildChatBody: a parallel tool batch renders as one assistant message (WS-24 item 3, verified against the existing general merge)", () => {
+  test("a 3-call batch (one transcript entry per call, Winter's own history -- not a claude rebuild) renders as ONE assistant message plus 3 tool messages, ids kept", () => {
+    const batch: ProviderMessageLike[] = [
+      { role: "user", content: "do three things" },
+      { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "Read", input: { path: "a" } }] },
+      { role: "assistant", content: [{ type: "tool_use", id: "call_2", name: "Read", input: { path: "b" } }] },
+      { role: "assistant", content: [{ type: "tool_use", id: "call_3", name: "Read", input: { path: "c" } }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "call_1", content: "A" }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "call_2", content: "B" }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "call_3", content: "C" }] },
+    ];
+    const r = req({ messages: batch });
+    const body = buildChatBody(r, resolveReasoning(r, DEEPSEEK), DEEPSEEK, false);
+    expect(body.messages).toEqual([
+      { role: "user", content: "do three things" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          { id: "call_1", type: "function", function: { name: "Read", arguments: '{"path":"a"}' } },
+          { id: "call_2", type: "function", function: { name: "Read", arguments: '{"path":"b"}' } },
+          { id: "call_3", type: "function", function: { name: "Read", arguments: '{"path":"c"}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "call_1", content: "A" },
+      { role: "tool", tool_call_id: "call_2", content: "B" },
+      { role: "tool", tool_call_id: "call_3", content: "C" },
+    ]);
+    expect(toolRepliesFollowTheirCalls(body.messages as unknown[])).toBe(true);
+  });
+
+  test("a non-batch history (no two consecutive assistant entries) renders byte-identical to the pre-merge shape", () => {
+    const ordinary: ProviderMessageLike[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+      { role: "user", content: "run one thing" },
+      { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "Read", input: { path: "a" } }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "call_1", content: "A" }] },
+      { role: "assistant", content: "done" },
+    ];
+    const r = req({ messages: ordinary });
+    const body = buildChatBody(r, resolveReasoning(r, DEEPSEEK), DEEPSEEK, false);
+    expect(body.messages).toEqual([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+      { role: "user", content: "run one thing" },
+      { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "Read", arguments: '{"path":"a"}' } }] },
+      { role: "tool", tool_call_id: "call_1", content: "A" },
+      { role: "assistant", content: "done" },
+    ]);
+  });
+});
+
 describe("mapChatMessages: an is_error tool result keeps its text (no wire field to map it to)", () => {
   test("the content is sent verbatim", () => {
     const out = mapChatMessages([{ role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "Agent type 'x' not found.", is_error: true }] }], false);
     expect(out).toEqual([{ role: "tool", tool_call_id: "c1", content: "Agent type 'x' not found." }]);
+  });
+});
+
+// WS-24 (follow-up 2): mirrors responses.ts's `vendorFallbackFor` fix (WS-23) on THIS adapter, which
+// serves every OpenAI-compatible dialect (DeepSeek, OpenRouter, Azure, the local servers, and any
+// other row wired against it). A connection with no `baseUrl` and no catalog `defaultEndpoints` entry
+// used to fall back to `OPENAI_CHAT_BASE_URL` regardless of `providerId` -- sending that provider's
+// own credential to OpenAI's host, silently. It is refused typed now, except for `openai` itself.
+let restoreFetch: (() => void) | undefined;
+afterEach(() => {
+  restoreFetch?.();
+  restoreFetch = undefined;
+});
+
+/** Replaces `fetch` for one test; every request is recorded (method + url) and answered from a script. */
+function stubFetch(respond: () => Response): Array<{ method: string; url: string }> {
+  const original = globalThis.fetch;
+  const requests: Array<{ method: string; url: string }> = [];
+  const fake = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    requests.push({ method: init?.method ?? "GET", url: typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url });
+    return respond();
+  };
+  globalThis.fetch = fake as unknown as typeof fetch;
+  restoreFetch = () => {
+    globalThis.fetch = original;
+  };
+  return requests;
+}
+
+function chatSse(): Response {
+  const events = [{ choices: [{ delta: { content: "ok" }, finish_reason: null }] }, { choices: [{ delta: {}, finish_reason: "stop" }] }];
+  const text = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n";
+  return new Response(text, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
+describe("the base URL is the PROVIDER's own, never the adapter's vendor's (WS-24 item 2)", () => {
+  test("a `deepseek` turn with NO connection baseUrl and no generated endpoint is refused typed -- never sent to OpenAI", async () => {
+    const requests = stubFetch(chatSse);
+    const adapter = createChatCompletionsAdapter({ descriptors: () => undefined });
+    const events = await collect(adapter.streamTurn({ model: "deepseek-chat", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "deepseek" })));
+    const error = soleError(events).error;
+    expect([error.code, error.retryable]).toEqual(["capability", false]);
+    expect(error.message).toContain('provider "deepseek" has no endpoint');
+    expect(requests).toEqual([]);
+  });
+
+  test("`openai` on the same hand-wired adapter still reaches api.openai.com", async () => {
+    const requests = stubFetch(chatSse);
+    const adapter = createChatCompletionsAdapter({ descriptors: () => undefined });
+    const events = await collect(adapter.streamTurn({ model: "gpt-4.1", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "openai" })));
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+    expect(requests).toEqual([{ method: "POST", url: `${OPENAI_CHAT_BASE_URL}/chat/completions` }]);
+  });
+
+  test("a connection profile's own `baseUrl` is unaffected either way (DeepSeek's ordinary wiring)", async () => {
+    const requests = stubFetch(chatSse);
+    const adapter = createChatCompletionsAdapter({ descriptors: () => undefined });
+    const events = await collect(adapter.streamTurn({ model: "deepseek-chat", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "deepseek", baseUrl: "https://api.deepseek.com" })));
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+    expect(requests).toEqual([{ method: "POST", url: "https://api.deepseek.com/chat/completions" }]);
+  });
+
+  test("credential validation and discovery follow the same rule", async () => {
+    const adapter = createChatCompletionsAdapter({ descriptors: () => undefined });
+    await expect(adapter.validateCredential({ kind: "keychain", account: "openai:test" }, testContext({ providerId: "glm" }))).rejects.toThrow(/provider "glm" has no endpoint/);
+    await expect(adapter.listModels(testDiscoveryContext({ providerId: "glm" }))).rejects.toThrow(/provider "glm" has no endpoint/);
   });
 });
