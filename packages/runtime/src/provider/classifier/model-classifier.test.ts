@@ -210,6 +210,64 @@ describe("every failure collapses to no_verdict with its own reason code (WS-07 
   });
 });
 
+// WS-24 (follow-up 6): the text-fallback path, for a row whose forced tool_choice the adapter must
+// downgrade to an ordinary one (Opus 5.5 / Fable 5.1). Every case here arrives as a `kind: "text"`
+// turn -- the same shape a model with nothing else to say produces, exercised through the SAME
+// `classify()` entry point as every other case above.
+describe("the text-fallback path recovers a verdict from plain text, strictly (WS-24 follow-up 6)", () => {
+  test("a bare JSON object matching the tool's schema is a real verdict, not a `no_tool_call`", async () => {
+    const provider = scriptedProvider({ kind: "text", text: '{"verdict":"deny","reasonCode":"force_push"}' });
+    const result = await createModelClassifier({ provider, model: "p/m" }).classify(ENVELOPE, CONTEXT);
+    expect(result).toEqual({ verdict: "deny", reasonCode: `${MODEL_REASON_CODE_PREFIX}force_push` });
+  });
+
+  test("surrounding whitespace is trimmed, but nothing else is tolerated", async () => {
+    const provider = scriptedProvider({ kind: "text", text: '\n  {"verdict":"allow"}  \n' });
+    const result = await createModelClassifier({ provider, model: "p/m" }).classify(ENVELOPE, CONTEXT);
+    expect(result).toEqual({ verdict: "allow" });
+  });
+
+  test("a JSON object embedded in surrounding prose is NOT recovered -- no bracket-scanning, never lenient", async () => {
+    const provider = scriptedProvider({ kind: "text", text: 'Sure, here is my answer: {"verdict":"allow"} -- let me know if you need anything else.' });
+    const result = await createModelClassifier({ provider, model: "p/m" }).classify(ENVELOPE, CONTEXT);
+    expect(result).toEqual({ verdict: "no_verdict", reasonCode: "no_tool_call" });
+  });
+
+  test("a markdown-fenced JSON object is NOT recovered either -- the prompt asks for no fence, and none is parsed", async () => {
+    const provider = scriptedProvider({ kind: "text", text: '```json\n{"verdict":"deny"}\n```' });
+    const result = await createModelClassifier({ provider, model: "p/m" }).classify(ENVELOPE, CONTEXT);
+    expect(result).toEqual({ verdict: "no_verdict", reasonCode: "no_tool_call" });
+  });
+
+  test("ordinary prose with no JSON at all escalates as `no_tool_call`, same as before this batch", async () => {
+    const provider = scriptedProvider({ kind: "text", text: "I think this is fine, go ahead." });
+    const result = await createModelClassifier({ provider, model: "p/m" }).classify(ENVELOPE, CONTEXT);
+    expect(result).toEqual({ verdict: "no_verdict", reasonCode: "no_tool_call" });
+  });
+
+  test("valid JSON that fails the schema (unknown verdict) escalates as `schema_invalid`, not `no_tool_call` -- never fails open", async () => {
+    const provider = scriptedProvider({ kind: "text", text: '{"verdict":"maybe"}' });
+    const result = await createModelClassifier({ provider, model: "p/m" }).classify(ENVELOPE, CONTEXT);
+    expect(result).toEqual({ verdict: "no_verdict", reasonCode: "schema_invalid" });
+  });
+
+  test("valid JSON that is not an object (a bare string) escalates as `schema_invalid`", async () => {
+    const provider = scriptedProvider({ kind: "text", text: '"allow"' });
+    const result = await createModelClassifier({ provider, model: "p/m" }).classify(ENVELOPE, CONTEXT);
+    expect(result).toEqual({ verdict: "no_verdict", reasonCode: "schema_invalid" });
+  });
+
+  test("a refusal is still checked BEFORE the text fallback, even when the refusal text happens to be valid JSON", async () => {
+    const result = await createModelClassifier({ provider: scriptedProvider({ kind: "text", text: '{"verdict":"allow"}', stopReason: "refusal" }), model: "p/m" }).classify(ENVELOPE, CONTEXT);
+    expect(result).toEqual({ verdict: "no_verdict", reasonCode: "refusal" });
+  });
+
+  test("the system prompt tells a model unable to call the tool exactly how to answer instead", () => {
+    expect(CLASSIFIER_SYSTEM_PROMPT).toContain(CLASSIFIER_TOOL_NAME);
+    expect(CLASSIFIER_SYSTEM_PROMPT.toLowerCase()).toContain("json object");
+  });
+});
+
 describe("the verdict schema itself", () => {
   test("accepts the full five-field shape and rejects each malformation", () => {
     const full = parseClassifierVerdict({ verdict: "deny", category: "c", severity: "s", reasonCode: "r", auditReason: "a" });

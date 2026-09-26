@@ -122,7 +122,14 @@ function collapseTurn(turn: ProviderTurn): ClassifierRawResult {
   // Checked FIRST, and on every kind: §10.6-5 names "safety refusal" as its own arm, and a refusal
   // that also happened to carry a tool call is still a refusal to review.
   if ("stopReason" in turn && turn.stopReason === "refusal") return noVerdict("refusal");
-  if (turn.kind === "text") return noVerdict("no_tool_call");
+  // WS-24 (follow-up 6): a text turn is no longer an automatic `no_tool_call`. On a row whose forced
+  // `tool_choice` the adapter must downgrade to an ordinary one (Opus 5.5 / Fable 5.1's documented
+  // 400 on a forced choice -- `anthropic/messages.ts`'s `resolveToolChoice`), this request reaches
+  // the model as an UNFORCED choice, and a model with no reason to call the tool may answer in plain
+  // text instead -- which used to fail every review on those two rows closed for a reason that has
+  // nothing to do with the action being judged. The prompt's own fallback instruction asks such a
+  // model for exactly one JSON object in the tool's shape; this is where that answer is recovered.
+  if (turn.kind === "text") return collapseTextFallback(turn.text);
   // The `unexpected_turn` arm used to live here for the engine's `rpc_probe` kind, which T10 removed
   // (R6-13). Its reason CODE went with it, and deliberately: `model-classifier.test.ts`'s own
   // "every declared reason code is reachable" test is what keeps this vocabulary honest, and a
@@ -133,6 +140,32 @@ function collapseTurn(turn: ProviderTurn): ClassifierRawResult {
   const call = turn.calls[0]!;
   if (call.name !== CLASSIFIER_TOOL_NAME) return noVerdict("wrong_tool");
   const parsed = parseClassifierVerdict(call.input);
+  return parsed.ok ? parsed.result : noVerdict(parsed.reasonCode);
+}
+
+/**
+ * The text-fallback path (WS-24 follow-up 6): strict, never lenient.
+ *
+ * The WHOLE trimmed reply must be one JSON value, parsed and validated through the SAME schema and
+ * namespacing the tool-call path uses (`parseClassifierVerdict`) -- there is no bracket-scanning for
+ * an object embedded in surrounding prose, because a reply that needed that did not follow the
+ * prompt's own instruction, and lenient recovery from unstructured text is exactly the "unparseable
+ * output" §10.6-5 requires to fail closed rather than be salvaged.
+ *
+ * `no_tool_call` when the text is not even valid JSON (the model did not attempt the documented
+ * fallback shape at all -- indistinguishable, from here, from any other unstructured reply);
+ * `schema_invalid` when it parses but does not satisfy the verdict schema (the model attempted the
+ * fallback and got the shape wrong) -- the SAME two outcomes the tool-call path can produce, on the
+ * same JSON, just reached by a different route. Never fails open: both arms are `no_verdict`.
+ */
+function collapseTextFallback(text: string): ClassifierRawResult {
+  let value: unknown;
+  try {
+    value = JSON.parse(text.trim());
+  } catch {
+    return noVerdict("no_tool_call");
+  }
+  const parsed = parseClassifierVerdict(value);
   return parsed.ok ? parsed.result : noVerdict(parsed.reasonCode);
 }
 
