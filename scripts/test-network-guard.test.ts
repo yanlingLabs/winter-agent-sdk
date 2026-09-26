@@ -115,7 +115,13 @@ describe("the npm-registry hole is one host, one call, and never a credential", 
       expect(npmRegistryAccessOpen()).toBe(false);
       expect(read()).toEqual({ ...before, ...planted });
     } finally {
-      for (const name of Object.keys(planted)) delete process.env[name];
+      // Put back what the HOST had, not "absent": the release job itself exports `NODE_AUTH_TOKEN` and
+      // `NPM_CONFIG_USERCONFIG`, and deleting them here failed the next assertion (and would have left
+      // every later test without them).
+      for (const name of Object.keys(planted)) {
+        if (before[name] === undefined) delete process.env[name];
+        else process.env[name] = before[name];
+      }
     }
     expect(read()).toEqual(before);
   });
