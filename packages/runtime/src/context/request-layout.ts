@@ -312,6 +312,13 @@ export interface EffortMarkerPlan {
   live: string;
   /** Levels the target row can take. */
   accepts: (effort: string) => boolean;
+  /**
+   * WS-23 (reasoning-state): whether an assistant message is the TARGET model's own. A per-message effort
+   * level is a cache quirk of one model -- a vocabulary and a cached prefix of its own -- so only its own
+   * replies' levels become markers; another model's reply is read as un-annotated (no marker). Absent:
+   * every reply counts (the pre-WS-23 reading, and a session with no provider identity).
+   */
+  owns?: (message: ProviderMessage) => boolean;
 }
 
 /** A HUMAN turn start in the PRE-merge list: a user message that is neither an attachment nor the index-0 context. */
@@ -345,7 +352,7 @@ export function withEffortMarkers(ordered: readonly ProviderMessage[], plan: Eff
         const next = ordered[j]!;
         if (next.role !== "assistant") continue;
         sawAssistant = true;
-        level = next.perTurnEffort ?? next.effort;
+        level = plan.owns === undefined || plan.owns(next) ? (next.perTurnEffort ?? next.effort) : undefined;
         break;
       }
       // The turn being generated right now has no reply yet: it runs at the live level.
@@ -370,11 +377,12 @@ export function withEffortMarkers(ordered: readonly ProviderMessage[], plan: Eff
  * names). A deferred tool in this set is referenced somewhere in the history, so it can stay declared
  * `defer_loading: true`; a loaded tool outside it would be invisible to the model and is sent plainly.
  */
-export function referencedToolNames(history: readonly ProviderMessage[]): Set<string> {
+export function referencedToolNames(history: readonly ProviderMessage[], modelKey?: string | null): Set<string> {
   // WS-23 (midconv): plus every deferred tool a tool-change entry of the current epoch announced by
   // reference -- it is surfaced on the wire the same way, and a resumed session re-seeds its loaded set
-  // from it. An earlier epoch's entries are not replayed, so they surface nothing.
-  const names = new Set<string>(toolChangeReferences(history));
+  // from it. An earlier epoch's entries are not replayed, so they surface nothing. WS-23 (reasoning-state):
+  // with `modelKey`, "the current epoch" is that model's own (see `toolChangeReferences`).
+  const names = new Set<string>(toolChangeReferences(history, modelKey));
   for (const message of history) {
     if (typeof message.content === "string") continue;
     for (const block of message.content) {
@@ -389,10 +397,12 @@ export function referencedToolNames(history: readonly ProviderMessage[]): Set<st
  * message's own `effort` (absent means the session sent none at the top level). `undefined` when no
  * assistant message is annotated at all -- nothing to restore.
  */
-export function frozenEffortFromHistory(history: readonly ProviderMessage[]): { value: string | undefined } | undefined {
+export function frozenEffortFromHistory(history: readonly ProviderMessage[], owns?: (message: ProviderMessage) => boolean): { value: string | undefined } | undefined {
   for (let i = history.length - 1; i >= 0; i--) {
     const m = history[i]!;
-    if (m.role === "assistant" && (m.effort !== undefined || m.perTurnEffort !== undefined)) return { value: m.effort };
+    // WS-23 (reasoning-state): only the target model's OWN replies -- another model's top-level effort is
+    // a value in another vocabulary, sent on another cached prefix.
+    if (m.role === "assistant" && (m.effort !== undefined || m.perTurnEffort !== undefined) && (owns === undefined || owns(m))) return { value: m.effort };
   }
   return undefined;
 }

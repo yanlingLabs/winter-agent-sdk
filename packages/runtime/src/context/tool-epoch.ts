@@ -58,6 +58,12 @@ export interface ToolEpochAttachment extends AttachmentPayload {
 export interface ToolChangesAttachment extends AttachmentPayload {
   type: "tool_changes";
   mechanism: ToolChangeMechanism;
+  /**
+   * WS-23 (reasoning-state): the model whose epoch this change extends. Several models' epochs can now
+   * sit in one history (a switch no longer retires the earlier model's), so each change names its own.
+   * Absent on an entry a dev build wrote into the transcript: it belongs to the epoch before it.
+   */
+  modelKey?: string | null;
   declare: ProviderToolSpec[];
   remove: string[];
   add: ToolChangeSet["add"];
@@ -82,26 +88,42 @@ export function toolDefinitionKey(spec: { name: string; description: string; inp
 }
 
 /**
- * The history's ACTIVE epoch for `mechanism` on `modelKey`: the LAST `tool_epoch` entry, and only when it
- * belongs to both -- a later epoch of another model or mechanism supersedes every earlier one.
+ * The history's newest epoch for `mechanism` on `modelKey` -- that MODEL's own, wherever it sits.
+ *
+ * WS-23 (reasoning-state): a later epoch of ANOTHER model no longer retires this one. The tool list is a
+ * cache quirk of one model, so each model keeps its own epoch in the history and reads only its own:
+ * after Claude -> GPT -> Claude, Claude's epoch (and the cached prefix it heads) is still there to
+ * resume. Whether it SHOULD be resumed -- the cache may have expired while the other model ran -- is the
+ * engine's call (`planToolsForRequest`, the TTL rule); this only finds it.
  */
 export function activeToolEpoch(history: readonly ProviderMessage[], mechanism: ToolChangeMechanism, modelKey: string | undefined): { index: number; epoch: ToolEpochAttachment } | undefined {
   for (let i = history.length - 1; i >= 0; i--) {
     const message = history[i]!;
     if (!isToolEpochMessage(message)) continue;
     const epoch = message.meta!.attachment as ToolEpochAttachment;
-    if (epoch.mechanism !== mechanism || epoch.modelKey !== (modelKey ?? null)) return undefined;
-    return { index: i, epoch };
+    if (epoch.mechanism === mechanism && epoch.modelKey === (modelKey ?? null)) return { index: i, epoch };
   }
   return undefined;
 }
 
-/** The `tool_changes` entries that belong to the epoch at `epochIndex`, in order. */
+/**
+ * The `tool_changes` entries that belong to the epoch at `epochIndex`, in order: after it, on its
+ * mechanism, and of its MODEL (WS-23 -- another model's changes in between are that model's). A change
+ * with no `modelKey` (a dev-build transcript entry) belongs to whichever epoch precedes it.
+ */
 export function epochChangeMessages(history: readonly ProviderMessage[], epochIndex: number, mechanism: ToolChangeMechanism): ProviderMessage[] {
   const out: ProviderMessage[] = [];
+  const own = (history[epochIndex]!.meta!.attachment as ToolEpochAttachment).modelKey;
+  let preceding = own;
   for (let i = epochIndex + 1; i < history.length; i++) {
     const message = history[i]!;
-    if (isToolChangesMessage(message) && (message.meta!.attachment as ToolChangesAttachment).mechanism === mechanism) out.push(message);
+    if (isToolEpochMessage(message)) {
+      preceding = (message.meta!.attachment as ToolEpochAttachment).modelKey;
+      continue;
+    }
+    if (!isToolChangesMessage(message)) continue;
+    const change = message.meta!.attachment as ToolChangesAttachment;
+    if (change.mechanism === mechanism && (change.modelKey !== undefined ? change.modelKey : preceding) === own) out.push(message);
   }
   return out;
 }
@@ -260,20 +282,35 @@ export function toolChangesWireMessage(message: ProviderMessage): ProviderMessag
   return { role: "system", content: [], toolChanges: { remove: [...change.remove], add: change.add.map((a) => ({ ...a })) } };
 }
 
-/** The deferred tools a `tool_changes` entry after the history's LAST epoch surfaced by reference (see `referencedToolNames`). */
-export function toolChangeReferences(history: readonly ProviderMessage[]): string[] {
-  let from = 0;
+/**
+ * The deferred tools a `tool_changes` entry of the current epoch surfaced by reference (see
+ * `referencedToolNames`). WS-23: with `modelKey`, the current epoch is THAT model's newest (and only its
+ * own changes count); without, the history's last epoch of any model -- the pre-WS-23 reading.
+ */
+export function toolChangeReferences(history: readonly ProviderMessage[], modelKey?: string | null): string[] {
+  let from = -1;
   for (let i = history.length - 1; i >= 0; i--) {
-    if (isToolEpochMessage(history[i]!)) {
-      from = i + 1;
-      break;
-    }
-  }
-  const out: string[] = [];
-  for (let i = from; i < history.length; i++) {
     const message = history[i]!;
+    if (!isToolEpochMessage(message)) continue;
+    if (modelKey !== undefined && (message.meta!.attachment as ToolEpochAttachment).modelKey !== modelKey) continue;
+    from = i;
+    break;
+  }
+  if (from === -1 && modelKey !== undefined) return [];
+  const out: string[] = [];
+  let preceding = from >= 0 ? (history[from]!.meta!.attachment as ToolEpochAttachment).modelKey : null;
+  const owner = preceding;
+  for (let i = from + 1; i < history.length; i++) {
+    const message = history[i]!;
+    if (isToolEpochMessage(message)) {
+      preceding = (message.meta!.attachment as ToolEpochAttachment).modelKey;
+      if (modelKey === undefined) break;
+      continue;
+    }
     if (!isToolChangesMessage(message)) continue;
-    for (const addition of (message.meta!.attachment as ToolChangesAttachment).add) if (addition.type === "reference") out.push(addition.name);
+    const change = message.meta!.attachment as ToolChangesAttachment;
+    if (modelKey !== undefined && (change.modelKey !== undefined ? change.modelKey : preceding) !== owner) continue;
+    for (const addition of change.add) if (addition.type === "reference") out.push(addition.name);
   }
   return out;
 }

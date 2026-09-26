@@ -3033,11 +3033,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // re-derived from the history -- a compaction's kept messages need not carry any annotation, and a
   // first \`set_effort\` must not move a top-level value the session never sent. Seeded from the history
   // on resume; re-frozen only on a model change (the cache is cold then anyway).
+  //
+  // WS-23 (reasoning-state): seeded LAZILY, per model, by `planEffort` -- from the target model's OWN
+  // replies (the annotations are a cache quirk of one model), and only once the sidecar's `effort`
+  // records are folded back onto a resumed history, which happens after this point. Returning to a model
+  // re-seeds its own frozen value, so its cached prefix's top-level effort is what it was.
   let frozenEffort: { modelKey: string | undefined; value: string | undefined } | undefined;
-  {
-    const seeded = frozenEffortFromHistory(messages);
-    if (seeded !== undefined) frozenEffort = { modelKey: providerIdentity?.modelKey ?? config.model, value: seeded.value };
-  }
+  // WS-23 (reasoning-state): tool-epoch bookkeeping appended to the history but not yet persisted. It is
+  // written to the sidecar with the NEXT assistant entry, anchored to it (the reply to the request that
+  // introduced it), and put back right before that entry on a resume.
+  const pendingBookkeeping: AttachmentPayload[] = [];
   // WS-23 (midconv): the tool epoch's session state (context/tool-epoch.ts; `planToolsForRequest`).
   // `toolChangesRejected` is sticky, like `perMessageEffortRejected`: the API refused a tool change, so
   // every later request rebuilds `tools` (claude 2.1.282's own one-time fallback). `forceNewToolEpoch` is
@@ -3526,6 +3531,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const identity = currentProviderIdentity;
     let persisted = content;
     let moved: { content: string | ContentBlock[]; nativeState: ProviderNativeState } | undefined;
+    // WS-23 (layer 2): whether the effort annotations went to the sidecar (then the entry carries none).
+    let effortInSidecar = false;
+    const recordedAt = (engineClock?.() ?? new Date()).toISOString();
     if (identity !== undefined && store.recordProviderState !== undefined) {
       const base = {
         sessionId: config.sessionId,
@@ -3536,7 +3544,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         ...(identity.continuationDomain !== undefined ? { continuationDomain: identity.continuationDomain } : {}),
       };
       // itemIndex ORDERS the records under one anchor: 0 is always the mandatory `origin`.
-      const records: ProviderStateRecordInput[] = [{ ...base, itemIndex: 0, kind: "origin", payload: {} }];
+      const records: ProviderStateRecordInput[] = [{ ...base, itemIndex: 0, kind: "origin", payload: {}, timestamp: recordedAt }];
       if (provenance?.nativeState !== undefined) {
         // WS-23: Winter's own bookkeeping items (a Responses output layout) are persisted APART from the
         // vendor's items, under `winter` -- an older runtime replays `payload.items` verbatim and must
@@ -3570,6 +3578,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             items: [...(provenance?.nativeState?.items ?? []), ...items],
           },
         };
+      }
+      // WS-23 (layer 2): the CACHE QUIRKS of this model -- its effort annotations and the tool-epoch
+      // bookkeeping that preceded this reply -- ride the sidecar, keyed by this record's provider+model,
+      // never the provider-neutral transcript (see store/provider-state.ts).
+      if (effortStamp !== undefined) {
+        records.push({ ...base, itemIndex: records.length, kind: "effort", payload: { ...effortStamp } });
+        effortInSidecar = true;
+      }
+      for (const attachment of pendingBookkeeping.splice(0)) {
+        records.push({ ...base, itemIndex: records.length, kind: attachment.type === TOOL_EPOCH_ATTACHMENT ? "tool-epoch" : "tool-changes", payload: attachment });
       }
       const unsaved: string[] = [];
       for (const input of records) {
@@ -3614,12 +3632,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // needs no extra sidecar re-read to tell a provider summary from complete exposed reasoning.
       sessionChain.set(uuid, {
         origin: { providerId: identity.providerId, modelKey: identity.modelKey, family: identity.family, ...(identity.continuationDomain !== undefined ? { continuationDomain: identity.continuationDomain } : {}) },
+        recordedAt,
         ...(provenance?.summary !== undefined ? { summary: provenance.summary } : {}),
         ...(provenance?.material !== undefined ? { material: provenance.material, complete: provenance.complete === true } : {}),
       });
     }
     try {
-      await store.recordAssistantEntry(persisted, { uuid, ...(effortStamp ?? {}) });
+      await store.recordAssistantEntry(persisted, { uuid, ...(effortInSidecar ? {} : (effortStamp ?? {})) });
     } catch {
       /* auxiliary — see comment above */
     }
@@ -6399,6 +6418,35 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     });
     for (const [anchor, link] of resumedChain) sessionChain.set(anchor, link);
 
+    // WS-23 (reasoning-state, layer 2): each resumed reply's CACHE QUIRKS come back from the sidecar --
+    // its effort annotations onto the message (the markers derive from them), and the tool-epoch
+    // bookkeeping that preceded it back into the history right before it, where the live session had it.
+    // Inline annotations (a transcript a dev build wrote) win and are never merged with a record. Walked
+    // backwards so an insertion never moves an index still to be visited.
+    let restoredBookkeeping = false;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i]!;
+      if (message.role !== "assistant" || message.uuid === undefined) continue;
+      const link = resumedChain.get(message.uuid);
+      if (link === undefined) continue;
+      if (link.effort !== undefined && message.effort === undefined && message.perTurnEffort === undefined) Object.assign(message, link.effort);
+      if (link.bookkeeping !== undefined && link.bookkeeping.length > 0) {
+        const restored = link.bookkeeping.flatMap((payload) => {
+          const bookkeeping = attachmentMessage(payload as AttachmentPayload);
+          return bookkeeping !== undefined ? [bookkeeping] : [];
+        });
+        messages.splice(i, 0, ...restored);
+        restoredBookkeeping = restoredBookkeeping || restored.length > 0;
+      }
+    }
+    if (restoredBookkeeping) {
+      // A deferred tool a restored change announced by reference is callable again, as it was live (the
+      // setup-time seed above ran before the sidecar was read).
+      const byAdvertised = new Map([...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => [d.advertisedName, d.canonicalName] as const));
+      const seeded = [...referencedToolNames(messages, currentProviderIdentity?.modelKey ?? currentModel ?? null)].map((name) => byAdvertised.get(name) ?? name);
+      if (seeded.length > 0) loadedToolSet.load(seeded);
+    }
+
     // --- Phase 6 Task 10 review round 1 (D): A RESUME THAT CHANGES THE MODEL IS A SWITCH ----------
     //
     // R6-I's boundary rule was implemented for the `set_model` CONTROL REQUEST only, which reads as
@@ -7074,16 +7122,21 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const vocabulary = described.efforts ?? [];
     const accepts = (effort: string): boolean => vocabulary.includes(effort);
     const key = currentProviderIdentity?.modelKey ?? currentModel;
-    if (frozenEffort === undefined || frozenEffort.modelKey !== key || (frozenEffort.value !== undefined && !(accepts(frozenEffort.value) && isNamedEffort(frozenEffort.value)))) {
-      frozenEffort = { modelKey: key, value: live };
+    const owns = ownedBy(key);
+    if (frozenEffort === undefined || frozenEffort.modelKey !== key) {
+      // WS-23 (reasoning-state): this model's OWN frozen value when its replies recorded one -- a resume,
+      // or a return after another model ran -- else the live level, as before.
+      const seeded = frozenEffortFromHistory(messages, owns);
+      frozenEffort = { modelKey: key, value: seeded !== undefined ? seeded.value : live };
     }
+    if (frozenEffort.value !== undefined && !(accepts(frozenEffort.value) && isNamedEffort(frozenEffort.value))) frozenEffort = { modelKey: key, value: live };
     const frozen = frozenEffort.value;
     const initial = frozen ?? described.defaultEffort;
     const effective = live ?? described.defaultEffort;
     if (initial === undefined || effective === undefined || !accepts(initial) || !accepts(effective)) return plain;
     return {
       topLevel: frozen !== undefined && isNamedEffort(frozen) ? frozen : undefined,
-      markers: { initial, live: effective, accepts },
+      markers: { initial, live: effective, accepts, owns },
       stamp: { ...(frozen !== undefined ? { effort: frozen } : {}), perTurnEffort: effective },
     };
   };
@@ -7400,7 +7453,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const wire = currentModelDescription()?.wire;
     const clientSearch = wire?.clientToolSearch === true && !nativeToolSearchRejected;
     const declareDeferred = specs.length > 0 && (wire?.deferredToolLoading === true || clientSearch);
-    const referenced = declareDeferred ? referencedToolNames(messages) : undefined;
+    const referenced = declareDeferred ? referencedToolNames(messages, currentProviderIdentity?.modelKey ?? currentModel ?? null) : undefined;
     const namespaced = (spec: ProviderToolSpec, canonicalName: string): ProviderToolSpec => {
       if (!clientSearch) return spec;
       const server = mcpServerOwningTool(canonicalName);
@@ -7453,12 +7506,42 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return undefined;
   };
 
-  /** Appends one bookkeeping entry to the history and the transcript (an attachment, like every other). */
+  /**
+   * Appends one bookkeeping entry to the history. WS-23 (reasoning-state): where the sidecar exists it is
+   * persisted THERE, with the next assistant entry (`pendingBookkeeping`) -- the tool list is a cache quirk
+   * of one model, not part of a provider-neutral transcript. A session with no sidecar keeps the transcript
+   * attachment, as before.
+   */
   const appendToolBookkeeping = async (attachment: ToolEpochAttachment | ToolChangesAttachment): Promise<void> => {
     const message = attachmentMessage(attachment);
     if (message === undefined) return;
     messages.push(message);
-    await recordAttachment(attachment);
+    if (currentProviderIdentity !== undefined && store?.recordProviderState !== undefined) pendingBookkeeping.push(attachment);
+    else await recordAttachment(attachment);
+  };
+
+  /** WS-23 (reasoning-state): whether a message is `key`'s own reply -- or carries no origin (a pre-P6 history, a session with no identity), which reads as the session's own. */
+  const ownedBy =
+    (key: string | undefined) =>
+    (message: ProviderMessage): boolean =>
+      message.origin === undefined || (message.origin.modelKey === key && (currentProviderIdentity === undefined || message.origin.providerId === currentProviderIdentity.providerId));
+
+  /**
+   * WS-23 (reasoning-state, decision 4): is this request a RETURN to `key` after another model ran, past
+   * `key`'s prompt-cache lifetime? Then its old tool epoch heads a prefix the provider no longer holds and a
+   * fresh epoch is the better start. Within the lifetime the old epoch resumes -- the model's cached prefix
+   * is still good up to where it left off -- and whatever changed since becomes change entries. A model
+   * that never left (its own reply is the newest) is not returning at all.
+   */
+  const returningPastCacheTtl = (key: string | undefined): boolean => {
+    const owns = ownedBy(key);
+    const newest = [...messages].reverse().find((m) => m.role === "assistant");
+    if (newest === undefined || owns(newest)) return false;
+    const ownNewest = [...messages].reverse().find((m) => m.role === "assistant" && m.origin !== undefined && owns(m));
+    const at = ownNewest?.uuid !== undefined ? sessionChain.get(ownNewest.uuid)?.recordedAt : undefined;
+    if (at === undefined) return true;
+    const ttlMs = promptCacheTtlFor(config) === "1h" ? 60 * 60_000 : 5 * 60_000;
+    return (engineClock?.() ?? new Date()).getTime() - Date.parse(at) > ttlMs;
   };
 
   /**
@@ -7484,14 +7567,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       await appendToolBookkeeping({ type: TOOL_EPOCH_ATTACHMENT, mechanism, modelKey: modelKey ?? null, tools: epochToolsFor(from, mechanism) });
       return activeToolEpoch(messages, mechanism, modelKey)!;
     };
-    let active = forceNewToolEpoch ? undefined : activeToolEpoch(messages, mechanism, modelKey);
+    let active = forceNewToolEpoch || returningPastCacheTtl(modelKey) ? undefined : activeToolEpoch(messages, mechanism, modelKey);
     let current = live;
     if (active === undefined) {
       active = await startEpoch(live);
       // Re-read: the new epoch retired the old one's references (`referencedToolNames`).
       current = providerToolSpecs();
     }
-    const referenced = (): Set<string> => referencedToolNames(messages);
+    const referenced = (): Set<string> => referencedToolNames(messages, modelKey ?? null);
     let changes = epochChangeMessages(messages, active.index, mechanism);
     let state = foldToolState(active.epoch, changes, referenced());
     let diff = diffToolState(current, state, mechanism, caps);
@@ -7511,7 +7594,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // A change follows a user or tool-result turn -- never a paused assistant turn (a `pause_turn`
     // resend), which the vendor refuses; that request changes nothing and the next one catches up.
     if (diff.kind === "change" && messages.at(-1)?.role !== "assistant") {
-      await appendToolBookkeeping({ type: TOOL_CHANGES_ATTACHMENT, mechanism, ...diff.change });
+      await appendToolBookkeeping({ type: TOOL_CHANGES_ATTACHMENT, mechanism, modelKey: modelKey ?? null, ...diff.change });
       changes = epochChangeMessages(messages, active.index, mechanism);
       // A deferred tool announced by reference is callable from here on: load it, so the dispatch's
       // load-first check agrees with what the model was shown.

@@ -668,3 +668,19 @@ describe("WS-23: the bounded read lets the oldest records go instead of dropping
       expect(readProviderState(path, { maxLineBytes: 2.5 * 1024 * 1024 })).toEqual([before, after]);
     }));
 });
+
+// --- WS-23 (reasoning-state, layer 2): cache quirks keyed by model -------------------------------------
+describe("WS-23: the `effort`, `tool-epoch` and `tool-changes` kinds", () => {
+  const CLAUDE = { sessionId: "sess", provider: "anthropic", model: "anthropic/claude-opus-5-5", family: "anthropic" } as const;
+  test("fold onto the anchor's link: the effort annotations, the bookkeeping in write order, and when the reply landed", () => {
+    const origin = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 0, kind: "origin", payload: {}, timestamp: "2026-09-26T10:00:00.000Z" });
+    const effort = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 1, kind: "effort", payload: { effort: "high", perTurnEffort: "low" } });
+    const epoch = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 2, kind: "tool-epoch", payload: { type: "tool_epoch", mechanism: "anthropic-inline", modelKey: CLAUDE.model, tools: [] } });
+    const changes = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 3, kind: "tool-changes", payload: { type: "tool_changes", mechanism: "anthropic-inline", modelKey: CLAUDE.model, declare: [], remove: [], add: [] } });
+    const wrong = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 4, kind: "tool-epoch", payload: { type: "tool_changes" } });
+    const link = buildContinuationChain([origin, effort, epoch, changes, wrong], new Set(["a1"])).get("a1")!;
+    expect(link.recordedAt).toBe("2026-09-26T10:00:00.000Z");
+    expect(link.effort).toEqual({ effort: "high", perTurnEffort: "low" });
+    expect(link.bookkeeping!.map((b) => b.type)).toEqual(["tool_epoch", "tool_changes"]);
+  });
+});

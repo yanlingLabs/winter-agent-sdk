@@ -59,7 +59,16 @@ export { PROVIDER_STATE_FILE_SUFFIX };
 // (payload `{blocks: [{at, block}]}`). It is a kind of its own rather than a `native-state` record so an
 // older runtime, whose `KINDS` filter below does not list it, drops it cleanly instead of replaying it as
 // some other family's opaque items. See provider-runtime's `continuity/reasoning-blocks.ts`.
-export type ProviderStateKind = "origin" | "native-state" | "summary" | "handoff" | "reasoning-blocks";
+//
+// LAYER 2 -- CACHE QUIRKS, keyed by provider+model (the record's own `provider`/`model`):
+//   - `effort`: the assistant entry's `{effort?, perTurnEffort}` -- the top-level effort its request sent
+//     and the level in force for its turn, which the per-message effort markers derive from;
+//   - `tool-epoch` / `tool-changes`: the tool epoch's bookkeeping (context/tool-epoch.ts) -- the payload
+//     is the attachment verbatim, anchored to the assistant entry it PRECEDED (the reply to the request
+//     that introduced it), and put back right before that entry on a resume.
+// All three used to ride the transcript (entry fields and attachment entries); none of it is portable to
+// another model, so none of it belongs in a provider-neutral transcript.
+export type ProviderStateKind = "origin" | "native-state" | "summary" | "handoff" | "reasoning-blocks" | "effort" | "tool-epoch" | "tool-changes";
 
 /**
  * One sidecar record. The envelope (`type`/`uuid`/`timestamp`) plus R6-7's own payload fields.
@@ -327,7 +336,7 @@ export function parseProviderStateLine(line: string): ProviderStateRecord | unde
   return coerceProviderStateRecord(value);
 }
 
-const KINDS: ReadonlySet<string> = new Set<ProviderStateKind>(["origin", "native-state", "summary", "handoff", "reasoning-blocks"]);
+const KINDS: ReadonlySet<string> = new Set<ProviderStateKind>(["origin", "native-state", "summary", "handoff", "reasoning-blocks", "effort", "tool-epoch", "tool-changes"]);
 
 export function coerceProviderStateRecord(value: unknown): ProviderStateRecord | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
@@ -374,6 +383,12 @@ export interface ContinuationLink {
   // both are present on the turn.
   material?: "exposed";
   complete?: boolean;
+  /** WS-23: when the `origin` record was written -- the time the reply landed, which the tool epoch's cache-TTL rule reads. */
+  recordedAt?: string;
+  /** WS-23 (layer 2): the entry's effort annotations, from an `effort` record. */
+  effort?: { effort?: string; perTurnEffort?: string };
+  /** WS-23 (layer 2): the tool-epoch bookkeeping that PRECEDED this entry, in write order (attachment payloads). */
+  bookkeeping?: Array<{ type: string; [key: string]: unknown }>;
 }
 
 /**
@@ -396,6 +411,7 @@ export function buildContinuationChain(records: readonly ProviderStateRecord[], 
     const link = chain.get(record.anchorUuid) ?? {};
     switch (record.kind) {
       case "origin":
+        link.recordedAt = record.timestamp;
         link.origin = {
           providerId: record.provider,
           modelKey: record.model,
@@ -448,6 +464,20 @@ export function buildContinuationChain(records: readonly ProviderStateRecord[], 
         if (complete !== undefined) link.complete = complete;
         break;
       }
+      case "effort": {
+        const effort = readEffort(record.payload);
+        if (effort !== undefined) link.effort = effort;
+        break;
+      }
+      case "tool-epoch":
+      case "tool-changes": {
+        const payload = record.payload;
+        const expected = record.kind === "tool-epoch" ? "tool_epoch" : "tool_changes";
+        if (typeof payload === "object" && payload !== null && !Array.isArray(payload) && (payload as { type?: unknown }).type === expected) {
+          (link.bookkeeping ??= []).push(payload as { type: string; [key: string]: unknown });
+        }
+        break;
+      }
       case "handoff":
         // Lane C's portable handoff. Carried in the sidecar and read by the renderer, never folded
         // into a link the engine itself acts on -- this switch is exhaustive so a new kind cannot be
@@ -482,6 +512,14 @@ function readReasoningBlocks(payload: unknown): ReasoningBlockAt[] | undefined {
     out.push({ at, block });
   }
   return out;
+}
+
+/** WS-23: an `effort` payload -- `effort` and `perTurnEffort` strings, either optional, at least one present. */
+function readEffort(payload: unknown): { effort?: string; perTurnEffort?: string } | undefined {
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const { effort, perTurnEffort } = payload as { effort?: unknown; perTurnEffort?: unknown };
+  const out = { ...(typeof effort === "string" ? { effort } : {}), ...(typeof perTurnEffort === "string" ? { perTurnEffort } : {}) };
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function readWinterItems(payload: unknown): unknown[] {
