@@ -249,7 +249,7 @@ import { createBridgeHookInvoker } from "./hooks/bridge-invoker.ts";
 import { runHooks, type HookAuditRecord, type HookAuditRecorder, type HookInvoker, type RunHooksCallInfo } from "./hooks/runner.ts";
 import type { HookComposite } from "./hooks/reducer.ts";
 import { createRegistryToolInputValidator } from "./hooks/input-validator.ts";
-import { contextStrings, hookAdditionalContextAttachment, hookFeedbackAttachment } from "./hooks/additional-context.ts";
+import { asyncHookDroppedAttachment, asyncHookResponseAttachment, contextStrings, hookAdditionalContextAttachment, hookFeedbackAttachment } from "./hooks/additional-context.ts";
 import { capHookText, MAX_HOOK_TOOL_OUTPUT_CHARS } from "./hooks/bounds.ts";
 // Task 11 (WS-07 §9 / WS-08 §7): the durable approval store a `defer` decision parks into, and the
 // pure revalidation function the resume-consumption step (this file, below) uses.
@@ -3515,6 +3515,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     if (turnStop.request === undefined) turnStop.request = { hookName: opts.hookName, ...(reason !== undefined ? { reason } : {}) };
   };
   const flushPendingHookAttachments = async (): Promise<void> => {
+    // WS-24: what BACKGROUND (async) hooks said since the last safe point joins here -- every flush site
+    // is between requests (hooks/async-hooks.ts), and a `systemMessage` is also the host's notice.
+    const finishedAsync = hookInvoker.asyncHooks?.drain();
+    for (const out of finishedAsync?.outputs ?? []) {
+      if (out.systemMessage !== undefined) emitHookNotice(out.systemMessage);
+      const attachment = asyncHookResponseAttachment(out);
+      if (attachment !== undefined) pendingHookAttachments.push(attachment);
+    }
+    const droppedAsync = asyncHookDroppedAttachment(finishedAsync?.dropped ?? 0);
+    if (droppedAsync !== undefined) pendingHookAttachments.push(droppedAsync);
     for (const attachment of pendingHookAttachments.splice(0)) {
       const message = attachmentMessage(attachment);
       if (message === undefined) continue;
@@ -9721,6 +9731,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // shell of its session; a subagent engine stops the ones IT started (the pin's
   // `killShellTasksForAgent` on agent exit). BEFORE `output.end()`, so the kill frames can still land.
   const sweptShellTasks = stopSessionShellTasks({ sessionId: config.sessionId, ...(config.agentId !== undefined ? { agentId: config.agentId } : {}) });
+  // WS-24: the session's background (async) hooks die with it, like its background shells.
+  hookInvoker.asyncHooks?.dispose();
   // The listed set just shrank -- `background_tasks_changed` is a level signal, so it follows the
   // sweep exactly as it follows a TaskStop (task-stop.ts). Nothing swept, nothing to announce.
   if (sweptShellTasks.length > 0) {

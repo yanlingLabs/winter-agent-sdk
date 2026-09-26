@@ -27,6 +27,7 @@
 // buildHookRegistry inherits that gate automatically; it must NOT re-implement its own filter here.
 import { HOOK_EVENTS, type HookEvent, type HookSource, type ResolvedSettingSource, type RuntimeHooksConfig } from "@yanlinglabs/winter-agent-sdk";
 import type { SourcedHookEntry } from "./registry.ts";
+import { FAIL_CLOSED_EVENTS } from "./runner.ts";
 
 const KNOWN_HOOK_EVENTS: ReadonlySet<string> = new Set(HOOK_EVENTS);
 
@@ -187,6 +188,17 @@ export function buildHookEntriesFromSettings(perSource: readonly SettingsHookSou
           // anyone made. A matcher GROUP may carry it too, for every handler in the group, mirroring
           // `HookCallbackMatcher.failClosed`'s own per-matcher scope on the callback side.
           const failClosed = handler["failClosed"] === true || group["failClosed"] === true;
+          // WS-24: claude's `async: true` -- the hook runs in the background and never blocks its event
+          // (hooks/async-hooks.ts). Only a literal `true`, like `failClosed`. REFUSED on a fail-closed
+          // PreToolUse/PermissionRequest hook: a floor exists to gate the call, and an answer that
+          // arrives after the call ran gates nothing. The refusal keeps the HOOK and drops the FLAG --
+          // dropping the hook instead would leave the call ungated, the fail-open direction for a
+          // misconfigured floor -- and is reported through `rejected` (what was rejected is the flag).
+          let isAsync = handler["async"] === true;
+          if (isAsync && failClosed && FAIL_CLOSED_EVENTS.has(event as HookEvent)) {
+            rejected.push({ ...where, event, reason: `the "async" flag on hook ${groupIndex}:${hookIndex}: it is fail-closed, and a fail-closed ${event} hook always runs synchronously (it gates the call), so it was registered without async` });
+            isAsync = false;
+          }
           entries.push({
             id: `${event}:${source}:${groupIndex}:${hookIndex}`,
             event: event as HookEvent,
@@ -195,6 +207,7 @@ export function buildHookEntriesFromSettings(perSource: readonly SettingsHookSou
             ...(typeof timeout === "number" && Number.isFinite(timeout) ? { timeoutMs: timeout * 1000 } : {}),
             command: handler["command"],
             ...(failClosed ? { failClosed: true } : {}),
+            ...(isAsync ? { async: true } : {}),
           });
         });
       });

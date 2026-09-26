@@ -379,12 +379,16 @@ export type HookInput =
 
 // --- HookJSONOutput — the callback's return value (derived-shapes item (b), verbatim envelope) ---
 
-// A second, unmodeled async-signaling mechanism distinct from HookPermissionDecision's own "defer"
-// value (derived-shapes item (b), Open Question 3) — Winter's P2 hook runner treats an
-// async-signaling response as a "no decision yet" contribution (TODO: revisit once a task actually
-// needs to wait up to `asyncTimeout`; see hooks/runner.ts's own header).
+// A second async-signaling mechanism distinct from HookPermissionDecision's own "defer" value
+// (derived-shapes item (b), Open Question 3). WS-24: a COMMAND hook whose first stdout line is this
+// shape goes to the background (runtime hooks/async-hooks.ts): the event is answered "no opinion" at
+// once, and what the hook prints afterwards -- its `systemMessage` / `additionalContext`, never a
+// decision -- reaches the model at the next safe point. A CALLBACK hook that returns it has no
+// "afterwards" (its one return value was it), so it stays plain "no opinion". Never from a fail-closed
+// PreToolUse/PermissionRequest hook: that is malformed output, and denies.
 export interface AsyncHookJSONOutput {
   async: true;
+  /** Milliseconds the background run may take (the runtime's default is 10 minutes). */
   asyncTimeout?: number;
 }
 

@@ -19,11 +19,15 @@
 // sanitizing hook's transform can be excluded from the final composite if a LATER hook's decision
 // outranks it, even though a still-later hook already evaluated against the sanitized value).
 //
-// A SECOND, UNMODELED ASYNC MECHANISM (derived-shapes-p2.md Open Question 3): `{async: true,
+// A SECOND ASYNC MECHANISM (derived-shapes-p2.md Open Question 3, RESOLVED by WS-24): `{async: true,
 // asyncTimeout?}` is a top-level alternative to every synchronous hook output, distinct from
-// `permissionDecision: "defer"`. This runner treats it as a `{kind:"none"}` contribution (ran, no
-// synchronous opinion) — it does NOT wait up to `asyncTimeout` for a later answer. Flagged as an
-// open item in the task report; not resolved here.
+// `permissionDecision: "defer"`. This runner still reads it as a `{kind:"none"}` contribution (ran, no
+// synchronous opinion) and never waits for a later answer -- because there is none to wait for: an
+// async hook can never allow, deny or rewrite anything. What it SAYS later (`systemMessage`,
+// `additionalContext`) is the command invoker's and the async queue's business (hooks/async-hooks.ts),
+// delivered by the engine at the next safe point. A callback hook that answers `{async: true}` has no
+// "later" at all (its one return value was it) and stays exactly "no opinion". A fail-closed gating
+// hook that answers it is malformed (strict mode below).
 //
 // WS-23 additions, each at the one place it belongs:
 //   - FAIL CLOSED (`SourcedHookEntry.failClosed`, `failClosedDenial` below): opt-in per hook, default
@@ -43,6 +47,7 @@ import { MATCHER_SUBJECT_FIELD, type HookRegistry, type SourcedHookEntry } from 
 import { reduceHookOutcomes, type HookComposite, type HookOutcome, type HookOutcomeEntry } from "./reducer.ts";
 import { capHookText } from "./bounds.ts";
 import { mcpServerOwningTool } from "../tools/registry.ts";
+import type { AsyncHookQueue } from "./async-hooks.ts";
 
 // --- HookInvoker — the T10 swap point (WS-08 §10, verbatim request shape) -------------------------
 
@@ -125,6 +130,12 @@ export function mcpToolProvenance(toolName: string): McpToolProvenanceInfo | und
 // real callback honors abort (a backstop, not a trust assumption).
 export interface HookInvoker {
   invoke(request: HookInvocationRequest, opts: { signal: AbortSignal }): Promise<unknown>;
+  /**
+   * WS-24: the session's background (async) hooks, when this invoker can run any -- only the command
+   * invoker can (hooks/async-hooks.ts). The engine drains it at each safe point and disposes it at
+   * session end; a callback-only session has none.
+   */
+  readonly asyncHooks?: AsyncHookQueue;
 }
 
 // --- HookAuditRecorder — the P2-A audit seam (WS-08 §9's Amended text) -----------------------------
