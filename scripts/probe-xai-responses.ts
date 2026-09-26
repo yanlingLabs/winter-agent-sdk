@@ -17,7 +17,19 @@
 //      it on every turn (fix round 1, I3): `grok-4.6` (5a), and the two rows that take NO effort at all,
 //      `grok-4.20-0309-reasoning` (5b) and `grok-build-0.1` (5c) — the rows whose `continuation` claim
 //      rests on this answer;
-//   6. the ERROR body shape and status for a wrong key (free: it is refused before inference).
+//   6. the ERROR body shape and status for a wrong key (free: it is refused before inference);
+//   8. (WS-23 reasoning-state, defect a) THE ORDER QUESTION behind the intermittent multi-agent
+//      "Could not decrypt the provided encrypted_content": a multi-agent turn whose reasoning items sat
+//      BETWEEN its other output items is replayed with that order PRESERVED (Winter's replay since the
+//      fix: the stream mapper records a `winter.responses_layout` and the replay interleaves) and
+//      REORDERED (the pre-fix replay: every reasoning item first), several times each. A 400 on the
+//      reordered variant only settles it. NOTE: since defect (b) the adapter retries such a 400 ONCE
+//      without the replayed reasoning -- a refused replay therefore shows as TWO wire lines (the 400,
+//      then the retry's 200) under one step, which is what to count.
+//
+// STEPS: `WINTER_XAI_PROBE_STEPS=order` runs only step 4a (the multi-agent turn, repeated up to
+// `WINTER_XAI_PROBE_ORDER_ATTEMPTS`, default 3, until its output interleaves) and step 8
+// (`WINTER_XAI_PROBE_ORDER_RUNS` replays per variant, default 3). Default: every step.
 //
 // IT DRIVES THE SHIPPED WIRING, not a hand-built request: `createShippedAdapters(loadCatalog())`'s
 // Responses adapter on a connection with NO `baseUrl`, so every request also proves the base-URL rule
@@ -34,7 +46,8 @@
 // leading words only).
 //
 // COST: nine small generations (grok-4.7 at effort `low`, three effortless one-word turns, two
-// multi-agent turns at 4 agents). Keep the prompts tiny.
+// multi-agent turns at 4 agents), plus step 8's multi-agent replays (2 x ORDER_RUNS, default 6, and up
+// to ORDER_ATTEMPTS extra first turns). Keep the prompts tiny.
 //
 // Usage (from the worktree root):
 //   WINTER_XAI_PROBE=1 bun run scripts/probe-xai-responses.ts
@@ -243,6 +256,47 @@ async function runTurn(label: string, adapter: ProviderAdapter, ctx: ProviderCon
   return { events, text, nativeItems, toolCalls: [...toolCalls.values()] };
 }
 
+// --- step 8 (WS-23 reasoning-state, defect a): multi-agent replay ORDER ----------------------------------------
+
+const LAYOUT_TYPE = "winter.responses_layout";
+const isLayout = (item: unknown): boolean => typeof item === "object" && item !== null && (item as { type?: unknown }).type === LAYOUT_TYPE;
+
+async function orderStep(adapter: ProviderAdapter, ctx: ProviderContext, first?: TurnReport): Promise<void> {
+  const MULTI = "grok-4.20-multi-agent-0309";
+  const q = "In one sentence: why is the sky blue?";
+  const attempts = Number(process.env["WINTER_XAI_PROBE_ORDER_ATTEMPTS"] ?? "3");
+  const runs = Number(process.env["WINTER_XAI_PROBE_ORDER_RUNS"] ?? "3");
+  let turn = first;
+  for (let attempt = 0; attempt < attempts && (turn?.nativeItems?.some(isLayout) !== true); attempt++) {
+    turn = await runTurn(`8.0 multi-agent turn, attempt ${attempt + 1} (looking for interleaved output)`, adapter, ctx, { model: MULTI, effort: "low", messages: [{ role: "user", content: q }] });
+  }
+  const items = turn?.nativeItems ?? [];
+  const layout = items.find(isLayout) as { order?: unknown } | undefined;
+  if (layout === undefined) {
+    console.log(`\n=== 8. INCONCLUSIVE: no multi-agent turn in ${attempts} attempt(s) put a reasoning item after a message or call -- both replay orders would be identical. Raise WINTER_XAI_PROBE_ORDER_ATTEMPTS.`);
+    return;
+  }
+  console.log(`\n=== 8. the multi-agent output interleaved: ${JSON.stringify(layout.order)} (r:k = the k-th reasoning item, m = a message, c = a call)`);
+  const variants: Array<[string, unknown[]]> = [
+    ["PRESERVED (Winter since the fix)", items],
+    ["REORDERED (reasoning first, the pre-fix replay)", items.filter((i) => !isLayout(i))],
+  ];
+  for (const [variant, replayed] of variants) {
+    for (let run = 1; run <= runs; run++) {
+      await runTurn(`8. replay ${variant}, run ${run}/${runs} -- TWO wire lines here mean a refused replay (400) and its retry`, adapter, ctx, {
+        model: MULTI,
+        effort: "low",
+        messages: [
+          { role: "user", content: q },
+          { role: "assistant", content: turn!.text, nativeState: { family: "openai", continuationDomain: `xai/${MULTI}`, items: replayed } },
+          { role: "user", content: "Now say it in five words." },
+        ],
+      });
+    }
+  }
+  console.log("\n=== 8. READ IT AS: count the refused replays (a 400 wire line) per variant. Refusals on REORDERED only = the order was the cause (the fix holds); on both = not the order (the decrypt retry is then the only defence); on neither = not reproduced in this many runs.");
+}
+
 // --- the probe ---------------------------------------------------------------------------------------------
 
 async function main(): Promise<void> {
@@ -256,6 +310,10 @@ async function main(): Promise<void> {
   try {
     const credentials = await devKeychainCredentials();
     const ctx = contextWith(credentials, KEYCHAIN_REF);
+    if ((process.env["WINTER_XAI_PROBE_STEPS"] ?? "all") === "order") {
+      await orderStep(adapter, ctx);
+      return;
+    }
 
     // 1. A reasoning turn on grok-4.7, asking for the encrypted item and a summary.
     const q1 = "What is 17 * 23? Reply with the number only.";
@@ -315,6 +373,7 @@ async function main(): Promise<void> {
     } else {
       console.log("\n=== 4b. SKIPPED: 4a returned no encrypted item to replay — the multi-agent row's `opaque-provider-state` claim is then UNSUPPORTED (a finding)");
     }
+    await orderStep(adapter, ctx, multi);
 
     // 5. EFFORTLESS turns. Since fix round 1 (I3) an opaque-continuation row sends `include` on every
     // turn, so each should come back with an encrypted item. For 5b/5c that answer is the whole basis
