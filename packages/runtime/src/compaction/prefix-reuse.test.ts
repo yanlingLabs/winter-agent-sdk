@@ -72,7 +72,9 @@ describe("the controller's prefix-reusing summary (WS-23 item 4)", () => {
     expect(result.summary).toBe("fallback summary");
     expect(seen).toHaveLength(2);
     expect(seen[1]!.tools).toBeUndefined();
-    expect(typeof seen[1]!.system).toBe("string");
+    // The redacted request: no system prompt (fix round 1), its instruction the final user turn.
+    expect(seen[1]!.system).toBeUndefined();
+    expect(String(seen[1]!.messages.at(-1)!.content)).toContain("compacting a conversation");
   });
 
   test("a carried summary stays verbatim: the model is told to summarise only what follows it, and the result is concatenated", async () => {
