@@ -694,7 +694,9 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
               // resource tools refused a server that was in fact live. Once, by whichever caller gets here
               // first (a concurrent sharer of the same attempt finds the slot already connected), and never
               // over a supersede (the state check -- disable/remove/reconnect move it off "cached").
-              if (slot.state === "cached" && slot.client !== undefined && (gen === undefined || isCurrentAttempt(slot, gen))) {
+              // `slots.get(slot.name) === slot`: a slot REPLACED meanwhile (addAndConnect under the same name)
+              // must not have its successor's state overwritten -- setSlotState writes by name.
+              if (slots.get(slot.name) === slot && slot.state === "cached" && slot.client !== undefined && (gen === undefined || isCurrentAttempt(slot, gen))) {
                 setSlotState(slot.name, "connected", { toolNames: slot.toolNames });
                 replayParkedToolListChange(slot);
               }
