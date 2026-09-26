@@ -262,9 +262,9 @@ export type HookPermissionDecision = "allow" | "ask" | "deny" | "defer";
 // absent for every other tool, including a registry-native tool that merely wears an `mcp__` name.
 //
 // WHY BOTH FIELDS, AND WHY NOT PARSE `tool_name`. `mcp__<server>__<tool>` cannot be split reliably:
-// server names may themselves contain `__` (a host's `winter__sessions`), so `mcp__winter__sessions__list`
-// is server `winter__sessions`, tool `list` -- a hook that split on the first `__` would read server
-// `winter`. The runtime knows the registering server, so it states both, and a hook (a matcher-less
+// server names may themselves contain `__` (a host's `host__sessions`), so `mcp__host__sessions__list`
+// is server `host__sessions`, tool `list` -- a hook that split on the first `__` would read server
+// `host`. The runtime knows the registering server, so it states both, and a hook (a matcher-less
 // audit hook, a per-server policy) never has to guess. `mcp_server_name` is the spelling claude already
 // uses for its Elicitation hook input; `mcp_tool_name` is the server's own name for the tool (what it
 // answers to in `tools/call`).

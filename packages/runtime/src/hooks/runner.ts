@@ -107,7 +107,7 @@ export interface HookInvocationRequest {
 // Read from the ONE place that knows it: the tool registry's owner index (`mcpServerOwningTool`), which
 // every MCP registration -- a live stdio/http/sse server's AND a host's in-process `type: "sdk"`
 // server's -- goes through (`registerMcpServerTools`). The canonical name is NEVER split on `__`:
-// server names may contain it (`winter__sessions`), so the bare name is what follows the owner's own
+// server names may contain it (a host's `host__sessions`), so the bare name is what follows the owner's own
 // `mcp__<server>__` prefix. A registry-native tool that merely wears an `mcp__` name (the standing
 // server's twins) has no owner and so no provenance: no connected server is behind it.
 export interface McpToolProvenanceInfo {
