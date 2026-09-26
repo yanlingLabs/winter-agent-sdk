@@ -36,6 +36,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { ReadBuffer, serializeMessage, type JSONRPCMessage, type Transport } from "@modelcontextprotocol/client";
 import type { McpStdioServerConfig } from "@yanlinglabs/winter-agent-sdk";
+import { trackProcessGroup } from "../../process-groups.ts";
 
 // The upstream PARITY BASELINE, named explicitly rather than silently duplicated: this is the exact
 // non-Windows `DEFAULT_INHERITED_ENV_VARS` list the MCP TS SDK itself ships (v1's
@@ -132,8 +133,13 @@ export class WinterStdioTransport implements Transport {
         detached: true,
       });
       this.child = child;
+      // WS-24: the server's group is mirrored to an embedded session's host while it lives, so a
+      // Worker that dies without reaching `close()` below does not orphan it (process-groups.ts).
+      // Released when the child is gone, however it went (its own exit, `close()`, a spawn error).
+      const releaseGroup = child.pid !== undefined ? trackProcessGroup(child.pid, "mcp_stdio") : () => {};
 
       child.on("error", (error) => {
+        releaseGroup();
         // N3: whatever the child managed to say before dying is the only evidence a caller will ever
         // get for a spawn failure -- attached here rather than at the caller, which has no access to
         // the pipe at all.
@@ -142,6 +148,7 @@ export class WinterStdioTransport implements Transport {
       });
       child.on("spawn", () => resolve());
       child.on("close", () => {
+        releaseGroup();
         this.child = undefined;
         this.onclose?.();
       });

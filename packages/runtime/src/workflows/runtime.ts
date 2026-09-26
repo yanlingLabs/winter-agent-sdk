@@ -23,6 +23,7 @@ import { makeSemaphore, resolveConcurrencyCap, type Semaphore } from "./semaphor
 import { createBudget, type WorkflowBudget } from "./budget.ts";
 import { buildWorkerSpawn, resolveWorkerCommand, workflowSandboxAvailable, type WorkerCommand } from "./sandbox.ts";
 import type { SandboxBrand } from "../sandbox/profile.ts";
+import { trackProcessGroup } from "../process-groups.ts";
 import type { BrandProfile, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { persistWorkflowScript, workflowTranscriptDir, workflowRunsDir, resolveWorkflowByName } from "./store.ts";
 import { encodeNdjson, splitNdjson, type BridgeRequest, type BridgeResponse, type WorkerInit, type WorkflowRef } from "./bridge.ts";
@@ -91,6 +92,12 @@ export function realWorkerSpawner(opts: { sandbox?: boolean } = {}): WorkerSpawn
     // every path), but an unstated cwd inherits the host process's -- a daemon's, for an embedded
     // session -- and no child of a session should start outside that session's tree.
     const child = spawnProcess(spawnTarget.file, spawnTarget.args, { stdio: ["pipe", "pipe", "pipe"], detached: true, ...(spawnOpts.cwd !== undefined ? { cwd: spawnOpts.cwd } : {}) });
+    // WS-24: mirrored while the worker's group lives, so an embedded host can reap it (process-groups.ts).
+    if (child.pid !== undefined) {
+      const releaseGroup = trackProcessGroup(child.pid, "workflow");
+      child.once("close", releaseGroup);
+      child.once("error", releaseGroup);
+    }
     return {
       stdin: child.stdin!,
       stdout: child.stdout!,

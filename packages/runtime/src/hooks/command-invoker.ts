@@ -60,6 +60,7 @@ import { envName, type BrandProfile, type HookEvent } from "@yanlinglabs/winter-
 import { FAIL_CLOSED_EVENTS, HOOK_PROCESS_OUTPUT, type HookInvocationRequest, type HookInvoker, type HookProcessOutput } from "./runner.ts";
 import { MAX_HOOK_STDOUT_CAPTURE } from "./bounds.ts";
 import type { SourcedHookEntry } from "./registry.ts";
+import { trackProcessGroup } from "../process-groups.ts";
 
 /** Grace between SIGTERM and SIGKILL. Short: by the time this fires the runner has already given up on the hook. */
 export const COMMAND_HOOK_KILL_GRACE_MS = 250;
@@ -223,6 +224,10 @@ async function runCommandHook(
     // process-group discipline sandbox/spawn.ts applies).
     detached: true,
   });
+  // WS-24: mirrored to an embedded session's host while the hook's group lives (process-groups.ts).
+  const releaseGroup = child.pid !== undefined ? trackProcessGroup(child.pid, "hook") : () => {};
+  child.once("close", releaseGroup);
+  child.once("error", releaseGroup);
 
   let killTimer: ReturnType<typeof setTimeout> | undefined;
   const killTree = (sig: NodeJS.Signals): void => {

@@ -24,6 +24,7 @@ import { isMainThread } from "node:worker_threads";
 import { Queue } from "./protocol/channel.ts";
 import { runEmbeddedSession } from "./embedded.ts";
 import type { EmbeddedHostMessage, EmbeddedWorkerMessage } from "./embedded-protocol.ts";
+import { liveProcessGroups, onProcessGroupChange } from "./process-groups.ts";
 
 declare const self: { onmessage: ((event: MessageEvent) => void) | null };
 
@@ -49,8 +50,19 @@ function fenceProcessWideState(): void {
   }) as typeof process.umask;
 }
 
+/**
+ * WS-24: mirror this realm's live process groups to the host (`EmbeddedProcessGroupMessage`) -- every
+ * group already live first (none, at install), then each change as it happens. Installed before the
+ * session starts, so no spawn can precede its own `add`.
+ */
+function mirrorProcessGroups(): void {
+  for (const { pgid } of liveProcessGroups()) post({ kind: "process-group", op: "add", pgid });
+  onProcessGroupChange((change) => post({ kind: "process-group", op: change.op, pgid: change.pgid }));
+}
+
 function installEmbeddedWorker(): void {
   fenceProcessWideState();
+  mirrorProcessGroups();
   const input = new Queue<string>();
   const abort = new AbortController();
   let started = false;
