@@ -175,13 +175,15 @@ describe("T8 production wiring: the guards it carries", () => {
         displayName: "Claude Opus 5.5",
         efforts: ["low", "medium", "high", "xhigh", "max"],
         defaultEffort: "medium",
-        wire: { perMessageEffort: true, deferredToolLoading: true, midConversationSystem: true, toolChanges: "inline" },
+        // WS-24: `undeclaredToolCalls` -- live-probe evidence (scripts/probe-fork-undeclared-tool.ts).
+        wire: { perMessageEffort: true, deferredToolLoading: true, midConversationSystem: true, toolChanges: "inline", undeclaredToolCalls: true },
         // WS-23 (reasoning-state, decision 5): the switch fit check's budget and the accountant's limit.
         contextWindow: 1_000_000,
         maxOutputTokens: 128_000,
       });
-      // Sonnet 5: effort via output_config, but neither per-message effort nor tool search.
-      expect(wiring.engineOptions.describeModel("anthropic/claude-sonnet-5")?.wire).toBeUndefined();
+      // Sonnet 5: effort via output_config, but neither per-message effort nor tool search -- only the
+      // WS-24 live-probe evidence that it takes a call to a tool absent from `tools`.
+      expect(wiring.engineOptions.describeModel("anthropic/claude-sonnet-5")?.wire).toEqual({ undeclaredToolCalls: true });
       // A provider-local id resolves UNDER ITS PROVIDER (E4): this row's id is also `console`'s, so
       // without a provider it would be ambiguous and name neither (`describe-model-provider.test.ts`).
       expect(wiring.engineOptions.describeModel(row.upstreamId, row.providerId)?.displayName).toBe(row.displayName);
