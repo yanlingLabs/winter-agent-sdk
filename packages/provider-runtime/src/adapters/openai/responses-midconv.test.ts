@@ -167,14 +167,22 @@ describe("additional_tools and allowed_tools (WS-23 midconv addendum)", () => {
     expect(input[1]).toEqual({ type: "additional_tools", role: "developer", tools: [{ type: "function", name: "Late", description: "Late tool", parameters: { type: "object" }, strict: false }] });
   });
 
-  test("`allowed_tools` restricts WITHOUT touching `tools`, and lists FUNCTIONS ONLY (live L1): never `tool_search`, never a namespace -- a loaded namespaced tool by the name it was loaded as", () => {
+  test("`allowed_tools` restricts WITHOUT touching `tools`, listing only functions `tools` declares (live L1): never `tool_search`, never a namespace", () => {
     const row = searchRow({ allowed: true });
+    const beforeLoad: ProviderMessageLike[] = [{ role: "user", content: "hi" }];
     // The engine's list names ToolSearch too; on a client-search request it is the native tool, unlisted.
+    const restricted = body({ messages: beforeLoad, allowedTools: ["Bash", "ToolSearch"] }, row);
+    expect(restricted["tools"]).toEqual(body({ messages: beforeLoad }, row)["tools"]);
+    expect(restricted["tool_choice"]).toEqual({ type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "Bash" }] });
+    expect(body({ messages: beforeLoad, allowedTools: ["Bash"], toolChoice: { type: "any" } }, row)["tool_choice"]).toMatchObject({ type: "allowed_tools", mode: "required" });
+  });
+
+  test("fix round 3 (live): once a search has LOADED a tool, no `allowed_tools` at all -- the API refused a loaded tool's name (\"Tool choice 'lookup_order' not found in 'tools' parameter.\") and there is no way to name one", () => {
+    const row = searchRow({ allowed: true });
+    // `searchHistory` loaded list_orders (in a namespace) and NotebookEdit.
     const restricted = body({ allowedTools: ["Bash", "ToolSearch"] }, row);
-    expect(restricted["tools"]).toEqual(body({}, row)["tools"]);
-    expect(restricted["tool_choice"]).toEqual({ type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "Bash" }, { type: "function", name: "NotebookEdit" }, { type: "function", name: "list_orders" }] });
-    expect(JSON.stringify(restricted["tool_choice"])).not.toMatch(/"type":"(tool_search|namespace)"/);
-    expect(body({ allowedTools: ["Bash"], toolChoice: { type: "any" } }, row)["tool_choice"]).toMatchObject({ type: "allowed_tools", mode: "required" });
+    expect(restricted["tool_choice"]).toBe("auto");
+    expect(body({ allowedTools: ["Bash"], toolChoice: { type: "any" } }, row)["tool_choice"]).toBe("required");
     // A forced choice (the classifier, structured output) outranks the restriction.
     expect(body({ allowedTools: ["Bash"], toolChoice: { type: "tool", name: "Bash" } }, row)["tool_choice"]).toEqual({ type: "function", name: "Bash" });
   });
