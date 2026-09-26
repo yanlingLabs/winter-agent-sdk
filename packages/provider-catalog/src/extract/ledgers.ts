@@ -239,4 +239,6 @@ export const FIELD_PROVENANCE: readonly FieldProvenance[] = [
   { field: "model.deferredToolLoading", provenance: "official-doc-derived", note: "OVERLAY ONLY, from Anthropic's tool-search model-compatibility table (a client tool-search result's `tool_reference` blocks expand `defer_loading` tools)" },
   { field: "model.midConversationSystem", provenance: "official-doc-derived", note: "OVERLAY ONLY, from Anthropic's mid-conversation system messages page (a `role: \"system\"` message with text inside `messages`)" },
   { field: "model.promptCacheKey", provenance: "official-doc-derived", note: "OVERLAY ONLY, from OpenAI's prompt-caching guide (Responses `prompt_cache_key`) and codex-rs's request builder" },
+  { field: "model.midConversationToolChanges", provenance: "official-doc-derived", note: "OVERLAY ONLY, from Anthropic's mid-conversation system messages page (`tool_addition`/`tool_removal` by reference; model list, Sonnet 5 excluded)" },
+  { field: "model.inlineToolDefinitions", provenance: "official-doc-derived", note: "OVERLAY ONLY, from the same page (`tool_definition` by value under `inline-tools-2026-09-15`; Claude API only)" },
 ];

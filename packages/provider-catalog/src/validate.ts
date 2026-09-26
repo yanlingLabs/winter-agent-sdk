@@ -117,6 +117,8 @@ const EFFORT_REQUEST_FIELDS = ["output_config.effort"] as const;
 const BLOCK_BINDING_BETAS = ["thinking-binding-controls-2026-08-01"] as const;
 const PER_MESSAGE_EFFORT_BETAS = ["mid-conversation-output-config-2026-07-01"] as const;
 const PER_MESSAGE_EFFORT_ITEMS = ["configuration_update"] as const;
+const MID_CONVERSATION_TOOL_CHANGE_BETAS = ["mid-conversation-tool-changes-2026-07-01"] as const;
+const INLINE_TOOL_DEFINITION_BETAS = ["inline-tools-2026-09-15"] as const;
 
 /**
  * The closed vocabularies, exported as ONE object so the JSON Schema can be checked against the
@@ -161,6 +163,8 @@ export const CATALOG_VOCABULARIES = {
   blockBindingBetas: BLOCK_BINDING_BETAS,
   perMessageEffortBetas: PER_MESSAGE_EFFORT_BETAS,
   perMessageEffortItems: PER_MESSAGE_EFFORT_ITEMS,
+  midConversationToolChangeBetas: MID_CONVERSATION_TOOL_CHANGE_BETAS,
+  inlineToolDefinitionBetas: INLINE_TOOL_DEFINITION_BETAS,
 } as const satisfies Record<string, readonly string[]>;
 
 // --- secrets floor (WS-13 §6/§13, R6-10: "descriptors never contain secrets; a catalog test greps
@@ -755,6 +759,14 @@ function checkModel(errs: Errors, v: unknown, path: string): void {
   checkEvidence(errs, v["deferredToolLoading"], `${path}.deferredToolLoading`, evidenceBoolean, false);
   checkEvidence(errs, v["midConversationSystem"], `${path}.midConversationSystem`, evidenceBoolean, false);
   checkEvidence(errs, v["promptCacheKey"], `${path}.promptCacheKey`, evidenceBoolean, false);
+  // WS-23 (midconv): the two Anthropic tool-change betas, each a closed `{beta}` vocabulary.
+  const betaOnly = (vocabulary: readonly string[], what: string) => (val: unknown, p: string) => {
+    if (!isRecord(val)) return errs.add(p, `expected {beta}, got ${describe(val)}`);
+    for (const key of Object.keys(val)) if (key !== "beta") errs.add(`${p}.${key}`, "unknown key");
+    if (typeof val["beta"] !== "string" || !vocabulary.includes(val["beta"])) errs.add(`${p}.beta`, `unknown ${what} beta ${describe(val["beta"])}`);
+  };
+  checkEvidence(errs, v["midConversationToolChanges"], `${path}.midConversationToolChanges`, betaOnly(MID_CONVERSATION_TOOL_CHANGE_BETAS, "mid-conversation tool-change"), false);
+  checkEvidence(errs, v["inlineToolDefinitions"], `${path}.inlineToolDefinitions`, betaOnly(INLINE_TOOL_DEFINITION_BETAS, "inline tool-definition"), false);
   checkEvidence(errs, v["classifierEligible"], `${path}.classifierEligible`, evidenceBoolean, false);
   checkEvidence(errs, v["pricing"], `${path}.pricing`, (val, p) => checkPricing(errs, val, p), false);
   if (v["reasoning"] !== undefined) checkReasoning(errs, v["reasoning"], `${path}.reasoning`);

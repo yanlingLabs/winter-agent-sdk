@@ -71,6 +71,7 @@ import type {
   ProviderError,
   ProviderEvent,
   ProviderMessageLike,
+  ToolChangeSet,
   TurnRequest,
 } from "../../types.ts";
 
@@ -335,6 +336,28 @@ function fileBlocks(entry: WireEntryBuckets, blocks: Record<string, unknown>[]):
   for (; at < nonResults.length; at++) entry.rest.push(nonResults[at]!);
 }
 
+/**
+ * WS-23 (midconv): one tool-change point as Anthropic's blocks -- removals first, then additions (claude
+ * 2.1.282's order, and the docs' "mixed with `text` blocks in the same `content` array"), each exactly the
+ * documented shape
+ * (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages):
+ *   `{"type": "tool_removal",  "tool": {"type": "tool_reference", "name": …}}`
+ *   `{"type": "tool_addition", "tool": {"type": "tool_reference", "name": …}}`
+ *   `{"type": "tool_addition", "tool": {"type": "tool_definition", "definition": {name, description, input_schema}}}`
+ * A definition never carries `cache_control` (the rolling breakpoint may land on the BLOCK, and the docs
+ * allow one or the other, "not both").
+ */
+function toolChangeBlocks(changes: ToolChangeSet): Record<string, unknown>[] {
+  return [
+    ...changes.remove.map((name) => ({ type: "tool_removal", tool: { type: "tool_reference", name } })),
+    ...changes.add.map((addition) =>
+      addition.type === "reference"
+        ? { type: "tool_addition", tool: { type: "tool_reference", name: addition.name } }
+        : { type: "tool_addition", tool: { type: "tool_definition", definition: { name: addition.name, description: addition.description, input_schema: addition.inputSchema } } },
+    ),
+  ];
+}
+
 /** One wire message. `output_config` rides only on a `system` entry (WS-23's per-message effort). */
 export type WireMessage = { role: "user" | "assistant" | "system"; content: Record<string, unknown>[]; output_config?: { effort: string } };
 
@@ -351,8 +374,10 @@ export function toWireMessages(messages: ProviderMessageLike[], opts: { referabl
     // Merging one into the user turn after it (the pre-WS-23 `role !== "assistant"` rule) would have
     // turned an operator instruction into user text and dropped the effort change entirely.
     if (role === "system") {
-      if (own.length === 0 && message.outputConfig === undefined) continue;
-      entries.push({ role, ...(message.outputConfig !== undefined ? { outputConfig: { effort: message.outputConfig.effort } } : {}), results: [], leading: [], decorations: [], rest: own });
+      // WS-23 (midconv): a tool-change message's blocks, after any text it carries.
+      const blocks = message.toolChanges !== undefined ? [...own, ...toolChangeBlocks(message.toolChanges)] : own;
+      if (blocks.length === 0 && message.outputConfig === undefined) continue;
+      entries.push({ role, ...(message.outputConfig !== undefined ? { outputConfig: { effort: message.outputConfig.effort } } : {}), results: [], leading: [], decorations: [], rest: blocks });
       continue;
     }
     if (own.length === 0 && message.decoration === undefined) continue;
@@ -988,9 +1013,57 @@ export function perMessageEffortBetaFor(body: Record<string, unknown>, descripto
   return mechanism !== undefined && "beta" in mechanism ? mechanism.beta : undefined;
 }
 
+/**
+ * WS-23 (midconv): the tool-change beta, or `undefined` -- when the body carries a `tool_addition` /
+ * `tool_removal` block, OR the engine says this conversation uses the mechanism (`req.toolChanges`),
+ * so the header rides EVERY request of it and the set of active betas never flips when the first change
+ * lands (the set is part of what the cache compares). The inline beta where the row documents it -- it
+ * "covers all reference-based changes, so you don't need to send `mid-conversation-tool-changes-2026-07-01`
+ * as well" -- else the reference beta.
+ */
+export function toolChangesBetaFor(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined, optIn = false): string | undefined {
+  const messages = body["messages"];
+  const carries =
+    Array.isArray(messages) &&
+    messages.some((m) => {
+      const content = (m as { role?: unknown; content?: unknown }).content;
+      return (m as { role?: unknown }).role === "system" && Array.isArray(content) && content.some((b) => (b as { type?: unknown }).type === "tool_addition" || (b as { type?: unknown }).type === "tool_removal");
+    });
+  if (!carries && !optIn) return undefined;
+  return descriptor?.inlineToolDefinitions?.value.beta ?? descriptor?.midConversationToolChanges?.value.beta;
+}
+
 /** Every body-derived beta, in a fixed order. One list, so `prepare()` and `countTokens()` cannot disagree about which ride. */
-function bodyBetas(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined): string[] {
-  return [perMessageEffortBetaFor(body, descriptor)].filter((b): b is string => b !== undefined);
+function bodyBetas(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined, req?: Pick<TurnRequest, "toolChanges">): string[] {
+  return [perMessageEffortBetaFor(body, descriptor), toolChangesBetaFor(body, descriptor, req?.toolChanges === true)].filter((b): b is string => b !== undefined);
+}
+
+/**
+ * WS-23 (midconv): the tool-change gate. A `system` message carrying `toolChanges` is refused BEFORE the
+ * request unless the row documents a mechanism -- by reference (`midConversationToolChanges`) or by value
+ * (`inlineToolDefinitions`); a definition needs the latter ("Claude API" only, and Sonnet 5 documents
+ * neither); and a reference must name a tool this request's `tools` declares (the API's
+ * `tool_reference_unresolved` otherwise). The engine only builds changes a row can take, so this fires on
+ * a wiring bug, never on an ordinary session.
+ */
+function assertToolChanges(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): void {
+  const declared = new Set((req.tools ?? []).map((t) => t.name));
+  for (const message of req.messages) {
+    if (message.toolChanges === undefined) continue;
+    const key = descriptor?.key ?? req.model;
+    if (message.role !== "system") throw capabilityRefusal("mid-conversation tool changes ride only a `role: \"system\"` message");
+    if (descriptor?.midConversationToolChanges === undefined && descriptor?.inlineToolDefinitions === undefined) {
+      throw capabilityRefusal(`model "${key}" documents no mid-conversation tool changes (no \`midConversationToolChanges\` / \`inlineToolDefinitions\` evidence), so a \`tool_addition\` / \`tool_removal\` is refused before the request rather than sent and rejected upstream`);
+    }
+    for (const addition of message.toolChanges.add) {
+      if (addition.type === "definition" && descriptor.inlineToolDefinitions === undefined) {
+        throw capabilityRefusal(`model "${key}" documents tool changes by reference only (no \`inlineToolDefinitions\` evidence), so the tool "${addition.name}" cannot be defined by value`);
+      }
+      if (addition.type === "reference" && !declared.has(addition.name)) {
+        throw capabilityRefusal(`a \`tool_addition\` references "${addition.name}", which this request's \`tools\` does not declare (the API's \`tool_reference_unresolved\`)`);
+      }
+    }
+  }
 }
 
 /**
@@ -1058,6 +1131,7 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   if (!thinking.ok) throw capabilityRefusal(thinking.reason);
   if (thinking.rewroteDisabled === true) onThinkingRewrite?.();
   assertPerMessageEffort(req, descriptor);
+  assertToolChanges(req, descriptor);
 
   // `max_tokens` has TWO AUTHORITATIVE sources -- what the caller asked for and what the model's row
   // declares -- and a third, this adapter's own fallback, which is authoritative over nothing.
@@ -1591,7 +1665,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       loggedThinkingRewrite = true;
       ctx.log({ kind: "provider.thinking_rewrite.disabled_to_adaptive", providerId: ctx.connection.providerId, model: req.model });
     });
-    const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor), ...bodyBetas(body, descriptor)], endpoint.policy, opts, true, identityFor(ctx));
+    const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor), ...bodyBetas(body, descriptor, req)], endpoint.policy, opts, true, identityFor(ctx));
     return { endpoint, body, headers, captureEvent: anthropicCaptureEvent(descriptor) };
   }
 
@@ -1897,7 +1971,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
       const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
       const body = buildRequestBody(req, descriptor, opts, "count");
-      const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor), ...bodyBetas(body, descriptor)], endpoint.policy, opts, true, identityFor(ctx));
+      const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor), ...bodyBetas(body, descriptor, req)], endpoint.policy, opts, true, identityFor(ctx));
       const res = await boundedFetch(`${endpoint.base}/v1/messages/count_tokens`, {
         method: "POST",
         headers,

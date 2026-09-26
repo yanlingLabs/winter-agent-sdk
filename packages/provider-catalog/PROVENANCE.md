@@ -86,6 +86,8 @@ twin and a test asserts the two agree, so this document cannot drift away from t
 | `model.deferredToolLoading` | official-doc derived | **overlay only**; Anthropic's tool-search model-compatibility table (custom `tool_reference` + `defer_loading`) |
 | `model.midConversationSystem` | official-doc derived | **overlay only**; Anthropic's mid-conversation system messages page (model list; Sonnet 5 excluded) |
 | `model.promptCacheKey` | official-doc derived | **overlay only**; OpenAI's prompt-caching guide (Responses `prompt_cache_key`), and codex-rs's own request builder for the ChatGPT Codex backend |
+| `model.midConversationToolChanges` | official-doc derived | **overlay only**; Anthropic's mid-conversation system messages page (tool changes by reference, `mid-conversation-tool-changes-2026-07-01`; model list, Sonnet 5 excluded) |
+| `model.inlineToolDefinitions` | official-doc derived | **overlay only**; the same page (tools defined by value, `inline-tools-2026-09-15`; Claude API only) |
 
 ### Two tiers of admission citation
 

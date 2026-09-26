@@ -81,7 +81,7 @@ import { getDefaultMessagingRuntime, UnattributableSenderError, classifyDelivery
 // types can live down there while `ProviderTurn`/`ProviderMessage`/`ContentBlock` stay up here.
 // `TurnRequest` is imported for its `toolChoice`/`effort`/`thinking` member types, so the engine's
 // request and an adapter's request cannot drift apart on the three fields they share.
-import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, SystemPromptBlock, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
+import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, SystemPromptBlock, ToolChangeSet, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 // P6 fix wave (Ruling E-2): the two PURE continuity functions the switch point calls. Value imports
 // from the provider-runtime barrel, one direction (runtime -> provider-runtime), same as every adapter.
 import { WinterProviderResolutionError, buildPortableHandoff, classifySwitch } from "@yanlinglabs/winter-provider-runtime";
@@ -215,7 +215,21 @@ import {
   type ContextEntry,
   type EffortMarkerPlan,
   type SessionRequestLayout,
+  type ToolChangeRendering,
 } from "./context/request-layout.ts";
+import {
+  activeToolEpoch,
+  diffToolState,
+  epochChangeMessages,
+  epochToolsFor,
+  foldToolState,
+  TOOL_CHANGES_ATTACHMENT,
+  TOOL_EPOCH_ATTACHMENT,
+  type ToolChangeCaps,
+  type ToolChangeMechanism,
+  type ToolChangesAttachment,
+  type ToolEpochAttachment,
+} from "./context/tool-epoch.ts";
 import { computeGitStatus } from "./context/git-status.ts";
 import { renderSkillListingContent } from "./skills/listing.ts";
 import { getPluginAgents } from "./subagents/plugin-agents.ts";
@@ -420,6 +434,12 @@ export interface ProviderMessage {
   /** WS-23: a `system` marker's per-message effort change. Never set on another role. */
   outputConfig?: { effort: string };
   /**
+   * WS-23 (midconv): a `system` message's mid-conversation tool changes, built by the request layout from
+   * the tool epoch's `tool_changes` entries (context/tool-epoch.ts) -- never in the history itself. See
+   * provider-runtime's `ProviderMessageLike.toolChanges`.
+   */
+  toolChanges?: ToolChangeSet;
+  /**
    * WS-23 (claude's own transcript fields, `effort`/`perTurnEffort` on an assistant entry): the
    * TOP-LEVEL effort the request that produced this assistant message sent, and the level actually IN
    * FORCE for its turn. They differ only on a model with per-message effort, where the top-level value
@@ -537,6 +557,20 @@ function isPerMessageEffortRejection(err: unknown): boolean {
 }
 
 /**
+ * WS-23 (midconv): a provider 400 refusing a MID-CONVERSATION TOOL CHANGE -- its opt-in, its block or item
+ * types, or one of the documented tool-change errors. Anthropic: an unknown beta header, `Input tag
+ * 'tool_(addition|removal|definition)'` (a platform without the blocks), the documented
+ * `tool_reference_unresolved` / `tool_name_conflict` / `available_tools_limit_exceeded` codes, or any
+ * message naming the blocks (claude 2.1.282 classifies the same phrases before its one-time fallback).
+ * OpenAI: a message naming the `additional_tools` item or the `allowed_tools` choice. A false positive
+ * costs one retried request that rebuilds `tools`, never a wrong answer.
+ */
+function isToolChangeRejection(err: unknown): boolean {
+  if (!isProviderTurnError(err) || (err.status !== 400 && err.status !== 422)) return false;
+  return /mid-conversation-tool-changes|inline-tools|tool_addition|tool_removal|tool_definition|tool_reference_unresolved|tool_name_conflict|available_tools_limit_exceeded|additional_tools|allowed_tools/i.test(err instanceof Error ? err.message : "");
+}
+
+/**
  * WS-23: the session's system-prompt cache lifetime -- `RuntimeConfig.promptCacheTtl`, defaulted HERE
  * and nowhere else. `"5m"` is the vendor's own default and what claude 2.1.282 uses with an API key;
  * `"1h"` is the host's choice for sessions with long idle gaps (it is written at twice the input
@@ -579,6 +613,18 @@ export interface ModelWireFeatures {
   deferredToolLoading?: true;
   /** `midConversationSystem`: a reminder whose renderer opted in rides as a `role: "system"` message after the user turn it follows. */
   midConversationSystem?: true;
+  /**
+   * WS-23 (midconv): how a change to the tool list reaches this model without editing `tools` (the tool
+   * epoch, context/tool-epoch.ts): `"inline"` -- Anthropic by value and by reference
+   * (`inlineToolDefinitions`); `"reference"` -- Anthropic by reference only (`midConversationToolChanges`).
+   */
+  toolChanges?: "inline" | "reference";
+  /** WS-23 (midconv): OpenAI's client-executed `tool_search` stands in for Winter's ToolSearch (`clientToolSearch`). */
+  clientToolSearch?: true;
+  /** WS-23 (midconv): OpenAI's `additional_tools` input item adds or redefines a tool mid-conversation (`additionalToolsItem`). */
+  additionalToolsItem?: true;
+  /** WS-23 (midconv): OpenAI's `tool_choice: allowed_tools` restricts the callable set without editing `tools` (`allowedToolsChoice`). */
+  allowedToolsChoice?: true;
 }
 
 /** What `EngineOptions.describeModel` knows about a model: its display name, its verified effort vocabulary, and its wire features. */
@@ -642,6 +688,10 @@ export interface ProviderRequest {
   cacheDiagnostics?: { previousMessageId: string | null };
   /** WS-23: this conversation's cache-routing key (`promptCacheKeyFor`) -- the session id, plus the agent id for a subagent. */
   cacheKey?: string;
+  /** WS-23 (midconv): the callable subset of `tools` on this request (OpenAI `allowed_tools`); see `TurnRequest.allowedTools`. */
+  allowedTools?: string[];
+  /** WS-23 (midconv): the conversation carries mid-conversation tool changes -- the opt-in rides every request (`TurnRequest.toolChanges`). */
+  toolChanges?: true;
   /** The resolved model for THIS generation. Present once selection is wired; absent means "the provider's own configured default", which is what every pre-P6 double sees. */
   model?: string;
   effort?: TurnRequest["effort"];
@@ -679,6 +729,19 @@ export interface ProviderToolSpec {
    * loading (`ModelWireFeatures.deferredToolLoading`), so no other adapter ever receives one.
    */
   deferLoading?: true;
+  /** WS-23 (midconv): the MCP server group a deferred tool belongs to, for OpenAI's client tool search (`TurnRequest.tools[].namespace`). */
+  namespace?: string;
+  /** WS-23 (midconv): this is Winter's ToolSearch, rendered as OpenAI's native client `tool_search` (`TurnRequest.tools[].toolSearch`). */
+  toolSearch?: true;
+}
+
+/** WS-23 (midconv): one request's tool plan -- see the engine's `planToolsForRequest`. */
+export interface ToolPlan {
+  tools: ProviderToolSpec[];
+  allowedTools?: string[];
+  toolChanges?: ToolChangeRendering;
+  /** The vendor's tool-change opt-in rides this request (`ProviderRequest.toolChanges`). */
+  optIn?: true;
 }
 
 /**
@@ -2936,11 +2999,18 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const seeded = frozenEffortFromHistory(messages);
     if (seeded !== undefined) frozenEffort = { modelKey: providerIdentity?.modelKey ?? config.model, value: seeded.value };
   }
+  // WS-23 (midconv): the tool epoch's session state (context/tool-epoch.ts; `planToolsForRequest`).
+  // `toolChangesRejected` is sticky, like `perMessageEffortRejected`: the API refused a tool change, so
+  // every later request rebuilds `tools` (claude 2.1.282's own one-time fallback). `forceNewToolEpoch` is
+  // set by a compaction: the prefix is new anyway, so the next request freezes the list afresh.
+  let toolChangesRejected = false;
+  let forceNewToolEpoch = false;
+  let toolEpochRestartLogged = false;
   // WS-23: the last MAIN-LOOP response's id and the model it came from -- the next request's
   // `cacheDiagnostics.previousMessageId`. Cleared by a compaction (the history it fingerprinted is gone).
   let lastMainResponse: { id: string; modelKey: string | undefined } | undefined;
   // WS-23: the last main-loop request's system, index-0 context and tools, for compaction to reuse.
-  let lastMainRequestShape: { modelKey: string | undefined; system: { system: string; systemBlocks?: SystemPromptBlock[] }; userContextText: string | undefined; tools: ProviderToolSpec[] } | undefined;
+  let lastMainRequestShape: { modelKey: string | undefined; system: { system: string; systemBlocks?: SystemPromptBlock[] }; userContextText: string | undefined; tools: ProviderToolSpec[]; toolPlan?: Omit<ToolPlan, "tools"> } | undefined;
   const applyPendingEffort = (): void => {
     if (pendingEffort === undefined) return;
     liveEffort = pendingEffort.effort;
@@ -6510,12 +6580,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const shape = lastMainRequestShape;
     if (shape === undefined || shape.modelKey !== (currentProviderIdentity?.modelKey ?? currentModel)) return undefined;
     const plan = planEffort();
-    const outbound = buildRequestMessages(messages, shape.userContextText, { systemReminders: systemRemindersOnWire(), ...(plan.markers !== undefined ? { effort: plan.markers } : {}) });
+    const outbound = buildRequestMessages(messages, shape.userContextText, {
+      systemReminders: systemRemindersOnWire(),
+      ...(plan.markers !== undefined ? { effort: plan.markers } : {}),
+      // WS-23 (midconv): the tool changes the last main request carried, at the same positions.
+      ...(shape.toolPlan?.toolChanges !== undefined ? { toolChanges: shape.toolPlan.toolChanges } : {}),
+    });
     return {
       messages: outbound,
       ...(shape.system.system.length > 0 ? { system: shape.system.system } : {}),
       ...(shape.system.systemBlocks !== undefined && shape.system.systemBlocks.length > 0 ? { systemBlocks: shape.system.systemBlocks } : {}),
       ...(shape.tools.length > 0 ? { tools: shape.tools } : {}),
+      ...(shape.toolPlan?.allowedTools !== undefined ? { allowedTools: shape.toolPlan.allowedTools } : {}),
+      ...(shape.toolPlan?.optIn === true ? { toolChanges: true as const } : {}),
       ...(currentModel !== undefined ? { model: currentModel } : {}),
       ...(plan.topLevel !== undefined ? { effort: plan.topLevel } : {}),
       ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
@@ -6612,6 +6689,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     lastCompactionTokens = contextAccountant.contextTokens();
     // WS-23: the history the last fingerprint described is gone; the next request opts in afresh.
     lastMainResponse = undefined;
+    // WS-23 (midconv): and the tool list is frozen afresh -- a retained entry of the old epoch must not be
+    // taken for the new one's.
+    forceNewToolEpoch = true;
 
     // Fix round 1 (M3): `preserved_messages` on the FRAME, built from the uuids the store just
     // minted -- previously unreachable, because `recordCompactBoundary` returned `void`, so a host
@@ -6849,8 +6929,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // the index-0 context prepended, attachments reordered and consecutive user-role turns merged,
   // exactly as claude 0.3.250 lays out its requests. SDK 0.0.16 retires P5-F's re-anchoring: nothing
   // is attached to the last user message any more, so a mid-turn compaction has nothing to strand.
-  const requestMessages = (context: SessionContext, effort?: EffortMarkerPlan): ProviderMessage[] =>
-    buildRequestMessages(messages, context.userContextText, { systemReminders: systemRemindersOnWire(), ...(effort !== undefined ? { effort } : {}) });
+  const requestMessages = (context: SessionContext, effort?: EffortMarkerPlan, toolChanges?: ToolChangeRendering): ProviderMessage[] =>
+    buildRequestMessages(messages, context.userContextText, { systemReminders: systemRemindersOnWire(), ...(effort !== undefined ? { effort } : {}), ...(toolChanges !== undefined ? { toolChanges } : {}) });
   /** WS-23: whether opted-in reminders ride as mid-conversation `system` messages on the LIVE model. */
   const systemRemindersOnWire = (): boolean => currentModelDescription()?.wire?.midConversationSystem === true;
 
@@ -7223,6 +7303,99 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...[...advertisedPartition.eager, ...advertisedPartition.deferred].flatMap((d) => [d.advertisedName, d.canonicalName]),
     ]);
     return specs;
+  };
+
+  // --- WS-23 (midconv): the tool epoch ---------------------------------------------------------------
+  //
+  // `tools` is frozen per cache epoch and every later change rides the vendor's own mid-conversation
+  // mechanism, recorded as an additive transcript entry and replayed in place (context/tool-epoch.ts has
+  // the model). On a row with no mechanism -- or after the API refused one -- nothing here runs and the
+  // request carries today's live list, rebuilt every request.
+
+  /** The LIVE model's tool-change mechanism and what it can express, or `undefined` for today's rebuild. */
+  const toolChangeMechanism = (): { mechanism: ToolChangeMechanism; caps: ToolChangeCaps } | undefined => {
+    if (toolChangesRejected) return undefined;
+    const wire = currentModelDescription()?.wire;
+    if (wire?.toolChanges === "inline") return { mechanism: "anthropic-inline", caps: {} };
+    if (wire?.toolChanges === "reference") return { mechanism: "anthropic-reference", caps: {} };
+    if (wire?.additionalToolsItem === true || wire?.allowedToolsChoice === true) {
+      return { mechanism: "openai", caps: { additionalTools: wire.additionalToolsItem === true, allowedTools: wire.allowedToolsChoice === true } };
+    }
+    return undefined;
+  };
+
+  /** Appends one bookkeeping entry to the history and the transcript (an attachment, like every other). */
+  const appendToolBookkeeping = async (attachment: ToolEpochAttachment | ToolChangesAttachment): Promise<void> => {
+    const message = attachmentMessage(attachment);
+    if (message === undefined) return;
+    messages.push(message);
+    await recordAttachment(attachment);
+  };
+
+  /**
+   * This request's tool plan: the `tools` array to send (the epoch's declared list, never re-sorted), the
+   * change entries to render, the callable subset where the vendor restricts by choice, and whether the
+   * vendor's opt-in rides the request. Appends (and persists) a new epoch or change entry when needed.
+   */
+  const planToolsForRequest = async (): Promise<ToolPlan> => {
+    const live = providerToolSpecs();
+    const chosen = toolChangeMechanism();
+    if (chosen === undefined) return { tools: live };
+    const { mechanism, caps } = chosen;
+    const modelKey = currentProviderIdentity?.modelKey ?? currentModel;
+    const optIn = mechanism !== "openai" ? { optIn: true as const } : {};
+    // A byte-exact fork sends its parent's tools verbatim (`providerToolSpecs`) and replays the parent's
+    // change entries as they stand; it never starts or extends an epoch of its own.
+    if (exactRequestLayout !== undefined) {
+      const inherited = activeToolEpoch(messages, mechanism, modelKey);
+      return { tools: live, ...(inherited !== undefined ? { toolChanges: { render: new Set(epochChangeMessages(messages, inherited.index, mechanism)) } } : {}), ...optIn };
+    }
+    const startEpoch = async (from: ProviderToolSpec[]): Promise<{ index: number; epoch: ToolEpochAttachment }> => {
+      forceNewToolEpoch = false;
+      await appendToolBookkeeping({ type: TOOL_EPOCH_ATTACHMENT, mechanism, modelKey: modelKey ?? null, tools: epochToolsFor(from, mechanism) });
+      return activeToolEpoch(messages, mechanism, modelKey)!;
+    };
+    let active = forceNewToolEpoch ? undefined : activeToolEpoch(messages, mechanism, modelKey);
+    let current = live;
+    if (active === undefined) {
+      active = await startEpoch(live);
+      // Re-read: the new epoch retired the old one's references (`referencedToolNames`).
+      current = providerToolSpecs();
+    }
+    const referenced = (): Set<string> => referencedToolNames(messages);
+    let changes = epochChangeMessages(messages, active.index, mechanism);
+    let state = foldToolState(active.epoch, changes, referenced());
+    let diff = diffToolState(current, state, mechanism, caps);
+    if (diff.kind === "new-epoch") {
+      // The mechanism cannot say this (a reference-only row whose tool changed its definition, a row
+      // with no way to withdraw a tool, ...): today's rebuild, once, as the start of a new epoch.
+      if (!toolEpochRestartLogged) {
+        toolEpochRestartLogged = true;
+        console.error(`winter: the tool list changed in a way this model cannot take mid-conversation (${diff.reason}); session ${config.sessionId} re-sends its tool list, which restarts the prompt cache once`);
+      }
+      active = await startEpoch(current);
+      current = providerToolSpecs();
+      changes = [];
+      state = foldToolState(active.epoch, changes, referenced());
+      diff = diffToolState(current, state, mechanism, caps);
+    }
+    // A change follows a user or tool-result turn -- never a paused assistant turn (a `pause_turn`
+    // resend), which the vendor refuses; that request changes nothing and the next one catches up.
+    if (diff.kind === "change" && messages.at(-1)?.role !== "assistant") {
+      await appendToolBookkeeping({ type: TOOL_CHANGES_ATTACHMENT, mechanism, ...diff.change });
+      changes = epochChangeMessages(messages, active.index, mechanism);
+      // A deferred tool announced by reference is callable from here on: load it, so the dispatch's
+      // load-first check agrees with what the model was shown.
+      const announced = diff.change.add.filter((a) => a.type === "reference").map((a) => a.name);
+      if (announced.length > 0) {
+        const byAdvertised = new Map([...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => [d.advertisedName, d.canonicalName] as const));
+        loadedToolSet.load(announced.map((name) => byAdvertised.get(name) ?? name));
+      }
+      state = foldToolState(active.epoch, changes, referenced());
+    }
+    const tools = mechanism === "openai" ? [...state.declared, ...current.filter((t) => t.deferLoading === true)] : state.declared;
+    const allowedTools = diff.kind !== "new-epoch" ? diff.allowedTools : undefined;
+    return { tools, ...(allowedTools !== undefined ? { allowedTools } : {}), toolChanges: { render: new Set(changes) }, ...optIn };
   };
 
   /**
@@ -7888,11 +8061,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // WS-23: whether THIS generation carried per-message effort markers -- read by the catch's
       // beta-rejection fallback, which must never fire for a request that sent none.
       let sentPerMessageBeta = false;
+      // WS-23 (midconv): whether THIS generation carried a tool-change mechanism -- the tool-change
+      // fallback below must never fire for a request that sent none.
+      let sentToolChanges = false;
       try {
         // A mid-turn compaction cleared the session context; this rebuilds it (same envelope input).
         const context = await ensureSessionContext(assembled, envelopeInput);
         const effortPlan = planEffort();
-        const outboundMessages = requestMessages(context, effortPlan.markers);
+        // WS-23 (midconv): the tool plan FIRST -- it may append the epoch's entries to the history the
+        // outbound messages are built from.
+        const toolPlan = await planToolsForRequest();
+        const toolSpecs = toolPlan.tools;
+        sentToolChanges = toolPlan.optIn === true || toolPlan.allowedTools !== undefined || (toolPlan.toolChanges?.render.size ?? 0) > 0;
+        const outboundMessages = requestMessages(context, effortPlan.markers, toolPlan.toolChanges);
         generationEffort = effortPlan.stamp;
         // Fix round 1 (I1): every per-message request carries the leading marker, so the beta rides
         // every such request -- and the fallback keys on exactly that.
@@ -7900,10 +8081,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // P1 carry: the per-message cap, enforced BEFORE the request leaves the engine. Throws a
         // `ProviderTurnError`, so it lands on R6-F's result shape through the catch below.
         assertMessagesWithinCap(outboundMessages);
-        const toolSpecs = providerToolSpecs();
         const outboundSystem = requestSystem(assembled, context);
         // WS-23: what compaction's summary reuses (see `compactionPrefixRequest`).
-        lastMainRequestShape = { modelKey: currentProviderIdentity?.modelKey ?? currentModel, system: outboundSystem, userContextText: context.userContextText, tools: toolSpecs };
+        const { tools: _declared, ...toolPlanRest } = toolPlan;
+        lastMainRequestShape = { modelKey: currentProviderIdentity?.modelKey ?? currentModel, system: outboundSystem, userContextText: context.userContextText, tools: toolSpecs, toolPlan: toolPlanRest };
         // The layout a byte-exact fork (a later lane) will reuse: exactly what this request carries.
         recordSessionRequestLayout(config.sessionId, config.agentId, {
           ...(outboundSystem.system.length > 0 ? { system: outboundSystem.system } : {}),
@@ -7929,6 +8110,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // requests to a real provider (the second says "you have no tools", the first says
             // nothing), and a session with no tools is the shape every P1-P5 fixture uses.
             ...(toolSpecs.length > 0 ? { tools: toolSpecs } : {}),
+            // WS-23 (midconv): the tool epoch's per-request facts (see `planToolsForRequest`).
+            ...(toolPlan.allowedTools !== undefined ? { allowedTools: toolPlan.allowedTools } : {}),
+            ...(toolPlan.optIn === true ? { toolChanges: true as const } : {}),
             ...(currentModel !== undefined ? { model: currentModel } : {}),
             // WS-23: the PLANNED top-level value (frozen on a per-message-effort row), never
             // `config.effort` directly -- a `set_effort` moves the live level.
@@ -8035,6 +8219,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         if (sentPerMessageBeta && !perMessageEffortRejected && isPerMessageEffortRejection(err)) {
           perMessageEffortRejected = true;
           console.error(`winter: the provider refused per-message effort (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now changes effort at the top level, which restarts the prompt cache on each change`);
+          continue roundLoop;
+        }
+        // WS-23 (midconv): a mid-conversation tool change REFUSED (the opt-in, a block or item, or a
+        // documented tool-change error such as `tool_name_conflict`). Same shape as the effort fallback:
+        // a 400 is pre-first-byte, the round re-runs as a fresh request, and the session rebuilds `tools`
+        // for the rest of its life -- claude 2.1.282's own "declaring late tools in tools[]" fallback --
+        // saying so once. Sticky, so a second refusal surfaces like any other failure.
+        if (sentToolChanges && !toolChangesRejected && isToolChangeRejection(err)) {
+          toolChangesRejected = true;
+          console.error(`winter: the provider refused a mid-conversation tool change (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now re-sends its tool list on each change, which restarts the prompt cache`);
           continue roundLoop;
         }
         if (isProviderTurnError(err) && err.retryable === true && err.committed !== true && engageFallback()) continue roundLoop;

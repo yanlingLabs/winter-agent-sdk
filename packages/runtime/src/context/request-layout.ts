@@ -30,6 +30,7 @@
 // see exactly what claude's transcript holds.
 import type { ContentBlock, ProviderMessage, ProviderToolSpec } from "../engine.ts";
 import { isSystemRoleAttachment } from "./attachments.ts";
+import { isToolBookkeeping, isToolChangesMessage, toolChangeReferences, toolChangesWireMessage } from "./tool-epoch.ts";
 import type { SystemPromptBlock } from "@yanlinglabs/winter-provider-runtime";
 
 /** One userContext / systemContext entry, in the order it is rendered. */
@@ -208,7 +209,7 @@ function joinAttachmentBlocks(prev: ContentBlock[], next: ContentBlock[]): Conte
  * Never mutates `history`. Assistant messages pass through untouched (their own merge is the
  * adapters' business, as before).
  */
-export function buildRequestMessages(history: readonly ProviderMessage[], userContextText?: string, opts: { systemReminders?: boolean; effort?: EffortMarkerPlan } = {}): ProviderMessage[] {
+export function buildRequestMessages(history: readonly ProviderMessage[], userContextText?: string, opts: { systemReminders?: boolean; effort?: EffortMarkerPlan; toolChanges?: ToolChangeRendering } = {}): ProviderMessage[] {
   const withContext: ProviderMessage[] = userContextText !== undefined ? [{ role: "user", content: userContextText, isMeta: true }, ...history] : [...history];
   // WS-23: on a model that takes mid-conversation system messages, a reminder whose renderer opted in
   // rides as `role: "system"` (operator-level, and never merged into the user's own turn). The vendor's
@@ -218,12 +219,26 @@ export function buildRequestMessages(history: readonly ProviderMessage[], userCo
   // cannot (a compaction's reminder after a retained assistant reply, or an interrupted turn with a
   // second user message behind it) falls back to today's user-text form, deterministically.
   const eligible = (message: ProviderMessage): boolean => opts.systemReminders === true && message.meta !== undefined && isSystemRoleAttachment(message.meta.attachment);
-  const reordered = reorderAttachments(withContext, eligible);
+  // WS-23 (midconv): the tool epoch's bookkeeping entries keep their HISTORY position too -- a change
+  // is placed right after the user or tool-result turn it follows, before the reply (context/tool-epoch.ts).
+  const reordered = reorderAttachments(withContext, (message) => eligible(message) || isToolBookkeeping(message));
   const ordered = opts.effort !== undefined ? withEffortMarkers(reordered, opts.effort) : reordered;
   const out: ProviderMessage[] = [];
   for (let index = 0; index < ordered.length; index++) {
     const message = ordered[index]!;
     const prev = out[out.length - 1];
+    // WS-23 (midconv): a tool-change entry of the ACTIVE epoch becomes the vendor's tool-change message
+    // (an empty-content `system` message the adapter renders); every other bookkeeping entry -- the
+    // epoch itself, a change from an earlier epoch, or any of them on a model with no mechanism -- is
+    // dropped. Before the merge, so neither ever joins a user turn. Only after a user-role turn: both
+    // vendors place a change there, and the engine never appends one anywhere else.
+    if (isToolBookkeeping(message)) {
+      if (isToolChangesMessage(message) && opts.toolChanges?.render.has(message) === true && prev !== undefined && (isUserRole(prev) || (prev.role === "system" && prev.outputConfig === undefined))) {
+        const wire = toolChangesWireMessage(message);
+        if (wire !== undefined) out.push(wire);
+      }
+      continue;
+    }
     // A text-carrying system message may follow another one with content; never an effort-only
     // marker ("adding a text-carrying message next to an effort-only one makes the whole group follow
     // the content rule").
@@ -276,6 +291,14 @@ export function buildRequestMessages(history: readonly ProviderMessage[], userCo
 // value -- the loopback capture shows both. After-the-user placement would apply the level from the
 // FOLLOWING user turn (a tool-result turn), not to the reply the user is waiting for, and moving the
 // top-level value restarts the cache; Winter follows the vendor's documented placement instead.
+
+/**
+ * WS-23 (midconv): which `tool_changes` entries this request renders -- the active epoch's, by identity
+ * (the engine's own history objects). Absent: every bookkeeping entry is dropped (today's layout).
+ */
+export interface ToolChangeRendering {
+  render: ReadonlySet<ProviderMessage>;
+}
 
 /** WS-23: the per-message effort plan `buildRequestMessages` lays out -- see `withEffortMarkers`. */
 export interface EffortMarkerPlan {
@@ -344,7 +367,10 @@ export function withEffortMarkers(ordered: readonly ProviderMessage[], plan: Eff
  * `defer_loading: true`; a loaded tool outside it would be invisible to the model and is sent plainly.
  */
 export function referencedToolNames(history: readonly ProviderMessage[]): Set<string> {
-  const names = new Set<string>();
+  // WS-23 (midconv): plus every deferred tool a tool-change entry of the current epoch announced by
+  // reference -- it is surfaced on the wire the same way, and a resumed session re-seeds its loaded set
+  // from it. An earlier epoch's entries are not replayed, so they surface nothing.
+  const names = new Set<string>(toolChangeReferences(history));
   for (const message of history) {
     if (typeof message.content === "string") continue;
     for (const block of message.content) {
@@ -372,6 +398,8 @@ function systemMayPrecede(ordered: readonly ProviderMessage[], index: number): b
   for (let j = index + 1; j < ordered.length; j++) {
     const next = ordered[j]!;
     if (next.meta !== undefined && isSystemRoleAttachment(next.meta.attachment)) continue;
+    // WS-23 (midconv): a tool-change entry is itself a system message between the turn and its reply.
+    if (isToolBookkeeping(next)) continue;
     return next.role === "assistant";
   }
   return true;

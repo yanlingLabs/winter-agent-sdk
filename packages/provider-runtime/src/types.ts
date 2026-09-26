@@ -3,7 +3,9 @@
 // FROZEN as of P6 T2's merge (R6-12): lanes ADD files under `adapters/<family>/`, never edit this
 // one. A lane that needs a change here stops with NEEDS_CONTEXT. WS-23's anthropic-cache lane was
 // assigned this file explicitly (the `system` message role, `outputConfig`, the cache fields on
-// `TurnRequest` and the richer `usage` event); every change it made is ADDITIVE and optional.
+// `TurnRequest` and the richer `usage` event); every change it made is ADDITIVE and optional. So was
+// WS-23's midconv lane (a `system` message's `toolChanges`, a tool's `namespace`/`toolSearch`, and
+// `TurnRequest.allowedTools`/`toolChanges`), on the same terms: additive and optional.
 //
 // STRUCTURAL RULE (R6-4): this package NEVER imports `winter-agent-runtime`. The engine's
 // `ProviderTurn`/`ProviderMessage`/`ContentBlock` stay defined in `engine.ts`, the runtime-side
@@ -155,6 +157,20 @@ export interface ProviderMessageLike {
    * a `system` message, and only for a row whose `reasoning.perMessageEffort` evidence documents it.
    */
   outputConfig?: { effort: string };
+  /**
+   * WS-23 (midconv): a `system` message's MID-CONVERSATION TOOL CHANGES -- what the model may call
+   * changes from this point on, without editing `tools` (the cached prefix). The engine produces one
+   * only for a row whose catalog evidence documents a mechanism, and each adapter renders its own
+   * vendor form:
+   *   - Anthropic: `tool_addition` / `tool_removal` blocks in a `role: "system"` message
+   *     (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages) --
+   *     `reference` names a tool `tools` declares (`defer_loading: true`, or one withdrawn earlier),
+   *     `definition` defines one by value (a new tool, or a new definition under the same name);
+   *   - OpenAI Responses: an `additional_tools` developer item carrying the `definition`s
+   *     (https://developers.openai.com/api/docs/guides/tools-tool-search).
+   * Never carries text; never set on another role.
+   */
+  toolChanges?: ToolChangeSet;
   uuid?: string;
   origin?: MessageOrigin;
   nativeState?: ProviderNativeState;
@@ -168,6 +184,13 @@ export interface ProviderMessageLike {
   meta?: { attachment: { type: string; [k: string]: unknown } };
   /** 0.0.16 request layout: the per-request userContext message at index 0 (never persisted). Bookkeeping only. */
   isMeta?: true;
+}
+
+/** WS-23 (midconv): one mid-conversation tool change point -- see `ProviderMessageLike.toolChanges`. */
+export interface ToolChangeSet {
+  /** Withdrawn from this point on, by name. Listed before the additions (claude 2.1.282's order). */
+  remove: string[];
+  add: Array<{ type: "reference"; name: string } | { type: "definition"; name: string; description: string; inputSchema: Record<string, unknown> }>;
 }
 
 /**
@@ -199,7 +222,15 @@ export interface TurnRequest {
    * `defer_loading: true`). The engine sets it only for a row whose catalog evidence documents
    * deferred tool loading, so no other family's adapter ever receives one.
    */
-  tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown>; deferLoading?: true }>;
+  //
+  // WS-23 (midconv): `namespace` groups a deferred tool for OpenAI's client tool search (Winter's MCP
+  // tools, by server: `mcp__<server>`); the name stays the full Winter name and an adapter that
+  // namespaces maps the vendor's `{namespace, name}` back to it by lookup. `toolSearch` marks the ONE
+  // tool that is Winter's ToolSearch, which an adapter with a native client tool search (OpenAI's
+  // `{"type": "tool_search", "execution": "client"}`) renders as that instead of a function. Both are
+  // set only for a row whose catalog evidence documents client tool search; every other adapter
+  // ignores them.
+  tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown>; deferLoading?: true; namespace?: string; toolSearch?: true }>;
   toolChoice?: { type: "auto" } | { type: "any" } | { type: "tool"; name: string };
   /**
    * KEEPS `number`, unlike `Options.effort` (R6-E): a child carries numeric effort
@@ -235,6 +266,21 @@ export interface TurnRequest {
    * takes one.
    */
   cacheKey?: string;
+  /**
+   * WS-23 (midconv): the names the model may call on THIS request when that is a strict subset of
+   * `tools` -- OpenAI's `tool_choice: {"type": "allowed_tools", …}`, which restricts the callable set
+   * "but not modify the list of tools you pass in, so you can maximize savings from prompt caching"
+   * (https://developers.openai.com/api/docs/guides/function-calling). Set only for a row whose
+   * `allowedToolsChoice` evidence documents it; absent means every declared tool is callable.
+   */
+  allowedTools?: string[];
+  /**
+   * WS-23 (midconv): this conversation carries (or may carry) mid-conversation tool changes, so the
+   * vendor's opt-in rides EVERY request of it, not only the ones whose history holds a change -- the
+   * set of active beta headers is itself part of what the cache compares (the same reasoning as the
+   * leading effort marker). Anthropic only; every other adapter ignores it.
+   */
+  toolChanges?: true;
 }
 
 /**

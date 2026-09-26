@@ -704,6 +704,9 @@ export function describeCatalogModel(catalog: WinterCatalog, model: string, prov
     ...(row.reasoning?.perMessageEffort !== undefined ? { perMessageEffort: true as const } : {}),
     ...(row.deferredToolLoading?.value === true ? { deferredToolLoading: true as const } : {}),
     ...(row.midConversationSystem?.value === true ? { midConversationSystem: true as const } : {}),
+    // WS-23 (midconv): the tool epoch's mechanism. By value subsumes by reference (the inline beta "covers
+    // all reference-based changes"), so a row with both reads as inline.
+    ...(row.inlineToolDefinitions !== undefined ? { toolChanges: "inline" as const } : row.midConversationToolChanges !== undefined ? { toolChanges: "reference" as const } : {}),
   };
   const description: ModelDescription = {
     ...(row.displayName.length > 0 ? { displayName: row.displayName } : {}),

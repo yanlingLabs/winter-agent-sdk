@@ -275,6 +275,24 @@ export interface WinterModelDescriptor {
    * the only meaningful value; absent sends no key.
    */
   promptCacheKey?: CapabilityEvidence<boolean>;
+  /**
+   * WS-23 (midconv): the model takes MID-CONVERSATION TOOL CHANGES BY REFERENCE -- a `role: "system"`
+   * message carrying `tool_addition` / `tool_removal` blocks that name a tool `tools` declares, so what
+   * the model may call changes without editing `tools` and the cached prefix survives
+   * (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages). `beta`
+   * is the header value, a closed vocabulary (`CATALOG_VOCABULARIES.midConversationToolChangeBetas`).
+   * Documented for Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5 on
+   * the Claude API, Amazon Bedrock and Google Cloud; "Not available on Claude Sonnet 5".
+   */
+  midConversationToolChanges?: CapabilityEvidence<{ beta: "mid-conversation-tool-changes-2026-07-01" }>;
+  /**
+   * WS-23 (midconv): the model also takes a tool DEFINED BY VALUE mid-conversation -- a `tool_addition`
+   * whose `tool` is a `tool_definition` -- for a tool unknown at the first request, or a new definition
+   * under an existing name ("The new definition replaces the earlier one from that position onward").
+   * The header covers the reference changes too. Claude API only (same page). `beta` is a closed
+   * vocabulary (`CATALOG_VOCABULARIES.inlineToolDefinitionBetas`).
+   */
+  inlineToolDefinitions?: CapabilityEvidence<{ beta: "inline-tools-2026-09-15" }>;
   reasoning?: ReasoningCapabilities;
   pricing?: CapabilityEvidence<ModelPricing>;
   /** R6-14: set only after the safety corpus passes live. A worker with no configured classifier route serves only when this is true AND `structuredOutput.confidence === "verified"`. */

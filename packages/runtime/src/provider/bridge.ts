@@ -206,6 +206,9 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
         ...(input.cacheTtl !== undefined ? { cacheTtl: input.cacheTtl } : {}),
         ...(input.cacheDiagnostics !== undefined ? { cacheDiagnostics: input.cacheDiagnostics } : {}),
         ...(input.cacheKey !== undefined ? { cacheKey: input.cacheKey } : {}),
+        // WS-23 (midconv): the tool epoch's per-request facts, verbatim (the adapter owns the wire form).
+        ...(input.allowedTools !== undefined ? { allowedTools: input.allowedTools } : {}),
+        ...(input.toolChanges !== undefined ? { toolChanges: input.toolChanges } : {}),
         ...(input.signal !== undefined ? { signal: input.signal } : {}),
         // Ask for a readable SUMMARY only where the model's own evidence says HOW to ask.
         //

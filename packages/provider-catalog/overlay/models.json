@@ -408,6 +408,15 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
       }
     },
     {
@@ -718,6 +727,15 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
       }
     },
     {
@@ -1355,6 +1373,15 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
       }
     },
     {
@@ -7017,6 +7044,15 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
       }
     },
     {
@@ -7842,6 +7878,15 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
       }
     },
     {
@@ -8035,6 +8080,15 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
       }
     },
     {
@@ -8776,6 +8830,15 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
       }
     },
     {
@@ -8969,6 +9032,15 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
       }
     },
     {
@@ -48605,6 +48677,15 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
       }
     },
     {
@@ -48807,6 +48888,15 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
       }
     },
     {
