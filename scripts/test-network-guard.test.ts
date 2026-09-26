@@ -57,6 +57,45 @@ describe("the test network guard closes the doors review r1 found open", () => {
   });
 });
 
+// WS-24: shell children, and every child whose environment is a spread of `process.env` -- the proxy used to
+// reach none of them on Bun 1.3 (its proxy variables are non-enumerable, so a spread dropped them).
+describe("children inherit the block: shell doors, spread environments, no-env named imports (WS-24)", () => {
+  test.skipIf(Bun.which("curl") === null)("a SHELL child (exec) reaching a non-loopback host goes to the recording proxy and fails the test", async () => {
+    const r = await nested(`const { exec } = await import("node:child_process"); await new Promise((resolve) => exec("curl -s -m 5 http://192.0.2.1/", () => resolve(undefined)));`);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toMatch(/proxy[^\n]*192\.0\.2\.1/);
+  });
+
+  test("execSync, a named-import spawnSync with no env, and a spread environment all carry the proxy", async () => {
+    const r = await nested(`
+      const cp = await import("node:child_process");
+      const { execSync, spawnSync } = cp;
+      const seen = {
+        execSync: execSync("env").toString(),
+        namedNoEnv: spawnSync("/usr/bin/env").stdout.toString(),
+        spread: cp.default.spawnSync("/usr/bin/env", { env: { ...process.env, EXTRA: "1" } }).stdout.toString(),
+      };
+      for (const [door, out] of Object.entries(seen)) if (!out.includes("HTTPS_PROXY=http://127.0.0.1:")) throw new Error(door + " ran without the proxy");
+      if (!Object.keys(process.env).includes("HTTPS_PROXY")) throw new Error("the proxy variables are still hidden from a spread");`);
+    expect(r.out).not.toContain("ran without the proxy");
+    expect(r.out).not.toContain("still hidden");
+    expect(r.code).toBe(0);
+  });
+
+  test("inside withNpmRegistryAccess, the registry reaches a shell child's NO_PROXY too (the write-through survives)", async () => {
+    const r = await nested(`
+      const { withNpmRegistryAccess } = await import(${JSON.stringify(REGISTRY)});
+      const { execSync } = await import("node:child_process");
+      const noProxyOf = (env) => env.split("\\n").find((l) => l.startsWith("NO_PROXY=")) ?? "";
+      const inside = noProxyOf(await withNpmRegistryAccess(async () => execSync("env").toString()));
+      const after = noProxyOf(execSync("env").toString());
+      if (!inside.includes("registry.npmjs.org")) throw new Error("the hole never reached the shell child: " + inside);
+      if (after.includes("registry.npmjs.org")) throw new Error("the hole outlived its call: " + after);`);
+    expect(r.out).not.toContain("the hole");
+    expect(r.code).toBe(0);
+  });
+});
+
 // The release CI fix: the one hole (`test-network-registry.ts`). Every case below is REFUSED before a
 // byte leaves -- the positive path (a real anonymous read of the registry) is what the network legs
 // themselves exercise (`smoke-installed.test.ts`, `compile-fixtures.test.ts`), under CI's flag.
