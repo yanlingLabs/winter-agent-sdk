@@ -193,6 +193,8 @@ export type {
   MaterialKind,
   RenderReport,
   RenderedDecoration,
+  StickyDecoration,
+  StickyDecorations,
   WinterHistoryRenderer,
   LossClass,
   SwitchClassification,

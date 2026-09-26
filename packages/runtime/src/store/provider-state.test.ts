@@ -737,3 +737,18 @@ describe("WS-23: a large sidecar is read in bounded memory", () => {
       expect(stats.peakRetained).toBeLessThanOrEqual(2 * 101 + 1);
     }));
 });
+
+// Review r1, M-1: the sticky decoration decisions fold per TARGET model.
+describe("WS-23: the `decoration` kind", () => {
+  test("folds per target model key: a decoration verbatim, or null for 'none was sent'", () => {
+    const base = { sessionId: "sess", anchorUuid: "a1", itemIndex: 0, kind: "decoration" as const };
+    const records = [
+      toProviderStateRecord({ ...base, provider: "openai", model: "openai/gpt-6-sol", family: "openai", payload: { text: "<recovered_reasoning …>x</recovered_reasoning>", door: "tag" } }),
+      toProviderStateRecord({ ...base, provider: "deepseek", model: "deepseek/deepseek-v4-pro", family: "openai", payload: { dropped: true } }),
+    ];
+    expect(buildContinuationChain(records, new Set(["a1"])).get("a1")!.decorations).toEqual({
+      "openai/gpt-6-sol": { text: "<recovered_reasoning …>x</recovered_reasoning>", door: "tag" },
+      "deepseek/deepseek-v4-pro": null,
+    });
+  });
+});

@@ -131,6 +131,20 @@ export interface HistoryRendererOptions {
   allowExposedForwarding?: boolean;
   /** Called with every render's report. The frozen seam returns only messages; this is the side channel that keeps truncation observable through it. */
   onReport?: (report: RenderReport) => void;
+  /** Review r1, M-1: the decoration decisions already made per (message, target model) -- see pass 2. Absent: decided afresh every render. */
+  stickyDecorations?: StickyDecorations;
+}
+
+/** Review r1, M-1: what a target model was sent for one message's reasoning -- the decoration verbatim, or `null` for none. */
+export interface StickyDecoration {
+  text: string;
+  door: DecorationDoor;
+}
+
+/** The memory of those decisions, keyed by the decorated message's anchor and the TARGET model. */
+export interface StickyDecorations {
+  get(anchorUuid: string, target: { providerId: string; modelKey: string }): StickyDecoration | null | undefined;
+  set(anchorUuid: string, target: { providerId: string; modelKey: string; family: string }, decision: StickyDecoration | null): void;
 }
 
 /**
@@ -305,10 +319,35 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
     // PASS 2: spend the decoration budget NEWEST FIRST. When it runs out the OLDEST material is
     // dropped rather than every decoration being shrunk to uselessness -- §9.6's ordering applied at
     // the message level, and, like every other loss here, reported rather than silent.
+    //
+    // Review r1, M-1: STICKY PER TARGET MODEL. What this target was already sent for a message -- a
+    // decoration's exact text, or that it got none -- is what it is sent again, so a history that grows
+    // (another model's stint appended, a back-and-forth switch) never moves bytes INSIDE a prefix the
+    // target has cached. Earlier decisions are charged against the budget first; only new messages are
+    // decided newest-first from what remains, and each new decision is remembered (the engine keeps them
+    // as layer-2 `decoration` records, keyed by the TARGET model).
+    const sticky = options.stickyDecorations !== undefined && target.providerId !== undefined && target.modelKey !== undefined ? { memory: options.stickyDecorations, target: { providerId: target.providerId, modelKey: target.modelKey, family: target.family } } : undefined;
+    const decided = (plan: (typeof plans)[number]): StickyDecoration | null | undefined => (sticky !== undefined && plan.anchorUuid !== undefined ? sticky.memory.get(plan.anchorUuid, sticky.target) : undefined);
     let remaining = options.decorationCharBudget;
+    if (remaining !== undefined) for (const plan of plans) remaining = Math.max(0, remaining - (decided(plan)?.text.length ?? 0));
     const door = doorFor(target);
     for (const plan of [...plans].reverse()) {
       const source = { providerId: plan.source.providerId, modelKey: plan.source.modelKey };
+      const earlier = decided(plan);
+      if (earlier === null) {
+        report.budgetDropped++;
+        report.truncated = true;
+        continue;
+      }
+      if (earlier !== undefined) {
+        if (earlier.door === "thinking-channel") report.thinkingChannelDecorations++;
+        report.decorations.push({ ...(plan.anchorUuid !== undefined ? { anchorUuid: plan.anchorUuid } : {}), source, kind: plan.material.kind, door: earlier.door, truncated: false });
+        out[plan.index] = { ...out[plan.index]!, decoration: { text: earlier.text, door: earlier.door } } as unknown as M;
+        continue;
+      }
+      const remember = (decision: StickyDecoration | null): void => {
+        if (sticky !== undefined && plan.anchorUuid !== undefined) sticky.memory.set(plan.anchorUuid, sticky.target, decision);
+      };
       const perDecoration = budgetFor(options.maxDecorationChars, remaining);
       // A budget that cannot hold the wrapper plus a usable body buys nothing: sending a delimiter
       // around three characters spends context and carries no meaning. Dropped, counted, and the
@@ -316,6 +355,7 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
       if (perDecoration !== undefined && perDecoration < decorationOverhead(source, door, plan.material.kind) + MIN_DECORATION_BODY_CHARS) {
         report.budgetDropped++;
         report.truncated = true;
+        remember(null);
         continue;
       }
       const decoration: Decoration = buildDecoration({
@@ -340,6 +380,7 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
       // the whole render, it happens at most once per index (one plan per message), and pass 1 has
       // already dropped any decoration the input carried.
       out[plan.index] = { ...current, decoration: { text: decoration.text, door: decoration.door } } as unknown as M;
+      remember({ text: decoration.text, door: decoration.door });
     }
 
     // WS-23 (reasoning-state, decisions 8 and 9): what the target cannot represent becomes TEXT, never a

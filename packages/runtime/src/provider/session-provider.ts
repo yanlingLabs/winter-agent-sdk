@@ -37,7 +37,7 @@
 import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import type { CredentialRef, ProviderConnectionConfig, ProviderSelection, RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
-import type { CredentialStore, ModelInfo, ProviderContext, ProviderRegistry, ResolvedModel } from "@yanlinglabs/winter-provider-runtime";
+import type { CredentialStore, ModelInfo, ProviderContext, ProviderRegistry, ResolvedModel, StickyDecoration, StickyDecorations } from "@yanlinglabs/winter-provider-runtime";
 import {
   ANTHROPIC_CONSOLE_ACCOUNT_ID,
   CredentialResolutionError,
@@ -64,7 +64,7 @@ import { testProviderForNamespace } from "./mock.ts";
 import { createProviderContext, redactCredentialRef, resolveSessionProvider, type SelectionDeps, type SessionProviderSelection, type WinterProviderIdentity } from "./selection.ts";
 import { createModelClassifier, selectClassifierRoute, type ClassifierRoute } from "./classifier/model-classifier.ts";
 import type { ClassifierInterface } from "../permissions/auto/engine.ts";
-import { buildContinuationChain, type ContinuationChain, type ProviderStateRecord } from "../store/provider-state.ts";
+import { buildContinuationChain, type ContinuationChain, type ProviderStateRecord, type ProviderStateRecordInput } from "../store/provider-state.ts";
 import type { ModelSwitchResolution, PricedUsage, Provider, ProviderRequest, ProviderTurn, ProviderUsage, ResolveModelSwitch, UsageRowFacts } from "../engine.ts";
 import { computeActiveSlotSet, resolveSlotToProvider, type SlotProviderResolution } from "./slots.ts";
 import { resolveAdvisorRoute, selectAdvisorCandidate } from "./advisor-route.ts";
@@ -156,6 +156,11 @@ export interface SessionProviderOptions {
    * be the empty one.
    */
   chain?: () => ContinuationChain;
+  /**
+   * Review r1, M-1: where the renderer's sticky decoration decisions persist (the session's own
+   * provider-state sidecar, `SessionPersistence.recordProviderState`). Absent: they hold for this run only.
+   */
+  recordProviderState?: (record: ProviderStateRecordInput) => void | Promise<void>;
   /** `ProviderContext.log` — provider/model identifiers and BYTE COUNTS only, never content. Defaults to a no-op. */
   log?: ProviderContext["log"];
   /**
@@ -588,8 +593,28 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   // as a `<recovered_reasoning>` decoration -- BOUNDED, so a long cross-family history cannot spend the
   // target's window on quoted reasoning. The renderer spends the budget NEWEST FIRST and drops the
   // oldest material once it runs out (the reasoning closest to the current work is the useful part).
-  const renderer: HistoryRenderer = createHistoryRenderer(registry, { maxDecorationChars: MAX_DECORATION_CHARS, decorationCharBudget: DECORATION_CHAR_BUDGET });
   const chain = opts.chain ?? ((): ContinuationChain => new Map());
+  // Review r1, M-1: the decoration decisions, sticky per (message, TARGET model) -- seeded from the resumed
+  // chain's `decoration` records, and every new one kept as such a record when the session persists.
+  const stickyDecisions = new Map<string, StickyDecoration | null>();
+  const stickyDecorations: StickyDecorations = {
+    get(anchorUuid, target) {
+      const key = `${anchorUuid}\u0000${target.modelKey}`;
+      if (stickyDecisions.has(key)) return stickyDecisions.get(key);
+      const resumed = chain().get(anchorUuid)?.decorations?.[target.modelKey];
+      return resumed;
+    },
+    set(anchorUuid, target, decision) {
+      stickyDecisions.set(`${anchorUuid}\u0000${target.modelKey}`, decision);
+      if (opts.recordProviderState === undefined) return;
+      void Promise.resolve(
+        opts.recordProviderState({ sessionId: config.sessionId, anchorUuid, provider: target.providerId, model: target.modelKey, family: target.family, itemIndex: 0, kind: "decoration", payload: decision === null ? { dropped: true } : { text: decision.text, door: decision.door } }),
+      ).catch(() => {
+        /* auxiliary: the in-memory decision holds for this run; a resume decides afresh */
+      });
+    },
+  };
+  const renderer: HistoryRenderer = createHistoryRenderer(registry, { maxDecorationChars: MAX_DECORATION_CHARS, decorationCharBudget: DECORATION_CHAR_BUDGET, stickyDecorations });
 
   // THE SESSION'S PROVIDER, AS A STATE (fix wave round 2, R-E1). Three states, and the difference
   // between the last two is a credential boundary:

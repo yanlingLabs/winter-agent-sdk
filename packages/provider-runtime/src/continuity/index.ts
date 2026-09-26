@@ -15,7 +15,7 @@ export { createEndpointResolver, endpointFromOrigin, readableStateOf, sameDomain
 export type { ContinuityEndpoint, DomainFacts, ReadableState } from "./domains.ts";
 
 export { applyDecorationToContent, createHistoryRenderer, isServerToolBlockType, stripOpaque } from "./renderer.ts";
-export type { ContinuationChainLike, ContinuationLinkLike, HistoryRendererOptions, HistoryTarget, MaterialKind, RenderReport, RenderedDecoration, WinterHistoryRenderer } from "./renderer.ts";
+export type { ContinuationChainLike, ContinuationLinkLike, HistoryRendererOptions, HistoryTarget, MaterialKind, RenderReport, RenderedDecoration, StickyDecoration, StickyDecorations, WinterHistoryRenderer } from "./renderer.ts";
 
 // WS-23 (reasoning-state): Anthropic thinking carried in the sidecar, and put back in place on the wire.
 export {

@@ -27,14 +27,23 @@ function claudeTurn(i: number, thinking: string): ProviderMessage {
 }
 
 async function decorationsSent(history: ProviderMessage[]): Promise<string[]> {
+  return (await decorationRounds(history)).at(-1)!;
+}
+
+/** One session's wiring rendering each history in turn (the same renderer, so its sticky decisions carry), the decorations of each request. */
+async function decorationRounds(...histories: ProviderMessage[][]): Promise<string[][]> {
   const fake: ResponsesFake = await startResponsesFake(() => ({ items: [{ type: "text", text: "ok" }] }));
   cleanups.push(() => fake.close());
   const catalog = fakeResponsesCatalog("openai", fake.url, [TARGET]);
   const config = { sessionId: "s-cap", cwd: "/winter-fixture", model: TARGET, provider: { providerId: "openai", authRef: { kind: "inline", value: "fixture" }, connection: { baseUrl: fake.url, local: true } } } as unknown as RuntimeConfig;
   const wiring = buildSessionProvider({ config, env: {}, catalog, credentials: createMemoryCredentialStore() });
-  await wiring.provider.generate({ model: TARGET, messages: history });
-  expect(fake.requests).toHaveLength(1);
-  const raw = fake.requests[0]!.raw;
+  for (const history of histories) await wiring.provider.generate({ model: TARGET, messages: history });
+  expect(fake.requests).toHaveLength(histories.length);
+  return fake.requests.map((request) => decorationsIn(request));
+}
+
+function decorationsIn(request: ResponsesFake["requests"][number]): string[] {
+  const raw = request.raw;
   expect(raw).not.toContain("SIG-");
   // Every string in the body, walked; each decoration is matched out of the string that carries it.
   const strings: string[] = [];
@@ -43,7 +52,7 @@ async function decorationsSent(history: ProviderMessage[]): Promise<string[]> {
     else if (Array.isArray(value)) value.forEach(walk);
     else if (typeof value === "object" && value !== null) Object.values(value).forEach(walk);
   };
-  walk(fake.requests[0]!.body);
+  walk(request.body);
   const pattern = new RegExp(`<${RECOVERED_REASONING_TAG}[^>]*>[\\s\\S]*?</${RECOVERED_REASONING_TAG}>`, "g");
   return strings.flatMap((text) => [...text.matchAll(pattern)].map((m) => m[0]));
 }
@@ -69,5 +78,17 @@ describe("the production renderer's decoration caps (WS-23 decision 2)", () => {
     const decorations = await decorationsSent([{ role: "user", content: "q" }, claudeTurn(0, "brief reasoning"), { role: "user", content: "now you" }]);
     expect(decorations).toHaveLength(1);
     expect(decorations[0]).toContain("brief reasoning");
+  });
+});
+
+describe("review r1, M-1: the decoration choice is sticky per target model", () => {
+  test("a history that grows past the budget never changes what the target was already sent", async () => {
+    const stint = (from: number, n: number): ProviderMessage[] => Array.from({ length: n }, (_, k) => [{ role: "user" as const, content: `q ${from + k}` }, claudeTurn(from + k, `thought-${from + k} `.repeat(1_500))]).flat();
+    const first = [...stint(0, 4), { role: "user" as const, content: "gpt, your turn" }];
+    const second = [...first, { role: "assistant" as const, content: "gpt answer" }, ...stint(4, 8), { role: "user" as const, content: "gpt again" }];
+    const [before, after] = await decorationRounds(first, second);
+    // Every decoration the first request carried is carried again, byte for byte, in the same order.
+    expect(after!.slice(0, before!.length)).toEqual(before!);
+    expect(after!.reduce((n, d) => n + d.length, 0)).toBeLessThanOrEqual(DECORATION_CHAR_BUDGET);
   });
 });
