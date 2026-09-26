@@ -35,6 +35,7 @@ const UPDATE = process.env["WINTER_UPDATE_REASONING_GOLDEN"] === "1";
 /** The endpoint's answers, keyed by the user turn the request belongs to and whether a tool result is already in it. */
 function answer(body: Record<string, unknown>): FakeResponse {
   const text = JSON.stringify(body["messages"]);
+  if (text.includes("turn four")) return { blocks: [{ type: "thinking", thinking: "fourth thoughts", signature: "sig-d" }, { type: "text", text: "done four" }], stopReason: "end_turn" };
   if (text.includes("turn three")) return { blocks: [{ type: "thinking", thinking: "third thoughts", signature: "sig-c" }, { type: "text", text: "done three" }], stopReason: "end_turn" };
   if (text.includes("turn two")) return { blocks: [{ type: "text", text: "plain two" }], stopReason: "end_turn" };
   if (text.includes("toolu_glob")) {
@@ -240,5 +241,16 @@ describe("Anthropic reasoning moves to the sidecar and the wire does not move (W
     expect(normalizedMessages(fx, fx.fake.requests[0]!.body)).toEqual(golden.resumed);
     // Read in place: the old entries are untouched (new turns only append after them).
     expect(readFileSync(join(projectDir, "reasoning-old.jsonl"), "utf8").startsWith(transcriptBefore)).toBe(true);
+
+    // THE MIXED TRANSCRIPT: its first turns carry thinking inline (written before the move), turn three's
+    // rides the sidecar. Resumed once more, every block goes back in place -- inline where it was inline,
+    // spliced where it was moved -- and the previous request is a byte prefix of the next.
+    await runSession(fx, "reasoning-old-resumed-again", ["turn four"], "reasoning-old");
+    expect(fx.fake.requests).toHaveLength(2);
+    const [three, four] = fx.fake.requests.map((r) => r.body["messages"] as unknown[]);
+    const wire = JSON.stringify(four);
+    for (const signed of ['"signature":"sig-a"', '"signature":"sig-b"', '"signature":"sig-c"', '"data":"REDACTED-OPAQUE-1"']) expect(wire).toContain(signed);
+    const strip = (value: unknown): string => JSON.stringify(JSON.parse(JSON.stringify(value), (key, v) => (key === "cache_control" ? undefined : v)));
+    expect(strip(four!.slice(0, three!.length))).toBe(strip(three));
   });
 });

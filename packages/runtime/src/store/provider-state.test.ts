@@ -684,3 +684,38 @@ describe("WS-23: the `effort`, `tool-epoch` and `tool-changes` kinds", () => {
     expect(link.bookkeeping!.map((b) => b.type)).toEqual(["tool_epoch", "tool_changes"]);
   });
 });
+
+// --- WS-23 (reasoning-state): a FORK carries the new kinds with the rest of the chain ---------------------
+describe("WS-23: a forked session carries `reasoning-blocks`, `effort` and the tool epoch's records", () => {
+  test("every new kind is copied, re-owned and still anchored on the source's entry uuid, and folds on the fork", () =>
+    withTempHome(async (home) => {
+      const cwd = mkdtempSync(join(tmpdir(), "winter-ws23-fork-kinds-"));
+      try {
+        const anchor = "eeeeeeee-2222-4222-8222-222222222222";
+        const source = await resolveEngineSession({ config: { sessionId: "sess-ws23-fork", cwd, model: "m", permissionMode: "default" } as never, resolveWinterHome: () => home, env: {} });
+        source.store!.setProviderIdentity!({ providerId: "anthropic", modelKey: "anthropic/claude-opus-5-5", adapterId: "anthropic-messages", adapterVersion: "1.0.0", catalogVersion: "0.0.0-seed", authRefKind: "env" });
+        await source.store!.recordUserEntry("hello");
+        const base = { sessionId: "sess-ws23-fork", anchorUuid: anchor, provider: "anthropic", model: "anthropic/claude-opus-5-5", family: "anthropic", continuationDomain: "anthropic/claude-opus-5-5" };
+        await source.store!.recordProviderState!({ ...base, itemIndex: 0, kind: "origin", payload: {} });
+        await source.store!.recordProviderState!({ ...base, itemIndex: 1, kind: "reasoning-blocks", payload: { blocks: [{ at: 0, block: { type: "thinking", thinking: "t", signature: "SIG-FORK" } }] } });
+        await source.store!.recordProviderState!({ ...base, itemIndex: 2, kind: "effort", payload: { effort: "high", perTurnEffort: "low" } });
+        await source.store!.recordProviderState!({ ...base, itemIndex: 3, kind: "tool-epoch", payload: { type: "tool_epoch", mechanism: "anthropic-inline", modelKey: base.model, tools: [] } });
+        await source.store!.recordAssistantEntry([{ type: "text", text: "one" }], { uuid: anchor });
+        await source.store!.flush?.();
+
+        const forked = await resolveEngineSession({ config: { sessionId: "unused", cwd, model: "m", permissionMode: "default", resume: "sess-ws23-fork", forkSession: true } as never, resolveWinterHome: () => home, env: {} });
+        const records = await forked.store!.loadProviderState!();
+        expect(records.map((r) => r.kind)).toEqual(["origin", "reasoning-blocks", "effort", "tool-epoch"]);
+        for (const r of records) {
+          expect(r.sessionId).toBe(forked.config.sessionId);
+          expect(r.anchorUuid).toBe(anchor);
+        }
+        const link = buildContinuationChain(records, new Set([anchor])).get(anchor)!;
+        expect(link.nativeState?.items).toEqual([{ type: "winter.reasoning_block", at: 0, block: { type: "thinking", thinking: "t", signature: "SIG-FORK" } }]);
+        expect(link.effort).toEqual({ effort: "high", perTurnEffort: "low" });
+        expect(link.bookkeeping?.map((b) => b.type)).toEqual(["tool_epoch"]);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }));
+});
