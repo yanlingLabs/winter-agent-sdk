@@ -37,6 +37,11 @@
 //                      system prompt carries the plan-mode block (context/assembler.ts's dynamic system
 //                      half), so a length change lining up with a cache drop on the SAME request is the
 //                      evidence for "the block's insertion/removal shifted the whole downstream prefix".
+//   9. allowed-tools-cache -- (fix round 1, M-3) I-1 moved the plan-mode block out of `instructions`;
+//                      this phase isolates the OTHER half a plan-mode toggle used to bundle with it --
+//                      `tool_choice: allowed_tools` narrowing the callable set once a tool is loaded --
+//                      to see whether THAT alone still costs a cache miss even with `instructions_length`
+//                      unchanged throughout.
 // Every request prints its SHAPE (item types in order, the update's placement, tools, tool_choice, the
 // top-level effort) and the response's usage (`input_tokens`, `cached_tokens`); a non-2xx prints its error
 // body, truncated.
@@ -55,7 +60,7 @@
 //
 // COST: roughly thirty small generations across gpt-6-astra/sol/luna and gpt-5.6 (tiny prompts, effort
 // high/low). Pick phases with WINTER_OPENAI_MIDCONV_PROBE_PHASES (comma-separated; default: all):
-//   cfg-openai,cfg-error,cfg-codex,search,tools-openai,tools-codex,cache,plan-cache
+//   cfg-openai,cfg-error,cfg-codex,search,tools-openai,tools-codex,cache,plan-cache,allowed-tools-cache
 //
 // Usage (from the worktree root):
 //   WINTER_OPENAI_MIDCONV_PROBE=1 bun run scripts/probe-openai-midconv.ts
@@ -91,7 +96,7 @@ if (process.env["WINTER_OPENAI_MIDCONV_PROBE"] !== "1") {
   process.exit(0);
 }
 const DRY_RUN = process.env["WINTER_OPENAI_MIDCONV_PROBE_DRY_RUN"] === "1";
-const PHASES = new Set((process.env["WINTER_OPENAI_MIDCONV_PROBE_PHASES"] ?? "cfg-openai,cfg-error,cfg-codex,search,tools-openai,tools-codex,cache,plan-cache").split(",").map((p) => p.trim()));
+const PHASES = new Set((process.env["WINTER_OPENAI_MIDCONV_PROBE_PHASES"] ?? "cfg-openai,cfg-error,cfg-codex,search,tools-openai,tools-codex,cache,plan-cache,allowed-tools-cache").split(",").map((p) => p.trim()));
 
 // --- the dev-pinned, read-only credential store --------------------------------------------------------
 
@@ -448,13 +453,39 @@ try {
     await runSession("plan-cache", "openai/gpt-6-astra", (row) => row, planCacheSteps);
     await runSession("plan-cache", "codex-oauth/gpt-6-astra", (row) => row, planCacheSteps);
   }
+  if (PHASES.has("allowed-tools-cache")) {
+    // WS-24 (fix round 1, M-3): `plan-cache` above proves the mode SWITCH itself no longer touches
+    // `instructions` (I-1 moved the plan-mode block to a persisted attachment). This phase isolates
+    // the OTHER half of what a plan-mode toggle used to bundle together: `tool_choice: allowed_tools`
+    // narrowing the callable set (`allowedToolsChoice`, responses.ts) -- entering plan mode is still
+    // the only mechanism in this codebase that produces it, so it is still the vehicle, but a tool
+    // must already be LOADED for the restriction to name anything (`allowedToolsChoice` sends nothing
+    // once a search has loaded a tool at all -- see its own header -- so this loads one via ToolSearch
+    // and settles BEFORE toggling, unlike `tools-openai`'s turn 4, which follows two OTHER
+    // prefix-changing turns first). `instructions_length` should hold across every turn here; if
+    // `cached` still drops on the allowed_tools turn despite that, the restriction itself -- not the
+    // (now retired) plan-mode block -- is a second, independent cause.
+    const allowedToolsCacheSteps: Step[] = [
+      { turn: "Reply with the single word: one.", label: "turn 1 (baseline, bypassPermissions)" },
+      { turn: `Use the ToolSearch tool with the query "select:${PROBE_TOOL}", then call it with id "6", then reply with its answer as one word.`, label: "turn 2 (load a namespaced MCP tool; settle it before any restriction)" },
+      { turn: "Reply with the single word: three.", label: "turn 3 (no change since turn 2: should read cache)" },
+      { mode: "plan" },
+      { turn: `Call ${PROBE_TOOL} with id "7" again, then reply with its answer as one word.`, label: "turn 4 (allowed_tools narrows to the loaded tool -- instructions_length should be UNCHANGED from turn 3)" },
+      { mode: "bypassPermissions" },
+      { turn: "Reply with the single word: five.", label: "turn 5 (restriction lifted, back to auto)" },
+    ];
+    await runSession("allowed-tools-cache", "openai/gpt-6-astra", (row) => row, allowedToolsCacheSteps);
+    // codex-oauth/gpt-6-astra's real catalog row does not (yet) document `allowedToolsChoice` --
+    // `claimTools` patches it in, the SAME evidence `tools-codex` above needs for its own turn 4.
+    await runSession("allowed-tools-cache", "codex-oauth/gpt-6-astra", claimTools, allowedToolsCacheSteps);
+  }
 
   console.log("\n=== per request (request shape, then the response) ===");
   observed.forEach((o, i) => {
     console.log(`\n#${i + 1} [${o.label}] HTTP ${o.status} ${o.url}\n  sent:   ${o.sent}\n  usage:  ${o.usage ?? "(none)"}\n  output: ${o.outputItems ?? "(none)"}${o.error !== undefined ? `\n  error:  ${o.error}` : ""}`);
   });
   console.log(
-    "\nREAD IT AS: cfg-* -- a 2xx on turn 2 means the placement is accepted (compare before-user vs after-user; if only after-user passes, flip CONFIGURATION_UPDATE_PLACEMENT), `cached` on turn 2 should be close to turn 1's input, and the top-level reasoning.effort never moves; cfg-error / gpt-5.6 prints the API's own error text for the item (the engine's fallback regex keys on `configuration_update`); cfg-codex decides whether codex-oauth/gpt-6-* may record the item. search -- tools unchanged across the round trip, the namespaced call accepted. tools-* -- tools unchanged; turn 2 carries additional_tools, turn 4 tool_choice allowed_tools without the bypass-only tool, functions only (a 400 here names the allowed_tools spelling the endpoint refused, and the session's one fallback line must say allowed_tools, not tool search), turn 5 back to auto. cache -- codex turn 2/3 `cached` near their input, as on api.openai.com; still 0 means the backend does not report it (or needs more than the headers). plan-cache (WS-24 #8) -- turn 1's `instructions_length` is the baseline; if turn 2's (entering plan mode) differs AND its `cached` drops relative to turn 1's `input`, that is the plan-mode block (context/assembler.ts) shifting the whole downstream prefix, not a Winter bug -- expect the SAME pattern on turn 3 (leaving plan mode, `instructions_length` reverts) and a cache recovery by turn 4 (unchanged from turn 3). If `cached` stays high on turn 2/3 despite the length change, the hypothesis is wrong and the real cause is still open.",
+    "\nREAD IT AS: cfg-* -- a 2xx on turn 2 means the placement is accepted (compare before-user vs after-user; if only after-user passes, flip CONFIGURATION_UPDATE_PLACEMENT), `cached` on turn 2 should be close to turn 1's input, and the top-level reasoning.effort never moves; cfg-error / gpt-5.6 prints the API's own error text for the item (the engine's fallback regex keys on `configuration_update`); cfg-codex decides whether codex-oauth/gpt-6-* may record the item. search -- tools unchanged across the round trip, the namespaced call accepted. tools-* -- tools unchanged; turn 2 carries additional_tools, turn 4 tool_choice allowed_tools without the bypass-only tool, functions only (a 400 here names the allowed_tools spelling the endpoint refused, and the session's one fallback line must say allowed_tools, not tool search), turn 5 back to auto. cache -- codex turn 2/3 `cached` near their input, as on api.openai.com; still 0 means the backend does not report it (or needs more than the headers). plan-cache (WS-24 #8, CONFIRMED and fixed by I-1) -- this phase is now a REGRESSION check: `instructions_length` should be IDENTICAL on every turn (the plan-mode block no longer lives in `instructions` at all), and `cached` should hold steady across both mode switches (turn 2 entering, turn 3 leaving) rather than dropping the way the original live run showed (api.openai.com: 0/5373 entering; codex: 3712/5377). A length change or a cache drop here means the fix regressed. allowed-tools-cache (fix round 1, M-3) -- `instructions_length` must stay IDENTICAL turns 1-5 (nothing here ever touches the system prompt); watch `cached` on turn 4 specifically (the allowed_tools narrowing) against turn 3's baseline -- a drop there, with `instructions_length` unchanged, means `tool_choice: allowed_tools` itself is a SECOND, independent cache-busting cause the I-1 fix does not address, worth its own follow-up.",
   );
 } finally {
   unregisterMcpServerTools(PROBE_SERVER);
