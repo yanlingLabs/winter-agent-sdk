@@ -4739,31 +4739,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // `alwaysLoad` server makes it wait, bounded by MCP_CONNECT_TIMEOUT_MS. Awaited BEFORE the init
     // frame is written so `mcp_servers` reflects the batch snapshot the spec describes.
     await mcpLifecycle.start();
-    // Fix round 19/20: claude's FIRST-TURN wait on its SDK path (`km`, dump byte 34109614; the full trail
-    // is on mcp/lifecycle.ts's `firstTurnMcpWaitDeadlineMs`). `start()` above is claude's nonblocking
-    // connect, so without this every ordinary stdio server is still `pending` when `system/init` and
-    // the first turn are built. claude awaits `km` before its first turn (34017496) and builds that
-    // turn's `system/init` and tools from live state (33881679); Winter writes its startup
-    // `system/init` once, before the first turn, so the wait belongs here, ahead of the capability,
-    // partition and init derivations below -- first turn only, since nothing below waits again.
-    // Settled means not `pending` (connected, cached, failed, needs-auth): a server that cannot spawn
-    // ends the wait at once, and a session with nothing pending does not wait at all. `alwaysLoad` is
-    // unchanged (`start()` already awaited it).
-    //
-    // Scoped as claude scopes it: the TOP-LEVEL run only (claude's is in `runHeadless`; a child engine
-    // shares its parent's board and never builds its own lifecycle), and only this engine's own
-    // lifecycle -- a caller-supplied `mcpServerStateSource` is a host that owns its MCP stack, which
-    // this engine did not start and does not wait on.
-    if (config.agentId === undefined) {
-      await mcpLifecycle.stateSource.waitForPending(
-        undefined,
-        firstTurnMcpWaitDeadlineMs({
-          ...(config.strictMcpConfig !== undefined ? { strictMcpConfig: config.strictMcpConfig } : {}),
-          ...(config.mcpServers !== undefined ? { explicitServers: config.mcpServers } : {}),
-          envConfig: mcpEnvConfig,
-        }),
-      );
-    }
+    // The FIRST-TURN wait for this lifecycle's pending servers is no longer here: it runs once the
+    // input pump is reading (WS-24, see `awaitFirstTurnMcpServers` below the pump), so a control
+    // request is answered while the servers connect instead of queueing behind the wait.
     // The four WS-09 §1.4 bridge tools resolve their lifecycle out of this session-keyed registry
     // (see mcp/lifecycle.ts's own header for why it is session-keyed rather than a module singleton
     // or a per-run replaceExecutor). Cleared in teardown, below.
@@ -5287,10 +5265,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // `mcp_set_servers`); and (3) at every `system/init` build. Capabilities are the LIVE set -- the same
   // `resolveLiveSessionCapabilities()` the dispatch-time availability check already reads per call.
   // `advertisedCfg.mode` stays the startup mode: rider 5's recorded init-vs-live-mode posture (above)
-  // is unchanged, and the live mode still governs execution. The startup `type:"init"` frame and
-  // `advertisedToolNames` below read the first derivation: the registry as it stands after the
-  // first-turn MCP wait above (claude's `km`), so a server that connected within it is listed; a slower
-  // one is still `pending`, with none of its tools, and joins from a later request.
+  // is unchanged, and the live mode still governs execution. The startup `type:"init"` handshake and
+  // `advertisedToolNames` below read the first derivation, taken BEFORE the first-turn MCP wait (WS-24:
+  // the wait now runs once the pump is reading, below it); `system/init` and the first request re-derive
+  // after the wait (claude's `km`), so a server that connected within it is listed there; a slower one
+  // is still `pending`, with none of its tools, and joins from a later request.
   //
   // Fix round 20 (the round-19 re-review): the registry is PROCESS-WIDE, and a subagent's object-form
   // (child-scoped) MCP server registers its tools there too -- so the live partition offered a parent
@@ -5593,7 +5572,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const writeSdkInit = (): void => {
     output.write({ type: "data", ...buildSdkInitMessage() } as Parameters<typeof output.write>[0]);
   };
-  writeSdkInit();
+  // `writeSdkInit()` runs once the first-turn MCP wait has settled (WS-24): see below the pump.
 
   const userFrames = new Queue<UserFrame>();
 
@@ -6541,6 +6520,50 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       bridge.rejectAllPending(new Error("winter: input ended before this control request could be answered"));
     }
   })();
+
+  // --- The first-turn MCP wait (fix round 19/20; moved here in WS-24) ---------------------------------
+  //
+  // claude's FIRST-TURN wait on its SDK path (`km`, dump byte 34109614; the full trail is on
+  // mcp/lifecycle.ts's `firstTurnMcpWaitDeadlineMs`). `start()` is claude's nonblocking connect, so
+  // without this every ordinary stdio server is still `pending` when `system/init` and the first turn
+  // are built. claude awaits `km` before its first turn (34017496) and builds that turn's `system/init`
+  // and tools from live state (33881679); Winter writes its startup `system/init` once, before the first
+  // turn, so the wait comes first and `writeSdkInit()` right after it. Settled means not `pending`
+  // (connected, cached, failed, needs-auth): a server that cannot spawn ends the wait at once. `alwaysLoad`
+  // is unchanged (`start()` already awaited it).
+  //
+  // WS-24: AFTER THE PUMP, not before it. The wait used to sit ahead of everything the pump closes over,
+  // so every control request (interrupt, set_model, set_permission_mode, mcp_status ...) queued behind it
+  // -- 2 s by default, and up to MCP_TIMEOUT behind a hung explicit server. The pump is reading now, so
+  // those are answered while the servers connect; a user message still waits, because it only lands in
+  // `userFrames` and the turn loop below does not start until this has settled. What this costs: the
+  // `type:"init"` handshake (written above, before the pump -- the host requires it as frame one)
+  // reflects the servers as they stood BEFORE the wait, while `system/init` reflects them after it. The
+  // handshake is internal (the SDK reads its protocol version and drops it; a child's is never
+  // forwarded), so the two can differ only for a server that was pending at startup.
+  //
+  // SYNCHRONOUS when nothing is pending: no `await` at all on that path, so a session with nothing to
+  // wait for writes `system/init` before the pump can have processed a single frame -- the frame order
+  // every golden pins is unchanged.
+  //
+  // Scoped to the TOP-LEVEL run and to this engine's own lifecycle -- a caller-supplied
+  // `mcpServerStateSource` is a host that owns its MCP stack, which this engine did not start and does
+  // not wait on.
+  const firstTurnMcpWaitMs = (): number | undefined => {
+    if (mcpLifecycle === undefined || config.agentId !== undefined) return undefined;
+    return firstTurnMcpWaitDeadlineMs({
+      ...(config.strictMcpConfig !== undefined ? { strictMcpConfig: config.strictMcpConfig } : {}),
+      ...(config.mcpServers !== undefined ? { explicitServers: config.mcpServers } : {}),
+      envConfig: mcpEnvConfig,
+    });
+  };
+  {
+    const deadlineMs = firstTurnMcpWaitMs();
+    if (deadlineMs !== undefined && mcpLifecycle!.stateSource.snapshot().some((server) => server.state === "pending")) {
+      await mcpLifecycle!.stateSource.waitForPending(undefined, deadlineMs);
+    }
+  }
+  writeSdkInit();
 
   // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "engine start, after init." Fired here — AFTER the
   // pump has started running (the `const pump = ...` assignment above has already invoked its IIFE;
