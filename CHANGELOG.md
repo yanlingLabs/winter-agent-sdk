@@ -6,6 +6,8 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
+## 0.0.28
+
 ### Engine (WS-24)
 
 - A subagent with its own object-form MCP servers waits for them (bounded, 2 s) before its first
