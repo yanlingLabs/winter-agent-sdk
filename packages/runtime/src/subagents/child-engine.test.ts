@@ -25,7 +25,7 @@ import { createChildEngineFactory, type ChildEngineFactoryDeps } from "./child-e
 import { resetSpawnLimitsForTest } from "./limits.ts";
 import { loadAgentDefinitions } from "./definitions.ts";
 import { TranscriptWriter } from "../store/dialect.ts";
-import { withHttpFixture, defaultFixtureSpec } from "../mcp/test-fixtures.ts";
+import { withHttpFixture, defaultFixtureSpec, pingFixtureCommand } from "../mcp/test-fixtures.ts";
 import { getToolSearchSessionRuntime } from "../toolsearch/search.ts";
 // Phase 5 residual round (NEW-4): the REAL production wiring and the REAL default child factory --
 // see the NEW-4 describe block for why a hand-built seed would measure the wrong thing.
@@ -3859,4 +3859,39 @@ describe("fix round 21: the MCP server scope reaches every descendant, and ToolS
     expect(matchesOf("p4")).toEqual([]);
   }, 30_000);
 
+});
+
+// WS-24 (engine lane, item 1): a subagent's OWN object-form servers get the bounded first-turn wait.
+// Before, only the top-level run waited (the child was assumed to share its parent's board), so under
+// the default nonblocking connect a child-scoped stdio server was still `pending` when the child's first
+// request was built, and its tools missed it. The I4 test above dodges exactly this race with
+// MCP_CONNECTION_NONBLOCKING=0; this one runs on the default.
+describe("WS-24 item 1: a subagent waits for its own servers before its first request", () => {
+  test("a child-scoped stdio server that connects in ~800 ms is offered on the child's FIRST request", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const childRequests: string[][] = [];
+    const childProvider: Provider = {
+      async generate(request) {
+        childRequests.push((request.tools ?? []).map((t) => t.name));
+        return { kind: "text", text: "child done" };
+      },
+    };
+    const req: SpawnChildRequest = {
+      parentToolUseId: "call-1", prompt: "use your own server", runInBackground: false,
+      definition: { description: "child with a slow-starting server", prompt: "persona", mcpServers: [{ slowchild: pingFixtureCommand({ label: "slowchild", delayMs: 800 }) }] },
+    };
+    // A real directory: a stdio server is spawned in the session cwd, which the shared fixture path is not.
+    const cwd = mkdtempSync(join(tmpdir(), "winter-ws24-child-wait-"));
+    try {
+      const { code } = await driveParent({ provider: childProvider }, baseConfig({ sessionId: "ws24-child-wait", cwd }), [
+        { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+        { kind: "text", text: "parent done" },
+      ]);
+      expect(code).toBe(0);
+      expect(childRequests[0]).toContain("mcp__slowchild__gate_ping");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

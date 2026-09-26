@@ -127,7 +127,7 @@ import { resolveBuiltinCommand, looksLikeCommand, type CommandResolver } from ".
 // integration recipe in its own report, and could not perform the integration itself: the
 // elicitation sender it needs is `bridge`, which is a closure-local value inside THIS function --
 // there is no seam exposing it outward, so main.ts structurally cannot construct one.
-import { createMcpLifecycle, firstTurnMcpWaitDeadlineMs, resolveMcpServerSources, registerSessionMcpLifecycle, type McpLifecycle, type McpServerSource } from "./mcp/lifecycle.ts";
+import { createMcpLifecycle, FIRST_TURN_MCP_WAIT_DEFAULT_MS, firstTurnMcpWaitDeadlineMs, resolveMcpServerSources, registerSessionMcpLifecycle, type McpLifecycle, type McpServerSource } from "./mcp/lifecycle.ts";
 import { createElicitationAsker } from "./mcp/elicitation.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
@@ -6546,11 +6546,21 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // wait for writes `system/init` before the pump can have processed a single frame -- the frame order
   // every golden pins is unchanged.
   //
-  // Scoped to the TOP-LEVEL run and to this engine's own lifecycle -- a caller-supplied
-  // `mcpServerStateSource` is a host that owns its MCP stack, which this engine did not start and does
-  // not wait on.
+  // Scoped to THIS ENGINE'S OWN lifecycle -- a caller-supplied `mcpServerStateSource` is a host that owns
+  // its MCP stack, which this engine did not start and does not wait on. That is also what a subagent
+  // with no servers of its own has (child-engine.ts hands it the parent's board), so it never waits.
+  //
+  // WS-24: a SUBAGENT WITH ITS OWN object-form servers (`AgentDefinition.mcpServers`) builds its own
+  // lifecycle and waits for it too. It used to be excluded on the premise that "a child engine shares its
+  // parent's board and never builds its own lifecycle" -- true only for a child that declares nothing, so
+  // a slow server's tools missed the subagent's first request. Its bound is the DEFAULT 2 s, never the
+  // MCP_TIMEOUT long wait `firstTurnMcpWaitDeadlineMs` gives an explicit non-sdk server: that long wait is
+  // the reading of a HOST's explicit `--mcp-config` declaration (claude's `explicitMcpConfigFlag`), which a
+  // definition's inline server is not -- and the parent's turn is blocked on this child meanwhile. A server
+  // slower than that still joins a later request, and `WaitForMcpServers` is there for the model.
   const firstTurnMcpWaitMs = (): number | undefined => {
-    if (mcpLifecycle === undefined || config.agentId !== undefined) return undefined;
+    if (mcpLifecycle === undefined) return undefined;
+    if (config.agentId !== undefined) return FIRST_TURN_MCP_WAIT_DEFAULT_MS;
     return firstTurnMcpWaitDeadlineMs({
       ...(config.strictMcpConfig !== undefined ? { strictMcpConfig: config.strictMcpConfig } : {}),
       ...(config.mcpServers !== undefined ? { explicitServers: config.mcpServers } : {}),
