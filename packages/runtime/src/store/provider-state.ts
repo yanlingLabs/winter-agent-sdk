@@ -26,7 +26,8 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, constants as fsConstants, fsyncSync, mkdirSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import type { MessageOrigin, ProviderNativeState } from "@yanlinglabs/winter-provider-runtime";
+import type { MessageOrigin, ProviderNativeState, ReasoningBlockAt } from "@yanlinglabs/winter-provider-runtime";
+import { coerceInDialectReasoningBlock, isReasoningBlockItem, reasoningBlockItems } from "@yanlinglabs/winter-provider-runtime";
 import { PROVIDER_STATE_FILE_SUFFIX } from "@yanlinglabs/winter-agent-sdk";
 
 /** The `SessionStoreEntry.type` discriminant every record carries. One string, one place. */
@@ -53,7 +54,12 @@ export const PROVIDER_STATE_SUBPATH = "provider-state" as const;
  */
 export { PROVIDER_STATE_FILE_SUFFIX };
 
-export type ProviderStateKind = "origin" | "native-state" | "summary" | "handoff";
+// WS-23 (reasoning-state): `reasoning-blocks` is an Anthropic-family turn's in-dialect thinking -- each
+// `thinking` / `redacted_thinking` block VERBATIM plus `at`, its index in the turn's stream-order content
+// (payload `{blocks: [{at, block}]}`). It is a kind of its own rather than a `native-state` record so an
+// older runtime, whose `KINDS` filter below does not list it, drops it cleanly instead of replaying it as
+// some other family's opaque items. See provider-runtime's `continuity/reasoning-blocks.ts`.
+export type ProviderStateKind = "origin" | "native-state" | "summary" | "handoff" | "reasoning-blocks";
 
 /**
  * One sidecar record. The envelope (`type`/`uuid`/`timestamp`) plus R6-7's own payload fields.
@@ -243,7 +249,7 @@ export function parseProviderStateLine(line: string): ProviderStateRecord | unde
   return coerceProviderStateRecord(value);
 }
 
-const KINDS: ReadonlySet<string> = new Set<ProviderStateKind>(["origin", "native-state", "summary", "handoff"]);
+const KINDS: ReadonlySet<string> = new Set<ProviderStateKind>(["origin", "native-state", "summary", "handoff", "reasoning-blocks"]);
 
 export function coerceProviderStateRecord(value: unknown): ProviderStateRecord | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
@@ -328,7 +334,24 @@ export function buildContinuationChain(records: readonly ProviderStateRecord[], 
             // replay to a continuation DOMAIN, not to a family), so the family is the honest floor
             // rather than a fabricated domain id.
             continuationDomain: record.continuationDomain ?? record.family,
-            items,
+            // WS-23: a later `native-state` record supersedes the earlier one's items, never the
+            // anchor's sidecar-carried reasoning blocks (a separate record kind, whatever the order).
+            items: [...items, ...(link.nativeState?.items.filter(isReasoningBlockItem) ?? [])],
+          };
+        }
+        break;
+      }
+      case "reasoning-blocks": {
+        // Folded into `nativeState` as TAGGED items, after any items a `native-state` record carried, so
+        // the renderer's one keep-or-drop rule covers them and only the Anthropic adapter's splice reads
+        // them back. The domain is the record's own, exactly as for `native-state`.
+        const blocks = readReasoningBlocks(record.payload);
+        if (blocks !== undefined && blocks.length > 0) {
+          const items = reasoningBlockItems(blocks);
+          link.nativeState = {
+            family: record.family,
+            continuationDomain: link.nativeState?.continuationDomain ?? record.continuationDomain ?? record.family,
+            items: [...(link.nativeState?.items.filter((item) => !isReasoningBlockItem(item)) ?? []), ...items],
           };
         }
         break;
@@ -360,6 +383,22 @@ function readNativeItems(payload: unknown): unknown[] | undefined {
   if (typeof payload !== "object" || payload === null) return undefined;
   const items = (payload as { items?: unknown }).items;
   return Array.isArray(items) ? items : undefined;
+}
+
+/** WS-23: a `reasoning-blocks` payload's `{at, block}` list, each entry checked structurally; `undefined` for a malformed payload. */
+function readReasoningBlocks(payload: unknown): ReasoningBlockAt[] | undefined {
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const blocks = (payload as { blocks?: unknown }).blocks;
+  if (!Array.isArray(blocks)) return undefined;
+  const out: ReasoningBlockAt[] = [];
+  for (const entry of blocks) {
+    if (typeof entry !== "object" || entry === null) return undefined;
+    const at = (entry as { at?: unknown }).at;
+    const block = coerceInDialectReasoningBlock((entry as { block?: unknown }).block);
+    if (typeof at !== "number" || !Number.isInteger(at) || at < 0 || block === undefined) return undefined;
+    out.push({ at, block });
+  }
+  return out;
 }
 
 function readSummaryText(payload: unknown): string | undefined {

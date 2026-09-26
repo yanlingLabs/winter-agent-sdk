@@ -593,3 +593,53 @@ describe("round 2 / M3: a FORKED session carries its provider-state chain and id
       }
     }));
 });
+
+// --- WS-23 (reasoning-state): Anthropic thinking as a `reasoning-blocks` record ------------------------
+describe("WS-23: the `reasoning-blocks` kind", () => {
+  const CLAUDE = { sessionId: "sess", provider: "anthropic", model: "anthropic/claude-opus-5-5", family: "anthropic", continuationDomain: "anthropic/claude-opus-5-5" } as const;
+  const THINK = { type: "thinking", thinking: "look first", signature: "sig-a" };
+  const REDACTED = { type: "redacted_thinking", data: "OPAQUE" };
+
+  test("folds into `nativeState` as tagged items in `at` order, carrying the record's own family and domain", () => {
+    const records = [
+      toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 0, kind: "origin", payload: {} }),
+      toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 1, kind: "reasoning-blocks", payload: { blocks: [{ at: 2, block: REDACTED }, { at: 0, block: THINK }] } }),
+    ];
+    const link = buildContinuationChain(records, new Set(["a1"])).get("a1")!;
+    expect(link.nativeState).toEqual({
+      family: "anthropic",
+      continuationDomain: "anthropic/claude-opus-5-5",
+      items: [
+        { type: "winter.reasoning_block", at: 0, block: THINK },
+        { type: "winter.reasoning_block", at: 2, block: REDACTED },
+      ],
+    });
+  });
+
+  test("a `native-state` record on the same anchor neither erases nor is erased by the blocks, in either order", () => {
+    const blocks = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 2, kind: "reasoning-blocks", payload: { blocks: [{ at: 0, block: THINK }] } });
+    const native = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 1, kind: "native-state", payload: { items: ["opaque"] } });
+    for (const order of [
+      [native, blocks],
+      [blocks, native],
+    ]) {
+      const items = buildContinuationChain(order, new Set(["a1"])).get("a1")!.nativeState!.items;
+      expect(items).toContainEqual("opaque");
+      expect(items).toContainEqual({ type: "winter.reasoning_block", at: 0, block: THINK });
+      expect(items).toHaveLength(2);
+    }
+  });
+
+  test("a malformed payload folds to nothing (never a partial list of blocks)", () => {
+    const bad = toProviderStateRecord({ ...CLAUDE, anchorUuid: "a1", itemIndex: 1, kind: "reasoning-blocks", payload: { blocks: [{ at: 0, block: THINK }, { at: 1, block: { type: "thinking", thinking: "no signature" } }] } });
+    expect(buildContinuationChain([bad], new Set(["a1"])).get("a1")?.nativeState).toBeUndefined();
+  });
+
+  test("the record round-trips through the file codec; a kind this reader does not list is dropped (what an older runtime does with this one)", () =>
+    withTempHome((home) => {
+      const path = join(home, "s.provider-state.jsonl");
+      const written = appendProviderState(path, { ...CLAUDE, anchorUuid: "a1", itemIndex: 1, kind: "reasoning-blocks", payload: { blocks: [{ at: 0, block: THINK }] } });
+      appendFileSync(path, `${JSON.stringify({ ...written, uuid: "u-future", kind: "some-future-kind" })}\n`);
+      expect(readProviderState(path)).toEqual([written]);
+    }));
+});

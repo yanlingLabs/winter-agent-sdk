@@ -17,6 +17,21 @@ export type { ContinuityEndpoint, DomainFacts, ReadableState } from "./domains.t
 export { applyDecorationToContent, createHistoryRenderer, stripOpaque } from "./renderer.ts";
 export type { ContinuationChainLike, ContinuationLinkLike, HistoryRendererOptions, HistoryTarget, MaterialKind, RenderReport, RenderedDecoration, WinterHistoryRenderer } from "./renderer.ts";
 
+// WS-23 (reasoning-state): Anthropic thinking carried in the sidecar, and put back in place on the wire.
+export {
+  REASONING_BLOCK_ITEM_TYPE,
+  coerceInDialectReasoningBlock,
+  contentWithReasoningBlocks,
+  hasInlineReasoning,
+  isReasoningBlockItem,
+  reasoningBlockItems,
+  reasoningBlocksOf,
+  reasoningBlocksVisibleText,
+  separateReasoningBlocks,
+  spliceReasoningBlocks,
+} from "./reasoning-blocks.ts";
+export type { InDialectReasoningBlock, ReasoningBlockAt, ReasoningBlockItem } from "./reasoning-blocks.ts";
+
 export { classifySwitch } from "./warnings.ts";
 export type { LossClass, SwitchClassification, SwitchFacts } from "./warnings.ts";
 

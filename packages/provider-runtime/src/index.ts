@@ -152,6 +152,16 @@ export {
   toClaudeReady,
   switchFactsFor,
   reviewModelSwitch,
+  REASONING_BLOCK_ITEM_TYPE,
+  coerceInDialectReasoningBlock,
+  contentWithReasoningBlocks,
+  hasInlineReasoning,
+  isReasoningBlockItem,
+  reasoningBlockItems,
+  reasoningBlocksOf,
+  reasoningBlocksVisibleText,
+  separateReasoningBlocks,
+  spliceReasoningBlocks,
 } from "./continuity/index.ts";
 export type {
   Decoration,
@@ -182,4 +192,7 @@ export type {
   ToClaudeReadyOptions,
   ToClaudeReadyResult,
   SwitchReview,
+  InDialectReasoningBlock,
+  ReasoningBlockAt,
+  ReasoningBlockItem,
 } from "./continuity/index.ts";

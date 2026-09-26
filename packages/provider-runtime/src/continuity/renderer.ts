@@ -34,6 +34,7 @@ import type { ProviderRegistry } from "../registry.ts";
 import type { ContentBlockLike, MessageOrigin, ProviderMessageLike, ProviderNativeState } from "../types.ts";
 import { MIN_DECORATION_BODY_CHARS, buildDecoration, decorationOverhead, doorFor, type Decoration, type DecorationDoor } from "./decoration.ts";
 import { createEndpointResolver, sameDomain, sameModel, type ContinuityEndpoint, type ReadableState } from "./domains.ts";
+import { hasInlineReasoning, reasoningBlocksVisibleText } from "./reasoning-blocks.ts";
 
 /** The target of THIS request. Structurally the `target` argument of the runtime's frozen `HistoryRenderer` seam. */
 export interface HistoryTarget {
@@ -222,7 +223,7 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
         const { nativeState, content, strippedBlocks } = stripOpaque(message);
         if (nativeState !== undefined) report.droppedNativeState++;
         report.strippedInDialectBlocks += strippedBlocks;
-        const hadVisibleThinking = message.role === "assistant" && visibleThinkingText(message.content) !== undefined;
+        const hadVisibleThinking = message.role === "assistant" && ownThinkingText(message) !== undefined;
         if (hadVisibleThinking) report.withoutMaterial++;
         // Micro-round Minor 1: REAL reasoning content was just destroyed with no chance to carry it
         // as labelled material (there is no origin to attribute it to) -- `strippedBlocks` already
@@ -278,7 +279,10 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
       // to its OWN visible `thinking` text -- blocks joined in order, NEVER `signature` -- as ITS
       // summary. `source.readableState` (Claude's own catalog row: "summary") is what makes
       // `materialFor` classify this `kind: "summary"`, exactly like a captured sidecar summary would.
-      const material = materialFor(link, source, allowExposed, visibleThinkingText(message.content));
+      // WS-23 (reasoning-state): read from the message as it was BEFORE `stripOpaque` above, because
+      // since the move a Claude turn's thinking rides `nativeState` rather than its content -- and
+      // dropping the carrier must not also drop the readable decoration the user chose to keep.
+      const material = materialFor(link, source, allowExposed, ownThinkingText(message));
       if (material === undefined) {
         report.withoutMaterial++;
       } else {
@@ -377,6 +381,15 @@ function visibleThinkingText(content: string | ContentBlockLike[]): string | und
   if (typeof content === "string") return undefined;
   const texts = content.filter((b): b is Extract<ContentBlockLike, { type: "thinking" }> => b.type === "thinking").map((b) => b.thinking);
   return texts.length > 0 ? texts.join("\n\n") : undefined;
+}
+
+/**
+ * WS-23 (reasoning-state): a message's OWN readable thinking wherever it rides -- inline in the content
+ * (a transcript written before the move), else the sidecar-carried blocks on `nativeState`. Inline wins
+ * outright and the two are never concatenated, the same precedence the adapter's splice applies.
+ */
+function ownThinkingText(message: ProviderMessageLike): string | undefined {
+  return hasInlineReasoning(message.content) ? visibleThinkingText(message.content) : reasoningBlocksVisibleText(message.nativeState);
 }
 
 /**

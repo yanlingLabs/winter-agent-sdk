@@ -172,18 +172,42 @@ describe("Anthropic reasoning moves to the sidecar and the wire does not move (W
 
     const split = await fixture();
     await runSession(split, "reasoning-split", ["turn one", "turn two"]);
+    // Named for the golden's field: on the commit that captured the golden this WAS the pre-move session.
     const preMoveSession = sessionFiles(split, "reasoning-split");
     await runSession(split, "reasoning-split-resumed", ["turn three"], "reasoning-split");
     expect(split.fake.requests).toHaveLength(4);
     const resumedMessages = normalizedMessages(split, split.fake.requests[3]!.body);
 
     if (UPDATE) {
-      writeFileSync(GOLDEN_PATH, `${JSON.stringify({ live: liveMessages, resumed: resumedMessages, preMoveSession } satisfies Golden, null, 2)}\n`);
+      // The pre-move session is history: a regeneration on a post-move commit keeps the one already
+      // captured rather than replacing it with a neutral transcript.
+      const kept = existsSync(GOLDEN_PATH) ? readGolden().preMoveSession : preMoveSession;
+      writeFileSync(GOLDEN_PATH, `${JSON.stringify({ live: liveMessages, resumed: resumedMessages, preMoveSession: kept } satisfies Golden, null, 2)}\n`);
       return;
     }
     const golden = readGolden();
     expect(liveMessages).toEqual(golden.live);
     expect(resumedMessages).toEqual(golden.resumed);
+    // AND THE MOVE REALLY HAPPENED: the transcript the split session wrote is provider-neutral -- no
+    // thinking, no signature, no opaque data -- and the sidecar carries every block, verbatim, with its
+    // stream index. (Without this the golden would also pass on the pre-move code.)
+    const transcript = preMoveSession["reasoning-split.jsonl"]!;
+    for (const needle of ['"thinking"', '"redacted_thinking"', '"signature"', "sig-a", "REDACTED-OPAQUE-1", "look first"]) expect(transcript).not.toContain(needle);
+    const sidecar = preMoveSession["reasoning-split.provider-state.jsonl"]!.trim().split("\n").map((line) => JSON.parse(line) as { kind: string; payload: unknown });
+    expect(sidecar.filter((r) => r.kind === "reasoning-blocks").map((r) => r.payload)).toEqual([
+      {
+        blocks: [
+          { at: 0, block: { type: "thinking", thinking: "look first", signature: "sig-a" } },
+          { at: 2, block: { type: "thinking", thinking: "then glob", signature: "sig-b" } },
+        ],
+      },
+      {
+        blocks: [
+          { at: 0, block: { type: "redacted_thinking", data: "REDACTED-OPAQUE-1" } },
+          { at: 1, block: { type: "thinking", thinking: "wrap up", signature: "" } },
+        ],
+      },
+    ]);
     // A resume re-sends exactly what the uninterrupted session sent: same bytes, same positions.
     expect(JSON.stringify(resumedMessages)).toBe(JSON.stringify(liveMessages[3]));
     // Append-only across the live session, the rolling breakpoint aside.

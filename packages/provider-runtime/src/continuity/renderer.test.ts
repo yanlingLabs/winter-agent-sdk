@@ -5,6 +5,7 @@ import { toWireMessages } from "../adapters/anthropic/messages.ts";
 import { RECOVERED_REASONING_TAG } from "./decoration.ts";
 import { fixtureCatalog, fixtureModel, fixtureProvider, fixtureReasoning, scriptedAdapter } from "./fixtures.ts";
 import { applyDecorationToContent, createHistoryRenderer, type ContinuationChainLike, type ContinuationLinkLike, type HistoryTarget } from "./renderer.ts";
+import { reasoningBlockItems, separateReasoningBlocks } from "./reasoning-blocks.ts";
 
 // Four models across three families. The two Claude rows declare NO domain evidence, so each is its
 // own single-member domain -- which is what makes "Claude model A -> Claude model B" a real boundary
@@ -573,5 +574,45 @@ describe("fail-closed: a message whose origin cannot be resolved at all never ri
     const { messages } = renderer.renderWithReport([carrier], chainOf({}), CLAUDE_A);
     expect(messages[0]).toBe(carrier);
     expect(messages[0]!.decoration?.text).toContain("prior_model_handoff");
+  });
+});
+
+// --- WS-23 (reasoning-state): Claude's thinking rides the sidecar, not the content --------------------
+describe("WS-23: a Claude turn whose thinking rides `nativeState` (the sidecar) instead of its content", () => {
+  const sidecarClaude = (uuid: string): ProviderMessageLike => {
+    const { neutral, blocks } = separateReasoningBlocks(claudeMessage(uuid).content as ContentBlockLike[]);
+    return {
+      role: "assistant",
+      content: neutral.length === 1 && neutral[0]!.type === "text" ? neutral[0]!.text : neutral,
+      uuid,
+      origin: { providerId: "anthropic", modelKey: "anthropic/claude-a", family: "anthropic", continuationDomain: "anthropic/claude-a" },
+      nativeState: { family: "anthropic", continuationDomain: "anthropic/claude-a", items: reasoningBlockItems(blocks) },
+    };
+  };
+
+  test("cross-family: the SAME decoration as the inline form -- built from the sidecar blocks' thinking text, never a signature or redacted data", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const inline = renderer.renderWithReport([claudeMessage("m1")], chainOf({ m1: {} }), OPENAI);
+    const moved = renderer.renderWithReport([sidecarClaude("m1")], chainOf({ m1: {} }), OPENAI);
+    expect(moved.messages[0]!.decoration).toEqual(inline.messages[0]!.decoration);
+    expect(moved.messages[0]!.nativeState).toBeUndefined();
+    const rendered = JSON.stringify(moved.messages);
+    for (const opaque of ["SIG-OPAQUE", "REDACTED-OPAQUE", "winter.reasoning_block"]) expect(rendered).not.toContain(opaque);
+    expect(moved.report.droppedNativeState).toBe(1);
+  });
+
+  test("same model: the blocks ride, no decoration, and the Anthropic wire is the inline form byte for byte", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const moved = renderer.render([sidecarClaude("m1")], chainOf({ m1: {} }), { ...CLAUDE_A, providerId: "anthropic", modelKey: "anthropic/claude-a" });
+    expect(moved[0]!.decoration).toBeUndefined();
+    expect(JSON.stringify(toWireMessages(moved))).toBe(JSON.stringify(toWireMessages([claudeMessage("m1")])));
+  });
+
+  test("another Claude model (a different continuation domain) gets the decoration, not the signed blocks", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const claudeB: HistoryTarget = { family: "anthropic", continuationDomain: "anthropic/claude-b", readableState: "summary", providerId: "anthropic", modelKey: "anthropic/claude-b" };
+    const wire = JSON.stringify(toWireMessages(renderer.render([sidecarClaude("m1")], chainOf({ m1: {} }), claudeB)));
+    expect(wire).not.toContain("SIG-OPAQUE");
+    expect(wire).toContain(RECOVERED_REASONING_TAG);
   });
 });

@@ -84,7 +84,7 @@ import { getDefaultMessagingRuntime, UnattributableSenderError, classifyDelivery
 import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, SystemPromptBlock, ToolChangeSet, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 // P6 fix wave (Ruling E-2): the two PURE continuity functions the switch point calls. Value imports
 // from the provider-runtime barrel, one direction (runtime -> provider-runtime), same as every adapter.
-import { WinterProviderResolutionError, buildPortableHandoff, classifySwitch } from "@yanlinglabs/winter-provider-runtime";
+import { WinterProviderResolutionError, buildPortableHandoff, classifySwitch, reasoningBlockItems, separateReasoningBlocks } from "@yanlinglabs/winter-provider-runtime";
 export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
@@ -989,6 +989,16 @@ export function inStreamOrder(turn: ProviderTurn): ContentBlock[] | undefined {
   if (turn.kind === "text") return orderedCallIds.length === 0 ? content : undefined;
   if (orderedCallIds.length !== turn.calls.length || orderedCallIds.some((id, i) => id !== turn.calls[i]!.id)) return undefined;
   return content;
+}
+
+/**
+ * WS-23 (reasoning-state): the in-memory shape of an assistant entry's persisted content -- exactly what
+ * `rebuildProviderMessages` (store/resume.ts) rebuilds it as on a resume: a lone text block collapses to
+ * its string, anything else stays an array. Holding the same shape live keeps a live session's history
+ * and the same session's resumed history identical message for message.
+ */
+function asRebuiltContent(content: ContentBlock[]): string | ContentBlock[] {
+  return content.length === 1 && content[0]!.type === "text" ? content[0]!.text : content;
 }
 
 /**
@@ -3479,10 +3489,27 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * (every pre-P6 double, and any run before selection is wired in T10) writes no records at all and
    * behaves byte-identically to before this task.
    */
-  const recordAssistant = async (content: ContentBlock[], provenance?: { nativeState?: ProviderNativeState; summary?: string; material?: "exposed"; complete?: boolean }, effortStamp?: { effort?: string; perTurnEffort: string }): Promise<string | undefined> => {
-    if (!store) return undefined;
+  //
+  // WS-23 (reasoning-state): the TRANSCRIPT IS PROVIDER-NEUTRAL. An Anthropic-family turn's in-dialect
+  // `thinking` / `redacted_thinking` blocks (signatures and opaque data intact) leave the entry's content
+  // and ride a `reasoning-blocks` sidecar record instead, each block verbatim with `at`, its index in the
+  // stream-order content -- written ahead of the entry like every other record. The IN-MEMORY message
+  // matches what a resume rebuilds: the neutral content (collapsed as `rebuildProviderMessages` collapses
+  // it) and the blocks as tagged `nativeState` items, which the Anthropic adapter splices back into
+  // place on every request (provider-runtime `continuity/reasoning-blocks.ts`) -- so the wire does not
+  // move by a byte. The move happens only where the sidecar exists (a provider identity AND a store that
+  // records provider state, the `origin` record's own condition): a session with nowhere to put the
+  // blocks keeps them inline, exactly as before, rather than losing them.
+  const recordAssistant = async (
+    content: ContentBlock[],
+    provenance?: { nativeState?: ProviderNativeState; summary?: string; material?: "exposed"; complete?: boolean },
+    effortStamp?: { effort?: string; perTurnEffort: string },
+  ): Promise<{ uuid?: string; moved?: { content: string | ContentBlock[]; nativeState: ProviderNativeState } }> => {
+    if (!store) return {};
     const uuid = randomUUID();
     const identity = currentProviderIdentity;
+    let persisted = content;
+    let moved: { content: string | ContentBlock[]; nativeState: ProviderNativeState } | undefined;
     if (identity !== undefined && store.recordProviderState !== undefined) {
       const base = {
         sessionId: config.sessionId,
@@ -3506,6 +3533,21 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // package's `switchFactsFor`) takes as "a provider summary, not complete-exposed" (P10b-7).
           payload: { text: provenance.summary, ...(provenance.material !== undefined ? { material: provenance.material, complete: provenance.complete === true } : {}) },
         });
+      const separated = separateReasoningBlocks(content);
+      if (separated.blocks.length > 0) {
+        records.push({ ...base, itemIndex: records.length, kind: "reasoning-blocks", payload: { blocks: separated.blocks } });
+        persisted = separated.neutral;
+        const items = reasoningBlockItems(separated.blocks);
+        moved = {
+          content: asRebuiltContent(separated.neutral),
+          // The same stamp `buildContinuationChain` folds the record into on a resume.
+          nativeState: {
+            family: provenance?.nativeState?.family ?? identity.family,
+            continuationDomain: provenance?.nativeState?.continuationDomain ?? identity.continuationDomain ?? identity.family,
+            items: [...(provenance?.nativeState?.items ?? []), ...items],
+          },
+        };
+      }
       for (const record of records) {
         try {
           await store.recordProviderState(record);
@@ -3525,15 +3567,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       });
     }
     try {
-      await store.recordAssistantEntry(content, { uuid, ...(effortStamp ?? {}) });
+      await store.recordAssistantEntry(persisted, { uuid, ...(effortStamp ?? {}) });
     } catch {
       /* auxiliary — see comment above */
     }
     // RETURNED so the IN-MEMORY message can carry the same anchor the sidecar record names. Without
     // it a live session's history and the same session's RESUMED history would disagree on every
     // assistant message's `uuid` -- and the continuous-vs-resumed fidelity that resume.test.ts pins
-    // is exactly the property the continuation chain depends on.
-    return uuid;
+    // is exactly the property the continuation chain depends on. `moved` is the in-memory content and
+    // native state when the reasoning blocks went to the sidecar (see above).
+    return { uuid, ...(moved !== undefined ? { moved } : {}) };
   };
   const flushStore = async (): Promise<void> => {
     if (!store?.flush) return;
@@ -8359,8 +8402,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         const paused = inStreamOrder(turn) ?? [...(turn.thinking?.blocks ?? []), ...(turn.text.length > 0 ? [{ type: "text" as const, text: turn.text }] : [])];
         if (paused.length > 0) {
           output.write({ type: "data", message: { type: "assistant", message: { content: paused } } });
-          const pausedAnchor = await recordAssistant(paused, turnProvenance(turn));
-          messages.push({ role: "assistant", content: paused, ...(pausedAnchor !== undefined ? { uuid: pausedAnchor } : {}), ...providerAnnotations(turn) });
+          const pausedRecord = await recordAssistant(paused, turnProvenance(turn));
+          messages.push({ role: "assistant", content: pausedRecord.moved?.content ?? paused, ...(pausedRecord.uuid !== undefined ? { uuid: pausedRecord.uuid } : {}), ...providerAnnotations(turn), ...(pausedRecord.moved !== undefined ? { nativeState: pausedRecord.moved.nativeState } : {}) });
         }
         continue roundLoop;
       }
@@ -8389,8 +8432,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // names. A live session's history and the same session's RESUMED history must agree on every
         // assistant message's `uuid` -- that agreement is what the continuation chain is keyed on,
         // and resume.test.ts's continuous-vs-split fidelity test pins it.
-        const textAnchor = await recordAssistant(assistantBlocks, turnProvenance(turn), generationEffort);
-        messages.push({ role: "assistant", content: thinkingBlocks.length === 0 ? turn.text : assistantBlocks, ...(textAnchor !== undefined ? { uuid: textAnchor } : {}), ...providerAnnotations(turn), ...(generationEffort ?? {}) });
+        const textRecord = await recordAssistant(assistantBlocks, turnProvenance(turn), generationEffort);
+        messages.push({
+          role: "assistant",
+          content: textRecord.moved?.content ?? (thinkingBlocks.length === 0 ? turn.text : assistantBlocks),
+          ...(textRecord.uuid !== undefined ? { uuid: textRecord.uuid } : {}),
+          ...providerAnnotations(turn),
+          ...(textRecord.moved !== undefined ? { nativeState: textRecord.moved.nativeState } : {}),
+          ...(generationEffort ?? {}),
+        });
         finalResult = { type: "result", subtype: "success", is_error: false, result: turn.text };
         // WS-23: the Stop/SubagentStop hooks fire HERE for a plain answer (still before the terminal
         // result is written -- the single-shot wrapper is still reading, see the post-loop comment),
@@ -8441,8 +8491,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await — the
       // terminal result is the sole durability barrier; P6 (partial streaming) must revisit this.
       output.write({ type: "data", message: { type: "assistant", message: { content: toolUseBlocks } } });
-      const callAnchor = await recordAssistant(toolUseBlocks, turnProvenance(turn), generationEffort);
-      messages.push({ role: "assistant", content: toolUseBlocks, ...(callAnchor !== undefined ? { uuid: callAnchor } : {}), ...providerAnnotations(turn), ...(generationEffort ?? {}) });
+      const callRecord = await recordAssistant(toolUseBlocks, turnProvenance(turn), generationEffort);
+      messages.push({
+        role: "assistant",
+        content: callRecord.moved?.content ?? toolUseBlocks,
+        ...(callRecord.uuid !== undefined ? { uuid: callRecord.uuid } : {}),
+        ...providerAnnotations(turn),
+        ...(callRecord.moved !== undefined ? { nativeState: callRecord.moved.nativeState } : {}),
+        ...(generationEffort ?? {}),
+      });
 
       const resultBlocks: ContentBlock[] = [];
       // Set (alongside `finalResult`) exactly when a call in THIS round throws — kept as its own
