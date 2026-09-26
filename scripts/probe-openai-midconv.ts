@@ -21,6 +21,13 @@
 //                      restricts the callable set through `tool_choice: allowed_tools` (a namespaced loaded
 //                      tool named by `{"type": "namespace"}` is INFERRED -- this is where it is checked);
 //   6. tools-codex  -- step 5 on the Codex backend, rows patched to claim both (the catalog does not).
+//      Steps 5 and 6 load a namespaced MCP tool through ToolSearch BEFORE the restriction, so the plan-mode
+//      request lists it in `allowed_tools` as `{"type": "function", "name": <name inside the namespace>}`
+//      (fix round 1: never `tool_search`, never a namespace entry -- the spelling is INFERRED, checked here);
+//   7. cache        -- (fix round 1, live L3) three plain turns on the OpenAI API and on the Codex backend,
+//                      no changes at all: turn 2 and 3's `cached` should be most of their input on BOTH now
+//                      that codex requests carry `session-id` / `thread-id` (codex-rs's cache affinity;
+//                      each request line prints whether `session-id` was sent).
 // Every request prints its SHAPE (item types in order, the update's placement, tools, tool_choice, the
 // top-level effort) and the response's usage (`input_tokens`, `cached_tokens`); a non-2xx prints its error
 // body, truncated.
@@ -39,7 +46,7 @@
 //
 // COST: roughly thirty small generations across gpt-6-astra/sol/luna and gpt-5.6 (tiny prompts, effort
 // high/low). Pick phases with WINTER_OPENAI_MIDCONV_PROBE_PHASES (comma-separated; default: all):
-//   cfg-openai,cfg-error,cfg-codex,search,tools-openai,tools-codex
+//   cfg-openai,cfg-error,cfg-codex,search,tools-openai,tools-codex,cache
 //
 // Usage (from the worktree root):
 //   WINTER_OPENAI_MIDCONV_PROBE=1 bun run scripts/probe-openai-midconv.ts
@@ -75,7 +82,7 @@ if (process.env["WINTER_OPENAI_MIDCONV_PROBE"] !== "1") {
   process.exit(0);
 }
 const DRY_RUN = process.env["WINTER_OPENAI_MIDCONV_PROBE_DRY_RUN"] === "1";
-const PHASES = new Set((process.env["WINTER_OPENAI_MIDCONV_PROBE_PHASES"] ?? "cfg-openai,cfg-error,cfg-codex,search,tools-openai,tools-codex").split(",").map((p) => p.trim()));
+const PHASES = new Set((process.env["WINTER_OPENAI_MIDCONV_PROBE_PHASES"] ?? "cfg-openai,cfg-error,cfg-codex,search,tools-openai,tools-codex,cache").split(",").map((p) => p.trim()));
 
 // --- the dev-pinned, read-only credential store --------------------------------------------------------
 
@@ -131,7 +138,7 @@ function toAfterUser(input: Item[]): Item[] {
   return out;
 }
 
-function describeRequest(body: Record<string, unknown>): string {
+function describeRequest(body: Record<string, unknown>, headers: Headers): string {
   const input = Array.isArray(body["input"]) ? (body["input"] as Item[]) : [];
   const shape = input.map((i) => {
     if (i["type"] === "configuration_update") return `cfg(${String((i["reasoning"] as Item)["effort"])})`;
@@ -147,7 +154,7 @@ function describeRequest(body: Record<string, unknown>): string {
   return [
     `model=${String(body["model"])} reasoning=${JSON.stringify(body["reasoning"] ?? null)} placement=${currentPlacement}`,
     `input=[${shape.join(", ")}]`,
-    `tools=${tools.length} tool_search=${tools.includes("tool_search")} tool_choice=${choiceShape} prompt_cache_key=${body["prompt_cache_key"] !== undefined ? "set" : "absent"}`,
+    `tools=${tools.length} tool_search=${tools.includes("tool_search")} tool_choice=${choiceShape} prompt_cache_key=${body["prompt_cache_key"] !== undefined ? "set" : "absent"} session-id=${headers.get("session-id") !== null ? "set" : "absent"} thread-id=${headers.get("thread-id") !== null ? "set" : "absent"}`,
   ].join(" | ");
 }
 
@@ -192,7 +199,7 @@ globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestIni
   }
   const headers = new Headers(init?.headers);
   const response = DRY_RUN ? cannedResponse(body, headers) : await originalFetch(input, init);
-  const record: Observed = { label: currentLabel, url: new URL(url).host + new URL(url).pathname, status: response.status, sent: describeRequest(body) };
+  const record: Observed = { label: currentLabel, url: new URL(url).host + new URL(url).pathname, status: response.status, sent: describeRequest(body, headers) };
   observed.push(record);
   if (!response.ok) {
     const text = await response.clone().text().catch(() => "(unreadable body)");
@@ -326,10 +333,11 @@ const toolSteps: Step[] = [
   { turn: "Reply with the single word: one.", label: "turn 1 (frozen list)" },
   { act: () => addTool(LATE_TOOL), note: `a late tool ${LATE_TOOL} is registered` },
   { turn: "Reply with the single word: two.", label: "turn 2 (additional_tools)" },
+  { turn: `Use the ToolSearch tool with the query "select:${PROBE_TOOL}", then call it with id "7", then reply with its answer as one word.`, label: "turn 3 (load a namespaced MCP tool)" },
   { mode: "plan" },
-  { turn: "Reply with the single word: three.", label: "turn 3 (plan mode: allowed_tools)" },
+  { turn: `Call ${PROBE_TOOL} with id "8" again, then reply with its answer as one word.`, label: "turn 4 (plan mode: allowed_tools names the loaded namespaced tool as a function)" },
   { mode: "bypassPermissions" },
-  { turn: "Reply with the single word: four.", label: "turn 4 (bypass again: restriction lifted)" },
+  { turn: "Reply with the single word: five.", label: "turn 5 (bypass again: restriction lifted)" },
 ];
 
 const registered: string[] = [];
@@ -375,13 +383,22 @@ try {
   }
   if (PHASES.has("tools-openai")) await runSession("tools-openai", "openai/gpt-6-astra", (row) => row, toolSteps);
   if (PHASES.has("tools-codex")) await runSession("tools-codex", "codex-oauth/gpt-6-astra", claimTools, toolSteps);
+  if (PHASES.has("cache")) {
+    const plain: Step[] = [
+      { turn: "Reply with the single word: one.", label: "turn 1" },
+      { turn: "Reply with the single word: two.", label: "turn 2 (no change: should read cache)" },
+      { turn: "Reply with the single word: three.", label: "turn 3 (no change: should read cache)" },
+    ];
+    await runSession("cache", "openai/gpt-6-astra", (row) => row, plain);
+    await runSession("cache", "codex-oauth/gpt-6-astra", (row) => row, plain);
+  }
 
   console.log("\n=== per request (request shape, then the response) ===");
   observed.forEach((o, i) => {
     console.log(`\n#${i + 1} [${o.label}] HTTP ${o.status} ${o.url}\n  sent:   ${o.sent}\n  usage:  ${o.usage ?? "(none)"}\n  output: ${o.outputItems ?? "(none)"}${o.error !== undefined ? `\n  error:  ${o.error}` : ""}`);
   });
   console.log(
-    "\nREAD IT AS: cfg-* -- a 2xx on turn 2 means the placement is accepted (compare before-user vs after-user; if only after-user passes, flip CONFIGURATION_UPDATE_PLACEMENT), `cached` on turn 2 should be close to turn 1's input, and the top-level reasoning.effort never moves; cfg-error / gpt-5.6 prints the API's own error text for the item (the engine's fallback regex keys on `configuration_update`); cfg-codex decides whether codex-oauth/gpt-6-* may record the item. search -- tools unchanged across the round trip, the namespaced call accepted. tools-* -- tools unchanged; turn 2 carries additional_tools, turn 3 tool_choice allowed_tools without the bypass-only tool, turn 4 back to auto; a 400 names what the endpoint refused.",
+    "\nREAD IT AS: cfg-* -- a 2xx on turn 2 means the placement is accepted (compare before-user vs after-user; if only after-user passes, flip CONFIGURATION_UPDATE_PLACEMENT), `cached` on turn 2 should be close to turn 1's input, and the top-level reasoning.effort never moves; cfg-error / gpt-5.6 prints the API's own error text for the item (the engine's fallback regex keys on `configuration_update`); cfg-codex decides whether codex-oauth/gpt-6-* may record the item. search -- tools unchanged across the round trip, the namespaced call accepted. tools-* -- tools unchanged; turn 2 carries additional_tools, turn 4 tool_choice allowed_tools without the bypass-only tool, functions only (a 400 here names the allowed_tools spelling the endpoint refused, and the session's one fallback line must say allowed_tools, not tool search), turn 5 back to auto. cache -- codex turn 2/3 `cached` near their input, as on api.openai.com; still 0 means the backend does not report it (or needs more than the headers).",
   );
 } finally {
   unregisterMcpServerTools(PROBE_SERVER);
