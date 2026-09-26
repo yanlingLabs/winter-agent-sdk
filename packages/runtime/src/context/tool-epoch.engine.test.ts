@@ -5,7 +5,7 @@
 // message right after the user turn it follows, every request's messages are a prefix of the next, a
 // resumed session rebuilds the epoch from its history, and a refusal falls back once to today's rebuild.
 import { afterEach, describe, expect, test } from "bun:test";
-import type { RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
+import type { PermissionMode, RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { ProviderTurnError, runEngine, type EngineOptions, type ModelDescription, type ProviderMessage, type ProviderRequest, type ProviderTurn } from "../engine.ts";
 import { stubExecutor } from "../provider/mock.ts";
@@ -21,10 +21,10 @@ afterEach(() => {
   for (const name of registered.splice(0)) unregisterToolForTest(name);
 });
 
-/** A test-only eager tool, advertised to every session. */
-function addTool(name: string, description = `${name}: a midconv test tool`): void {
+/** A test-only eager tool, advertised to every session (or only in `modes`). */
+function addTool(name: string, description = `${name}: a midconv test tool`, modes?: PermissionMode[]): void {
   registerTool({
-    descriptor: { canonicalName: name, advertisedName: name, source: "sdk", inputSchema: { type: "object", properties: { q: { type: "string" } } }, description, exposure: "eager", permissionClass: "read", availability: {}, capabilityRequirements: [], disposition: "implement-now" },
+    descriptor: { canonicalName: name, advertisedName: name, source: "sdk", inputSchema: { type: "object", properties: { q: { type: "string" } } }, description, exposure: "eager", permissionClass: "read", availability: modes !== undefined ? { modes } : {}, capabilityRequirements: [], disposition: "implement-now" },
     executor: {
       async execute() {
         return { output: "ok" };
@@ -38,7 +38,7 @@ function dropTool(name: string): void {
   registered.splice(registered.indexOf(name), 1);
 }
 
-type Step = { user: string } | { act: () => void };
+type Step = { user: string } | { act: () => void } | { control: string; payload: unknown };
 
 async function drive(opts: { describe: ModelDescription; steps: Step[]; generate?: (req: ProviderRequest, index: number) => ProviderTurn | Promise<ProviderTurn>; engine?: Partial<EngineOptions> }): Promise<{ requests: ProviderRequest[]; attachments: Array<{ type: string }>; frames: WinterFrame[] }> {
   const { host, runtime } = createInMemoryChannel();
@@ -72,9 +72,16 @@ async function drive(opts: { describe: ModelDescription; steps: Step[]; generate
   })();
   const results = (): number => frames.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").length;
   let users = 0;
+  let controls = 0;
   for (const step of opts.steps) {
     if ("act" in step) {
       step.act();
+      continue;
+    }
+    if ("control" in step) {
+      const requestId = `c${++controls}`;
+      host.output.write({ type: "control_request", requestId, subtype: step.control, payload: step.payload });
+      for (let n = 0; n < 2000 && !frames.some((f) => f.type === "control_response" && (f as { requestId: string }).requestId === requestId); n++) await new Promise((r) => setTimeout(r, 2));
       continue;
     }
     host.output.write({ type: "user", text: step.user });
@@ -302,6 +309,42 @@ describe("the documented tool-change errors (inline)", () => {
     } finally {
       console.error = original;
     }
+  });
+});
+
+describe("the tool epoch on OpenAI (`additionalToolsItem` + `allowedToolsChoice`)", () => {
+  const OPENAI_ROW: ModelDescription = { wire: { additionalToolsItem: true, allowedToolsChoice: true } };
+
+  test("a PERMISSION-MODE SWITCH keeps `tools` byte-identical: only the callable subset (`allowed_tools`) changes, and switching back lifts it", async () => {
+    addTool("zz_midconv_a");
+    addTool("zz_midconv_default_only", "only outside plan mode", ["default"]);
+    const { requests } = await drive({
+      describe: OPENAI_ROW,
+      steps: [{ user: "one" }, { control: "set_permission_mode", payload: "plan" }, { user: "two" }, { control: "set_permission_mode", payload: "default" }, { user: "three" }],
+    });
+    expect(requests).toHaveLength(3);
+    expect(names(requests[0]!)).toContain("zz_midconv_default_only");
+    expect(JSON.stringify(requests[1]!.tools)).toBe(JSON.stringify(requests[0]!.tools));
+    expect(JSON.stringify(requests[2]!.tools)).toBe(JSON.stringify(requests[0]!.tools));
+    expect(requests[0]!.allowedTools).toBeUndefined();
+    expect(requests[1]!.allowedTools).toBeDefined();
+    expect(requests[1]!.allowedTools).not.toContain("zz_midconv_default_only");
+    expect(requests[1]!.allowedTools).toContain("zz_midconv_a");
+    expect(requests[2]!.allowedTools).toBeUndefined();
+    // No change message: a restriction is a per-request choice, not an entry. OpenAI sends no opt-in.
+    expect(requests.flatMap(changesOf)).toEqual([]);
+    expect(requests.map((r) => r.toolChanges)).toEqual([undefined, undefined, undefined]);
+    expect(isPrefix(requests[0]!, requests[1]!)).toBe(true);
+    expect(isPrefix(requests[1]!, requests[2]!)).toBe(true);
+  });
+
+  test("a late tool rides an `additional_tools` change (a definition) and `tools` stays byte-identical", async () => {
+    addTool("zz_midconv_a");
+    const { requests } = await drive({ describe: OPENAI_ROW, steps: [{ user: "one" }, { act: () => addTool("aa_midconv_late") }, { user: "two" }] });
+    expect(JSON.stringify(requests[1]!.tools)).toBe(JSON.stringify(requests[0]!.tools));
+    expect(changesOf(requests[1]!).map(({ remove, add }) => ({ remove, add }))).toEqual([
+      { remove: [], add: [{ type: "definition", name: "aa_midconv_late", description: "aa_midconv_late: a midconv test tool", inputSchema: { type: "object", properties: { q: { type: "string" } } } }] },
+    ]);
   });
 });
 

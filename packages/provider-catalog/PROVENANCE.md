@@ -88,6 +88,9 @@ twin and a test asserts the two agree, so this document cannot drift away from t
 | `model.promptCacheKey` | official-doc derived | **overlay only**; OpenAI's prompt-caching guide (Responses `prompt_cache_key`), and codex-rs's own request builder for the ChatGPT Codex backend |
 | `model.midConversationToolChanges` | official-doc derived | **overlay only**; Anthropic's mid-conversation system messages page (tool changes by reference, `mid-conversation-tool-changes-2026-07-01`; model list, Sonnet 5 excluded) |
 | `model.inlineToolDefinitions` | official-doc derived | **overlay only**; the same page (tools defined by value, `inline-tools-2026-09-15`; Claude API only) |
+| `model.clientToolSearch` | official-doc derived | **overlay only**; OpenAI's tool-search guide (client-executed `tool_search`, GPT-5.4 and later) and codex-rs's `models.json` (`supports_search_tool`) for the Codex backend |
+| `model.additionalToolsItem` | official-doc derived | **overlay only**; OpenAI's tool-search guide (`additional_tools` developer item; no model list, so set only where `clientToolSearch` is documented, never on codex-oauth before the live probe) |
+| `model.allowedToolsChoice` | official-doc derived | **overlay only**; OpenAI's function-calling guide (`tool_choice: allowed_tools`; no model list, same rows as `additionalToolsItem`) |
 
 ### Two tiers of admission citation
 

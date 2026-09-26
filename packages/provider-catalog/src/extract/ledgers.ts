@@ -241,4 +241,7 @@ export const FIELD_PROVENANCE: readonly FieldProvenance[] = [
   { field: "model.promptCacheKey", provenance: "official-doc-derived", note: "OVERLAY ONLY, from OpenAI's prompt-caching guide (Responses `prompt_cache_key`) and codex-rs's request builder" },
   { field: "model.midConversationToolChanges", provenance: "official-doc-derived", note: "OVERLAY ONLY, from Anthropic's mid-conversation system messages page (`tool_addition`/`tool_removal` by reference; model list, Sonnet 5 excluded)" },
   { field: "model.inlineToolDefinitions", provenance: "official-doc-derived", note: "OVERLAY ONLY, from the same page (`tool_definition` by value under `inline-tools-2026-09-15`; Claude API only)" },
+  { field: "model.clientToolSearch", provenance: "official-doc-derived", note: "OVERLAY ONLY, from OpenAI's tool-search guide (client `tool_search`, GPT-5.4+) and codex-rs's models.json `supports_search_tool` for codex-oauth" },
+  { field: "model.additionalToolsItem", provenance: "official-doc-derived", note: "OVERLAY ONLY, from OpenAI's tool-search guide (`additional_tools`); no model list, so only where `clientToolSearch` is documented" },
+  { field: "model.allowedToolsChoice", provenance: "official-doc-derived", note: "OVERLAY ONLY, from OpenAI's function-calling guide (`tool_choice: allowed_tools`); no model list, same rows as `additionalToolsItem`" },
 ];

@@ -121,7 +121,17 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
     if (last?.type === "configuration_update") out[out.length - 1] = update;
     else out.push(update);
   };
+  const search = opts.clientToolSearch === true ? toolSearchIndex(opts.tools) : undefined;
+  // The ToolSearch calls seen so far, so their results become `tool_search_output` items.
+  const searchCalls = new Set<string>();
   for (const message of messages) {
+    // WS-23 (midconv): a tool-change message is an `additional_tools` developer item -- the tools
+    // "become available only after that item appears in the input", so it is replayed right here.
+    if (message.role === "system" && message.toolChanges !== undefined) {
+      const definitions = message.toolChanges.add.flatMap((a) => (a.type === "definition" ? [{ type: "function", name: a.name, description: a.description, parameters: a.inputSchema, strict: false }] : []));
+      if (definitions.length > 0) out.push({ type: "additional_tools", role: "developer", tools: definitions });
+      continue;
+    }
     // WS-23 (midconv): the engine's effort-only `system` marker IS a `configuration_update` on this
     // surface -- never a system message (see `CONFIGURATION_UPDATE_PLACEMENT`).
     if (message.role === "system" && message.outputConfig !== undefined) {
@@ -168,7 +178,25 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
             out.push({ type: "message", role: wireRole, content: [...contentParts] });
             contentParts.length = 0;
           }
-          out.push({ type: "function_call", call_id: block.id, name: block.name, arguments: typeof block.input === "string" ? block.input : JSON.stringify(block.input ?? {}) });
+          if (search !== undefined && block.name === search.name) {
+            // WS-23 (midconv): Winter's ToolSearch call, replayed as the item the model emitted
+            // (codex-rs's own round-trip fixture: `arguments` is an OBJECT here, not a JSON string).
+            searchCalls.add(block.id);
+            out.push({ type: "tool_search_call", call_id: block.id, execution: "client", status: "completed", arguments: block.input ?? {} });
+            break;
+          }
+          {
+            const namespace = search?.namespaceOf.get(block.name);
+            out.push({
+              type: "function_call",
+              call_id: block.id,
+              // A namespaced tool is called by its short name INSIDE its namespace (the vendor's
+              // `{namespace, name}`), the way the model emitted it.
+              name: namespace !== undefined ? block.name.slice(namespace.length + 2) : block.name,
+              ...(namespace !== undefined ? { namespace } : {}),
+              arguments: typeof block.input === "string" ? block.input : JSON.stringify(block.input ?? {}),
+            });
+          }
           break;
         case "tool_result":
           // NO FLUSH HERE (Lane A r3 carry). Emitting the pending parts as a `message` first is what
@@ -181,6 +209,18 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
           // the outputs — the same trade the chat mapper already makes for trailing non-result
           // content ("nothing is inserted between a call and its reply"), and the same answer for a
           // host-supplied history that puts text ahead of a result on one message.
+          if (search !== undefined && searchCalls.has(block.tool_use_id)) {
+            // WS-23 (midconv): the ToolSearch result is a `tool_search_output` carrying the loaded tools'
+            // definitions -- "Deferred functions in tool_search_output.tools retain defer_loading: true"
+            // -- grouped by namespace. The loaded tools are "loaded at the end of the model's context
+            // window", so `tools` never changes. Its own text (the listing, any MCP server still
+            // connecting) follows as ordinary user text, like every trailing part of a tool message.
+            out.push({ type: "tool_search_output", call_id: block.tool_use_id, execution: "client", status: "completed", tools: search.outputTools((block as { loadedTools?: unknown }).loadedTools) });
+            const text = prefixToolResult(resultPrefix, toolResultText(block.content));
+            if (text.length > 0) contentParts.push({ type: partType, text });
+            resultPrefix = undefined;
+            break;
+          }
           out.push({ type: "function_call_output", call_id: block.tool_use_id, output: prefixToolResult(resultPrefix, toolResultText(block.content)) });
           // The FIRST result carries it; a message with several results annotates the set once.
           resultPrefix = undefined;
@@ -223,6 +263,10 @@ export const CONFIGURATION_UPDATE_PLACEMENT: "before-user" | "after-user" = "bef
 export interface ResponsesInputOptions {
   /** Defaults to `CONFIGURATION_UPDATE_PLACEMENT`. */
   configurationUpdatePlacement?: "before-user" | "after-user";
+  /** The row documents client tool search: ToolSearch calls and results take the native items (needs `tools`). */
+  clientToolSearch?: boolean;
+  /** The request's tools -- where the ToolSearch name, the namespaces and the loaded definitions come from. */
+  tools?: TurnRequest["tools"];
 }
 
 /**
@@ -248,8 +292,130 @@ export function assertConfigurationUpdates(req: TurnRequest, descriptor: WinterM
   }
 }
 
-export function mapResponsesTools(tools: TurnRequest["tools"]): unknown[] {
-  return (tools ?? []).map((tool) => ({ type: "function", name: tool.name, description: tool.description, parameters: tool.inputSchema, strict: false }));
+export function mapResponsesTools(tools: TurnRequest["tools"], opts: { clientToolSearch?: boolean } = {}): unknown[] {
+  if (opts.clientToolSearch !== true) return (tools ?? []).map((tool) => ({ type: "function", name: tool.name, description: tool.description, parameters: tool.inputSchema, strict: false }));
+  // WS-23 (midconv): client tool search. ToolSearch is the native tool; a deferred tool is NOT declared
+  // -- it reaches the model only in a `tool_search_output`, the vendor's own client-search shape (codex-rs
+  // declares none either), so loading one never changes `tools`.
+  return (tools ?? [])
+    .filter((tool) => tool.deferLoading !== true)
+    .map((tool) =>
+      tool.toolSearch === true
+        ? { type: "tool_search", execution: "client", description: tool.description, parameters: tool.inputSchema }
+        : { type: "function", name: tool.name, description: tool.description, parameters: tool.inputSchema, strict: false },
+    );
+}
+
+/**
+ * WS-23 (midconv): what the client tool search needs to know about THIS request's tools -- ToolSearch's
+ * name, each namespaced tool's namespace, and how to render the loaded tools of one search.
+ */
+interface ToolSearchIndex {
+  name: string;
+  namespaceOf: ReadonlyMap<string, string>;
+  outputTools(loaded: unknown): unknown[];
+}
+
+function toolSearchIndex(tools: TurnRequest["tools"]): ToolSearchIndex | undefined {
+  const search = (tools ?? []).find((t) => t.toolSearch === true);
+  if (search === undefined) return undefined;
+  const byName = new Map((tools ?? []).map((t) => [t.name, t] as const));
+  const namespaceOf = new Map((tools ?? []).flatMap((t) => (t.namespace !== undefined ? [[t.name, t.namespace] as const] : [])));
+  return {
+    name: search.name,
+    namespaceOf,
+    outputTools(loaded: unknown): unknown[] {
+      const names = Array.isArray(loaded) ? [...new Set(loaded.filter((n): n is string => typeof n === "string"))] : [];
+      const out: unknown[] = [];
+      const groups = new Map<string, unknown[]>();
+      for (const name of names) {
+        // A tool that is gone (or no longer deferred) is not re-described: only what `tools` still names.
+        const tool = byName.get(name);
+        if (tool === undefined || tool.deferLoading !== true) continue;
+        const namespace = tool.namespace;
+        const fn = { type: "function", name: namespace !== undefined ? name.slice(namespace.length + 2) : name, description: tool.description, parameters: tool.inputSchema, strict: false, defer_loading: true };
+        if (namespace === undefined) {
+          out.push(fn);
+          continue;
+        }
+        let group = groups.get(namespace);
+        if (group === undefined) {
+          group = [];
+          groups.set(namespace, group);
+          out.push({ type: "namespace", name: namespace, description: namespaceDescription(namespace), tools: group });
+        }
+        group.push(fn);
+      }
+      return out;
+    },
+  };
+}
+
+/** A namespace's description, which the shape requires: Winter's own words, deterministic per server. */
+function namespaceDescription(namespace: string): string {
+  return `Tools from the MCP server "${namespace.slice("mcp__".length)}".`;
+}
+
+/**
+ * WS-23 (midconv): `tool_choice: allowed_tools` for a request whose callable set is a strict subset of
+ * `tools` -- the engine's `allowedTools`, plus what else is callable on this turn: the native tool search
+ * and every deferred tool a search already loaded ("When you use tool search, tool_choice still applies
+ * to the tools that are currently callable in the turn"). A loaded tool in a namespace is named by its
+ * namespace entry -- the page lists namespaces among what `allowed_tools` can name, without a shape, so
+ * `{"type": "namespace", "name": …}` is INFERRED and a live-probe item. A FORCED choice (the classifier,
+ * structured output) outranks it: the model must call that one tool either way.
+ */
+function allowedToolsChoice(req: TurnRequest, clientToolSearch: boolean): unknown {
+  const functions = (req.allowedTools ?? []).map((name) => ({ type: "function", name }));
+  const search = clientToolSearch ? toolSearchIndex(req.tools) : undefined;
+  const loaded = new Set<string>();
+  if (search !== undefined) {
+    for (const message of req.messages) {
+      if (typeof message.content === "string") continue;
+      for (const block of message.content) {
+        const names = block.type === "tool_result" ? (block as { loadedTools?: unknown }).loadedTools : undefined;
+        if (Array.isArray(names)) for (const name of names) if (typeof name === "string") loaded.add(name);
+      }
+    }
+  }
+  const byName = new Map((req.tools ?? []).map((t) => [t.name, t] as const));
+  const extra: unknown[] = search !== undefined ? [{ type: "tool_search" }] : [];
+  const namespaces = new Set<string>();
+  for (const name of [...loaded].sort()) {
+    const tool = byName.get(name);
+    if (tool === undefined || tool.deferLoading !== true) continue;
+    if (tool.namespace === undefined) extra.push({ type: "function", name });
+    else if (!namespaces.has(tool.namespace)) {
+      namespaces.add(tool.namespace);
+      extra.push({ type: "namespace", name: tool.namespace });
+    }
+  }
+  return { type: "allowed_tools", mode: req.toolChoice?.type === "any" ? "required" : "auto", tools: [...functions, ...extra] };
+}
+
+/**
+ * WS-23 (midconv): the gate for the three mid-conversation tool mechanisms on this surface. Each is sent
+ * only where the row's evidence documents it; anything else is refused before the request. The engine only
+ * builds what a row can take, so this fires on a wiring bug, never on an ordinary session.
+ */
+export function assertResponsesToolFeatures(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): void {
+  const key = descriptor?.key ?? req.model;
+  const searchShaped = (req.tools ?? []).some((t) => t.deferLoading === true || t.toolSearch === true || t.namespace !== undefined);
+  if (searchShaped && descriptor?.clientToolSearch?.value !== true) {
+    throw capabilityRefusal(`model "${key}" does not document OpenAI's client tool search (no \`clientToolSearch\` evidence), so a deferred or tool-search tool is refused before the request rather than sent and rejected upstream`);
+  }
+  for (const message of req.messages) {
+    if (message.toolChanges === undefined) continue;
+    if (descriptor?.additionalToolsItem?.value !== true) {
+      throw capabilityRefusal(`model "${key}" does not document the \`additional_tools\` item (no \`additionalToolsItem\` evidence), so a mid-conversation tool addition is refused before the request`);
+    }
+    if (message.toolChanges.remove.length > 0 || message.toolChanges.add.some((a) => a.type !== "definition")) {
+      throw capabilityRefusal("the Responses API adds tools mid-conversation by definition only; a withdrawal is an `allowed_tools` restriction, never a removal item");
+    }
+  }
+  if (req.allowedTools !== undefined && descriptor?.allowedToolsChoice?.value !== true) {
+    throw capabilityRefusal(`model "${key}" does not document \`tool_choice: allowed_tools\` (no \`allowedToolsChoice\` evidence), so a restricted callable set is refused before the request`);
+  }
 }
 
 function mapToolChoice(choice: TurnRequest["toolChoice"]): unknown {
@@ -286,14 +452,21 @@ export function buildResponsesBody(
       ? { ...(reasoning.effort !== undefined ? { effort: reasoning.effort } : {}), ...(reasoning.summary !== undefined ? { summary: reasoning.summary } : {}) }
       : undefined;
   const sendToolFields = opts.requireToolFields === true || (req.tools?.length ?? 0) > 0;
+  // WS-23 (midconv): the row's client tool search, when this request carries the tool that uses it.
+  const clientToolSearch = descriptor?.clientToolSearch?.value === true && (req.tools ?? []).some((t) => t.toolSearch === true);
+  // A forced choice outranks a restriction (see `allowedToolsChoice`).
+  const toolChoice = req.allowedTools !== undefined && req.toolChoice?.type !== "tool" ? allowedToolsChoice(req, clientToolSearch) : mapToolChoice(req.toolChoice);
   return {
     model: req.model,
     ...(req.system !== undefined && req.system.length > 0 ? { instructions: req.system } : {}),
-    input: mapResponsesInput(req.messages, opts.configurationUpdatePlacement !== undefined ? { configurationUpdatePlacement: opts.configurationUpdatePlacement } : {}),
+    input: mapResponsesInput(req.messages, {
+      ...(opts.configurationUpdatePlacement !== undefined ? { configurationUpdatePlacement: opts.configurationUpdatePlacement } : {}),
+      ...(clientToolSearch ? { clientToolSearch: true, tools: req.tools } : {}),
+    }),
     ...(sendToolFields
       ? {
-          tools: mapResponsesTools(req.tools),
-          tool_choice: mapToolChoice(req.toolChoice),
+          tools: mapResponsesTools(req.tools, { clientToolSearch }),
+          tool_choice: toolChoice,
           parallel_tool_calls: descriptor?.parallelTools?.value === false ? false : true,
         }
       : {}),
@@ -316,6 +489,29 @@ export function buildResponsesBody(
 /** Output item types that are a TOOL INVOCATION this adapter cannot express. Seeing one is an error, never a skip (WS-13 §9). */
 function isUnrepresentableCall(itemType: string): boolean {
   return itemType !== "function_call" && (itemType.endsWith("_call") || itemType === "custom_tool_call");
+}
+
+/**
+ * WS-23 (midconv): how this request's tools come back from the stream -- the ToolSearch tool's name, for a
+ * CLIENT `tool_search_call` (the one `*_call` item this adapter can express: it is Winter's own ToolSearch,
+ * run by Winter), and each namespaced tool's full Winter name by `namespace` + short name. Built from the
+ * request's tools, never by concatenating the two parts.
+ */
+export interface ResponsesStreamTools {
+  toolSearchName?: string;
+  namespaced?: ReadonlyMap<string, string>;
+}
+
+/** The stream-side tool facts for a request (see `ResponsesStreamTools`). */
+export function responsesStreamTools(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): ResponsesStreamTools {
+  if (descriptor?.clientToolSearch?.value !== true) return {};
+  const search = (req.tools ?? []).find((t) => t.toolSearch === true);
+  const namespaced = new Map((req.tools ?? []).flatMap((t) => (t.namespace !== undefined ? [[namespacedKey(t.namespace, t.name.slice(t.namespace.length + 2)), t.name] as const] : [])));
+  return { ...(search !== undefined ? { toolSearchName: search.name } : {}), ...(namespaced.size > 0 ? { namespaced } : {}) };
+}
+
+function namespacedKey(namespace: string, name: string): string {
+  return `${namespace}\u0000${name}`;
 }
 
 /**
@@ -355,7 +551,16 @@ export class ResponsesStreamMapper {
   constructor(
     private readonly completionEvent: string = "response.completed",
     private readonly readableState: "none" | "summary" | "full-exposed" = "none",
+    private readonly tools: ResponsesStreamTools = {},
   ) {}
+
+  /** WS-23 (midconv): a client `tool_search_call` this request's ToolSearch answers. */
+  private isClientToolSearch(itemType: string, item: Record<string, unknown>): boolean {
+    return itemType === "tool_search_call" && item.execution === "client" && this.tools.toolSearchName !== undefined;
+  }
+
+  /** call ids of client tool-search calls already opened (`added`), so `done` does not open them twice. */
+  private readonly openedSearches = new Set<string>();
 
   private sawToolCall = false;
   private sawRefusal = false;
@@ -462,10 +667,18 @@ export class ResponsesStreamMapper {
     const item = itemOf(payload);
     if (item === undefined) return [];
     const itemType = typeof item.type === "string" ? item.type : "";
+    if (this.isClientToolSearch(itemType, item)) {
+      // Opened here, its arguments (an OBJECT, complete only on `done`) handed over there.
+      const callId = typeof item.call_id === "string" ? item.call_id : undefined;
+      if (callId === undefined) return [];
+      this.openedSearches.add(callId);
+      this.sawToolCall = true;
+      return [{ type: "tool_call_start", id: callId, name: this.tools.toolSearchName! }];
+    }
     if (isUnrepresentableCall(itemType)) return this.unrepresentable(itemType, item);
     if (itemType !== "function_call") return [];
     const callId = typeof item.call_id === "string" ? item.call_id : typeof item.id === "string" ? item.id : undefined;
-    const name = typeof item.name === "string" ? item.name : undefined;
+    const name = this.fullName(item);
     if (callId === undefined || name === undefined) {
       return [{ type: "error", error: { code: "bad_request", message: "the provider opened a function call with no call id or name, which cannot be represented as a tool call", retryable: false } }];
     }
@@ -503,6 +716,23 @@ export class ResponsesStreamMapper {
         this.reasoningItems.push({ index, arrival: this.arrivals++, item: replayable });
       }
       return [];
+    }
+
+    if (this.isClientToolSearch(itemType, item)) {
+      const callId = typeof item.call_id === "string" ? item.call_id : undefined;
+      if (callId === undefined) {
+        return [{ type: "error", error: { code: "bad_request", message: "the provider emitted a client tool_search_call with no call id, which cannot be answered", retryable: false } }];
+      }
+      const events: ProviderEvent[] = [];
+      if (!this.openedSearches.has(callId)) {
+        this.openedSearches.add(callId);
+        this.sawToolCall = true;
+        events.push({ type: "tool_call_start", id: callId, name: this.tools.toolSearchName! });
+      }
+      const args = typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments ?? {});
+      if (args.length > 0) events.push({ type: "tool_call_delta", id: callId, argumentsJsonDelta: args });
+      events.push({ type: "tool_call_end", id: callId });
+      return events;
     }
 
     if (isUnrepresentableCall(itemType)) return this.unrepresentable(itemType, item);
@@ -561,6 +791,13 @@ export class ResponsesStreamMapper {
     const stopReason = this.sawRefusal ? "refusal" : incompleteReason === "max_output_tokens" ? "max_tokens" : this.sawToolCall ? "tool_use" : "end_turn";
     events.push({ type: "done", stopReason });
     return events;
+  }
+
+  /** A function call's Winter name: a namespaced call (`{namespace, name}`) is looked up in this request's tools. */
+  private fullName(item: Record<string, unknown>): string | undefined {
+    const name = typeof item.name === "string" ? item.name : undefined;
+    if (name === undefined || typeof item.namespace !== "string") return name;
+    return this.tools.namespaced?.get(namespacedKey(item.namespace, name)) ?? name;
   }
 
   private noteRefusal(item: Record<string, unknown>): void {
@@ -630,6 +867,8 @@ export interface ResponsesTurnPlan {
   onRateLimited?: (retry: Extract<ProviderEvent, { type: "retry" }>, queue: EventQueue) => void;
   /** Pre-seeded observations (an `auth_status` from a token refresh that already happened). */
   queue?: EventQueue;
+  /** WS-23 (midconv): how this request's tools come back from the stream (`responsesStreamTools`). */
+  streamTools?: ResponsesStreamTools;
 }
 
 /**
@@ -643,7 +882,7 @@ export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: Abor
   const queue = plan.queue ?? new EventQueue();
   const policy = makeRetryPolicy(plan.options);
   const descriptor = plan.options.descriptors?.(plan.model, plan.ctx.connection.providerId);
-  const mapper = new ResponsesStreamMapper(responsesCompletionEvent(descriptor), descriptor?.reasoning?.readableState?.value ?? "none");
+  const mapper = new ResponsesStreamMapper(responsesCompletionEvent(descriptor), descriptor?.reasoning?.readableState?.value ?? "none", plan.streamTools ?? {});
   let response: Response;
   try {
     response = yield* pumpEvents(
@@ -771,6 +1010,7 @@ export async function* responsesTurn(
     const descriptor = options.descriptors?.(req.model, ctx.connection.providerId);
     assertRepresentableTools(req.tools);
     assertConfigurationUpdates(req, descriptor);
+    assertResponsesToolFeatures(req, descriptor);
     const reasoning = resolveReasoning(req, descriptor);
     const parametersInPlay = [
       ...(reasoning.enabled && reasoning.effort !== undefined ? ["reasoning", "reasoning.effort"] : []),
@@ -796,7 +1036,7 @@ export async function* responsesTurn(
       identity: identityFor(options, ctx),
       userSupplied: ctx.connection.headers,
     });
-    plan = { model: req.model, url: urlFor(endpoint.baseUrl), headers, endpoint, ctx, options, body: JSON.stringify(buildResponsesBody(req, reasoning, descriptor)) };
+    plan = { model: req.model, url: urlFor(endpoint.baseUrl), headers, endpoint, ctx, options, body: JSON.stringify(buildResponsesBody(req, reasoning, descriptor)), streamTools: responsesStreamTools(req, descriptor) };
   } catch (err) {
     yield errorEvent(err);
     return;

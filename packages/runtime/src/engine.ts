@@ -572,6 +572,16 @@ function isToolChangeRejection(err: unknown): boolean {
 }
 
 /**
+ * WS-23 (midconv): a provider 400 refusing OpenAI's client tool search -- the `tool_search` tool, its
+ * `tool_search_output` item, `defer_loading`, or a `namespace` entry. A false positive costs one retried
+ * request on today's shape, never a wrong answer.
+ */
+function isToolSearchRejection(err: unknown): boolean {
+  if (!isProviderTurnError(err) || (err.status !== 400 && err.status !== 422)) return false;
+  return /tool_search|defer_loading|namespace/i.test(err instanceof Error ? err.message : "");
+}
+
+/**
  * WS-23: the session's system-prompt cache lifetime -- `RuntimeConfig.promptCacheTtl`, defaulted HERE
  * and nowhere else. `"5m"` is the vendor's own default and what claude 2.1.282 uses with an API key;
  * `"1h"` is the host's choice for sessions with long idle gaps (it is written at twice the input
@@ -3005,6 +3015,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // every later request rebuilds `tools` (claude 2.1.282's own one-time fallback). `forceNewToolEpoch` is
   // set by a compaction: the prefix is new anyway, so the next request freezes the list afresh.
   let toolChangesRejected = false;
+  // WS-23 (midconv): sticky too -- the API refused OpenAI's client `tool_search` (or a namespace), so the
+  // session goes back to today's shape: loaded deferred tools appended to `tools` as plain functions.
+  let nativeToolSearchRejected = false;
   let forceNewToolEpoch = false;
   let toolEpochRestartLogged = false;
   // WS-23: the last MAIN-LOOP response's id and the model it came from -- the next request's
@@ -7281,8 +7294,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // all (a narrow child pool) the old shape stands. A tool loaded with NO reference left in the
     // history (a compaction summarised it away, or it was loaded on another model) is sent plainly --
     // nothing would surface it otherwise.
-    const declareDeferred = specs.length > 0 && currentModelDescription()?.wire?.deferredToolLoading === true;
+    //
+    // WS-23 (midconv): OpenAI's client tool search (`wire.clientToolSearch`) is the same pattern on the
+    // Responses API: deferred tools ride `deferLoading` (the adapter keeps them out of `tools` and hands
+    // the loaded ones back in `tool_search_output`), ToolSearch itself is marked `toolSearch` (sent as
+    // the native `{"type": "tool_search", "execution": "client"}`), and an MCP tool carries its server's
+    // `namespace`. "At least one tool must have defer_loading=false" holds there too (ToolSearch is one).
+    const wire = currentModelDescription()?.wire;
+    const clientSearch = wire?.clientToolSearch === true && !nativeToolSearchRejected;
+    const declareDeferred = specs.length > 0 && (wire?.deferredToolLoading === true || clientSearch);
     const referenced = declareDeferred ? referencedToolNames(messages) : undefined;
+    const namespaced = (spec: ProviderToolSpec, canonicalName: string): ProviderToolSpec => {
+      if (!clientSearch) return spec;
+      const server = mcpServerOwningTool(canonicalName);
+      const namespace = server !== undefined ? `mcp__${server}` : undefined;
+      return namespace !== undefined && spec.name.startsWith(`${namespace}__`) && spec.name.length > namespace.length + 2 ? { ...spec, namespace } : spec;
+    };
     for (const descriptor of advertisedPartition.deferred) {
       const loaded = loadedToolSet.isLoaded(descriptor.canonicalName);
       if (referenced === undefined) {
@@ -7291,7 +7318,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         continue;
       }
       const spec = toolSpecFor(descriptor);
-      specs.push(!loaded || referenced.has(spec.name) ? { ...spec, deferLoading: true } : spec);
+      specs.push(!loaded || referenced.has(spec.name) ? namespaced({ ...spec, deferLoading: true }, descriptor.canonicalName) : spec);
+    }
+    if (clientSearch) {
+      const searchNames = new Set(advertisedPartition.eager.filter((d) => d.canonicalName === "ToolSearch").map((d) => d.advertisedName));
+      for (let i = 0; i < specs.length; i++) if (searchNames.has(specs[i]!.name) && specs[i]!.deferLoading !== true) specs[i] = { ...specs[i]!, toolSearch: true };
     }
     // WS-23: a DETERMINISTIC order, by name (UTF-16 code units, locale-independent). Registration
     // order moves with MCP connect order and module load order, so two processes -- or a session and
@@ -7395,7 +7426,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       state = foldToolState(active.epoch, changes, referenced());
     }
     const tools = mechanism === "openai" ? [...state.declared, ...current.filter((t) => t.deferLoading === true)] : state.declared;
-    const allowedTools = diff.kind !== "new-epoch" ? diff.allowedTools : undefined;
+    let allowedTools = diff.kind !== "new-epoch" ? diff.allowedTools : undefined;
+    // THE LIVE PERMISSION MODE, on a row that restricts by choice. `tools` follows the session's STARTUP
+    // mode (rider 5's posture: the partition is not re-derived on a mode switch) and the live mode governs
+    // dispatch -- so in plan mode the model is still shown a tool the dispatch will refuse. `allowed_tools`
+    // closes that gap at no cache cost: the tools the live mode excludes leave the callable subset, and
+    // come back when the mode does. Anthropic has no equivalent that leaves `tools` alone (only a
+    // `tool_removal` entry per switch), so there the dispatch refusal stays the gate.
+    if (mechanism === "openai" && caps.allowedTools === true) {
+      const liveMode = policyStateStore.getState().mode;
+      const modeExcluded = new Set(advertisedPartition.eager.filter((d) => !isToolAvailable(d, { ...advertisedCfg, mode: liveMode })).map((d) => d.advertisedName));
+      if (modeExcluded.size > 0) {
+        const base = allowedTools ?? current.filter((t) => t.deferLoading !== true && state.available.has(t.name)).map((t) => t.name).sort();
+        const restricted = base.filter((name) => !modeExcluded.has(name));
+        if (restricted.length < base.length || allowedTools !== undefined) allowedTools = restricted;
+      }
+    }
     return { tools, ...(allowedTools !== undefined ? { allowedTools } : {}), toolChanges: { render: new Set(changes) }, ...optIn };
   };
 
@@ -8065,6 +8111,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // WS-23 (midconv): whether THIS generation carried a tool-change mechanism -- the tool-change
       // fallback below must never fire for a request that sent none.
       let sentToolChanges = false;
+      let sentNativeToolSearch = false;
       try {
         // A mid-turn compaction cleared the session context; this rebuilds it (same envelope input).
         const context = await ensureSessionContext(assembled, envelopeInput);
@@ -8074,6 +8121,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         const toolPlan = await planToolsForRequest();
         const toolSpecs = toolPlan.tools;
         sentToolChanges = toolPlan.optIn === true || toolPlan.allowedTools !== undefined || (toolPlan.toolChanges?.render.size ?? 0) > 0;
+        sentNativeToolSearch = toolSpecs.some((t) => t.toolSearch === true);
         const outboundMessages = requestMessages(context, effortPlan.markers, toolPlan.toolChanges);
         generationEffort = effortPlan.stamp;
         // Fix round 1 (I1): every per-message request carries the leading marker, so the beta rides
@@ -8227,6 +8275,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // a 400 is pre-first-byte, the round re-runs as a fresh request, and the session rebuilds `tools`
         // for the rest of its life -- claude 2.1.282's own "declaring late tools in tools[]" fallback --
         // saying so once. Sticky, so a second refusal surfaces like any other failure.
+        // WS-23 (midconv): OpenAI's client tool search REFUSED -- same one-time, sticky fallback, to the
+        // shape every other row has (loaded deferred tools as plain functions). A new epoch, since the
+        // frozen list carried the native tool search.
+        if (sentNativeToolSearch && !nativeToolSearchRejected && isToolSearchRejection(err)) {
+          nativeToolSearchRejected = true;
+          forceNewToolEpoch = true;
+          console.error(`winter: the provider refused its client tool search (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now sends loaded deferred tools in its tool list`);
+          continue roundLoop;
+        }
         if (sentToolChanges && !toolChangesRejected && isToolChangeRejection(err)) {
           toolChangesRejected = true;
           console.error(`winter: the provider refused a mid-conversation tool change (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now re-sends its tool list on each change, which restarts the prompt cache`);

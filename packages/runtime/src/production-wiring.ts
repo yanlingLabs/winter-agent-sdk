@@ -707,6 +707,10 @@ export function describeCatalogModel(catalog: WinterCatalog, model: string, prov
     // WS-23 (midconv): the tool epoch's mechanism. By value subsumes by reference (the inline beta "covers
     // all reference-based changes"), so a row with both reads as inline.
     ...(row.inlineToolDefinitions !== undefined ? { toolChanges: "inline" as const } : row.midConversationToolChanges !== undefined ? { toolChanges: "reference" as const } : {}),
+    // WS-23 (midconv): OpenAI's client tool search, `additional_tools` and `allowed_tools`.
+    ...(row.clientToolSearch?.value === true ? { clientToolSearch: true as const } : {}),
+    ...(row.additionalToolsItem?.value === true ? { additionalToolsItem: true as const } : {}),
+    ...(row.allowedToolsChoice?.value === true ? { allowedToolsChoice: true as const } : {}),
   };
   const description: ModelDescription = {
     ...(row.displayName.length > 0 ? { displayName: row.displayName } : {}),

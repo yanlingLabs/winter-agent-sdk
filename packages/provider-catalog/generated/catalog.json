@@ -25481,6 +25481,13 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "codex-rs models-manager/models.json (cloned 25270df, 2026-09-26): supports_search_tool is true on every bundled model; core/src/tools/spec_plan.rs:653-666 turns on the client tool_search (tools/src/tool_search.rs:84-110, core/src/tools/handlers/tool_search_spec.rs:98) when the provider's namespace capability is on (default true) -- the vendor's own client sends it to chatgpt.com/backend-api/codex."
+      },
       "canonicalModelId": "gpt-5.6-luna",
       "modelFamily": "gpt"
     },
@@ -25595,6 +25602,13 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "codex-rs models-manager/models.json (cloned 25270df, 2026-09-26): supports_search_tool is true on every bundled model; core/src/tools/spec_plan.rs:653-666 turns on the client tool_search (tools/src/tool_search.rs:84-110, core/src/tools/handlers/tool_search_spec.rs:98) when the provider's namespace capability is on (default true) -- the vendor's own client sends it to chatgpt.com/backend-api/codex."
+      },
       "canonicalModelId": "gpt-5.6-sol",
       "modelFamily": "gpt"
     },
@@ -25708,6 +25722,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "codex-rs models-manager/models.json (cloned 25270df, 2026-09-26): supports_search_tool is true on every bundled model; core/src/tools/spec_plan.rs:653-666 turns on the client tool_search (tools/src/tool_search.rs:84-110, core/src/tools/handlers/tool_search_spec.rs:98) when the provider's namespace capability is on (default true) -- the vendor's own client sends it to chatgpt.com/backend-api/codex."
       },
       "canonicalModelId": "gpt-5.6-terra",
       "modelFamily": "gpt"
@@ -25825,6 +25846,13 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "codex-rs models-manager/models.json (cloned 25270df, 2026-09-26): supports_search_tool is true on every bundled model; core/src/tools/spec_plan.rs:653-666 turns on the client tool_search (tools/src/tool_search.rs:84-110, core/src/tools/handlers/tool_search_spec.rs:98) when the provider's namespace capability is on (default true) -- the vendor's own client sends it to chatgpt.com/backend-api/codex."
+      },
       "canonicalModelId": "gpt-6-astra",
       "modelFamily": "gpt"
     },
@@ -25941,6 +25969,13 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "codex-rs models-manager/models.json (cloned 25270df, 2026-09-26): supports_search_tool is true on every bundled model; core/src/tools/spec_plan.rs:653-666 turns on the client tool_search (tools/src/tool_search.rs:84-110, core/src/tools/handlers/tool_search_spec.rs:98) when the provider's namespace capability is on (default true) -- the vendor's own client sends it to chatgpt.com/backend-api/codex."
+      },
       "canonicalModelId": "gpt-6-luna",
       "modelFamily": "gpt"
     },
@@ -26056,6 +26091,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "codex-rs models-manager/models.json (cloned 25270df, 2026-09-26): supports_search_tool is true on every bundled model; core/src/tools/spec_plan.rs:653-666 turns on the client tool_search (tools/src/tool_search.rs:84-110, core/src/tools/handlers/tool_search_spec.rs:98) when the provider's namespace capability is on (default true) -- the vendor's own client sends it to chatgpt.com/backend-api/codex."
       },
       "canonicalModelId": "gpt-6-sol",
       "modelFamily": "gpt"
@@ -51525,6 +51567,27 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
+      },
       "canonicalModelId": "gpt-5.4",
       "modelFamily": "gpt"
     },
@@ -51643,6 +51706,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-5.4-mini",
       "modelFamily": "gpt"
@@ -51763,6 +51847,27 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
+      },
       "canonicalModelId": "gpt-5.4-nano",
       "modelFamily": "gpt"
     },
@@ -51856,6 +51961,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-5.4-pro",
       "modelFamily": "gpt"
@@ -51969,6 +52095,27 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
+      },
       "canonicalModelId": "gpt-5.5",
       "modelFamily": "gpt"
     },
@@ -52069,6 +52216,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-5.5-pro",
       "modelFamily": "gpt"
@@ -52191,6 +52359,27 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
+      },
       "canonicalModelId": "gpt-5.6",
       "modelFamily": "gpt"
     },
@@ -52311,6 +52500,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-5.6-luna",
       "modelFamily": "gpt"
@@ -52433,6 +52643,27 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
+      },
       "canonicalModelId": "gpt-5.6-sol",
       "modelFamily": "gpt"
     },
@@ -52553,6 +52784,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-5.6-terra",
       "modelFamily": "gpt"
@@ -52719,6 +52971,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-6-astra",
       "modelFamily": "gpt"
@@ -52887,6 +53160,27 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
+      },
       "canonicalModelId": "gpt-6-luna",
       "modelFamily": "gpt"
     },
@@ -53053,6 +53347,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-6-sol",
       "modelFamily": "gpt"

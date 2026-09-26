@@ -31,7 +31,7 @@ import { CODEX, CODEX_MODELS, codexCredentialAccount } from "./codex-config.ts";
 import { refreshTokens, runLoginFlow, type OAuthTokens } from "./pkce.ts";
 import { refreshOauthMaterial } from "../oauth/refresh.ts";
 import { QuotaManager, quotaEvent } from "./quota.ts";
-import { assertConfigurationUpdates, buildResponsesBody, privilegedHeaders, streamResponsesTurn, type ResponsesTurnPlan } from "./responses.ts";
+import { assertConfigurationUpdates, assertResponsesToolFeatures, buildResponsesBody, privilegedHeaders, responsesStreamTools, streamResponsesTurn, type ResponsesTurnPlan } from "./responses.ts";
 import { identityFor } from "./shared.ts";
 import { activeWinterIdentity } from "../../identity.ts";
 import {
@@ -185,6 +185,7 @@ async function* codexTurn(req: TurnRequest, ctx: ProviderContext, options: Codex
     // WS-23 (midconv): the same per-message effort gate as `responsesTurn`. No codex-oauth row records
     // the item yet (the live probe decides), so an effort marker here is refused before the request.
     assertConfigurationUpdates(req, descriptor);
+    assertResponsesToolFeatures(req, descriptor);
     const reasoning = resolveReasoning(req, descriptor);
     // The SAME set `responsesTurn` declares (minor 7): this adapter sends the identical body, so a
     // model that lists `include` or `tools` as unsupported must be refused here too.
@@ -210,6 +211,7 @@ async function* codexTurn(req: TurnRequest, ctx: ProviderContext, options: Codex
       // The codex backend REQUIRES the tool trio even with no tools (a live 400 otherwise, `responses.ts`
       // header) — the one surface `buildResponsesBody` does not omit it for.
       body: JSON.stringify(buildResponsesBody(req, reasoning, descriptor, { requireToolFields: true })),
+      streamTools: responsesStreamTools(req, descriptor),
       queue,
       beforeAttempt: async () => {
         // A known subscription window is waited out BEFORE the request rather than discovered by

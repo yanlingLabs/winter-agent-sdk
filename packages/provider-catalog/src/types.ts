@@ -293,6 +293,28 @@ export interface WinterModelDescriptor {
    * vocabulary (`CATALOG_VOCABULARIES.inlineToolDefinitionBetas`).
    */
   inlineToolDefinitions?: CapabilityEvidence<{ beta: "inline-tools-2026-09-15" }>;
+  /**
+   * WS-23 (midconv): the model takes OpenAI's CLIENT-EXECUTED tool search -- a
+   * `{"type": "tool_search", "execution": "client", description, parameters}` tool, `tool_search_call`
+   * output items the client answers with `tool_search_output` (the loaded definitions, `defer_loading`
+   * kept, optionally grouped in `namespace` entries), so deferred tools never sit in `tools`
+   * (https://developers.openai.com/api/docs/guides/tools-tool-search: "Only gpt-5.4 and later models
+   * support tool_search"). `true` is the only meaningful value.
+   */
+  clientToolSearch?: CapabilityEvidence<boolean>;
+  /**
+   * WS-23 (midconv): the model takes an `additional_tools` developer input item -- tools that "become
+   * available only after that item appears in the input", replayed at their position -- so a tool can be
+   * added mid-conversation without editing `tools` (same page). `true` is the only meaningful value.
+   */
+  additionalToolsItem?: CapabilityEvidence<boolean>;
+  /**
+   * WS-23 (midconv): the model takes `tool_choice: {"type": "allowed_tools", "mode": "auto" | "required",
+   * "tools": [...]}` -- a callable subset of `tools` "but not modify the list of tools you pass in, so you
+   * can maximize savings from prompt caching" (https://developers.openai.com/api/docs/guides/function-calling).
+   * `true` is the only meaningful value.
+   */
+  allowedToolsChoice?: CapabilityEvidence<boolean>;
   reasoning?: ReasoningCapabilities;
   pricing?: CapabilityEvidence<ModelPricing>;
   /** R6-14: set only after the safety corpus passes live. A worker with no configured classifier route serves only when this is true AND `structuredOutput.confidence === "verified"`. */

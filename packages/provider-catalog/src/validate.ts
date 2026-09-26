@@ -767,6 +767,9 @@ function checkModel(errs: Errors, v: unknown, path: string): void {
   };
   checkEvidence(errs, v["midConversationToolChanges"], `${path}.midConversationToolChanges`, betaOnly(MID_CONVERSATION_TOOL_CHANGE_BETAS, "mid-conversation tool-change"), false);
   checkEvidence(errs, v["inlineToolDefinitions"], `${path}.inlineToolDefinitions`, betaOnly(INLINE_TOOL_DEFINITION_BETAS, "inline tool-definition"), false);
+  checkEvidence(errs, v["clientToolSearch"], `${path}.clientToolSearch`, evidenceBoolean, false);
+  checkEvidence(errs, v["additionalToolsItem"], `${path}.additionalToolsItem`, evidenceBoolean, false);
+  checkEvidence(errs, v["allowedToolsChoice"], `${path}.allowedToolsChoice`, evidenceBoolean, false);
   checkEvidence(errs, v["classifierEligible"], `${path}.classifierEligible`, evidenceBoolean, false);
   checkEvidence(errs, v["pricing"], `${path}.pricing`, (val, p) => checkPricing(errs, val, p), false);
   if (v["reasoning"] !== undefined) checkReasoning(errs, v["reasoning"], `${path}.reasoning`);
