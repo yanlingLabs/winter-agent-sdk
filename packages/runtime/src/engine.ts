@@ -5510,6 +5510,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const notifications: SessionNotificationQueue = notificationQueueFor(config.sessionId);
   /** True from the moment a turn's envelope is claimed until its terminal result has been written. */
   let turnActive = false;
+  // WS-23 (reasoning-state, decision 5): the host-requested compaction (the `compact` control) while it
+  // runs -- a turn does not start until it settles -- and its runner, assigned once `performCompaction`
+  // exists (a control that arrives earlier is answered `busy`).
+  let controlCompaction: Promise<void> | undefined;
+  let compactOnControl: ((instructions: string | null) => Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }>) | undefined;
   /** True while the RUNNING turn is one a task notification started (no host input produced it). */
   let turnStartedByNotification = false;
   /** Set at the one place `userFrames.end()` is called -- nothing may be written after it. */
@@ -6020,6 +6025,42 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             pendingEffort = { effort: target };
             // IDLE is itself a quiescent boundary, exactly as for `set_model`.
             if (interruptCurrentTurn.current === null) applyPendingEffort();
+            continue;
+          }
+          // --- WS-23 (reasoning-state, decision 5): `compact` -------------------------------------
+          //
+          // WINTER-ONLY. The host compacts the conversation NOW, on the model the session is live on --
+          // what the daemon asks of a child before a switch to another provider whose model cannot hold
+          // the conversation (the user's rule: the model being left pays for the compaction; the new
+          // incarnation then resumes from the compacted transcript). Refused `busy` while a turn runs or
+          // another compaction does; answered when the compaction has finished, with how many messages
+          // it kept. Reuses the session's own cached prefix where it can (`performCompaction`).
+          if (cf.subtype === "compact") {
+            const payload = cf.payload;
+            const raw = typeof payload === "object" && payload !== null ? (payload as { custom_instructions?: unknown }).custom_instructions : undefined;
+            const instructions = typeof raw === "string" && raw.length > 0 ? raw : null;
+            if (turnActive || controlCompaction !== undefined || compactOnControl === undefined) {
+              output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "busy", message: "a turn or another compaction is running (or the session has not started); ask again once it is idle" } });
+              continue;
+            }
+            const run = compactOnControl(instructions);
+            controlCompaction = run.then(
+              () => undefined,
+              () => undefined,
+            );
+            void run
+              .then(
+                (outcome) =>
+                  output.write(
+                    outcome.ok
+                      ? { type: "control_response", requestId: cf.requestId, ok: true, payload: { compacted: true, retained_count: outcome.retainedCount } }
+                      : { type: "control_response", requestId: cf.requestId, ok: false, error: { code: "compaction_failed", message: outcome.error } },
+                  ),
+                (err: unknown) => output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "compaction_failed", message: err instanceof Error ? err.message : String(err) } }),
+              )
+              .finally(() => {
+                controlCompaction = undefined;
+              });
             continue;
           }
           // --- Phase 6 Task 10 (R6-I): `list_models` and `account_info` ---------------------------
@@ -6972,6 +7013,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const outcome = await performCompaction("auto", null, { reason: "overflow", ...(source !== undefined ? { provider: source } : {}), ...(bound !== undefined ? { maxInputChars: bound } : {}) });
     return outcome.ok;
   };
+
+  // WS-23 (decision 5): the `compact` control's runner -- an AUTO compaction (the host asked, not the
+  // user), which reuses the session's cached prefix when it can.
+  compactOnControl = (instructions) => performCompaction("auto", instructions);
 
   // R5-14's `/compact [instructions]`: the MANUAL trigger, never subject to the auto re-entrancy
   // guard (a user asking twice gets two compactions).
@@ -8066,6 +8111,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   }
 
   for await (const userFrame of userFrames) {
+    // WS-23 (decision 5): a host-requested compaction finishes before any turn starts.
+    if (controlCompaction !== undefined) await controlCompaction;
     // SDK 0.0.16 Lane N. `turnActive` gates `pumpNotifications` (one notification turn at a time, and
     // never one that would race a host turn); `turnStartedByNotification` is what makes this an
     // UNSOLICITED turn rather than a host one -- it decides the second `system/init` frame below, the
