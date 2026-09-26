@@ -158,7 +158,7 @@ function exposeProxyVariable(name: string): void {
   const desc = Object.getOwnPropertyDescriptor(process.env, name);
   if (desc === undefined || desc.enumerable === true) return;
   try {
-    if (desc.get !== undefined || desc.set !== undefined) Object.defineProperty(process.env, name, { get: desc.get, set: desc.set, enumerable: true, configurable: true });
+    if (desc.get !== undefined || desc.set !== undefined) Object.defineProperty(process.env, name, { ...(desc.get !== undefined ? { get: desc.get } : {}), ...(desc.set !== undefined ? { set: desc.set } : {}), enumerable: true, configurable: true });
     else Object.defineProperty(process.env, name, { ...desc, enumerable: true });
   } catch {
     /* not redefinable on this Bun: the by-name merge in withEnv still carries it */
