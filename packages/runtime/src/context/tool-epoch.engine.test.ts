@@ -267,6 +267,28 @@ describe("the tool epoch, by reference (a row with `midConversationToolChanges`)
     }
   });
 
+  test("fix round 1: a paused turn's resend KEEPS its prefill exemption when a fallback retries it", async () => {
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => void errors.push(args.join(" "));
+    try {
+      addTool("zz_midconv_a");
+      const { requests } = await drive({
+        describe: REFERENCE_ROW,
+        steps: [{ user: "one" }],
+        generate: (_req, index) => {
+          if (index === 0) return { kind: "text", text: "paused", stopReason: "pause_turn" };
+          // The resend is refused on a tool-change ground; the fallback re-runs it.
+          if (index === 1) throw new ProviderTurnError("provider request failed (bad_request): HTTP 400 — Unexpected value(s) `mid-conversation-tool-changes-2026-07-01` for the `anthropic-beta` header", { status: 400, code: "bad_request", retryable: false });
+          return { kind: "text", text: "resumed" };
+        },
+      });
+      expect(requests.map((r) => r.resumesPausedTurn === true)).toEqual([false, true, true]);
+    } finally {
+      console.error = original;
+    }
+  });
+
   test("a `pause_turn` resend appends no change (a change never follows a paused assistant turn); the next user turn catches up", async () => {
     addTool("zz_midconv_a");
     const { requests } = await drive({

@@ -225,6 +225,7 @@ import {
   foldToolState,
   TOOL_CHANGES_ATTACHMENT,
   TOOL_EPOCH_ATTACHMENT,
+  isToolBookkeeping,
   type ToolChangeCaps,
   type ToolChangeMechanism,
   type ToolChangesAttachment,
@@ -7484,7 +7485,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     }
     // A change follows a user or tool-result turn -- never a paused assistant turn (a `pause_turn`
     // resend), which the vendor refuses; that request changes nothing and the next one catches up.
-    if (diff.kind === "change" && messages.at(-1)?.role !== "assistant") {
+    // The last REAL message decides (fix round 1): an epoch entry appended after a paused turn is
+    // bookkeeping, not a user turn, and must not let a change follow the paused assistant message.
+    const lastReal = [...messages].reverse().find((m) => !isToolBookkeeping(m));
+    if (diff.kind === "change" && lastReal?.role !== "assistant") {
       await appendToolBookkeeping({ type: TOOL_CHANGES_ATTACHMENT, mechanism, ...diff.change });
       changes = epochChangeMessages(messages, active.index, mechanism);
       // A deferred tool announced by reference is callable from here on: load it, so the dispatch's
@@ -8187,8 +8191,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       let sentToolChangeMessage = false;
       let sentAllowedTools = false;
       // WS-23 (midconv): this generation re-sends a paused turn (set by the `pause_turn` branch below).
+      // Read, NOT consumed here (fix round 1): a retried round (a fallback's `continue roundLoop`) re-sends
+      // the same paused turn and must keep the exemption; it is cleared once a generation returns.
       const resumesPausedTurn = resendingPausedTurn;
-      resendingPausedTurn = false;
       try {
         // A mid-turn compaction cleared the session context; this rebuilds it (same envelope input).
         const context = await ensureSessionContext(assembled, envelopeInput);
@@ -8266,6 +8271,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           break roundLoop;
         }
         turn = raced.value;
+        resendingPausedTurn = false;
         if ("responseId" in turn && turn.responseId !== undefined) lastMainResponse = { id: turn.responseId, modelKey: currentProviderIdentity?.modelKey ?? currentModel };
         // Phase 5 Task 2 (R5-3): the ONE place this run folds a generation's reported usage into
         // the session's context accounting. A provider that reports no usage (every P1/P3/P4 test
