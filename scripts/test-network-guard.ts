@@ -192,7 +192,9 @@ if (process.env[ALLOW_REAL_NETWORK_ENV] !== "1") {
     proxy.unref();
     const proxyUrl = `http://127.0.0.1:${proxy.port}`;
     for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]) process.env[name] = proxyUrl;
-    for (const name of ["NO_PROXY", "no_proxy"]) process.env[name] = "localhost,127.0.0.1,::1,.localhost";
+    // Review r2: the reserved names (`.invalid`, `.test`, RFC 2606/6761) bypass the proxy too, so a test
+    // that points at one still fails at DNS as it always did, not with the proxy's 403.
+    for (const name of ["NO_PROXY", "no_proxy"]) process.env[name] = "localhost,127.0.0.1,::1,.localhost,.invalid,.test,invalid,test";
     // A spawn with NO `env` of its own inherits Bun's STARTUP environment, not today's `process.env`
     // (measured: `Bun.spawn` and `node:child_process` both), so the variables above would never reach it.
     // Such a spawn is handed `process.env` explicitly; a spawn that brings its own `env` keeps it as is.

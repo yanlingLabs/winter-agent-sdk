@@ -44,6 +44,11 @@ describe("the test network guard closes the doors review r1 found open", () => {
     expect(r.out).toContain("192.0.2.1");
   });
 
+  test("a reserved name (.invalid, .test) bypasses the proxy and fails at DNS, as before", async () => {
+    const r = await nested(`const e = await Bun.fetch("http://winter-guard-probe.invalid/").then(() => undefined, (err) => err); if (e === undefined) throw new Error("reached something"); const t = await Bun.fetch("http://winter-guard-probe.test/").then(() => undefined, (err) => err); if (t === undefined) throw new Error("reached something");`);
+    expect(r.code).toBe(0);
+  });
+
   test("loopback stays open", async () => {
     const r = await nested(`const s = Bun.serve({ port: 0, fetch: () => new Response("ok") }); try { await fetch(\`http://127.0.0.1:\${s.port}/\`); } finally { s.stop(true); }`);
     expect(r.code).toBe(0);
