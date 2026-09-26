@@ -493,13 +493,22 @@ interface BlockAt {
 
 /**
  * The last block in `messages[0..end)` a breakpoint may carry: the last block of the last
- * CONTENT-BEARING message. An effort-only `system` marker has no content and is skipped -- it renders
+ * CONTENT-BEARING, NON-SYSTEM message. An effort-only `system` marker has no content -- it renders
  * nothing at its position (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#limitations).
  * An in-dialect thinking block cannot carry a marker; claude never ends a request on one either (the
  * final message is the user's), so that only guards a host-supplied history.
+ *
+ * WS-23 (midconv, review I-1, the live probe's `messages_changed`): EVERY `role: "system"` message is
+ * skipped, content or not. A breakpoint on a system message's block (a tool change, a reminder) is there
+ * only while that message ends the request; the next request moves it to its new tail, so the entry the
+ * first one wrote is never read again -- the live inline phase read the same 10135 tokens on two requests
+ * in a row. The docs' own pattern is the fix: "put the breakpoint on the last block of the preceding user
+ * turn", then "append the system message after the breakpoint ... the cache still hits" (same page). A
+ * breakpoint on every system message instead would run into the four-breakpoint limit.
  */
 function lastMarkable(messages: readonly WireMessage[], end: number): BlockAt | undefined {
   for (let m = end - 1; m >= 0; m--) {
+    if (messages[m]!.role === "system") continue;
     const content = messages[m]!.content;
     if (content.length === 0) continue;
     const tail = content[content.length - 1]!;

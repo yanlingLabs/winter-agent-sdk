@@ -75,8 +75,9 @@ async function drive(opts: { config: RuntimeConfig; catalog: WinterCatalog; fami
   return frames;
 }
 
-/** JSON with every `cache_control` removed -- Anthropic's one rolling breakpoint moves by design. */
-const strip = (value: unknown): string => JSON.stringify(JSON.parse(JSON.stringify(value)), (key, v) => (key === "cache_control" ? undefined : v));
+/** JSON with `cache_control` removed from non-system messages -- Anthropic's rolling breakpoint moves by design; a system message never carries one (asserted separately). */
+const strip = (value: unknown): string =>
+  JSON.stringify((value as Block[]).map((m) => (m["role"] === "system" ? m : JSON.parse(JSON.stringify(m), (key, v) => (key === "cache_control" ? undefined : v)))));
 const isErrorResult = (frames: WinterFrame[]): boolean[] => frames.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").map((f) => (f as { message: { is_error: boolean } }).message.is_error);
 
 describe("the cached prefix on the wire through mid-session changes (WS-23 midconv item 5)", () => {
@@ -132,12 +133,16 @@ describe("the cached prefix on the wire through mid-session changes (WS-23 midco
     expect(first!.headers["anthropic-beta"]!.split(",")).toContain("inline-tools-2026-09-15");
     expect((first!.body["tools"] as Block[]).some((t) => String(t["name"]).includes(SERVER))).toBe(false);
     const wire = reqs.map((r) => r.body["messages"] as Block[]);
+    // Review I-1: no system message EVER carries a breakpoint (one there moves off on the next request,
+    // and the entry it wrote is never read) -- so the system messages are compared WITH their bytes.
+    for (const messages of wire) for (const m of messages) if (m["role"] === "system") expect(JSON.stringify(m)).not.toContain("cache_control");
+    // Only the rolling breakpoint on a user/assistant block moves, by design.
     for (let i = 0; i + 1 < wire.length; i++) expect(strip(wire[i + 1]!.slice(0, wire[i]!.length))).toBe(strip(wire[i]));
-    // The three changes, each where it belongs.
-    const systems = wire[3]!.filter((m) => m["role"] === "system").map((m) => strip(m));
-    expect(systems).toContain(strip({ role: "system", content: [{ type: "tool_addition", tool: { type: "tool_definition", definition: { name: `mcp__${SERVER}__lookup`, description: "Look something up.", input_schema: { type: "object", properties: { q: { type: "string" } } } } } }] }));
-    expect(systems).toContain(strip({ role: "system", content: [{ type: "tool_removal", tool: { type: "tool_reference", name: `mcp__${SERVER}__lookup` } }] }));
-    expect(systems).toContain(strip({ role: "system", content: [], output_config: { effort: "low" } }));
+    // The three changes, each where it belongs -- compared byte for byte (no breakpoint to set aside).
+    const systems = wire[3]!.filter((m) => m["role"] === "system").map((m) => JSON.stringify(m));
+    expect(systems).toContain(JSON.stringify({ role: "system", content: [{ type: "tool_addition", tool: { type: "tool_definition", definition: { name: `mcp__${SERVER}__lookup`, description: "Look something up.", input_schema: { type: "object", properties: { q: { type: "string" } } } } } }] }));
+    expect(systems).toContain(JSON.stringify({ role: "system", content: [{ type: "tool_removal", tool: { type: "tool_reference", name: `mcp__${SERVER}__lookup` } }] }));
+    expect(systems).toContain(JSON.stringify({ role: "system", content: [], output_config: { effort: "low" } }));
   });
 
   test("OpenAI (gpt-6-astra): an effort change, then a ToolSearch load -- `tools` byte-identical (the loaded tool arrives in tool_search_output), effort pinned, each input prefixes the next", async () => {
