@@ -113,3 +113,43 @@ describe("OpenAI-family context overflow is classified (WS-23 decision 5)", () =
     expect(normalizeHttpError(400, new Headers(), '{"error":{"message":"bad tool","code":"invalid_value"}}').contextOverflow).toBeUndefined();
   });
 });
+
+// WS-23 (reasoning-state x midconv fix round, I-2): the interleaved replay coexists with client tool search --
+// a `tool_search_call` is placed by the layout like any call, and its `tool_search_output` still renders
+// from the definitions stored on the result at load time.
+describe("(a) the layout with a client tool_search_call and a stored-definitions tool_search_output", () => {
+  test("[reasoning, tool_search_call, reasoning] goes back in that order; the output follows from the stored copy", () => {
+    const schema = { type: "object", properties: { q: { type: "string" } } };
+    const tools = [
+      { name: "ToolSearch", description: "ToolSearch tool", inputSchema: schema, toolSearch: true },
+      { name: "Lookup", description: "Lookup tool", inputSchema: schema, deferLoading: true },
+    ];
+    const input = mapResponsesInput(
+      [
+        { role: "user", content: "find it" },
+        {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "ts_1", name: "ToolSearch", input: { query: "lookup" } }],
+          nativeState: {
+            family: "openai",
+            continuationDomain: "openai/gpt-6-sol",
+            items: [
+              { type: "reasoning", encrypted_content: "E0" },
+              { type: "reasoning", encrypted_content: "E2" },
+              { type: RESPONSES_LAYOUT_ITEM_TYPE, order: [{ r: 0 }, { c: "ts_1" }, { r: 1 }] },
+            ],
+          },
+        },
+        {
+          role: "tool",
+          content: [{ type: "tool_result", tool_use_id: "ts_1", content: "loaded", loadedTools: ["Lookup"], loadedToolDefinitions: [{ name: "Lookup", description: "Lookup as loaded", inputSchema: schema }] }],
+        },
+      ],
+      { clientToolSearch: true, tools },
+    ) as Array<Record<string, unknown>>;
+    const shape = input.map((i) => (i["type"] === "reasoning" ? `r:${String(i["encrypted_content"])}` : String(i["type"] ?? i["role"])));
+    expect(shape.slice(0, 5)).toEqual(["message", "r:E0", "tool_search_call", "r:E2", "tool_search_output"]);
+    expect(JSON.stringify(input)).toContain("Lookup as loaded");
+    expect(JSON.stringify(input)).not.toContain("winter.");
+  });
+});
