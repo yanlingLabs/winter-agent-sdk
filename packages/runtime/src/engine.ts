@@ -986,6 +986,11 @@ export interface ProviderUsage {
   cacheMiss?: { type: string; missedInputTokens?: number };
   /** WS-23: replayed thinking blocks the provider dropped (Anthropic's `input_transformations`). */
   thinkingBlocksDropped?: number;
+  /**
+   * WS-24 (follow-up 1, lane `providers`): the Responses family's reasoning-token count -- a SUBSET
+   * of `outputTokens`. Anthropic reports no separate count and leaves this absent.
+   */
+  reasoningTokens?: number;
 }
 
 // Phase 6 Task 3 (R6-3): both production kinds gain `usage`/`stopReason`/`thinking`/`nativeState`,
@@ -8282,13 +8287,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // claude's per-turn `result.usage` (a fresh QueryEngine's `totalUsage` per prompt in SDK mode):
     // the sum of THIS turn's main-loop generations -- not a subagent's, not a tool's inner pass, which
     // land on `modelUsage` instead. Stamped on this turn's terminal result, priced row or not.
-    const turnUsage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cache_creation_1h_input_tokens: 0 };
+    const turnUsage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cache_creation_1h_input_tokens: 0, reasoning_tokens: 0 };
     // WS-23: this turn's cache verdicts, surfaced on the result only when there is one.
     const turnCacheMisses: NonNullable<WireResultUsage["cache_misses"]> = [];
     // claude's full `NonNullableUsage` shape around the four real counts (frames.ts's WireResultUsage
     // says what each filled field means).
     const resultUsage = (): WireResultUsage => ({
-      output_tokens_details: { thinking_tokens: 0 },
+      // WS-24 (follow-up 1): threaded from the Responses family's `reasoning_tokens` when a
+      // generation reported one; still 0 for a turn on a family that reports none (Anthropic).
+      output_tokens_details: { thinking_tokens: turnUsage.reasoning_tokens },
       input_tokens: turnUsage.input_tokens,
       cache_creation_input_tokens: turnUsage.cache_creation_input_tokens,
       cache_read_input_tokens: turnUsage.cache_read_input_tokens,
@@ -8656,6 +8663,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           turnUsage.cache_read_input_tokens += turn.usage.cacheReadTokens ?? 0;
           turnUsage.cache_creation_input_tokens += turn.usage.cacheWriteTokens ?? 0;
           turnUsage.cache_creation_1h_input_tokens += Math.min(turn.usage.cacheWrite1hTokens ?? 0, turn.usage.cacheWriteTokens ?? 0);
+          turnUsage.reasoning_tokens += turn.usage.reasoningTokens ?? 0;
           if (turn.usage.cacheMiss !== undefined || turn.usage.thinkingBlocksDropped !== undefined) {
             turnCacheMisses.push({
               ...(turn.usage.cacheMiss !== undefined ? { type: turn.usage.cacheMiss.type } : {}),

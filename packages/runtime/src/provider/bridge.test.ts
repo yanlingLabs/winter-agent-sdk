@@ -64,6 +64,27 @@ describe("the fold: what a turn accumulates", () => {
     expect(turn.responseId).toBe("m2");
   });
 
+  // WS-24 (follow-up 1): the Responses family's `reasoningTokens` rides the folded usage verbatim.
+  test("WS-24: the usage event's `reasoningTokens` rides the folded usage verbatim", async () => {
+    const turn = await foldProviderStream(
+      scripted([
+        { type: "usage", inputTokens: 100, outputTokens: 50, reasoningTokens: 30 },
+        { type: "done", stopReason: "end_turn" },
+      ]),
+    );
+    expect(turn.usage).toEqual({ inputTokens: 100, outputTokens: 50, reasoningTokens: 30 });
+  });
+
+  test("WS-24: no `reasoningTokens` on the event -> absent on the folded usage, never invented as 0", async () => {
+    const turn = await foldProviderStream(
+      scripted([
+        { type: "usage", inputTokens: 100, outputTokens: 50 },
+        { type: "done", stopReason: "end_turn" },
+      ]),
+    );
+    expect(turn.usage?.reasoningTokens).toBeUndefined();
+  });
+
   test("a stream with TEXT AND CALLS folds to a tool_use turn that KEEPS the text", async () => {
     // The whole reason R6-3 added `text?` to the tool_use arm: a real model returns both, and before
     // the field existed the text was silently discarded.

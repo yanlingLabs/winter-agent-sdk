@@ -437,6 +437,22 @@ describe("ResponsesStreamMapper", () => {
     expect(drive(new ResponsesStreamMapper(), [{ type: "response.completed", response: { usage: { input_tokens: 100, output_tokens: 5 } } }])[0]).toEqual({ type: "usage", inputTokens: 100, outputTokens: 5 });
     expect(drive(new ResponsesStreamMapper(), [{ type: "response.completed", response: { usage: { input_tokens: 10, output_tokens: 1, input_tokens_details: { cached_tokens: 50 } } } }])[0]).toEqual({ type: "usage", inputTokens: 0, outputTokens: 1, cacheReadTokens: 10 });
   });
+
+  // WS-24 (follow-up 1): `output_tokens_details.reasoning_tokens` rides the usage event as
+  // `reasoningTokens` -- a subset of `outputTokens`, never added on top. This mapper is shared by
+  // openai, codex-oauth and xai's API-key row (all Responses-shaped), so one fixture covers all three.
+  test("`output_tokens_details.reasoning_tokens` becomes `reasoningTokens`", () => {
+    const events = drive(new ResponsesStreamMapper(), [
+      { type: "response.completed", response: { usage: { input_tokens: 100, output_tokens: 50, output_tokens_details: { reasoning_tokens: 30 } } } },
+    ]);
+    expect(events[0]).toEqual({ type: "usage", inputTokens: 100, outputTokens: 50, reasoningTokens: 30 });
+  });
+
+  test("no `output_tokens_details` -> `reasoningTokens` is absent, never invented as 0", () => {
+    const events = drive(new ResponsesStreamMapper(), [{ type: "response.completed", response: { usage: { input_tokens: 100, output_tokens: 5 } } }]);
+    expect(events[0]).toEqual({ type: "usage", inputTokens: 100, outputTokens: 5 });
+    expect((events[0] as { reasoningTokens?: number }).reasoningTokens).toBeUndefined();
+  });
 });
 
 // R-S4: the Responses surface has no error field on a function_call_output -- the text carries it.

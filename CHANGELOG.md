@@ -6,6 +6,10 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
+### Providers (WS-24)
+
+- `reasoning_tokens` joins the normalized `usage` event (`reasoningTokens`, additive) and threads through the Responses adapter (openai, codex-oauth and xai's API-key row, which all share it), the bridge's fold, and the result's `output_tokens_details.thinking_tokens` (previously hard-coded to 0). Anthropic reports no separate count and stays absent.
+
 ## 0.0.27
 
 (0.0.25 and 0.0.26 were tagged but never published: their release workflows stopped at the test step. 0.0.26 fixed the release smoke's registry access; 0.0.27 fixes one test that deleted the release job's own `NODE_AUTH_TOKEN`/`NPM_CONFIG_USERCONFIG` during cleanup.)

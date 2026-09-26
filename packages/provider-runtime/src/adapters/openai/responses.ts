@@ -925,14 +925,19 @@ export class ResponsesStreamMapper {
 
     const usage = record.usage;
     if (usage !== null && typeof usage === "object") {
-      const u = usage as { input_tokens?: unknown; output_tokens?: unknown; input_tokens_details?: unknown };
+      const u = usage as { input_tokens?: unknown; output_tokens?: unknown; input_tokens_details?: unknown; output_tokens_details?: unknown };
       const cached = u.input_tokens_details !== null && typeof u.input_tokens_details === "object" ? (u.input_tokens_details as { cached_tokens?: unknown }).cached_tokens : undefined;
+      // WS-24 (follow-up 1): `output_tokens_details.reasoning_tokens` -- shipped by every Responses
+      // row (openai, codex-oauth and xai's API-key row, which all stream through this mapper), a
+      // SUBSET of `output_tokens` the vendor already counts once. Absent when the row omits it.
+      const reasoning = u.output_tokens_details !== null && typeof u.output_tokens_details === "object" ? (u.output_tokens_details as { reasoning_tokens?: unknown }).reasoning_tokens : undefined;
       // Review r1 finding 5: `input_tokens` is the TOTAL prompt and `cached_tokens` a subset of it;
       // the seam's convention (types.ts) is Anthropic's -- non-cached input, cache read disjoint.
       events.push({
         type: "usage",
         ...normalizedPromptUsage(typeof u.input_tokens === "number" ? u.input_tokens : 0, typeof cached === "number" ? cached : undefined),
         outputTokens: typeof u.output_tokens === "number" ? u.output_tokens : 0,
+        ...(typeof reasoning === "number" ? { reasoningTokens: reasoning } : {}),
       });
     }
 

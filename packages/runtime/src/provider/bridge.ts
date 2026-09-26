@@ -388,6 +388,8 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
             ...(event.cacheWrite1hTokens !== undefined ? { cacheWrite1hTokens: event.cacheWrite1hTokens } : {}),
             ...(event.cacheMiss !== undefined ? { cacheMiss: event.cacheMiss } : {}),
             ...(event.thinkingBlocksDropped !== undefined ? { thinkingBlocksDropped: event.thinkingBlocksDropped } : {}),
+            // WS-24 (follow-up 1): the Responses family's reasoning-token count, carried verbatim.
+            ...(event.reasoningTokens !== undefined ? { reasoningTokens: event.reasoningTokens } : {}),
           };
           break;
         case "retry":
