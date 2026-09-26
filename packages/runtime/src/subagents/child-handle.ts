@@ -445,6 +445,14 @@ export interface ParentMcpState {
    * `JP($n, Y2(yr.mcp.tools.concat(pn)))`, dump byte 18016381).
    */
   visibleServerNames?: () => readonly string[];
+  /**
+   * WS-24 (fix round 3): the parent run's own `EngineOptions.mcpServerRenames` -- `{ actual: declared }`
+   * for every server in its scope that runs under a name other than the one it was declared with. A
+   * renamed server is in `visibleServerNames` above, so a descendant can call it; the descendant merges
+   * these into its own renames, so session rules and hooks written against the declared name keep
+   * governing it at every depth.
+   */
+  serverRenames?: Readonly<Record<string, string>>;
 }
 
 // The three rule buckets a child's own `RuntimeConfig.permissions` carries. `allowedTools`/

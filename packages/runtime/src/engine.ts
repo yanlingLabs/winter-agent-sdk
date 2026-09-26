@@ -4485,6 +4485,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
               // Fix round 21: this run's own visible-server set, so a child's scope recurses (see
               // `ParentMcpState.visibleServerNames`). Declared later in this function; read at call time.
               visibleServerNames: () => [...visibleMcpServers()],
+              // WS-24 (fix round 3): the renames in this run's scope, inherited with the servers above.
+              ...(mcpServerRenames !== undefined ? { serverRenames: mcpServerRenames } : {}),
             }),
             // Fix wave follow-up (8), whole-branch M7: this session's own programmatic agents map,
             // so a grandchild can resolve a `subagent_type` the host declared (see
@@ -8036,6 +8038,18 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     }
     return undefined;
   };
+  /**
+   * WS-24 (fix round 3): the tool name a post-tool hook (PostToolUse / PostToolUseFailure) is matched
+   * on. A renamed own server's call is ALSO matched on its declared spelling: when no hook with a matcher
+   * selects the name it ran under and one selects the declared name, the declared name is the subject.
+   * (The gating PreToolUse already resolves strictest-of through the permission identity.)
+   */
+  const postToolHookSubject = (event: "PostToolUse" | "PostToolUseFailure", toolName: string): string => {
+    const declared = declaredMcpIdentity(toolName);
+    if (declared === undefined) return toolName;
+    const scoped = (name: string): boolean => hookRegistry.matching(event, name).some((e) => e.matcher !== undefined);
+    return !scoped(toolName) && scoped(declared) ? declared : toolName;
+  };
   const toolNotOfferedRefusal = (toolName: string): string | undefined => {
     const offered = offeredThisRequest;
     if (offered === undefined) return undefined;
@@ -9596,13 +9610,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             raced.value.isError === true
               ? await fireObservationalHook("PostToolUseFailure", {
                   toolUseID: call.id,
-                  toolName: call.name,
+                  toolName: postToolHookSubject("PostToolUseFailure", call.name),
                   input: executedCall.input as Record<string, unknown>,
                   payload: { error: raced.value.output },
                 })
               : await fireObservationalHook("PostToolUse", {
                   toolUseID: call.id,
-                  toolName: call.name,
+                  toolName: postToolHookSubject("PostToolUse", call.name),
                   input: executedCall.input as Record<string, unknown>,
                   payload: { tool_response: raced.value.output },
                 });
@@ -9641,7 +9655,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           absorbHookComposite(
             await fireObservationalHook("PostToolUseFailure", {
               toolUseID: call.id,
-              toolName: call.name,
+              toolName: postToolHookSubject("PostToolUseFailure", call.name),
               input: typeof call.input === "object" && call.input !== null ? (call.input as Record<string, unknown>) : {},
               payload: { error: text },
             }),

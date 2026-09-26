@@ -842,6 +842,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // WS-24 fix round 1 (M1): settles once the current generation's `runEngine` has fully returned, and
     // with it released that generation's MCP server-name claims.
     let lastGenerationDone: Promise<void> = Promise.resolve();
+    // Fix round 3: set while a resume waits for the previous generation's teardown (see `resume()`).
+    let pendingResume: { stopped: boolean } | undefined;
 
     // One generation = one live `runEngine()` invocation, from its initial "user" turn until IT
     // reaches a terminal frame (or is stopped/stalls). `resume()` starts a NEW generation against
@@ -1275,7 +1277,12 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           // `computeAdvertisedPartition`). Scope only: never connected, never reported.
           // WS-24: minus the names this child declares for itself -- its own server of that name is the one
           // it sees (under whatever name `allocateChildScopedServers` gave it).
-          ...(renames.length > 0 ? { mcpServerRenames: Object.fromEntries(renames.map(([declared, actual]) => [actual, declared])) } : {}),
+          // WS-24 (fix round 3): the parent's renames too -- a renamed server of an ancestor's is visible here,
+        // so its declared name must govern it here as well. This generation's own win on a shared name.
+        ...(() => {
+          const merged = { ...(parentMcp?.serverRenames ?? {}), ...Object.fromEntries(renames.map(([declared, actual]) => [actual, declared])) };
+          return Object.keys(merged).length > 0 ? { mcpServerRenames: merged } : {};
+        })(),
           ...(parentMcp?.visibleServerNames !== undefined
             ? { inheritedMcpServerNames: ownServerNames.size === 0 ? parentMcp.visibleServerNames : () => parentMcp.visibleServerNames!().filter((name) => !ownServerNames.has(name)) }
             : {}),
@@ -1804,7 +1811,13 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // returned (its lifecycle's teardown closes clients first), while `record.status` went terminal
         // synchronously at settle -- so a quick resume waits for that, bounded, rather than finding its
         // own names still claimed and renaming a server that collides with nothing.
+        const ticket = { stopped: false };
+        pendingResume = ticket;
         await Promise.race([lastGenerationDone, new Promise<void>((resolve) => setTimeout(resolve, GENERATION_TEARDOWN_WAIT_MS).unref?.())]);
+        pendingResume = undefined;
+        // Fix round 3: a `stop()` that landed during that wait had no generation of its own to settle (the
+        // previous one already had), so it is honoured here -- the new generation never starts.
+        if (ticket.stopped) return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: `child ${agentId} was stopped while resuming` };
         serverAllocation = allocateChildScopedServers(childScopedMcpServers, parentVisibleServers(), previous, parentMcp?.declaredServers);
         const moved = [...serverAllocation.actual].filter(([declared, name]) => previous.get(declared) !== name).map(([declared, name]) => `this agent's own "${declared}" is now connected as "${name}" (its tools are named mcp__${name}__<tool>)`);
         startGeneration(generationConfig(resumeMode), rebuilt, moved.length > 0 ? `${msg.body}\n\n[winter: ${moved.join("; ")}]` : msg.body, resolvedSystemPrompt, serverAllocation);
@@ -1815,6 +1828,14 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       },
       async stop(): Promise<void> {
         if (record.status !== "running") return; // already terminal -- idempotent
+        // Fix round 3: a resume still waiting for the previous generation's teardown has nothing to settle
+        // yet -- the stop cancels that resume instead, and the child is recorded stopped.
+        if (pendingResume !== undefined) {
+          pendingResume.stopped = true;
+          record.status = "stopped";
+          void writer?.writeMetadata({ ...record });
+          return;
+        }
         // Routed through the CURRENT generation's own gated `settle` (never a parallel, ungated
         // status mutation) -- see startGeneration's own header comment on `currentSettle` for why:
         // whichever of {this stop, a genuine result frame arriving moments later} reaches the gate

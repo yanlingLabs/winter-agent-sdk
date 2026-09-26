@@ -4197,3 +4197,133 @@ describe("WS-24: a subagent's hook notice carries the spawning call's parent_too
     expect(notice!.parent_tool_use_id).toBe("call-1");
   }, 30_000);
 });
+
+// WS-24 fix round 3: the residuals of I1 and M1.
+describe("WS-24 fix round 3: a renamed server stays governed at every depth; a stop during a resume's wait holds", () => {
+  const shoutSpec = (onRun: () => void) => ({
+    tools: [{ name: "shout", description: "uppercases", inputSchema: { type: "object", properties: {} }, handler: () => {
+      onRun();
+      return { content: [{ type: "text" as const, text: "SHOUT-child" }] };
+    } }],
+    resources: [],
+  });
+  const helloSpec = { tools: [{ name: "hello", description: "greets", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text" as const, text: "HELLO" }] }) }], resources: [] };
+
+  test("a parent deny on mcp__srv__shout denies a GRANDCHILD's call to its parent's renamed mcp__srv_2__shout", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    let ran = 0;
+    let grandchildResult = "";
+    await withHttpFixture(helloSpec, async (parentUrl) => {
+      await withHttpFixture(shoutSpec(() => ran++), async (childUrl) => {
+        const grandchildReq: SpawnChildRequest = { parentToolUseId: "gc-1", prompt: "GRANDCHILD: shout", runInBackground: false };
+        const req: SpawnChildRequest = {
+          parentToolUseId: "call-1", prompt: "CHILD: delegate", runInBackground: false,
+          definition: { description: "child with its own srv", prompt: "persona", mcpServers: [{ srv: { type: "http", url: childUrl.href } }] },
+        };
+        const provider: Provider = {
+          async generate(request) {
+            const firstUser = userMessageText(request.messages.find((m) => m.role === "user"));
+            const tool = request.messages.filter((m) => m.role === "tool");
+            if (firstUser.includes("GRANDCHILD")) {
+              if (tool.length === 0) return { kind: "tool_use", calls: [{ id: "g1", name: "mcp__srv_2__shout", input: {} }] };
+              grandchildResult = JSON.stringify(tool[0]!.content);
+              return { kind: "text", text: "grandchild done" };
+            }
+            if (tool.length === 0) return { kind: "tool_use", calls: [{ id: "gc-1", name: SPAWN_PROBE, input: grandchildReq }] };
+            return { kind: "text", text: "child done" };
+          },
+        };
+        const { code } = await driveParent({ provider, env: { MCP_CONNECTION_NONBLOCKING: "0" } }, baseConfig({
+          sessionId: `ws24-fr3-${randomUUID()}`,
+          mcpServers: { srv: { type: "http", url: parentUrl.href } },
+          permissions: { deny: ["mcp__srv__shout"] },
+        }), [
+          { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+          { kind: "text", text: "parent done" },
+        ]);
+        expect(code).toBe(0);
+      });
+    });
+    expect(grandchildResult).not.toBe("");
+    expect(ran).toBe(0);
+    expect(grandchildResult).not.toContain("SHOUT-child");
+  }, 30_000);
+
+  test("a PostToolUse hook matching mcp__srv__shout fires for the child's renamed mcp__srv_2__shout", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const postToolNames: string[] = [];
+    await withHttpFixture(helloSpec, async (parentUrl) => {
+      await withHttpFixture(shoutSpec(() => {}), async (childUrl) => {
+        const req: SpawnChildRequest = {
+          parentToolUseId: "call-1", prompt: "shout", runInBackground: false,
+          definition: { description: "child with its own srv", prompt: "persona", mcpServers: [{ srv: { type: "http", url: childUrl.href } }] },
+        };
+        const { code } = await driveParentAnswering(
+          {
+            provider: scriptedProvider([{ kind: "tool_use", calls: [{ id: "c1", name: "mcp__srv_2__shout", input: {} }] }, { kind: "text", text: "child done" }]),
+            env: { MCP_CONNECTION_NONBLOCKING: "0" },
+            parentHooks: { PostToolUse: [{ matcher: "mcp__srv__shout", hookCount: 1, source: "sdk" }] },
+          },
+          baseConfig({ sessionId: `ws24-fr3-post-${randomUUID()}`, mcpServers: { srv: { type: "http", url: parentUrl.href } } }),
+          [
+            { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+            { kind: "text", text: "parent done" },
+          ],
+          (frame) => {
+            const payload = (frame as { payload?: { event?: string; toolName?: string } }).payload;
+            if ((frame as { subtype?: string }).subtype === "hook" && payload?.event === "PostToolUse") postToolNames.push(String(payload.toolName));
+            return { ok: true, payload: {} };
+          },
+        );
+        expect(code).toBe(0);
+      });
+    });
+    expect(postToolNames).toEqual(["mcp__srv__shout"]);
+  }, 30_000);
+
+  test("stop() while a resume waits for the previous generation's teardown cancels that resume: no new generation starts", async () => {
+    const PROBE = "ws24_resume_then_stop";
+    let outcome = "";
+    let statusAfter = "";
+    registerTool({
+      descriptor: {
+        canonicalName: PROBE, advertisedName: PROBE, source: "builtin", inputSchema: { type: "object" },
+        description: "spawns, awaits the result, resumes and stops at once", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: {
+        async execute(input: unknown, ctx: ToolExecutionContext) {
+          const handle = await ctx.session.spawnChild!(input as SpawnChildRequest);
+          await handle.result();
+          const resuming = handle.resume({ messageId: "m-1", body: "again" } as never);
+          // The resume marks the child running and then waits for the previous generation's teardown;
+          // the stop lands inside that wait (microtask steps, never a timer the wait could outrun).
+          for (let n = 0; n < 1000 && handle.status() !== "running"; n++) await Promise.resolve();
+          await handle.stop();
+          outcome = (await resuming).status;
+          statusAfter = handle.status();
+          return { output: outcome };
+        },
+      },
+    });
+    cleanupToolNames.push(PROBE);
+    let generations = 0;
+    const childProvider: Provider = {
+      async generate() {
+        generations++;
+        return { kind: "text", text: "child" };
+      },
+    };
+    const { code } = await driveParent({ provider: childProvider }, baseConfig({ sessionId: `ws24-fr3-stop-${randomUUID()}` }), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: PROBE, input: { parentToolUseId: "call-1", prompt: "first", runInBackground: false } }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(code).toBe(0);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(outcome).toBe("unavailable");
+    expect(statusAfter).toBe("stopped");
+    expect(generations).toBe(1);
+  }, 30_000);
+});
