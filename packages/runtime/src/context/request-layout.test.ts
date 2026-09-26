@@ -118,6 +118,17 @@ describe("the merged request (claude's Noe / mIt / IMe)", () => {
     expect(out[2]).toEqual({ role: "tool", content: [{ type: "tool_result", tool_use_id: "t1", content: `hi\n\n${DATE.content as string}` }] });
   });
 
+  test("WS-23 midconv live gate: an attachment is NEVER folded into a ToolSearch result that loaded tools -- it stays a trailing text block", () => {
+    const history: ProviderMessage[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "ToolSearch", input: {} }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "t1", content: '{"matches":["X"]}', loadedTools: ["X"] }] },
+      DATE,
+    ];
+    const out = buildRequestMessages(history);
+    expect(out[2]).toEqual({ role: "tool", content: [{ type: "tool_result", tool_use_id: "t1", content: '{"matches":["X"]}', loadedTools: ["X"] }, { type: "text", text: DATE.content as string }] });
+  });
+
   test("a tool result with block content keeps the text as trailing blocks (the adapters' 'text after tool results')", () => {
     const history: ProviderMessage[] = [
       { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }] },
@@ -150,6 +161,8 @@ describe("the merged request (claude's Noe / mIt / IMe)", () => {
     const folded = foldTextIntoToolResult({ type: "tool_result", tool_use_id: "t", content: [{ type: "text", text: " a " }] }, [{ type: "text", text: " b" }]);
     expect(folded).toEqual({ type: "tool_result", tool_use_id: "t", content: [{ type: "text", text: "a\n\nb" }] });
     expect(foldTextIntoToolResult({ type: "tool_result", tool_use_id: "t", content: [{ type: "tool_reference", tool_names: ["X"] }] }, [{ type: "text", text: "b" }])).toBeNull();
+    // WS-23 midconv live gate: Winter's own results carry `loadedTools`, never the blocks -- refused too.
+    expect(foldTextIntoToolResult({ type: "tool_result", tool_use_id: "t", content: "listing", loadedTools: ["X"] }, [{ type: "text", text: "b" }])).toBeNull();
   });
 });
 

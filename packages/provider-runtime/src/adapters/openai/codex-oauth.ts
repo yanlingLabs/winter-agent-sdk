@@ -31,7 +31,7 @@ import { CODEX, CODEX_MODELS, codexCredentialAccount } from "./codex-config.ts";
 import { refreshTokens, runLoginFlow, type OAuthTokens } from "./pkce.ts";
 import { refreshOauthMaterial } from "../oauth/refresh.ts";
 import { QuotaManager, quotaEvent } from "./quota.ts";
-import { buildResponsesBody, privilegedHeaders, streamResponsesTurn, type ResponsesTurnPlan } from "./responses.ts";
+import { assertConfigurationUpdates, assertResponsesToolFeatures, buildResponsesBody, privilegedHeaders, responsesStreamTools, streamResponsesTurn, type ResponsesTurnPlan } from "./responses.ts";
 import { identityFor } from "./shared.ts";
 import { activeWinterIdentity } from "../../identity.ts";
 import {
@@ -182,6 +182,10 @@ async function* codexTurn(req: TurnRequest, ctx: ProviderContext, options: Codex
   try {
     const descriptor = options.descriptors?.(req.model, ctx.connection.providerId);
     assertRepresentableTools(req.tools);
+    // WS-23 (midconv): the same per-message effort gate as `responsesTurn`. No codex-oauth row records
+    // the item yet (the live probe decides), so an effort marker here is refused before the request.
+    assertConfigurationUpdates(req, descriptor);
+    assertResponsesToolFeatures(req, descriptor);
     const reasoning = resolveReasoning(req, descriptor);
     // The SAME set `responsesTurn` declares (minor 7): this adapter sends the identical body, so a
     // model that lists `include` or `tools` as unsupported must be refused here too.
@@ -200,13 +204,14 @@ async function* codexTurn(req: TurnRequest, ctx: ProviderContext, options: Codex
     plan = {
       model: req.model,
       url: `${endpoint.baseUrl}/responses`,
-      headers: codexHeaders(endpoint.policy, tokens, ctx, options),
+      headers: codexHeaders(endpoint.policy, tokens, ctx, options, req.cacheKey),
       endpoint,
       ctx,
       options,
       // The codex backend REQUIRES the tool trio even with no tools (a live 400 otherwise, `responses.ts`
       // header) — the one surface `buildResponsesBody` does not omit it for.
       body: JSON.stringify(buildResponsesBody(req, reasoning, descriptor, { requireToolFields: true })),
+      streamTools: responsesStreamTools(req, descriptor),
       queue,
       beforeAttempt: async () => {
         // A known subscription window is waited out BEFORE the request rather than discovered by
@@ -240,7 +245,7 @@ async function* codexTurn(req: TurnRequest, ctx: ProviderContext, options: Codex
             };
           }
           queue.push({ type: "auth_status", isAuthenticating: false, output: ["codex token refreshed"] });
-          return codexHeaders(endpoint.policy, tokens, ctx, options);
+          return codexHeaders(endpoint.policy, tokens, ctx, options, req.cacheKey);
         } catch (err) {
           queue.push({ type: "auth_status", isAuthenticating: false, error: err instanceof Error ? err.message : String(err) });
           return undefined;
@@ -306,10 +311,26 @@ class CodexAuthRefusal extends Error {
  * backend and the second names the operator's ChatGPT account, and neither has any business at a
  * base URL the reviewed catalog never named.
  */
-function codexHeaders(policy: ResponsesTurnPlan["endpoint"]["policy"], tokens: Extract<CredentialMaterial, { kind: "oauth" }>, ctx: ProviderContext, options: CodexAdapterOptions): Record<string, string> {
+/**
+ * WS-23 (midconv, fix round 1, live L3): the Codex backend's CACHE AFFINITY rides a header, not the body.
+ * The live probe read `cached_tokens: 0` on every turn of every chatgpt.com request -- plain repeat turns
+ * included -- while api.openai.com cached normally with the same `prompt_cache_key`. codex-rs says why:
+ * "ChatGPT derives cache affinity from the Responses session-id header" (`core/src/client.rs:599-600`),
+ * and every request it sends carries `session-id` (its `prompt_cache_key` for a root session,
+ * `core/src/client.rs:585-607`), `thread-id` and `x-client-request-id` (`codex-api/src/requests/headers.rs:5-13`,
+ * `codex-api/src/endpoint/responses.rs:86-90`; asserted in `core/tests/suite/client.rs:1412-1466`). Winter
+ * sends the same three, all the conversation's cache key (`TurnRequest.cacheKey`): opaque session/agent
+ * ids, nothing about the account. Absent without a key, as before.
+ */
+function codexCacheHeaders(cacheKey: string | undefined): Record<string, string> {
+  if (cacheKey === undefined || cacheKey.length === 0) return {};
+  return { "session-id": cacheKey, "thread-id": cacheKey, "x-client-request-id": cacheKey };
+}
+
+function codexHeaders(policy: ResponsesTurnPlan["endpoint"]["policy"], tokens: Extract<CredentialMaterial, { kind: "oauth" }>, ctx: ProviderContext, options: CodexAdapterOptions, cacheKey?: string): Record<string, string> {
   return buildHeaders({
     policy,
-    protocol: { "content-type": "application/json", accept: "text/event-stream", "OpenAI-Beta": CODEX.headers["OpenAI-Beta"]!, authorization: `Bearer ${tokens.accessToken}` },
+    protocol: { "content-type": "application/json", accept: "text/event-stream", "OpenAI-Beta": CODEX.headers["OpenAI-Beta"]!, authorization: `Bearer ${tokens.accessToken}`, ...codexCacheHeaders(cacheKey) },
     // P7a (D19): the RUNNING product's originator, not the frozen table's — `CODEX.headers.originator`
     // is the default profile's value, evaluated at module load before any brand exists.
     privileged: { ...privilegedHeaders(options), originator: activeWinterIdentity().codexOriginator, ...(tokens.accountId !== undefined ? { "chatgpt-account-id": tokens.accountId } : {}) },

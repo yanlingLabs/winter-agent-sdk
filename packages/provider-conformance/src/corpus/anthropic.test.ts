@@ -178,6 +178,22 @@ describe("Anthropic Messages: the live request", () => {
       await foldTurn(adapter, { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "go" }, { role: "assistant", content: [{ type: "tool_reference", tool_names: ["Read"] }] }, { role: "user", content: "next" }] }, testContext(fake.url));
       expect(fake.requests).toHaveLength(1);
       const messages = anthropicBody(fake.requests[0]!)["messages"] as Array<{ role: string; content: unknown }>;
+      // WS-23 midconv: the request declares no `Read` at all, so the reference names a tool that is gone --
+      // claude's placeholder keeps the assistant turn (and the two user turns apart), never a silent drop.
+      expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+      expect(messages[1]).toEqual({ role: "assistant", content: [{ type: "text", text: "[Tool references removed - tools no longer available]" }] });
+    });
+  });
+
+  test("WS-23 midconv: a reference to a tool the request DOES declare (not deferred) keeps the legible note", async () => {
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "go" }, { role: "assistant", content: [{ type: "tool_reference", tool_names: ["Read"] }] }, { role: "user", content: "next" }], tools: [{ name: "Read", description: "read", inputSchema: { type: "object" } }] },
+        testContext(fake.url),
+      );
+      const messages = anthropicBody(fake.requests[0]!)["messages"] as Array<{ role: string; content: unknown }>;
       expect(messages[1]).toEqual({ role: "assistant", content: [{ type: "text", text: "[tools now callable: Read]" }] });
     });
   });

@@ -11,6 +11,7 @@ import { base64Url, buildAuthorizeUrl, decodeAccountId, generatePkce } from "./p
 import { QuotaManager, quotaEvent } from "./quota.ts";
 import { codexCredentialRef, createCodexOauthAdapter } from "./codex-oauth.ts";
 import { descriptor, testContext } from "./testing.ts";
+import { createMemoryCredentialStore } from "../../credentials/memory.ts";
 import type { ProviderEvent, TurnRequest } from "../../types.ts";
 
 describe("codex constants: the parity set, and the one deliberate divergence", () => {
@@ -250,5 +251,50 @@ describe("the quota manager: R6-B's sole producer of `rate_limit`", () => {
     const started = Date.now();
     await quota.waitIfLimited(controller.signal);
     expect(Date.now() - started).toBeLessThan(500);
+  });
+});
+
+describe("the Codex backend's cache affinity rides headers (WS-23 midconv fix round 1, live L3)", () => {
+  // codex-rs: "ChatGPT derives cache affinity from the Responses session-id header" (core/src/client.rs:599-600);
+  // it sends session-id, thread-id and x-client-request-id on every request. Live, Winter's codex requests
+  // (which sent none of them) read `cached_tokens: 0` on every turn while api.openai.com cached normally.
+  async function headersFor(req: Partial<TurnRequest>): Promise<Record<string, string>> {
+    const seen: Record<string, string>[] = [];
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const headers: Record<string, string> = {};
+        request.headers.forEach((value, name) => (headers[name.toLowerCase()] = name.toLowerCase() === "authorization" ? "***" : value));
+        seen.push(headers);
+        const frames = [
+          { type: "response.created", response: { id: "r", model: "gpt-5.6-sol" } },
+          { type: "response.completed", response: { id: "r", status: "completed", usage: { input_tokens: 1, output_tokens: 1 }, output: [] } },
+        ];
+        return new Response(frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    try {
+      const ref = { kind: "keychain" as const, account: "codex-oauth:acct", service: "com.winter.test.hermetic" };
+      const adapter = createCodexOauthAdapter({ generatedBaseUrl: `http://127.0.0.1:${server.port}`, descriptors: () => undefined });
+      const ctx = { ...testContext({ providerId: "codex-oauth" }), credentials: createMemoryCredentialStore([[ref, { kind: "oauth", accessToken: "fixture-token", accountId: "acct", expiresAt: Date.now() + 3_600_000 }]]), authRef: ref };
+      for await (const _event of adapter.streamTurn({ model: "gpt-5.6-sol", messages: [{ role: "user", content: "hi" }], ...req }, ctx)) void _event;
+      return seen[0]!;
+    } finally {
+      await server.stop(true);
+    }
+  }
+
+  test("a request with a cache key sends session-id, thread-id and x-client-request-id, all that key", async () => {
+    const headers = await headersFor({ cacheKey: "session-7" });
+    expect(headers["session-id"]).toBe("session-7");
+    expect(headers["thread-id"]).toBe("session-7");
+    expect(headers["x-client-request-id"]).toBe("session-7");
+  });
+
+  test("without a key, none of them (as before)", async () => {
+    const headers = await headersFor({});
+    expect(headers["session-id"]).toBeUndefined();
+    expect(headers["thread-id"]).toBeUndefined();
   });
 });

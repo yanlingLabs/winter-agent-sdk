@@ -82,6 +82,9 @@ export type ModelStatus = "candidate" | "experimental" | "supported" | "deprecat
  * continuation domain (Anthropic strips thinking across Claude models), so `continuationDomain`
  * lists the models PROVEN to accept this endpoint's native continuation object.
  */
+/** WS-23: how a row takes a per-message effort change -- see `ReasoningCapabilities.perMessageEffort`. */
+export type PerMessageEffortMechanism = { beta: "mid-conversation-output-config-2026-07-01" } | { item: "configuration_update" };
+
 export interface ReasoningCapabilities {
   supported: CapabilityEvidence<boolean>;
   /** The model's own effort vocabulary, verbatim. Vocabularies are NOT interchangeable across providers (WS-13 §8.2). */
@@ -124,8 +127,19 @@ export interface ReasoningCapabilities {
    * Documented for Claude Fable 5.1, Mythos 5.1, Opus 5.5 and Opus 5; Claude Fable 5 returns a 400.
    * ABSENT means a change is a new top-level value, which restarts the cache. `beta` is the header
    * value, a closed vocabulary (`CATALOG_VOCABULARIES.perMessageEffortBetas`).
+   *
+   * WS-23 (midconv lane): the value names the row's MECHANISM, because two vendors document one:
+   *   - `{ beta }` -- Anthropic's effort-only `system` message above, behind that beta header;
+   *   - `{ item: "configuration_update" }` -- OpenAI's Responses input item
+   *     `{"type":"configuration_update","reasoning":{"effort":…}}`, placed "before the next user
+   *     message", with the top-level `reasoning.effort` kept fixed ("Configuration updates are
+   *     supported by the GPT-6 model family in standard, single-agent mode. They change only reasoning
+   *     effort.", https://developers.openai.com/api/docs/guides/reasoning). A closed vocabulary
+   *     (`CATALOG_VOCABULARIES.perMessageEffortItems`).
+   * The engine keys only on PRESENCE (either mechanism lays out the same markers); each adapter
+   * refuses, typed, a row whose mechanism is not its own.
    */
-  perMessageEffort?: CapabilityEvidence<{ beta: "mid-conversation-output-config-2026-07-01" }>;
+  perMessageEffort?: CapabilityEvidence<PerMessageEffortMechanism>;
 }
 
 /** List prices, USD per million tokens. R6-H: the ONLY price source Winter has — an unpriced model reports `0` / `costBasis: "unknown"`, never an invented number. */
@@ -261,6 +275,54 @@ export interface WinterModelDescriptor {
    * the only meaningful value; absent sends no key.
    */
   promptCacheKey?: CapabilityEvidence<boolean>;
+  /**
+   * WS-23 (midconv): the model takes MID-CONVERSATION TOOL CHANGES BY REFERENCE -- a `role: "system"`
+   * message carrying `tool_addition` / `tool_removal` blocks that name a tool `tools` declares, so what
+   * the model may call changes without editing `tools` and the cached prefix survives
+   * (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages). `beta`
+   * is the header value, a closed vocabulary (`CATALOG_VOCABULARIES.midConversationToolChangeBetas`).
+   * Documented for Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5 on
+   * the Claude API, Amazon Bedrock and Google Cloud; "Not available on Claude Sonnet 5".
+   */
+  midConversationToolChanges?: CapabilityEvidence<{ beta: "mid-conversation-tool-changes-2026-07-01" }>;
+  /**
+   * WS-23 (midconv): the model also takes a tool DEFINED BY VALUE mid-conversation -- a `tool_addition`
+   * whose `tool` is a `tool_definition` -- for a tool unknown at the first request, or a new definition
+   * under an existing name ("The new definition replaces the earlier one from that position onward").
+   * The header covers the reference changes too. Claude API only (same page). `beta` is a closed
+   * vocabulary (`CATALOG_VOCABULARIES.inlineToolDefinitionBetas`).
+   */
+  inlineToolDefinitions?: CapabilityEvidence<{ beta: "inline-tools-2026-09-15" }>;
+  /**
+   * WS-23 (midconv): the model takes OpenAI's CLIENT-EXECUTED tool search -- a
+   * `{"type": "tool_search", "execution": "client", description, parameters}` tool, `tool_search_call`
+   * output items the client answers with `tool_search_output` (the loaded definitions, `defer_loading`
+   * kept, optionally grouped in `namespace` entries), so deferred tools never sit in `tools`
+   * (https://developers.openai.com/api/docs/guides/tools-tool-search: "Only gpt-5.4 and later models
+   * support tool_search"). `true` is the only meaningful value.
+   */
+  clientToolSearch?: CapabilityEvidence<boolean>;
+  /**
+   * WS-23 (midconv): the model takes an `additional_tools` developer input item -- tools that "become
+   * available only after that item appears in the input", replayed at their position -- so a tool can be
+   * added mid-conversation without editing `tools` (same page). `true` is the only meaningful value.
+   */
+  additionalToolsItem?: CapabilityEvidence<boolean>;
+  /**
+   * WS-23 (midconv): the model takes `tool_choice: {"type": "allowed_tools", "mode": "auto" | "required",
+   * "tools": [...]}` -- a callable subset of `tools` "but not modify the list of tools you pass in, so you
+   * can maximize savings from prompt caching" (https://developers.openai.com/api/docs/guides/function-calling).
+   * `true` is the only meaningful value.
+   */
+  allowedToolsChoice?: CapabilityEvidence<boolean>;
+  /**
+   * WS-23 (midconv, live gate): whether the model takes an ASSISTANT PREFILL -- a request whose
+   * `messages` ends with an assistant turn. `false` is the meaningful value: "Prefilling assistant
+   * messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5"
+   * and on Claude Sonnet 5 (https://platform.claude.com/docs/en/models/opus-5-5/migration-guide), and on
+   * Claude Fable 5 / 5.1. An adapter refuses such a request typed instead of sending it. Absent = unknown.
+   */
+  assistantPrefill?: CapabilityEvidence<boolean>;
   reasoning?: ReasoningCapabilities;
   pricing?: CapabilityEvidence<ModelPricing>;
   /** R6-14: set only after the safety corpus passes live. A worker with no configured classifier route serves only when this is true AND `structuredOutput.confidence === "verified"`. */

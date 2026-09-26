@@ -71,6 +71,7 @@ import type {
   ProviderError,
   ProviderEvent,
   ProviderMessageLike,
+  ToolChangeSet,
   TurnRequest,
 } from "../../types.ts";
 
@@ -189,8 +190,15 @@ function capabilityRefusal(reason: string): ProviderRequestError {
  * have a corresponding tool definition in the top-level `tools` parameter", and an undeclared name is a
  * 400 `tool_reference_unresolved`), so it is never sent.
  */
-type Referable = ReadonlySet<string>;
+//
+// WS-23 (midconv): `declared` -- every name the request's `tools` declares, when the caller knows it --
+// separates a reference to a tool that is still callable directly (declared, just not deferred: the legible
+// note below) from one to a tool that is GONE (declared nowhere), which is dropped. claude 2.1.282's
+// resume filter does the same, and says `[Tool references removed - tools no longer available]` when a
+// result is left with nothing.
+type Referable = ReadonlySet<string> & { readonly declared?: ReadonlySet<string> };
 const NOTHING_REFERABLE: Referable = new Set();
+export const TOOL_REFERENCES_REMOVED_TEXT = "[Tool references removed - tools no longer available]";
 
 /** The wire `tool_reference` block for each referable name, in order, deduplicated. */
 function toolReferences(names: readonly string[], referable: Referable): Record<string, unknown>[] {
@@ -204,6 +212,7 @@ function referenceNames(block: Record<string, unknown>): string[] {
 }
 
 function toWireBlocks(block: ContentBlockLike, referable: Referable): Record<string, unknown>[] {
+  if (block.type === "tool_result") return toolResultWireBlocks(block, referable);
   if (block.type !== "tool_reference") return [toWireBlock(block, referable)];
   // WS-23: no longer a refusal. A `tool_reference` whose tool this request declares deferred is
   // Anthropic's own block and goes on the wire as one per name; anything else (a claude-written
@@ -211,7 +220,7 @@ function toWireBlocks(block: ContentBlockLike, referable: Referable): Record<str
   // same legible note every other serializer in this repo writes for it, never to a silent drop.
   const names = referenceNames(block as unknown as Record<string, unknown>);
   const wire = toolReferences(names, referable);
-  const rest = names.filter((name) => !referable.has(name));
+  const rest = names.filter((name) => !referable.has(name) && (referable.declared === undefined || referable.declared.has(name)));
   return [...wire, ...(rest.length > 0 ? [{ type: "text", text: `[tools now callable: ${rest.join(", ")}]` }] : [])];
 }
 
@@ -228,34 +237,68 @@ function toWireBlock(block: ContentBlockLike, referable: Referable = NOTHING_REF
       return { type: "thinking", thinking: block.thinking, signature: block.signature };
     case "redacted_thinking":
       return { type: "redacted_thinking", data: block.data };
-    case "tool_result": {
-      // WS-23: a ToolSearch result's `loadedTools` becomes Anthropic's `tool_reference` blocks inside
-      // this result -- the documented "custom tool search implementation"
-      // (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) -- so the API
-      // expands the deferred definitions in place and `tools` never changes. Only for names this
-      // request declares deferred; with none, the result is byte-identical to before.
-      const rawLoaded = block["loadedTools"];
-      const loaded = Array.isArray(rawLoaded) ? rawLoaded.filter((n): n is string => typeof n === "string") : [];
-      const references = toolReferences(loaded, referable);
-      const inner = Array.isArray(block.content) ? block.content.flatMap((b) => toWireBlocks(b, referable)) : block.content;
-      const content = references.length === 0 ? inner : [...(typeof inner === "string" ? (inner.length > 0 ? [{ type: "text", text: inner }] : []) : inner), ...references];
-      // Winter's provisional markers (`interrupted`/`denied`/`deferred`/`loadFirst`) are BOOKKEEPING,
-      // not wire fields: the result's own content already carries what the model needs to read. Only
-      // `error` has a wire counterpart, and dropping it would tell the model a failed call succeeded.
-      // Spawn-surface parity (R-S4): a REAL executor error arrives as the block's own `is_error`
-      // (engine.ts) -- the same wire field, so either spelling maps to it.
-      const isError = (block as { error?: unknown }).error === true || (block as { is_error?: unknown }).is_error === true;
-      return { type: "tool_result", tool_use_id: block.tool_use_id, content, ...(isError ? { is_error: true } : {}) };
-    }
+    case "tool_result":
+      // Reached only through `toWireBlocks`, which may split a referencing result in two.
+      return toolResultWireBlocks(block, referable)[0]!;
     case "tool_reference":
       // Reached only through `toWireBlocks`, which expands a reference into one block per name.
       return toWireBlocks(block, referable)[0] ?? { type: "text", text: "[tools now callable]" };
   }
 }
 
+/**
+ * One engine `tool_result` -> the wire blocks it becomes: the result itself, then -- only for a result
+ * that carries `tool_reference` blocks -- the content it can no longer hold.
+ *
+ * WS-23: a ToolSearch result's `loadedTools` becomes Anthropic's `tool_reference` blocks inside this
+ * result -- the documented "custom tool search implementation"
+ * (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) -- so the API expands
+ * the deferred definitions in place and `tools` never changes. Only for names this request declares
+ * deferred; with none, the result is byte-identical to before.
+ *
+ * WS-23 (midconv, live gate on claude-opus-5-5): a result carrying `tool_reference` blocks must carry
+ * NOTHING ELSE. The docs' only shape is `"content": [{ "type": "tool_reference", "tool_name": … }]`, and
+ * the API refuses a result mixing them with text -- HTTP 400 "Tool definitions/code execution functions
+ * cannot be mixed with other content" -- on that request and, since the block stays in the history, on
+ * every later one: the session is bricked. So the result holds ONLY its references, and whatever else it
+ * carried (the tool's own text, a hook's `<system-reminder>` tail smooshed into it) follows it as
+ * ordinary blocks in the same user message, where text after a `tool_result` is legal. claude 2.1.282
+ * sends no text at all for a successful ToolSearch; Winter keeps its tool's text because it can name MCP
+ * servers still connecting or failed.
+ */
+function toolResultWireBlocks(block: Extract<ContentBlockLike, { type: "tool_result" }>, referable: Referable): Record<string, unknown>[] {
+  const rawLoaded = block["loadedTools"];
+  const loaded = Array.isArray(rawLoaded) ? rawLoaded.filter((n): n is string => typeof n === "string") : [];
+  const references = toolReferences(loaded, referable);
+  const inner = Array.isArray(block.content) ? block.content.flatMap((b) => toWireBlocks(b, referable)) : block.content;
+  // Winter's provisional markers (`interrupted`/`denied`/`deferred`/`loadFirst`) are BOOKKEEPING, not
+  // wire fields: the result's own content already carries what the model needs to read. Only `error` has
+  // a wire counterpart, and dropping it would tell the model a failed call succeeded. Spawn-surface parity
+  // (R-S4): a REAL executor error arrives as the block's own `is_error` (engine.ts) -- the same wire field,
+  // so either spelling maps to it.
+  const isError = (block as { error?: unknown }).error === true || (block as { is_error?: unknown }).is_error === true;
+  const flags = isError ? { is_error: true } : {};
+  // A nested `tool_reference` (a claude-written result, resumed) is a reference too; everything else moves out.
+  const innerBlocks = typeof inner === "string" ? (inner.length > 0 ? [{ type: "text", text: inner }] : []) : inner;
+  const nestedReferences = innerBlocks.filter((b) => b["type"] === "tool_reference");
+  if (references.length === 0 && nestedReferences.length === 0) {
+    // Every reference it held named a tool that is gone: say so rather than send an empty result.
+    const emptied = Array.isArray(block.content) && block.content.some((b) => b.type === "tool_reference") && innerBlocks.length === 0;
+    return [{ type: "tool_result", tool_use_id: block.tool_use_id, content: emptied ? TOOL_REFERENCES_REMOVED_TEXT : inner, ...flags }];
+  }
+  const displaced = innerBlocks.filter((b) => b["type"] !== "tool_reference");
+  return [{ type: "tool_result", tool_use_id: block.tool_use_id, content: [...nestedReferences, ...references], ...flags }, ...displaced];
+}
+
 function normalizeContent(content: string | ContentBlockLike[], referable: Referable = NOTHING_REFERABLE): Record<string, unknown>[] {
   if (typeof content === "string") return content.length > 0 ? [{ type: "text", text: content }] : [];
-  return content.flatMap((block) => toWireBlocks(block, referable));
+  const out = content.flatMap((block) => toWireBlocks(block, referable));
+  // WS-23 (midconv, fix round 2): a message whose only content was references to tools that are GONE
+  // says so -- claude's placeholder -- rather than vanishing: an empty message is dropped from the wire,
+  // which merged its neighbours into one turn (the conformance corpus's "never a silent drop" case). The
+  // tool_result path does the same inside `toolResultWireBlocks`.
+  if (out.length === 0 && content.some((b) => b.type === "tool_reference")) return [{ type: "text", text: TOOL_REFERENCES_REMOVED_TEXT }];
+  return out;
 }
 
 /**
@@ -310,11 +353,33 @@ function fileBlocks(entry: WireEntryBuckets, blocks: Record<string, unknown>[]):
   for (; at < nonResults.length; at++) entry.rest.push(nonResults[at]!);
 }
 
+/**
+ * WS-23 (midconv): one tool-change point as Anthropic's blocks -- removals first, then additions (claude
+ * 2.1.282's order, and the docs' "mixed with `text` blocks in the same `content` array"), each exactly the
+ * documented shape
+ * (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages):
+ *   `{"type": "tool_removal",  "tool": {"type": "tool_reference", "name": …}}`
+ *   `{"type": "tool_addition", "tool": {"type": "tool_reference", "name": …}}`
+ *   `{"type": "tool_addition", "tool": {"type": "tool_definition", "definition": {name, description, input_schema}}}`
+ * A definition never carries `cache_control` (the rolling breakpoint may land on the BLOCK, and the docs
+ * allow one or the other, "not both").
+ */
+function toolChangeBlocks(changes: ToolChangeSet): Record<string, unknown>[] {
+  return [
+    ...changes.remove.map((name) => ({ type: "tool_removal", tool: { type: "tool_reference", name } })),
+    ...changes.add.map((addition) =>
+      addition.type === "reference"
+        ? { type: "tool_addition", tool: { type: "tool_reference", name: addition.name } }
+        : { type: "tool_addition", tool: { type: "tool_definition", definition: { name: addition.name, description: addition.description, input_schema: addition.inputSchema } } },
+    ),
+  ];
+}
+
 /** One wire message. `output_config` rides only on a `system` entry (WS-23's per-message effort). */
 export type WireMessage = { role: "user" | "assistant" | "system"; content: Record<string, unknown>[]; output_config?: { effort: string } };
 
-export function toWireMessages(messages: ProviderMessageLike[], opts: { referableTools?: ReadonlySet<string> } = {}): WireMessage[] {
-  const referable = opts.referableTools ?? NOTHING_REFERABLE;
+export function toWireMessages(messages: ProviderMessageLike[], opts: { referableTools?: ReadonlySet<string>; declaredTools?: ReadonlySet<string> } = {}): WireMessage[] {
+  const referable: Referable = opts.declaredTools !== undefined ? Object.assign(new Set(opts.referableTools ?? []), { declared: opts.declaredTools }) : (opts.referableTools ?? NOTHING_REFERABLE);
   const entries: WireEntryBuckets[] = [];
   for (const message of messages) {
     const role: WireEntryBuckets["role"] = message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user";
@@ -326,8 +391,10 @@ export function toWireMessages(messages: ProviderMessageLike[], opts: { referabl
     // Merging one into the user turn after it (the pre-WS-23 `role !== "assistant"` rule) would have
     // turned an operator instruction into user text and dropped the effort change entirely.
     if (role === "system") {
-      if (own.length === 0 && message.outputConfig === undefined) continue;
-      entries.push({ role, ...(message.outputConfig !== undefined ? { outputConfig: { effort: message.outputConfig.effort } } : {}), results: [], leading: [], decorations: [], rest: own });
+      // WS-23 (midconv): a tool-change message's blocks, after any text it carries.
+      const blocks = message.toolChanges !== undefined ? [...own, ...toolChangeBlocks(message.toolChanges)] : own;
+      if (blocks.length === 0 && message.outputConfig === undefined) continue;
+      entries.push({ role, ...(message.outputConfig !== undefined ? { outputConfig: { effort: message.outputConfig.effort } } : {}), results: [], leading: [], decorations: [], rest: blocks });
       continue;
     }
     if (own.length === 0 && message.decoration === undefined) continue;
@@ -432,13 +499,22 @@ interface BlockAt {
 
 /**
  * The last block in `messages[0..end)` a breakpoint may carry: the last block of the last
- * CONTENT-BEARING message. An effort-only `system` marker has no content and is skipped -- it renders
+ * CONTENT-BEARING, NON-SYSTEM message. An effort-only `system` marker has no content -- it renders
  * nothing at its position (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#limitations).
  * An in-dialect thinking block cannot carry a marker; claude never ends a request on one either (the
  * final message is the user's), so that only guards a host-supplied history.
+ *
+ * WS-23 (midconv, review I-1, the live probe's `messages_changed`): EVERY `role: "system"` message is
+ * skipped, content or not. A breakpoint on a system message's block (a tool change, a reminder) is there
+ * only while that message ends the request; the next request moves it to its new tail, so the entry the
+ * first one wrote is never read again -- the live inline phase read the same 10135 tokens on two requests
+ * in a row. The docs' own pattern is the fix: "put the breakpoint on the last block of the preceding user
+ * turn", then "append the system message after the breakpoint ... the cache still hits" (same page). A
+ * breakpoint on every system message instead would run into the four-breakpoint limit.
  */
 function lastMarkable(messages: readonly WireMessage[], end: number): BlockAt | undefined {
   for (let m = end - 1; m >= 0; m--) {
+    if (messages[m]!.role === "system") continue;
     const content = messages[m]!.content;
     if (content.length === 0) continue;
     const tail = content[content.length - 1]!;
@@ -904,6 +980,30 @@ function deferredToolNames(req: TurnRequest, descriptor: WinterModelDescriptor |
   return new Set(deferred.map((t) => t.name));
 }
 
+/**
+ * WS-23 (midconv, live gate): a request ending on an ASSISTANT turn is an assistant prefill, which a row
+ * recording `assistantPrefill: false` rejects with a 400 ("This model does not support assistant message
+ * prefill. The conversation must end with a user message." -- claude-opus-5-5, live). Refused typed before
+ * the request, so a caller that builds one (the compaction fallback did) fails here, legibly, instead of
+ * at the vendor. A `system` message is not a turn for this rule; a token count is not a generation.
+ * A `pause_turn` resend also ends on the paused assistant turn, legitimately: the engine marks it
+ * (`req.resumesPausedTurn`) and it is exempt.
+ */
+function assertNoPrefill(req: TurnRequest, descriptor: WinterModelDescriptor | undefined, purpose: "generate" | "count"): void {
+  if (purpose !== "generate" || descriptor?.assistantPrefill?.value !== false || req.resumesPausedTurn === true) return;
+  const last = [...req.messages].reverse().find((m) => m.role !== "system");
+  if (last?.role === "assistant") {
+    throw capabilityRefusal(`model "${descriptor.key}" rejects an assistant prefill (\`assistantPrefill: false\`), so a request whose conversation ends on an assistant turn is refused before it is sent; it must end with a user message`);
+  }
+}
+
+/** WS-23 (midconv): every tool this request declares, deferred or not, plus those a tool-change message in it defines by value. */
+function declaredToolNames(req: TurnRequest): ReadonlySet<string> {
+  const names = new Set((req.tools ?? []).map((t) => t.name));
+  for (const message of req.messages) for (const addition of message.toolChanges?.add ?? []) if (addition.type === "definition") names.add(addition.name);
+  return names;
+}
+
 /** WS-23: an effort-only `system` marker -- no content, only `output_config`. */
 function isEffortOnlyMarker(message: ProviderMessageLike): boolean {
   return message.role === "system" && message.outputConfig !== undefined && (typeof message.content === "string" ? message.content.length === 0 : message.content.length === 0);
@@ -934,6 +1034,12 @@ function assertPerMessageEffort(req: TurnRequest, descriptor: WinterModelDescrip
     if (descriptor?.reasoning?.perMessageEffort === undefined) {
       throw capabilityRefusal(`model "${descriptor?.key ?? req.model}" does not document per-message effort (no \`reasoning.perMessageEffort\` evidence), so a mid-conversation \`output_config.effort\` is refused before the request rather than sent and rejected upstream`);
     }
+    // WS-23 (midconv): the evidence names its MECHANISM, and only Anthropic's beta is this dialect's.
+    // A row recording OpenAI's `configuration_update` item on this adapter would otherwise pass the gate
+    // and send a marker with no beta header -- an upstream 400 instead of a local, typed refusal.
+    if (!("beta" in descriptor.reasoning.perMessageEffort.value)) {
+      throw capabilityRefusal(`model "${descriptor.key}" records per-message effort as a non-Anthropic mechanism, so a mid-conversation \`output_config.effort\` cannot be sent on the Messages API`);
+    }
     if (!efforts.includes(message.outputConfig.effort)) {
       throw capabilityRefusal(`per-message effort "${message.outputConfig.effort}" is not in model "${descriptor.key}"'s verified vocabulary (${efforts.join(", ")})`);
     }
@@ -953,12 +1059,61 @@ function assertPerMessageEffort(req: TurnRequest, descriptor: WinterModelDescrip
 export function perMessageEffortBetaFor(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined): string | undefined {
   const messages = body["messages"];
   if (!Array.isArray(messages) || !messages.some((m) => typeof m === "object" && m !== null && "output_config" in m)) return undefined;
-  return descriptor?.reasoning?.perMessageEffort?.value.beta;
+  const mechanism = descriptor?.reasoning?.perMessageEffort?.value;
+  return mechanism !== undefined && "beta" in mechanism ? mechanism.beta : undefined;
+}
+
+/**
+ * WS-23 (midconv): the tool-change beta, or `undefined` -- when the body carries a `tool_addition` /
+ * `tool_removal` block, OR the engine says this conversation uses the mechanism (`req.toolChanges`),
+ * so the header rides EVERY request of it and the set of active betas never flips when the first change
+ * lands (the set is part of what the cache compares). The inline beta where the row documents it -- it
+ * "covers all reference-based changes, so you don't need to send `mid-conversation-tool-changes-2026-07-01`
+ * as well" -- else the reference beta.
+ */
+export function toolChangesBetaFor(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined, optIn = false): string | undefined {
+  const messages = body["messages"];
+  const carries =
+    Array.isArray(messages) &&
+    messages.some((m) => {
+      const content = (m as { role?: unknown; content?: unknown }).content;
+      return (m as { role?: unknown }).role === "system" && Array.isArray(content) && content.some((b) => (b as { type?: unknown }).type === "tool_addition" || (b as { type?: unknown }).type === "tool_removal");
+    });
+  if (!carries && !optIn) return undefined;
+  return descriptor?.inlineToolDefinitions?.value.beta ?? descriptor?.midConversationToolChanges?.value.beta;
 }
 
 /** Every body-derived beta, in a fixed order. One list, so `prepare()` and `countTokens()` cannot disagree about which ride. */
-function bodyBetas(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined): string[] {
-  return [perMessageEffortBetaFor(body, descriptor)].filter((b): b is string => b !== undefined);
+function bodyBetas(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined, req?: Pick<TurnRequest, "toolChanges">): string[] {
+  return [perMessageEffortBetaFor(body, descriptor), toolChangesBetaFor(body, descriptor, req?.toolChanges === true)].filter((b): b is string => b !== undefined);
+}
+
+/**
+ * WS-23 (midconv): the tool-change gate. A `system` message carrying `toolChanges` is refused BEFORE the
+ * request unless the row documents a mechanism -- by reference (`midConversationToolChanges`) or by value
+ * (`inlineToolDefinitions`); a definition needs the latter ("Claude API" only, and Sonnet 5 documents
+ * neither); and a reference must name a tool this request's `tools` declares (the API's
+ * `tool_reference_unresolved` otherwise). The engine only builds changes a row can take, so this fires on
+ * a wiring bug, never on an ordinary session.
+ */
+function assertToolChanges(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): void {
+  const declared = new Set((req.tools ?? []).map((t) => t.name));
+  for (const message of req.messages) {
+    if (message.toolChanges === undefined) continue;
+    const key = descriptor?.key ?? req.model;
+    if (message.role !== "system") throw capabilityRefusal("mid-conversation tool changes ride only a `role: \"system\"` message");
+    if (descriptor?.midConversationToolChanges === undefined && descriptor?.inlineToolDefinitions === undefined) {
+      throw capabilityRefusal(`model "${key}" documents no mid-conversation tool changes (no \`midConversationToolChanges\` / \`inlineToolDefinitions\` evidence), so a \`tool_addition\` / \`tool_removal\` is refused before the request rather than sent and rejected upstream`);
+    }
+    for (const addition of message.toolChanges.add) {
+      if (addition.type === "definition" && descriptor.inlineToolDefinitions === undefined) {
+        throw capabilityRefusal(`model "${key}" documents tool changes by reference only (no \`inlineToolDefinitions\` evidence), so the tool "${addition.name}" cannot be defined by value`);
+      }
+      if (addition.type === "reference" && !declared.has(addition.name)) {
+        throw capabilityRefusal(`a \`tool_addition\` references "${addition.name}", which this request's \`tools\` does not declare (the API's \`tool_reference_unresolved\`)`);
+      }
+    }
+  }
 }
 
 /**
@@ -1026,6 +1181,8 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   if (!thinking.ok) throw capabilityRefusal(thinking.reason);
   if (thinking.rewroteDisabled === true) onThinkingRewrite?.();
   assertPerMessageEffort(req, descriptor);
+  assertToolChanges(req, descriptor);
+  assertNoPrefill(req, descriptor, purpose);
 
   // `max_tokens` has TWO AUTHORITATIVE sources -- what the caller asked for and what the model's row
   // declares -- and a third, this adapter's own fallback, which is authoritative over nothing.
@@ -1082,7 +1239,7 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
       model: anthropicWireModelId(req.model),
       // An effort-only marker renders nothing and `output_config` is deliberately off a count body
       // (above), so the markers are dropped here rather than sent to an endpoint with no fixture.
-      messages: toWireMessages(req.messages.filter((m) => !isEffortOnlyMarker(m)), { referableTools }),
+      messages: toWireMessages(req.messages.filter((m) => !isEffortOnlyMarker(m)), { referableTools, declaredTools: declaredToolNames(req) }),
       ...(req.system !== undefined ? { system: req.system } : {}),
       ...(req.tools !== undefined && req.tools.length > 0 ? { tools: req.tools.map(toWireTool) } : {}),
       ...(thinking.value !== undefined ? { thinking: thinking.value } : {}),
@@ -1096,7 +1253,7 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   }
 
   const caching = promptCachingLayout(req, descriptor);
-  const wireMessages = toWireMessages(req.messages, { referableTools });
+  const wireMessages = toWireMessages(req.messages, { referableTools, declaredTools: declaredToolNames(req) });
   // The system blocks' own breakpoints (at most two: the static prefix and the dynamic rest) come out
   // of the request's budget of four first; the messages get what is left.
   const wireSystem = caching && req.systemBlocks !== undefined ? toWireSystemBlocks(req.systemBlocks, req.cacheTtl) : undefined;
@@ -1559,7 +1716,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       loggedThinkingRewrite = true;
       ctx.log({ kind: "provider.thinking_rewrite.disabled_to_adaptive", providerId: ctx.connection.providerId, model: req.model });
     });
-    const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor), ...bodyBetas(body, descriptor)], endpoint.policy, opts, true, identityFor(ctx));
+    const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor), ...bodyBetas(body, descriptor, req)], endpoint.policy, opts, true, identityFor(ctx));
     return { endpoint, body, headers, captureEvent: anthropicCaptureEvent(descriptor) };
   }
 
@@ -1865,7 +2022,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
       const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
       const body = buildRequestBody(req, descriptor, opts, "count");
-      const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor), ...bodyBetas(body, descriptor)], endpoint.policy, opts, true, identityFor(ctx));
+      const headers = await buildHeaders(ctx, [blockBindingBetaFor(body, descriptor), interleavedThinkingBetaFor(body, descriptor), ...bodyBetas(body, descriptor, req)], endpoint.policy, opts, true, identityFor(ctx));
       const res = await boundedFetch(`${endpoint.base}/v1/messages/count_tokens`, {
         method: "POST",
         headers,

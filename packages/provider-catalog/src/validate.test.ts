@@ -245,7 +245,28 @@ describe("validateCatalog — evidence integrity", () => {
     expect(validateCatalog(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ beta: "mid-conversation-output-config-2026-07-01" })) } as never)] })).ok).toBe(true);
     // claude 2.1.282 sends the undocumented alias `per-turn-control-2026-07-01`; the catalog records only the documented value.
     expectRejected(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ beta: "per-turn-control-2026-07-01" })) } as never)] }), "unknown per-message effort beta");
-    expectRejected(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ beta: "mid-conversation-output-config-2026-07-01", placement: "after-user" })) } as never)] }), "unknown key");
+    expectRejected(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ beta: "mid-conversation-output-config-2026-07-01", placement: "after-user" })) } as never)] }), "expected exactly one of {beta} or {item}");
+  });
+
+  test("WS-23 midconv: accepts OpenAI's `configuration_update` item as the mechanism, and never both mechanisms at once", () => {
+    const reasoning = (perMessageEffort: unknown) => ({
+      supported: { value: true, source: "official-doc", confidence: "declared" },
+      efforts: ["low", "high"],
+      continuation: "opaque-provider-state",
+      perMessageEffort,
+    });
+    const evidence = (value: unknown) => ({ value, source: "official-doc", confidence: "declared", sourceRef: "https://developers.openai.com/api/docs/guides/reasoning", observedAt: "2026-09-26T00:00:00Z" });
+    expect(validateCatalog(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ item: "configuration_update" })) } as never)] })).ok).toBe(true);
+    expectRejected(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ item: "system_message" })) } as never)] }), "unknown per-message effort item");
+    expectRejected(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({ item: "configuration_update", beta: "mid-conversation-output-config-2026-07-01" })) } as never)] }), "expected exactly one of {beta} or {item}");
+    expectRejected(baseCatalog({ models: [baseModel({ reasoning: reasoning(evidence({})) } as never)] }), "expected exactly one of {beta} or {item}");
+  });
+
+  test("WS-23 midconv: the two Anthropic tool-change betas are closed vocabularies", () => {
+    const evidence = (value: unknown) => ({ value, source: "official-doc", confidence: "declared", sourceRef: "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages", observedAt: "2026-09-26T00:00:00Z" });
+    expect(validateCatalog(baseCatalog({ models: [baseModel({ midConversationToolChanges: evidence({ beta: "mid-conversation-tool-changes-2026-07-01" }), inlineToolDefinitions: evidence({ beta: "inline-tools-2026-09-15" }) } as never)] })).ok).toBe(true);
+    expectRejected(baseCatalog({ models: [baseModel({ midConversationToolChanges: evidence({ beta: "inline-tools-2026-09-15" }) } as never)] }), "unknown mid-conversation tool-change beta");
+    expectRejected(baseCatalog({ models: [baseModel({ inlineToolDefinitions: evidence({ beta: "inline-tools-2026-09-15", mcp: true }) } as never)] }), "unknown key");
   });
 
   test("rejects a defaultEffort the model's own `efforts` does not contain", () => {
@@ -559,7 +580,10 @@ describe("JSON Schema / validator enum parity (Minor 9)", () => {
     ["toolLoopRequirements", "$defs.evidenceToolLoopRequirement.properties.value"],
     ["effortRequestFields", "$defs.evidenceEffortRequest.properties.value.properties.field"],
     ["blockBindingBetas", "$defs.evidenceBlockBinding.properties.value.properties.beta"],
-    ["perMessageEffortBetas", "$defs.evidencePerMessageEffort.properties.value.properties.beta"],
+    ["perMessageEffortBetas", "$defs.evidencePerMessageEffort.properties.value.oneOf.0.properties.beta"],
+    ["perMessageEffortItems", "$defs.evidencePerMessageEffort.properties.value.oneOf.1.properties.item"],
+    ["midConversationToolChangeBetas", "$defs.evidenceMidConversationToolChanges.properties.value.properties.beta"],
+    ["inlineToolDefinitionBetas", "$defs.evidenceInlineToolDefinitions.properties.value.properties.beta"],
     ["pricingBases", "$defs.WinterProviderDescriptor.properties.pricingBasis"],
     ["admissionBases", "$defs.WinterProviderDescriptor.properties.admission.properties.basis"],
     ["admissionTiers", "$defs.WinterProviderDescriptor.properties.admission.properties.tier"],

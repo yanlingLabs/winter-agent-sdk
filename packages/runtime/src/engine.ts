@@ -81,7 +81,7 @@ import { getDefaultMessagingRuntime, UnattributableSenderError, classifyDelivery
 // types can live down there while `ProviderTurn`/`ProviderMessage`/`ContentBlock` stay up here.
 // `TurnRequest` is imported for its `toolChoice`/`effort`/`thinking` member types, so the engine's
 // request and an adapter's request cannot drift apart on the three fields they share.
-import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, SystemPromptBlock, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
+import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, SystemPromptBlock, ToolChangeSet, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 // P6 fix wave (Ruling E-2): the two PURE continuity functions the switch point calls. Value imports
 // from the provider-runtime barrel, one direction (runtime -> provider-runtime), same as every adapter.
 import { WinterProviderResolutionError, buildPortableHandoff, classifySwitch } from "@yanlinglabs/winter-provider-runtime";
@@ -215,7 +215,22 @@ import {
   type ContextEntry,
   type EffortMarkerPlan,
   type SessionRequestLayout,
+  type ToolChangeRendering,
 } from "./context/request-layout.ts";
+import {
+  activeToolEpoch,
+  diffToolState,
+  epochChangeMessages,
+  epochToolsFor,
+  foldToolState,
+  TOOL_CHANGES_ATTACHMENT,
+  TOOL_EPOCH_ATTACHMENT,
+  isToolBookkeeping,
+  type ToolChangeCaps,
+  type ToolChangeMechanism,
+  type ToolChangesAttachment,
+  type ToolEpochAttachment,
+} from "./context/tool-epoch.ts";
 import { computeGitStatus } from "./context/git-status.ts";
 import { renderSkillListingContent } from "./skills/listing.ts";
 import { getPluginAgents } from "./subagents/plugin-agents.ts";
@@ -381,7 +396,13 @@ export type ContentBlock =
   // pattern), which is what surfaces a `defer_loading` tool without touching `tools`; every other
   // adapter ignores it, like the markers above. Persisted with the block, so a resumed session keeps
   // the references at the same positions and re-seeds its loaded set from them.
-  | { type: "tool_result"; tool_use_id: string; content: string | ContentBlock[]; is_error?: boolean; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean; loadFirst?: boolean; loadedTools?: string[] }
+  //
+  // WS-23 (midconv, review I-2): `loadedToolDefinitions` is the definitions those tools had WHEN THEY WERE
+  // LOADED (name, description, schema, and the MCP namespace they group under). An adapter that re-sends
+  // the loaded definitions in the history (OpenAI's `tool_search_output`) renders them from this copy,
+  // never from the live tool list: a server that later disconnects, or a tool whose description changes,
+  // must not rewrite what the model was shown -- that would bust the cache mid-history.
+  | { type: "tool_result"; tool_use_id: string; content: string | ContentBlock[]; is_error?: boolean; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean; loadFirst?: boolean; loadedTools?: string[]; loadedToolDefinitions?: LoadedToolDefinition[] }
   // --- Phase 6 Task 3 (R6-3, derived-shapes-p6.md item (f)): the variants a real provider produces --
   //
   // NOT declared by the pinned artifact: `redacted_thinking`, a `type: 'thinking'` literal and
@@ -405,6 +426,15 @@ export type ContentBlock =
   | { type: "redacted_thinking"; data: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
 
+/** WS-23 (midconv, review I-2): one loaded tool's definition as it stood at load time (see `tool_result.loadedToolDefinitions`). */
+export interface LoadedToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  /** The MCP server group (`mcp__<server>`) of an MCP tool whose name carries that prefix. */
+  namespace?: string;
+}
+
 // The engine's own turn-history record fed back to Provider.generate() on every call. Distinct
 // from the WIRE shape (assistant/user data frames, below): the wire has no "tool" role (tool
 // results ride a "user" message, matching WS-03 §8 / the official SDK), but keeping tool results
@@ -419,6 +449,12 @@ export interface ProviderMessage {
   content: string | ContentBlock[];
   /** WS-23: a `system` marker's per-message effort change. Never set on another role. */
   outputConfig?: { effort: string };
+  /**
+   * WS-23 (midconv): a `system` message's mid-conversation tool changes, built by the request layout from
+   * the tool epoch's `tool_changes` entries (context/tool-epoch.ts) -- never in the history itself. See
+   * provider-runtime's `ProviderMessageLike.toolChanges`.
+   */
+  toolChanges?: ToolChangeSet;
   /**
    * WS-23 (claude's own transcript fields, `effort`/`perTurnEffort` on an assistant entry): the
    * TOP-LEVEL effort the request that produced this assistant message sent, and the level actually IN
@@ -528,7 +564,66 @@ export function providerMessageContentToText(content: string | ContentBlock[]): 
  */
 function isPerMessageEffortRejection(err: unknown): boolean {
   if (!isProviderTurnError(err) || err.status !== 400) return false;
-  return /mid-conversation-output-config|per-turn effort/i.test(err instanceof Error ? err.message : "");
+  // WS-23 (midconv): OpenAI's Responses `configuration_update` item too. OpenAI's own wording for a
+  // model without it is unpublished (the live probe records it); every 400 seen for the item names it
+  // ("Invalid value: 'configuration_update'", github.com/can1357/oh-my-pi/issues/11121), as does the
+  // docs' adjacency rule. Matching the item name is the same "a false positive costs one retried
+  // request" trade as the two Anthropic phrases.
+  return /mid-conversation-output-config|per-turn effort|configuration_update/i.test(err instanceof Error ? err.message : "");
+}
+
+/**
+ * WS-23 (midconv): a provider 400 refusing a MID-CONVERSATION TOOL CHANGE -- its opt-in, its block or item
+ * types, or one of the documented tool-change errors. Anthropic: an unknown beta header, `Input tag
+ * 'tool_(addition|removal|definition)'` (a platform without the blocks), the documented
+ * `tool_reference_unresolved` / `tool_name_conflict` / `available_tools_limit_exceeded` codes, or any
+ * message naming the blocks (claude 2.1.282 classifies the same phrases before its one-time fallback).
+ * OpenAI: a message naming the `additional_tools` item (`allowed_tools` has its own, narrower fallback --
+ * `isAllowedToolsRejection`). A false positive
+ * costs one retried request that rebuilds `tools`, never a wrong answer.
+ */
+function isToolChangeRejection(err: unknown, carriedChangeMessage = false): boolean {
+  if (!isProviderTurnError(err) || (err.status !== 400 && err.status !== 422)) return false;
+  // Review C-1: a request that carried a tool-change message and was refused on PLACEMENT (the rule's own
+  // words, or claude 2.1.282's `after_paused_turn` phrase) falls back too -- the entry stays in the history,
+  // so a placement refusal that did not fall back would refuse every later request the same way.
+  if (carriedChangeMessage && /system message|role.{0,4}system|must (immediately )?(follow|precede)|end the array|paused assistant turn/i.test(err instanceof Error ? err.message : "")) return true;
+  // The bounded error snippet is the raw body, so a documented `error.details.error_code` is matched too.
+  return /mid-conversation-tool-changes|inline-tools|tool_addition|tool_removal|tool_definition|tool_reference_unresolved|tool_name_conflict|available_tools_limit_exceeded|cannot yet be defined in a message|additional_tools/i.test(err instanceof Error ? err.message : "");
+}
+
+/**
+ * WS-23 (midconv): a provider 400 refusing OpenAI's client tool search -- the `tool_search` tool, its
+ * `tool_search_output` item, `defer_loading`, or a `namespace` entry. A false positive costs one retried
+ * request on today's shape, never a wrong answer.
+ */
+function isToolSearchRejection(err: unknown): boolean {
+  if (!isProviderTurnError(err) || (err.status !== 400 && err.status !== 422)) return false;
+  const text = err instanceof Error ? err.message : "";
+  // A refusal of the `tool_choice` field is `allowed_tools`', not the tool search's (fix round 1, live L2).
+  if (errorParam(text)?.startsWith("tool_choice") === true) return false;
+  return /tool_search|defer_loading|namespace/i.test(text);
+}
+
+/** The `param` an OpenAI-style error body names (the normalised message carries the raw body), or `undefined`. */
+function errorParam(text: string): string | undefined {
+  return /"param"\s*:\s*"([^"]*)"/.exec(text)?.[1];
+}
+
+/**
+ * WS-23 (midconv, fix round 1, live L2): a 400 refusing the request's `tool_choice: allowed_tools`. Checked
+ * BEFORE the tool-search fallback, and only for a request that sent the choice: the live refusal of an
+ * `allowed_tools` entry read "Invalid value: 'tool_search'...", which the tool-search matcher also takes --
+ * it turned the WHOLE client tool search off, and the cache with it. Keyed on the error's own `param`
+ * (`tool_choice...`) when the body names one; without a `param`, the narrower feature goes first: if the tool
+ * search was the real problem, the retry fails again and the tool-search fallback takes it then.
+ */
+function isAllowedToolsRejection(err: unknown): boolean {
+  if (!isProviderTurnError(err) || (err.status !== 400 && err.status !== 422)) return false;
+  const text = err instanceof Error ? err.message : "";
+  const param = errorParam(text);
+  if (param !== undefined) return param.startsWith("tool_choice");
+  return /allowed_tools|tool_choice|tool_search/i.test(text);
 }
 
 /**
@@ -550,10 +645,17 @@ export function promptCacheKeyFor(config: { sessionId: string; agentId?: string 
   return config.agentId === undefined ? config.sessionId : `${config.sessionId}:${config.agentId}`;
 }
 
-/** WS-23: a tool_result without its `loadedTools` bookkeeping (see the tool-round frame write). */
+/** WS-23: a tool_result without its `loadedTools` / `loadedToolDefinitions` bookkeeping (see the tool-round frame write). */
 function withoutLoadedTools(block: Extract<ContentBlock, { type: "tool_result" }>): ContentBlock {
-  const { loadedTools: _loaded, ...rest } = block;
+  const { loadedTools: _loaded, loadedToolDefinitions: _definitions, ...rest } = block;
   return rest;
+}
+
+/** WS-23 (midconv): the MCP namespace (`mcp__<server>`) a tool's advertised name groups under, or `undefined`. */
+function mcpNamespaceFor(advertisedName: string, server: string | undefined): string | undefined {
+  if (server === undefined) return undefined;
+  const namespace = `mcp__${server}`;
+  return advertisedName.startsWith(`${namespace}__`) && advertisedName.length > namespace.length + 2 ? namespace : undefined;
 }
 
 /** WS-23: a named effort tier -- the string half of `TurnRequest["effort"]`. */
@@ -574,6 +676,18 @@ export interface ModelWireFeatures {
   deferredToolLoading?: true;
   /** `midConversationSystem`: a reminder whose renderer opted in rides as a `role: "system"` message after the user turn it follows. */
   midConversationSystem?: true;
+  /**
+   * WS-23 (midconv): how a change to the tool list reaches this model without editing `tools` (the tool
+   * epoch, context/tool-epoch.ts): `"inline"` -- Anthropic by value and by reference
+   * (`inlineToolDefinitions`); `"reference"` -- Anthropic by reference only (`midConversationToolChanges`).
+   */
+  toolChanges?: "inline" | "reference";
+  /** WS-23 (midconv): OpenAI's client-executed `tool_search` stands in for Winter's ToolSearch (`clientToolSearch`). */
+  clientToolSearch?: true;
+  /** WS-23 (midconv): OpenAI's `additional_tools` input item adds or redefines a tool mid-conversation (`additionalToolsItem`). */
+  additionalToolsItem?: true;
+  /** WS-23 (midconv): OpenAI's `tool_choice: allowed_tools` restricts the callable set without editing `tools` (`allowedToolsChoice`). */
+  allowedToolsChoice?: true;
 }
 
 /** What `EngineOptions.describeModel` knows about a model: its display name, its verified effort vocabulary, and its wire features. */
@@ -637,6 +751,12 @@ export interface ProviderRequest {
   cacheDiagnostics?: { previousMessageId: string | null };
   /** WS-23: this conversation's cache-routing key (`promptCacheKeyFor`) -- the session id, plus the agent id for a subagent. */
   cacheKey?: string;
+  /** WS-23 (midconv): the callable subset of `tools` on this request (OpenAI `allowed_tools`); see `TurnRequest.allowedTools`. */
+  allowedTools?: string[];
+  /** WS-23 (midconv): the conversation carries mid-conversation tool changes -- the opt-in rides every request (`TurnRequest.toolChanges`). */
+  toolChanges?: true;
+  /** WS-23 (midconv): this request re-sends a `pause_turn` response (`TurnRequest.resumesPausedTurn`). */
+  resumesPausedTurn?: true;
   /** The resolved model for THIS generation. Present once selection is wired; absent means "the provider's own configured default", which is what every pre-P6 double sees. */
   model?: string;
   effort?: TurnRequest["effort"];
@@ -674,6 +794,19 @@ export interface ProviderToolSpec {
    * loading (`ModelWireFeatures.deferredToolLoading`), so no other adapter ever receives one.
    */
   deferLoading?: true;
+  /** WS-23 (midconv): the MCP server group a deferred tool belongs to, for OpenAI's client tool search (`TurnRequest.tools[].namespace`). */
+  namespace?: string;
+  /** WS-23 (midconv): this is Winter's ToolSearch, rendered as OpenAI's native client `tool_search` (`TurnRequest.tools[].toolSearch`). */
+  toolSearch?: true;
+}
+
+/** WS-23 (midconv): one request's tool plan -- see the engine's `planToolsForRequest`. */
+export interface ToolPlan {
+  tools: ProviderToolSpec[];
+  allowedTools?: string[];
+  toolChanges?: ToolChangeRendering;
+  /** The vendor's tool-change opt-in rides this request (`ProviderRequest.toolChanges`). */
+  optIn?: true;
 }
 
 /**
@@ -2931,11 +3064,24 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const seeded = frozenEffortFromHistory(messages);
     if (seeded !== undefined) frozenEffort = { modelKey: providerIdentity?.modelKey ?? config.model, value: seeded.value };
   }
+  // WS-23 (midconv): the tool epoch's session state (context/tool-epoch.ts; `planToolsForRequest`).
+  // `toolChangesRejected` is sticky, like `perMessageEffortRejected`: the API refused a tool change, so
+  // every later request rebuilds `tools` (claude 2.1.282's own one-time fallback). `forceNewToolEpoch` is
+  // set by a compaction: the prefix is new anyway, so the next request freezes the list afresh.
+  let toolChangesRejected = false;
+  // WS-23 (midconv): sticky too -- the API refused OpenAI's client `tool_search` (or a namespace), so the
+  // session goes back to today's shape: loaded deferred tools appended to `tools` as plain functions.
+  let nativeToolSearchRejected = false;
+  // WS-23 (midconv, fix round 1): sticky -- the API refused `tool_choice: allowed_tools`. Only the
+  // restriction goes: a withdrawn tool then starts a new epoch (today's rebuild), and the tool search stays.
+  let allowedToolsRejected = false;
+  let forceNewToolEpoch = false;
+  let toolEpochRestartLogged = false;
   // WS-23: the last MAIN-LOOP response's id and the model it came from -- the next request's
   // `cacheDiagnostics.previousMessageId`. Cleared by a compaction (the history it fingerprinted is gone).
   let lastMainResponse: { id: string; modelKey: string | undefined } | undefined;
   // WS-23: the last main-loop request's system, index-0 context and tools, for compaction to reuse.
-  let lastMainRequestShape: { modelKey: string | undefined; system: { system: string; systemBlocks?: SystemPromptBlock[] }; userContextText: string | undefined; tools: ProviderToolSpec[] } | undefined;
+  let lastMainRequestShape: { modelKey: string | undefined; system: { system: string; systemBlocks?: SystemPromptBlock[] }; userContextText: string | undefined; tools: ProviderToolSpec[]; toolPlan?: Omit<ToolPlan, "tools"> } | undefined;
   const applyPendingEffort = (): void => {
     if (pendingEffort === undefined) return;
     liveEffort = pendingEffort.effort;
@@ -5013,6 +5159,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   let advertisedPartition = computeAdvertisedPartition();
   // WS-23: the names a ToolSearch call loaded, collected while that one call runs (see the execute site).
   let toolReferenceCollector: string[] | undefined;
+  /**
+   * WS-23 (midconv, review I-2): the definitions of the tools a ToolSearch call just loaded, AS THEY STAND
+   * NOW -- stored on the result so a later request re-renders exactly what the model was shown (the same
+   * rendering `tools` uses, `toolSpecFor`), whatever the live registry says by then.
+   */
+  const loadedDefinitionsFor = (advertised: readonly string[]): LoadedToolDefinition[] => {
+    if (advertised.length === 0) return [];
+    const byAdvertised = new Map([...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => [d.advertisedName, d] as const));
+    return advertised.flatMap((name) => {
+      const descriptor = byAdvertised.get(name);
+      if (descriptor === undefined) return [];
+      const spec = toolSpecFor(descriptor);
+      const namespace = mcpNamespaceFor(spec.name, mcpServerOwningTool(descriptor.canonicalName));
+      return [{ name: spec.name, description: spec.description, inputSchema: spec.inputSchema, ...(namespace !== undefined ? { namespace } : {}) }];
+    });
+  };
   /** Canonical -> advertised: `loadedTools` names what `tools` carries, because that is what a `tool_reference` must name. */
   const advertisedNamesFor = (canonical: readonly string[] | undefined): string[] => {
     if (canonical === undefined || canonical.length === 0) return [];
@@ -6505,12 +6667,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const shape = lastMainRequestShape;
     if (shape === undefined || shape.modelKey !== (currentProviderIdentity?.modelKey ?? currentModel)) return undefined;
     const plan = planEffort();
-    const outbound = buildRequestMessages(messages, shape.userContextText, { systemReminders: systemRemindersOnWire(), ...(plan.markers !== undefined ? { effort: plan.markers } : {}) });
+    const outbound = buildRequestMessages(messages, shape.userContextText, {
+      systemReminders: systemRemindersOnWire(),
+      ...(plan.markers !== undefined ? { effort: plan.markers } : {}),
+      // WS-23 (midconv): the tool changes the last main request carried, at the same positions.
+      ...(shape.toolPlan?.toolChanges !== undefined ? { toolChanges: shape.toolPlan.toolChanges } : {}),
+    });
     return {
       messages: outbound,
       ...(shape.system.system.length > 0 ? { system: shape.system.system } : {}),
       ...(shape.system.systemBlocks !== undefined && shape.system.systemBlocks.length > 0 ? { systemBlocks: shape.system.systemBlocks } : {}),
       ...(shape.tools.length > 0 ? { tools: shape.tools } : {}),
+      ...(shape.toolPlan?.allowedTools !== undefined ? { allowedTools: shape.toolPlan.allowedTools } : {}),
+      ...(shape.toolPlan?.optIn === true ? { toolChanges: true as const } : {}),
       ...(currentModel !== undefined ? { model: currentModel } : {}),
       ...(plan.topLevel !== undefined ? { effort: plan.topLevel } : {}),
       ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
@@ -6607,6 +6776,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     lastCompactionTokens = contextAccountant.contextTokens();
     // WS-23: the history the last fingerprint described is gone; the next request opts in afresh.
     lastMainResponse = undefined;
+    // WS-23 (midconv): and the tool list is frozen afresh -- a retained entry of the old epoch must not be
+    // taken for the new one's.
+    forceNewToolEpoch = true;
 
     // Fix round 1 (M3): `preserved_messages` on the FRAME, built from the uuids the store just
     // minted -- previously unreachable, because `recordCompactBoundary` returned `void`, so a host
@@ -6844,8 +7016,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // the index-0 context prepended, attachments reordered and consecutive user-role turns merged,
   // exactly as claude 0.3.250 lays out its requests. SDK 0.0.16 retires P5-F's re-anchoring: nothing
   // is attached to the last user message any more, so a mid-turn compaction has nothing to strand.
-  const requestMessages = (context: SessionContext, effort?: EffortMarkerPlan): ProviderMessage[] =>
-    buildRequestMessages(messages, context.userContextText, { systemReminders: systemRemindersOnWire(), ...(effort !== undefined ? { effort } : {}) });
+  const requestMessages = (context: SessionContext, effort?: EffortMarkerPlan, toolChanges?: ToolChangeRendering): ProviderMessage[] =>
+    buildRequestMessages(messages, context.userContextText, { systemReminders: systemRemindersOnWire(), ...(effort !== undefined ? { effort } : {}), ...(toolChanges !== undefined ? { toolChanges } : {}) });
   /** WS-23: whether opted-in reminders ride as mid-conversation `system` messages on the LIVE model. */
   const systemRemindersOnWire = (): boolean => currentModelDescription()?.wire?.midConversationSystem === true;
 
@@ -7195,8 +7367,21 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // all (a narrow child pool) the old shape stands. A tool loaded with NO reference left in the
     // history (a compaction summarised it away, or it was loaded on another model) is sent plainly --
     // nothing would surface it otherwise.
-    const declareDeferred = specs.length > 0 && currentModelDescription()?.wire?.deferredToolLoading === true;
+    //
+    // WS-23 (midconv): OpenAI's client tool search (`wire.clientToolSearch`) is the same pattern on the
+    // Responses API: deferred tools ride `deferLoading` (the adapter keeps them out of `tools` and hands
+    // the loaded ones back in `tool_search_output`), ToolSearch itself is marked `toolSearch` (sent as
+    // the native `{"type": "tool_search", "execution": "client"}`), and an MCP tool carries its server's
+    // `namespace`. "At least one tool must have defer_loading=false" holds there too (ToolSearch is one).
+    const wire = currentModelDescription()?.wire;
+    const clientSearch = wire?.clientToolSearch === true && !nativeToolSearchRejected;
+    const declareDeferred = specs.length > 0 && (wire?.deferredToolLoading === true || clientSearch);
     const referenced = declareDeferred ? referencedToolNames(messages) : undefined;
+    const namespaced = (spec: ProviderToolSpec, canonicalName: string): ProviderToolSpec => {
+      if (!clientSearch) return spec;
+      const namespace = mcpNamespaceFor(spec.name, mcpServerOwningTool(canonicalName));
+      return namespace !== undefined ? { ...spec, namespace } : spec;
+    };
     for (const descriptor of advertisedPartition.deferred) {
       const loaded = loadedToolSet.isLoaded(descriptor.canonicalName);
       if (referenced === undefined) {
@@ -7205,7 +7390,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         continue;
       }
       const spec = toolSpecFor(descriptor);
-      specs.push(!loaded || referenced.has(spec.name) ? { ...spec, deferLoading: true } : spec);
+      specs.push(!loaded || referenced.has(spec.name) ? namespaced({ ...spec, deferLoading: true }, descriptor.canonicalName) : spec);
+    }
+    if (clientSearch) {
+      const searchNames = new Set(advertisedPartition.eager.filter((d) => d.canonicalName === "ToolSearch").map((d) => d.advertisedName));
+      for (let i = 0; i < specs.length; i++) if (searchNames.has(specs[i]!.name) && specs[i]!.deferLoading !== true) specs[i] = { ...specs[i]!, toolSearch: true };
     }
     // WS-23: a DETERMINISTIC order, by name (UTF-16 code units, locale-independent). Registration
     // order moves with MCP connect order and module load order, so two processes -- or a session and
@@ -7218,6 +7407,117 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...[...advertisedPartition.eager, ...advertisedPartition.deferred].flatMap((d) => [d.advertisedName, d.canonicalName]),
     ]);
     return specs;
+  };
+
+  // --- WS-23 (midconv): the tool epoch ---------------------------------------------------------------
+  //
+  // `tools` is frozen per cache epoch and every later change rides the vendor's own mid-conversation
+  // mechanism, recorded as an additive transcript entry and replayed in place (context/tool-epoch.ts has
+  // the model). On a row with no mechanism -- or after the API refused one -- nothing here runs and the
+  // request carries today's live list, rebuilt every request.
+
+  /** The LIVE model's tool-change mechanism and what it can express, or `undefined` for today's rebuild. */
+  const toolChangeMechanism = (): { mechanism: ToolChangeMechanism; caps: ToolChangeCaps } | undefined => {
+    if (toolChangesRejected) return undefined;
+    const wire = currentModelDescription()?.wire;
+    if (wire?.toolChanges === "inline") return { mechanism: "anthropic-inline", caps: {} };
+    if (wire?.toolChanges === "reference") return { mechanism: "anthropic-reference", caps: {} };
+    const additionalTools = wire?.additionalToolsItem === true;
+    const allowedTools = wire?.allowedToolsChoice === true && !allowedToolsRejected;
+    if (additionalTools || allowedTools) return { mechanism: "openai", caps: { additionalTools, allowedTools } };
+    return undefined;
+  };
+
+  /** Appends one bookkeeping entry to the history and the transcript (an attachment, like every other). */
+  const appendToolBookkeeping = async (attachment: ToolEpochAttachment | ToolChangesAttachment): Promise<void> => {
+    const message = attachmentMessage(attachment);
+    if (message === undefined) return;
+    messages.push(message);
+    await recordAttachment(attachment);
+  };
+
+  /**
+   * This request's tool plan: the `tools` array to send (the epoch's declared list, never re-sorted), the
+   * change entries to render, the callable subset where the vendor restricts by choice, and whether the
+   * vendor's opt-in rides the request. Appends (and persists) a new epoch or change entry when needed.
+   */
+  const planToolsForRequest = async (): Promise<ToolPlan> => {
+    const live = providerToolSpecs();
+    const chosen = toolChangeMechanism();
+    if (chosen === undefined) return { tools: live };
+    const { mechanism, caps } = chosen;
+    const modelKey = currentProviderIdentity?.modelKey ?? currentModel;
+    const optIn = mechanism !== "openai" ? { optIn: true as const } : {};
+    // A byte-exact fork sends its parent's tools verbatim (`providerToolSpecs`) and replays the parent's
+    // change entries as they stand; it never starts or extends an epoch of its own.
+    if (exactRequestLayout !== undefined) {
+      const inherited = activeToolEpoch(messages, mechanism, modelKey);
+      return { tools: live, ...(inherited !== undefined ? { toolChanges: { render: new Set(epochChangeMessages(messages, inherited.index, mechanism)) } } : {}), ...optIn };
+    }
+    const startEpoch = async (from: ProviderToolSpec[]): Promise<{ index: number; epoch: ToolEpochAttachment }> => {
+      forceNewToolEpoch = false;
+      await appendToolBookkeeping({ type: TOOL_EPOCH_ATTACHMENT, mechanism, modelKey: modelKey ?? null, tools: epochToolsFor(from, mechanism) });
+      return activeToolEpoch(messages, mechanism, modelKey)!;
+    };
+    let active = forceNewToolEpoch ? undefined : activeToolEpoch(messages, mechanism, modelKey);
+    let current = live;
+    if (active === undefined) {
+      active = await startEpoch(live);
+      // Re-read: the new epoch retired the old one's references (`referencedToolNames`).
+      current = providerToolSpecs();
+    }
+    const referenced = (): Set<string> => referencedToolNames(messages);
+    let changes = epochChangeMessages(messages, active.index, mechanism);
+    let state = foldToolState(active.epoch, changes, referenced());
+    let diff = diffToolState(current, state, mechanism, caps);
+    if (diff.kind === "new-epoch") {
+      // The mechanism cannot say this (a reference-only row whose tool changed its definition, a row
+      // with no way to withdraw a tool, ...): today's rebuild, once, as the start of a new epoch.
+      if (!toolEpochRestartLogged) {
+        toolEpochRestartLogged = true;
+        console.error(`winter: the tool list changed in a way this model cannot take mid-conversation (${diff.reason}); session ${config.sessionId} re-sends its tool list, which restarts the prompt cache once`);
+      }
+      active = await startEpoch(current);
+      current = providerToolSpecs();
+      changes = [];
+      state = foldToolState(active.epoch, changes, referenced());
+      diff = diffToolState(current, state, mechanism, caps);
+    }
+    // A change follows a user or tool-result turn -- never a paused assistant turn (a `pause_turn`
+    // resend), which the vendor refuses; that request changes nothing and the next one catches up.
+    // The last REAL message decides (fix round 1): an epoch entry appended after a paused turn is
+    // bookkeeping, not a user turn, and must not let a change follow the paused assistant message.
+    const lastReal = [...messages].reverse().find((m) => !isToolBookkeeping(m));
+    if (diff.kind === "change" && lastReal?.role !== "assistant") {
+      await appendToolBookkeeping({ type: TOOL_CHANGES_ATTACHMENT, mechanism, ...diff.change });
+      changes = epochChangeMessages(messages, active.index, mechanism);
+      // A deferred tool announced by reference is callable from here on: load it, so the dispatch's
+      // load-first check agrees with what the model was shown.
+      const announced = diff.change.add.filter((a) => a.type === "reference").map((a) => a.name);
+      if (announced.length > 0) {
+        const byAdvertised = new Map([...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => [d.advertisedName, d.canonicalName] as const));
+        loadedToolSet.load(announced.map((name) => byAdvertised.get(name) ?? name));
+      }
+      state = foldToolState(active.epoch, changes, referenced());
+    }
+    const tools = mechanism === "openai" ? [...state.declared, ...current.filter((t) => t.deferLoading === true)] : state.declared;
+    let allowedTools = diff.kind !== "new-epoch" ? diff.allowedTools : undefined;
+    // THE LIVE PERMISSION MODE, on a row that restricts by choice. `tools` follows the session's STARTUP
+    // mode (rider 5's posture: the partition is not re-derived on a mode switch) and the live mode governs
+    // dispatch -- so in plan mode the model is still shown a tool the dispatch will refuse. `allowed_tools`
+    // closes that gap at no cache cost: the tools the live mode excludes leave the callable subset, and
+    // come back when the mode does. Anthropic has no equivalent that leaves `tools` alone (only a
+    // `tool_removal` entry per switch), so there the dispatch refusal stays the gate.
+    if (mechanism === "openai" && caps.allowedTools === true) {
+      const liveMode = policyStateStore.getState().mode;
+      const modeExcluded = new Set(advertisedPartition.eager.filter((d) => !isToolAvailable(d, { ...advertisedCfg, mode: liveMode })).map((d) => d.advertisedName));
+      if (modeExcluded.size > 0) {
+        const base = allowedTools ?? current.filter((t) => t.deferLoading !== true && state.available.has(t.name)).map((t) => t.name).sort();
+        const restricted = base.filter((name) => !modeExcluded.has(name));
+        if (restricted.length < base.length || allowedTools !== undefined) allowedTools = restricted;
+      }
+    }
+    return { tools, ...(allowedTools !== undefined ? { allowedTools } : {}), toolChanges: { render: new Set(changes) }, ...optIn };
   };
 
   /**
@@ -7825,6 +8125,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // (the vendor's own guide recommends a cap; 5 is the figure it uses).
     let overflowRetryPending = false;
     let pauseContinuations = 0;
+    let resendingPausedTurn = false;
     const recoverFromContextOverflow = async (): Promise<{ retry: true } | { retry: false; why: string }> => {
       if (overflowRetryPending) return { retry: false, why: "the retry after a reactive compaction overflowed the context window again" };
       // WS-23 (anthropic-cache C1): `reason: "overflow"` -- the summary must NOT reuse the session's own
@@ -7883,11 +8184,29 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // WS-23: whether THIS generation carried per-message effort markers -- read by the catch's
       // beta-rejection fallback, which must never fire for a request that sent none.
       let sentPerMessageBeta = false;
+      // WS-23 (midconv): whether THIS generation carried a tool-change mechanism -- the tool-change
+      // fallback below must never fire for a request that sent none.
+      let sentToolChanges = false;
+      let sentNativeToolSearch = false;
+      let sentToolChangeMessage = false;
+      let sentAllowedTools = false;
+      // WS-23 (midconv): this generation re-sends a paused turn (set by the `pause_turn` branch below).
+      // Read, NOT consumed here (fix round 1): a retried round (a fallback's `continue roundLoop`) re-sends
+      // the same paused turn and must keep the exemption; it is cleared once a generation returns.
+      const resumesPausedTurn = resendingPausedTurn;
       try {
         // A mid-turn compaction cleared the session context; this rebuilds it (same envelope input).
         const context = await ensureSessionContext(assembled, envelopeInput);
         const effortPlan = planEffort();
-        const outboundMessages = requestMessages(context, effortPlan.markers);
+        // WS-23 (midconv): the tool plan FIRST -- it may append the epoch's entries to the history the
+        // outbound messages are built from.
+        const toolPlan = await planToolsForRequest();
+        const toolSpecs = toolPlan.tools;
+        sentToolChanges = toolPlan.optIn === true || (toolPlan.toolChanges?.render.size ?? 0) > 0;
+        sentNativeToolSearch = toolSpecs.some((t) => t.toolSearch === true);
+        sentAllowedTools = toolPlan.allowedTools !== undefined;
+        const outboundMessages = requestMessages(context, effortPlan.markers, toolPlan.toolChanges);
+        sentToolChangeMessage = outboundMessages.some((m) => m.toolChanges !== undefined);
         generationEffort = effortPlan.stamp;
         // Fix round 1 (I1): every per-message request carries the leading marker, so the beta rides
         // every such request -- and the fallback keys on exactly that.
@@ -7895,10 +8214,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // P1 carry: the per-message cap, enforced BEFORE the request leaves the engine. Throws a
         // `ProviderTurnError`, so it lands on R6-F's result shape through the catch below.
         assertMessagesWithinCap(outboundMessages);
-        const toolSpecs = providerToolSpecs();
         const outboundSystem = requestSystem(assembled, context);
         // WS-23: what compaction's summary reuses (see `compactionPrefixRequest`).
-        lastMainRequestShape = { modelKey: currentProviderIdentity?.modelKey ?? currentModel, system: outboundSystem, userContextText: context.userContextText, tools: toolSpecs };
+        const { tools: _declared, ...toolPlanRest } = toolPlan;
+        lastMainRequestShape = { modelKey: currentProviderIdentity?.modelKey ?? currentModel, system: outboundSystem, userContextText: context.userContextText, tools: toolSpecs, toolPlan: toolPlanRest };
         // The layout a byte-exact fork (a later lane) will reuse: exactly what this request carries.
         recordSessionRequestLayout(config.sessionId, config.agentId, {
           ...(outboundSystem.system.length > 0 ? { system: outboundSystem.system } : {}),
@@ -7924,6 +8243,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // requests to a real provider (the second says "you have no tools", the first says
             // nothing), and a session with no tools is the shape every P1-P5 fixture uses.
             ...(toolSpecs.length > 0 ? { tools: toolSpecs } : {}),
+            // WS-23 (midconv): the tool epoch's per-request facts (see `planToolsForRequest`).
+            ...(toolPlan.allowedTools !== undefined ? { allowedTools: toolPlan.allowedTools } : {}),
+            ...(toolPlan.optIn === true ? { toolChanges: true as const } : {}),
+            ...(resumesPausedTurn ? { resumesPausedTurn: true as const } : {}),
             ...(currentModel !== undefined ? { model: currentModel } : {}),
             // WS-23: the PLANNED top-level value (frozen on a per-message-effort row), never
             // `config.effort` directly -- a `set_effort` moves the live level.
@@ -7948,6 +8271,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           break roundLoop;
         }
         turn = raced.value;
+        resendingPausedTurn = false;
         if ("responseId" in turn && turn.responseId !== undefined) lastMainResponse = { id: turn.responseId, modelKey: currentProviderIdentity?.modelKey ?? currentModel };
         // Phase 5 Task 2 (R5-3): the ONE place this run folds a generation's reported usage into
         // the session's context accounting. A provider that reports no usage (every P1/P3/P4 test
@@ -8032,6 +8356,30 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           console.error(`winter: the provider refused per-message effort (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now changes effort at the top level, which restarts the prompt cache on each change`);
           continue roundLoop;
         }
+        // WS-23 (midconv): a mid-conversation tool change REFUSED (the opt-in, a block or item, or a
+        // documented tool-change error such as `tool_name_conflict`). Same shape as the effort fallback:
+        // a 400 is pre-first-byte, the round re-runs as a fresh request, and the session rebuilds `tools`
+        // for the rest of its life -- claude 2.1.282's own "declaring late tools in tools[]" fallback --
+        // saying so once. Sticky, so a second refusal surfaces like any other failure.
+        // WS-23 (midconv): OpenAI's client tool search REFUSED -- same one-time, sticky fallback, to the
+        // shape every other row has (loaded deferred tools as plain functions). A new epoch, since the
+        // frozen list carried the native tool search.
+        if (sentAllowedTools && !allowedToolsRejected && isAllowedToolsRejection(err)) {
+          allowedToolsRejected = true;
+          console.error(`winter: the provider refused tool_choice allowed_tools (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} no longer restricts its callable set that way (its tool search is unaffected)`);
+          continue roundLoop;
+        }
+        if (sentNativeToolSearch && !nativeToolSearchRejected && isToolSearchRejection(err)) {
+          nativeToolSearchRejected = true;
+          forceNewToolEpoch = true;
+          console.error(`winter: the provider refused its client tool search (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now sends loaded deferred tools in its tool list`);
+          continue roundLoop;
+        }
+        if (sentToolChanges && !toolChangesRejected && isToolChangeRejection(err, sentToolChangeMessage)) {
+          toolChangesRejected = true;
+          console.error(`winter: the provider refused a mid-conversation tool change (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now re-sends its tool list on each change, which restarts the prompt cache`);
+          continue roundLoop;
+        }
         if (isProviderTurnError(err) && err.retryable === true && err.committed !== true && engageFallback()) continue roundLoop;
         const text = err instanceof Error ? err.message : String(err);
         // Phase 6 Task 3 (R6-F, capture (I)): a PROVIDER failure lands on `subtype: "success"` with
@@ -8091,6 +8439,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           break roundLoop;
         }
         pauseContinuations++;
+        resendingPausedTurn = true;
         const paused = inStreamOrder(turn) ?? [...(turn.thinking?.blocks ?? []), ...(turn.text.length > 0 ? [{ type: "text" as const, text: turn.text }] : [])];
         if (paused.length > 0) {
           output.write({ type: "data", message: { type: "assistant", message: { content: paused } } });
@@ -8674,13 +9023,21 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           const raced = await raceInterrupt(tools.execute(executedCall, { signal: turnAbort.signal, ...(decision.explicitApproval !== undefined ? { explicitApproval: decision.explicitApproval } : {}) }), interruptSignal);
           const loadedTools = advertisedNamesFor(toolReferenceCollector);
           toolReferenceCollector = undefined;
+          const loadedToolDefinitions = loadedDefinitionsFor(loadedTools);
           if (raced.kind === "interrupted") {
             interrupted = true;
             break;
           }
           // Spawn-surface parity (R-S4): an executor's `isError` rides the block as claude's own
           // `is_error: true` -- on the wire, into history, into persistence and into every adapter.
-          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: raced.value.output, ...(raced.value.isError === true ? { is_error: true } : {}), ...(loadedTools.length > 0 ? { loadedTools } : {}) });
+          resultBlocks.push({
+            type: "tool_result",
+            tool_use_id: call.id,
+            content: raced.value.output,
+            ...(raced.value.isError === true ? { is_error: true } : {}),
+            ...(loadedTools.length > 0 ? { loadedTools } : {}),
+            ...(loadedToolDefinitions.length > 0 ? { loadedToolDefinitions } : {}),
+          });
           // Task 10 (WS-08 §5; PreToolUse/PostToolUse/PostToolUseFailure "fire at the tool round"):
           // contribution-capable, observational at P2 — its own transformedOutput/extraContext
           // fields still have no consumer (a future WS-08 task's job); `classifierContext` DOES have

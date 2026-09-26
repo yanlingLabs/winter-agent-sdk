@@ -3,7 +3,8 @@
 // renderer and the adapter -- against a loopback Messages endpoint, on the real Opus 5.5 row, through:
 //   - a tool round whose replies carry signed thinking blocks (replayed on every later request);
 //   - a ToolSearch load of a deferred MCP tool (surfaced by `tool_reference`, `tools` untouched);
-//   - a hook-style `<system-reminder>` appended after each tool round (it folds into the tool_result);
+//   - a hook-style `<system-reminder>` appended after each tool round (it folds into an ordinary
+//     tool_result, and follows a reference-carrying one as text -- the live gate's rule);
 //   - an effort switch before the second turn.
 // Across every request the `tools`, `system`, top-level `output_config`, `thinking` and the
 // `anthropic-beta` header are byte-identical, and each request's messages (with the one moving
@@ -156,7 +157,9 @@ describe("the cached prefix on the wire, turns 1 -> 2 with a tool round, a ToolS
       // THE BETA SET IS CONSTANT (fix round 1, I1): per-message effort and block binding on every request.
       expect(beta).toBe(first!.beta);
     }
-    expect(first!.beta!.split(",").sort()).toEqual(["mid-conversation-output-config-2026-07-01", "thinking-binding-controls-2026-08-01"]);
+    // WS-23 midconv: the tool-change beta rides every request too -- the inline one, which "covers all
+    // reference-based changes" (the row documents tools defined by value).
+    expect(first!.beta!.split(",").sort()).toEqual(["inline-tools-2026-09-15", "mid-conversation-output-config-2026-07-01", "thinking-binding-controls-2026-08-01"]);
     // The deferred tool is declared up front, and stays declared the same way after it loads.
     expect((first!.body["tools"] as Block[]).find((t) => t["name"] === DEFERRED)).toMatchObject({ defer_loading: true });
 
@@ -171,7 +174,22 @@ describe("the cached prefix on the wire, turns 1 -> 2 with a tool round, a ToolS
     expect(last).toContain(`{"type":"tool_reference","tool_name":"${DEFERRED}"}`);
     const toolResults = wire[3]!.flatMap((m) => (Array.isArray(m["content"]) ? (m["content"] as Block[]) : [])).filter((b) => b["type"] === "tool_result");
     expect(toolResults).toHaveLength(2);
-    expect(toolResults.every((b) => JSON.stringify(b["content"]).includes("hook says: keep going"))).toBe(true);
+    // Live gate (claude-opus-5-5): a result carrying `tool_reference` holds ONLY references -- mixing
+    // them with other content is a 400 that bricks the session. So the ToolSearch result is
+    // references-only and ITS hook tail follows it as text in the same user message; the ordinary
+    // result keeps its tail folded inside, as before.
+    for (const message of wire.flat()) {
+      for (const block of Array.isArray(message["content"]) ? (message["content"] as Block[]) : []) {
+        if (block["type"] !== "tool_result" || !Array.isArray(block["content"])) continue;
+        const inner = block["content"] as Block[];
+        if (inner.some((b) => b["type"] === "tool_reference")) expect(inner.every((b) => b["type"] === "tool_reference")).toBe(true);
+      }
+    }
+    const referencing = toolResults.filter((b) => JSON.stringify(b["content"]).includes("tool_reference"));
+    expect(referencing).toHaveLength(1);
+    expect(toolResults.filter((b) => JSON.stringify(b["content"]).includes("hook says: keep going"))).toHaveLength(1);
+    const searchTurn = wire[3]!.find((m) => Array.isArray(m["content"]) && (m["content"] as Block[]).includes(referencing[0]!))!;
+    expect((searchTurn["content"] as Block[]).filter((b) => b["type"] === "text").some((b) => String(b["text"]).includes("hook says: keep going"))).toBe(true);
     const systems = wire[3]!.filter((m) => m["role"] === "system");
     expect(systems).toEqual([
       { role: "system", content: [], output_config: { effort: "high" } },

@@ -82,10 +82,16 @@ twin and a test asserts the two agree, so this document cannot drift away from t
 | `model.status` | local override | `candidate` by default; `experimental` where the allowlist's reviewed `initialModelStatus` says so (R6-16's native cloud, 4 of 53 extracted rows), overridable per row. Never `supported` — upstream presence promotes nothing |
 | `*.pricing` | official-doc derived | **overlay only**, from the vendors' pricing pages with the URL and observation instant |
 | `*.classifierEligible` | live-probe proven | **never set** by extraction or overlay (R6-14) |
-| `reasoning.continuationDomain` / `summaryRequest` / `readableState` / `completionEvent` / `toolLoopRequirement` / `effortRequest` / `blockBinding` / `perMessageEffort` | official-doc derived | **overlay only**; continuation domain is never inferred from a shared HTTP shape |
+| `reasoning.continuationDomain` / `summaryRequest` / `readableState` / `completionEvent` / `toolLoopRequirement` / `effortRequest` / `blockBinding` / `perMessageEffort` | official-doc derived | **overlay only**; continuation domain is never inferred from a shared HTTP shape; `perMessageEffort` names its mechanism -- Anthropic's effort-only `system` message beta, or OpenAI's Responses `configuration_update` item (GPT-6, the reasoning guide) |
 | `model.deferredToolLoading` | official-doc derived | **overlay only**; Anthropic's tool-search model-compatibility table (custom `tool_reference` + `defer_loading`) |
 | `model.midConversationSystem` | official-doc derived | **overlay only**; Anthropic's mid-conversation system messages page (model list; Sonnet 5 excluded) |
 | `model.promptCacheKey` | official-doc derived | **overlay only**; OpenAI's prompt-caching guide (Responses `prompt_cache_key`), and codex-rs's own request builder for the ChatGPT Codex backend |
+| `model.midConversationToolChanges` | official-doc derived | **overlay only**; Anthropic's mid-conversation system messages page (tool changes by reference, `mid-conversation-tool-changes-2026-07-01`; model list, Sonnet 5 excluded) |
+| `model.inlineToolDefinitions` | official-doc derived | **overlay only**; the same page (tools defined by value, `inline-tools-2026-09-15`; Claude API only) |
+| `model.clientToolSearch` | official-doc derived | **overlay only**; OpenAI's tool-search guide (client-executed `tool_search`, GPT-5.4 and later) and codex-rs's `models.json` (`supports_search_tool`) for the Codex backend |
+| `model.additionalToolsItem` | official-doc derived | **overlay only**; OpenAI's tool-search guide (`additional_tools` developer item; no model list, so set only where `clientToolSearch` is documented, never on codex-oauth before the live probe) |
+| `model.allowedToolsChoice` | official-doc derived | **overlay only**; OpenAI's function-calling guide (`tool_choice: allowed_tools`; no model list, same rows as `additionalToolsItem`) |
+| `model.assistantPrefill` | official-doc derived | **overlay only**; the Opus 5.5 migration guide (prefill is a 400 on Opus 4.6 and later, Opus 5.5, Sonnet 5) and the Fable 5.1 guide; only `false` is recorded |
 
 ### Two tiers of admission citation
 

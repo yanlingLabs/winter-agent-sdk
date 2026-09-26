@@ -120,6 +120,12 @@ describe("per-message effort (WS-23 item 1)", () => {
     expect((thrown as Error).message).toContain("per-message effort");
   });
 
+  test("WS-23 midconv: a row recording OpenAI's `configuration_update` item is refused typed on this dialect, and names no beta", () => {
+    const openaiShaped = opus55({ reasoning: { ...opus55().reasoning!, perMessageEffort: evidence({ item: "configuration_update" as const }) } });
+    expect(() => buildRequestBody({ model: "claude-opus-5-5", messages: switched, effort: "high" }, openaiShaped, {})).toThrow(/non-Anthropic mechanism/);
+    expect(perMessageEffortBetaFor({ messages: [{ role: "system", content: [], output_config: { effort: "low" } }] }, openaiShaped)).toBeUndefined();
+  });
+
   test("a marker level outside the row's own vocabulary is refused before the request", () => {
     expect(() => buildRequestBody({ model: "claude-opus-5-5", messages: [...switched.slice(0, 2), marker("minimal"), switched[3]!], effort: "high" }, opus55(), {})).toThrow(/verified vocabulary/);
   });
@@ -158,12 +164,90 @@ describe("deferred tools and tool_reference (WS-23 item 3)", () => {
 
   test("a ToolSearch result's `loadedTools` becomes Anthropic's tool_reference blocks inside that result -- only for names declared deferred", () => {
     const body = buildRequestBody({ model: "claude-opus-5-5", messages: searchResult(["NotebookEdit", "Bash", "Nope"]), tools: [tool("Bash"), tool("NotebookEdit", true)] }, deferredRow(), {});
-    const result = (body["messages"] as Array<{ content: Array<Record<string, unknown>> }>)[2]!.content[0]!;
-    expect(result).toEqual({
-      type: "tool_result",
-      tool_use_id: "ts1",
-      content: [{ type: "text", text: '{"matches":["NotebookEdit"]}' }, { type: "tool_reference", tool_name: "NotebookEdit" }],
-    });
+    // Live gate (claude-opus-5-5): a result carrying `tool_reference` blocks holds NOTHING else -- mixing
+    // is a 400 that bricks the session. The tool's own text follows the result in the same user message.
+    expect((body["messages"] as Array<{ content: Array<Record<string, unknown>> }>)[2]!.content).toEqual([
+      { type: "tool_result", tool_use_id: "ts1", content: [{ type: "tool_reference", tool_name: "NotebookEdit" }] },
+      { type: "text", text: '{"matches":["NotebookEdit"]}' },
+    ]);
+  });
+
+  test("a reference to a tool that is GONE (declared nowhere) is dropped; a result left with nothing says so (claude's placeholder), never an empty result", () => {
+    const history: ProviderMessageLike[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "tool_use", id: "t", name: "ToolSearch", input: {} }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "t", content: [{ type: "tool_reference", tool_name: "mcp__gone__tool" } as never] }] },
+    ];
+    const body = buildRequestBody({ model: "claude-opus-5-5", messages: history, tools: [tool("Bash"), tool("NotebookEdit", true)] }, deferredRow(), {});
+    expect((body["messages"] as Array<{ content: Array<Record<string, unknown>> }>)[2]!.content).toEqual([{ type: "tool_result", tool_use_id: "t", content: "[Tool references removed - tools no longer available]" }]);
+  });
+
+  test("fix round 2: an ASSISTANT message whose only content referenced a gone tool keeps its turn, as the placeholder -- never dropped (which merged the user turns around it)", () => {
+    const history: ProviderMessageLike[] = [{ role: "user", content: "go" }, { role: "assistant", content: [{ type: "tool_reference", tool_name: "mcp__gone__tool" } as never] }, { role: "user", content: "next" }];
+    const body = buildRequestBody({ model: "claude-opus-5-5", messages: history, tools: [tool("Bash")] }, deferredRow(), {});
+    expect(body["messages"]).toEqual([
+      { role: "user", content: [{ type: "text", text: "go" }] },
+      { role: "assistant", content: [{ type: "text", text: "[Tool references removed - tools no longer available]" }] },
+      expect.objectContaining({ role: "user" }),
+    ]);
+  });
+
+  test("a session ALREADY ON DISK in the rejected shape is healed at send time: the same stored history now goes out references-only, its text as siblings", () => {
+    // Exactly what 2ddc238 persisted: the ToolSearch listing with a hook reminder smooshed into it, plus
+    // `loadedTools` (the references were the adapter's, never stored), and a claude-written mixed result.
+    const stored: ProviderMessageLike[] = [
+      { role: "user", content: "find it" },
+      { role: "assistant", content: [{ type: "tool_use", id: "s1", name: "ToolSearch", input: {} }, { type: "tool_use", id: "s2", name: "ToolSearch", input: {} }] },
+      {
+        role: "tool",
+        content: [
+          { type: "tool_result", tool_use_id: "s1", content: '{"matches":["NotebookEdit"],"query":"nb","total_deferred_tools":1}\n\n<system-reminder>\nPostToolUse hook context\n</system-reminder>', loadedTools: ["NotebookEdit"] },
+          { type: "tool_result", tool_use_id: "s2", content: [{ type: "text", text: "Tool loaded." }, { type: "tool_reference", tool_name: "NotebookEdit" } as never] },
+        ],
+      },
+      { role: "assistant", content: "found it" },
+      { role: "user", content: "next" },
+    ];
+    const body = buildRequestBody({ model: "claude-opus-5-5", messages: stored, tools: [tool("Bash"), tool("NotebookEdit", true)] }, deferredRow(), {});
+    const turn = (body["messages"] as Array<{ content: Array<Record<string, unknown>> }>)[2]!.content;
+    expect(turn.map((b) => b["type"])).toEqual(["tool_result", "tool_result", "text", "text"]);
+    expect(turn[0]).toEqual({ type: "tool_result", tool_use_id: "s1", content: [{ type: "tool_reference", tool_name: "NotebookEdit" }] });
+    expect(turn[1]).toEqual({ type: "tool_result", tool_use_id: "s2", content: [{ type: "tool_reference", tool_name: "NotebookEdit" }] });
+    expect(String(turn[2]!["text"])).toContain("PostToolUse hook context");
+    expect(turn[3]).toEqual({ type: "text", text: "Tool loaded." });
+  });
+
+  test("live-gate regression: NO tool_result on the wire mixes `tool_reference` blocks with any other content -- not the tool's text, not a hook's smooshed reminder, not a nested claude reference, across several results", () => {
+    const history: ProviderMessageLike[] = [
+      { role: "user", content: "find tools" },
+      { role: "assistant", content: [{ type: "tool_use", id: "a", name: "ToolSearch", input: {} }, { type: "tool_use", id: "b", name: "ToolSearch", input: {} }, { type: "tool_use", id: "c", name: "Bash", input: {} }] },
+      {
+        role: "tool",
+        content: [
+          // The engine smooshes a hook's `<system-reminder>` tail into a string result.
+          { type: "tool_result", tool_use_id: "a", content: '{"matches":["NotebookEdit"]}\n\n<system-reminder>\nhook context\n</system-reminder>', loadedTools: ["NotebookEdit"] },
+          { type: "tool_result", tool_use_id: "b", content: [{ type: "text", text: "found" }, { type: "tool_reference", tool_name: "Grep" } as never], loadedTools: ["Grep"] },
+          { type: "tool_result", tool_use_id: "c", content: "plain output" },
+        ],
+      },
+    ];
+    const body = buildRequestBody({ model: "claude-opus-5-5", messages: history, tools: [tool("Bash"), tool("NotebookEdit", true), tool("Grep", true)] }, deferredRow(), {});
+    const messages = body["messages"] as Array<{ role: string; content: Array<Record<string, unknown>> }>;
+    let referencing = 0;
+    for (const message of messages) {
+      for (const block of message.content) {
+        if (block["type"] !== "tool_result" || !Array.isArray(block["content"])) continue;
+        const inner = block["content"] as Array<Record<string, unknown>>;
+        if (!inner.some((b) => b["type"] === "tool_reference")) continue;
+        referencing++;
+        expect(inner.every((b) => b["type"] === "tool_reference")).toBe(true);
+      }
+    }
+    expect(referencing).toBe(2);
+    // Every result first, then the displaced text, in order; the plain result is untouched.
+    expect(messages[2]!.content.map((b) => b["type"])).toEqual(["tool_result", "tool_result", "tool_result", "text", "text"]);
+    expect(messages[2]!.content[2]).toEqual({ type: "tool_result", tool_use_id: "c", content: "plain output" });
+    expect(messages[2]!.content[3]!["text"]).toContain("hook context");
   });
 
   test("with no deferred tool in the request, the same history serialises byte-identically to before (the bookkeeping field never reaches the wire)", () => {

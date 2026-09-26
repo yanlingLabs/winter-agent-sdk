@@ -14421,6 +14421,31 @@
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
       },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
+      },
+      "inlineToolDefinitions": {
+        "value": {
+          "beta": "inline-tools-2026-09-15"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
+      },
       "canonicalModelId": "claude-fable-5",
       "modelFamily": "claude"
     },
@@ -14614,6 +14639,31 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
+      },
+      "inlineToolDefinitions": {
+        "value": {
+          "beta": "inline-tools-2026-09-15"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-fable-5.1",
       "modelFamily": "claude"
@@ -15085,6 +15135,13 @@
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
       },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
+      },
       "canonicalModelId": "claude-opus-4.6",
       "modelFamily": "claude"
     },
@@ -15219,6 +15276,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-4.7",
       "modelFamily": "claude"
@@ -15361,6 +15425,31 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
+      },
+      "inlineToolDefinitions": {
+        "value": {
+          "beta": "inline-tools-2026-09-15"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-4.8",
       "modelFamily": "claude"
@@ -15555,6 +15644,31 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
+      },
+      "inlineToolDefinitions": {
+        "value": {
+          "beta": "inline-tools-2026-09-15"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-5",
       "modelFamily": "claude"
@@ -15758,6 +15872,31 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
+      },
+      "inlineToolDefinitions": {
+        "value": {
+          "beta": "inline-tools-2026-09-15"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-5.5",
       "modelFamily": "claude"
@@ -16181,6 +16320,13 @@
         "thinking.type.enabled"
       ],
       "status": "candidate",
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
+      },
       "canonicalModelId": "claude-sonnet-5",
       "modelFamily": "claude"
     },
@@ -25391,6 +25537,13 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "codex-rs models-manager/models.json (cloned 25270df, 2026-09-26): supports_search_tool is true on every bundled model; core/src/tools/spec_plan.rs:653-666 turns on the client tool_search (tools/src/tool_search.rs:84-110, core/src/tools/handlers/tool_search_spec.rs:98) when the provider's namespace capability is on (default true) -- the vendor's own client sends it to chatgpt.com/backend-api/codex."
+      },
       "canonicalModelId": "gpt-5.6-luna",
       "modelFamily": "gpt"
     },
@@ -25505,6 +25658,13 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "codex-rs models-manager/models.json (cloned 25270df, 2026-09-26): supports_search_tool is true on every bundled model; core/src/tools/spec_plan.rs:653-666 turns on the client tool_search (tools/src/tool_search.rs:84-110, core/src/tools/handlers/tool_search_spec.rs:98) when the provider's namespace capability is on (default true) -- the vendor's own client sends it to chatgpt.com/backend-api/codex."
+      },
       "canonicalModelId": "gpt-5.6-sol",
       "modelFamily": "gpt"
     },
@@ -25618,6 +25778,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "codex-rs models-manager/models.json (cloned 25270df, 2026-09-26): supports_search_tool is true on every bundled model; core/src/tools/spec_plan.rs:653-666 turns on the client tool_search (tools/src/tool_search.rs:84-110, core/src/tools/handlers/tool_search_spec.rs:98) when the provider's namespace capability is on (default true) -- the vendor's own client sends it to chatgpt.com/backend-api/codex."
       },
       "canonicalModelId": "gpt-5.6-terra",
       "modelFamily": "gpt"
@@ -25735,6 +25902,13 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "codex-rs models-manager/models.json (cloned 25270df, 2026-09-26): supports_search_tool is true on every bundled model; core/src/tools/spec_plan.rs:653-666 turns on the client tool_search (tools/src/tool_search.rs:84-110, core/src/tools/handlers/tool_search_spec.rs:98) when the provider's namespace capability is on (default true) -- the vendor's own client sends it to chatgpt.com/backend-api/codex."
+      },
       "canonicalModelId": "gpt-6-astra",
       "modelFamily": "gpt"
     },
@@ -25851,6 +26025,13 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "codex-rs models-manager/models.json (cloned 25270df, 2026-09-26): supports_search_tool is true on every bundled model; core/src/tools/spec_plan.rs:653-666 turns on the client tool_search (tools/src/tool_search.rs:84-110, core/src/tools/handlers/tool_search_spec.rs:98) when the provider's namespace capability is on (default true) -- the vendor's own client sends it to chatgpt.com/backend-api/codex."
+      },
       "canonicalModelId": "gpt-6-luna",
       "modelFamily": "gpt"
     },
@@ -25966,6 +26147,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "codex-rs models-manager/models.json (cloned 25270df, 2026-09-26): supports_search_tool is true on every bundled model; core/src/tools/spec_plan.rs:653-666 turns on the client tool_search (tools/src/tool_search.rs:84-110, core/src/tools/handlers/tool_search_spec.rs:98) when the provider's namespace capability is on (default true) -- the vendor's own client sends it to chatgpt.com/backend-api/codex."
       },
       "canonicalModelId": "gpt-6-sol",
       "modelFamily": "gpt"
@@ -26724,6 +26912,31 @@
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
       },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
+      },
+      "inlineToolDefinitions": {
+        "value": {
+          "beta": "inline-tools-2026-09-15"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
+      },
       "canonicalModelId": "claude-fable-5",
       "modelFamily": "claude"
     },
@@ -26917,6 +27130,31 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
+      },
+      "inlineToolDefinitions": {
+        "value": {
+          "beta": "inline-tools-2026-09-15"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-fable-5.1",
       "modelFamily": "claude"
@@ -27388,6 +27626,13 @@
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
       },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
+      },
       "canonicalModelId": "claude-opus-4.6",
       "modelFamily": "claude"
     },
@@ -27522,6 +27767,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-4.7",
       "modelFamily": "claude"
@@ -27664,6 +27916,31 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
+      },
+      "inlineToolDefinitions": {
+        "value": {
+          "beta": "inline-tools-2026-09-15"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-4.8",
       "modelFamily": "claude"
@@ -27858,6 +28135,31 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
+      },
+      "inlineToolDefinitions": {
+        "value": {
+          "beta": "inline-tools-2026-09-15"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-5",
       "modelFamily": "claude"
@@ -28061,6 +28363,31 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — \"This feature is available on Claude Fable 5.1, Claude Mythos 5.1, Claude Fable 5, Claude Mythos 5, Claude Opus 5.5, Claude Opus 4.8, and Claude Opus 5. No beta header is required for mid-conversation system messages. This feature is not available on Claude Sonnet 5.\""
+      },
+      "midConversationToolChanges": {
+        "value": {
+          "beta": "mid-conversation-tool-changes-2026-07-01"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition / tool_removal blocks in a role:\"system\" message, by reference (\"Add/remove by reference: mid-conversation-tool-changes-2026-07-01 — Claude API, Amazon Bedrock, Google Cloud\"); available on Claude Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 4.8 and Opus 5, \"Not available on Claude Sonnet 5\". Retrieved 2026-09-26; release note 2026-07-24 (https://platform.claude.com/docs/en/release-notes/overview)."
+      },
+      "inlineToolDefinitions": {
+        "value": {
+          "beta": "inline-tools-2026-09-15"
+        },
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages — tool_addition with a tool_definition (\"Add/remove by reference + define by value: inline-tools-2026-09-15 — Claude API\"); \"The inline-tools-2026-09-15 header covers all reference-based changes\"; redefinition: \"send a different definition under the same name ... The new definition replaces the earlier one from that position onward\" (no removal first, a tool declared in tools included); a definition reusing the name of a different type of tool is a 400 tool_name_conflict. Same model list as midConversationToolChanges. Claude API only, so set on the anthropic and console providers (both api.anthropic.com), never on a cloud reseller. Retrieved 2026-09-26; release note 2026-09-22."
+      },
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
       "canonicalModelId": "claude-opus-5.5",
       "modelFamily": "claude"
@@ -28484,6 +28811,13 @@
         "thinking.type.enabled"
       ],
       "status": "candidate",
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
+      },
       "canonicalModelId": "claude-sonnet-5",
       "modelFamily": "claude"
     },
@@ -51345,6 +51679,27 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
+      },
       "canonicalModelId": "gpt-5.4",
       "modelFamily": "gpt"
     },
@@ -51463,6 +51818,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-5.4-mini",
       "modelFamily": "gpt"
@@ -51583,6 +51959,27 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
+      },
       "canonicalModelId": "gpt-5.4-nano",
       "modelFamily": "gpt"
     },
@@ -51676,6 +52073,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-5.4-pro",
       "modelFamily": "gpt"
@@ -51789,6 +52207,27 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
+      },
       "canonicalModelId": "gpt-5.5",
       "modelFamily": "gpt"
     },
@@ -51889,6 +52328,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-5.5-pro",
       "modelFamily": "gpt"
@@ -52011,6 +52471,27 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
+      },
       "canonicalModelId": "gpt-5.6",
       "modelFamily": "gpt"
     },
@@ -52131,6 +52612,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-5.6-luna",
       "modelFamily": "gpt"
@@ -52253,6 +52755,27 @@
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
       },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
+      },
       "canonicalModelId": "gpt-5.6-sol",
       "modelFamily": "gpt"
     },
@@ -52373,6 +52896,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-5.6-terra",
       "modelFamily": "gpt"
@@ -52508,6 +53052,15 @@
           "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model.  WS-13 §8.2: \"OpenAI-compatible\" is never the capability test, so this key shares NO domain with any other row.",
           "confidence": "declared",
           "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "perMessageEffort": {
+          "value": {
+            "item": "configuration_update"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-26T00:00:00Z",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning — \"Configuration updates are supported by the GPT-6 model family in standard, single-agent mode. They change only reasoning effort.\" Shape {\"type\":\"configuration_update\",\"reasoning\":{\"effort\":…}}, placed \"before the next user message in the input array\"; \"the API rejects adjacent updates\"; \"The response's reasoning.effort continues to report the request-level setting\"; with store:false, replay updates \"in their original positions\". Retrieved 2026-09-26. NOT set on codex-oauth/gpt-6-* (codex-rs enables it only behind an off-by-default feature, backend acceptance unprobed — scripts/probe-openai-midconv.ts decides) nor on azure-openai (undocumented there)."
         }
       },
       "pricing": {
@@ -52530,6 +53083,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-6-astra",
       "modelFamily": "gpt"
@@ -52666,6 +53240,15 @@
           "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model.  WS-13 §8.2: \"OpenAI-compatible\" is never the capability test, so this key shares NO domain with any other row.",
           "confidence": "declared",
           "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "perMessageEffort": {
+          "value": {
+            "item": "configuration_update"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-26T00:00:00Z",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning — \"Configuration updates are supported by the GPT-6 model family in standard, single-agent mode. They change only reasoning effort.\" Shape {\"type\":\"configuration_update\",\"reasoning\":{\"effort\":…}}, placed \"before the next user message in the input array\"; \"the API rejects adjacent updates\"; \"The response's reasoning.effort continues to report the request-level setting\"; with store:false, replay updates \"in their original positions\". Retrieved 2026-09-26. NOT set on codex-oauth/gpt-6-* (codex-rs enables it only behind an off-by-default feature, backend acceptance unprobed — scripts/probe-openai-midconv.ts decides) nor on azure-openai (undocumented there)."
         }
       },
       "pricing": {
@@ -52688,6 +53271,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-6-luna",
       "modelFamily": "gpt"
@@ -52824,6 +53428,15 @@
           "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model.  WS-13 §8.2: \"OpenAI-compatible\" is never the capability test, so this key shares NO domain with any other row.",
           "confidence": "declared",
           "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "perMessageEffort": {
+          "value": {
+            "item": "configuration_update"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-26T00:00:00Z",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning — \"Configuration updates are supported by the GPT-6 model family in standard, single-agent mode. They change only reasoning effort.\" Shape {\"type\":\"configuration_update\",\"reasoning\":{\"effort\":…}}, placed \"before the next user message in the input array\"; \"the API rejects adjacent updates\"; \"The response's reasoning.effort continues to report the request-level setting\"; with store:false, replay updates \"in their original positions\". Retrieved 2026-09-26. NOT set on codex-oauth/gpt-6-* (codex-rs enables it only behind an off-by-default feature, backend acceptance unprobed — scripts/probe-openai-midconv.ts decides) nor on azure-openai (undocumented there)."
         }
       },
       "pricing": {
@@ -52846,6 +53459,27 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T19:30:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"Use a stable prompt_cache_key to optimize cache routing for requests that share a reusable prefix\" (pre-GPT-5.6); on GPT-5.6+ routing is automatic and the key is \"optional for separate cache accounting\"."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"Only gpt-5.4 and later models support tool_search\" in the Responses API; client execution: {\"type\":\"tool_search\",\"execution\":\"client\",description,parameters}, tool_search_call -> tool_search_output {call_id, execution:\"client\", status, tools}, deferred functions keep defer_loading:true, optionally inside {\"type\":\"namespace\",name,description,tools}. Retrieved 2026-09-26."
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — {\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[...]}: \"Tools in an additional_tools item become available only after that item appears in the input\"; its position is kept on replay. The page names no model list, so it is set only on the rows the same page documents tool_search for (GPT-5.4 and later). NOT on codex-oauth: codex-rs sends one only at input[0] (core/src/client.rs:910-941), never mid-conversation -- the live probe decides. Retrieved 2026-09-26."
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-09-26T00:00:00Z",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
       },
       "canonicalModelId": "gpt-6-sol",
       "modelFamily": "gpt"

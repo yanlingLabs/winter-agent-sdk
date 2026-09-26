@@ -94,6 +94,62 @@ describe("compaction/controller.ts -- shouldCompact (R5-4's formula, the lane's 
   });
 });
 
+describe("every summary request ends with a USER turn (WS-23 midconv live gate: no assistant prefill on Opus 5.5)", () => {
+  test("the redacted fallback: the summarised window ends on an assistant reply, and the instruction follows it as the final user turn", async () => {
+    const { provider, requests } = recordingProvider("A SUMMARY");
+    const controller = createCompactionController();
+    const accountant = createContextAccountant({ limit: 1000 });
+    accountant.record({ inputTokens: 700, outputTokens: 60 });
+    await controller.compact({ messages: longConversation(), trigger: "auto", customInstructions: null, accountant, provider });
+    const sent = requests[0]!.messages;
+    // The window before the ask really does end on an assistant reply -- the case the API refused.
+    expect(sent.at(-2)!.role).toBe("assistant");
+    expect(sent.at(-1)).toEqual({ role: "user", content: WINTER_SUMMARY_INSTRUCTION });
+    // Fix round 1: sent ONCE -- no system prompt repeating it.
+    expect(requests[0]!.system).toBeUndefined();
+    expect(WINTER_SUMMARY_INSTRUCTION).toContain("the conversation above");
+  });
+
+  test("the redacted fallback is flattened to text and carries nothing Opus 5.5 refuses: no tools, no tool_choice, no thinking or effort, no tool blocks at all -- and never STARTS on an assistant turn", async () => {
+    const { provider, requests } = recordingProvider("A SUMMARY");
+    const controller = createCompactionController();
+    const accountant = createContextAccountant({ limit: 1000 });
+    accountant.record({ inputTokens: 700, outputTokens: 60 });
+    // A window that opens on a reply, and carries a ToolSearch result whose `loadedTools` would become
+    // `tool_reference` blocks on the wire ("Tool reference ... not found" once `tools` is empty).
+    const opensOnReply: ProviderMessage[] = [
+      assistant("reply zero"),
+      user("turn one"),
+      toolUse("s1", "ToolSearch", { query: "select:mcp__x__y" }),
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "s1", content: '{"matches":["mcp__x__y"]}', loadedTools: ["mcp__x__y"] }] },
+      ...longConversation().slice(1),
+    ];
+    await controller.compact({ messages: opensOnReply, trigger: "auto", customInstructions: null, accountant, provider });
+    const req = requests[0]!;
+    expect(req.tools).toBeUndefined();
+    expect(req.toolChoice).toBeUndefined();
+    expect(req.thinking).toBeUndefined();
+    expect(req.effort).toBeUndefined();
+    expect(req.messages.every((m) => typeof m.content === "string")).toBe(true);
+    expect(JSON.stringify(req.messages)).not.toContain("loadedTools");
+    expect(req.messages[0]!.role).toBe("user");
+    expect(req.messages.at(-1)!.role).toBe("user");
+  });
+
+  test("the prefix-reusing request ends with its instruction as a user turn too, even after an assistant tail", async () => {
+    const { provider, requests } = recordingProvider("A SUMMARY");
+    const controller = createCompactionController();
+    const accountant = createContextAccountant({ limit: 1000 });
+    accountant.record({ inputTokens: 700, outputTokens: 60 });
+    const prefixRequest: ProviderRequest = { messages: [user("turn one"), assistant("reply one")], system: "session system" };
+    await controller.compact({ messages: longConversation(), trigger: "auto", customInstructions: null, accountant, provider, prefixRequest });
+    expect(requests).toHaveLength(1);
+    const last = requests[0]!.messages.at(-1)!;
+    expect(last.role).toBe("user");
+    expect(String(last.content)).toContain("The conversation above is being compacted");
+  });
+});
+
 describe("compaction/controller.ts -- compact()", () => {
   test("summarizes through the SESSION's provider, with Winter's own instruction as the system prompt", async () => {
     const { provider, requests } = recordingProvider("A SUMMARY");
@@ -104,7 +160,7 @@ describe("compaction/controller.ts -- compact()", () => {
     const result = await controller.compact({ messages: longConversation(), trigger: "auto", customInstructions: null, accountant, provider });
 
     expect(requests).toHaveLength(1);
-    expect(requests[0]!.system).toBe(WINTER_SUMMARY_INSTRUCTION);
+    expect(requests[0]!.messages.at(-1)).toEqual({ role: "user", content: WINTER_SUMMARY_INSTRUCTION });
     expect(result.summary).toBe("A SUMMARY");
     // `preTokens` is the reading BEFORE the summarizer ran -- lands on compact_metadata.pre_tokens.
     expect(result.preTokens).toBe(760);
@@ -211,7 +267,7 @@ describe("compaction/controller.ts -- compact()", () => {
       accountant: createContextAccountant({ limit: 1000 }),
       provider,
     });
-    const system = requests[0]!.system!;
+    const system = requests[0]!.messages.at(-1)!.content as string;
     expect(system).toContain(WINTER_SUMMARY_INSTRUCTION);
     expect(system).toContain("keep the API decisions");
     // The caller's text is clearly attributed, not spliced into Winter's own sentences.
@@ -224,8 +280,8 @@ describe("compaction/controller.ts -- compact()", () => {
     const common = { messages: longConversation(), accountant: createContextAccountant({ limit: 1000 }), provider };
     await controller.compact({ ...common, trigger: "auto", customInstructions: null });
     await controller.compact({ ...common, trigger: "manual", customInstructions: null });
-    expect(requests[0]!.system).toBe(requests[1]!.system);
-    expect(requests[0]!.system).toBe(WINTER_SUMMARY_INSTRUCTION);
+    expect(requests[0]!.messages.at(-1)).toEqual(requests[1]!.messages.at(-1));
+    expect(requests[0]!.messages.at(-1)!.content).toBe(WINTER_SUMMARY_INSTRUCTION);
   });
 
   test("NOTHING FOLDABLE throws, so the engine reports it -- it never returns the input unchanged", async () => {

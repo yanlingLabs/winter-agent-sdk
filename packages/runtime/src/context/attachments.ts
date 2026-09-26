@@ -154,6 +154,26 @@ registerAttachmentRenderer("skill_listing", (a) => {
 // Winter-authored end to end (only the date is data), so it may ride the system role (WS-23).
 registerAttachmentRenderer("date_change", (a) => (typeof a["newDate"] === "string" ? dateChangeText(a["newDate"]) : undefined), { systemRole: true });
 
+// WS-23 (midconv): the tool epoch's two bookkeeping entries (context/tool-epoch.ts). Their text NEVER
+// reaches a provider -- the request layout turns a `tool_changes` entry into the vendor's own tool-change
+// message and drops a `tool_epoch` entry outright -- but a renderer must answer something, or the resume
+// path (store/resume.ts) would drop the entry and the epoch with it. So each renders one legible line for
+// the Winter-side readers of the history (the compaction summariser's transcript, the advisor's).
+registerAttachmentRenderer(
+  "tool_epoch",
+  (a) => `[tool list fixed for the prompt cache: ${Array.isArray(a["tools"]) ? a["tools"].length : 0} tools]`,
+  { wrap: false },
+);
+registerAttachmentRenderer(
+  "tool_changes",
+  (a) => {
+    const names = (key: string): string[] => (Array.isArray(a[key]) ? (a[key] as Array<{ name?: unknown } | string>).map((x) => (typeof x === "string" ? x : String(x.name))) : []);
+    const parts = [...names("add").map((n) => `+${n}`), ...names("remove").map((n) => `-${n}`)];
+    return `[tools changed: ${parts.length > 0 ? parts.join(" ") : "declarations only"}]`;
+  },
+  { wrap: false },
+);
+
 /** The wrapped model-facing text for an attachment, or `undefined` when there is none (an unknown type included). */
 export function renderAttachment(attachment: AttachmentPayload): string | undefined {
   const renderer = renderers.get(attachment.type);

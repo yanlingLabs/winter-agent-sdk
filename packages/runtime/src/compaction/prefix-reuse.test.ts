@@ -72,7 +72,9 @@ describe("the controller's prefix-reusing summary (WS-23 item 4)", () => {
     expect(result.summary).toBe("fallback summary");
     expect(seen).toHaveLength(2);
     expect(seen[1]!.tools).toBeUndefined();
-    expect(typeof seen[1]!.system).toBe("string");
+    // The redacted request: no system prompt (fix round 1), its instruction the final user turn.
+    expect(seen[1]!.system).toBeUndefined();
+    expect(String(seen[1]!.messages.at(-1)!.content)).toContain("compacting a conversation");
   });
 
   test("a carried summary stays verbatim: the model is told to summarise only what follows it, and the result is concatenated", async () => {
@@ -136,8 +138,10 @@ describe("fallbacks: the prefix is an optimisation, never a new way for compacti
     expect(result.summary).toBe("redacted summary");
     expect(seen).toHaveLength(1);
     expect(seen[0]!.tools).toBeUndefined();
-    // Four of the six exchanges are summarised; the two retained ones never reach the summariser.
-    expect(seen[0]!.messages).toHaveLength(8);
+    // Four of the six exchanges are summarised; the two retained ones never reach the summariser. The
+    // ninth message is the instruction as the final user turn (WS-23 midconv live gate: no prefill).
+    expect(seen[0]!.messages).toHaveLength(9);
+    expect(seen[0]!.messages.at(-1)!.role).toBe("user");
     expect(JSON.stringify(seen[0]!.messages)).not.toContain("question 5");
   });
 

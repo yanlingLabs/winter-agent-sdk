@@ -198,6 +198,80 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   `midConversationSystem` (Fable 5.1, Fable 5, Opus 5.5, Opus 5, Opus 4.8) and `promptCacheKey` (OpenAI
   and Codex rows).
 
+### Mid-session changes that keep the prompt cache (WS-23 midconv)
+
+- **Effort on GPT-6.** On `openai/gpt-6-astra`, `-sol` and `-luna`, a `set_effort` rides OpenAI's
+  `{"type": "configuration_update", "reasoning": {"effort": …}}` input item, placed before the user message
+  it applies to (the docs; Codex places it after, and the live probe decides), while the top-level
+  `reasoning.effort` stays fixed. Like the Anthropic markers, one update opens every request, so every
+  GPT-6 session sends the item from turn one; two updates are never sent side by side. The transcript
+  records the level the update set. A 400 naming the item falls back once, for the rest of the session,
+  to changing the top-level value. `codex-oauth` rows and Azure do not use the item yet.
+- **A frozen tool list.** On rows that document a way to change tools mid-conversation, `tools` is fixed
+  for a cache epoch (session start, each compaction, each model switch) and written to the transcript as
+  a `tool_epoch` attachment. Each later change is a `tool_changes` attachment, placed after the user or
+  tool-result turn it follows and replayed at that position, so every request is a byte prefix of the
+  next. A resumed session rebuilds both from its transcript. Everywhere else `tools` is rebuilt per
+  request, as before.
+  - **Anthropic, by reference** (Fable 5/5.1, Opus 4.8/5/5.5 on `anthropic` and `console`): a late eager
+    tool is declared `defer_loading` after the frozen list and announced with a `tool_addition` reference;
+    a late DEFERRED tool is only declared there and stays deferred until ToolSearch loads it; a withdrawn
+    tool gets a `tool_removal`. The `role: "system"` message follows a user turn and precedes the reply
+    (after a failed or interrupted generation it moves past the next prompt), never follows a paused
+    assistant turn, and never carries the cache breakpoint. The beta rides every request.
+  - **Anthropic, by value** (the same rows, Claude API only): a late tool is a `tool_definition`
+    addition, and a changed description or schema is a new definition under the same name. Only the
+    `inline-tools-2026-09-15` beta is sent.
+  - **OpenAI** (`openai` gpt-5.4 and later): a late tool is an `additional_tools` developer item. A
+    withdrawn tool, or one the live permission mode excludes, leaves the callable set through
+    `tool_choice: {"type": "allowed_tools", …}` (function entries only), so a mode switch changes only
+    `tool_choice`. A forced choice still wins; a refused `allowed_tools` turns off only itself.
+  - A change the row cannot express (a new definition on a reference-only row) starts a new epoch, and
+    is logged once. A refused change (the beta, a block, `tool_name_conflict`,
+    `tool_reference_unresolved`, `available_tools_limit_exceeded`, …) falls back once, for the rest of the
+    session, to rebuilding `tools`.
+- **OpenAI client tool search** (`openai` gpt-5.4 and later, and every `codex-oauth` row): ToolSearch is sent
+  as `{"type": "tool_search", "execution": "client"}`. Deferred tools are not declared in `tools`; a
+  search's tools come back in `tool_search_output` (with `defer_loading`), and MCP tools are grouped in an
+  `mcp__<server>` namespace. The loaded definitions are stored on the ToolSearch result, and the history
+  replays them from there, so a server that disconnects or a tool that changes never rewrites an earlier
+  output. A `tool_search_call` is accepted, and no longer fails the turn. A namespaced call maps back to
+  Winter's full name. A refused search falls back once to today's shape.
+- **Codex caching.** Codex requests now send `session-id`, `thread-id` and `x-client-request-id` (the
+  conversation's cache key): codex-rs says the ChatGPT backend "derives cache affinity from the Responses
+  session-id header", and without it the live probe read no cached tokens on any codex request.
+- New seam fields, all additive and optional: `ProviderMessageLike.toolChanges`,
+  `TurnRequest.tools[].namespace` / `.toolSearch`, `TurnRequest.allowedTools` / `.toolChanges` /
+  `.resumesPausedTurn`; on the engine side, `tool_result.loadedToolDefinitions`.
+
+### Fixes from the Anthropic live gate (claude-opus-5-5)
+
+- A `tool_result` that carries `tool_reference` blocks now holds only those blocks. Its text (the
+  ToolSearch listing, a hook's reminder) follows as sibling text in the same user message. Mixing them
+  was a 400, "Tool definitions/code execution functions cannot be mixed with other content", which bricked
+  the session. Sessions already saved in the mixed shape are fixed when sent. A reference to a tool
+  that no longer exists is dropped; a result left empty reads "[Tool references removed - tools no
+  longer available]".
+- The no-prefix compaction fallback sends its instruction once, as the final user turn, and never starts
+  on an assistant turn. It had ended on an assistant reply, which newer models refuse as a prefill. New
+  evidence `assistantPrefill: false` (Opus 4.6 and later, Sonnet 5, Fable 5/5.1) makes the Anthropic
+  adapter refuse such a request, typed, except for a `pause_turn` resend.
+- `scripts/probe-anthropic-cache.ts` now names its credential (every request had been a 401) and prints
+  error bodies.
+
+### Catalog data (midconv)
+
+- `reasoning.perMessageEffort` names its mechanism: `{beta}` (Anthropic) or `{item: "configuration_update"}`
+  (OpenAI). New evidence fields: `midConversationToolChanges`, `inlineToolDefinitions`,
+  `clientToolSearch`, `additionalToolsItem`, `allowedToolsChoice` and `assistantPrefill`.
+
+### Tooling
+
+- `scripts/probe-openai-midconv.ts` (`WINTER_OPENAI_MIDCONV_PROBE=1`, dry run available) probes
+  `configuration_update` placement and errors, the codex backend, a `tool_search` round trip, and
+  `additional_tools` / `allowed_tools`. `scripts/probe-anthropic-cache.ts` gains the tool-change phases
+  and per-message effort on Opus 5.
+
 ## 0.0.24
 
 Fixes to the 0.0.23 catalog refresh from an independent audit (53 rows fact-checked against vendor pages), plus
