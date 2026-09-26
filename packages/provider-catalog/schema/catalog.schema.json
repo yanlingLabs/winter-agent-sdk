@@ -73,10 +73,20 @@
       "allOf": [{ "$ref": "#/$defs/evidenceBase" }],
       "properties": {
         "value": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["beta"],
-          "properties": { "beta": { "enum": ["mid-conversation-output-config-2026-07-01"] } }
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["beta"],
+              "properties": { "beta": { "enum": ["mid-conversation-output-config-2026-07-01"] } }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["item"],
+              "properties": { "item": { "enum": ["configuration_update"] } }
+            }
+          ]
         }
       }
     },

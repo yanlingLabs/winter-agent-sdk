@@ -528,7 +528,12 @@ export function providerMessageContentToText(content: string | ContentBlock[]): 
  */
 function isPerMessageEffortRejection(err: unknown): boolean {
   if (!isProviderTurnError(err) || err.status !== 400) return false;
-  return /mid-conversation-output-config|per-turn effort/i.test(err instanceof Error ? err.message : "");
+  // WS-23 (midconv): OpenAI's Responses `configuration_update` item too. OpenAI's own wording for a
+  // model without it is unpublished (the live probe records it); every 400 seen for the item names it
+  // ("Invalid value: 'configuration_update'", github.com/can1357/oh-my-pi/issues/11121), as does the
+  // docs' adjacency rule. Matching the item name is the same "a false positive costs one retried
+  // request" trade as the two Anthropic phrases.
+  return /mid-conversation-output-config|per-turn effort|configuration_update/i.test(err instanceof Error ? err.message : "");
 }
 
 /**

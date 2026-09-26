@@ -107,9 +107,30 @@ function optionsForProvider(options: OpenAiAdapterOptions, ctx: ProviderContext)
  * from a foreign continuation domain before this sees it, so what arrives here is replayable by
  * construction.
  */
-export function mapResponsesInput(messages: readonly ProviderMessageLike[]): unknown[] {
+export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts: ResponsesInputOptions = {}): unknown[] {
   const out: unknown[] = [];
+  const placement = opts.configurationUpdatePlacement ?? CONFIGURATION_UPDATE_PLACEMENT;
+  // WS-23 (midconv): an update waiting for the user message it must follow ("after-user" only).
+  let pendingUpdate: Record<string, unknown> | undefined;
+  /** Appends one `configuration_update`, never next to another one ("the API rejects adjacent updates"). */
+  const pushUpdate = (update: Record<string, unknown>): void => {
+    const last = out[out.length - 1] as { type?: unknown } | undefined;
+    // The later update wins: both would apply from the same point, so the earlier one says nothing. A
+    // LOCAL decision (only the two items involved), so replaying the same history coalesces it the
+    // same way and the input stays byte-stable from request to request.
+    if (last?.type === "configuration_update") out[out.length - 1] = update;
+    else out.push(update);
+  };
   for (const message of messages) {
+    // WS-23 (midconv): the engine's effort-only `system` marker IS a `configuration_update` on this
+    // surface -- never a system message (see `CONFIGURATION_UPDATE_PLACEMENT`).
+    if (message.role === "system" && message.outputConfig !== undefined) {
+      const update = { type: "configuration_update", reasoning: { effort: message.outputConfig.effort } };
+      if (placement === "after-user") pendingUpdate = update;
+      else pushUpdate(update);
+      if (typeof message.content === "string" ? message.content.length === 0 : message.content.length === 0) continue;
+    }
+    const outBefore = out.length;
     if (message.role === "assistant" && message.nativeState !== undefined) {
       // Replayed VERBATIM and never inspected: these are the provider's own completed items, and
       // `items` is `unknown[]` precisely so nothing here is tempted to look inside.
@@ -173,8 +194,58 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[]): unk
       }
     }
     if (contentParts.length > 0) out.push({ type: "message", role: wireRole, content: contentParts });
+    // "after-user": the waiting update lands right after the user message it was placed before --
+    // Codex's position (the tail of `input`, behind the prompt). Only a HUMAN message counts, never a
+    // tool output.
+    if (pendingUpdate !== undefined && message.role === "user" && out.length > outBefore) {
+      pushUpdate(pendingUpdate);
+      pendingUpdate = undefined;
+    }
   }
+  if (pendingUpdate !== undefined) pushUpdate(pendingUpdate);
   return out;
+}
+
+/**
+ * WS-23 (midconv): where a `configuration_update` goes relative to the user message it applies to.
+ *
+ * `"before-user"` is the DOCUMENTED placement: "place it before the next user message in the `input`
+ * array" (https://developers.openai.com/api/docs/guides/reasoning, retrieved 2026-09-26) -- the same
+ * slot the engine gives Anthropic's effort-only markers, so the engine lays out one list for both.
+ * Codex does the opposite: it appends the item AFTER the user message, at the tail of `input`
+ * (codex-rs `core/tests/suite/reasoning_effort_override.rs:458-488`, `core/src/session/turn.rs:509-511`).
+ * Winter follows the docs; the live probe (`scripts/probe-openai-midconv.ts`) sends both and this one
+ * constant is what flips if the endpoints disagree with their own page.
+ */
+export const CONFIGURATION_UPDATE_PLACEMENT: "before-user" | "after-user" = "before-user";
+
+/** WS-23 (midconv): request-mapping knobs the probe script (and tests) can override. */
+export interface ResponsesInputOptions {
+  /** Defaults to `CONFIGURATION_UPDATE_PLACEMENT`. */
+  configurationUpdatePlacement?: "before-user" | "after-user";
+}
+
+/**
+ * WS-23 (midconv): the per-message effort gate for this surface. A `system` marker carrying
+ * `outputConfig` is sent as a `configuration_update` only where the row's own
+ * `reasoning.perMessageEffort` evidence names that item, and only at a level from the row's own
+ * `reasoning.efforts`; anything else is refused before the request -- a model without the item (GPT-5.6,
+ * any non-OpenAI row) would 400 upstream (a proxy's answer: "Invalid value: 'configuration_update'",
+ * github.com/can1357/oh-my-pi/issues/11121). The engine only emits a marker for a row with the evidence,
+ * so this fires on a wiring bug, never on an ordinary session.
+ */
+export function assertConfigurationUpdates(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): void {
+  for (const message of req.messages) {
+    if (message.role !== "system" || message.outputConfig === undefined) continue;
+    const mechanism = descriptor?.reasoning?.perMessageEffort?.value;
+    if (mechanism === undefined || !("item" in mechanism) || mechanism.item !== "configuration_update") {
+      throw capabilityRefusal(`model "${descriptor?.key ?? req.model}" does not document the Responses \`configuration_update\` item (no \`reasoning.perMessageEffort: {item: "configuration_update"}\` evidence), so a mid-conversation effort change is refused before the request rather than sent and rejected upstream`);
+    }
+    const efforts = descriptor?.reasoning?.efforts ?? [];
+    if (!efforts.includes(message.outputConfig.effort)) {
+      throw capabilityRefusal(`per-message effort "${message.outputConfig.effort}" is not in model "${descriptor?.key ?? req.model}"'s verified vocabulary (${efforts.join(", ")})`);
+    }
+  }
 }
 
 export function mapResponsesTools(tools: TurnRequest["tools"]): unknown[] {
@@ -208,7 +279,7 @@ export function buildResponsesBody(
   req: TurnRequest,
   reasoning: ReasoningPlan,
   descriptor: WinterModelDescriptor | undefined,
-  opts: { requireToolFields?: boolean } = {},
+  opts: { requireToolFields?: boolean } & ResponsesInputOptions = {},
 ): Record<string, unknown> {
   const reasoningObject =
     reasoning.enabled && (reasoning.effort !== undefined || reasoning.summary !== undefined)
@@ -218,7 +289,7 @@ export function buildResponsesBody(
   return {
     model: req.model,
     ...(req.system !== undefined && req.system.length > 0 ? { instructions: req.system } : {}),
-    input: mapResponsesInput(req.messages),
+    input: mapResponsesInput(req.messages, opts.configurationUpdatePlacement !== undefined ? { configurationUpdatePlacement: opts.configurationUpdatePlacement } : {}),
     ...(sendToolFields
       ? {
           tools: mapResponsesTools(req.tools),
@@ -699,6 +770,7 @@ export async function* responsesTurn(
   try {
     const descriptor = options.descriptors?.(req.model, ctx.connection.providerId);
     assertRepresentableTools(req.tools);
+    assertConfigurationUpdates(req, descriptor);
     const reasoning = resolveReasoning(req, descriptor);
     const parametersInPlay = [
       ...(reasoning.enabled && reasoning.effort !== undefined ? ["reasoning", "reasoning.effort"] : []),

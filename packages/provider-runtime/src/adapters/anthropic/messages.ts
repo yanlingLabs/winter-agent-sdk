@@ -934,6 +934,12 @@ function assertPerMessageEffort(req: TurnRequest, descriptor: WinterModelDescrip
     if (descriptor?.reasoning?.perMessageEffort === undefined) {
       throw capabilityRefusal(`model "${descriptor?.key ?? req.model}" does not document per-message effort (no \`reasoning.perMessageEffort\` evidence), so a mid-conversation \`output_config.effort\` is refused before the request rather than sent and rejected upstream`);
     }
+    // WS-23 (midconv): the evidence names its MECHANISM, and only Anthropic's beta is this dialect's.
+    // A row recording OpenAI's `configuration_update` item on this adapter would otherwise pass the gate
+    // and send a marker with no beta header -- an upstream 400 instead of a local, typed refusal.
+    if (!("beta" in descriptor.reasoning.perMessageEffort.value)) {
+      throw capabilityRefusal(`model "${descriptor.key}" records per-message effort as a non-Anthropic mechanism, so a mid-conversation \`output_config.effort\` cannot be sent on the Messages API`);
+    }
     if (!efforts.includes(message.outputConfig.effort)) {
       throw capabilityRefusal(`per-message effort "${message.outputConfig.effort}" is not in model "${descriptor.key}"'s verified vocabulary (${efforts.join(", ")})`);
     }
@@ -953,7 +959,8 @@ function assertPerMessageEffort(req: TurnRequest, descriptor: WinterModelDescrip
 export function perMessageEffortBetaFor(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined): string | undefined {
   const messages = body["messages"];
   if (!Array.isArray(messages) || !messages.some((m) => typeof m === "object" && m !== null && "output_config" in m)) return undefined;
-  return descriptor?.reasoning?.perMessageEffort?.value.beta;
+  const mechanism = descriptor?.reasoning?.perMessageEffort?.value;
+  return mechanism !== undefined && "beta" in mechanism ? mechanism.beta : undefined;
 }
 
 /** Every body-derived beta, in a fixed order. One list, so `prepare()` and `countTokens()` cannot disagree about which ride. */

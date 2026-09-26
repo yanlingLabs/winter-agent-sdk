@@ -120,6 +120,12 @@ describe("per-message effort (WS-23 item 1)", () => {
     expect((thrown as Error).message).toContain("per-message effort");
   });
 
+  test("WS-23 midconv: a row recording OpenAI's `configuration_update` item is refused typed on this dialect, and names no beta", () => {
+    const openaiShaped = opus55({ reasoning: { ...opus55().reasoning!, perMessageEffort: evidence({ item: "configuration_update" as const }) } });
+    expect(() => buildRequestBody({ model: "claude-opus-5-5", messages: switched, effort: "high" }, openaiShaped, {})).toThrow(/non-Anthropic mechanism/);
+    expect(perMessageEffortBetaFor({ messages: [{ role: "system", content: [], output_config: { effort: "low" } }] }, openaiShaped)).toBeUndefined();
+  });
+
   test("a marker level outside the row's own vocabulary is refused before the request", () => {
     expect(() => buildRequestBody({ model: "claude-opus-5-5", messages: [...switched.slice(0, 2), marker("minimal"), switched[3]!], effort: "high" }, opus55(), {})).toThrow(/verified vocabulary/);
   });

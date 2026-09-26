@@ -116,6 +116,7 @@ const TOOL_LOOP_REQUIREMENTS = ["hard-error", "silent-degradation", "not-require
 const EFFORT_REQUEST_FIELDS = ["output_config.effort"] as const;
 const BLOCK_BINDING_BETAS = ["thinking-binding-controls-2026-08-01"] as const;
 const PER_MESSAGE_EFFORT_BETAS = ["mid-conversation-output-config-2026-07-01"] as const;
+const PER_MESSAGE_EFFORT_ITEMS = ["configuration_update"] as const;
 
 /**
  * The closed vocabularies, exported as ONE object so the JSON Schema can be checked against the
@@ -159,6 +160,7 @@ export const CATALOG_VOCABULARIES = {
   effortRequestFields: EFFORT_REQUEST_FIELDS,
   blockBindingBetas: BLOCK_BINDING_BETAS,
   perMessageEffortBetas: PER_MESSAGE_EFFORT_BETAS,
+  perMessageEffortItems: PER_MESSAGE_EFFORT_ITEMS,
 } as const satisfies Record<string, readonly string[]>;
 
 // --- secrets floor (WS-13 §6/§13, R6-10: "descriptors never contain secrets; a catalog test greps
@@ -408,10 +410,13 @@ function checkReasoning(errs: Errors, v: unknown, path: string): void {
     for (const key of Object.keys(val)) if (key !== "beta") errs.add(`${p}.${key}`, "unknown key");
     if (typeof val["beta"] !== "string" || !(BLOCK_BINDING_BETAS as readonly string[]).includes(val["beta"])) errs.add(`${p}.beta`, `unknown block-binding beta ${describe(val["beta"])}`);
   }, false);
+  // WS-23 (midconv): exactly ONE mechanism per row -- `{beta}` (Anthropic) or `{item}` (OpenAI).
   checkEvidence(errs, v["perMessageEffort"], `${path}.perMessageEffort`, (val, p) => {
-    if (!isRecord(val)) return errs.add(p, `expected {beta}, got ${describe(val)}`);
-    for (const key of Object.keys(val)) if (key !== "beta") errs.add(`${p}.${key}`, "unknown key");
-    if (typeof val["beta"] !== "string" || !(PER_MESSAGE_EFFORT_BETAS as readonly string[]).includes(val["beta"])) errs.add(`${p}.beta`, `unknown per-message effort beta ${describe(val["beta"])}`);
+    if (!isRecord(val)) return errs.add(p, `expected {beta} or {item}, got ${describe(val)}`);
+    const keys = Object.keys(val);
+    if (keys.length !== 1 || (keys[0] !== "beta" && keys[0] !== "item")) return errs.add(p, `expected exactly one of {beta} or {item}, got keys ${describe(keys)}`);
+    if (keys[0] === "beta" && (typeof val["beta"] !== "string" || !(PER_MESSAGE_EFFORT_BETAS as readonly string[]).includes(val["beta"]))) errs.add(`${p}.beta`, `unknown per-message effort beta ${describe(val["beta"])}`);
+    if (keys[0] === "item" && (typeof val["item"] !== "string" || !(PER_MESSAGE_EFFORT_ITEMS as readonly string[]).includes(val["item"]))) errs.add(`${p}.item`, `unknown per-message effort item ${describe(val["item"])}`);
   }, false);
 }
 

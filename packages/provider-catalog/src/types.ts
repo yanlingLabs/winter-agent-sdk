@@ -82,6 +82,9 @@ export type ModelStatus = "candidate" | "experimental" | "supported" | "deprecat
  * continuation domain (Anthropic strips thinking across Claude models), so `continuationDomain`
  * lists the models PROVEN to accept this endpoint's native continuation object.
  */
+/** WS-23: how a row takes a per-message effort change -- see `ReasoningCapabilities.perMessageEffort`. */
+export type PerMessageEffortMechanism = { beta: "mid-conversation-output-config-2026-07-01" } | { item: "configuration_update" };
+
 export interface ReasoningCapabilities {
   supported: CapabilityEvidence<boolean>;
   /** The model's own effort vocabulary, verbatim. Vocabularies are NOT interchangeable across providers (WS-13 §8.2). */
@@ -124,8 +127,19 @@ export interface ReasoningCapabilities {
    * Documented for Claude Fable 5.1, Mythos 5.1, Opus 5.5 and Opus 5; Claude Fable 5 returns a 400.
    * ABSENT means a change is a new top-level value, which restarts the cache. `beta` is the header
    * value, a closed vocabulary (`CATALOG_VOCABULARIES.perMessageEffortBetas`).
+   *
+   * WS-23 (midconv lane): the value names the row's MECHANISM, because two vendors document one:
+   *   - `{ beta }` -- Anthropic's effort-only `system` message above, behind that beta header;
+   *   - `{ item: "configuration_update" }` -- OpenAI's Responses input item
+   *     `{"type":"configuration_update","reasoning":{"effort":…}}`, placed "before the next user
+   *     message", with the top-level `reasoning.effort` kept fixed ("Configuration updates are
+   *     supported by the GPT-6 model family in standard, single-agent mode. They change only reasoning
+   *     effort.", https://developers.openai.com/api/docs/guides/reasoning). A closed vocabulary
+   *     (`CATALOG_VOCABULARIES.perMessageEffortItems`).
+   * The engine keys only on PRESENCE (either mechanism lays out the same markers); each adapter
+   * refuses, typed, a row whose mechanism is not its own.
    */
-  perMessageEffort?: CapabilityEvidence<{ beta: "mid-conversation-output-config-2026-07-01" }>;
+  perMessageEffort?: CapabilityEvidence<PerMessageEffortMechanism>;
 }
 
 /** List prices, USD per million tokens. R6-H: the ONLY price source Winter has — an unpriced model reports `0` / `costBasis: "unknown"`, never an invented number. */

@@ -52508,6 +52508,15 @@
           "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model.  WS-13 §8.2: \"OpenAI-compatible\" is never the capability test, so this key shares NO domain with any other row.",
           "confidence": "declared",
           "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "perMessageEffort": {
+          "value": {
+            "item": "configuration_update"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-26T00:00:00Z",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning — \"Configuration updates are supported by the GPT-6 model family in standard, single-agent mode. They change only reasoning effort.\" Shape {\"type\":\"configuration_update\",\"reasoning\":{\"effort\":…}}, placed \"before the next user message in the input array\"; \"the API rejects adjacent updates\"; \"The response's reasoning.effort continues to report the request-level setting\"; with store:false, replay updates \"in their original positions\". Retrieved 2026-09-26. NOT set on codex-oauth/gpt-6-* (codex-rs enables it only behind an off-by-default feature, backend acceptance unprobed — scripts/probe-openai-midconv.ts decides) nor on azure-openai (undocumented there)."
         }
       },
       "pricing": {
@@ -52666,6 +52675,15 @@
           "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model.  WS-13 §8.2: \"OpenAI-compatible\" is never the capability test, so this key shares NO domain with any other row.",
           "confidence": "declared",
           "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "perMessageEffort": {
+          "value": {
+            "item": "configuration_update"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-26T00:00:00Z",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning — \"Configuration updates are supported by the GPT-6 model family in standard, single-agent mode. They change only reasoning effort.\" Shape {\"type\":\"configuration_update\",\"reasoning\":{\"effort\":…}}, placed \"before the next user message in the input array\"; \"the API rejects adjacent updates\"; \"The response's reasoning.effort continues to report the request-level setting\"; with store:false, replay updates \"in their original positions\". Retrieved 2026-09-26. NOT set on codex-oauth/gpt-6-* (codex-rs enables it only behind an off-by-default feature, backend acceptance unprobed — scripts/probe-openai-midconv.ts decides) nor on azure-openai (undocumented there)."
         }
       },
       "pricing": {
@@ -52824,6 +52842,15 @@
           "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model.  WS-13 §8.2: \"OpenAI-compatible\" is never the capability test, so this key shares NO domain with any other row.",
           "confidence": "declared",
           "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "perMessageEffort": {
+          "value": {
+            "item": "configuration_update"
+          },
+          "source": "official-doc",
+          "confidence": "declared",
+          "observedAt": "2026-09-26T00:00:00Z",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning — \"Configuration updates are supported by the GPT-6 model family in standard, single-agent mode. They change only reasoning effort.\" Shape {\"type\":\"configuration_update\",\"reasoning\":{\"effort\":…}}, placed \"before the next user message in the input array\"; \"the API rejects adjacent updates\"; \"The response's reasoning.effort continues to report the request-level setting\"; with store:false, replay updates \"in their original positions\". Retrieved 2026-09-26. NOT set on codex-oauth/gpt-6-* (codex-rs enables it only behind an off-by-default feature, backend acceptance unprobed — scripts/probe-openai-midconv.ts decides) nor on azure-openai (undocumented there)."
         }
       },
       "pricing": {
