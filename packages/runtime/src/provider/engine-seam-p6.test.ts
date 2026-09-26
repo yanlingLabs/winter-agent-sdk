@@ -270,7 +270,9 @@ describe("R6-3: what a turn PERSISTS and what it must not", () => {
     expect(assistant.message.content[1]!.type).toBe("tool_use");
   });
 
-  test("IN-DIALECT thinking blocks lead the assistant frame with their real signatures", async () => {
+  // WS-23 (reasoning-state): the frame keeps the block and its readable text but NOT its attestation --
+  // the signature reaches the next request from the provider-state sidecar, never a host.
+  test("IN-DIALECT thinking blocks lead the assistant frame, their signatures stripped for the host", async () => {
     const provider: Provider = {
       async generate() {
         return { kind: "text", text: "answer", thinking: { blocks: [{ type: "thinking", thinking: "reasoned", signature: "real-sig" }] } };
@@ -278,8 +280,9 @@ describe("R6-3: what a turn PERSISTS and what it must not", () => {
     };
     const messages = await runTurn({ provider });
     const assistant = messages.find((m) => m.type === "assistant") as { message: { content: Array<Record<string, unknown>> } };
-    expect(assistant.message.content[0]).toEqual({ type: "thinking", thinking: "reasoned", signature: "real-sig" });
+    expect(assistant.message.content[0]).toEqual({ type: "thinking", thinking: "reasoned", signature: "" });
     expect(assistant.message.content[1]).toEqual({ type: "text", text: "answer" });
+    expect(JSON.stringify(messages)).not.toContain("real-sig");
   });
 
   test("R6-8: a FOREIGN summary never reaches the assistant frame -- it rides the Winter-only frame only", async () => {

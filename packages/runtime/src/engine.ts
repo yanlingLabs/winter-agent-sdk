@@ -992,6 +992,19 @@ export function inStreamOrder(turn: ProviderTurn): ContentBlock[] | undefined {
 }
 
 /**
+ * WS-23 (reasoning-state): an assistant turn's content as the HOST sees it on the `assistant` frame --
+ * every in-dialect reasoning block keeps its readable text and loses its attestation: `signature` and
+ * `redacted_thinking.data` become `""`. Those bytes exist for one reader, the Anthropic API on the next
+ * request, and they reach it from the provider-state sidecar; a host (the daemon, a phone, a log) has no
+ * use for them and every copy is one more place an opaque token can leak from. The block SHAPES stay,
+ * so a host that renders "thinking…" or "[redacted]" keeps working.
+ */
+export function contentForHost(content: ContentBlock[]): ContentBlock[] {
+  if (!content.some((block) => block.type === "thinking" || block.type === "redacted_thinking")) return content;
+  return content.map((block) => (block.type === "thinking" ? { type: "thinking", thinking: block.thinking, signature: "" } : block.type === "redacted_thinking" ? { type: "redacted_thinking", data: "" } : block));
+}
+
+/**
  * WS-23 (reasoning-state): the in-memory shape of an assistant entry's persisted content -- exactly what
  * `rebuildProviderMessages` (store/resume.ts) rebuilds it as on a resume: a lone text block collapses to
  * its string, anything else stays an array. Holding the same shape live keeps a live session's history
@@ -8401,7 +8414,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         resendingPausedTurn = true;
         const paused = inStreamOrder(turn) ?? [...(turn.thinking?.blocks ?? []), ...(turn.text.length > 0 ? [{ type: "text" as const, text: turn.text }] : [])];
         if (paused.length > 0) {
-          output.write({ type: "data", message: { type: "assistant", message: { content: paused } } });
+          output.write({ type: "data", message: { type: "assistant", message: { content: contentForHost(paused) } } });
           const pausedRecord = await recordAssistant(paused, turnProvenance(turn));
           messages.push({ role: "assistant", content: pausedRecord.moved?.content ?? paused, ...(pausedRecord.uuid !== undefined ? { uuid: pausedRecord.uuid } : {}), ...providerAnnotations(turn), ...(pausedRecord.moved !== undefined ? { nativeState: pausedRecord.moved.nativeState } : {}) });
         }
@@ -8423,7 +8436,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await —
         // the terminal result below is the sole durability barrier for this turn; P6 (partial
         // streaming) must revisit this ordering once intermediate frames become resumable state.
-        output.write({ type: "data", message: { type: "assistant", message: { content: assistantBlocks } } });
+        output.write({ type: "data", message: { type: "assistant", message: { content: contentForHost(assistantBlocks) } } });
         // The in-memory history keeps the bare STRING when there is nothing but text -- that is the
         // shape `rebuildProviderMessages` collapses a single-text-block entry back to, and changing
         // it would make a resumed session's history differ from a continuous one's (resume.test.ts's
@@ -8490,7 +8503,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ];
       // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await — the
       // terminal result is the sole durability barrier; P6 (partial streaming) must revisit this.
-      output.write({ type: "data", message: { type: "assistant", message: { content: toolUseBlocks } } });
+      output.write({ type: "data", message: { type: "assistant", message: { content: contentForHost(toolUseBlocks) } } });
       const callRecord = await recordAssistant(toolUseBlocks, turnProvenance(turn), generationEffort);
       messages.push({
         role: "assistant",

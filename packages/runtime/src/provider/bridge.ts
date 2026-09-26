@@ -523,11 +523,13 @@ class StreamEventEmitter {
     // A COMPLETE block arrives as one event, so it is emitted as start + its delta(s) + stop rather
     // than being withheld: a host rendering the stream must see the same content the completed
     // `assistant` message will carry.
-    this.emit({ type: "content_block_start", index: this.index, content_block: block as WireContentBlock });
-    if (block.type === "thinking") {
-      this.emit({ type: "content_block_delta", index: this.index, delta: { type: "thinking_delta", thinking: block.thinking } });
-      this.emit({ type: "content_block_delta", index: this.index, delta: { type: "signature_delta", signature: block.signature } });
-    }
+    //
+    // WS-23 (reasoning-state): WITHOUT its attestation -- no `signature_delta`, `signature: ""` and
+    // `data: ""` on the start frame -- exactly as the `assistant` frame carries it (engine.ts
+    // `contentForHost`). The signed bytes go back to the API from the provider-state sidecar; no host
+    // reads them, so no frame carries them.
+    this.emit({ type: "content_block_start", index: this.index, content_block: (block.type === "thinking" ? { type: "thinking", thinking: "", signature: "" } : { type: "redacted_thinking", data: "" }) as WireContentBlock });
+    if (block.type === "thinking") this.emit({ type: "content_block_delta", index: this.index, delta: { type: "thinking_delta", thinking: block.thinking } });
     this.emit({ type: "content_block_stop", index: this.index });
   }
 

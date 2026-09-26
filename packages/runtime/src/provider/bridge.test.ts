@@ -380,7 +380,9 @@ describe("R6-5: the raw stream-event translation", () => {
     expect(events.some((e) => e.type === "message_start")).toBe(false); // no message_start was scripted
   });
 
-  test("the four observed delta variants are the only ones produced", async () => {
+  // WS-23 (reasoning-state): `signature_delta` is no longer produced -- a host never receives a thinking
+  // block's signature (the next request gets it from the provider-state sidecar).
+  test("the three delta variants a host may see are the only ones produced -- never a signature", async () => {
     const { sink, events } = recordingSink();
     await foldProviderStream(
       scripted([
@@ -394,7 +396,8 @@ describe("R6-5: the raw stream-event translation", () => {
       sink,
     );
     const deltas = events.filter((e) => e.type === "content_block_delta") as Array<{ delta: { type: string } }>;
-    expect([...new Set(deltas.map((d) => d.delta.type))].sort()).toEqual(["input_json_delta", "signature_delta", "text_delta", "thinking_delta"]);
+    expect([...new Set(deltas.map((d) => d.delta.type))].sort()).toEqual(["input_json_delta", "text_delta", "thinking_delta"]);
+    expect(events.find((e) => e.type === "content_block_start")).toEqual({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } });
   });
 
   test("no sink means no work: the fold is identical for an AUXILIARY generation", async () => {

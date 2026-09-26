@@ -166,7 +166,11 @@ function readGolden(): Golden {
 describe("Anthropic reasoning moves to the sidecar and the wire does not move (WS-23 reasoning-state item 1)", () => {
   test("live, resumed and pre-move-transcript sessions send the golden bytes", async () => {
     const live = await fixture();
-    await runSession(live, "reasoning-live", ["turn one", "turn two", "turn three"]);
+    const liveFrames = await runSession(live, "reasoning-live", ["turn one", "turn two", "turn three"]);
+    // Decision 7: no frame the host receives carries a signature or redacted data -- only the readable text.
+    const hostBytes = JSON.stringify(liveFrames);
+    for (const opaque of ["sig-a", "sig-b", "sig-c", "REDACTED-OPAQUE-1", "signature_delta"]) expect(hostBytes).not.toContain(opaque);
+    expect(hostBytes).toContain("look first");
     expect(live.fake.requests).toHaveLength(4);
     const liveMessages = live.fake.requests.map((r) => normalizedMessages(live, r.body));
 
