@@ -21,13 +21,17 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 - A fork can run a tool it loads itself through ToolSearch; its `tools` (the parent's exact layout)
   never moves. A tool the frozen list does not declare is callable only where the definition travels by
   a documented mechanism (OpenAI's client `tool_search`) or on a row with the new live-probe-proven
-  catalog key `model.undeclaredToolCalls` (set on no row yet; `scripts/probe-fork-undeclared-tool.ts`
-  gathers the evidence), where it rides the ToolSearch result as text. Elsewhere such a call keeps its
+  catalog key `model.undeclaredToolCalls` (gathered by `scripts/probe-fork-undeclared-tool.ts`; set, from
+  its 2026-09-26 run, on `anthropic/claude-opus-5-5`, `anthropic/claude-sonnet-5` and
+  `deepseek/deepseek-flash`), where it rides the ToolSearch result as text. Elsewhere such a call keeps its
   "No such tool available".
 - The one-time request-feature fallbacks (per-message effort, mid-conversation tool changes, OpenAI
   client `tool_search`, `tool_choice: allowed_tools`) are kept per provider+model and persisted as a
   `feature-rejected` provider-state record, so a resume skips the doomed request and another model
   still gets the feature.
+- A subagent's own system frames (hook notices, continuity warnings, model switches, compaction,
+  hook lifecycle, permission outcomes, session state) carry the spawning call's `parent_tool_use_id`,
+  so a host threading by it keeps them on the subagent's thread; the task-registry frames are unchanged.
 - approvals: re-check the target at execution.
 
 ## 0.0.27
