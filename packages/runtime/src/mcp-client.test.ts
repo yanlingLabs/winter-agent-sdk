@@ -1,13 +1,19 @@
 // WS-24 (cross-lane): `@yanlinglabs/winter-agent-runtime/mcp-client` resolves by its PUBLIC specifier and
 // is the real client -- a host connects a stdio server and calls a tool through it.
 import { expect, test } from "bun:test";
-import { connectMcpServer, createElicitationAsker, McpConnectError, type ConnectedMcpClient } from "@yanlinglabs/winter-agent-runtime/mcp-client";
+import { connectMcpServer, createElicitationAsker, McpConnectError, type ConnectedMcpClient, type ConnectMcpServerOptions } from "@yanlinglabs/winter-agent-runtime/mcp-client";
 import * as internal from "./mcp/client.ts";
 import { pingFixtureCommand } from "./mcp/test-fixtures.ts";
 
-test("the public subpath resolves to the runtime's own client (not a copy)", () => {
-  expect(connectMcpServer).toBe(internal.connectMcpServer);
+test("the public subpath resolves, and its error class is the runtime's own (not a copy)", () => {
+  expect(typeof connectMcpServer).toBe("function");
   expect(McpConnectError).toBe(internal.McpConnectError);
+});
+
+test("the public options are the host-shaped subset: an in-process `sdk` config is not something a host can pass", () => {
+  // @ts-expect-error -- `type: "sdk"` is excluded from the public config type
+  const opts: ConnectMcpServerOptions = { name: "x", config: { type: "sdk", name: "x" }, connectTimeoutMs: 1, elicitationAsk: createElicitationAsker(undefined) };
+  void opts;
 });
 
 test("a host connects, lists and calls through it; a failure is a typed McpConnectError", async () => {
