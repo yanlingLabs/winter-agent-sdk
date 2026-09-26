@@ -991,6 +991,9 @@ export function inStreamOrder(turn: ProviderTurn): ContentBlock[] | undefined {
   return content;
 }
 
+/** WS-23 (reasoning-state): the sidecar kinds that carry a turn's REASONING (retried once on a failed write, then warned about). */
+const REASONING_STATE_KINDS: ReadonlySet<string> = new Set(["native-state", "reasoning-blocks", "summary"]);
+
 /**
  * WS-23 (reasoning-state): an assistant turn's content as the HOST sees it on the `assistant` frame --
  * every in-dialect reasoning block keeps its readable text and loses its attestation: `signature` and
@@ -3561,14 +3564,43 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           },
         };
       }
-      for (const record of records) {
+      const unsaved: string[] = [];
+      for (const input of records) {
+        // The record's own uuid is minted ONCE, so a retry is the same record (an external store upserts
+        // on it) rather than a second one.
+        const record: ProviderStateRecordInput = { ...input, uuid: randomUUID() };
         try {
           await store.recordProviderState(record);
         } catch {
           // Auxiliary, exactly like every other record* call here: a sidecar write failing must never
           // fail the turn. The consequence is a DEGRADED resume for that message, which the
-          // continuity warning already exists to report -- not a lost turn.
+          // continuity warning exists to report -- not a lost turn.
+          //
+          // WS-23 (reasoning-state, user decision): REASONING is no longer only a nice-to-have -- a
+          // Claude turn's thinking now lives nowhere else (the transcript is provider-neutral), and on
+          // the block-binding rows a lost block costs the next resume every later one. So a reasoning
+          // record gets ONE retry, and if that fails too the turn still completes but says so, visibly.
+          if (!REASONING_STATE_KINDS.has(record.kind)) continue;
+          try {
+            await store.recordProviderState(record);
+          } catch {
+            unsaved.push(record.kind);
+          }
         }
+      }
+      if (unsaved.length > 0) {
+        output.write({
+          type: "data",
+          message: {
+            type: "system",
+            subtype: "continuity_warning",
+            warning: "reasoning_state_unsaved",
+            // KINDS ONLY, never a payload (the records hold opaque provider state).
+            detail: `the provider-state sidecar could not record this turn's reasoning (${unsaved.join(", ")}) after one retry; the turn completed, and this session keeps it in memory, but a resumed session will not replay it natively.`,
+            uuid: randomUUID(),
+            session_id: config.sessionId,
+          },
+        });
       }
       // The in-memory half of the chain: origin + the readable summary, never the opaque state.
       // W18-15: `material`/`complete` ride alongside so `announceLossyTransfer`'s own lookup below

@@ -24,7 +24,7 @@
 //      else. `subpath` is documented as opaque to the adapter, "just a storage-key suffix"
 //      (`sdk.d.ts:5203-5205`) -- a positive licence for a non-transcript key, not a silence.
 import { randomUUID } from "node:crypto";
-import { closeSync, constants as fsConstants, fsyncSync, mkdirSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
+import { closeSync, constants as fsConstants, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { MessageOrigin, ProviderNativeState, ReasoningBlockAt } from "@yanlinglabs/winter-provider-runtime";
 import { coerceInDialectReasoningBlock, isReasoningBlockItem, reasoningBlockItems } from "@yanlinglabs/winter-provider-runtime";
@@ -168,14 +168,38 @@ export function appendProviderState(path: string, input: ProviderStateRecordInpu
   // permission the credentials file store uses for the same class of content. O_NOFOLLOW mirrors the
   // store's write-path symlink hardening (WS-05 §13): a followed write symlink could append
   // attacker-chosen bytes into an arbitrary file this process can write to.
+  // WS-23 (reasoning-state): a write that died mid-line (the crash the bounded repair below exists for)
+  // leaves the file without its final newline -- and the engine now RETRIES a failed reasoning write
+  // once, so the next record would otherwise be glued onto the torn fragment and lost with it. A
+  // leading newline closes the fragment off as its own malformed (skipped) line.
+  const closeTorn = endsMidLine(path) ? "\n" : "";
   const fd = openSync(path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_APPEND | fsConstants.O_NOFOLLOW, 0o600);
   try {
-    writeSync(fd, `${JSON.stringify(record)}\n`);
+    writeSync(fd, `${closeTorn}${JSON.stringify(record)}\n`);
     fsyncSync(fd);
   } finally {
     closeSync(fd);
   }
   return record;
+}
+
+/** Does the file end without its trailing newline (a torn final line)? `false` for an absent or empty file. */
+function endsMidLine(path: string): boolean {
+  let fd: number;
+  try {
+    fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  } catch {
+    return false;
+  }
+  try {
+    const size = fstatSync(fd).size;
+    if (size === 0) return false;
+    const last = Buffer.alloc(1);
+    readSync(fd, last, 0, 1, size - 1);
+    return last[0] !== 0x0a;
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**
