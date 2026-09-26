@@ -318,16 +318,17 @@ describe("SDK 0.0.16 (P16-7): a fork's request is the parent's own captured layo
   });
 });
 
-// WS-24 (engine lane, item 4): a fork may RUN a tool it loads itself through ToolSearch. Its `tools` is
-// the parent's exact layout, so a deferred tool the fork loads mid-run is never appended to it (that
-// would move the prefix the fork shares with its parent for the cache) -- and the call used to be refused
-// "No such tool available". The tool is now offered to the fork, its definition rides the ToolSearch
-// result, and `tools` stays byte-identical.
-describe("WS-24: a fork runs the tools it loads itself, without changing its shared prefix", () => {
+// WS-24 (engine lane, item 4): a fork and the tools it loads itself through ToolSearch. Its `tools` is the
+// parent's exact layout, so a deferred tool the fork loads mid-run is never appended to it (that would
+// move the prefix the fork shares with its parent for the cache). Where the frozen list does not declare
+// the tool, whether the fork may call it anyway depends on live evidence that the endpoint takes a call to
+// a tool absent from `tools` (the catalog's `undeclaredToolCalls`, fix round 1 I2): with it, the
+// definition rides the ToolSearch result and the call runs; without it, the call keeps its soft refusal.
+describe("WS-24: a fork and the tools it loads itself, without changing its shared prefix", () => {
   const DEFERRED = "zz_ws24_fork_deferred";
   afterEach(() => unregisterToolForTest(DEFERRED));
 
-  test("on a row with no deferred-loading support: ToolSearch loads the tool, the call runs, `tools` never moves", async () => {
+  async function runFork(describeModel?: () => { wire: { undeclaredToolCalls: true } }): Promise<{ ran: number; parentRequests: CapturedChildRequest[]; childRequests: CapturedChildRequest[] }> {
     registerSpawnProbe();
     let ran = 0;
     registerTool({
@@ -351,8 +352,9 @@ describe("WS-24: a fork runs the tools it loads itself, without changing its sha
       { kind: "text", text: "fork done" },
     ]);
     // The child's deferral activation comes from its environment (child-engine.ts's header).
-    registerChildEngineFactory(createChildEngineFactory({ provider: capturingProvider(childRequests, childScript), env: { ENABLE_TOOL_SEARCH: "true" } } as ChildEngineFactoryDeps));
-
+    registerChildEngineFactory(
+      createChildEngineFactory({ provider: capturingProvider(childRequests, childScript), env: { ENABLE_TOOL_SEARCH: "true" }, ...(describeModel !== undefined ? { describeModel } : {}) } as ChildEngineFactoryDeps),
+    );
     const parentRequests: CapturedChildRequest[] = [];
     const { host, runtime } = createInMemoryChannel();
     const scripted = scriptedProvider([
@@ -364,21 +366,29 @@ describe("WS-24: a fork runs the tools it loads itself, without changing its sha
     host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
     await drain(host.input);
     expect(await done).toBe(0);
-
     // The parent was offered ToolSearch and NOT the deferred tool, which is exactly what the fork inherits.
     const parentTools = (parentRequests[0]!.tools ?? []).map((t) => t.name);
     expect(parentTools).toContain("ToolSearch");
     expect(parentTools).not.toContain(DEFERRED);
-
     expect(childRequests).toHaveLength(3);
     // `tools` is the parent's, byte-identical, on every fork request -- including after the load.
     for (const req of childRequests) expect(JSON.stringify(req.tools ?? [])).toBe(JSON.stringify(parentRequests[0]!.tools ?? []));
-    const results = (req: CapturedChildRequest) => JSON.stringify(req.messages.filter((m) => m.role === "tool"));
-    // The definition reached the model in the ToolSearch result...
+    return { ran, parentRequests, childRequests };
+  }
+  const results = (req: CapturedChildRequest) => JSON.stringify(req.messages.filter((m) => m.role === "tool"));
+
+  test("a row WITH `undeclaredToolCalls` evidence: the definition rides the ToolSearch result and the call runs", async () => {
+    const { ran, childRequests } = await runFork(() => ({ wire: { undeclaredToolCalls: true } }));
     expect(results(childRequests[1]!)).toContain(`<function>{\\"name\\":\\"${DEFERRED}\\"`);
-    // ...and the call ran instead of answering "No such tool available".
     expect(ran).toBe(1);
     expect(results(childRequests[2]!)).toContain("DEFERRED-RAN");
     expect(results(childRequests[2]!)).not.toContain("No such tool available");
+  });
+
+  test("a row WITHOUT the evidence: no definition text, and the call keeps its soft refusal instead of risking a vendor 400", async () => {
+    const { ran, childRequests } = await runFork();
+    expect(results(childRequests[1]!)).not.toContain("<functions>");
+    expect(ran).toBe(0);
+    expect(results(childRequests[2]!)).toContain(`No such tool available: ${DEFERRED}`);
   });
 });

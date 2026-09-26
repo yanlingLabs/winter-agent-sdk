@@ -316,6 +316,16 @@ export interface WinterModelDescriptor {
    */
   allowedToolsChoice?: CapabilityEvidence<boolean>;
   /**
+   * WS-24: the endpoint takes a call to a tool that is NOT in the request's `tools` -- the model called
+   * it from a definition it was shown in a tool result -- and takes that call and its result in the
+   * history of later requests. A fork of a session (whose `tools` is its parent's, frozen so the cached
+   * prefix is shared) relies on it to run a tool it loads itself where the row documents no mechanism
+   * that declares the tool (`deferredToolLoading`, `clientToolSearch`). No vendor documents this, so it is
+   * LIVE-PROBE-PROVEN only (`scripts/probe-fork-undeclared-tool.ts`), never set from a page. `true` is the
+   * only meaningful value; absent keeps such a call refused ("No such tool available").
+   */
+  undeclaredToolCalls?: CapabilityEvidence<boolean>;
+  /**
    * WS-23 (midconv, live gate): whether the model takes an ASSISTANT PREFILL -- a request whose
    * `messages` ends with an assistant turn. `false` is the meaningful value: "Prefilling assistant
    * messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5"

@@ -689,6 +689,8 @@ export interface ModelWireFeatures {
   additionalToolsItem?: true;
   /** WS-23 (midconv): OpenAI's `tool_choice: allowed_tools` restricts the callable set without editing `tools` (`allowedToolsChoice`). */
   allowedToolsChoice?: true;
+  /** WS-24: the endpoint takes a call (and its history) to a tool absent from `tools` (`undeclaredToolCalls`, live-probe-proven) -- what lets a fork run a self-loaded tool its frozen `tools` lacks. */
+  undeclaredToolCalls?: true;
 }
 
 /** What `EngineOptions.describeModel` knows about a model: its display name, its verified effort vocabulary, and its wire features. */
@@ -5336,13 +5338,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       return [{ name: spec.name, description: spec.description, inputSchema: spec.inputSchema, ...(namespace !== undefined ? { namespace } : {}) }];
     });
   };
+  /** WS-24: OpenAI's client `tool_search` is live on this row (documented, and not refused). */
+  const forkClientToolSearchLive = (): boolean => currentModelDescription()?.wire?.clientToolSearch === true && !featureRejected("client-tool-search");
+  /** WS-24: a fork may run a self-loaded tool its frozen `tools` does not declare (see `providerToolSpecs`). */
+  const forkMayCallUndeclared = (): boolean => forkClientToolSearchLive() || currentModelDescription()?.wire?.undeclaredToolCalls === true;
   /**
    * WS-24: the loaded definitions a FORK's frozen `tools` does not declare, as text for the loading call's
    * own result -- `""` when there are none. The tool is callable (`offeredThisRequest`); this is how the
    * model learns its input schema without the fork's shared prefix moving.
    */
   const forkLoadedDefinitionsText = (definitions: readonly LoadedToolDefinition[]): string => {
-    if (exactRequestLayout === undefined) return "";
+    // Only on the evidence row: under a live client `tool_search` the adapter's `tool_search_output`
+    // carries the definitions already, and without either the tool is not callable at all.
+    if (exactRequestLayout === undefined || forkClientToolSearchLive() || currentModelDescription()?.wire?.undeclaredToolCalls !== true) return "";
     const declared = new Set(exactRequestLayout.tools.map((t) => t.name));
     const missing = definitions.filter((d) => !declared.has(d.name));
     if (missing.length === 0) return "";
@@ -7761,16 +7769,28 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // bytes the fork shares with its parent at the head of the cached prefix, and this run cannot know
     // whether the parent would render the same spec anyway (a fork's own `insideFork` gates differ).
     //
-    // WS-24: but it IS offered -- a fork may RUN the tools it loads. `offeredThisRequest` used to be the
-    // frozen names alone, so such a call answered "No such tool available". It now also holds every tool
-    // of the fork's own partition that the fork has loaded (its ToolSearch's `emitToolReference`), and the
-    // definition reaches the model after the shared prefix instead: in that ToolSearch call's own result
-    // (`forkLoadedDefinitionsText`, at the tool-round), whenever the frozen list does not already declare
-    // the tool (a deferred-loading row's layout declares every deferred tool up front, so there it does).
+    // WS-24: which of those a fork may RUN, by how the definition reaches the model:
+    //   - the frozen list DECLARES it (a deferred-loading row declares every deferred tool up front with
+    //     `defer_loading`, and the adapter answers the load with references only; any tool the parent had
+    //     loaded): offered as it always was, by its frozen name;
+    //   - OpenAI's client `tool_search` is live for this row (`clientToolSearch`, not refused): its
+    //     `tool_search_output` carries the definition, the documented way to load an undeclared tool;
+    //   - otherwise ONLY on a row with live evidence that the endpoint takes a call to a tool absent from
+    //     `tools` (`undeclaredToolCalls`, catalog, live-probe-proven -- set on no row yet). There the
+    //     definition rides the loading call's own result (`forkLoadedDefinitionsText`), after the shared
+    //     prefix. Without the evidence such a call keeps its soft "No such tool available": a vendor 400
+    //     on the next request would fail the whole fork instead.
+    // Delivering the definition through the row's own mid-conversation mechanism (an Anthropic inline
+    // `tool_addition`, OpenAI `additional_tools`) would also keep the prefix; a fork does not extend a
+    // tool epoch today (`planToolsForRequest`), and that is left for later.
     if (exactRequestLayout !== undefined) {
-      refreshAdvertisedPartition();
-      const ownLoaded = [...advertisedPartition.eager, ...advertisedPartition.deferred].filter((d) => loadedToolSet.isLoaded(d.canonicalName));
-      offeredThisRequest = new Set([...exactRequestLayout.tools.map((t) => t.name), ...ownLoaded.flatMap((d) => [d.advertisedName, d.canonicalName])]);
+      if (forkMayCallUndeclared()) {
+        refreshAdvertisedPartition();
+        const ownLoaded = [...advertisedPartition.eager, ...advertisedPartition.deferred].filter((d) => loadedToolSet.isLoaded(d.canonicalName));
+        offeredThisRequest = new Set([...exactRequestLayout.tools.map((t) => t.name), ...ownLoaded.flatMap((d) => [d.advertisedName, d.canonicalName])]);
+      } else {
+        offeredThisRequest = new Set(exactRequestLayout.tools.map((t) => t.name));
+      }
       return exactRequestLayout.tools;
     }
     // Fix round 19: every provider request re-derives the partition from the live registry and the
