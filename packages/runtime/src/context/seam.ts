@@ -20,6 +20,7 @@
 // from the assembler's own tests.
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import type { ContextEntry } from "./request-layout.ts";
+import type { PlanModeInput } from "./plan-mode.ts";
 
 // RULING R5-17 (pre-flight scan T5<->T6): Lane S produces this listing, Lane C consumes it (SDK 0.0.16:
 // as the engine's persisted `skill_listing` attachment, context/attachments.ts), and neither lane may define it -- it lives here, in the spine,
@@ -73,7 +74,12 @@ export interface SystemPromptInput {
   modelDisplayName?: string;
   memoryDir?: string;
   outputStyle?: OutputStyle;
-  planMode: boolean;
+  /**
+   * WS-24 (I-1 fix round): the host's replacement for the plan-mode body's middle section
+   * (`planModeInstructions` on the wire, `plan-mode.ts`'s own header on the two-name mapping). Still
+   * carried on the snapshot -- `planModeInput()` reads it -- even though the block itself no longer
+   * renders inline here; it moved to a persisted attachment (`context/attachments.ts`'s `plan_mode`).
+   */
   hostPlanBody?: string;
   /**
    * DISCLOSED WINTER FIELD, not in the brief's list: the child persona a subagent runs with
@@ -146,6 +152,18 @@ export interface SystemPromptAssembler {
    * per session context rather than once per turn. Absent = no index-0 message.
    */
   userContext?(input: SystemPromptInput): ContextEntry[];
+  /**
+   * WS-24 (I-1 fix round): the plan-mode block's render inputs -- `plansDirectory` (the session's own
+   * project dot-dir default, config then settings then the brand's), `plansDirectoryFallback` (the
+   * same brand default, for a refused `plansDirectory`) and `hostPlanBody` passed through. `assemble()`
+   * used to derive these inline and render the block into the dynamic system half on every request
+   * while the mode held; the block moved to a persisted attachment (`context/attachments.ts`'s
+   * `plan_mode`) so a toggle costs one cache miss instead of shifting the whole downstream prefix on
+   * every request. The ENGINE calls this ONCE, when producing the attachment on a genuine mode change
+   * -- never per render -- so the settings/brand precedence stays derived in this one place. Absent =
+   * the engine falls back to the SDK's own `DEFAULT_PLANS_DIRECTORY` with no `hostPlanBody`.
+   */
+  planModeInput?(input: SystemPromptInput): PlanModeInput;
 }
 
 /**
@@ -166,7 +184,7 @@ export function fakeSystemPromptAssembler(opts?: {
   return {
     assemble(input: SystemPromptInput): AssembledPrompt {
       opts?.calls?.push(input);
-      const system = opts?.system ?? `[fake-assembler] cwd=${input.cwd} platform=${input.platform} planMode=${input.planMode}${input.agentPrompt !== undefined ? ` agentPrompt=${input.agentPrompt}` : ""}`;
+      const system = opts?.system ?? `[fake-assembler] cwd=${input.cwd} platform=${input.platform}${input.agentPrompt !== undefined ? ` agentPrompt=${input.agentPrompt}` : ""}`;
       return {
         system,
         ...(opts?.presetVersion !== undefined ? { presetVersion: opts.presetVersion } : {}),

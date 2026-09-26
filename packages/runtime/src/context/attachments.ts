@@ -24,8 +24,10 @@
 // matches the pinned binary EXACTLY (spawn-surface-scope R-S10), traced from its attachment renderer:
 // the agent-listing section headers, the ambient sentence, the concurrency sentence, the skill-listing
 // header and the date-change line.
+import { DEFAULT_PLANS_DIRECTORY } from "@yanlinglabs/winter-agent-sdk";
 import type { ProviderMessage } from "../engine.ts";
 import { neutralizeReminderTags } from "./injection.ts";
+import { renderPlanModeBlock } from "./plan-mode.ts";
 
 /**
  * One attachment payload, exactly as the transcript stores it (`entry.attachment`). Open-ended: the
@@ -62,6 +64,30 @@ export interface DateChangeAttachment extends AttachmentPayload {
   newDate: string;
 }
 
+/**
+ * WS-24 (I-1 fix round): Winter's own, no claude equivalent. Plan mode moved OUT of the system
+ * prompt's dynamic half and into a persisted attachment at the tail of the conversation -- the block
+ * used to sit ahead of the conversation history, so a toggle shifted every downstream token and
+ * busted the whole cached prefix on the vendor's own prompt-cache accounting (WS-24 follow-up 8's
+ * confirmed live finding, on every provider: OpenAI's byte-exact prefix match and Anthropic's `org`
+ * dynamic system block alike). As an attachment it costs exactly ONE cache miss on the turn the mode
+ * actually changes, and the history stays a stable, cacheable prefix while the mode holds steady in
+ * either direction.
+ */
+export interface PlanModeAttachment extends AttachmentPayload {
+  type: "plan_mode";
+  state: "entered" | "exited";
+  /**
+   * Present only for `state: "entered"`. Captured ONCE at production time
+   * (`SystemPromptAssembler.planModeInput`, the settings/brand precedence `assemble()` used to apply
+   * inline) rather than re-derived at render time -- a renderer takes only the payload, never live
+   * settings or the session's brand.
+   */
+  plansDirectory?: string;
+  plansDirectoryFallback?: string;
+  hostPlanBody?: string;
+}
+
 export const AGENT_LISTING_INITIAL_HEADER = "Available agent types for the Agent tool:";
 export const AGENT_LISTING_ADDED_HEADER = "New agent types are now available for the Agent tool:";
 export const AGENT_LISTING_REMOVED_HEADER = "The following agent types are no longer available:";
@@ -74,6 +100,14 @@ export const SKILL_LISTING_HEADER = "The following skills are available for use 
 export function dateChangeText(newDate: string): string {
   return `The date has changed. Today's date is now ${newDate}. No need to announce the new date — the user's own clock shows it.`;
 }
+
+/**
+ * WS-24 (I-1): kept deliberately MINIMAL. The `ExitPlanMode` tool's own result already announces the
+ * mode change in the model-visible function_call_output ("Plan approved; permission mode restored to
+ * ..."), so this attachment's job is only to cover the OTHER way the mode can leave plan -- a host or
+ * UI action (`set_permission_mode`) with no tool call at all -- without repeating that sentence.
+ */
+export const PLAN_MODE_EXITED_TEXT = "Plan mode has ended. The write restriction is lifted.";
 
 /** claude's attachment wrapper (`Qa`). Nothing is added around it and nothing after it. */
 export function wrapSystemReminder(body: string): string {
@@ -154,6 +188,25 @@ registerAttachmentRenderer("skill_listing", (a) => {
 // Winter-authored end to end (only the date is data), so it may ride the system role (WS-23).
 registerAttachmentRenderer("date_change", (a) => (typeof a["newDate"] === "string" ? dateChangeText(a["newDate"]) : undefined), { systemRole: true });
 
+// WS-24 (I-1): `entered` renders EXACTLY what the system prompt used to render inline
+// (`renderPlanModeBlock`, unchanged); `exited` is the one-line notice above. Winter-authored end to
+// end -- `plansDirectory` is validated at render time (`renderablePlansDirectory`'s own RULING P5-L)
+// and `hostPlanBody` is never wired from an untrusted source (M-4, reported not fixed) -- so, like
+// `date_change`, it may ride the system role.
+registerAttachmentRenderer(
+  "plan_mode",
+  (a) => {
+    if (a["state"] === "exited") return PLAN_MODE_EXITED_TEXT;
+    if (a["state"] !== "entered") return undefined;
+    return renderPlanModeBlock({
+      plansDirectory: typeof a["plansDirectory"] === "string" ? a["plansDirectory"] : DEFAULT_PLANS_DIRECTORY,
+      plansDirectoryFallback: typeof a["plansDirectoryFallback"] === "string" ? a["plansDirectoryFallback"] : DEFAULT_PLANS_DIRECTORY,
+      ...(typeof a["hostPlanBody"] === "string" ? { hostPlanBody: a["hostPlanBody"] } : {}),
+    });
+  },
+  { systemRole: true },
+);
+
 // WS-23 (midconv): the tool epoch's two bookkeeping entries (context/tool-epoch.ts). Their text NEVER
 // reaches a provider -- the request layout turns a `tool_changes` entry into the vendor's own tool-change
 // message and drops a `tool_epoch` entry outright -- but a renderer must answer something, or the resume
@@ -220,6 +273,18 @@ export function announcedAgentTypes(messages: readonly ProviderMessage[]): Set<s
 /** claude's `alr` fold: whether a `date_change` for `date` is already in the history. */
 export function dateChangeAnnounced(messages: readonly ProviderMessage[], date: string): boolean {
   return attachmentsIn(messages).some((a) => a.type === "date_change" && a["newDate"] === date);
+}
+
+/**
+ * WS-24 (I-1): the last `plan_mode` attachment's state, or `"exited"` when none exists yet -- a
+ * session that never entered plan mode is, correctly, not IN it. This is what the engine's own
+ * producer compares against the LIVE `policyStateStore` mode to decide whether anything changed
+ * since the history's own last word on it -- emitting only on a genuine difference, never every turn.
+ */
+export function lastPlanModeState(messages: readonly ProviderMessage[]): "entered" | "exited" {
+  const attachments = attachmentsIn(messages).filter((a) => a.type === "plan_mode");
+  const last = attachments.at(-1);
+  return last !== undefined && last["state"] === "entered" ? "entered" : "exited";
 }
 
 /**

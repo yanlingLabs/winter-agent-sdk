@@ -158,7 +158,6 @@ describe("P7a (D19): a host's own brand reaches every Winter-owned name", () => 
         osVersion: "test",
         shell: "/bin/zsh",
         date: "2026-09-07",
-        planMode: false,
         env: { ACME_HOME: acmeHome },
       });
       const blocks = entries.map(([, value]) => value).join("\n");
