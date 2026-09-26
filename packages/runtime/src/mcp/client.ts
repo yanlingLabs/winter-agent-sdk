@@ -34,7 +34,7 @@
 // LOCALLY (a request timeout, a closed connection, a failed era negotiation, a non-OK HTTP answer) is
 // now an `SdkError` whose `code` is a STRING `SdkErrorCode` -- the HTTP status moved off `.code` onto
 // `SdkHttpError.status`. `classifyConnectError` below is where that move is absorbed.
-import { Client, ProtocolError, ProtocolErrorCode, SdkError, SdkErrorCode, SdkHttpError, SseError, UnauthorizedError, type Transport, type VersionNegotiationMode } from "@modelcontextprotocol/client";
+import { Client, ProtocolError, ProtocolErrorCode, SdkError, SdkErrorCode, SdkHttpError, SseError, UnauthorizedError, UnsupportedProtocolVersionError, type Transport, type VersionNegotiationMode } from "@modelcontextprotocol/client";
 import type { McpServerConfigForProcessTransport, McpVersionNegotiation } from "@yanlinglabs/winter-agent-sdk";
 import { buildStdioTransport, WinterStdioTransport } from "./transports/stdio.ts";
 import { buildHttpTransport } from "./transports/http.ts";
@@ -44,7 +44,22 @@ import { installElicitationHandler, type ElicitationAsker } from "./elicitation.
 
 // --- Public shapes ---------------------------------------------------------------------------
 
-export type McpConnectErrorCode = "timeout" | "spawn_failed" | "handshake_failed" | "needs_auth" | "unknown";
+/**
+ * WHY a connection attempt failed -- a category, not a message (the message is for humans; this is what
+ * the state board's `errorCode`, the web search backend and the `'auto'` legacy retry read).
+ *
+ * WS-24 split two causes out of `handshake_failed`, which a failed version negotiation used to land in
+ * whatever had gone wrong:
+ *  - `version_mismatch`: the server and this client share no protocol version -- a `{pin}` the server
+ *    did not offer, or a server that named the versions it speaks and none is ours. Retrying cannot
+ *    help, so the `'auto'` legacy retry never spends a second connection on it.
+ *  - `transport_closed`: the server ended the connection under the attempt -- a stdio server that
+ *    exited by itself (on the `server/discover` probe, or during `initialize`). Observed on the
+ *    transport (`WinterStdioTransport.exitedOnItsOwn`), never inferred from message text.
+ * A probe that went unanswered is `timeout` and a probe answered with an HTTP error keeps
+ * `handshake_failed` plus its `httpStatus`, as before.
+ */
+export type McpConnectErrorCode = "timeout" | "spawn_failed" | "handshake_failed" | "version_mismatch" | "transport_closed" | "needs_auth" | "unknown";
 
 export class McpConnectError extends Error {
   readonly code: McpConnectErrorCode;
@@ -184,13 +199,26 @@ export interface ConnectMcpServerOptions {
 //     read an outage as an era verdict. Such a server needs `versionNegotiation: "legacy"`.
 //   - `stdio` defaults to `'legacy'`. `WinterStdioTransport` is a CUSTOM stdio-shaped transport, and
 //     the v2 client probes a custom transport IN PLACE, on the one live pipe -- the sibling-process
-//     probe it runs for its own `StdioClientTransport` is not available to it. A legacy server built
-//     on an SDK that exits on any unknown pre-`initialize` request would therefore die on the probe
-//     and never connect. A user who knows their server can opt in per server.
+//     probe it runs for its own `StdioClientTransport` is not available to it. A user who knows their
+//     server can opt in per server, and since WS-24 the opt-in is SAFE on every legacy server:
+//       * one that answers the probe (`-32601`, an error) settles legacy on the same pipe;
+//       * one that ignores it settles legacy on the same pipe when the probe's own bound
+//         (`autoProbeTimeoutMs`) runs out -- the transport declares `stderr` so the client reads it as
+//         stdio, where silence is a legacy signal rather than an outage;
+//       * one that EXITS on it (servers on SDKs that die on any pre-`initialize` request) is
+//         `transport_closed`, and the legacy retry below respawns it ONCE in `'legacy'`, logged once.
+//     WS-24 assessed making `'auto'` the stdio DEFAULT and kept `'legacy'`: every legacy server that
+//     ignores the probe would pay the probe bound (up to 5 s) on every connect -- past the 5 s first-turn
+//     batch deadline (`MCP_CONNECT_TIMEOUT_MS`), so its tools would miss the first request -- and every
+//     one that exits on it would be started twice (a second process, a second set of side effects: a
+//     server that opens a login page on start opens two), while the 2026-07-28 era buys a stdio server
+//     nothing the legacy one lacks today (elicitation, list-changed notifications and tool calls all
+//     work on 2025-11-25). Revisit when stdio servers speaking 2026-07-28 are common.
 //   - `sse` defaults to `'legacy'`. It is the 2024-11-05 transport; no 2026-07-28 server is reached
 //     over it, and on a non-stdio transport a probe TIMEOUT rejects the connect outright (the v2
 //     client reads silence on a network transport as an outage, not a legacy signal), so `'auto'`
-//     could only ever cost a legacy SSE server its connection.
+//     could only ever cost a legacy SSE server a probe round trip (and, when silent, the probe bound
+//     before the legacy retry). The opt-in stays available and safe for the same reason as stdio's.
 //   - `sdk` (in-process) is always `'legacy'`: an in-process `Server.connect()` serves the legacy
 //     era only (the modern era needs the v2 SDK's own per-connection serving entries).
 export function resolveVersionNegotiation(config: McpServerConfigForProcessTransport): McpVersionNegotiation {
@@ -206,7 +234,21 @@ function toSdkNegotiationMode(mode: McpVersionNegotiation): VersionNegotiationMo
 // --- Error classification (WS-09 §2.1's failed/needsAuth split, plus a small diagnostic taxonomy
 // beyond what the state model itself distinguishes) --------------------------------------------
 
-function classifyConnectError(err: unknown): McpConnectError {
+/** What `connectOnce` saw of the attempt beyond the error itself -- see `McpConnectErrorCode`. */
+interface ConnectAttemptFacts {
+  /**
+   * The server side ended the connection under the attempt: a stdio server that exited by itself
+   * (`WinterStdioTransport.exitedOnItsOwn`). Only stdio can report it faithfully -- an HTTP/SSE
+   * transport's `onclose` fires on the client's own `close()`, which the v2 client runs on EVERY failed
+   * negotiation before the error reaches this file, and a dead network path already arrives as a
+   * wrapped cause (`unknown`, as on v1).
+   */
+  transportClosed: boolean;
+  /** The attempt ran a `{pin}` negotiation (a no-cause negotiation failure is then the pin not being offered). */
+  pinned: boolean;
+}
+
+function classifyConnectError(err: unknown, facts: ConnectAttemptFacts = { transportClosed: false, pinned: false }): McpConnectError {
   if (err instanceof McpConnectError) return err;
   if (err instanceof UnauthorizedError) return new McpConnectError("needs_auth", err.message);
   // v2 moved every locally-raised failure onto `SdkError` with a STRING code; the v1 check this
@@ -226,16 +268,25 @@ function classifyConnectError(err: unknown): McpConnectError {
     return new McpConnectError(httpStatus === 401 ? "needs_auth" : "handshake_failed", err.message, httpStatus);
   }
   // WS-23: a failed era negotiation (a `{pin}` the server does not offer, a probe answered 5xx, a
-  // network failure mid-probe) never becomes an era verdict -- the v2 client refuses the connect
-  // with this code. When it wraps an underlying failure (`cause`: a refused connection, a DNS
-  // failure) that failure is what is classified, so the code matches what the same failure gets on
-  // the legacy handshake (and got on v1); only a failure OF the negotiation itself (no cause: the
-  // pin was not offered) is a handshake failure.
+  // network failure mid-probe, a transport that died on the probe) never becomes an era verdict --
+  // the v2 client refuses the connect with this code. WS-24 classifies it BY ITS CAUSE, in this order:
+  //   1. the server ended the connection under it (observed, `facts.transportClosed`) ->
+  //      `transport_closed`: the v2 client reports a stdio server that exited on the probe as a
+  //      no-cause failure whose only trace of the exit is its message text;
+  //   2. a wrapped underlying failure (`cause`: a refused connection, a DNS failure) is classified
+  //      itself, so the code matches what the same failure gets on the legacy handshake (and got on v1);
+  //   3. a no-cause failure of a `{pin}` negotiation -> `version_mismatch` (the pin was not offered);
+  //   4. anything else -> `handshake_failed`.
   if (err instanceof SdkError && err.code === SdkErrorCode.EraNegotiationFailed) {
+    if (facts.transportClosed) return new McpConnectError("transport_closed", err.message);
     const cause = (err as { cause?: unknown }).cause;
-    if (cause !== undefined && cause !== err) return classifyConnectError(cause);
-    return new McpConnectError("handshake_failed", err.message);
+    if (cause !== undefined && cause !== err) return classifyConnectError(cause, facts);
+    return new McpConnectError(facts.pinned ? "version_mismatch" : "handshake_failed", err.message);
   }
+  // WS-24: the server named the versions it speaks and none is ours (a probe answered with
+  // UNSUPPORTED_PROTOCOL_VERSION and no mutual modern version) -- checked before the generic
+  // ProtocolError below, which it extends.
+  if (err instanceof UnsupportedProtocolVersionError) return new McpConnectError("version_mismatch", err.message);
   // A JSON-RPC error ANSWERING the handshake (e.g. an `initialize` the server refused) -- v1 left
   // this to the generic "unknown" below; it is a handshake failure by definition.
   if (err instanceof ProtocolError) return new McpConnectError("handshake_failed", err.message);
@@ -245,6 +296,11 @@ function classifyConnectError(err: unknown): McpConnectError {
   // substring match, since the message text is not a contract.
   const code = (err as { code?: unknown } | null)?.code;
   if (code === "ENOENT" || code === "EACCES") return new McpConnectError("spawn_failed", message);
+  // WS-24: the server exited under a LEGACY handshake too (a stdio server that crashed during
+  // `initialize`, or before it could read it). Whatever the pending request was then rejected with --
+  // the v2 client's "connection closed", a failed write to a dead pipe -- the observed exit is the
+  // cause; v1 and WS-23 left all of these `unknown`.
+  if (facts.transportClosed) return new McpConnectError("transport_closed", message);
   return new McpConnectError("unknown", message);
 }
 
@@ -305,9 +361,25 @@ function autoProbeTimeoutMs(connectTimeoutMs: number): number {
   return Math.max(1, Math.min(AUTO_PROBE_TIMEOUT_CAP_MS, Math.floor(connectTimeoutMs / 3)));
 }
 
+// WS-24: `version_mismatch` joins the never-retried causes -- a server that named its versions (or did
+// not offer a pin, though a pin never reaches here) answers a legacy handshake the same way, and the
+// retry would cost a second process on stdio for nothing. `transport_closed` IS retried: it is exactly
+// the stdio server that exited on the unknown probe, which a fresh legacy spawn connects to.
 function retriesAsLegacy(err: McpConnectError): boolean {
-  if (err.code === "needs_auth" || err.code === "spawn_failed") return false;
+  if (err.code === "needs_auth" || err.code === "spawn_failed" || err.code === "version_mismatch") return false;
   return err.httpStatus !== 401 && err.httpStatus !== 403;
+}
+
+// WS-24: the legacy fallback is announced ONCE per server and cause, per process -- a server that
+// reconnects (a toggle, a RefreshMcpTools after a failure, a subagent re-declaring it) must not print
+// the same line on every attempt, and a server whose cause CHANGES says so again.
+const announcedLegacyFallbacks = new Set<string>();
+
+function announceLegacyFallback(name: string, transport: string, cause: McpConnectError): void {
+  const key = `${name}\u0000${transport}\u0000${cause.code}`;
+  if (announcedLegacyFallbacks.has(key)) return;
+  announcedLegacyFallbacks.add(key);
+  console.error(`winter: mcp: server "${name}" (${transport}) failed the 'auto' version probe (${cause.code}); connecting once more with 'legacy' -- set versionNegotiation: "legacy" on it to skip the probe`);
 }
 
 // --- Listing without the capability (WS-23 fix round 1, ruling I2) -------------------------------
@@ -357,6 +429,8 @@ export async function connectMcpServer(opts: ConnectMcpServerOptions): Promise<C
     // nothing is left, and a retry past it would stretch MCP_TIMEOUT.
     const remaining = opts.connectTimeoutMs - (Date.now() - started);
     if (remaining <= 0) throw err;
+    // ONCE, never a loop: this `connectOnce` is `'legacy'`, which has no retry of its own.
+    announceLegacyFallback(opts.name, opts.config.type ?? "stdio", err);
     return connectOnce(opts, "legacy", remaining);
   }
 }
@@ -365,7 +439,6 @@ async function connectOnce(opts: ConnectMcpServerOptions, mode: McpVersionNegoti
   const { name, config, elicitationAsk } = opts;
 
   let transport: Transport;
-
   try {
     if (config.type === "sdk") {
       if (!opts.inProcessServer) {
@@ -525,16 +598,20 @@ async function connectOnce(opts: ConnectMcpServerOptions, mode: McpVersionNegoti
     // A hung server produces no child `error` event at all (the transport's own spawn-path
     // attachment cannot cover it) -- this is the handshake/timeout half of the same finding.
     const stderrTail = transport! instanceof WinterStdioTransport ? (transport as WinterStdioTransport).stderrTail.trim() : "";
+    // WS-24: observed on the transport, for `classifyConnectError` -- see `ConnectAttemptFacts`. Read
+    // off the stdio transport's own "the server exited by itself" flag, which neither the v2 client's
+    // teardown of a failed negotiation nor the close() below can set (both close it FROM this side).
+    const facts: ConnectAttemptFacts = { transportClosed: transport! instanceof WinterStdioTransport && (transport as WinterStdioTransport).exitedOnItsOwn, pinned: typeof mode === "object" };
     try {
       await transport!.close();
     } catch {
       /* transport may never have started, or may already be closed -- either is fine here */
     }
-    const classified = classifyConnectError(err);
+    const classified = classifyConnectError(err, facts);
     if (stderrTail === "" || classified.message.includes(stderrTail)) throw classified;
     // A NEW error of the same code, never a mutated one: McpConnectError.message is read back by
     // lifecycle.ts into the slot's own `error` field, and rewriting a thrown object in place is the
     // kind of aliasing that surprises a second reader of the same reference.
-    throw new McpConnectError(classified.code, `${classified.message}\n--- server stderr (last ${stderrTail.length} chars) ---\n${stderrTail}`);
+    throw new McpConnectError(classified.code, `${classified.message}\n--- server stderr (last ${stderrTail.length} chars) ---\n${stderrTail}`, classified.httpStatus);
   }
 }

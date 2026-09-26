@@ -256,13 +256,30 @@ export type HookPermissionDecision = "allow" | "ask" | "deny" | "defer";
 // OTHER event (21 of the 31) is typed but never constructed at P2 (WS-08 §1: "typed but inert") —
 // GenericHookInput below covers them without hand-typing 21 payload shapes nothing produces yet. ---
 
-export interface PreToolUseHookInput extends BaseHookInput {
+// WS-24: WHICH MCP SERVER a tool call is for, beside `tool_name`, on every tool-scoped input (the four
+// below plus PermissionRequest/PermissionDenied). Present exactly when `tool_name` is a tool a connected
+// MCP server registered -- a live stdio/http/sse server or a host's in-process `type: "sdk"` one -- and
+// absent for every other tool, including a registry-native tool that merely wears an `mcp__` name.
+//
+// WHY BOTH FIELDS, AND WHY NOT PARSE `tool_name`. `mcp__<server>__<tool>` cannot be split reliably:
+// server names may themselves contain `__` (a host's `host__sessions`), so `mcp__host__sessions__list`
+// is server `host__sessions`, tool `list` -- a hook that split on the first `__` would read server
+// `host`. The runtime knows the registering server, so it states both, and a hook (a matcher-less
+// audit hook, a per-server policy) never has to guess. `mcp_server_name` is the spelling claude already
+// uses for its Elicitation hook input; `mcp_tool_name` is the server's own name for the tool (what it
+// answers to in `tools/call`).
+export interface McpToolProvenance {
+  mcp_server_name?: string;
+  mcp_tool_name?: string;
+}
+
+export interface PreToolUseHookInput extends BaseHookInput, McpToolProvenance {
   hook_event_name: "PreToolUse";
   tool_name: string;
   tool_input: unknown;
   tool_use_id: string;
 }
-export interface PostToolUseHookInput extends BaseHookInput {
+export interface PostToolUseHookInput extends BaseHookInput, McpToolProvenance {
   hook_event_name: "PostToolUse";
   tool_name: string;
   tool_input: unknown;
@@ -270,7 +287,7 @@ export interface PostToolUseHookInput extends BaseHookInput {
   tool_use_id: string;
   duration_ms?: number;
 }
-export interface PostToolUseFailureHookInput extends BaseHookInput {
+export interface PostToolUseFailureHookInput extends BaseHookInput, McpToolProvenance {
   hook_event_name: "PostToolUseFailure";
   tool_name: string;
   tool_input: unknown;
@@ -309,13 +326,13 @@ export interface NotificationHookInput extends BaseHookInput {
   title?: string;
   notification_type: string;
 }
-export interface PermissionRequestHookInput extends BaseHookInput {
+export interface PermissionRequestHookInput extends BaseHookInput, McpToolProvenance {
   hook_event_name: "PermissionRequest";
   tool_name: string;
   tool_input: unknown;
   permission_suggestions?: PermissionUpdate[];
 }
-export interface PermissionDeniedHookInput extends BaseHookInput {
+export interface PermissionDeniedHookInput extends BaseHookInput, McpToolProvenance {
   hook_event_name: "PermissionDenied";
   tool_name: string;
   tool_input: unknown;
@@ -362,12 +379,16 @@ export type HookInput =
 
 // --- HookJSONOutput — the callback's return value (derived-shapes item (b), verbatim envelope) ---
 
-// A second, unmodeled async-signaling mechanism distinct from HookPermissionDecision's own "defer"
-// value (derived-shapes item (b), Open Question 3) — Winter's P2 hook runner treats an
-// async-signaling response as a "no decision yet" contribution (TODO: revisit once a task actually
-// needs to wait up to `asyncTimeout`; see hooks/runner.ts's own header).
+// A second async-signaling mechanism distinct from HookPermissionDecision's own "defer" value
+// (derived-shapes item (b), Open Question 3). WS-24: a COMMAND hook whose first stdout line is this
+// shape goes to the background (runtime hooks/async-hooks.ts): the event is answered "no opinion" at
+// once, and what the hook prints afterwards -- its `systemMessage` / `additionalContext`, never a
+// decision -- reaches the model at the next safe point. A CALLBACK hook that returns it has no
+// "afterwards" (its one return value was it), so it stays plain "no opinion". Never from a fail-closed
+// PreToolUse/PermissionRequest hook: that is malformed output, and denies.
 export interface AsyncHookJSONOutput {
   async: true;
+  /** Milliseconds the background run may take (the runtime's default is 10 minutes). */
   asyncTimeout?: number;
 }
 
@@ -514,6 +535,10 @@ export interface HookInvocationPayload {
   agentID?: string;
   toolUseID?: string;
   toolName?: string;
+  /** WS-24: for an MCP tool, the connected server that registered `toolName` -- see `McpToolProvenance`. */
+  mcpServerName?: string;
+  /** WS-24: for an MCP tool, the tool's own name on that server -- see `McpToolProvenance`. */
+  mcpToolName?: string;
   input?: Record<string, unknown>;
   payload?: unknown;
   policyVersion: string;

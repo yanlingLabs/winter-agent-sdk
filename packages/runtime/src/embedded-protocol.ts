@@ -42,7 +42,25 @@ export type EmbeddedHostMessage =
 export type EmbeddedWorkerMessage =
   | { kind: "stdout"; chunk: string }
   | { kind: "stderr"; chunk: string }
+  | EmbeddedProcessGroupMessage
   | { kind: "exit"; code: number };
+
+/**
+ * WS-24: a process group the session's realm started (`add`) or saw end (`remove`) -- Bash/Monitor
+ * commands, stdio MCP servers, command hooks, the workflow worker (`process-groups.ts`). The host keeps
+ * the live set so that a Worker which dies WITHOUT running its own kill doors (a `terminate()` of a
+ * spinning Worker, a crash) does not orphan them: `setsid` detached every one from the host process,
+ * so nothing else will ever reap them. Posted in order with `stdout`, so by the time a healthy Worker's
+ * `exit` arrives every group its teardown ended has already been removed.
+ *
+ * ADDITIVE: a host that predates it ignores an unknown `kind` (`embedded-host.ts`'s switch has no
+ * default arm), and a runtime that predates it simply never posts one.
+ */
+export interface EmbeddedProcessGroupMessage {
+  kind: "process-group";
+  op: "add" | "remove";
+  pgid: number;
+}
 
 /**
  * The request ids of the two control frames an ABORT synthesizes (`embedded.ts`). Fixed strings, not

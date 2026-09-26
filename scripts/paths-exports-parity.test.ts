@@ -112,14 +112,15 @@ describe("P7a pre-publish (item 4): tsconfig `paths` and package `exports` agree
     }
   });
 
-  test("the parity is not vacuous: it covers every EXPORTS-BEARING publishable package and all nineteen subpaths", () => {
+  test("the parity is not vacuous: it covers every EXPORTS-BEARING publishable package and all twenty subpaths", () => {
     const expected = expectedFromExports();
     // 12 since SDK 0.0.3's `@yanlinglabs/winter-agent-sdk/tools` (R-8-1: Winter's default tools,
     // declared once for both hosts); 19 since WS-23 made the runtime publishable (`.`, `./testing`,
-    // `./embedded`, `./embedded-host`, `./embedded-worker`, `./workflow-worker`, `./version`). The
+    // `./embedded`, `./embedded-host`, `./embedded-worker`, `./workflow-worker`, `./version`); 20 since
+    // WS-24's `./mcp-client` (the runtime's MCP client, for a host that talks to MCP servers itself). The
     // literal is the tripwire -- a subpath added to `exports` with no `paths` entry, or vice versa, is
     // caught by the two tests above only if this one keeps counting what they cover.
-    expect(expected.size).toBe(19);
+    expect(expected.size).toBe(20);
     // P9a-3: the darwin-arm64 platform package is publishable but BIN-ONLY -- no `exports` map, so it
     // contributes zero specifiers here and must not be counted on the RHS (this test's own denominator
     // is "packages this parity check actually covers", not "every publishable package" -- the platform

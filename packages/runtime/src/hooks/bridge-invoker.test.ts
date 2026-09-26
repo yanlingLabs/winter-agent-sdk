@@ -5,7 +5,8 @@
 // requestId, and does it pass through resolve/reject faithfully."
 import { test, expect } from "bun:test";
 import { WinterRpcError } from "@yanlinglabs/winter-agent-sdk";
-import type { RpcBridge } from "../rpc/bridge.ts";
+import { createRpcBridge, type RpcBridge } from "../rpc/bridge.ts";
+import type { FrameSink } from "../protocol/channel.ts";
 import { createBridgeHookInvoker } from "./bridge-invoker.ts";
 import type { HookInvocationRequest } from "./runner.ts";
 
@@ -85,23 +86,38 @@ test("a rejected bridge request (e.g. no 'hook' handler registered host-side) pr
   expect(caught).toBeInstanceOf(WinterRpcError);
 });
 
-// Finding 10 (P2 fix-wave, NIT): the runner's own timeout fires opts.signal's abort event
-// (invokeWithTimeout's `controller.abort()`) -- this invoker must free the bridge's own pending
-// entry at that exact moment, rather than leaving it parked until run-end teardown.
-test("Finding 10: an abort on opts.signal cancels the bridge entry for this exact requestId", async () => {
-  const { bridge, cancelled } = fakeBridge(() => new Promise(() => {})); // never resolves -- only the abort matters here
+// Finding 10 (P2 fix-wave), then WS-24: the runner's own timeout fires opts.signal's abort event
+// (invokeWithTimeout's `controller.abort()`). The pending entry must be freed at that exact moment --
+// and, since WS-24, the HOST must be told, so the callback still running there is aborted too.
+test("WS-24: the runner's signal is handed to the bridge request itself", async () => {
+  const { bridge, calls } = fakeBridge(async () => ({}));
   const invoker = createBridgeHookInvoker(bridge);
   const controller = new AbortController();
-  void invoker.invoke(baseRequest, { signal: controller.signal }); // fire-and-forget: never settles
-  expect(cancelled).toEqual([]);
-
-  controller.abort();
-  expect(cancelled).toEqual(["req-1"]);
+  await invoker.invoke(baseRequest, { signal: controller.signal });
+  expect((calls[0]!.opts as { signal?: AbortSignal } | undefined)?.signal).toBe(controller.signal);
 });
 
-test("Finding 10: NO abort -- the bridge entry is never cancelled (the happy path is unaffected)", async () => {
-  const { bridge, cancelled } = fakeBridge(async () => ({}));
+test("WS-24: an abort (the runner's timeout) frees the pending entry AND writes control_cancel_request for this requestId -- on a REAL bridge", async () => {
+  const written: Array<Record<string, unknown>> = [];
+  const bridge = createRpcBridge({ write: (frame: unknown) => void written.push(frame as Record<string, unknown>) } as unknown as FrameSink);
   const invoker = createBridgeHookInvoker(bridge);
-  await invoker.invoke(baseRequest, { signal: new AbortController().signal });
-  expect(cancelled).toEqual([]);
+  const controller = new AbortController();
+  const pending = invoker.invoke(baseRequest, { signal: controller.signal });
+  expect(written.map((f) => f["type"])).toEqual(["control_request"]);
+  expect(bridge.ownsRequest("req-1")).toBe(true);
+
+  controller.abort();
+  expect(bridge.ownsRequest("req-1")).toBe(false);
+  expect(written[1]).toEqual({ type: "control_cancel_request", requestId: "req-1" });
+  await expect(pending).rejects.toMatchObject({ code: "cancelled" });
+});
+
+test("NO abort -- nothing is cancelled and no cancel frame is written (the happy path is unaffected)", async () => {
+  const written: Array<Record<string, unknown>> = [];
+  const bridge = createRpcBridge({ write: (frame: unknown) => void written.push(frame as Record<string, unknown>) } as unknown as FrameSink);
+  const invoker = createBridgeHookInvoker(bridge);
+  const pending = invoker.invoke(baseRequest, { signal: new AbortController().signal });
+  bridge.handleResponse({ type: "control_response", requestId: "req-1", ok: true, payload: { decided: true } });
+  expect(await pending).toEqual({ decided: true });
+  expect(written.map((f) => f["type"])).toEqual(["control_request"]);
 });

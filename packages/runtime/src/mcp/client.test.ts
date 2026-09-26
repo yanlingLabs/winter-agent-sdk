@@ -1,4 +1,7 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, spyOn } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Server } from "@modelcontextprotocol/server";
 import { inputRequired, inputResponse } from "@modelcontextprotocol/server";
 import {
@@ -390,7 +393,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
     });
   });
 
-  test("a { pin } the server does not offer fails the connect as handshake_failed -- never a silent fallback to the legacy handshake", async () => {
+  test("a { pin } the server does not offer fails the connect as version_mismatch (WS-24; was handshake_failed) -- never a silent fallback to the legacy handshake", async () => {
     let error: unknown;
     try {
       await connectMcpServer({ cwd: process.cwd(), name: "p", config: { ...pingFixtureCommand({ label: "pin" }), versionNegotiation: { pin: MODERN } }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
@@ -398,7 +401,7 @@ describe("WS-23 (MCP TS SDK v2): transports, version negotiation, input_required
       error = err;
     }
     expect(error).toBeInstanceOf(McpConnectError);
-    expect((error as McpConnectError).code).toBe("handshake_failed");
+    expect((error as McpConnectError).code).toBe("version_mismatch");
   });
 
   test("input_required (2026-07-28): an embedded elicitation reaches the SAME asker, and the server sees its answer on the retried call", async () => {
@@ -701,4 +704,128 @@ describe("WS-23 fix round 1: 'auto' retries once as 'legacy' on a fresh transpor
       await server.close();
     }
   });
+});
+
+// --- WS-24: stdio `'auto'` is safe on every kind of legacy server; failures are classified by cause ---
+
+describe("WS-24: stdio 'auto' against the three kinds of legacy server, and the cause codes", () => {
+  function spawnCounter(): { log: string; count: () => number; dispose: () => void } {
+    const dir = mkdtempSync(join(tmpdir(), "winter-mcp-spawns-"));
+    const log = join(dir, "spawns.log");
+    return {
+      log,
+      count: () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter((l) => l.length > 0).length : 0),
+      dispose: () => rmSync(dir, { recursive: true, force: true }),
+    };
+  }
+
+  async function connectAuto(name: string, onProbe: "answer" | "silent" | "exit", spawnLog: string, connectTimeoutMs = 3000): Promise<{ client: ConnectedMcpClient; ms: number }> {
+    const started = Date.now();
+    const client = await connectMcpServer({ cwd: process.cwd(), name, config: { ...pingFixtureCommand({ label: name, onProbe, spawnLog }), versionNegotiation: "auto" }, connectTimeoutMs, elicitationAsk: NO_ELICIT });
+    return { client, ms: Date.now() - started };
+  }
+
+  test("a server that ANSWERS the probe (-32601) settles legacy on its one process", async () => {
+    const spawns = spawnCounter();
+    try {
+      const { client } = await connectAuto("answers", "answer", spawns.log);
+      try {
+        expect(client.protocolVersion).toBe(LEGACY_LATEST);
+        expect(await client.callTool("gate_ping", {})).toEqual({ content: [{ type: "text", text: "PONG-answers" }] });
+      } finally {
+        await client.close();
+      }
+      expect(spawns.count()).toBe(1);
+    } finally {
+      spawns.dispose();
+    }
+  }, 15_000);
+
+  test("a server that IGNORES the probe settles legacy on its one process once the probe bound runs out -- never a respawn (the transport reads as stdio to the client)", async () => {
+    const spawns = spawnCounter();
+    try {
+      const { client, ms } = await connectAuto("ignores", "silent", spawns.log, 3000);
+      try {
+        expect(client.protocolVersion).toBe(LEGACY_LATEST);
+        expect(await client.callTool("gate_ping", {})).toEqual({ content: [{ type: "text", text: "PONG-ignores" }] });
+      } finally {
+        await client.close();
+      }
+      expect(spawns.count()).toBe(1);
+      expect(ms).toBeGreaterThanOrEqual(1000); // the probe's own bound: min(5 s, 3000 / 3)
+      expect(ms).toBeLessThan(3000); // ...never the whole connect budget
+    } finally {
+      spawns.dispose();
+    }
+  }, 15_000);
+
+  test("a server that EXITS on the probe is transport_closed, respawned ONCE as legacy, and the fallback is logged once per server and cause", async () => {
+    const spawns = spawnCounter();
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const { client } = await connectAuto("exits-on-probe", "exit", spawns.log);
+        try {
+          expect(client.protocolVersion).toBe(LEGACY_LATEST);
+          expect(await client.callTool("gate_ping", {})).toEqual({ content: [{ type: "text", text: "PONG-exits-on-probe" }] });
+        } finally {
+          await client.close();
+        }
+      }
+      expect(spawns.count()).toBe(4); // two connects, each: the probed process + ONE legacy respawn
+      const fallbacks = errors.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("'auto' version probe"));
+      expect(fallbacks).toHaveLength(1);
+      expect(fallbacks[0]).toContain('"exits-on-probe"');
+      expect(fallbacks[0]).toContain("transport_closed");
+    } finally {
+      errors.mockRestore();
+      spawns.dispose();
+    }
+  }, 20_000);
+
+  test("a { pin } against the server that exits on the probe is transport_closed, and never retried", async () => {
+    const spawns = spawnCounter();
+    try {
+      await expect(
+        connectMcpServer({ cwd: process.cwd(), name: "pinned-exit", config: { ...pingFixtureCommand({ onProbe: "exit", spawnLog: spawns.log }), versionNegotiation: { pin: MODERN } }, connectTimeoutMs: 3000, elicitationAsk: NO_ELICIT }),
+      ).rejects.toMatchObject({ code: "transport_closed" });
+      expect(spawns.count()).toBe(1);
+    } finally {
+      spawns.dispose();
+    }
+  }, 15_000);
+
+  test("a version_mismatch is never retried as legacy: one process, one refusal", async () => {
+    const spawns = spawnCounter();
+    try {
+      await expect(
+        connectMcpServer({ cwd: process.cwd(), name: "pinned", config: { ...pingFixtureCommand({ spawnLog: spawns.log }), versionNegotiation: { pin: MODERN } }, connectTimeoutMs: 3000, elicitationAsk: NO_ELICIT }),
+      ).rejects.toMatchObject({ code: "version_mismatch" });
+      expect(spawns.count()).toBe(1);
+    } finally {
+      spawns.dispose();
+    }
+  }, 15_000);
+
+  test("a stdio server that dies during a LEGACY handshake is transport_closed (was unknown), with its stderr on the error", async () => {
+    let error: unknown;
+    try {
+      await connectMcpServer({ cwd: process.cwd(), name: "dies", config: { command: "/bin/sh", args: ["-c", "read line; echo 'fatal: cannot serve' >&2; exit 3"] }, connectTimeoutMs: 3000, elicitationAsk: NO_ELICIT });
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeInstanceOf(McpConnectError);
+    expect((error as McpConnectError).code).toBe("transport_closed");
+    expect((error as McpConnectError).message).toContain("fatal: cannot serve");
+  }, 15_000);
+
+  test("a stdio server that never answers is still a timeout -- the client's own close() at the end is not the server exiting", async () => {
+    let error: unknown;
+    try {
+      await connectMcpServer({ cwd: process.cwd(), name: "mute", config: { command: "/bin/sh", args: ["-c", "sleep 30"] }, connectTimeoutMs: 800, elicitationAsk: NO_ELICIT });
+    } catch (err) {
+      error = err;
+    }
+    expect((error as McpConnectError).code).toBe("timeout");
+  }, 15_000);
 });

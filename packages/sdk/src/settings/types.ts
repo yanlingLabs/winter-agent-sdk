@@ -65,13 +65,24 @@ export interface SettingsHookHandler {
   /** `"command"` is the only shape a settings file can express; see buildHookEntriesFromSettings. */
   type?: string;
   command?: string;
-  /** SECONDS (HookCallbackMatcher.timeout's pinned unit) -- converted to ms exactly once, at entry-build time. */
+  /** SECONDS (HookCallbackMatcher.timeout's pinned unit) -- converted to ms exactly once, at entry-build time. For an `async` handler, its background run's timeout. */
   timeout?: number;
+  /** WS-23: fail CLOSED on PreToolUse/PermissionRequest (an error, a timeout or malformed output denies the call). Only a literal `true`. */
+  failClosed?: boolean;
+  /**
+   * WS-24: run in the BACKGROUND -- the event never waits, the hook can never allow or deny anything, and
+   * what it later says (`systemMessage`, `additionalContext`) reaches the model at the next safe point as
+   * a reminder. Refused (the hook stays synchronous, and the refusal is reported) on a fail-closed
+   * PreToolUse/PermissionRequest hook. Only a literal `true`.
+   */
+  async?: boolean;
 }
 
 export interface SettingsHookMatcherGroup {
   matcher?: string;
   hooks?: SettingsHookHandler[];
+  /** WS-23: `failClosed` for every handler in the group. */
+  failClosed?: boolean;
 }
 
 /** Open-keyed for the same reason RuntimeHooksConfig is (protocol/config.ts): unknown event names are accepted, preserved and inert. */

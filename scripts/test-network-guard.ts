@@ -25,6 +25,22 @@
 // test that spawned it); and EVERY child -- a compiled binary, `curl`, a grandchild -- inherits the proxy
 // environment of the recording proxy below, unless it was handed an environment that drops it.
 //
+// SHELL CHILDREN, AND THE PROXY THAT NEVER REACHED ANY CHILD (WS-24). Measured on Bun 1.3.14: the six proxy
+// variables are special on `process.env` -- ACCESSORS that write through to the real process environment
+// (so a spawn with no `env` inherits them) but NOT ENUMERABLE, so every `{ ...process.env }` drops them. That
+// spread is how most code builds a child's environment, the guard's own `withEnv` included: every child the
+// guard handed an environment ran with NO proxy at all. Each variable is now redefined as an enumerable
+// accessor over Bun's own getter/setter (`exposeProxyVariable`): the write-through is kept (a later
+// assignment -- `withNpmRegistryAccess`'s `NO_PROXY` append -- still reaches no-env children) and every spread,
+// `Object.keys` and `Bun.$` now carries it. (Bun 1.4, which CI's `setup-bun` installs, already enumerates
+// them; this brings a 1.3 run in line.) `exec`/`execSync` -- a SHELL child, e.g. a test shelling out to `curl`
+// or `npm` -- are wrapped as well: their `(command, options?, callback?)` shape does not fit the argv doors'.
+// A `bun` started from inside such a shell string gets the proxy but not `--preload` (the string is never
+// rewritten); a named ESM import of `node:child_process` is a separate binding the wrappers cannot reach, and
+// relies on the two properties above instead. What still escapes: a child handed an environment built
+// WITHOUT these variables (an explicit minimal env is its author's choice), and non-HTTP traffic from a
+// non-`bun` child.
+//
 // THE ONE HOLE (release CI fix): the release gates that exist to reach the public npm registry open it for
 // the length of one call with `withNpmRegistryAccess` (`./test-network-registry.ts`, which says why the
 // hole is cut there and not in the proxy). Only `registry.npmjs.org`, only over HTTPS, never with a
@@ -37,6 +53,7 @@ import tls from "node:tls";
 import http from "node:http";
 import https from "node:https";
 import childProcess from "node:child_process";
+import { promisify } from "node:util";
 import { NPM_REGISTRY_HOST, npmRegistryAccessOpen } from "./test-network-registry.ts";
 
 export const ALLOW_REAL_NETWORK_ENV = "WINTER_TEST_ALLOW_REAL_NETWORK";
@@ -126,6 +143,37 @@ function npmRegistryFetchAllowed(input: unknown, init: RequestInit | undefined):
   if (url.protocol !== "https:" || url.hostname.toLowerCase() !== NPM_REGISTRY_HOST || url.username !== "" || url.password !== "") return false;
   const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
   return !headers.has("authorization") && !headers.has("cookie");
+}
+
+/** The six variables every HTTP client honours, which the recording proxy below is announced through. */
+const PROXY_VARIABLES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"] as const;
+
+/**
+ * WS-24: make one proxy variable ENUMERABLE on `process.env` without losing Bun's write-through to the real
+ * environment (see "SHELL CHILDREN" in this file's header). Bun 1.3 defines each as a non-enumerable
+ * accessor; it is redefined as an enumerable one over the SAME getter and setter, so an assignment still
+ * reaches no-env children. Anything else (a plain data property, an already-enumerable one, a Bun that
+ * refuses the redefinition) is left alone -- `withEnv` then carries the variables by name.
+ */
+function exposeProxyVariable(name: string): void {
+  const desc = Object.getOwnPropertyDescriptor(process.env, name);
+  if (desc === undefined || desc.enumerable === true) return;
+  try {
+    if (desc.get !== undefined || desc.set !== undefined) Object.defineProperty(process.env, name, { ...(desc.get !== undefined ? { get: desc.get } : {}), ...(desc.set !== undefined ? { set: desc.set } : {}), enumerable: true, configurable: true });
+    else Object.defineProperty(process.env, name, { ...desc, enumerable: true });
+  } catch {
+    /* not redefinable on this Bun: the by-name merge in withEnv still carries it */
+  }
+}
+
+/** The proxy variables' CURRENT values, read by name (a spread may not see them). */
+function proxyEnvironment(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of PROXY_VARIABLES) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
 }
 
 function guardArgs<T extends (...args: never[]) => unknown>(via: string, original: T): T {
@@ -221,10 +269,13 @@ if (process.env[ALLOW_REAL_NETWORK_ENV] !== "1") {
     // Review r2: the reserved names (`.invalid`, `.test`, RFC 2606/6761) bypass the proxy too, so a test
     // that points at one still fails at DNS as it always did, not with the proxy's 403.
     for (const name of ["NO_PROXY", "no_proxy"]) process.env[name] = "localhost,127.0.0.1,::1,.localhost,.invalid,.test,invalid,test";
+    // WS-24: visible to every `{ ...process.env }` from here on -- see "SHELL CHILDREN" in this file's header.
+    for (const name of PROXY_VARIABLES) exposeProxyVariable(name);
     // A spawn with NO `env` of its own inherits Bun's STARTUP environment, not today's `process.env`
-    // (measured: `Bun.spawn` and `node:child_process` both), so the variables above would never reach it.
-    // Such a spawn is handed `process.env` explicitly; a spawn that brings its own `env` keeps it as is.
-    const withEnv = <O extends { env?: unknown } | undefined>(opts: O): O => (opts !== undefined && opts.env !== undefined ? opts : ({ ...(opts ?? {}), env: { ...process.env } } as O));
+    // (measured: `Bun.spawn` and `node:child_process` both) -- except the proxy variables, which Bun writes
+    // through. Such a spawn is handed `process.env` explicitly, and the proxy variables by NAME on top (the
+    // belt for a Bun whose accessors cannot be redefined); a spawn that brings its own `env` keeps it as is.
+    const withEnv = <O extends { env?: unknown } | undefined>(opts: O): O => (opts !== undefined && opts.env !== undefined ? opts : ({ ...(opts ?? {}), env: { ...process.env, ...proxyEnvironment() } } as O));
     // A child `bun` RUNNING CODE (a file, `-e`, `run <file>`) gets the guard itself too: `--preload` right
     // after the executable. A `bun` subcommand (`build`, `install`, `test`, ...) is left alone -- it runs no
     // test code, and `--preload` in front of it would turn it into a script lookup. (`BUN_OPTIONS` would
@@ -251,6 +302,27 @@ if (process.env[ALLOW_REAL_NETWORK_ENV] !== "1") {
       }
     }
     const cp = childProcess as unknown as Record<string, (...args: unknown[]) => unknown>;
+    // WS-24: the SHELL doors, `(command, options?, callback?)` -- no argv to preload into (a shell string is
+    // never rewritten), so only the environment: the options object, when there is one, is the first plain
+    // object after the command; with none, one carrying `process.env` is inserted before any callback.
+    // Fix round 1: a LEADING `null`/`undefined` options argument (`exec(cmd, null, cb)`, a common spelling)
+    // is REPLACED, never shifted right -- inserting before it made the callback the third-after argument,
+    // lost it, and hung the caller. `util.promisify(exec)` reads `exec[util.promisify.custom]`, which is
+    // copied onto the wrapper so the promisified form keeps its `{stdout, stderr}` shape.
+    for (const name of ["exec", "execSync"]) {
+      const original = cp[name]!;
+      const wrapped = (command: unknown, ...rest: unknown[]) => {
+        const at = rest.findIndex((a) => typeof a === "object" && a !== null && !Array.isArray(a));
+        if (at !== -1) return original(command, ...rest.map((a, i) => (i === at ? withEnv(a as { env?: unknown }) : a)));
+        if (rest.length > 0 && (rest[0] === null || rest[0] === undefined)) return original(command, withEnv(undefined), ...rest.slice(1));
+        return original(command, withEnv(undefined), ...rest);
+      };
+      const custom = (original as unknown as Record<symbol, unknown>)[promisify.custom];
+      // The copied custom form calls Bun's ORIGINAL exec (so it skips withEnv) -- it still sees the proxy
+      // variables, through Bun's write-through to the real environment (see this file's header).
+      if (custom !== undefined) Object.defineProperty(wrapped, promisify.custom, { value: custom, configurable: true });
+      cp[name] = wrapped;
+    }
     for (const name of ["spawn", "spawnSync", "execFile", "execFileSync"]) {
       const original = cp[name]!;
       cp[name] = (command: unknown, ...rest: unknown[]) => {

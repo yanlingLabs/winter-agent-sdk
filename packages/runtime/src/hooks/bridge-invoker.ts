@@ -20,24 +20,29 @@
 // trust assumption"). Adding a SECOND, bridge-level timeout here would just be a redundant,
 // independently-tuned duplicate of that same policy — the runner is the sole timeout authority for
 // hook invocations, exactly as its own seam contract already promises T10.
+//
+// WS-24: THE TIMEOUT NOW REACHES THE CALLBACK. `opts.signal` firing IS the runner's own timeout (see
+// invokeWithTimeout's `controller.abort()`). It used to reach only this side: a silent
+// `bridge.cancel()` freed the pending entry (Finding 10), and the host's callback kept running --
+// a timed-out reviewer went on spending model time for an answer nobody would read. The signal is now
+// handed to `bridge.request` itself, which on abort drops the entry exactly as before AND writes a
+// `control_cancel_request` for this requestId (rpc/bridge.ts, the permission prompt's door since lane
+// C); the wrapper aborts the running handler's signal, and `makeHookHandler` (sdk query.ts) passes that
+// abort into the callback's own `signal`. The same one frame in both topologies: a spawned `winter`
+// child and an embedded Worker (whose hooks were the one argument for a "direct" invoker -- WS-24
+// item 5 closed that as moot: the daemon's callbacks are closures on its main thread, so an embedded
+// hook call crosses the Worker boundary as one message either way, and this was the one thing a direct
+// call would have bought).
 import type { HookInvocationRequest, HookInvoker } from "./runner.ts";
 import type { RpcBridge } from "../rpc/bridge.ts";
 
 export function createBridgeHookInvoker(bridge: RpcBridge): HookInvoker {
   return {
     async invoke(request: HookInvocationRequest, opts: { signal: AbortSignal }): Promise<unknown> {
-      // Finding 10 (P2 fix-wave, NIT): `opts.signal` firing IS the runner's own timeout — see
-      // invokeWithTimeout's own `controller.abort()` call, at the exact moment its hard timer
-      // fires. Without this, the abandoned bridge.request() entry stayed parked in the bridge's own
-      // `pending` map until `rejectAllPending` at run end (a long session with many flaky/slow hooks
-      // accumulates entries, and a very-late host answer would resolve an ignored promise) — the
-      // runner is still the sole TIMEOUT authority (unchanged: no timeoutMs is passed to
-      // bridge.request below), this is purely cleanup of the now-abandoned bridge-side bookkeeping.
-      // Registered BEFORE bridge.request() is called (invokeWithTimeout always hands this a fresh,
-      // not-yet-aborted signal from a controller it just created — never already-aborted — so there
-      // is no missed-event race to guard against here).
-      opts.signal.addEventListener("abort", () => bridge.cancel(request.requestId), { once: true });
-      return bridge.request("hook", request, { requestId: request.requestId });
+      // invokeWithTimeout always hands this a fresh, not-yet-aborted signal, so the request is always
+      // issued; an abort after that settles this promise with a `cancelled` rejection nobody awaits
+      // any more (the runner's own race already resolved on its timer).
+      return bridge.request("hook", request, { requestId: request.requestId, signal: opts.signal });
     },
   };
 }

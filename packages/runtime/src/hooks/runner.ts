@@ -19,11 +19,15 @@
 // sanitizing hook's transform can be excluded from the final composite if a LATER hook's decision
 // outranks it, even though a still-later hook already evaluated against the sanitized value).
 //
-// A SECOND, UNMODELED ASYNC MECHANISM (derived-shapes-p2.md Open Question 3): `{async: true,
+// A SECOND ASYNC MECHANISM (derived-shapes-p2.md Open Question 3, RESOLVED by WS-24): `{async: true,
 // asyncTimeout?}` is a top-level alternative to every synchronous hook output, distinct from
-// `permissionDecision: "defer"`. This runner treats it as a `{kind:"none"}` contribution (ran, no
-// synchronous opinion) — it does NOT wait up to `asyncTimeout` for a later answer. Flagged as an
-// open item in the task report; not resolved here.
+// `permissionDecision: "defer"`. This runner still reads it as a `{kind:"none"}` contribution (ran, no
+// synchronous opinion) and never waits for a later answer -- because there is none to wait for: an
+// async hook can never allow, deny or rewrite anything. What it SAYS later (`systemMessage`,
+// `additionalContext`) is the command invoker's and the async queue's business (hooks/async-hooks.ts),
+// delivered by the engine at the next safe point. A callback hook that answers `{async: true}` has no
+// "later" at all (its one return value was it) and stays exactly "no opinion". A fail-closed gating
+// hook that answers it is malformed (strict mode below).
 //
 // WS-23 additions, each at the one place it belongs:
 //   - FAIL CLOSED (`SourcedHookEntry.failClosed`, `failClosedDenial` below): opt-in per hook, default
@@ -42,6 +46,8 @@ import type { HookEvent, HookPermissionDecision, PermissionUpdate } from "@yanli
 import { MATCHER_SUBJECT_FIELD, type HookRegistry, type SourcedHookEntry } from "./registry.ts";
 import { reduceHookOutcomes, type HookComposite, type HookOutcome, type HookOutcomeEntry } from "./reducer.ts";
 import { capHookText } from "./bounds.ts";
+import { mcpServerOwningTool } from "../tools/registry.ts";
+import type { AsyncHookQueue } from "./async-hooks.ts";
 
 // --- HookInvoker — the T10 swap point (WS-08 §10, verbatim request shape) -------------------------
 
@@ -80,12 +86,41 @@ export interface HookInvocationRequest {
   agentID?: string;
   toolUseID?: string;
   toolName?: string;
+  /**
+   * WS-24: for an MCP tool, the server that registered `toolName` and the tool's own name there
+   * (`mcpToolProvenance` below). Both builders of a hook's input -- `commandHookInput`
+   * (command-invoker.ts) and the wrapper's `buildHookInput` (sdk query.ts) -- turn them into
+   * `mcp_server_name`/`mcp_tool_name`. Absent for every non-MCP tool and every tool-less event.
+   */
+  mcpServerName?: string;
+  mcpToolName?: string;
   input?: Record<string, unknown>;
   payload?: unknown;
   policyVersion: string;
   requestId: string;
   hookId: string;
   hookName?: string;
+}
+
+// --- WS-24: MCP provenance ------------------------------------------------------------------------
+//
+// Read from the ONE place that knows it: the tool registry's owner index (`mcpServerOwningTool`), which
+// every MCP registration -- a live stdio/http/sse server's AND a host's in-process `type: "sdk"`
+// server's -- goes through (`registerMcpServerTools`). The canonical name is NEVER split on `__`:
+// server names may contain it (a host's `host__sessions`), so the bare name is what follows the owner's own
+// `mcp__<server>__` prefix. A registry-native tool that merely wears an `mcp__` name (the standing
+// server's twins) has no owner and so no provenance: no connected server is behind it.
+export interface McpToolProvenanceInfo {
+  server: string;
+  tool: string;
+}
+
+export function mcpToolProvenance(toolName: string): McpToolProvenanceInfo | undefined {
+  const server = mcpServerOwningTool(toolName);
+  if (server === undefined) return undefined;
+  const prefix = `mcp__${server}__`;
+  if (!toolName.startsWith(prefix) || toolName.length === prefix.length) return undefined;
+  return { server, tool: toolName.slice(prefix.length) };
 }
 
 // The pinned HookCallback signature (derived-shapes item (a)) takes `{signal: AbortSignal}` as its
@@ -95,6 +130,12 @@ export interface HookInvocationRequest {
 // real callback honors abort (a backstop, not a trust assumption).
 export interface HookInvoker {
   invoke(request: HookInvocationRequest, opts: { signal: AbortSignal }): Promise<unknown>;
+  /**
+   * WS-24: the session's background (async) hooks, when this invoker can run any -- only the command
+   * invoker can (hooks/async-hooks.ts). The engine drains it at each safe point and disposes it at
+   * session end; a callback-only session has none.
+   */
+  readonly asyncHooks?: AsyncHookQueue;
 }
 
 // --- HookAuditRecorder — the P2-A audit seam (WS-08 §9's Amended text) -----------------------------
@@ -271,6 +312,8 @@ export interface RunHooksContext {
   timeouts?: HookTimeoutConfig;
   validator?: ToolInputValidator;
   lifecycle?: HookLifecycleSink;
+  /** WS-24: the MCP provenance lookup. Defaults to `mcpToolProvenance` (the live registry); a test seam. */
+  mcpProvenance?: (toolName: string) => McpToolProvenanceInfo | undefined;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -692,7 +735,7 @@ function failureCodeOf(err: unknown): string {
   return "hook_error";
 }
 
-function buildRequest(entry: SourcedHookEntry, event: HookEvent, call: RunHooksCallInfo, ctx: RunHooksContext, currentInput: Record<string, unknown> | undefined): HookInvocationRequest {
+function buildRequest(entry: SourcedHookEntry, event: HookEvent, call: RunHooksCallInfo, ctx: RunHooksContext, currentInput: Record<string, unknown> | undefined, provenance: McpToolProvenanceInfo | undefined): HookInvocationRequest {
   return {
     event,
     ...(entry.matcher !== undefined ? { matchedMatcher: entry.matcher } : {}),
@@ -700,6 +743,7 @@ function buildRequest(entry: SourcedHookEntry, event: HookEvent, call: RunHooksC
     ...(ctx.agentID !== undefined ? { agentID: ctx.agentID } : {}),
     ...(call.toolUseID !== undefined ? { toolUseID: call.toolUseID } : {}),
     ...(call.toolName !== undefined ? { toolName: call.toolName } : {}),
+    ...(provenance !== undefined ? { mcpServerName: provenance.server, mcpToolName: provenance.tool } : {}),
     ...(currentInput !== undefined ? { input: currentInput } : {}),
     ...(call.payload !== undefined ? { payload: call.payload } : {}),
     policyVersion: String(ctx.policyVersion),
@@ -783,6 +827,9 @@ function matcherSubjectOf(event: HookEvent, call: RunHooksCallInfo): string | un
 export async function runHooks(event: HookEvent, call: RunHooksCallInfo, ctx: RunHooksContext): Promise<HookComposite> {
   const matched = ctx.registry.matching(event, matcherSubjectOf(event, call));
   const validator = ctx.validator ?? NO_SCHEMAS_YET_VALIDATOR;
+  // WS-24: looked up once per run -- the same tool for every participant, and a registry that changes
+  // mid-run (a server reconnecting) must not hand two hooks of one call two different answers.
+  const provenance = call.toolName !== undefined && matched.length > 0 ? (ctx.mcpProvenance ?? mcpToolProvenance)(call.toolName) : undefined;
   const results: HookOutcomeEntry[] = [];
   let denied = false;
   // Invocation-time chaining (rule 3 sentence 1) -- see this file's own header for the split from
@@ -797,7 +844,7 @@ export async function runHooks(event: HookEvent, call: RunHooksCallInfo, ctx: Ru
       continue;
     }
 
-    const request = buildRequest(entry, event, call, ctx, currentInput);
+    const request = buildRequest(entry, event, call, ctx, currentInput, provenance);
     const timeoutMs = defaultTimeoutMsFor(event, entry, ctx.timeouts);
     // T10 (WS-08 §9): "hook_started" fires for every hook actually invoked (never a skipped one,
     // handled above) — BEFORE the invocation, so a slow/hanging hook shows up in-flight on the

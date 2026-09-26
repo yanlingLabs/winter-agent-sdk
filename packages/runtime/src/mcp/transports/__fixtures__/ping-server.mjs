@@ -16,6 +16,13 @@
 // `--delay-ms <n>` postpones the MCP handshake by n milliseconds (stdin is not read, so the client's
 // `initialize` waits in the pipe): a slow-starting server, for the first-turn wait and the
 // late-connection tests. `--label <s>` is echoed in the tool's answer.
+//
+// WS-24 (stdio `'auto'`): `--on-probe <answer|silent|exit>` picks what the server does with a request
+// that arrives BEFORE `initialize` -- the 2026-07-28 `server/discover` probe -- modelling the three kinds
+// of legacy server: `answer` (the default, `-32601`), `silent` (drops it unanswered), `exit` (dies on
+// it, as servers on some SDKs do). `--spawn-log <file>` appends one line per process start, so a test
+// can count how many processes a connect cost.
+import { appendFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 function argValue(name) {
@@ -24,6 +31,10 @@ function argValue(name) {
 }
 const delayMs = Number(argValue("--delay-ms") ?? "0");
 const label = argValue("--label") ?? "fixture";
+const onProbe = argValue("--on-probe") ?? "answer";
+const spawnLog = argValue("--spawn-log");
+if (spawnLog !== undefined) appendFileSync(spawnLog, `${process.pid}\n`);
+let initialized = false;
 
 // The newest 2025-era revision this fixture speaks; a client offering an older one gets it echoed
 // back (the handshake's own version-selection rule).
@@ -45,8 +56,13 @@ function handle(message) {
   // A notification (no id) never gets an answer; `notifications/initialized` included.
   if (!("id" in message) || typeof message.method !== "string") return;
   const { id, method, params } = message;
+  if (!initialized && method !== "initialize") {
+    if (onProbe === "exit") process.exit(1);
+    if (onProbe === "silent") return;
+  }
   switch (method) {
     case "initialize": {
+      initialized = true;
       const requested = params?.protocolVersion;
       result(id, {
         protocolVersion: SUPPORTED.has(requested) ? requested : LATEST,

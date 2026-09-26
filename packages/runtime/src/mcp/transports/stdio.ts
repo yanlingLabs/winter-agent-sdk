@@ -29,13 +29,14 @@
 // Winter's transport stays. One v2 consequence to know about: the v2 client probes a CUSTOM stdio
 // transport like this one IN PLACE when `versionNegotiation` is `'auto'` (it can run its sibling-
 // process probe only for its own class), which is why stdio defaults to `'legacy'`
-// (mcp/client.ts's `resolveVersionNegotiation`).
+// (mcp/client.ts's `resolveVersionNegotiation`, which also records what WS-24 made of the opt-in).
 // `cross-spawn` (the reference's own dependency, needed for Windows shell-resolution quirks) is
 // deliberately NOT used -- this repo's own OS floors are macOS/Linux only (CLAUDE.md's "Latest-OS
 // floors" convention, carried from the wider product), so `node:child_process.spawn` alone suffices.
 import { spawn, type ChildProcess } from "node:child_process";
 import { ReadBuffer, serializeMessage, type JSONRPCMessage, type Transport } from "@modelcontextprotocol/client";
 import type { McpStdioServerConfig } from "@yanlinglabs/winter-agent-sdk";
+import { trackProcessGroup } from "../../process-groups.ts";
 
 // The upstream PARITY BASELINE, named explicitly rather than silently duplicated: this is the exact
 // non-Windows `DEFAULT_INHERITED_ENV_VARS` list the MCP TS SDK itself ships (v1's
@@ -92,6 +93,8 @@ export class WinterStdioTransport implements Transport {
   // Whole-branch review N3: bounded stderr tail (see the `stderr` listener in start() for why it is
   // retained at all, and why it stays this small).
   private stderrTailBuffer = "";
+  // WS-24: the child ended WITHOUT this side asking (see `exitedOnItsOwn`).
+  private exitedOnItsOwnFlag = false;
 
   onclose?: () => void;
   onerror?: (error: Error) => void;
@@ -106,6 +109,30 @@ export class WinterStdioTransport implements Transport {
   // mcp/client.ts's own pid-based bookkeeping was written against that contract.
   get pid(): number | null {
     return this.child?.pid ?? null;
+  }
+
+  /**
+   * WS-24: the running child's stderr stream (`null` before `start()` and after exit) -- the shape of
+   * the SDK's own `StdioClientTransport.stderr`. Declared for one reason: the v2 client decides how to
+   * read a `server/discover` probe by DUCK TYPING (`"stderr" in transport && "pid" in transport` ->
+   * "stdio"), and only as stdio does an unanswered probe settle the LEGACY era on the same pipe (a
+   * server that ignores unknown methods keeps its one process); read as "http", the silence is an outage
+   * and `connectMcpServer`'s legacy retry has to respawn the server. `client.test.ts` pins the single
+   * spawn, so a future client that stops recognising this transport fails there, not silently. Nothing
+   * reads from the stream through this getter: the tail below stays the one reader.
+   */
+  get stderr(): NodeJS.ReadableStream | null {
+    return this.child?.stderr ?? null;
+  }
+
+  /**
+   * WS-24: the server exited BY ITSELF -- its process closed while this transport still held it, never
+   * through `close()` (which lets go of the child before killing it). This is how `connectMcpServer`
+   * tells a server that died under the attempt (`transport_closed`: e.g. one that exits on the
+   * `server/discover` probe) from one the client tore down after a failed attempt of its own.
+   */
+  get exitedOnItsOwn(): boolean {
+    return this.exitedOnItsOwnFlag;
   }
 
   async start(): Promise<void> {
@@ -132,8 +159,13 @@ export class WinterStdioTransport implements Transport {
         detached: true,
       });
       this.child = child;
+      // WS-24: the server's group is mirrored to an embedded session's host while it lives, so a
+      // Worker that dies without reaching `close()` below does not orphan it (process-groups.ts).
+      // Released when the child is gone, however it went (its own exit, `close()`, a spawn error).
+      const releaseGroup = child.pid !== undefined ? trackProcessGroup(child.pid, "mcp_stdio") : () => {};
 
       child.on("error", (error) => {
+        releaseGroup();
         // N3: whatever the child managed to say before dying is the only evidence a caller will ever
         // get for a spawn failure -- attached here rather than at the caller, which has no access to
         // the pipe at all.
@@ -142,6 +174,8 @@ export class WinterStdioTransport implements Transport {
       });
       child.on("spawn", () => resolve());
       child.on("close", () => {
+        releaseGroup();
+        if (this.child === child) this.exitedOnItsOwnFlag = true; // close() lets go of the child first
         this.child = undefined;
         this.onclose?.();
       });

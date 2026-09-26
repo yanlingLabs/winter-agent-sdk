@@ -102,6 +102,12 @@ export interface SourcedHookEntry extends HookParticipant {
    * (command-invoker.ts). Absent on every non-plugin entry.
    */
   pluginRoot?: string;
+  /**
+   * WS-24: a settings/plugin command handler declared `async: true` -- it runs in the BACKGROUND and
+   * never blocks its event (hooks/async-hooks.ts). Never set together with `failClosed` on a
+   * PreToolUse/PermissionRequest entry: from-config.ts refuses the flag there (a floor must gate).
+   */
+  async?: boolean;
 }
 
 export interface HookRegistry {

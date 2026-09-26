@@ -1206,6 +1206,77 @@ test("a hook callback receives a reconstructed HookInput with cwd/session/tool i
   expect(response?.payload).toEqual(answer);
 });
 
+test("WS-24: an MCP tool's hook input names its server and bare tool (mcp_server_name / mcp_tool_name); a built-in's names neither", async () => {
+  const seen: HookInput[] = [];
+  for (const payload of [
+    fullHookPayload({ toolName: "mcp__winter__sessions__list", mcpServerName: "winter__sessions", mcpToolName: "list", requestId: "hook-1" }),
+    fullHookPayload({ requestId: "hook-1" }),
+  ]) {
+    const { proc } = recordingProcessWithHookRequest(payload);
+    const gen = query({
+      prompt: "hi",
+      options: {
+        cwd: "/work",
+        spawnClaudeCodeProcess: () => proc,
+        hooks: { PreToolUse: [{ hooks: [async (input) => (seen.push(input), {})] }] },
+      },
+    });
+    for await (const _msg of gen) {
+      /* drain */
+    }
+  }
+  expect(seen[0]).toMatchObject({ tool_name: "mcp__winter__sessions__list", mcp_server_name: "winter__sessions", mcp_tool_name: "list" });
+  expect("mcp_server_name" in seen[1]!).toBe(false);
+  expect("mcp_tool_name" in seen[1]!).toBe(false);
+});
+
+test("WS-24: a control_cancel_request for a running hook (the runner timed it out) aborts the callback's signal, and no answer is written for it", async () => {
+  const payload = fullHookPayload();
+  const writes: string[] = [];
+  let callbackStarted!: () => void;
+  const started = new Promise<void>((r) => (callbackStarted = r));
+  let aborted = false;
+  const proc: SpawnedRuntimeProcess = {
+    stdin: { write: (chunk: string) => void writes.push(chunk), end() {} },
+    stdout: (async function* () {
+      yield encodeFrame({ type: "init", protocolVersion: PROTOCOL_VERSION, sessionId: "s", cwd: "/x", model: "sonnet", permissionMode: "default", tools: [] });
+      yield encodeFrame({ type: "control_request", requestId: payload.requestId, subtype: "hook", payload });
+      await started;
+      yield encodeFrame({ type: "control_cancel_request", requestId: payload.requestId });
+      await Bun.sleep(50);
+      yield encodeFrame({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: "ok" } });
+    })(),
+    kill() {},
+    exited: Promise.resolve({ code: 0, signal: null }),
+    pid: null,
+  };
+  const gen = query({
+    prompt: "hi",
+    options: {
+      spawnClaudeCodeProcess: () => proc,
+      hooks: {
+        PreToolUse: [
+          {
+            hooks: [
+              async (_input, _id, { signal }) => {
+                callbackStarted();
+                await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+                aborted = signal.aborted;
+                return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } };
+              },
+            ],
+          },
+        ],
+      },
+    },
+  });
+  for await (const _msg of gen) {
+    /* drain */
+  }
+  expect(aborted).toBe(true);
+  expect(decodeControlResponse(writes, "hook-1")).toBeUndefined();
+});
+
 test("an unrecognized hookId answers ok:false, unknown_hook_id (a config/registry drift this handler defends against without crashing)", async () => {
   const payload = fullHookPayload({ hookId: "PreToolUse:sdk:0:99" });
   const { proc, writes } = recordingProcessWithHookRequest(payload);

@@ -49,6 +49,10 @@ each session needs its own JavaScript realm: run one session per Bun `Worker`.
   and returns a `SpawnedRuntimeProcess`. Hand it to `query()` through `Options.spawnClaudeCodeProcess`.
   The frames on the wire are exactly the ones the spawned binary writes. This module does not load
   the engine, so it is safe to import on a host's main thread.
+  A session's shell commands, stdio MCP servers and hooks run as their own process groups. A Worker
+  that is `terminate()`d or crashes never runs the teardown that kills them, so once `exited` settles,
+  SIGKILL every group the returned process still lists in `processGroups()`
+  (`process.kill(-pgid, "SIGKILL")`). After a clean exit the list is empty.
 - `@yanlinglabs/winter-agent-runtime/embedded-worker` — the Worker entry. A compiled
   (`bun build --compile`) host passes its own one-line worker file as an extra entrypoint and
   constructs the Worker from that file's plain relative path.

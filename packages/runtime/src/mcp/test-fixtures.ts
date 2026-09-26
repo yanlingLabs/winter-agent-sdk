@@ -336,10 +336,13 @@ export function stdioFixtureCommand(): { command: string; args: string[] } {
 // -- the router's same-view row does the same after measuring bun-launched fixture servers at 2.5-4.5 s
 // to start, too slow for the first-turn-wait case -- and under the running bun otherwise. Fix round 20:
 // the fixture is plain `.mjs`, so any node runs it (the release runner's Node 18 cannot strip types).
-export function pingFixtureCommand(opts: { label?: string; delayMs?: number } = {}): { command: string; args: string[] } {
+export function pingFixtureCommand(opts: { label?: string; delayMs?: number; onProbe?: "answer" | "silent" | "exit"; spawnLog?: string } = {}): { command: string; args: string[] } {
   const args = [fileURLToPath(new URL("./transports/__fixtures__/ping-server.mjs", import.meta.url))];
   if (opts.label !== undefined) args.push("--label", opts.label);
   if (opts.delayMs !== undefined) args.push("--delay-ms", String(opts.delayMs));
+  // WS-24: how the server treats a pre-`initialize` request, and a file counting its starts (ping-server.mjs).
+  if (opts.onProbe !== undefined) args.push("--on-probe", opts.onProbe);
+  if (opts.spawnLog !== undefined) args.push("--spawn-log", opts.spawnLog);
   return { command: Bun.which("node") ?? process.execPath, args };
 }
 

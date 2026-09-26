@@ -49,6 +49,11 @@
 // `buildHookRegistry` drops project/local entries wholesale in an untrusted workspace, so an entry
 // this invoker is asked to run has already passed it.
 //
+// ASYNC (WS-24): a hook DECLARED `async: true` on its handler, or one whose first stdout line ANNOUNCES
+// `{"async": true}`, is handed to the session's async queue (hooks/async-hooks.ts) and the runner is
+// answered at once -- see that file for what such a hook can still say, and the bounds on it. A
+// fail-closed gating hook never goes to the background.
+//
 // TIMEOUTS: the runner stays the SOLE timeout authority (60 s gating / 30 s observational,
 // hooks/runner.ts's own DEFAULT_*_TIMEOUT_MS, overridable per entry by the settings block's own
 // `timeout`). This invoker adds no second, independently-tuned clock -- the exact reasoning
@@ -60,6 +65,8 @@ import { envName, type BrandProfile, type HookEvent } from "@yanlinglabs/winter-
 import { FAIL_CLOSED_EVENTS, HOOK_PROCESS_OUTPUT, type HookInvocationRequest, type HookInvoker, type HookProcessOutput } from "./runner.ts";
 import { MAX_HOOK_STDOUT_CAPTURE } from "./bounds.ts";
 import type { SourcedHookEntry } from "./registry.ts";
+import { trackProcessGroup } from "../process-groups.ts";
+import { createAsyncHookQueue, DEFAULT_ASYNC_HOOK_TIMEOUT_MS, type AsyncHookQueue } from "./async-hooks.ts";
 
 /** Grace between SIGTERM and SIGKILL. Short: by the time this fires the runner has already given up on the hook. */
 export const COMMAND_HOOK_KILL_GRACE_MS = 250;
@@ -106,6 +113,13 @@ export interface CommandHookInvokerOptions {
   transcriptPath?: string;
   /** WS-23: the stdin input's `permission_mode`, read at invocation time (it changes mid-session). */
   permissionMode?: () => string | undefined;
+  /** WS-24: where backgrounded (async) hooks go. Defaults to a fresh `createAsyncHookQueue()`, exposed as the invoker's `asyncHooks`. */
+  asyncHooks?: AsyncHookQueue;
+}
+
+/** WS-24: the command invoker also OWNS the session's background hooks (hooks/async-hooks.ts). */
+export interface CommandHookInvoker extends HookInvoker {
+  readonly asyncHooks: AsyncHookQueue;
 }
 
 /**
@@ -115,18 +129,26 @@ export interface CommandHookInvokerOptions {
  * The entry list is snapshotted at construction, matching `buildHookRegistry`'s own "a registry is
  * immutable for the life of a run" contract -- a run builds both from the same entries.
  */
-export function createCommandHookInvoker(entries: readonly SourcedHookEntry[], opts: CommandHookInvokerOptions): HookInvoker {
-  const commandsById = new Map<string, { command: string; pluginRoot?: string; failClosed: boolean }>();
+export function createCommandHookInvoker(entries: readonly SourcedHookEntry[], opts: CommandHookInvokerOptions): CommandHookInvoker {
+  const commandsById = new Map<string, { command: string; pluginRoot?: string; failClosed: boolean; async: boolean; timeoutMs?: number }>();
   for (const entry of entries) {
     if (entry.command !== undefined && entry.command.length > 0) {
-      commandsById.set(entry.id, { command: entry.command, ...(entry.pluginRoot !== undefined ? { pluginRoot: entry.pluginRoot } : {}), failClosed: entry.failClosed === true });
+      commandsById.set(entry.id, {
+        command: entry.command,
+        ...(entry.pluginRoot !== undefined ? { pluginRoot: entry.pluginRoot } : {}),
+        failClosed: entry.failClosed === true,
+        async: entry.async === true,
+        ...(entry.timeoutMs !== undefined ? { timeoutMs: entry.timeoutMs } : {}),
+      });
     }
   }
   const killGraceMs = opts.killGraceMs ?? COMMAND_HOOK_KILL_GRACE_MS;
   const shellPath = opts.shellPath ?? "/bin/sh";
   const projectDir = opts.projectDir ?? opts.cwd;
+  const asyncHooks = opts.asyncHooks ?? createAsyncHookQueue();
 
   return {
+    asyncHooks,
     async invoke(request: HookInvocationRequest, invokeOpts: { signal: AbortSignal }): Promise<unknown> {
       const target = commandsById.get(request.hookId);
       if (target === undefined) return opts.next.invoke(request, invokeOpts);
@@ -135,7 +157,20 @@ export function createCommandHookInvoker(entries: readonly SourcedHookEntry[], o
       const input = commandHookInput(request, { cwd: opts.cwd, transcriptPath: opts.transcriptPath ?? "", ...(permissionMode !== undefined ? { permissionMode } : {}) });
       // Fix round 1 (I2): a fail-closed hook on a gating event must answer in JSON (see runCommandHook).
       const strictJson = target.failClosed && FAIL_CLOSED_EVENTS.has(request.event);
-      return runCommandHook(target.command, request.event, input, invokeOpts.signal, { cwd: opts.cwd, env, shellPath, killGraceMs, strictJson });
+      // WS-24: every hook but a fail-closed gating one may go to the background -- DECLARED (`async`
+      // on its handler; from-config.ts already refused it on a fail-closed gating hook, and strictJson
+      // re-checks) or ANNOUNCED (an `{"async": true}` first stdout line).
+      const background = strictJson
+        ? undefined
+        : {
+            queue: asyncHooks,
+            event: request.event,
+            hookName: request.toolName !== undefined ? `${request.event}:${request.toolName}` : request.event,
+            ...(request.toolUseID !== undefined ? { toolUseID: request.toolUseID } : {}),
+            ...(target.timeoutMs !== undefined ? { declaredTimeoutMs: target.timeoutMs } : {}),
+            declared: target.async,
+          };
+      return runCommandHook(target.command, request.event, input, invokeOpts.signal, { cwd: opts.cwd, env, shellPath, killGraceMs, strictJson, ...(background !== undefined ? { background } : {}) });
     },
   };
 }
@@ -171,6 +206,9 @@ export function commandHookInput(request: HookInvocationRequest, ctx: { cwd: str
     ...(request.agentID !== undefined ? { agent_id: request.agentID } : {}),
     hook_event_name: request.event,
     ...(request.toolName !== undefined ? { tool_name: request.toolName } : {}),
+    // WS-24: the MCP server behind the tool, and its own name there -- the sdk's `McpToolProvenance`.
+    ...(request.mcpServerName !== undefined ? { mcp_server_name: request.mcpServerName } : {}),
+    ...(request.mcpToolName !== undefined ? { mcp_tool_name: request.mcpToolName } : {}),
     ...(request.input !== undefined ? { tool_input: request.input } : {}),
     ...(request.toolUseID !== undefined ? { tool_use_id: request.toolUseID } : {}),
     ...payload,
@@ -202,13 +240,25 @@ function withProcessOutput<T extends object>(value: T, processOutput: HookProces
   return value;
 }
 
-async function runCommandHook(
-  command: string,
-  event: HookEvent,
-  input: Record<string, unknown>,
-  signal: AbortSignal,
-  cfg: { cwd: string; env: Record<string, string | undefined>; shellPath: string; killGraceMs: number; strictJson: boolean },
-): Promise<unknown> {
+interface HookProcess {
+  /** Settles when the process has exited and its pipes closed; rejects only when it could not be spawned. */
+  exited: Promise<{ code: number | null; signalName: NodeJS.Signals | null }>;
+  /** Resolves with the first stdout line once one is complete (never, if the process exits first). */
+  firstLine: Promise<string>;
+  stdout(): string;
+  stderr(): string;
+  /** SIGTERM the whole group now, SIGKILL after `graceMs` (the runner's timeout). */
+  terminate(graceMs: number): void;
+  /** SIGKILL the whole group now. Idempotent; a no-op once the process has exited. */
+  kill(): void;
+  /** Drop the escalation timer `terminate` armed. */
+  clearTimers(): void;
+}
+
+/** WS-24: the most bytes the first stdout line may take and still be read as an `{"async": true}` announcement. */
+const MAX_ASYNC_ANNOUNCEMENT_CHARS = 4096;
+
+function startHookProcess(command: string, input: Record<string, unknown>, cfg: { cwd: string; env: Record<string, string | undefined>; shellPath: string }): HookProcess {
   // ARGV FORM, never `shell: true`. The command itself is an author-supplied shell string (that is
   // what a `{type:"command"}` block IS), so a shell interprets it -- but it is passed as an ARGUMENT
   // to that shell, never concatenated into a larger command line. Nothing from the REQUEST is ever
@@ -223,6 +273,10 @@ async function runCommandHook(
     // process-group discipline sandbox/spawn.ts applies).
     detached: true,
   });
+  // WS-24: mirrored to an embedded session's host while the hook's group lives (process-groups.ts).
+  const releaseGroup = child.pid !== undefined ? trackProcessGroup(child.pid, "hook") : () => {};
+  child.once("close", releaseGroup);
+  child.once("error", releaseGroup);
 
   let killTimer: ReturnType<typeof setTimeout> | undefined;
   const killTree = (sig: NodeJS.Signals): void => {
@@ -239,50 +293,153 @@ async function runCommandHook(
     }
   };
 
+  let stdout = "";
+  let stderr = "";
+  let resolveFirstLine!: (line: string) => void;
+  const firstLine = new Promise<string>((resolve) => (resolveFirstLine = resolve));
+  let firstLineSeen = false;
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    // Fix round 1 (C1): bounded like stderr (hooks/bounds.ts's MAX_HOOK_STDOUT_CAPTURE). A script
+    // that floods stdout costs a bounded buffer; a JSON answer cut here fails to parse -- its error.
+    if (stdout.length < MAX_HOOK_STDOUT_CAPTURE) stdout += chunk.slice(0, MAX_HOOK_STDOUT_CAPTURE - stdout.length);
+    if (!firstLineSeen) {
+      const nl = stdout.indexOf("\n");
+      if (nl !== -1 || stdout.length > MAX_ASYNC_ANNOUNCEMENT_CHARS) {
+        firstLineSeen = true;
+        resolveFirstLine(nl !== -1 ? stdout.slice(0, nl) : "");
+      }
+    }
+  });
+  child.stderr.on("data", (chunk: string) => {
+    if (stderr.length < MAX_STDERR_CAPTURE) stderr += chunk;
+  });
+
+  // The exit promise is armed FIRST, before anything is awaited. `error` (a spawn that failed
+  // outright -- no such shell, permission denied) can fire on the very next tick, and a listener
+  // attached after an intervening `await` misses it: the promise then never settles and the whole
+  // invocation hangs until the runner's timeout. Observed, not theorised -- the "cannot be spawned"
+  // fixture below hung the suite before this ordering was fixed.
+  const exited = new Promise<{ code: number | null; signalName: NodeJS.Signals | null }>((resolveExit, rejectExit) => {
+    child.on("error", rejectExit);
+    child.on("close", (code, signalName) => resolveExit({ code, signalName }));
+  });
+
+  // claude's snake_case input (see this file's header). Written fire-and-forget: a hook that exits
+  // without reading stdin produces EPIPE, which is normal (the error listener swallows it), and
+  // awaiting the write's callback would be a second promise that can outlive a killed child.
+  child.stdin.on("error", () => {
+    /* EPIPE when a hook exits without reading stdin -- normal, not a failure */
+  });
+  child.stdin.end(`${JSON.stringify(input)}\n`);
+
+  return {
+    exited,
+    firstLine,
+    stdout: () => stdout,
+    stderr: () => stderr.slice(0, MAX_STDERR_CAPTURE),
+    terminate(graceMs: number): void {
+      killTree("SIGTERM");
+      killTimer = setTimeout(() => killTree("SIGKILL"), graceMs);
+      // Never hold the event loop open on the escalation timer alone.
+      killTimer.unref?.();
+    },
+    kill: () => killTree("SIGKILL"),
+    clearTimers(): void {
+      if (killTimer !== undefined) clearTimeout(killTimer);
+    },
+  };
+}
+
+/**
+ * WS-24: an `{"async": true, "asyncTimeout"?: <ms>}` first line -- the announcement that the rest of the
+ * hook runs in the background (hooks/async-hooks.ts). `undefined` for any other line.
+ */
+function asyncAnnouncement(line: string): { value: Record<string, unknown>; timeoutMs?: number } | undefined {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("{")) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || (parsed as { async?: unknown }).async !== true) return undefined;
+  const timeout = (parsed as { asyncTimeout?: unknown }).asyncTimeout;
+  return { value: parsed as Record<string, unknown>, ...(typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0 ? { timeoutMs: timeout } : {}) };
+}
+
+/** WS-24: what a backgrounded hook is handed to the async queue as. */
+interface BackgroundTarget {
+  queue: AsyncHookQueue;
+  event: HookEvent;
+  hookName: string;
+  toolUseID?: string;
+  /** The handler's own `timeout` (already ms), when it declared one. */
+  declaredTimeoutMs?: number;
+}
+
+function adoptInBackground(proc: HookProcess, target: BackgroundTarget, stdoutOffset: number, announcedTimeoutMs?: number): void {
+  target.queue.adopt({
+    event: target.event,
+    hookName: target.hookName,
+    ...(target.toolUseID !== undefined ? { toolUseID: target.toolUseID } : {}),
+    // Never rejects: a hook that could not even be spawned simply says nothing.
+    finished: proc.exited.then(
+      (exit) => ({ exitCode: exit.signalName !== null ? null : exit.code, stdout: proc.stdout().slice(stdoutOffset) }),
+      () => ({ exitCode: null, stdout: "" }),
+    ),
+    kill: () => proc.kill(),
+    // An ANNOUNCED `asyncTimeout` is the hook's own statement of its background budget, so it outranks the
+    // handler's generic `timeout` (which governed the synchronous wait up to that line).
+    timeoutMs: announcedTimeoutMs ?? target.declaredTimeoutMs ?? DEFAULT_ASYNC_HOOK_TIMEOUT_MS,
+  });
+}
+
+async function runCommandHook(
+  command: string,
+  event: HookEvent,
+  input: Record<string, unknown>,
+  signal: AbortSignal,
+  cfg: { cwd: string; env: Record<string, string | undefined>; shellPath: string; killGraceMs: number; strictJson: boolean; background?: BackgroundTarget & { declared: boolean } },
+): Promise<unknown> {
+  const proc = startHookProcess(command, input, cfg);
+
+  // WS-24, door 1 -- DECLARED async: the hook never had a synchronous answer to give. The runner is
+  // answered at once and never waits; the runner's signal is not attached (its timeout is for a hook it
+  // waits on), and the job's own timeout governs from here (hooks/async-hooks.ts).
+  if (cfg.background?.declared === true) {
+    adoptInBackground(proc, cfg.background, 0);
+    return { async: true };
+  }
+
+  let backgrounded = false;
   const onAbort = (): void => {
-    killTree("SIGTERM");
-    killTimer = setTimeout(() => killTree("SIGKILL"), cfg.killGraceMs);
-    // Never hold the event loop open on the escalation timer alone.
-    killTimer.unref?.();
+    if (!backgrounded) proc.terminate(cfg.killGraceMs);
   };
 
   try {
     if (signal.aborted) onAbort();
     else signal.addEventListener("abort", onAbort, { once: true });
 
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      // Fix round 1 (C1): bounded like stderr (hooks/bounds.ts's MAX_HOOK_STDOUT_CAPTURE). A script
-      // that floods stdout costs a bounded buffer; a JSON answer cut here fails to parse -- its error.
-      if (stdout.length < MAX_HOOK_STDOUT_CAPTURE) stdout += chunk.slice(0, MAX_HOOK_STDOUT_CAPTURE - stdout.length);
-    });
-    child.stderr.on("data", (chunk: string) => {
-      if (stderr.length < MAX_STDERR_CAPTURE) stderr += chunk;
-    });
+    // WS-24, door 2 -- an ANNOUNCED async hook: a first stdout line `{"async": true}` answers the runner
+    // NOW and the process runs on in the background. Never for a fail-closed gating hook (strictJson):
+    // its answer must arrive before the call, so it waits for the exit as always, and an `async` answer
+    // is its malformed-output error (runner.ts).
+    if (cfg.background !== undefined && !cfg.strictJson) {
+      const first = await Promise.race([proc.firstLine.then((line) => ({ line })), proc.exited.then(() => undefined, () => undefined)]);
+      const announced = first !== undefined ? asyncAnnouncement(first.line) : undefined;
+      if (announced !== undefined) {
+        backgrounded = true;
+        adoptInBackground(proc, cfg.background, first!.line.length + 1, announced.timeoutMs);
+        return announced.value;
+      }
+    }
 
-    // The exit promise is armed FIRST, before anything is awaited. `error` (a spawn that failed
-    // outright -- no such shell, permission denied) can fire on the very next tick, and a listener
-    // attached after an intervening `await` misses it: the promise then never settles and the whole
-    // invocation hangs until the runner's timeout. Observed, not theorised -- the "cannot be spawned"
-    // fixture below hung the suite before this ordering was fixed.
-    const exitPromise = new Promise<{ code: number | null; signalName: NodeJS.Signals | null }>((resolveExit, rejectExit) => {
-      child.on("error", rejectExit);
-      child.on("close", (code, signalName) => resolveExit({ code, signalName }));
-    });
-
-    // claude's snake_case input (see this file's header). Written fire-and-forget: a hook that exits
-    // without reading stdin produces EPIPE, which is normal (the error listener swallows it), and
-    // awaiting the write's callback would be a second promise that can outlive a killed child.
-    child.stdin.on("error", () => {
-      /* EPIPE when a hook exits without reading stdin -- normal, not a failure */
-    });
-    child.stdin.end(`${JSON.stringify(input)}\n`);
-
-    const exit = await exitPromise;
-    const boundedStderr = stderr.slice(0, MAX_STDERR_CAPTURE);
+    const exit = await proc.exited;
+    const boundedStderr = proc.stderr();
+    const stdout = proc.stdout();
     const processOutput: HookProcessOutput = { stdout: stdout.slice(0, MAX_STDOUT_ECHO), stderr: boundedStderr, exitCode: exit.code };
 
     if (exit.signalName !== null) {
@@ -312,9 +469,10 @@ async function runCommandHook(
     return typeof parsed === "object" && parsed !== null ? withProcessOutput(parsed, processOutput) : parsed;
   } finally {
     // Every path, including a throw and an abort: an abandoned hook process must never outlive its
-    // invocation. macOS has no `timeout(1)`, so this is the only backstop there is.
+    // invocation. macOS has no `timeout(1)`, so this is the only backstop there is. WS-24: except a
+    // BACKGROUNDED one, which the async queue now owns (its timeout, its kill, session end).
     signal.removeEventListener("abort", onAbort);
-    if (killTimer !== undefined) clearTimeout(killTimer);
-    killTree("SIGKILL");
+    proc.clearTimers();
+    if (!backgrounded) proc.kill();
   }
 }

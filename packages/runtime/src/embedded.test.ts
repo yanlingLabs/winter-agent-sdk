@@ -533,3 +533,134 @@ describe("the host's workflow worker command (workflows/sandbox.ts)", () => {
     }
   });
 });
+
+// WS-24: a Worker that dies without its own teardown must not ORPHAN the process groups its session
+// started -- `setsid` detached every one of them from the host, so only the host can reap them, and the
+// host can only reap what it was told about. The realm mirrors each group's birth and end
+// (process-groups.ts -> embedded-worker.ts -> embedded-host.ts's `processGroups()`).
+describe("WS-24: the session's process groups are mirrored to the host", () => {
+  function groupSession(mode: string, killGraceMs = 300): { proc: ReturnType<typeof spawnEmbeddedWorker>; err: string[]; reading: Promise<void>; pid: () => Promise<number> } {
+    const sessionId = crypto.randomUUID();
+    const proc = spawnEmbeddedWorker({
+      workerEntry: CRASH_WORKER_ENTRY,
+      spawn: { command: "winter", args: configArgv({ sessionId, cwd: tempDir("cwd"), model: "winter-test/hang" }), cwd: "/", env: sessionEnv({ WINTER_EMBEDDED_CRASH_FIXTURE: mode }) },
+      killGraceMs,
+    });
+    const err: string[] = [];
+    const reading = Promise.all([
+      (async () => { for await (const _ of proc.stdout) { /* drained */ } })(),
+      (async () => { for await (const c of proc.stderr!) err.push(c); })(),
+    ]).then(() => {});
+    proc.stdin.write(JSON.stringify({ type: "user", text: "hang please" }) + "\n");
+    const pid = async (): Promise<number> => {
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const match = /group (\d+)/.exec(err.join(""));
+        if (match !== null) return Number(match[1]);
+        if (Date.now() > deadline) throw new Error(`the fixture never reported its group: ${err.join("")}`);
+        await Bun.sleep(20);
+      }
+    };
+    return { proc, err, reading, pid };
+  }
+
+  // RUNNING, not merely present: a SIGKILLed child of a terminated Worker stays a zombie of THIS
+  // process (the Worker's loop that would have reaped it is gone), and `kill(pid, 0)` succeeds on a
+  // zombie. A zombie runs nothing and holds nothing but its process-table slot.
+  const alive = (pid: number): boolean => {
+    const r = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" });
+    const stat = r.stdout.toString().trim();
+    return stat.length > 0 && !stat.startsWith("Z");
+  };
+  const reap = (pid: number): void => {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  };
+
+  test("a TERMINATED spinning Worker leaves its live group listed -- and the group really is orphaned until the host kills it", async () => {
+    const { proc, reading, pid } = groupSession("orphan-spin");
+    const group = await pid();
+    try {
+      // Messages are ordered: the ledger's `add` was posted before the fixture's own report.
+      expect(proc.processGroups()).toContain(group);
+      proc.kill(); // the abort cannot be answered by a spinning Worker; the grace ends in terminate()
+      expect(await proc.exited).toEqual({ code: null, signal: "SIGKILL" });
+      await reading;
+      expect(proc.processGroups()).toEqual([group]);
+      expect(alive(group)).toBe(true); // nothing in the Worker reaped it: this is the orphan the host must kill
+    } finally {
+      reap(group);
+    }
+    const deadline = Date.now() + 3000;
+    while (alive(group) && Date.now() < deadline) await Bun.sleep(20);
+    expect(alive(group)).toBe(false);
+  }, 30_000);
+
+  test("a Worker that CRASHES leaves its live group listed too", async () => {
+    const { proc, reading, pid } = groupSession("orphan-throw");
+    const group = await pid();
+    try {
+      expect(await proc.exited).toEqual({ code: 1, signal: null });
+      await reading;
+      expect(proc.processGroups()).toEqual([group]);
+      expect(alive(group)).toBe(true);
+    } finally {
+      reap(group);
+    }
+  }, 30_000);
+
+  test("a group that ends is removed, and a healthy close leaves nothing listed", async () => {
+    const { proc, err, reading, pid } = groupSession("group-done");
+    const group = await pid();
+    const deadline = Date.now() + 10_000;
+    while (!err.join("").includes("group-done") && Date.now() < deadline) await Bun.sleep(20);
+    expect(err.join("")).toContain("group-done");
+    expect(proc.processGroups()).not.toContain(group);
+    proc.kill();
+    expect(await proc.exited).toEqual({ code: 0, signal: null });
+    await reading;
+    expect(proc.processGroups()).toEqual([]);
+  }, 30_000);
+
+  test("fix round 1: a CLEAN close whose teardown killed a live group leaves nothing listed -- exit waits for the group's removal", async () => {
+    const { proc, reading, pid } = groupSession("task-group");
+    const group = await pid();
+    try {
+      expect(proc.processGroups()).toContain(group);
+      proc.kill(); // the abort's sweep SIGKILLs the task group synchronously; its leader closes a moment later
+      expect(await proc.exited).toEqual({ code: 0, signal: null });
+      await reading;
+      expect(proc.processGroups()).toEqual([]);
+    } finally {
+      reap(group);
+    }
+  }, 30_000);
+
+  test("the host ignores a process-group message that names no real group leader (it would later be SIGKILLed as -pgid)", () => {
+    const listeners: Array<(event: MessageEvent) => void> = [];
+    const fake = {
+      postMessage: () => {},
+      terminate: () => {},
+      addEventListener: (type: string, listener: (event: MessageEvent) => void) => {
+        if (type === "message") listeners.push(listener);
+      },
+      set onmessage(listener: (event: MessageEvent) => void) {
+        listeners.push(listener);
+      },
+      set onerror(_listener: unknown) {},
+    };
+    const proc = spawnEmbeddedWorker({ workerEntry: "unused", spawn: { command: "winter", args: [], cwd: "/", env: {} }, createWorker: () => fake as unknown as Worker });
+    const deliver = (data: unknown): void => {
+      for (const listener of listeners) listener({ data } as MessageEvent);
+    };
+    for (const pgid of [0, 1, -5, 3.5, Number.NaN, process.pid]) deliver({ kind: "process-group", op: "add", pgid });
+    expect(proc.processGroups()).toEqual([]);
+    deliver({ kind: "process-group", op: "add", pgid: 4242 });
+    deliver({ kind: "process-group", op: "add", pgid: 4243 });
+    deliver({ kind: "process-group", op: "remove", pgid: 4242 });
+    expect(proc.processGroups()).toEqual([4243]);
+  });
+});

@@ -591,6 +591,8 @@ export interface McpLifecycle {
   // "counts as ready"), but WS-09's own "first live call" trigger is scoped, in this
   // implementation, to ORDINARY TOOL CALLS (installExecutorsForSlot's own on-demand connect) and
   // deliberately NOT extended to these bridge tools -- a disclosed scope choice, not an oversight.
+  // WS-24 fix round 1: once that first ordinary call HAS connected a cached server, the slot moves to
+  // `"connected"`, so from then on these accept it like any other live server.
   listConnectedServerNames(): string[];
   getConnectedClient(server: string): ConnectedMcpClient | undefined;
   // WS-09 §1.4: "re-queries connected servers' tool lists; never establishes a disconnected
@@ -685,6 +687,18 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
                 // whatever superseded it owns the slot's state now; this call just reports "not
                 // connected" rather than resurrecting it.
                 return { output: `Error: mcp server "${slot.name}" is not connected (state: ${slot.state})`, isError: true };
+              }
+              // WS-24 fix round 1: a committed on-demand connect IS a live connection, so the slot says so.
+              // It used to stay "cached" with a client behind it: a tool-list change on it parked forever
+              // (onToolListChangedFor only refreshes a connected slot), and RefreshMcpTools and the
+              // resource tools refused a server that was in fact live. Once, by whichever caller gets here
+              // first (a concurrent sharer of the same attempt finds the slot already connected), and never
+              // over a supersede (the state check -- disable/remove/reconnect move it off "cached").
+              // `slots.get(slot.name) === slot`: a slot REPLACED meanwhile (addAndConnect under the same name)
+              // must not have its successor's state overwritten -- setSlotState writes by name.
+              if (slots.get(slot.name) === slot && slot.state === "cached" && slot.client !== undefined && (gen === undefined || isCurrentAttempt(slot, gen))) {
+                setSlotState(slot.name, "connected", { toolNames: slot.toolNames });
+                replayParkedToolListChange(slot);
               }
             } catch (err) {
               if (gen === undefined || !isCurrentAttempt(slot, gen)) {

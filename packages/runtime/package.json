@@ -52,6 +52,11 @@
       "types": "./dist/version.d.ts",
       "bun": "./src/version.ts",
       "default": "./dist/version.js"
+    },
+    "./mcp-client": {
+      "types": "./dist/mcp-client.d.ts",
+      "bun": "./src/mcp-client.ts",
+      "default": "./dist/mcp-client.js"
     }
   },
   "files": [
@@ -93,6 +98,10 @@
       "./version": {
         "types": "./dist/version.d.ts",
         "default": "./dist/version.js"
+      },
+      "./mcp-client": {
+        "types": "./dist/mcp-client.d.ts",
+        "default": "./dist/mcp-client.js"
       }
     }
   },

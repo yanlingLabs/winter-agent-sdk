@@ -274,22 +274,13 @@ describe("convertFetchedHtml -- security review finding N2: nesting-driven outpu
     return "<blockquote>".repeat(500) + "<pre>" + "a\n".repeat(400_000);
   }
 
-  function measureRssMb<T>(fn: () => T): { result: T; ms: number; peakRssMb: number } {
-    // WHY a delta, not an absolute: every test file in a full-repo `bun test` shares one
-    // process, so absolute RSS already sits at 1.2-1.3 GB from earlier files and an absolute
-    // < 1000 MB guard fails on a warm process. The guard's intent is "no 7+ GB spike from THIS
-    // conversion" (pre-fix peak ~7,400 MB), so only rss-after-minus-rss-before can catch a real
-    // regression without failing on shared-process warmth. A forced GC first keeps the baseline
-    // from carrying one test's garbage into the next test's delta.
-    const t0 = Date.now();
-    collectGarbageForRss();
-    const before = process.memoryUsage().rss;
-    const result = fn();
-    const after = process.memoryUsage().rss;
-    const deltaMb = Math.max(0, Math.round((after - before) / (1024 * 1024)));
-    return { result, ms: Date.now() - t0, peakRssMb: deltaMb };
-  }
-
+  // WHY the two tests below measure a DELTA, not an absolute: every test file in a full-repo `bun test`
+  // shares one process, so absolute RSS already sits at 1.2-1.3 GB from earlier files and an absolute
+  // < 1000 MB guard fails on a warm process. The guard's intent is "no 7+ GB spike from THIS
+  // conversion" (pre-fix peak ~7,400 MB), so only rss-after-minus-rss-before can catch a real
+  // regression without failing on shared-process warmth. A forced GC first keeps the baseline from
+  // carrying one test's garbage into the next test's delta. (WS-24: the unused helper that used to
+  // carry this note is gone; the tests inline the same measurement.)
   function collectGarbageForRss(): void {
     try {
       (Bun as unknown as { gc?: (force: boolean) => void }).gc?.(true);

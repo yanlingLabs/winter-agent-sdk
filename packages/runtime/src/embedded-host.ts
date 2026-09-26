@@ -70,6 +70,20 @@ export interface EmbeddedWorkerProcess extends SpawnedRuntimeProcess {
   terminate(): void;
   /** `running` → (`kill()`) `stopping` → `closed`. `closed` means `exited` has settled. */
   readonly state: "running" | "stopping" | "closed";
+  /**
+   * WS-24: the process groups the session reported live and has not reported ended
+   * (`EmbeddedProcessGroupMessage`), oldest first. Still readable once `exited` has settled -- which is
+   * when it matters: a Worker that closed WITHOUT its own teardown (`terminate()` of a spinning Worker,
+   * a crash) leaves here exactly the groups it orphaned, and nothing but the host can reap them (each
+   * was `setsid`-detached). A healthy close leaves it empty, because every removal is posted before
+   * `exit`.
+   *
+   * The host OWNS the reaping, deliberately: SIGKILL `-pgid` for each entry once `exited` settles
+   * (Winter's daemon does, in `runtime-sdk/embedded.ts`). Residual: a group that ended in the instant
+   * between its last message and the kill leaves a pgid the OS could in principle hand to a new group
+   * leader -- pids are not reused while any member of the group lives, so only that race window remains.
+   */
+  processGroups(): readonly number[];
 }
 
 /**
@@ -105,6 +119,8 @@ export function spawnEmbeddedWorker(opts: SpawnEmbeddedWorkerOptions): EmbeddedW
   let stdinEnded = false;
   let graceTimer: ReturnType<typeof setTimeout> | undefined;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  // WS-24: see `EmbeddedWorkerProcess.processGroups`. Insertion-ordered, so "oldest first" is free.
+  const processGroups = new Set<number>();
 
   let settleExited!: (v: { code: number | null; signal: string | null }) => void;
   const exited = new Promise<{ code: number | null; signal: string | null }>((resolve) => {
@@ -160,6 +176,15 @@ export function spawnEmbeddedWorker(opts: SpawnEmbeddedWorkerOptions): EmbeddedW
         return;
       case "stderr":
         stderr.write(message.chunk);
+        return;
+      case "process-group":
+        // Validated, because the host will later SIGKILL `-pgid`: a non-integer, 0, 1 or a negative id
+        // would make that kill mean "my own group" or "every process I can signal".
+        // Nor THIS process's own id: as a group, that is the host itself (the daemon checks it too, but a
+        // third-party host following the README kills what this lists).
+        if (!Number.isInteger(message.pgid) || message.pgid <= 1 || message.pgid === process.pid) return;
+        if (message.op === "add") processGroups.add(message.pgid);
+        else processGroups.delete(message.pgid);
         return;
       case "exit":
         exitCode = message.code;
@@ -240,5 +265,6 @@ export function spawnEmbeddedWorker(opts: SpawnEmbeddedWorkerOptions): EmbeddedW
     get state() {
       return state;
     },
+    processGroups: () => [...processGroups],
   };
 }

@@ -9,7 +9,7 @@ import { createElicitationAsker } from "./elicitation.ts";
 import { createInMemoryDiscoveryCache, createMcpLifecycle, resolveMcpServerSources, type McpServerSource, type ResolvedMcpServerEntry } from "./lifecycle.ts";
 import type { McpEnvConfig } from "./env.ts";
 import type { InProcessMcpServer } from "./transports/sdk.ts";
-import { createFixtureMcpServer, defaultFixtureSpec, stdioFixtureCommand, type FixtureServerSpec } from "./test-fixtures.ts";
+import { createFixtureMcpServer, defaultFixtureSpec, stdioFixtureCommand, withModernHttpFixture, type FixtureServerSpec } from "./test-fixtures.ts";
 
 const NO_ELICIT = createElicitationAsker(undefined);
 
@@ -886,12 +886,9 @@ describe("fix round 1 (MAJOR M2): connect-completion race protection (per-slot g
         expect(r1.isError).not.toBe(true);
         expect(r2.isError).not.toBe(true);
         expect(fixture.initializeCount()).toBe(1); // exactly one real handshake serves BOTH callers
-        // Pre-existing, unrelated-to-this-fix behavior: a successful on-demand connect never itself
-        // transitions the wire state past "cached" (WS-09 §2.1 -- tools stay advertised under
-        // "cached" either way; only `slot.client` internally distinguishes "not yet dialed" from
-        // "live"). This assertion exists to document that fact for this test's own reader, not to
-        // re-litigate it.
-        expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("cached");
+        // WS-24 fix round 1: the shared on-demand connect moves the slot to "connected" (it used to
+        // stay "cached" with a live client behind it) -- once, whichever caller got there first.
+        expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("connected");
       } finally {
         await lifecycle.dispose();
       }
@@ -1122,4 +1119,46 @@ describe("WS-23 fix round 1: listChanged refreshes are single-flight; a change d
       await server.close();
     }
   }, 10_000);
+});
+
+// --- WS-24 fix round 1: a discovery-cached server becomes "connected" at its on-demand connect -------
+
+describe("WS-24 fix round 1: a cached server's first live call makes it connected", () => {
+  test("after the first call it is connected, visible to the bridge tools, and a list change is APPLIED, not parked", async () => {
+    const tool = (name: string) => ({ name, inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text", text: name }] }) });
+    const spec: FixtureServerSpec = { ...defaultFixtureSpec(), toolsListChanged: true, tools: [tool("before")] };
+    await withModernHttpFixture(spec, async (url, notify) => {
+      const cache = createInMemoryDiscoveryCache();
+      cache.set("cached-lc", [{ name: "before", inputSchema: { type: "object", properties: {} } }]);
+      const lifecycle = createMcpLifecycle({
+        cwd: process.cwd(),
+        servers: [{ name: "cached-lc", origin: "explicit", config: { type: "http", url: url.toString() } }],
+        envConfig: fastEnv({ discoveryCache: true, timeoutMs: 5000 }),
+        elicitationAsk: NO_ELICIT,
+        discoveryCache: cache,
+      });
+      try {
+        await lifecycle.start();
+        expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("cached");
+        const first = await getRegisteredTool("mcp__cached-lc__before")!.executor!.execute({}, {} as never);
+        expect(first.isError).not.toBe(true);
+        expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("connected");
+        expect(lifecycle.listConnectedServerNames()).toEqual(["cached-lc"]);
+        expect(lifecycle.getConnectedClient("cached-lc")).toBeDefined();
+
+        spec.tools = [tool("after")];
+        // The listen stream opens just after connect: announce until the refresh lands (each wait
+        // outlasts the client's 300 ms debounce).
+        for (let i = 0; i < 10 && lifecycle.stateSource.snapshot()[0]!.toolNames[0] !== "after"; i++) {
+          notify.toolsChanged();
+          await new Promise((r) => setTimeout(r, 400));
+        }
+        expect(lifecycle.stateSource.snapshot()[0]).toMatchObject({ state: "connected", toolNames: ["after"] });
+        expect(getRegisteredTool("mcp__cached-lc__after")).toBeDefined();
+        expect(getRegisteredTool("mcp__cached-lc__before")).toBeUndefined();
+      } finally {
+        await lifecycle.dispose();
+      }
+    });
+  }, 20_000);
 });

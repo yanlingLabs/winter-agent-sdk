@@ -18,6 +18,7 @@ import {
   type SandboxSettings,
 } from "./profile.ts";
 import type { GlobDenyEntry } from "../permissions/file-rules.ts";
+import { trackProcessGroup } from "../process-groups.ts";
 
 // ---------------------------------------------------------------------------------------------
 // §3: sandbox availability (darwin + /usr/bin/sandbox-exec present)
@@ -305,6 +306,10 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
       detached: true,
       env: opts.env,
     });
+    // WS-24: the group is live from here until its leader closes -- mirrored to an embedded session's
+    // host, which reaps it if the Worker dies without running the kill doors below (process-groups.ts).
+    // Recorded BEFORE `onSpawned`, so no caller can learn the pid ahead of the ledger.
+    const releaseGroup = child.pid !== undefined ? trackProcessGroup(child.pid, "command") : () => {};
     if (child.pid !== undefined) opts.onSpawned?.({ pid: child.pid });
 
     let streamedBytes = 0;
@@ -346,6 +351,7 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
 
     let spawnError: string | undefined;
     const finish = (exitCode: number | null) => {
+      releaseGroup();
       clearTimeout(timer);
       opts.signal?.removeEventListener("abort", onAbort);
       resolve({
