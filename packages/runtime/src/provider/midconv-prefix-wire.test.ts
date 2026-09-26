@@ -145,6 +145,44 @@ describe("the cached prefix on the wire through mid-session changes (WS-23 midco
     expect(systems).toContain(JSON.stringify({ role: "system", content: [], output_config: { effort: "low" } }));
   });
 
+  test("RULING (fix round 1), Anthropic: a late DEFERRED MCP tool is declared `defer_loading` at the END of `tools` and not announced -- no change message, messages still prefix", async () => {
+    const SERVER = "wsmidlatedeferred";
+    const model = "anthropic/claude-opus-5-5";
+    const fake = await startAnthropicFake(() => ({ blocks: [{ type: "text", text: "ok" }], stopReason: "end_turn" }));
+    cleanups.push(() => fake.close());
+    cleanups.push(() => unregisterMcpServerTools(SERVER));
+    const cwd = mkdtempSync(join(tmpdir(), "winter-midconv-wire-cwd-"));
+    cleanups.push(() => rmSync(cwd, { recursive: true, force: true }));
+    await drive({
+      config: {
+        sessionId: "midconv-wire-anthropic-deferred",
+        cwd,
+        model,
+        effort: "high",
+        persistSession: false,
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        toolSearchEnabled: true,
+        capabilities: ["winter.mcp"],
+        provider: { providerId: "anthropic", authRef: { kind: "inline", value: "fixture" }, connection: { baseUrl: fake.url, local: true } },
+      } as RuntimeConfig,
+      catalog: fakeAnthropicCatalog(fake.url, [model]),
+      family: "anthropic",
+      servers: [SERVER],
+      steps: [
+        { user: "one" },
+        { act: () => registerMcpServerTools(SERVER, [{ name: "lookup", description: "Look something up.", inputSchema: { type: "object" } }], { deferredDefault: true }) },
+        { user: "two" },
+      ],
+    });
+    const reqs = fake.requests.filter((r) => r.path === "/v1/messages");
+    expect(reqs).toHaveLength(2);
+    const [before, after] = reqs.map((r) => r.body["tools"] as Block[]);
+    expect(JSON.stringify(after!.slice(0, before!.length))).toBe(JSON.stringify(before));
+    expect(after!.at(-1)).toMatchObject({ name: `mcp__${SERVER}__lookup`, defer_loading: true });
+    expect(JSON.stringify(reqs[1]!.body["messages"])).not.toContain("tool_addition");
+  });
+
   test("OpenAI (gpt-6-astra): an effort change, then a ToolSearch load -- `tools` byte-identical (the loaded tool arrives in tool_search_output), effort pinned, each input prefixes the next", async () => {
     const SERVER = "wsmidcrm";
     const DEFERRED = `mcp__${SERVER}__lookup`;

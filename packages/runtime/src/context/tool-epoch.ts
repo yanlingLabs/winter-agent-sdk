@@ -193,10 +193,13 @@ function diffAnthropic(live: readonly ProviderToolSpec[], state: ToolState, mech
       if (declaredAs === undefined) {
         // A tool that appeared mid-session and is deferred: declared `defer_loading: true` AFTER the
         // frozen list (never sorted in -- the deferred tail is outside the rendered prefix, the frozen
-        // head is not) and announced by reference, claude 2.1.282's late-tool-additions shape.
+        // head is not) and NOT announced. RULING (fix round 1): it stays deferred like every tool declared
+        // at the start -- ToolSearch surfaces it when the model asks, which is what deferral is for. The
+        // live probe (Anthropic request #14) showed appending the declaration keeps the cache. claude
+        // 2.1.282 announces late deferred MCP tools by reference instead; that puts every late server's
+        // definitions into context, which is the cost deferral exists to avoid.
         if (!hasEagerDeclared) return { kind: "new-epoch", reason: "no non-deferred tool is declared, so a late deferred declaration would be refused" };
         declarations.push({ ...spec });
-        add.push({ type: "reference", name: spec.name });
         continue;
       }
       if (toolDefinitionKey(declaredAs) === toolDefinitionKey(spec)) continue;

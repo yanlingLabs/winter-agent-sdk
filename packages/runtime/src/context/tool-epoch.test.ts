@@ -39,9 +39,16 @@ describe("the diff table, by reference (`mid-conversation-tool-changes-2026-07-0
     expect(diff).toEqual({ kind: "change", change: { declare: [spec("C", "C tool", { deferLoading: true })], remove: [], add: [{ type: "reference", name: "C" }] } });
   });
 
-  test("a late DEFERRED tool is declared and announced by reference (brief item 2, claude's late-tool-additions shape)", () => {
+  test("RULING (fix round 1): a late DEFERRED tool is declared after the frozen list but NOT announced -- it stays deferred until ToolSearch loads it", () => {
     const diff = diffToolState([spec("A"), spec("B"), spec("D", "D tool", { deferLoading: true }), spec("E", "E tool", { deferLoading: true })], stateOf(history), "anthropic-reference");
-    expect(diff).toEqual({ kind: "change", change: { declare: [spec("E", "E tool", { deferLoading: true })], remove: [], add: [{ type: "reference", name: "E" }] } });
+    expect(diff).toEqual({ kind: "change", change: { declare: [spec("E", "E tool", { deferLoading: true })], remove: [], add: [] } });
+    if (diff.kind !== "change") throw new Error("unreachable");
+    const after = [...history, changes(diff.change)];
+    // Declared, not available; a declarations-only entry sends no message.
+    const state = stateOf(after);
+    expect(state.declared.at(-1)!.name).toBe("E");
+    expect(state.available.has("E")).toBe(false);
+    expect(buildRequestMessages(after, undefined, { toolChanges: { render: new Set([after.at(-1)!]) } }).some((m) => m.toolChanges !== undefined)).toBe(false);
   });
 
   test("a withdrawn tool is removed by reference; re-offering it later is a reference addition, never a new declaration", () => {
