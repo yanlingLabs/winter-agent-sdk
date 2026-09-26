@@ -89,7 +89,22 @@ const searchTools: TurnRequest["tools"] = [
 const searchHistory: ProviderMessageLike[] = [
   { role: "user", content: "find the order tools" },
   { role: "assistant", content: [{ type: "tool_use", id: "ts_1", name: "ToolSearch", input: { query: "orders" } }] },
-  { role: "tool", content: [{ type: "tool_result", tool_use_id: "ts_1", content: '{"matches":["mcp__crm__list_orders","NotebookEdit"]}', loadedTools: ["mcp__crm__list_orders", "NotebookEdit"] }] },
+  {
+    role: "tool",
+    content: [
+      {
+        type: "tool_result",
+        tool_use_id: "ts_1",
+        content: '{"matches":["mcp__crm__list_orders","NotebookEdit"]}',
+        loadedTools: ["mcp__crm__list_orders", "NotebookEdit"],
+        // What the engine stores at load time (review I-2): the definitions as they stood then.
+        loadedToolDefinitions: [
+          { name: "mcp__crm__list_orders", description: "mcp__crm__list_orders tool", inputSchema: { type: "object", properties: { q: { type: "string" } } }, namespace: "mcp__crm" },
+          { name: "NotebookEdit", description: "NotebookEdit tool", inputSchema: { type: "object", properties: { q: { type: "string" } } } },
+        ],
+      },
+    ],
+  },
   { role: "assistant", content: [{ type: "tool_use", id: "fc_1", name: "mcp__crm__list_orders", input: { q: "open" } }] },
   { role: "tool", content: [{ type: "tool_result", tool_use_id: "fc_1", content: "3 orders" }] },
 ];
@@ -122,6 +137,15 @@ describe("client tool search (WS-23 midconv item 4)", () => {
     });
     expect(input[3]).toEqual({ type: "message", role: "user", content: [{ type: "input_text", text: '{"matches":["mcp__crm__list_orders","NotebookEdit"]}' }] });
     expect(input[4]).toEqual({ type: "function_call", call_id: "fc_1", name: "list_orders", namespace: "mcp__crm", arguments: '{"q":"open"}' });
+  });
+
+  test("review I-2: the history renders from the STORED definitions -- a tool whose server disconnected, or that was redefined since, leaves every earlier tool_search_output and namespaced call byte-identical", () => {
+    const at = (tools: NonNullable<TurnRequest["tools"]>) => JSON.stringify((body({ tools })["input"] as unknown[]).slice(0, 6));
+    const live = at(searchTools!);
+    // The MCP server went away: neither of its tools is in the live list any more.
+    expect(at(searchTools!.filter((t) => !t.name.startsWith("mcp__crm__")))).toBe(live);
+    // A new description for a loaded tool: the history still shows the one the model was given.
+    expect(at(searchTools!.map((t) => (t.name === "mcp__crm__list_orders" ? { ...t, description: "reworded" } : t)))).toBe(live);
   });
 
   test("the codex backend keeps its required tool trio", () => {

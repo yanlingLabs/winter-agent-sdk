@@ -395,7 +395,13 @@ export type ContentBlock =
   // pattern), which is what surfaces a `defer_loading` tool without touching `tools`; every other
   // adapter ignores it, like the markers above. Persisted with the block, so a resumed session keeps
   // the references at the same positions and re-seeds its loaded set from them.
-  | { type: "tool_result"; tool_use_id: string; content: string | ContentBlock[]; is_error?: boolean; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean; loadFirst?: boolean; loadedTools?: string[] }
+  //
+  // WS-23 (midconv, review I-2): `loadedToolDefinitions` is the definitions those tools had WHEN THEY WERE
+  // LOADED (name, description, schema, and the MCP namespace they group under). An adapter that re-sends
+  // the loaded definitions in the history (OpenAI's `tool_search_output`) renders them from this copy,
+  // never from the live tool list: a server that later disconnects, or a tool whose description changes,
+  // must not rewrite what the model was shown -- that would bust the cache mid-history.
+  | { type: "tool_result"; tool_use_id: string; content: string | ContentBlock[]; is_error?: boolean; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean; loadFirst?: boolean; loadedTools?: string[]; loadedToolDefinitions?: LoadedToolDefinition[] }
   // --- Phase 6 Task 3 (R6-3, derived-shapes-p6.md item (f)): the variants a real provider produces --
   //
   // NOT declared by the pinned artifact: `redacted_thinking`, a `type: 'thinking'` literal and
@@ -418,6 +424,15 @@ export type ContentBlock =
   | { type: "thinking"; thinking: string; signature: string }
   | { type: "redacted_thinking"; data: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+
+/** WS-23 (midconv, review I-2): one loaded tool's definition as it stood at load time (see `tool_result.loadedToolDefinitions`). */
+export interface LoadedToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  /** The MCP server group (`mcp__<server>`) of an MCP tool whose name carries that prefix. */
+  namespace?: string;
+}
 
 // The engine's own turn-history record fed back to Provider.generate() on every call. Distinct
 // from the WIRE shape (assistant/user data frames, below): the wire has no "tool" role (tool
@@ -604,10 +619,17 @@ export function promptCacheKeyFor(config: { sessionId: string; agentId?: string 
   return config.agentId === undefined ? config.sessionId : `${config.sessionId}:${config.agentId}`;
 }
 
-/** WS-23: a tool_result without its `loadedTools` bookkeeping (see the tool-round frame write). */
+/** WS-23: a tool_result without its `loadedTools` / `loadedToolDefinitions` bookkeeping (see the tool-round frame write). */
 function withoutLoadedTools(block: Extract<ContentBlock, { type: "tool_result" }>): ContentBlock {
-  const { loadedTools: _loaded, ...rest } = block;
+  const { loadedTools: _loaded, loadedToolDefinitions: _definitions, ...rest } = block;
   return rest;
+}
+
+/** WS-23 (midconv): the MCP namespace (`mcp__<server>`) a tool's advertised name groups under, or `undefined`. */
+function mcpNamespaceFor(advertisedName: string, server: string | undefined): string | undefined {
+  if (server === undefined) return undefined;
+  const namespace = `mcp__${server}`;
+  return advertisedName.startsWith(`${namespace}__`) && advertisedName.length > namespace.length + 2 ? namespace : undefined;
 }
 
 /** WS-23: a named effort tier -- the string half of `TurnRequest["effort"]`. */
@@ -5108,6 +5130,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   let advertisedPartition = computeAdvertisedPartition();
   // WS-23: the names a ToolSearch call loaded, collected while that one call runs (see the execute site).
   let toolReferenceCollector: string[] | undefined;
+  /**
+   * WS-23 (midconv, review I-2): the definitions of the tools a ToolSearch call just loaded, AS THEY STAND
+   * NOW -- stored on the result so a later request re-renders exactly what the model was shown (the same
+   * rendering `tools` uses, `toolSpecFor`), whatever the live registry says by then.
+   */
+  const loadedDefinitionsFor = (advertised: readonly string[]): LoadedToolDefinition[] => {
+    if (advertised.length === 0) return [];
+    const byAdvertised = new Map([...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => [d.advertisedName, d] as const));
+    return advertised.flatMap((name) => {
+      const descriptor = byAdvertised.get(name);
+      if (descriptor === undefined) return [];
+      const spec = toolSpecFor(descriptor);
+      const namespace = mcpNamespaceFor(spec.name, mcpServerOwningTool(descriptor.canonicalName));
+      return [{ name: spec.name, description: spec.description, inputSchema: spec.inputSchema, ...(namespace !== undefined ? { namespace } : {}) }];
+    });
+  };
   /** Canonical -> advertised: `loadedTools` names what `tools` carries, because that is what a `tool_reference` must name. */
   const advertisedNamesFor = (canonical: readonly string[] | undefined): string[] => {
     if (canonical === undefined || canonical.length === 0) return [];
@@ -7312,9 +7350,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const referenced = declareDeferred ? referencedToolNames(messages) : undefined;
     const namespaced = (spec: ProviderToolSpec, canonicalName: string): ProviderToolSpec => {
       if (!clientSearch) return spec;
-      const server = mcpServerOwningTool(canonicalName);
-      const namespace = server !== undefined ? `mcp__${server}` : undefined;
-      return namespace !== undefined && spec.name.startsWith(`${namespace}__`) && spec.name.length > namespace.length + 2 ? { ...spec, namespace } : spec;
+      const namespace = mcpNamespaceFor(spec.name, mcpServerOwningTool(canonicalName));
+      return namespace !== undefined ? { ...spec, namespace } : spec;
     };
     for (const descriptor of advertisedPartition.deferred) {
       const loaded = loadedToolSet.isLoaded(descriptor.canonicalName);
@@ -8945,13 +8982,21 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           const raced = await raceInterrupt(tools.execute(executedCall, { signal: turnAbort.signal, ...(decision.explicitApproval !== undefined ? { explicitApproval: decision.explicitApproval } : {}) }), interruptSignal);
           const loadedTools = advertisedNamesFor(toolReferenceCollector);
           toolReferenceCollector = undefined;
+          const loadedToolDefinitions = loadedDefinitionsFor(loadedTools);
           if (raced.kind === "interrupted") {
             interrupted = true;
             break;
           }
           // Spawn-surface parity (R-S4): an executor's `isError` rides the block as claude's own
           // `is_error: true` -- on the wire, into history, into persistence and into every adapter.
-          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: raced.value.output, ...(raced.value.isError === true ? { is_error: true } : {}), ...(loadedTools.length > 0 ? { loadedTools } : {}) });
+          resultBlocks.push({
+            type: "tool_result",
+            tool_use_id: call.id,
+            content: raced.value.output,
+            ...(raced.value.isError === true ? { is_error: true } : {}),
+            ...(loadedTools.length > 0 ? { loadedTools } : {}),
+            ...(loadedToolDefinitions.length > 0 ? { loadedToolDefinitions } : {}),
+          });
           // Task 10 (WS-08 §5; PreToolUse/PostToolUse/PostToolUseFailure "fire at the tool round"):
           // contribution-capable, observational at P2 — its own transformedOutput/extraContext
           // fields still have no consumer (a future WS-08 task's job); `classifierContext` DOES have

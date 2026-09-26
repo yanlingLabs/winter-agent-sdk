@@ -28,7 +28,7 @@
 
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { parseSse } from "../../sse.ts";
-import type { CredentialRef, CredentialStatus, DiscoveryContext, ModelCatalogResult, ProviderAdapter, ProviderContext, ProviderEvent, ProviderMessageLike, TurnRequest } from "../../types.ts";
+import type { ContentBlockLike, CredentialRef, CredentialStatus, DiscoveryContext, ModelCatalogResult, ProviderAdapter, ProviderContext, ProviderEvent, ProviderMessageLike, TurnRequest } from "../../types.ts";
 import {
   EventQueue,
   asBlocks,
@@ -124,6 +124,10 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
   const search = opts.clientToolSearch === true ? toolSearchIndex(opts.tools) : undefined;
   // The ToolSearch calls seen so far, so their results become `tool_search_output` items.
   const searchCalls = new Set<string>();
+  // Review I-2: each loaded tool's namespace AS THE HISTORY RECORDED IT (a search result's stored
+  // definitions), built as the input is walked -- a call renders with the namespace its load gave it,
+  // never with whatever the live tool list says now.
+  const namespaceOf = new Map<string, string>();
   for (const message of messages) {
     // WS-23 (midconv): a tool-change message is an `additional_tools` developer item -- the tools
     // "become available only after that item appears in the input", so it is replayed right here.
@@ -186,7 +190,7 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
             break;
           }
           {
-            const namespace = search?.namespaceOf.get(block.name);
+            const namespace = search !== undefined ? namespaceOf.get(block.name) : undefined;
             out.push({
               type: "function_call",
               call_id: block.id,
@@ -215,7 +219,9 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
             // -- grouped by namespace. The loaded tools are "loaded at the end of the model's context
             // window", so `tools` never changes. Its own text (the listing, any MCP server still
             // connecting) follows as ordinary user text, like every trailing part of a tool message.
-            out.push({ type: "tool_search_output", call_id: block.tool_use_id, execution: "client", status: "completed", tools: search.outputTools((block as { loadedTools?: unknown }).loadedTools) });
+            const definitions = storedDefinitions(block);
+            for (const d of definitions) if (d.namespace !== undefined) namespaceOf.set(d.name, d.namespace);
+            out.push({ type: "tool_search_output", call_id: block.tool_use_id, execution: "client", status: "completed", tools: loadedToolsOutput(definitions) });
             const text = prefixToolResult(resultPrefix, toolResultText(block.content));
             if (text.length > 0) contentParts.push({ type: partType, text });
             resultPrefix = undefined;
@@ -312,43 +318,60 @@ export function mapResponsesTools(tools: TurnRequest["tools"], opts: { clientToo
  */
 interface ToolSearchIndex {
   name: string;
-  namespaceOf: ReadonlyMap<string, string>;
-  outputTools(loaded: unknown): unknown[];
 }
 
 function toolSearchIndex(tools: TurnRequest["tools"]): ToolSearchIndex | undefined {
   const search = (tools ?? []).find((t) => t.toolSearch === true);
-  if (search === undefined) return undefined;
-  const byName = new Map((tools ?? []).map((t) => [t.name, t] as const));
-  const namespaceOf = new Map((tools ?? []).flatMap((t) => (t.namespace !== undefined ? [[t.name, t.namespace] as const] : [])));
-  return {
-    name: search.name,
-    namespaceOf,
-    outputTools(loaded: unknown): unknown[] {
-      const names = Array.isArray(loaded) ? [...new Set(loaded.filter((n): n is string => typeof n === "string"))] : [];
-      const out: unknown[] = [];
-      const groups = new Map<string, unknown[]>();
-      for (const name of names) {
-        // A tool that is gone (or no longer deferred) is not re-described: only what `tools` still names.
-        const tool = byName.get(name);
-        if (tool === undefined || tool.deferLoading !== true) continue;
-        const namespace = tool.namespace;
-        const fn = { type: "function", name: namespace !== undefined ? name.slice(namespace.length + 2) : name, description: tool.description, parameters: tool.inputSchema, strict: false, defer_loading: true };
-        if (namespace === undefined) {
-          out.push(fn);
-          continue;
-        }
-        let group = groups.get(namespace);
-        if (group === undefined) {
-          group = [];
-          groups.set(namespace, group);
-          out.push({ type: "namespace", name: namespace, description: namespaceDescription(namespace), tools: group });
-        }
-        group.push(fn);
-      }
-      return out;
-    },
-  };
+  return search === undefined ? undefined : { name: search.name };
+}
+
+/** One loaded tool's definition as the engine stored it at load time (`tool_result.loadedToolDefinitions`). */
+interface StoredDefinition {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  namespace?: string;
+}
+
+/**
+ * Review I-2: the definitions a ToolSearch result STORED when it loaded its tools. The history is replayed
+ * from these and nothing else, so a server that disconnected since, or a tool whose description changed,
+ * leaves every earlier `tool_search_output` byte-identical (rewriting one would bust the cache from there,
+ * and misstate what the model was shown). A result with none renders an empty output.
+ */
+function storedDefinitions(block: ContentBlockLike): StoredDefinition[] {
+  const raw = (block as { loadedToolDefinitions?: unknown }).loadedToolDefinitions;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((d) => {
+    if (d === null || typeof d !== "object") return [];
+    const { name, description, inputSchema, namespace } = d as Record<string, unknown>;
+    if (typeof name !== "string" || typeof description !== "string" || inputSchema === null || typeof inputSchema !== "object") return [];
+    return [{ name, description, inputSchema: inputSchema as Record<string, unknown>, ...(typeof namespace === "string" && name.startsWith(`${namespace}__`) ? { namespace } : {}) }];
+  });
+}
+
+/** A `tool_search_output`'s `tools`: the loaded definitions, `defer_loading` kept, MCP tools grouped in their namespace. */
+function loadedToolsOutput(definitions: readonly StoredDefinition[]): unknown[] {
+  const out: unknown[] = [];
+  const groups = new Map<string, unknown[]>();
+  const seen = new Set<string>();
+  for (const d of definitions) {
+    if (seen.has(d.name)) continue;
+    seen.add(d.name);
+    const fn = { type: "function", name: d.namespace !== undefined ? d.name.slice(d.namespace.length + 2) : d.name, description: d.description, parameters: d.inputSchema, strict: false, defer_loading: true };
+    if (d.namespace === undefined) {
+      out.push(fn);
+      continue;
+    }
+    let group = groups.get(d.namespace);
+    if (group === undefined) {
+      group = [];
+      groups.set(d.namespace, group);
+      out.push({ type: "namespace", name: d.namespace, description: namespaceDescription(d.namespace), tools: group });
+    }
+    group.push(fn);
+  }
+  return out;
 }
 
 /** A namespace's description, which the shape requires: Winter's own words, deterministic per server. */
@@ -515,6 +538,15 @@ export function responsesStreamTools(req: TurnRequest, descriptor: WinterModelDe
   if (descriptor?.clientToolSearch?.value !== true) return {};
   const search = (req.tools ?? []).find((t) => t.toolSearch === true);
   const namespaced = new Map((req.tools ?? []).flatMap((t) => (t.namespace !== undefined ? [[namespacedKey(t.namespace, t.name.slice(t.namespace.length + 2)), t.name] as const] : [])));
+  // Plus every namespaced tool a search in the history LOADED (its stored definition): the model may call
+  // one it already has in context even if the live list no longer groups it the same way.
+  for (const message of req.messages) {
+    if (typeof message.content === "string") continue;
+    for (const block of message.content) {
+      if (block.type !== "tool_result") continue;
+      for (const d of storedDefinitions(block)) if (d.namespace !== undefined) namespaced.set(namespacedKey(d.namespace, d.name.slice(d.namespace.length + 2)), d.name);
+    }
+  }
   return { ...(search !== undefined ? { toolSearchName: search.name } : {}), ...(namespaced.size > 0 ? { namespaced } : {}) };
 }
 

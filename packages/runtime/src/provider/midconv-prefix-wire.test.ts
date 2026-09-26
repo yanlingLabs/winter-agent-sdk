@@ -204,4 +204,55 @@ describe("the cached prefix on the wire through mid-session changes (WS-23 midco
     expect(last.find((item) => item["type"] === "function_call")).toMatchObject({ call_id: "fc_1", name: "lookup", namespace: `mcp__${SERVER}` });
     expect(last.find((item) => item["type"] === "function_call_output")).toMatchObject({ call_id: "fc_1", output: "customer 7" });
   });
+
+  test("review I-2 (gpt-6-astra): after a load, the tool's MCP server DISCONNECTS, then returns with a REWORDED tool -- the earlier tool_search_output and namespaced call replay byte-identically on each later request", async () => {
+    const SERVER = "wsmidgone";
+    const DEFERRED = `mcp__${SERVER}__lookup`;
+    const register = (description: string): void => {
+      registerMcpServerTools(SERVER, [{ name: "lookup", description, inputSchema: { type: "object", properties: { q: { type: "string" } } } }], { deferredDefault: true });
+      replaceExecutor(DEFERRED, { async execute() { return { output: "customer 7" }; } });
+    };
+    register("Look up a customer.");
+    cleanups.push(() => unregisterMcpServerTools(SERVER));
+    const script: ResponsesFakeAnswer[] = [
+      { items: [{ type: "tool_search_call", callId: "ts_1", arguments: { query: `select:${DEFERRED}` } }] },
+      { items: [{ type: "function_call", callId: "fc_1", namespace: `mcp__${SERVER}`, name: "lookup", arguments: { q: "7" } }] },
+      { items: [{ type: "text", text: "done" }] },
+    ];
+    const fake = await startResponsesFake((_r, i) => script[Math.min(i, script.length - 1)]!);
+    cleanups.push(() => fake.close());
+    const model = "openai/gpt-6-astra";
+    await drive({
+      config: {
+        sessionId: "midconv-wire-openai-i2",
+        cwd: "/tmp/midconv-wire",
+        model,
+        effort: "high",
+        persistSession: false,
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        toolSearchEnabled: true,
+        capabilities: ["winter.mcp"],
+        provider: { providerId: "openai", authRef: { kind: "inline", value: "fixture" }, connection: { baseUrl: fake.url, local: true } },
+      } as RuntimeConfig,
+      catalog: fakeResponsesCatalog("openai", fake.url, [model]),
+      family: "openai",
+      servers: [SERVER],
+      steps: [
+        { user: "load the lookup tool and use it" },
+        { act: () => unregisterMcpServerTools(SERVER) },
+        { user: "the server is gone" },
+        { act: () => register("Look up a customer (reworded).") },
+        { user: "the server is back" },
+      ],
+    });
+    const reqs = fake.requests.filter((r) => r.path.endsWith("/responses"));
+    expect(reqs).toHaveLength(5);
+    const inputs = reqs.map((r) => r.body["input"] as Block[]);
+    // Every request is a byte prefix of the next, through both registry changes.
+    for (let i = 0; i + 1 < inputs.length; i++) expect(JSON.stringify(inputs[i + 1]!.slice(0, inputs[i]!.length))).toBe(JSON.stringify(inputs[i]));
+    const output = inputs[4]!.find((item) => item["type"] === "tool_search_output")!;
+    expect(JSON.stringify(output)).toContain('"description":"Look up a customer."');
+    expect(inputs[4]!.find((item) => item["type"] === "function_call")).toMatchObject({ name: "lookup", namespace: `mcp__${SERVER}` });
+  });
 });
