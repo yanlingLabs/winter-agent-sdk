@@ -190,8 +190,15 @@ function capabilityRefusal(reason: string): ProviderRequestError {
  * have a corresponding tool definition in the top-level `tools` parameter", and an undeclared name is a
  * 400 `tool_reference_unresolved`), so it is never sent.
  */
-type Referable = ReadonlySet<string>;
+//
+// WS-23 (midconv): `declared` -- every name the request's `tools` declares, when the caller knows it --
+// separates a reference to a tool that is still callable directly (declared, just not deferred: the legible
+// note below) from one to a tool that is GONE (declared nowhere), which is dropped. claude 2.1.282's
+// resume filter does the same, and says `[Tool references removed - tools no longer available]` when a
+// result is left with nothing.
+type Referable = ReadonlySet<string> & { readonly declared?: ReadonlySet<string> };
 const NOTHING_REFERABLE: Referable = new Set();
+export const TOOL_REFERENCES_REMOVED_TEXT = "[Tool references removed - tools no longer available]";
 
 /** The wire `tool_reference` block for each referable name, in order, deduplicated. */
 function toolReferences(names: readonly string[], referable: Referable): Record<string, unknown>[] {
@@ -213,7 +220,7 @@ function toWireBlocks(block: ContentBlockLike, referable: Referable): Record<str
   // same legible note every other serializer in this repo writes for it, never to a silent drop.
   const names = referenceNames(block as unknown as Record<string, unknown>);
   const wire = toolReferences(names, referable);
-  const rest = names.filter((name) => !referable.has(name));
+  const rest = names.filter((name) => !referable.has(name) && (referable.declared === undefined || referable.declared.has(name)));
   return [...wire, ...(rest.length > 0 ? [{ type: "text", text: `[tools now callable: ${rest.join(", ")}]` }] : [])];
 }
 
@@ -274,7 +281,11 @@ function toolResultWireBlocks(block: Extract<ContentBlockLike, { type: "tool_res
   // A nested `tool_reference` (a claude-written result, resumed) is a reference too; everything else moves out.
   const innerBlocks = typeof inner === "string" ? (inner.length > 0 ? [{ type: "text", text: inner }] : []) : inner;
   const nestedReferences = innerBlocks.filter((b) => b["type"] === "tool_reference");
-  if (references.length === 0 && nestedReferences.length === 0) return [{ type: "tool_result", tool_use_id: block.tool_use_id, content: inner, ...flags }];
+  if (references.length === 0 && nestedReferences.length === 0) {
+    // Every reference it held named a tool that is gone: say so rather than send an empty result.
+    const emptied = Array.isArray(block.content) && block.content.some((b) => b.type === "tool_reference") && innerBlocks.length === 0;
+    return [{ type: "tool_result", tool_use_id: block.tool_use_id, content: emptied ? TOOL_REFERENCES_REMOVED_TEXT : inner, ...flags }];
+  }
   const displaced = innerBlocks.filter((b) => b["type"] !== "tool_reference");
   return [{ type: "tool_result", tool_use_id: block.tool_use_id, content: [...nestedReferences, ...references], ...flags }, ...displaced];
 }
@@ -361,8 +372,8 @@ function toolChangeBlocks(changes: ToolChangeSet): Record<string, unknown>[] {
 /** One wire message. `output_config` rides only on a `system` entry (WS-23's per-message effort). */
 export type WireMessage = { role: "user" | "assistant" | "system"; content: Record<string, unknown>[]; output_config?: { effort: string } };
 
-export function toWireMessages(messages: ProviderMessageLike[], opts: { referableTools?: ReadonlySet<string> } = {}): WireMessage[] {
-  const referable = opts.referableTools ?? NOTHING_REFERABLE;
+export function toWireMessages(messages: ProviderMessageLike[], opts: { referableTools?: ReadonlySet<string>; declaredTools?: ReadonlySet<string> } = {}): WireMessage[] {
+  const referable: Referable = opts.declaredTools !== undefined ? Object.assign(new Set(opts.referableTools ?? []), { declared: opts.declaredTools }) : (opts.referableTools ?? NOTHING_REFERABLE);
   const entries: WireEntryBuckets[] = [];
   for (const message of messages) {
     const role: WireEntryBuckets["role"] = message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user";
@@ -954,6 +965,13 @@ function deferredToolNames(req: TurnRequest, descriptor: WinterModelDescriptor |
   return new Set(deferred.map((t) => t.name));
 }
 
+/** WS-23 (midconv): every tool this request declares, deferred or not, plus those a tool-change message in it defines by value. */
+function declaredToolNames(req: TurnRequest): ReadonlySet<string> {
+  const names = new Set((req.tools ?? []).map((t) => t.name));
+  for (const message of req.messages) for (const addition of message.toolChanges?.add ?? []) if (addition.type === "definition") names.add(addition.name);
+  return names;
+}
+
 /** WS-23: an effort-only `system` marker -- no content, only `output_config`. */
 function isEffortOnlyMarker(message: ProviderMessageLike): boolean {
   return message.role === "system" && message.outputConfig !== undefined && (typeof message.content === "string" ? message.content.length === 0 : message.content.length === 0);
@@ -1188,7 +1206,7 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
       model: anthropicWireModelId(req.model),
       // An effort-only marker renders nothing and `output_config` is deliberately off a count body
       // (above), so the markers are dropped here rather than sent to an endpoint with no fixture.
-      messages: toWireMessages(req.messages.filter((m) => !isEffortOnlyMarker(m)), { referableTools }),
+      messages: toWireMessages(req.messages.filter((m) => !isEffortOnlyMarker(m)), { referableTools, declaredTools: declaredToolNames(req) }),
       ...(req.system !== undefined ? { system: req.system } : {}),
       ...(req.tools !== undefined && req.tools.length > 0 ? { tools: req.tools.map(toWireTool) } : {}),
       ...(thinking.value !== undefined ? { thinking: thinking.value } : {}),
@@ -1202,7 +1220,7 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   }
 
   const caching = promptCachingLayout(req, descriptor);
-  const wireMessages = toWireMessages(req.messages, { referableTools });
+  const wireMessages = toWireMessages(req.messages, { referableTools, declaredTools: declaredToolNames(req) });
   // The system blocks' own breakpoints (at most two: the static prefix and the dynamic rest) come out
   // of the request's budget of four first; the messages get what is left.
   const wireSystem = caching && req.systemBlocks !== undefined ? toWireSystemBlocks(req.systemBlocks, req.cacheTtl) : undefined;

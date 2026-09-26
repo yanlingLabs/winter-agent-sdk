@@ -172,6 +172,41 @@ describe("deferred tools and tool_reference (WS-23 item 3)", () => {
     ]);
   });
 
+  test("a reference to a tool that is GONE (declared nowhere) is dropped; a result left with nothing says so (claude's placeholder), never an empty result", () => {
+    const history: ProviderMessageLike[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "tool_use", id: "t", name: "ToolSearch", input: {} }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "t", content: [{ type: "tool_reference", tool_name: "mcp__gone__tool" } as never] }] },
+    ];
+    const body = buildRequestBody({ model: "claude-opus-5-5", messages: history, tools: [tool("Bash"), tool("NotebookEdit", true)] }, deferredRow(), {});
+    expect((body["messages"] as Array<{ content: Array<Record<string, unknown>> }>)[2]!.content).toEqual([{ type: "tool_result", tool_use_id: "t", content: "[Tool references removed - tools no longer available]" }]);
+  });
+
+  test("a session ALREADY ON DISK in the rejected shape is healed at send time: the same stored history now goes out references-only, its text as siblings", () => {
+    // Exactly what 2ddc238 persisted: the ToolSearch listing with a hook reminder smooshed into it, plus
+    // `loadedTools` (the references were the adapter's, never stored), and a claude-written mixed result.
+    const stored: ProviderMessageLike[] = [
+      { role: "user", content: "find it" },
+      { role: "assistant", content: [{ type: "tool_use", id: "s1", name: "ToolSearch", input: {} }, { type: "tool_use", id: "s2", name: "ToolSearch", input: {} }] },
+      {
+        role: "tool",
+        content: [
+          { type: "tool_result", tool_use_id: "s1", content: '{"matches":["NotebookEdit"],"query":"nb","total_deferred_tools":1}\n\n<system-reminder>\nPostToolUse hook context\n</system-reminder>', loadedTools: ["NotebookEdit"] },
+          { type: "tool_result", tool_use_id: "s2", content: [{ type: "text", text: "Tool loaded." }, { type: "tool_reference", tool_name: "NotebookEdit" } as never] },
+        ],
+      },
+      { role: "assistant", content: "found it" },
+      { role: "user", content: "next" },
+    ];
+    const body = buildRequestBody({ model: "claude-opus-5-5", messages: stored, tools: [tool("Bash"), tool("NotebookEdit", true)] }, deferredRow(), {});
+    const turn = (body["messages"] as Array<{ content: Array<Record<string, unknown>> }>)[2]!.content;
+    expect(turn.map((b) => b["type"])).toEqual(["tool_result", "tool_result", "text", "text"]);
+    expect(turn[0]).toEqual({ type: "tool_result", tool_use_id: "s1", content: [{ type: "tool_reference", tool_name: "NotebookEdit" }] });
+    expect(turn[1]).toEqual({ type: "tool_result", tool_use_id: "s2", content: [{ type: "tool_reference", tool_name: "NotebookEdit" }] });
+    expect(String(turn[2]!["text"])).toContain("PostToolUse hook context");
+    expect(turn[3]).toEqual({ type: "text", text: "Tool loaded." });
+  });
+
   test("live-gate regression: NO tool_result on the wire mixes `tool_reference` blocks with any other content -- not the tool's text, not a hook's smooshed reminder, not a nested claude reference, across several results", () => {
     const history: ProviderMessageLike[] = [
       { role: "user", content: "find tools" },
