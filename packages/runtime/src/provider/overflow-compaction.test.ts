@@ -64,7 +64,12 @@ test("overflow -> reactive compaction on the REDACTED request (never the refused
     expect(JSON.stringify(summary)).not.toContain(WINTER_PREFIX_SUMMARY_INSTRUCTION.slice(0, 40));
     expect(summary["tools"]).toBeUndefined();
     expect(JSON.stringify(summary["system"])).toContain("compacting a conversation");
-    expect((summary["messages"] as unknown[]).length).toBeLessThan((overflowed["messages"] as unknown[]).length);
+    expect((summary["messages"] as unknown[]).length).toBeLessThanOrEqual((overflowed["messages"] as unknown[]).length);
+    // WS-23 midconv live gate: it ENDS WITH A USER TURN -- Opus 5.5 refuses an assistant prefill with a
+    // 400 ("The conversation must end with a user message"), which failed this fallback live.
+    const summaryMessages = summary["messages"] as Array<{ role: string; content: Array<{ text?: string }> }>;
+    expect(summaryMessages.at(-1)!.role).toBe("user");
+    expect(JSON.stringify(summaryMessages.at(-1))).toContain("compacting a conversation");
     // Only what the compaction REPLACES reaches the summariser: the retained turn ("third") does not.
     expect(JSON.stringify(summary["messages"])).not.toContain("third");
     // The retry runs on the compacted history and the turn ends on its answer.

@@ -94,6 +94,34 @@ describe("compaction/controller.ts -- shouldCompact (R5-4's formula, the lane's 
   });
 });
 
+describe("every summary request ends with a USER turn (WS-23 midconv live gate: no assistant prefill on Opus 5.5)", () => {
+  test("the redacted fallback: the summarised window ends on an assistant reply, and the instruction follows it as the final user turn", async () => {
+    const { provider, requests } = recordingProvider("A SUMMARY");
+    const controller = createCompactionController();
+    const accountant = createContextAccountant({ limit: 1000 });
+    accountant.record({ inputTokens: 700, outputTokens: 60 });
+    await controller.compact({ messages: longConversation(), trigger: "auto", customInstructions: null, accountant, provider });
+    const sent = requests[0]!.messages;
+    // The window before the ask really does end on an assistant reply -- the case the API refused.
+    expect(sent.at(-2)!.role).toBe("assistant");
+    expect(sent.at(-1)).toEqual({ role: "user", content: WINTER_SUMMARY_INSTRUCTION });
+    expect(requests[0]!.system).toBe(WINTER_SUMMARY_INSTRUCTION);
+  });
+
+  test("the prefix-reusing request ends with its instruction as a user turn too, even after an assistant tail", async () => {
+    const { provider, requests } = recordingProvider("A SUMMARY");
+    const controller = createCompactionController();
+    const accountant = createContextAccountant({ limit: 1000 });
+    accountant.record({ inputTokens: 700, outputTokens: 60 });
+    const prefixRequest: ProviderRequest = { messages: [user("turn one"), assistant("reply one")], system: "session system" };
+    await controller.compact({ messages: longConversation(), trigger: "auto", customInstructions: null, accountant, provider, prefixRequest });
+    expect(requests).toHaveLength(1);
+    const last = requests[0]!.messages.at(-1)!;
+    expect(last.role).toBe("user");
+    expect(String(last.content)).toContain("The conversation above is being compacted");
+  });
+});
+
 describe("compaction/controller.ts -- compact()", () => {
   test("summarizes through the SESSION's provider, with Winter's own instruction as the system prompt", async () => {
     const { provider, requests } = recordingProvider("A SUMMARY");

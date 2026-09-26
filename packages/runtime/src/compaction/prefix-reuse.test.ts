@@ -136,8 +136,10 @@ describe("fallbacks: the prefix is an optimisation, never a new way for compacti
     expect(result.summary).toBe("redacted summary");
     expect(seen).toHaveLength(1);
     expect(seen[0]!.tools).toBeUndefined();
-    // Four of the six exchanges are summarised; the two retained ones never reach the summariser.
-    expect(seen[0]!.messages).toHaveLength(8);
+    // Four of the six exchanges are summarised; the two retained ones never reach the summariser. The
+    // ninth message is the instruction as the final user turn (WS-23 midconv live gate: no prefill).
+    expect(seen[0]!.messages).toHaveLength(9);
+    expect(seen[0]!.messages.at(-1)!.role).toBe("user");
     expect(JSON.stringify(seen[0]!.messages)).not.toContain("question 5");
   });
 

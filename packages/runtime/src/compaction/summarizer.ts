@@ -148,6 +148,20 @@ export function redactForSummary(messages: readonly ProviderMessage[], opts: { t
   return out;
 }
 
+/**
+ * WS-23 (midconv, live gate on claude-opus-5-5): the redacted request's messages, ENDING WITH A USER
+ * TURN. The summarised window often ends on an assistant reply, and a request that ends there is an
+ * assistant PREFILL, which newer models refuse outright ("This model does not support assistant message
+ * prefill. The conversation must end with a user message.", HTTP 400) -- the fallback summary, the one
+ * that exists for when the prefix request cannot run, then failed too. So the instruction is ALSO the
+ * final user turn: the window as it was, then the ask. A window that already ends on a user message
+ * gets the same trailing turn (the adapters merge adjacent user messages), so the shape is one rule.
+ * The prefix-reusing request (`summarizeOverPrefix`) already ends with its instruction as a user turn.
+ */
+export function summaryRequestMessages(messages: readonly ProviderMessage[], instruction: string): ProviderMessage[] {
+  return [...messages, { role: "user", content: instruction }];
+}
+
 export class CompactionSummarizerError extends Error {}
 
 /**
@@ -157,7 +171,7 @@ export class CompactionSummarizerError extends Error {}
  * the compaction rather than the context it was meant to shrink.
  */
 export async function summarize(provider: Provider, messages: readonly ProviderMessage[], system: string): Promise<string> {
-  const turn = await provider.generate({ messages: [...messages], system });
+  const turn = await provider.generate({ messages: summaryRequestMessages(messages, system), system });
   if (turn.kind !== "text") {
     throw new CompactionSummarizerError(`the summarizer provider answered with a ${turn.kind} turn instead of summary text`);
   }
