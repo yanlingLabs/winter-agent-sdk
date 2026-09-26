@@ -220,6 +220,53 @@ describe("the tool epoch, by reference (a row with `midConversationToolChanges`)
     }
   });
 
+  test("review C-1: a generation that FAILS after its change was recorded -- the next request never puts the change in front of a user turn", async () => {
+    addTool("zz_midconv_a");
+    const { requests } = await drive({
+      describe: INLINE_ROW,
+      steps: [{ user: "one" }, { act: () => addTool("aa_midconv_late") }, { user: "two" }, { user: "three" }],
+      generate: (_req, index) => {
+        if (index === 1) throw new ProviderTurnError("provider request failed (overloaded): HTTP 529", { status: 529, code: "overloaded", retryable: false });
+        return { kind: "text", text: "ok" };
+      },
+    });
+    for (const req of requests) {
+      req.messages.forEach((m, at) => {
+        if (m.toolChanges === undefined) return;
+        expect(["user", "tool"]).toContain(req.messages[at - 1]!.role);
+        const next = req.messages[at + 1];
+        expect(next === undefined || next.role === "assistant").toBe(true);
+      });
+    }
+    expect(changesOf(requests.at(-1)!)).toHaveLength(1);
+  });
+
+  test("review C-1: a placement-worded 400 on a request carrying a change falls back once to today's rebuild", async () => {
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => void errors.push(args.join(" "));
+    try {
+      addTool("zz_midconv_a");
+      const { requests, frames } = await drive({
+        describe: INLINE_ROW,
+        steps: [{ user: "one" }, { act: () => addTool("aa_midconv_late") }, { user: "two" }],
+        generate: (req) => {
+          if (req.messages.some((m) => m.toolChanges !== undefined)) {
+            throw new ProviderTurnError('provider request failed (bad_request): HTTP 400 — {"type":"error","error":{"type":"invalid_request_error","message":"messages.3: a system message must precede an assistant turn or end the array"}}', { status: 400, code: "bad_request", retryable: false });
+          }
+          return { kind: "text", text: "ok" };
+        },
+      });
+      expect(requests.map((r) => changesOf(r).length)).toEqual([0, 1, 0]);
+      expect(requests[2]!.toolChanges).toBeUndefined();
+      const results = frames.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").map((f) => (f as { message: { is_error: boolean } }).message.is_error);
+      expect(results).toEqual([false, false]);
+      expect(errors.filter((e) => e.includes("refused a mid-conversation tool change"))).toHaveLength(1);
+    } finally {
+      console.error = original;
+    }
+  });
+
   test("a `pause_turn` resend appends no change (a change never follows a paused assistant turn); the next user turn catches up", async () => {
     addTool("zz_midconv_a");
     const { requests } = await drive({

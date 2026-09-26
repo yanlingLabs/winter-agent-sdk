@@ -158,6 +158,24 @@ describe("the request layout replays the entries", () => {
     ]);
   });
 
+  test("review C-1: a change whose generation FAILED (no reply after it) is carried past the next user turn to just before the reply -- never `system` then `user`", () => {
+    const failed: ProviderMessage[] = [
+      { role: "user", content: "one" },
+      { role: "assistant", content: "r1" },
+      { role: "user", content: "two" },
+      history[4]!,
+      { role: "user", content: "three" },
+    ];
+    const render = { render: new Set([history[4]!]) };
+    const pending = buildRequestMessages(failed, undefined, { toolChanges: render });
+    // Nothing after it yet: it ends the array, behind the merged prompts.
+    expect(pending.map((m) => (m.toolChanges !== undefined ? "change" : m.role))).toEqual(["user", "assistant", "user", "change"]);
+    const replied = buildRequestMessages([...failed, { role: "assistant", content: "r3" }, { role: "user", content: "four" }], undefined, { toolChanges: render });
+    expect(replied.map((m) => (m.toolChanges !== undefined ? "change" : m.role))).toEqual(["user", "assistant", "user", "change", "assistant", "user"]);
+    // Byte-stable: the later request keeps the earlier one as its prefix.
+    expect(JSON.stringify(replied.slice(0, pending.length))).toBe(JSON.stringify(pending));
+  });
+
   test("with no mechanism (or a change of another epoch) every bookkeeping entry is dropped -- the request is byte-identical to one that never had them", () => {
     const plain = history.filter((m) => m.meta === undefined);
     expect(buildRequestMessages(history)).toEqual(buildRequestMessages(plain));

@@ -565,8 +565,12 @@ function isPerMessageEffortRejection(err: unknown): boolean {
  * OpenAI: a message naming the `additional_tools` item or the `allowed_tools` choice. A false positive
  * costs one retried request that rebuilds `tools`, never a wrong answer.
  */
-function isToolChangeRejection(err: unknown): boolean {
+function isToolChangeRejection(err: unknown, carriedChangeMessage = false): boolean {
   if (!isProviderTurnError(err) || (err.status !== 400 && err.status !== 422)) return false;
+  // Review C-1: a request that carried a tool-change message and was refused on PLACEMENT (the rule's own
+  // words, or claude 2.1.282's `after_paused_turn` phrase) falls back too -- the entry stays in the history,
+  // so a placement refusal that did not fall back would refuse every later request the same way.
+  if (carriedChangeMessage && /system message|role.{0,4}system|must (immediately )?(follow|precede)|end the array|paused assistant turn/i.test(err instanceof Error ? err.message : "")) return true;
   // The bounded error snippet is the raw body, so a documented `error.details.error_code` is matched too.
   return /mid-conversation-tool-changes|inline-tools|tool_addition|tool_removal|tool_definition|tool_reference_unresolved|tool_name_conflict|available_tools_limit_exceeded|cannot yet be defined in a message|additional_tools|allowed_tools/i.test(err instanceof Error ? err.message : "");
 }
@@ -8115,6 +8119,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // fallback below must never fire for a request that sent none.
       let sentToolChanges = false;
       let sentNativeToolSearch = false;
+      let sentToolChangeMessage = false;
       // WS-23 (midconv): this generation re-sends a paused turn (set by the `pause_turn` branch below).
       const resumesPausedTurn = resendingPausedTurn;
       resendingPausedTurn = false;
@@ -8129,6 +8134,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         sentToolChanges = toolPlan.optIn === true || toolPlan.allowedTools !== undefined || (toolPlan.toolChanges?.render.size ?? 0) > 0;
         sentNativeToolSearch = toolSpecs.some((t) => t.toolSearch === true);
         const outboundMessages = requestMessages(context, effortPlan.markers, toolPlan.toolChanges);
+        sentToolChangeMessage = outboundMessages.some((m) => m.toolChanges !== undefined);
         generationEffort = effortPlan.stamp;
         // Fix round 1 (I1): every per-message request carries the leading marker, so the beta rides
         // every such request -- and the fallback keys on exactly that.
@@ -8291,7 +8297,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           console.error(`winter: the provider refused its client tool search (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now sends loaded deferred tools in its tool list`);
           continue roundLoop;
         }
-        if (sentToolChanges && !toolChangesRejected && isToolChangeRejection(err)) {
+        if (sentToolChanges && !toolChangesRejected && isToolChangeRejection(err, sentToolChangeMessage)) {
           toolChangesRejected = true;
           console.error(`winter: the provider refused a mid-conversation tool change (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now re-sends its tool list on each change, which restarts the prompt cache`);
           continue roundLoop;
