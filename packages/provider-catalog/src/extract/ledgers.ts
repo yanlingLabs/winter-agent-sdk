@@ -243,6 +243,7 @@ export const FIELD_PROVENANCE: readonly FieldProvenance[] = [
   { field: "model.inlineToolDefinitions", provenance: "official-doc-derived", note: "OVERLAY ONLY, from the same page (`tool_definition` by value under `inline-tools-2026-09-15`; Claude API only)" },
   { field: "model.clientToolSearch", provenance: "official-doc-derived", note: "OVERLAY ONLY, from OpenAI's tool-search guide (client `tool_search`, GPT-5.4+) and codex-rs's models.json `supports_search_tool` for codex-oauth" },
   { field: "model.additionalToolsItem", provenance: "official-doc-derived", note: "OVERLAY ONLY, from OpenAI's tool-search guide (`additional_tools`); no model list, so only where `clientToolSearch` is documented" },
+  { field: "model.undeclaredToolCalls", provenance: "live-probe-proven", note: "NEVER SET by extraction or a page. WS-24: set per row only after `scripts/probe-fork-undeclared-tool.ts` passes live (a call to a tool absent from `tools`, and its history, are accepted); absence keeps a fork's self-loaded undeclared tool refused" },
   { field: "model.allowedToolsChoice", provenance: "official-doc-derived", note: "OVERLAY ONLY, from OpenAI's function-calling guide (`tool_choice: allowed_tools`); no model list, same rows as `additionalToolsItem`" },
   { field: "model.assistantPrefill", provenance: "official-doc-derived", note: "OVERLAY ONLY, from the Opus 5.5 migration guide (a prefilled assistant turn is a 400 on Opus 4.6+, Opus 5.5, Sonnet 5) and the Fable 5.1 guide; only `false` is recorded" },
 ];

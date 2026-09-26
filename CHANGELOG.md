@@ -6,6 +6,34 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
+### Engine (WS-24)
+
+- A subagent with its own object-form MCP servers waits for them (bounded, 2 s) before its first
+  request, as the session does, so a server that connects within that is offered on it.
+- A subagent's inline MCP server whose name the session (or a live sibling) already uses no longer
+  replaces and then unregisters the session's tools: it is connected under a fresh name (`srv_2`, ...)
+  for that subagent, which is told so on its first turn. Its definition's `disallowedTools`, and every
+  rule and hook matcher written against the declared name, keep governing it. A colliding in-process
+  (`sdk`) server is not connected (the note says whether the session's own is used instead).
+- Control requests (interrupt, `set_model`, `set_permission_mode`, `mcp_status`, ...) are answered while
+  the first-turn MCP wait runs; a user message still waits for the servers. The `type:"init"` handshake
+  now reflects the servers as they stood before that wait; `system/init` still reflects them after it.
+- A fork can run a tool it loads itself through ToolSearch; its `tools` (the parent's exact layout)
+  never moves. A tool the frozen list does not declare is callable only where the definition travels by
+  a documented mechanism (OpenAI's client `tool_search`) or on a row with the new live-probe-proven
+  catalog key `model.undeclaredToolCalls` (gathered by `scripts/probe-fork-undeclared-tool.ts`; set, from
+  its 2026-09-26 run, on `anthropic/claude-opus-5-5`, `anthropic/claude-sonnet-5` and
+  `deepseek/deepseek-flash`), where it rides the ToolSearch result as text. Elsewhere such a call keeps its
+  "No such tool available".
+- The one-time request-feature fallbacks (per-message effort, mid-conversation tool changes, OpenAI
+  client `tool_search`, `tool_choice: allowed_tools`) are kept per provider+model and persisted as a
+  `feature-rejected` provider-state record, so a resume skips the doomed request and another model
+  still gets the feature.
+- A subagent's own system frames (hook notices, continuity warnings, model switches, compaction,
+  hook lifecycle, permission outcomes, session state) carry the spawning call's `parent_tool_use_id`,
+  so a host threading by it keeps them on the subagent's thread; the task-registry frames are unchanged.
+- approvals: re-check the target at execution.
+
 ## 0.0.27
 
 (0.0.25 and 0.0.26 were tagged but never published: their release workflows stopped at the test step. 0.0.26 fixed the release smoke's registry access; 0.0.27 fixes one test that deleted the release job's own `NODE_AUTH_TOKEN`/`NPM_CONFIG_USERCONFIG` during cleanup.)

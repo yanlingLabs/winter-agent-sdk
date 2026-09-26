@@ -90,7 +90,7 @@ export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
 // direction `store/dialect.ts` has to avoid.
-import { PROVIDER_STATE_FILE_SUFFIX, type ContinuationLink, type ProviderStateRecord, type ProviderStateRecordInput } from "./store/provider-state.ts";
+import { PROVIDER_STATE_FILE_SUFFIX, rejectedFeaturesFrom, type ContinuationLink, type ProviderStateRecord, type ProviderStateRecordInput, type RejectableFeature } from "./store/provider-state.ts";
 // Review round 1 (M8): the two pure clusters this file used to inline. Both are plain functions of
 // their inputs -- `provider/stream-frames.ts` imports only the `ProviderStreamSink` TYPE from here, and
 // `store/continuation-attach.ts` imports nothing from here at all (its message shape is structural,
@@ -127,7 +127,7 @@ import { resolveBuiltinCommand, looksLikeCommand, type CommandResolver } from ".
 // integration recipe in its own report, and could not perform the integration itself: the
 // elicitation sender it needs is `bridge`, which is a closure-local value inside THIS function --
 // there is no seam exposing it outward, so main.ts structurally cannot construct one.
-import { createMcpLifecycle, firstTurnMcpWaitDeadlineMs, resolveMcpServerSources, registerSessionMcpLifecycle, type McpLifecycle, type McpServerSource } from "./mcp/lifecycle.ts";
+import { createMcpLifecycle, FIRST_TURN_MCP_WAIT_DEFAULT_MS, firstTurnMcpWaitDeadlineMs, resolveMcpServerSources, registerSessionMcpLifecycle, type McpLifecycle, type McpServerSource } from "./mcp/lifecycle.ts";
 import { createElicitationAsker } from "./mcp/elicitation.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
@@ -427,6 +427,18 @@ export type ContentBlock =
   | { type: "redacted_thinking"; data: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
 
+/**
+ * WS-24: the text a FORK's ToolSearch result carries for loaded tools its frozen `tools` does not declare
+ * (the engine's `forkLoadedDefinitionsText`, on a row with `undeclaredToolCalls` evidence). Exported so
+ * the live probe that gathers that evidence (`scripts/probe-fork-undeclared-tool.ts`) sends these exact
+ * bytes rather than a lookalike.
+ */
+export function undeclaredToolDefinitionsText(definitions: readonly LoadedToolDefinition[]): string {
+  if (definitions.length === 0) return "";
+  const lines = definitions.map((d) => `<function>${JSON.stringify({ name: d.name, description: d.description, parameters: d.inputSchema })}</function>`);
+  return `\n\nThese loaded tools are not in this conversation's tool list, but you can call them by name; each one's input must match its parameters schema:\n<functions>\n${lines.join("\n")}\n</functions>`;
+}
+
 /** WS-23 (midconv, review I-2): one loaded tool's definition as it stood at load time (see `tool_result.loadedToolDefinitions`). */
 export interface LoadedToolDefinition {
   name: string;
@@ -689,6 +701,8 @@ export interface ModelWireFeatures {
   additionalToolsItem?: true;
   /** WS-23 (midconv): OpenAI's `tool_choice: allowed_tools` restricts the callable set without editing `tools` (`allowedToolsChoice`). */
   allowedToolsChoice?: true;
+  /** WS-24: the endpoint takes a call (and its history) to a tool absent from `tools` (`undeclaredToolCalls`, live-probe-proven) -- what lets a fork run a self-loaded tool its frozen `tools` lacks. */
+  undeclaredToolCalls?: true;
 }
 
 /** What `EngineOptions.describeModel` knows about a model: its display name, its verified effort vocabulary, and its wire features. */
@@ -1482,6 +1496,15 @@ export interface EngineOptions {
    * Round 20 carried the parent's board only, and only to a child with object-form servers.
    */
   inheritedMcpServerNames?: () => readonly string[];
+  /**
+   * WS-24: a SUBAGENT's own MCP servers connected under a name other than the one its definition
+   * declared (subagents/child-engine.ts's `allocateChildScopedServers` renames one that collides),
+   * as `{ actual: declared }`. Set by child-engine.ts only. A call to `mcp__<actual>__<tool>` is then
+   * ALSO governed by every permission rule and hook matcher written against `mcp__<declared>__<tool>`
+   * (strictest-of, like a tool alias), so a rename never lets a call escape a rule or hook that named
+   * the server as the author declared it.
+   */
+  mcpServerRenames?: Readonly<Record<string, string>>;
   // Phase 4 Task 3 (WS-09 §3): the live MCP server MUTATION seam (reconnect/toggle/setServers) --
   // Lane A's own real implementation; a fake for this task's own contract tests. Absent means the
   // three mutating subtypes answer a structured `mcp_unavailable` error (the subtype IS recognized;
@@ -2365,6 +2388,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     deferrableContextShare,
     mcpServerStateSource,
     inheritedMcpServerNames,
+    mcpServerRenames,
     mcpControlSeam,
     contextAccountant: injectedContextAccountant,
     systemPromptAssembler,
@@ -3090,10 +3114,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // message of a turn carry one `perTurnEffort`, the invariant `withEffortMarkers` derives from.
   let liveEffort: TurnRequest["effort"] | undefined = config.effort;
   let pendingEffort: { effort: TurnRequest["effort"] | undefined } | undefined;
-  // Sticky for the session: the API refused the per-message beta with a 400 (it may be limited to
-  // allowlisted accounts), so every later request changes the TOP-LEVEL value instead. See the
-  // generation catch.
-  let perMessageEffortRejected = false;
+  // Sticky: the API refused the per-message beta with a 400 (it may be limited to allowlisted
+  // accounts), so every later request to that model changes the TOP-LEVEL value instead. See the
+  // generation catch, and `featureRejected` below for how the four sticky refusals are kept.
   // What the in-flight generation sent, stamped onto the assistant message(s) it produces.
   let generationEffort: { effort?: string; perTurnEffort: string } | undefined;
   // WS-23 fix round 1 (M2): the TOP-LEVEL effort a per-message-effort session sends, frozen at its first
@@ -3118,16 +3141,36 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // (a resume onto another provider; the daemon compacts on the source before such a switch instead).
   let pendingFitCheck: { from: string | undefined; source: () => Provider | undefined } | undefined;
   // WS-23 (midconv): the tool epoch's session state (context/tool-epoch.ts; `planToolsForRequest`).
-  // `toolChangesRejected` is sticky, like `perMessageEffortRejected`: the API refused a tool change, so
-  // every later request rebuilds `tools` (claude 2.1.282's own one-time fallback). `forceNewToolEpoch` is
-  // set by a compaction: the prefix is new anyway, so the next request freezes the list afresh.
-  let toolChangesRejected = false;
-  // WS-23 (midconv): sticky too -- the API refused OpenAI's client `tool_search` (or a namespace), so the
-  // session goes back to today's shape: loaded deferred tools appended to `tools` as plain functions.
-  let nativeToolSearchRejected = false;
-  // WS-23 (midconv, fix round 1): sticky -- the API refused `tool_choice: allowed_tools`. Only the
-  // restriction goes: a withdrawn tool then starts a new epoch (today's rebuild), and the tool search stays.
-  let allowedToolsRejected = false;
+  // A refused tool change is sticky, like the refused per-message effort: every later request rebuilds
+  // `tools` (claude 2.1.282's own one-time fallback). So is a refused OpenAI client `tool_search` (or a
+  // namespace) -- loaded deferred tools go back to plain functions in `tools` -- and a refused
+  // `tool_choice: allowed_tools`, where only the restriction goes: a withdrawn tool then starts a new
+  // epoch (today's rebuild), and the tool search stays. `forceNewToolEpoch` is set by a compaction: the
+  // prefix is new anyway, so the next request freezes the list afresh.
+  //
+  // WS-24: the four refusals are kept PER PROVIDER+MODEL, never for the session as a whole -- one model's
+  // refusal says nothing about another's API (a `set_model` to a model whose row documents the feature
+  // tries it), and they are PERSISTED: a `feature-rejected` sidecar record rides the next assistant entry
+  // (`pendingRejections`), stamped with the refusing model's identity, and a resume reads them back
+  // (`rejectedFeaturesFrom`), so the resumed session does not spend a request re-learning each one.
+  // Identity-less sessions (a scripted double) key on the model string and keep them in memory only.
+  const rejectedFeatures = new Map<string, Set<RejectableFeature>>();
+  const featureKeyOf = (providerId: string | undefined, modelKey: string | undefined): string => `${providerId ?? ""}\u0000${modelKey ?? ""}`;
+  const liveFeatureKey = (): string =>
+    currentProviderIdentity !== undefined ? featureKeyOf(currentProviderIdentity.providerId, currentProviderIdentity.modelKey) : featureKeyOf(undefined, currentModel);
+  const featureRejected = (feature: RejectableFeature): boolean => rejectedFeatures.get(liveFeatureKey())?.has(feature) === true;
+  const markFeatureRejected = (key: string, feature: RejectableFeature): void => {
+    const set = rejectedFeatures.get(key) ?? new Set<RejectableFeature>();
+    set.add(feature);
+    rejectedFeatures.set(key, set);
+  };
+  /** Refusals not yet persisted -- written as `feature-rejected` records with the next assistant entry, under the REFUSING model's identity. */
+  const pendingRejections: Array<{ feature: RejectableFeature; provider: string; model: string; family: string }> = [];
+  const rejectFeature = (feature: RejectableFeature): void => {
+    markFeatureRejected(liveFeatureKey(), feature);
+    const identity = currentProviderIdentity;
+    if (identity !== undefined) pendingRejections.push({ feature, provider: identity.providerId, model: identity.modelKey, family: identity.family });
+  };
   let forceNewToolEpoch = false;
   let toolEpochRestartLogged = false;
   // WS-23: the last MAIN-LOOP response's id and the model it came from -- the next request's
@@ -3662,6 +3705,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       if (effortStamp !== undefined) records.push({ ...base, itemIndex: records.length, kind: "effort", payload: { ...effortStamp } });
       for (const attachment of pendingBookkeeping.splice(0)) {
         records.push({ ...base, itemIndex: records.length, kind: attachment.type === TOOL_EPOCH_ATTACHMENT ? "tool-epoch" : "tool-changes", payload: attachment });
+      }
+      // WS-24: a refusal is the REFUSING model's fact -- its own provider/model/family, not this entry's
+      // (a fallback may have produced this reply), and no continuation domain (it continues nothing).
+      for (const rejection of pendingRejections.splice(0)) {
+        records.push({ sessionId: config.sessionId, anchorUuid: uuid, provider: rejection.provider, model: rejection.model, family: rejection.family, itemIndex: records.length, kind: "feature-rejected", payload: { feature: rejection.feature } });
       }
       const unsaved: string[] = [];
       for (const input of records) {
@@ -4437,6 +4485,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
               // Fix round 21: this run's own visible-server set, so a child's scope recurses (see
               // `ParentMcpState.visibleServerNames`). Declared later in this function; read at call time.
               visibleServerNames: () => [...visibleMcpServers()],
+              // WS-24 (fix round 3): the renames in this run's scope, inherited with the servers above.
+              ...(mcpServerRenames !== undefined ? { serverRenames: mcpServerRenames } : {}),
             }),
             // Fix wave follow-up (8), whole-branch M7: this session's own programmatic agents map,
             // so a grandchild can resolve a `subagent_type` the host declared (see
@@ -4715,31 +4765,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // `alwaysLoad` server makes it wait, bounded by MCP_CONNECT_TIMEOUT_MS. Awaited BEFORE the init
     // frame is written so `mcp_servers` reflects the batch snapshot the spec describes.
     await mcpLifecycle.start();
-    // Fix round 19/20: claude's FIRST-TURN wait on its SDK path (`km`, dump byte 34109614; the full trail
-    // is on mcp/lifecycle.ts's `firstTurnMcpWaitDeadlineMs`). `start()` above is claude's nonblocking
-    // connect, so without this every ordinary stdio server is still `pending` when `system/init` and
-    // the first turn are built. claude awaits `km` before its first turn (34017496) and builds that
-    // turn's `system/init` and tools from live state (33881679); Winter writes its startup
-    // `system/init` once, before the first turn, so the wait belongs here, ahead of the capability,
-    // partition and init derivations below -- first turn only, since nothing below waits again.
-    // Settled means not `pending` (connected, cached, failed, needs-auth): a server that cannot spawn
-    // ends the wait at once, and a session with nothing pending does not wait at all. `alwaysLoad` is
-    // unchanged (`start()` already awaited it).
-    //
-    // Scoped as claude scopes it: the TOP-LEVEL run only (claude's is in `runHeadless`; a child engine
-    // shares its parent's board and never builds its own lifecycle), and only this engine's own
-    // lifecycle -- a caller-supplied `mcpServerStateSource` is a host that owns its MCP stack, which
-    // this engine did not start and does not wait on.
-    if (config.agentId === undefined) {
-      await mcpLifecycle.stateSource.waitForPending(
-        undefined,
-        firstTurnMcpWaitDeadlineMs({
-          ...(config.strictMcpConfig !== undefined ? { strictMcpConfig: config.strictMcpConfig } : {}),
-          ...(config.mcpServers !== undefined ? { explicitServers: config.mcpServers } : {}),
-          envConfig: mcpEnvConfig,
-        }),
-      );
-    }
+    // The FIRST-TURN wait for this lifecycle's pending servers is no longer here: it runs once the
+    // input pump is reading (WS-24, see `awaitFirstTurnMcpServers` below the pump), so a control
+    // request is answered while the servers connect instead of queueing behind the wait.
     // The four WS-09 §1.4 bridge tools resolve their lifecycle out of this session-keyed registry
     // (see mcp/lifecycle.ts's own header for why it is session-keyed rather than a module singleton
     // or a per-run replaceExecutor). Cleared in teardown, below.
@@ -5263,10 +5291,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // `mcp_set_servers`); and (3) at every `system/init` build. Capabilities are the LIVE set -- the same
   // `resolveLiveSessionCapabilities()` the dispatch-time availability check already reads per call.
   // `advertisedCfg.mode` stays the startup mode: rider 5's recorded init-vs-live-mode posture (above)
-  // is unchanged, and the live mode still governs execution. The startup `type:"init"` frame and
-  // `advertisedToolNames` below read the first derivation: the registry as it stands after the
-  // first-turn MCP wait above (claude's `km`), so a server that connected within it is listed; a slower
-  // one is still `pending`, with none of its tools, and joins from a later request.
+  // is unchanged, and the live mode still governs execution. The startup `type:"init"` handshake and
+  // `advertisedToolNames` below read the first derivation, taken BEFORE the first-turn MCP wait (WS-24:
+  // the wait now runs once the pump is reading, below it); `system/init` and the first request re-derive
+  // after the wait (claude's `km`), so a server that connected within it is listed there; a slower one
+  // is still `pending`, with none of its tools, and joins from a later request.
   //
   // Fix round 20 (the round-19 re-review): the registry is PROCESS-WIDE, and a subagent's object-form
   // (child-scoped) MCP server registers its tools there too -- so the live partition offered a parent
@@ -5322,6 +5351,24 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       const namespace = mcpNamespaceFor(spec.name, mcpServerOwningTool(descriptor.canonicalName));
       return [{ name: spec.name, description: spec.description, inputSchema: spec.inputSchema, ...(namespace !== undefined ? { namespace } : {}) }];
     });
+  };
+  /** WS-24: OpenAI's client `tool_search` is live on this row (documented, and not refused). */
+  const forkClientToolSearchLive = (): boolean => currentModelDescription()?.wire?.clientToolSearch === true && !featureRejected("client-tool-search");
+  /** WS-24: a fork may run a self-loaded tool its frozen `tools` does not declare (see `providerToolSpecs`). */
+  const forkMayCallUndeclared = (): boolean => forkClientToolSearchLive() || currentModelDescription()?.wire?.undeclaredToolCalls === true;
+  /**
+   * WS-24: the loaded definitions a FORK's frozen `tools` does not declare, as text for the loading call's
+   * own result -- `""` when there are none. The tool is callable (`offeredThisRequest`); this is how the
+   * model learns its input schema without the fork's shared prefix moving.
+   */
+  const forkLoadedDefinitionsText = (definitions: readonly LoadedToolDefinition[]): string => {
+    // Only on the evidence row: under a live client `tool_search` the adapter's `tool_search_output`
+    // carries the definitions already, and without either the tool is not callable at all.
+    if (exactRequestLayout === undefined || forkClientToolSearchLive() || currentModelDescription()?.wire?.undeclaredToolCalls !== true) return "";
+    const declared = new Set(exactRequestLayout.tools.map((t) => t.name));
+    const missing = definitions.filter((d) => !declared.has(d.name));
+    if (missing.length === 0) return "";
+    return undeclaredToolDefinitionsText(missing);
   };
   /** Canonical -> advertised: `loadedTools` names what `tools` carries, because that is what a `tool_reference` must name. */
   const advertisedNamesFor = (canonical: readonly string[] | undefined): string[] => {
@@ -5569,7 +5616,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const writeSdkInit = (): void => {
     output.write({ type: "data", ...buildSdkInitMessage() } as Parameters<typeof output.write>[0]);
   };
-  writeSdkInit();
+  // `writeSdkInit()` runs once the first-turn MCP wait has settled (WS-24): see below the pump.
 
   const userFrames = new Queue<UserFrame>();
 
@@ -6518,6 +6565,60 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     }
   })();
 
+  // --- The first-turn MCP wait (fix round 19/20; moved here in WS-24) ---------------------------------
+  //
+  // claude's FIRST-TURN wait on its SDK path (`km`, dump byte 34109614; the full trail is on
+  // mcp/lifecycle.ts's `firstTurnMcpWaitDeadlineMs`). `start()` is claude's nonblocking connect, so
+  // without this every ordinary stdio server is still `pending` when `system/init` and the first turn
+  // are built. claude awaits `km` before its first turn (34017496) and builds that turn's `system/init`
+  // and tools from live state (33881679); Winter writes its startup `system/init` once, before the first
+  // turn, so the wait comes first and `writeSdkInit()` right after it. Settled means not `pending`
+  // (connected, cached, failed, needs-auth): a server that cannot spawn ends the wait at once. `alwaysLoad`
+  // is unchanged (`start()` already awaited it).
+  //
+  // WS-24: AFTER THE PUMP, not before it. The wait used to sit ahead of everything the pump closes over,
+  // so every control request (interrupt, set_model, set_permission_mode, mcp_status ...) queued behind it
+  // -- 2 s by default, and up to MCP_TIMEOUT behind a hung explicit server. The pump is reading now, so
+  // those are answered while the servers connect; a user message still waits, because it only lands in
+  // `userFrames` and the turn loop below does not start until this has settled. What this costs: the
+  // `type:"init"` handshake (written above, before the pump -- the host requires it as frame one)
+  // reflects the servers as they stood BEFORE the wait, while `system/init` reflects them after it. The
+  // handshake is internal (the SDK reads its protocol version and drops it; a child's is never
+  // forwarded), so the two can differ only for a server that was pending at startup.
+  //
+  // SYNCHRONOUS when nothing is pending: no `await` at all on that path, so a session with nothing to
+  // wait for writes `system/init` before the pump can have processed a single frame -- the frame order
+  // every golden pins is unchanged.
+  //
+  // Scoped to THIS ENGINE'S OWN lifecycle -- a caller-supplied `mcpServerStateSource` is a host that owns
+  // its MCP stack, which this engine did not start and does not wait on. That is also what a subagent
+  // with no servers of its own has (child-engine.ts hands it the parent's board), so it never waits.
+  //
+  // WS-24: a SUBAGENT WITH ITS OWN object-form servers (`AgentDefinition.mcpServers`) builds its own
+  // lifecycle and waits for it too. It used to be excluded on the premise that "a child engine shares its
+  // parent's board and never builds its own lifecycle" -- true only for a child that declares nothing, so
+  // a slow server's tools missed the subagent's first request. Its bound is the DEFAULT 2 s, never the
+  // MCP_TIMEOUT long wait `firstTurnMcpWaitDeadlineMs` gives an explicit non-sdk server: that long wait is
+  // the reading of a HOST's explicit `--mcp-config` declaration (claude's `explicitMcpConfigFlag`), which a
+  // definition's inline server is not -- and the parent's turn is blocked on this child meanwhile. A server
+  // slower than that still joins a later request, and `WaitForMcpServers` is there for the model.
+  const firstTurnMcpWaitMs = (): number | undefined => {
+    if (mcpLifecycle === undefined) return undefined;
+    if (config.agentId !== undefined) return FIRST_TURN_MCP_WAIT_DEFAULT_MS;
+    return firstTurnMcpWaitDeadlineMs({
+      ...(config.strictMcpConfig !== undefined ? { strictMcpConfig: config.strictMcpConfig } : {}),
+      ...(config.mcpServers !== undefined ? { explicitServers: config.mcpServers } : {}),
+      envConfig: mcpEnvConfig,
+    });
+  };
+  {
+    const deadlineMs = firstTurnMcpWaitMs();
+    if (deadlineMs !== undefined && mcpLifecycle!.stateSource.snapshot().some((server) => server.state === "pending")) {
+      await mcpLifecycle!.stateSource.waitForPending(undefined, deadlineMs);
+    }
+  }
+  writeSdkInit();
+
   // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "engine start, after init." Fired here — AFTER the
   // pump has started running (the `const pump = ...` assignment above has already invoked its IIFE;
   // by the time control reaches this line the pump's own `while(true)` loop is actively listening
@@ -6554,15 +6655,33 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // ONE identity read (fix wave, the T10 r1 duplicate): loaded here and handed to
     // `attachContinuationChain`, which used to re-read it for the zero-records case.
     const persisted = store.loadProviderIdentity !== undefined ? await store.loadProviderIdentity() : undefined;
+    // WS-24: the records the attach loads are also where a resumed session's sticky refusals live
+    // (`feature-rejected`), read over the WHOLE list -- so the one read is captured here rather than
+    // made twice.
+    let loadedProviderState: readonly ProviderStateRecord[] = [];
+    const sidecarSource = store;
     const resumedChain = await attachContinuationChain({
       messages,
-      store,
+      store: {
+        ...(sidecarSource.loadProviderState !== undefined
+          ? {
+              loadProviderState: async () => {
+                const records = await sidecarSource.loadProviderState!();
+                loadedProviderState = records;
+                return records;
+              },
+            }
+          : {}),
+        ...(sidecarSource.loadProviderIdentity !== undefined ? { loadProviderIdentity: () => sidecarSource.loadProviderIdentity!() } : {}),
+      },
       sessionId: config.sessionId,
       warn: (message) => output.write({ type: "data", message }),
       newUuid: randomUUID,
       identity: () => Promise.resolve(persisted),
     });
     for (const [anchor, link] of resumedChain) sessionChain.set(anchor, link);
+    // WS-24: each refusal back under the model that made it -- in memory only (already persisted).
+    for (const rejection of rejectedFeaturesFrom(loadedProviderState)) markFeatureRejected(featureKeyOf(rejection.provider, rejection.model), rejection.feature);
 
     // WS-23 (reasoning-state, layer 2): each resumed reply's CACHE QUIRKS come back from the sidecar --
     // its effort annotations onto the message (the markers derive from them), and the tool-epoch
@@ -7362,7 +7481,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const planEffort = (): { topLevel: TurnRequest["effort"] | undefined; markers?: EffortMarkerPlan; stamp?: { effort?: string; perTurnEffort: string } } => {
     const live = liveEffort;
     const plain = { topLevel: live, ...(typeof live === "string" ? { stamp: { effort: live, perTurnEffort: live } } : {}) };
-    if (typeof live === "number" || perMessageEffortRejected) return plain;
+    if (typeof live === "number" || featureRejected("per-message-effort")) return plain;
     const described = currentModelDescription();
     if (described?.wire?.perMessageEffort !== true) return plain;
     const vocabulary = described.efforts ?? [];
@@ -7659,18 +7778,32 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // a fresh render here gates the Agent tool's own description/schema on THIS run's `insideFork`
     // (the fork itself), which differs from what the PARENT actually advertised.
     //
-    // A fork that later ToolSearch-loads a deferred tool of its own still gets fresh specs appended
-    // for THAT (loadedToolSet changes are a real, later event this exact snapshot cannot have
-    // anticipated) -- see the loop below, reached only past this early return on the FIRST call; a
-    // later call re-enters this same short-circuit and returns the frozen list again, so a
-    // newly-loaded deferred tool from THIS run never actually reaches the wire under exact mode. That
-    // is a deliberate choice, not an oversight: the alternative (appending fresh specs after the exact
-    // ones) would make request 2 differ in SHAPE from request 1 by the appended count, and this run
-    // has no way to know whether the PARENT would render an identical spec for the same tool anyway
-    // (a fork's own `insideFork` gates differ from the parent's). A fork that needs a deferred tool it
-    // was not already using at fork time is the disclosed edge of this design.
+    // A tool the fork ToolSearch-loads ITSELF never joins `tools`: appending a spec would move the
+    // bytes the fork shares with its parent at the head of the cached prefix, and this run cannot know
+    // whether the parent would render the same spec anyway (a fork's own `insideFork` gates differ).
+    //
+    // WS-24: which of those a fork may RUN, by how the definition reaches the model:
+    //   - the frozen list DECLARES it (a deferred-loading row declares every deferred tool up front with
+    //     `defer_loading`, and the adapter answers the load with references only; any tool the parent had
+    //     loaded): offered as it always was, by its frozen name;
+    //   - OpenAI's client `tool_search` is live for this row (`clientToolSearch`, not refused): its
+    //     `tool_search_output` carries the definition, the documented way to load an undeclared tool;
+    //   - otherwise ONLY on a row with live evidence that the endpoint takes a call to a tool absent from
+    //     `tools` (`undeclaredToolCalls`, catalog, live-probe-proven -- set on no row yet). There the
+    //     definition rides the loading call's own result (`forkLoadedDefinitionsText`), after the shared
+    //     prefix. Without the evidence such a call keeps its soft "No such tool available": a vendor 400
+    //     on the next request would fail the whole fork instead.
+    // Delivering the definition through the row's own mid-conversation mechanism (an Anthropic inline
+    // `tool_addition`, OpenAI `additional_tools`) would also keep the prefix; a fork does not extend a
+    // tool epoch today (`planToolsForRequest`), and that is left for later.
     if (exactRequestLayout !== undefined) {
-      offeredThisRequest = new Set(exactRequestLayout.tools.map((t) => t.name));
+      if (forkMayCallUndeclared()) {
+        refreshAdvertisedPartition();
+        const ownLoaded = [...advertisedPartition.eager, ...advertisedPartition.deferred].filter((d) => loadedToolSet.isLoaded(d.canonicalName));
+        offeredThisRequest = new Set([...exactRequestLayout.tools.map((t) => t.name), ...ownLoaded.flatMap((d) => [d.advertisedName, d.canonicalName])]);
+      } else {
+        offeredThisRequest = new Set(exactRequestLayout.tools.map((t) => t.name));
+      }
       return exactRequestLayout.tools;
     }
     // Fix round 19: every provider request re-derives the partition from the live registry and the
@@ -7697,7 +7830,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // the native `{"type": "tool_search", "execution": "client"}`), and an MCP tool carries its server's
     // `namespace`. "At least one tool must have defer_loading=false" holds there too (ToolSearch is one).
     const wire = currentModelDescription()?.wire;
-    const clientSearch = wire?.clientToolSearch === true && !nativeToolSearchRejected;
+    const clientSearch = wire?.clientToolSearch === true && !featureRejected("client-tool-search");
     const declareDeferred = specs.length > 0 && (wire?.deferredToolLoading === true || clientSearch);
     const referenced = declareDeferred ? referencedToolNames(messages, currentProviderIdentity?.modelKey ?? currentModel ?? null) : undefined;
     const namespaced = (spec: ProviderToolSpec, canonicalName: string): ProviderToolSpec => {
@@ -7741,12 +7874,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
   /** The LIVE model's tool-change mechanism and what it can express, or `undefined` for today's rebuild. */
   const toolChangeMechanism = (): { mechanism: ToolChangeMechanism; caps: ToolChangeCaps } | undefined => {
-    if (toolChangesRejected) return undefined;
+    if (featureRejected("tool-changes")) return undefined;
     const wire = currentModelDescription()?.wire;
     if (wire?.toolChanges === "inline") return { mechanism: "anthropic-inline", caps: {} };
     if (wire?.toolChanges === "reference") return { mechanism: "anthropic-reference", caps: {} };
     const additionalTools = wire?.additionalToolsItem === true;
-    const allowedTools = wire?.allowedToolsChoice === true && !allowedToolsRejected;
+    const allowedTools = wire?.allowedToolsChoice === true && !featureRejected("allowed-tools");
     if (additionalTools || allowedTools) return { mechanism: "openai", caps: { additionalTools, allowedTools } };
     return undefined;
   };
@@ -7896,6 +8029,27 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * includes the deferred names, so a deferred-but-unloaded tool still reaches the load-first
    * boundary and its "use ToolSearch" answer.
    */
+  /** WS-24: `mcp__<declared>[__tool]` for a call to a renamed own server (`EngineOptions.mcpServerRenames`), else `undefined`. */
+  const declaredMcpIdentity = (toolName: string): string | undefined => {
+    if (mcpServerRenames === undefined) return undefined;
+    for (const [actual, declared] of Object.entries(mcpServerRenames)) {
+      if (toolName === `mcp__${actual}`) return `mcp__${declared}`;
+      if (toolName.startsWith(`mcp__${actual}__`)) return `mcp__${declared}__${toolName.slice(`mcp__${actual}__`.length)}`;
+    }
+    return undefined;
+  };
+  /**
+   * WS-24 (fix round 3): the tool name a post-tool hook (PostToolUse / PostToolUseFailure) is matched
+   * on. A renamed own server's call is ALSO matched on its declared spelling: when no hook with a matcher
+   * selects the name it ran under and one selects the declared name, the declared name is the subject.
+   * (The gating PreToolUse already resolves strictest-of through the permission identity.)
+   */
+  const postToolHookSubject = (event: "PostToolUse" | "PostToolUseFailure", toolName: string): string => {
+    const declared = declaredMcpIdentity(toolName);
+    if (declared === undefined) return toolName;
+    const scoped = (name: string): boolean => hookRegistry.matching(event, name).some((e) => e.matcher !== undefined);
+    return !scoped(toolName) && scoped(declared) ? declared : toolName;
+  };
   const toolNotOfferedRefusal = (toolName: string): string | undefined => {
     const offered = offeredThisRequest;
     if (offered === undefined) return undefined;
@@ -8720,8 +8874,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // is pre-first-byte, so re-running the round is a fresh request, never a replay; the session
         // then changes the TOP-LEVEL value for the rest of its life, the only form left, and says so
         // once. Sticky, so a second refusal cannot loop -- it surfaces like any other failure.
-        if (sentPerMessageBeta && !perMessageEffortRejected && isPerMessageEffortRejection(err)) {
-          perMessageEffortRejected = true;
+        if (sentPerMessageBeta && !featureRejected("per-message-effort") && isPerMessageEffortRejection(err)) {
+          rejectFeature("per-message-effort");
           console.error(`winter: the provider refused per-message effort (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now changes effort at the top level, which restarts the prompt cache on each change`);
           continue roundLoop;
         }
@@ -8733,19 +8887,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // WS-23 (midconv): OpenAI's client tool search REFUSED -- same one-time, sticky fallback, to the
         // shape every other row has (loaded deferred tools as plain functions). A new epoch, since the
         // frozen list carried the native tool search.
-        if (sentAllowedTools && !allowedToolsRejected && isAllowedToolsRejection(err)) {
-          allowedToolsRejected = true;
+        if (sentAllowedTools && !featureRejected("allowed-tools") && isAllowedToolsRejection(err)) {
+          rejectFeature("allowed-tools");
           console.error(`winter: the provider refused tool_choice allowed_tools (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} no longer restricts its callable set that way (its tool search is unaffected)`);
           continue roundLoop;
         }
-        if (sentNativeToolSearch && !nativeToolSearchRejected && isToolSearchRejection(err)) {
-          nativeToolSearchRejected = true;
+        if (sentNativeToolSearch && !featureRejected("client-tool-search") && isToolSearchRejection(err)) {
+          rejectFeature("client-tool-search");
           forceNewToolEpoch = true;
           console.error(`winter: the provider refused its client tool search (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now sends loaded deferred tools in its tool list`);
           continue roundLoop;
         }
-        if (sentToolChanges && !toolChangesRejected && isToolChangeRejection(err, sentToolChangeMessage)) {
-          toolChangesRejected = true;
+        if (sentToolChanges && !featureRejected("tool-changes") && isToolChangeRejection(err, sentToolChangeMessage)) {
+          rejectFeature("tool-changes");
           console.error(`winter: the provider refused a mid-conversation tool change (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} now re-sends its tool list on each change, which restarts the prompt cache`);
           continue roundLoop;
         }
@@ -9108,24 +9262,33 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // frame and `result.permission_denials` entry (C2, B-M2, a subagent's excluded tools) -- none
           // of which executes. What is left is exactly the hole: a tool nothing else refuses that the
           // model was not offered (a server connected after the request was built).
-          const notOffered = aliasPermissionIdentities(call.name, config.toolAliases, sessionBrand).some(probeRule("deny")) ? undefined : toolNotOfferedRefusal(call.name);
+          // WS-24: the name this call's server was DECLARED under, when this subagent's own server was
+          // renamed (`EngineOptions.mcpServerRenames`) -- one more identity, governed strictest-of.
+          const declaredIdentity = declaredMcpIdentity(call.name);
+          const notOffered = [...aliasPermissionIdentities(call.name, config.toolAliases, sessionBrand), ...(declaredIdentity !== undefined ? [declaredIdentity] : [])].some(probeRule("deny"))
+            ? undefined
+            : toolNotOfferedRefusal(call.name);
           if (notOffered !== undefined) {
             resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: notOffered, is_error: true });
             continue;
           }
+          const identityProbes = {
+            deniedByRule: probeRule("deny"),
+            askedByRule: probeRule("ask"),
+            hookScoped: (candidate: string): boolean =>
+              (["PreToolUse", "PermissionRequest"] as const).some((event) => hookRegistry.matching(event, candidate).some((e) => e.matcher !== undefined)),
+            allowedByRule: probeRule("allow"),
+          };
+          const aliasIdentity = resolvePermissionIdentity(call.name, config.toolAliases, identityProbes, sessionBrand);
           const permissionCall: PermissionCall = {
-            toolName: resolvePermissionIdentity(
-              call.name,
-              config.toolAliases,
-              {
-                deniedByRule: probeRule("deny"),
-                askedByRule: probeRule("ask"),
-                hookScoped: (candidate: string): boolean =>
-                  (["PreToolUse", "PermissionRequest"] as const).some((event) => hookRegistry.matching(event, candidate).some((e) => e.matcher !== undefined)),
-                allowedByRule: probeRule("allow"),
-              },
-              sessionBrand,
-            ),
+            // WS-24: the declared spelling of a renamed server's tool joins the strictest-of choice, in
+            // the alias resolution's own probe order -- deny, ask, an explicit hook matcher, allow.
+            toolName:
+              declaredIdentity === undefined
+                ? aliasIdentity
+                : ([identityProbes.deniedByRule, identityProbes.askedByRule, identityProbes.hookScoped, identityProbes.allowedByRule]
+                    .map((probe) => [aliasIdentity, declaredIdentity].find(probe))
+                    .find((hit) => hit !== undefined) ?? aliasIdentity),
             input: permissionInput,
             toolUseId: call.id,
             // Phase 4 Task 3 (MUST 9): the identical agentID a child engine's own hook stage/audit
@@ -9407,6 +9570,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           const loadedTools = advertisedNamesFor(toolReferenceCollector);
           toolReferenceCollector = undefined;
           const loadedToolDefinitions = loadedDefinitionsFor(loadedTools);
+          // WS-24: a FORK's frozen `tools` cannot carry what it just loaded (see `providerToolSpecs`), so
+          // the definitions ride this result -- after the prefix the fork shares with its parent.
+          const forkDefinitionsText = exactRequestLayout !== undefined ? forkLoadedDefinitionsText(loadedToolDefinitions) : "";
           if (raced.kind === "interrupted") {
             interrupted = true;
             break;
@@ -9416,7 +9582,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           resultBlocks.push({
             type: "tool_result",
             tool_use_id: call.id,
-            content: raced.value.output,
+            content: forkDefinitionsText.length > 0 ? `${raced.value.output}${forkDefinitionsText}` : raced.value.output,
             ...(raced.value.isError === true ? { is_error: true } : {}),
             ...(loadedTools.length > 0 ? { loadedTools } : {}),
             ...(loadedToolDefinitions.length > 0 ? { loadedToolDefinitions } : {}),
@@ -9444,13 +9610,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             raced.value.isError === true
               ? await fireObservationalHook("PostToolUseFailure", {
                   toolUseID: call.id,
-                  toolName: call.name,
+                  toolName: postToolHookSubject("PostToolUseFailure", call.name),
                   input: executedCall.input as Record<string, unknown>,
                   payload: { error: raced.value.output },
                 })
               : await fireObservationalHook("PostToolUse", {
                   toolUseID: call.id,
-                  toolName: call.name,
+                  toolName: postToolHookSubject("PostToolUse", call.name),
                   input: executedCall.input as Record<string, unknown>,
                   payload: { tool_response: raced.value.output },
                 });
@@ -9489,7 +9655,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           absorbHookComposite(
             await fireObservationalHook("PostToolUseFailure", {
               toolUseID: call.id,
-              toolName: call.name,
+              toolName: postToolHookSubject("PostToolUseFailure", call.name),
               input: typeof call.input === "object" && call.input !== null ? (call.input as Record<string, unknown>) : {},
               payload: { error: text },
             }),

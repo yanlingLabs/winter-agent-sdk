@@ -616,6 +616,20 @@ export function resolveSymlinkTargetChain(path: string): string | undefined {
   return undefined;
 }
 
+// WS-24: the ends one ABSOLUTE path resolves to, as the live file-rule check sees them -- its real
+// target (`resolveRealTarget`) and the target of its full symlink chain (`resolveSymlinkTargetChain`,
+// `undefined` when that resolver gives up). ONE resolution, shared by `checkSymlinkBothEnds` below and by
+// the durable-approval target key (permissions/approvals.ts), so the two can never resolve a path
+// differently.
+export interface SymlinkEnds {
+  target: string;
+  chainTarget: string | undefined;
+}
+
+export function resolveSymlinkEnds(path: string): SymlinkEnds {
+  return { target: resolveRealTarget(path), chainTarget: resolveSymlinkTargetChain(path) };
+}
+
 // WS-07 §3.1: "Symlinks are checked at both ends: allow requires link AND resolved target to both
 // match; deny applies if EITHER matches." `matcher` tests ONE candidate path string against
 // whatever rule pattern the caller is evaluating (typically `(p) => matchFileRule(pattern, {...,
@@ -634,8 +648,7 @@ export function checkSymlinkBothEnds(
   path: string,
   matcher: (candidatePath: string) => boolean,
 ): SymlinkBothEndsResult {
-  const target = resolveRealTarget(path);
-  const chainTarget = resolveSymlinkTargetChain(path);
+  const { target, chainTarget } = resolveSymlinkEnds(path);
   const linkMatches = matcher(path);
   const targetMatches = matcher(target);
   const chainTargetMatches = chainTarget !== undefined ? matcher(chainTarget) : undefined;

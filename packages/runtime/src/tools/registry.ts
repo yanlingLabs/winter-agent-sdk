@@ -1062,6 +1062,15 @@ export function mcpServerOwningTool(canonicalName: string): string | undefined {
   return mcpToolOwner.get(canonicalName);
 }
 
+/**
+ * WS-24: does a live MCP server currently hold registrations under `server`? A subagent's own
+ * object-form server must not take a name some other lifecycle in this process is registered under --
+ * see subagents/child-engine.ts's `allocateChildScopedServers`.
+ */
+export function mcpServerHasRegistrations(server: string): boolean {
+  return (mcpServerOwnedNames.get(server)?.size ?? 0) > 0;
+}
+
 export function unregisterMcpServerTools(server: string): void {
   const owned = mcpServerOwnedNames.get(server);
   mcpServerOwnedNames.delete(server);

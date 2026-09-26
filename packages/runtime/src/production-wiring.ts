@@ -714,6 +714,8 @@ export function describeCatalogModel(catalog: WinterCatalog, model: string, prov
     ...(row.clientToolSearch?.value === true ? { clientToolSearch: true as const } : {}),
     ...(row.additionalToolsItem?.value === true ? { additionalToolsItem: true as const } : {}),
     ...(row.allowedToolsChoice?.value === true ? { allowedToolsChoice: true as const } : {}),
+    // WS-24: live-probe-proven only -- a fork may run a self-loaded tool its frozen `tools` does not declare.
+    ...(row.undeclaredToolCalls?.value === true ? { undeclaredToolCalls: true as const } : {}),
   };
   const description: ModelDescription = {
     ...(row.displayName.length > 0 ? { displayName: row.displayName } : {}),

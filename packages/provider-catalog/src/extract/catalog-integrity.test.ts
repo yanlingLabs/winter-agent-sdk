@@ -1461,7 +1461,9 @@ describe("WS-20: the console provider", () => {
 });
 
 test("WS-20: every anthropic/<id> row has a console/<id> twin, structurally equal bar identity fields", () => {
-  const DIFFERING = new Set(["key", "providerId", "$comment", "observedAt", "continuationDomain"]);
+  // WS-24: `undeclaredToolCalls` is LIVE-PROBE evidence, recorded per provider row for the door it was
+  // probed through (`anthropic/*`, the API key) -- a console twin gets it only from its own probe run.
+  const DIFFERING = new Set(["key", "providerId", "$comment", "observedAt", "continuationDomain", "undeclaredToolCalls"]);
   const strip = (m: WinterModelDescriptor): unknown => JSON.parse(JSON.stringify(m, (k, v: unknown) => (DIFFERING.has(k) ? undefined : v)));
   const anthropicRows = catalog.models.filter((m) => m.providerId === "anthropic");
   expect(anthropicRows.length).toBeGreaterThan(0);

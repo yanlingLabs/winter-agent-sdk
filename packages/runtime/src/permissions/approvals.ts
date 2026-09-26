@@ -34,7 +34,7 @@ import type { PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionCl
 // already uses (checkSymlinkBothEnds/matchFileRuleAtBothEnds) — reused, not duplicated, so this
 // store's own "normalized paths" revalidation axis can never silently drift from it. See
 // extractNormalizedTargets's own comment for why a lexical-only resolve() was fail-open here.
-import { resolveRealTarget } from "./paths.ts";
+import { resolveSymlinkEnds } from "./paths.ts";
 // RULING P3-F (Task 8, P3 close-out): `fileRulePathField` is the SAME Read/Edit/Write/NotebookEdit
 // path-field mapping evaluator.ts's own extractCandidateWritePaths/matchesRuleForCall consume (see
 // edit-recognition.ts's own header for why it lives there); `getRegisteredTool` is how this axis
@@ -182,6 +182,19 @@ export type RevalidationAxis = "session" | "toolCall" | "policy" | "paths" | "ru
 
 export type RevalidationVerdict = { ok: true } | { ok: false; axis: RevalidationAxis; reason: string };
 
+// WS-24: the key one target is compared under -- resolved exactly as the LIVE evaluation path resolves
+// it (`resolveSymlinkEnds`, the same call `checkSymlinkBothEnds` makes), not by its real target alone.
+// Whenever the full chain agrees with the real target the key IS the real target, byte-identical to what
+// earlier records stamped, so a record written before this change still revalidates; where they differ
+// both ends are in the key, and a change to either one is a drift. The two-ended key is a JSON array: no
+// path text can forge it (as a path containing a hand-picked separator could), it can never equal a plain
+// key (an absolute path starts with `/`, the array with `[`), and JSON escapes `\u0000`, the separator
+// the comparison joins targets with.
+function durableTargetKey(absPath: string): string {
+  const { target, chainTarget } = resolveSymlinkEnds(absPath);
+  return chainTarget === target ? target : JSON.stringify([target, chainTarget ?? null]);
+}
+
 // Best-effort target extraction for the "normalized paths/destinations" axis — deliberately NOT
 // evaluator.ts's full `recognizeEditOperation`/`extractCandidateWritePaths` parity (that machinery
 // is the PERMISSION STAGE's own concern, over the tool registry WS-06 eventually supplies; this
@@ -197,9 +210,9 @@ export type RevalidationVerdict = { ok: true } | { ok: false; axis: Revalidation
 // matchFileRuleAtBothEnds composition happens on that path) — a symlink COMPONENT retargeted
 // during defer's own core window (an intentionally long wait; that window is the whole point of
 // defer existing at all) was therefore invisible to it, the identical fail-open class P2-J/P2-D
-// already closed for the LIVE evaluation path. `resolveRealTarget` (paths.ts) is reused, not
-// duplicated, so this axis's symlink-chasing can never independently drift from the rest of the
-// permission engine's own.
+// already closed for the LIVE evaluation path. The live path's own resolution (paths.ts, through
+// `durableTargetKey`) is reused, not duplicated, so this axis's symlink-chasing can never
+// independently drift from the rest of the permission engine's own.
 // RULING P3-F extension (beyond the ruling's own literal "Bash/Read/Glob/Grep" text, flagged): the
 // Edit/Write arm below now also covers NotebookEdit, via the SAME `fileRulePathField` mapping RULING
 // P3-E wired into evaluator.ts/edit-recognition.ts — a NotebookEdit approval deferred across a
@@ -209,7 +222,7 @@ export type RevalidationVerdict = { ok: true } | { ok: false; axis: Revalidation
 function extractNormalizedTargets(toolName: string, input: Record<string, unknown>, ctx: { cwd: string; home: string }): string[] {
   if (toolName === "Edit" || toolName === "Write" || toolName === "NotebookEdit") {
     const path = input[fileRulePathField(toolName)];
-    if (typeof path === "string") return [resolveRealTarget(resolve(ctx.cwd, path))];
+    if (typeof path === "string") return [durableTargetKey(resolve(ctx.cwd, path))];
   }
   if (toolName === "WebFetch" && typeof input["url"] === "string") {
     return [input["url"].toLowerCase()];
@@ -217,7 +230,7 @@ function extractNormalizedTargets(toolName: string, input: Record<string, unknow
   // RULING P3-F: Bash/Read/Glob/Grep consult the registry's own `extractPaths` seam (registry.ts's
   // own pinned contract: raw, unresolved candidate strings) instead of re-deriving a parallel,
   // independent path-extraction implementation — resolved here, against THIS axis's own issuance-
-  // time cwd, via the identical resolveRealTarget(resolve(...)) composition the Edit/Write/
+  // time cwd, via the identical durableTargetKey(resolve(...)) composition the Edit/Write/
   // NotebookEdit arm above already uses. A tool with no registered `extractPaths` (or none
   // registered at all — e.g. this axis running before T8's production-wiring barrel existed) falls
   // through to the empty-array "vacuously unchanged" default below, exactly like any other
@@ -227,7 +240,7 @@ function extractNormalizedTargets(toolName: string, input: Record<string, unknow
     if (extractPaths) {
       const resolved = Object.values(extractPaths(input))
         .flat()
-        .map((p) => resolveRealTarget(resolve(ctx.cwd, p)));
+        .map((p) => durableTargetKey(resolve(ctx.cwd, p)));
       // Sorted for a stable, order-independent join — defensive: extractPaths is a pure function of
       // `input` (itself frozen on the record), so calling it twice on the SAME input already yields
       // the same order both times regardless of what that order is; sorting costs nothing and

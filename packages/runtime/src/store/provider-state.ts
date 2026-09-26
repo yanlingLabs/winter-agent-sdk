@@ -72,7 +72,32 @@ export { PROVIDER_STATE_FILE_SUFFIX };
 //     `<recovered_reasoning>` decoration verbatim (`{text, door}`) or `{dropped: true}` -- keyed by the
 //     record's provider+model, which here name the TARGET, so a growing history never moves bytes inside
 //     a prefix that target has cached.
-export type ProviderStateKind = "origin" | "native-state" | "summary" | "handoff" | "reasoning-blocks" | "effort" | "tool-epoch" | "tool-changes" | "decoration";
+//   - `feature-rejected` (WS-24): the API REFUSED one of the request features a model's row documents
+//     (payload `{feature}`, one of `REJECTABLE_FEATURES`), keyed by the record's provider+model -- the
+//     model that refused, which need not be the anchor entry's own (a fallback can answer the retried
+//     round). Read back by `rejectedFeaturesFrom` REGARDLESS of whether its anchor survives (a compaction
+//     or the write-ahead crash pair must not forget the refusal), so a resumed session skips the one
+//     request it would otherwise waste finding out again, on that model and no other.
+export type ProviderStateKind = "origin" | "native-state" | "summary" | "handoff" | "reasoning-blocks" | "effort" | "tool-epoch" | "tool-changes" | "decoration" | "feature-rejected";
+
+/**
+ * WS-24: the request features an API can refuse once and the session then stops sending, on that
+ * provider+model: the per-message effort beta, a mid-conversation tool change, OpenAI's client
+ * `tool_search`, and `tool_choice: allowed_tools`.
+ */
+export const REJECTABLE_FEATURES = ["per-message-effort", "tool-changes", "client-tool-search", "allowed-tools"] as const;
+export type RejectableFeature = (typeof REJECTABLE_FEATURES)[number];
+
+/** WS-24: every `feature-rejected` record, as `{provider, model, feature}` -- anchor presence is deliberately not consulted (see the kind's note above). */
+export function rejectedFeaturesFrom(records: readonly ProviderStateRecord[]): Array<{ provider: string; model: string; feature: RejectableFeature }> {
+  const out: Array<{ provider: string; model: string; feature: RejectableFeature }> = [];
+  for (const record of records) {
+    if (record.kind !== "feature-rejected") continue;
+    const feature = (record.payload as { feature?: unknown } | null)?.feature;
+    if (typeof feature === "string" && (REJECTABLE_FEATURES as readonly string[]).includes(feature)) out.push({ provider: record.provider, model: record.model, feature: feature as RejectableFeature });
+  }
+  return out;
+}
 
 /**
  * One sidecar record. The envelope (`type`/`uuid`/`timestamp`) plus R6-7's own payload fields.
@@ -350,7 +375,7 @@ export function parseProviderStateLine(line: string): ProviderStateRecord | unde
   return coerceProviderStateRecord(value);
 }
 
-const KINDS: ReadonlySet<string> = new Set<ProviderStateKind>(["origin", "native-state", "summary", "handoff", "reasoning-blocks", "effort", "tool-epoch", "tool-changes", "decoration"]);
+const KINDS: ReadonlySet<string> = new Set<ProviderStateKind>(["origin", "native-state", "summary", "handoff", "reasoning-blocks", "effort", "tool-epoch", "tool-changes", "decoration", "feature-rejected"]);
 
 export function coerceProviderStateRecord(value: unknown): ProviderStateRecord | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
@@ -502,6 +527,10 @@ export function buildContinuationChain(records: readonly ProviderStateRecord[], 
         }
         break;
       }
+      case "feature-rejected":
+        // WS-24: a session-level fact about one model, not about this entry -- read by
+        // `rejectedFeaturesFrom` over the whole record list, never folded into a link.
+        break;
       case "handoff":
         // Lane C's portable handoff. Carried in the sidecar and read by the renderer, never folded
         // into a link the engine itself acts on -- this switch is exhaustive so a new kind cannot be

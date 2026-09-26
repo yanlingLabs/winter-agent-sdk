@@ -15898,6 +15898,13 @@
         "observedAt": "2026-09-26T00:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
       },
+      "undeclaredToolCalls": {
+        "value": true,
+        "source": "live-probe",
+        "sourceRef": "scripts/probe-fork-undeclared-tool.ts (WS-24), run live 2026-09-26: A -- a call to a tool absent from `tools` and its result in the history -> 200; B -- a ToolSearch result carrying the definition as text -> the model called the undeclared tool; C -- that call and its result fed back -> 200",
+        "confidence": "verified",
+        "observedAt": "2026-09-26T00:00:00Z"
+      },
       "canonicalModelId": "claude-opus-5.5",
       "modelFamily": "claude"
     },
@@ -16326,6 +16333,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-26T00:00:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide — \"Don't end messages with a prefilled assistant turn: it is rejected\"; \"Prefilling assistant messages returns a 400 error on Claude Opus 4.6 and later Opus models, including Claude Opus 5.5\"; Sonnet 5 and Opus 5: \"Manual extended thinking, non-default sampling parameters, and assistant prefill return a 400 error on both models\"; the Fable 5.1 guide: prefill \"returns a 400 error, unchanged from Claude Fable 5\". Live gate 2026-09-26 on claude-opus-5-5: \"This model does not support assistant message prefill. The conversation must end with a user message.\""
+      },
+      "undeclaredToolCalls": {
+        "value": true,
+        "source": "live-probe",
+        "sourceRef": "scripts/probe-fork-undeclared-tool.ts (WS-24), run live 2026-09-26: A -- a call to a tool absent from `tools` and its result in the history -> 200; B -- a ToolSearch result carrying the definition as text -> the model called the undeclared tool; C -- that call and its result fed back -> 200",
+        "confidence": "verified",
+        "observedAt": "2026-09-26T00:00:00Z"
       },
       "canonicalModelId": "claude-sonnet-5",
       "modelFamily": "claude"
@@ -30137,6 +30151,13 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
+      "undeclaredToolCalls": {
+        "value": true,
+        "source": "live-probe",
+        "sourceRef": "scripts/probe-fork-undeclared-tool.ts (WS-24), run live 2026-09-26: A -- a call to a tool absent from `tools` and its result in the history -> 200; B -- a ToolSearch result carrying the definition as text -> the model called the undeclared tool; C -- that call and its result fed back -> 200",
+        "confidence": "verified",
+        "observedAt": "2026-09-26T00:00:00Z"
+      },
       "canonicalModelId": "deepseek-flash",
       "modelFamily": "deepseek"
     },

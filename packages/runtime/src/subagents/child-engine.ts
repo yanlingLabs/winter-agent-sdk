@@ -105,7 +105,7 @@ import { runEngine, createContextAccountant, type ContextAccountant, type Engine
 import { createInMemoryChannel, type FrameSink } from "../protocol/channel.ts";
 import { STRUCTURED_OUTPUT_TOOL_NAME } from "../structured/seam.ts";
 import { toolActivityDescription } from "./activity.ts";
-import { getRegisteredTool, listRegisteredTools } from "../tools/registry.ts";
+import { getRegisteredTool, listRegisteredTools, mcpServerHasRegistrations } from "../tools/registry.ts";
 import { buildChildTranscriptWriter, childTranscriptSubpath, TranscriptWriter } from "../store/dialect.ts";
 import { toDialectEntries, rebuildProviderMessages } from "../store/resume.ts";
 import type {
@@ -387,6 +387,125 @@ export interface ChildEngineFactoryDeps {
   compactionControllerFactory?: () => CompactionController;
 }
 
+// --- WS-24: a subagent's own object-form MCP servers never take a name another lifecycle holds ------
+//
+// THE BUG. MCP tools live in ONE process-wide registry keyed by their model-facing name,
+// `mcp__<server>__<tool>`. A subagent whose definition declared an object-form server under a name the
+// session already used (`srv`) registered its tools over the parent's -- replacing the parent's
+// descriptors and executors for EVERYONE while it ran -- and its teardown then unregistered them, so
+// the parent lost `srv` until a reconnect. Two siblings declaring the same inline name did the same to
+// each other.
+//
+// WHY RENAME, NOT A PER-ENGINE REGISTRY. An overlay registry would let the subagent keep the name, but
+// every consumer resolves a tool name against the process-wide registry directly: the engine's
+// offered-tool, availability and interaction checks (`getRegisteredTool` in engine.ts), the advertised
+// partition and ToolSearch's pool (`partitionAdvertisedTools` -> `listRegisteredTools`,
+// toolsearch/exposure.ts), `LoadedToolSet.load`, the permission rule parser (permissions/ruleset.ts),
+// the hook input validator (hooks/input-validator.ts), the approval store's path extraction
+// (permissions/approvals.ts) and the MCP scope filter (`mcpServerOwningTool`). Threading a scope through
+// all of them is a seven-module change for a collision that is rare. So a COLLIDING inline server gets a
+// fresh name (`srv_2`, ...) for this subagent, the subagent is told so on its first turn, and nothing any
+// other lifecycle registered is ever touched. A name that collides with nothing is kept as declared.
+//
+// "In use" is: a server the parent run can see (its board, pending ones included, and what it inherits),
+// a name some live MCP server in this process is registered under, or a name another LIVE subagent's
+// own lifecycle holds (`liveChildScopedServerNames` -- it may still be connecting, with nothing
+// registered yet). A name is held for exactly one GENERATION: claimed when the generation's servers are
+// allocated, released once its `runEngine` has fully returned (its lifecycle's `dispose()`, which
+// unregisters the name, runs inside that teardown -- releasing any earlier would let a sibling register
+// the name and then lose it to this generation's late unregister).
+//
+// AN IN-PROCESS (`sdk`) SERVER IS NOT RENAMED. Its calls go back to the host BY NAME (`sdk_mcp_call`),
+// so under another name it would reach nothing. A colliding one is dropped from the subagent's own set,
+// with a note that says what the subagent gets instead: the session's own in-process server of that name
+// (the same host instance, as a string entry would reach it), or -- when the name is held by a different
+// kind of session server, or by another agent -- nothing under that name.
+const liveChildScopedServerNames = new Set<string>();
+
+/** Fix round 1 (M1): how long a resume waits for the previous generation's teardown to release its server names. */
+const GENERATION_TEARDOWN_WAIT_MS = 5_000;
+
+type ChildMcpServers = NonNullable<RuntimeConfig["mcpServers"]>;
+
+interface ChildServerAllocation {
+  /** The servers this generation connects itself, under the names it holds. */
+  servers: ChildMcpServers;
+  /** Declared name -> the name it is connected under (only for servers this generation connects). */
+  actual: Map<string, string>;
+  /** One legible line per server not connected under its declared name. */
+  notes: string[];
+  /** Releases every name this allocation claimed. Idempotent. */
+  release: () => void;
+}
+
+/**
+ * WS-24 (fix round 1, I1): a tool-name rule entry (`mcp__srv`, `mcp__srv__tool`, `mcp__srv__*`,
+ * `mcp__srv__tool(...)`) re-pointed at the name its server was actually connected under, or
+ * `undefined` when it names none of the renamed servers. The declared name must end where the server
+ * segment ends, so `mcp__srv` never rewrites `mcp__srv_2__x`.
+ */
+function renameMcpReference(entry: string, renames: ReadonlyArray<readonly [declared: string, actual: string]>): string | undefined {
+  for (const [declared, actual] of renames) {
+    const prefix = `mcp__${declared}`;
+    if (entry === prefix || entry.startsWith(`${prefix}__`) || entry.startsWith(`${prefix}(`)) return `mcp__${actual}${entry.slice(prefix.length)}`;
+  }
+  return undefined;
+}
+
+function allocateChildScopedServers(
+  declared: ChildMcpServers,
+  parentVisible: ReadonlySet<string>,
+  prefer?: ReadonlyMap<string, string>,
+  parentDeclared?: Readonly<Record<string, { type?: string }>>,
+): ChildServerAllocation {
+  const claimed: string[] = [];
+  const inUse = (name: string): boolean => liveChildScopedServerNames.has(name) || parentVisible.has(name) || mcpServerHasRegistrations(name);
+  const servers: ChildMcpServers = {};
+  const actual = new Map<string, string>();
+  const notes: string[] = [];
+  const claim = (name: string): void => {
+    liveChildScopedServerNames.add(name);
+    claimed.push(name);
+  };
+  for (const [name, cfg] of Object.entries(declared)) {
+    if (cfg.type === "sdk") {
+      if (inUse(name)) {
+        notes.push(
+          parentVisible.has(name) && parentDeclared?.[name]?.type === "sdk"
+            ? `mcpServers declares the in-process server "${name}", which this session already has -- the session's "${name}" is used`
+            : parentVisible.has(name)
+              ? `mcpServers declares the in-process server "${name}", but this session's "${name}" is a different server -- this agent's own in-process "${name}" is not connected, and the session's is what this agent sees`
+              : `mcpServers declares the in-process server "${name}", which another agent in this session is using -- this agent's own in-process "${name}" is not connected`,
+        );
+        continue;
+      }
+      claim(name);
+      servers[name] = cfg;
+      actual.set(name, name);
+      continue;
+    }
+    const free = (candidate: string): boolean => !inUse(candidate) && (candidate === name || !(candidate in declared));
+    let pick = prefer?.get(name);
+    if (pick === undefined || !free(pick)) pick = free(name) ? name : undefined;
+    for (let n = 2; pick === undefined; n++) if (free(`${name}_${n}`)) pick = `${name}_${n}`;
+    claim(pick);
+    servers[pick] = cfg;
+    actual.set(name, pick);
+    if (pick !== name) notes.push(`mcpServers declares "${name}", which is already in use in this session -- this agent's own "${name}" is connected as "${pick}" (its tools are named mcp__${pick}__<tool>)`);
+  }
+  let released = false;
+  return {
+    servers,
+    actual,
+    notes,
+    release: () => {
+      if (released) return;
+      released = true;
+      for (const name of claimed) liveChildScopedServerNames.delete(name);
+    },
+  };
+}
+
 export function createChildEngineFactory(deps: ChildEngineFactoryDeps): ChildEngineFactory {
   return (runCtx: ChildEngineRunContext): ChildEngineDeps => ({
     spawn(req: SpawnChildRequest, inherit: ChildInheritance): Promise<ChildHandle> {
@@ -429,6 +548,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
   // header note) is a concurrency re-check on the SAME childKey, never a fresh depth for the record.
   const { depth: spawnDepth } = checkAndRegisterSpawn({ parentKey: runCtx.parentAgentId ?? runCtx.parentSessionId, childKey: agentId, env, ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}) });
   let spawnRegistered = true;
+  // WS-24: the first generation's MCP server-name claims, until `startGeneration` owns them (its `runEngine` releases them).
+  let pendingServerRelease: (() => void) | undefined;
 
   try {
     // --- Model/effort resolution (WS-10 §3) -----------------------------------------------------
@@ -620,7 +741,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       }
       for (const [name, cfg] of Object.entries(spec)) childScopedMcpServers[name] = cfg;
     }
-    const hasChildScopedMcpServers = Object.keys(childScopedMcpServers).length > 0;
+    // WS-24: the servers are ALLOCATED (named, and their names claimed) per generation, right before it
+    // starts -- see `allocateChildScopedServers`. The declared names shadow the parent's same-named
+    // servers in this child's own scope (below, `inheritedMcpServerNames`), so it sees one `srv`, its own.
+    const ownServerNames = new Set(Object.entries(childScopedMcpServers).filter(([, cfg]) => cfg.type !== "sdk").map(([name]) => name));
+    const parentVisibleServers = (): Set<string> => new Set(parentMcp?.visibleServerNames?.() ?? []);
 
     // --- Isolation (WS-10 §8) --------------------------------------------------------------------
     // Review r2 finding 5 (whole-branch): NO "a configured WorktreeCreate hook counts" carve-out
@@ -714,6 +839,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     let currentSettle: ((status: "completed" | "failed" | "stopped", content: string) => void) | undefined;
     // Review r1 finding 4: the current generation's live counters (see `startGeneration`).
     let currentUsage: (() => ChildResult["usage"]) | undefined;
+    // WS-24 fix round 1 (M1): settles once the current generation's `runEngine` has fully returned, and
+    // with it released that generation's MCP server-name claims.
+    let lastGenerationDone: Promise<void> = Promise.resolve();
+    // Fix round 3: set while a resume waits for the previous generation's teardown (see `resume()`).
+    let pendingResume: { stopped: boolean } | undefined;
 
     // One generation = one live `runEngine()` invocation, from its initial "user" turn until IT
     // reaches a terminal frame (or is stopped/stalls). `resume()` starts a NEW generation against
@@ -723,7 +853,24 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // its own forwarded frames (WS-10 §4), never a second settlement of THIS promise (a native
     // Promise's `resolve` is itself idempotent, so calling `resolveResultOnce` again from a later
     // generation is a harmless no-op, never a second, conflicting value).
-    function startGeneration(config: RuntimeConfig, initialMessages: ProviderMessage[], liveText: string, agentSystemPrompt?: string): void {
+    function startGeneration(config: RuntimeConfig, initialMessages: ProviderMessage[], liveText: string, agentSystemPrompt: string | undefined, servers: ChildServerAllocation): void {
+      // WS-24: this generation's own servers, under the names it holds (released once `runEngine` returns).
+      const ownServers = Object.keys(servers.servers).length > 0;
+      if (ownServers) config = { ...config, mcpServers: servers.servers };
+      // WS-24 (fix round 1, I1): a RENAMED server is still the one the definition named. Every
+      // `disallowedTools` entry naming it under its declared name is carried over to the name it runs
+      // under (the declared entry stays: it is harmless, and the parent's same-named server is out of
+      // this child's scope anyway) -- that covers both hiding it and denying it. Rules and hook matchers
+      // from every other layer (the parent's live rules, the settings seed, the hooks) are matched on
+      // the declared spelling too, by the engine (`EngineOptions.mcpServerRenames`).
+      const renames = [...servers.actual].filter(([declared, actual]) => declared !== actual);
+      if (renames.length > 0 && config.disallowedTools !== undefined) {
+        const carried = config.disallowedTools.flatMap((entry) => {
+          const renamed = renameMcpReference(entry, renames);
+          return renamed !== undefined ? [entry, renamed] : [entry];
+        });
+        config = { ...config, disallowedTools: [...new Set(carried)] };
+      }
       const channel = createInMemoryChannel();
       currentSink = channel.host.output;
       const startedAt = Date.now();
@@ -1047,154 +1194,174 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           },
         };
       })();
-      void runEngine({
-        config,
-        contextAccountant: childAccountant,
-        // Phase 6 Task 3 (R6-17): the PARENT's resolved provider identity, threaded onto the child's
-        // own engine.
-        //
-        // Without this line the seam is a field declared upstream that nothing downstream reads --
-        // the exact P5 factory-seam trap the plan names verbatim ("a field declared upstream proves
-        // nothing across the seam"). The consequence is concrete: a child would write NO
-        // provider-state records even when its parent has an identity, so its own sidecar would be
-        // empty and its resume would degrade every message. Conditionally spread, so a child of a
-        // parent with no resolved identity is byte-identical to a pre-P6 child.
-        // Phase 6 Task 10 (R6-17): the child's OWN provider WINS over the inherited identity when the
-        // child named its own model and that model resolves to something the parent is not running.
-        // `childProvider` is resolved once, above, from `resolvedModel.effectiveModel`.
-        //
-        // P6.6 (WS-13c §8): `childProvider.identity` alone covers both the cross-provider AND the
-        // same-provider case -- it is materialised from `parentIdentityAtSpawn`, which (P6.6 fix
-        // round 1, I2) IS `inherit.provider` now, and nothing else.
-        //
-        // P7a (Lane D): the `: inherit.provider !== undefined ? …` fallback that used to sit here
-        // is GONE. It was provably unreachable -- `childProvider.identity === undefined` happens
-        // only when `inherit.provider` is itself `undefined`, the exact condition the fallback
-        // re-tested -- and it survived P6.6 only because `provider/seam-contracts-p6.test.ts` pinned
-        // that substring against this file's SOURCE TEXT. That pin's own comment called itself a
-        // placeholder "until" the end-to-end proof landed; the proof exists, so the pin is retired
-        // and the branch with it. The seam is now asserted by BEHAVIOUR (a child spawned under a
-        // parent with an identity writes provider-state records into its own sidecar), which is
-        // what a source-text check could never actually check.
-        ...(childProvider.identity !== undefined ? { providerIdentity: childProvider.identity } : {}),
-        input: channel.runtime.input,
-        // Finding 9: the write-time snapshotting wrapper around `channel.runtime.output`.
-        output: snapshottingOutput,
-        // Every generation this handle ever runs -- spawn AND every resume -- reads `.provider` off
-        // this SAME, now-always-materialised object (never a fresh `?? deps.provider` fallback):
-        // that is the whole WS-13c §8 fix. `resume()` may reassign the closure variable `childProvider`
-        // itself (never this expression) after a fresh, successful re-resolution against the child's
-        // OWN recorded model -- see `resume()` below.
-        provider: childProvider.provider,
-        // Phase 5 Task 3 (R5-3): P4-J RETIRED. The child's persona now travels on the engine's real
-        // system-prompt channel (`ProviderRequest.system`) instead of being concatenated into the
-        // first user turn -- see the resolution site below for the full note. Conditionally spread so
-        // a child with no definition prompt sends nothing, exactly as before.
-        ...(agentSystemPrompt !== undefined && agentSystemPrompt.length > 0 ? { agentSystemPrompt } : {}),
-        // SDK 0.0.16 (P16-7): a FORK's exact inherited request layout -- captured once, at spawn, by
-        // `engine.ts`'s own `buildChildInheritance` fork branch, and handed to every generation this
-        // handle ever runs (spawn AND resume both call `startGeneration`, and both close over the SAME
-        // `inherit`). A resumed fork therefore keeps sending the layout it was BORN with rather than
-        // re-capturing the parent's (possibly since-changed) one -- consistent with a fork being a
-        // frozen snapshot of the parent at fork time, and disclosed rather than silently assumed.
-        ...(req.fork === true && inherit.requestLayout !== undefined ? { exactRequestLayout: inherit.requestLayout } : {}),
-        // WS-23 (brief item 7): this engine is a SUBAGENT, so it fires SubagentStart/SubagentStop
-        // where a session fires SessionStart/Stop -- through ITS OWN hook registry (the parent's
-        // callbacks, mirrored as `config.hooks`, plus the parent's settings/plugin entries as
-        // `extraHookEntries`), so exactly the hooks the parent runs see its subagents start and
-        // stop, and a SubagentStop `block` keeps THIS child working. `agent_transcript_path` is the
-        // child's own transcript, `""` when there is no durable one to name.
-        subagentHooks: {
-          agentType: req.agentType ?? req.builtinAgentType ?? (req.fork === true ? "fork" : "general-purpose"),
-          agentTranscriptPath: childStore !== undefined && childDurableRoot !== undefined ? transcriptPath : "",
-        },
-        // Spawn-surface parity (research §A1 `omitClaudeMd`): an Explore/Plan-style definition drops
-        // the project instructions files and the git summary from this child's own context.
-        ...(req.definition?.omitProjectContext === true ? { omitProjectContext: true } : {}),
-        ...(writer !== undefined ? { store: writer } : {}),
-        ...(initialMessages.length > 0 ? { initialMessages } : {}),
-        // Fix wave (I2): the parent's live MCP state, injected as this child's own -- but ONLY when
-        // the child declares no servers of its own. A caller-supplied state source SUPPRESSES the
-        // engine's own lifecycle dial (engine.ts's precedence block), so injecting it alongside a
-        // definition's own `mcpServers` would silently prevent those servers from ever connecting.
-        // A child with its own servers therefore keeps its own lifecycle; its bridge tools still
-        // resolve the OWNING session's lifecycle (ctx.sessionId, per I1), so those child-scoped
-        // servers are CALLABLE from inside the child but not browsable through ListMcpResources --
-        // disclosed, not silent.
-        ...(!hasChildScopedMcpServers && parentMcp?.stateSource !== undefined ? { mcpServerStateSource: parentMcp.stateSource } : {}),
-        ...(!hasChildScopedMcpServers && parentMcp?.controlSeam !== undefined ? { mcpControlSeam: parentMcp.controlSeam } : {}),
-        // Fix round 20/21: EVERY child -- with or without servers of its own -- inherits the parent's
-        // visible-server set, so the scope recurses to grandchildren (engine.ts's
-        // `computeAdvertisedPartition`). Scope only: never connected, never reported.
-        ...(parentMcp?.visibleServerNames !== undefined ? { inheritedMcpServerNames: parentMcp.visibleServerNames } : {}),
-        // Phase 5 Task 8: the SAME assembler the parent runs with. Without it a child's system
-        // prompt is `agentSystemPrompt` verbatim (the engine's R5-16 fallback) -- a persona with no
-        // minimal prompt, no dynamic sections, no WINTER.md and no memory block, which is a strictly
-        // worse prompt than the parent's for no stated reason.
-        ...(deps.systemPromptAssembler !== undefined ? { systemPromptAssembler: deps.systemPromptAssembler } : {}),
-        // Phase 5 fix wave (B-low): the assembler above PLACES the skill listing; without this it
-        // had nothing to place, so every child ran with an empty one.
-        ...(deps.skillListing !== undefined ? { skillListing: deps.skillListing } : {}),
-        ...(deps.describeModel !== undefined ? { describeModel: deps.describeModel } : {}),
-        // A child's generations are PRICED like its parent's, and each priced one climbs to the
-        // owning run's ledger -- see `ChildEngineFactoryDeps.priceUsage`.
-        //
-        // UNDER THE CHILD'S OWN QUALIFIED KEY. The child's config carries `effectiveModel` -- for a
-        // definition that says `model: "haiku"`, the SLOT NAME. The pricing seam pairs a bare key
-        // with the session-START provider, so a child that resolved onto a DIFFERENT provider would
-        // be priced against the wrong provider's rows, or not at all. `childProvider.identity` is
-        // what the model resolved TO; it is read INSIDE the closure because `resume()` reassigns
-        // `childProvider`. (The engine keys its ledger on the live identity as well; this is the
-        // half that holds for whatever key a caller hands the seam.)
-        ...(deps.priceUsage !== undefined
-          ? {
-              priceUsage: (modelKey: string, usage: ProviderUsage) =>
-                deps.priceUsage!(modelKey === resolvedModel.effectiveModel && childProvider.identity !== undefined ? childProvider.identity.modelKey : modelKey, usage),
-            }
-          : {}),
-        ...(deps.usageRowFacts !== undefined
-          ? {
-              usageRowFacts: (modelKey: string) =>
-                deps.usageRowFacts!(modelKey === resolvedModel.effectiveModel && childProvider.identity !== undefined ? childProvider.identity.modelKey : modelKey),
-            }
-          : {}),
-        ...(runCtx.recordDescendantCost !== undefined ? { onPricedGeneration: runCtx.recordDescendantCost } : {}),
-        // The session's spending limit reaches the CHILD's own loop through its spawner's answer --
-        // see `ChildEngineRunContext.budgetExceeded`.
-        ...(runCtx.budgetExceeded !== undefined ? { ancestorBudgetExceeded: () => runCtx.budgetExceeded!() } : {}),
-        ...(deps.resolveAuxiliaryModel !== undefined ? { resolveAuxiliaryModel: deps.resolveAuxiliaryModel } : {}),
-        ...(deps.resolveToolSecret !== undefined ? { resolveToolSecret: deps.resolveToolSecret } : {}),
-        // NEW-4, the two threads that close C1 and I1 for the child leg. `winterHome` already
-        // existed on the factory and was read ONLY for transcript paths (`childTranscriptSubpath`);
-        // the engine needs it to derive `buildBaselineDenyRules(resolvedWinterHome)`, which is what
-        // puts the `//<root>/{run,projects,backups}` floors in front of a child running under forced
-        // bypass.
-        ...(deps.settingsRules !== undefined ? { settingsRules: deps.settingsRules } : {}),
-        // WS-21 §3.7: the child's own `buildBaselineDenyRules(resolvedWinterHome)` floor anchors on
-        // the shared store home too, the same `childDurableRoot` preference used above for the
-        // transcript path and the sidecar gate -- `projects/` (what this floor protects) lives under
-        // the store home once the router links `buildRunHome`.
-        ...(childDurableRoot !== undefined ? { winterHome: childDurableRoot } : {}),
-        // Only meaningful when this child carries an `outputFormat` -- but supplied unconditionally,
-        // because the alternative is a child that fails its FIRST round the moment a caller sets one.
-        ...(deps.structuredOutput !== undefined ? { structuredOutput: deps.structuredOutput } : {}),
-        // I4: the settings-file and plugin hook entries the PARENT runs with. A user-tier
-        // `PreToolUse` deny must govern a child's tool calls too.
-        ...(deps.extraHookEntries !== undefined ? { extraHookEntries: deps.extraHookEntries } : {}),
-        // I4: children auto-compact. Same controller instance -- it is stateless per call except for
-        // the carried-summary memo, which is per-CONTROLLER and therefore per-parent; a child's own
-        // compaction would poison that memo, so a child gets its own via the factory below.
-        ...(ownCompactionController !== undefined ? { compactionController: ownCompactionController } : {}),
-        env,
-      }).catch((err: unknown) => {
-        // R-1: CARRY THE REASON. This used to discard `err` and settle with a fixed sentence, so a
-        // child that died for a stated, actionable reason -- a managed policy refusing its
-        // permission mode, say -- reached the parent's model as "exited unexpectedly", which is both
-        // untrue and unactionable. The generic text is now the FALLBACK for a rejection with no
-        // message, never a replacement for one that has it.
-        const reason = err instanceof Error && err.message.length > 0 ? err.message : String(err ?? "");
-        settle("failed", reason.length > 0 ? `child engine exited: ${reason}` : "child engine process exited unexpectedly");
-      });
+      let handedOver = false;
+      try {
+        lastGenerationDone = runEngine({
+          config,
+          contextAccountant: childAccountant,
+          // Phase 6 Task 3 (R6-17): the PARENT's resolved provider identity, threaded onto the child's
+          // own engine.
+          //
+          // Without this line the seam is a field declared upstream that nothing downstream reads --
+          // the exact P5 factory-seam trap the plan names verbatim ("a field declared upstream proves
+          // nothing across the seam"). The consequence is concrete: a child would write NO
+          // provider-state records even when its parent has an identity, so its own sidecar would be
+          // empty and its resume would degrade every message. Conditionally spread, so a child of a
+          // parent with no resolved identity is byte-identical to a pre-P6 child.
+          // Phase 6 Task 10 (R6-17): the child's OWN provider WINS over the inherited identity when the
+          // child named its own model and that model resolves to something the parent is not running.
+          // `childProvider` is resolved once, above, from `resolvedModel.effectiveModel`.
+          //
+          // P6.6 (WS-13c §8): `childProvider.identity` alone covers both the cross-provider AND the
+          // same-provider case -- it is materialised from `parentIdentityAtSpawn`, which (P6.6 fix
+          // round 1, I2) IS `inherit.provider` now, and nothing else.
+          //
+          // P7a (Lane D): the `: inherit.provider !== undefined ? …` fallback that used to sit here
+          // is GONE. It was provably unreachable -- `childProvider.identity === undefined` happens
+          // only when `inherit.provider` is itself `undefined`, the exact condition the fallback
+          // re-tested -- and it survived P6.6 only because `provider/seam-contracts-p6.test.ts` pinned
+          // that substring against this file's SOURCE TEXT. That pin's own comment called itself a
+          // placeholder "until" the end-to-end proof landed; the proof exists, so the pin is retired
+          // and the branch with it. The seam is now asserted by BEHAVIOUR (a child spawned under a
+          // parent with an identity writes provider-state records into its own sidecar), which is
+          // what a source-text check could never actually check.
+          ...(childProvider.identity !== undefined ? { providerIdentity: childProvider.identity } : {}),
+          input: channel.runtime.input,
+          // Finding 9: the write-time snapshotting wrapper around `channel.runtime.output`.
+          output: snapshottingOutput,
+          // Every generation this handle ever runs -- spawn AND every resume -- reads `.provider` off
+          // this SAME, now-always-materialised object (never a fresh `?? deps.provider` fallback):
+          // that is the whole WS-13c §8 fix. `resume()` may reassign the closure variable `childProvider`
+          // itself (never this expression) after a fresh, successful re-resolution against the child's
+          // OWN recorded model -- see `resume()` below.
+          provider: childProvider.provider,
+          // Phase 5 Task 3 (R5-3): P4-J RETIRED. The child's persona now travels on the engine's real
+          // system-prompt channel (`ProviderRequest.system`) instead of being concatenated into the
+          // first user turn -- see the resolution site below for the full note. Conditionally spread so
+          // a child with no definition prompt sends nothing, exactly as before.
+          ...(agentSystemPrompt !== undefined && agentSystemPrompt.length > 0 ? { agentSystemPrompt } : {}),
+          // SDK 0.0.16 (P16-7): a FORK's exact inherited request layout -- captured once, at spawn, by
+          // `engine.ts`'s own `buildChildInheritance` fork branch, and handed to every generation this
+          // handle ever runs (spawn AND resume both call `startGeneration`, and both close over the SAME
+          // `inherit`). A resumed fork therefore keeps sending the layout it was BORN with rather than
+          // re-capturing the parent's (possibly since-changed) one -- consistent with a fork being a
+          // frozen snapshot of the parent at fork time, and disclosed rather than silently assumed.
+          ...(req.fork === true && inherit.requestLayout !== undefined ? { exactRequestLayout: inherit.requestLayout } : {}),
+          // WS-23 (brief item 7): this engine is a SUBAGENT, so it fires SubagentStart/SubagentStop
+          // where a session fires SessionStart/Stop -- through ITS OWN hook registry (the parent's
+          // callbacks, mirrored as `config.hooks`, plus the parent's settings/plugin entries as
+          // `extraHookEntries`), so exactly the hooks the parent runs see its subagents start and
+          // stop, and a SubagentStop `block` keeps THIS child working. `agent_transcript_path` is the
+          // child's own transcript, `""` when there is no durable one to name.
+          subagentHooks: {
+            agentType: req.agentType ?? req.builtinAgentType ?? (req.fork === true ? "fork" : "general-purpose"),
+            agentTranscriptPath: childStore !== undefined && childDurableRoot !== undefined ? transcriptPath : "",
+          },
+          // Spawn-surface parity (research §A1 `omitClaudeMd`): an Explore/Plan-style definition drops
+          // the project instructions files and the git summary from this child's own context.
+          ...(req.definition?.omitProjectContext === true ? { omitProjectContext: true } : {}),
+          ...(writer !== undefined ? { store: writer } : {}),
+          ...(initialMessages.length > 0 ? { initialMessages } : {}),
+          // Fix wave (I2): the parent's live MCP state, injected as this child's own -- but ONLY when
+          // the child declares no servers of its own. A caller-supplied state source SUPPRESSES the
+          // engine's own lifecycle dial (engine.ts's precedence block), so injecting it alongside a
+          // definition's own `mcpServers` would silently prevent those servers from ever connecting.
+          // A child with its own servers therefore keeps its own lifecycle; its bridge tools still
+          // resolve the OWNING session's lifecycle (ctx.sessionId, per I1), so those child-scoped
+          // servers are CALLABLE from inside the child but not browsable through ListMcpResources --
+          // disclosed, not silent.
+          ...(!ownServers && parentMcp?.stateSource !== undefined ? { mcpServerStateSource: parentMcp.stateSource } : {}),
+          ...(!ownServers && parentMcp?.controlSeam !== undefined ? { mcpControlSeam: parentMcp.controlSeam } : {}),
+          // Fix round 20/21: EVERY child -- with or without servers of its own -- inherits the parent's
+          // visible-server set, so the scope recurses to grandchildren (engine.ts's
+          // `computeAdvertisedPartition`). Scope only: never connected, never reported.
+          // WS-24: minus the names this child declares for itself -- its own server of that name is the one
+          // it sees (under whatever name `allocateChildScopedServers` gave it).
+          // WS-24 (fix round 3): the parent's renames too -- a renamed server of an ancestor's is visible here,
+        // so its declared name must govern it here as well. This generation's own win on a shared name.
+        ...(() => {
+          const merged = { ...(parentMcp?.serverRenames ?? {}), ...Object.fromEntries(renames.map(([declared, actual]) => [actual, declared])) };
+          return Object.keys(merged).length > 0 ? { mcpServerRenames: merged } : {};
+        })(),
+          ...(parentMcp?.visibleServerNames !== undefined
+            ? { inheritedMcpServerNames: ownServerNames.size === 0 ? parentMcp.visibleServerNames : () => parentMcp.visibleServerNames!().filter((name) => !ownServerNames.has(name)) }
+            : {}),
+          // Phase 5 Task 8: the SAME assembler the parent runs with. Without it a child's system
+          // prompt is `agentSystemPrompt` verbatim (the engine's R5-16 fallback) -- a persona with no
+          // minimal prompt, no dynamic sections, no WINTER.md and no memory block, which is a strictly
+          // worse prompt than the parent's for no stated reason.
+          ...(deps.systemPromptAssembler !== undefined ? { systemPromptAssembler: deps.systemPromptAssembler } : {}),
+          // Phase 5 fix wave (B-low): the assembler above PLACES the skill listing; without this it
+          // had nothing to place, so every child ran with an empty one.
+          ...(deps.skillListing !== undefined ? { skillListing: deps.skillListing } : {}),
+          ...(deps.describeModel !== undefined ? { describeModel: deps.describeModel } : {}),
+          // A child's generations are PRICED like its parent's, and each priced one climbs to the
+          // owning run's ledger -- see `ChildEngineFactoryDeps.priceUsage`.
+          //
+          // UNDER THE CHILD'S OWN QUALIFIED KEY. The child's config carries `effectiveModel` -- for a
+          // definition that says `model: "haiku"`, the SLOT NAME. The pricing seam pairs a bare key
+          // with the session-START provider, so a child that resolved onto a DIFFERENT provider would
+          // be priced against the wrong provider's rows, or not at all. `childProvider.identity` is
+          // what the model resolved TO; it is read INSIDE the closure because `resume()` reassigns
+          // `childProvider`. (The engine keys its ledger on the live identity as well; this is the
+          // half that holds for whatever key a caller hands the seam.)
+          ...(deps.priceUsage !== undefined
+            ? {
+                priceUsage: (modelKey: string, usage: ProviderUsage) =>
+                  deps.priceUsage!(modelKey === resolvedModel.effectiveModel && childProvider.identity !== undefined ? childProvider.identity.modelKey : modelKey, usage),
+              }
+            : {}),
+          ...(deps.usageRowFacts !== undefined
+            ? {
+                usageRowFacts: (modelKey: string) =>
+                  deps.usageRowFacts!(modelKey === resolvedModel.effectiveModel && childProvider.identity !== undefined ? childProvider.identity.modelKey : modelKey),
+              }
+            : {}),
+          ...(runCtx.recordDescendantCost !== undefined ? { onPricedGeneration: runCtx.recordDescendantCost } : {}),
+          // The session's spending limit reaches the CHILD's own loop through its spawner's answer --
+          // see `ChildEngineRunContext.budgetExceeded`.
+          ...(runCtx.budgetExceeded !== undefined ? { ancestorBudgetExceeded: () => runCtx.budgetExceeded!() } : {}),
+          ...(deps.resolveAuxiliaryModel !== undefined ? { resolveAuxiliaryModel: deps.resolveAuxiliaryModel } : {}),
+          ...(deps.resolveToolSecret !== undefined ? { resolveToolSecret: deps.resolveToolSecret } : {}),
+          // NEW-4, the two threads that close C1 and I1 for the child leg. `winterHome` already
+          // existed on the factory and was read ONLY for transcript paths (`childTranscriptSubpath`);
+          // the engine needs it to derive `buildBaselineDenyRules(resolvedWinterHome)`, which is what
+          // puts the `//<root>/{run,projects,backups}` floors in front of a child running under forced
+          // bypass.
+          ...(deps.settingsRules !== undefined ? { settingsRules: deps.settingsRules } : {}),
+          // WS-21 §3.7: the child's own `buildBaselineDenyRules(resolvedWinterHome)` floor anchors on
+          // the shared store home too, the same `childDurableRoot` preference used above for the
+          // transcript path and the sidecar gate -- `projects/` (what this floor protects) lives under
+          // the store home once the router links `buildRunHome`.
+          ...(childDurableRoot !== undefined ? { winterHome: childDurableRoot } : {}),
+          // Only meaningful when this child carries an `outputFormat` -- but supplied unconditionally,
+          // because the alternative is a child that fails its FIRST round the moment a caller sets one.
+          ...(deps.structuredOutput !== undefined ? { structuredOutput: deps.structuredOutput } : {}),
+          // I4: the settings-file and plugin hook entries the PARENT runs with. A user-tier
+          // `PreToolUse` deny must govern a child's tool calls too.
+          ...(deps.extraHookEntries !== undefined ? { extraHookEntries: deps.extraHookEntries } : {}),
+          // I4: children auto-compact. Same controller instance -- it is stateless per call except for
+          // the carried-summary memo, which is per-CONTROLLER and therefore per-parent; a child's own
+          // compaction would poison that memo, so a child gets its own via the factory below.
+          ...(ownCompactionController !== undefined ? { compactionController: ownCompactionController } : {}),
+          env,
+        }).catch((err: unknown) => {
+          // R-1: CARRY THE REASON. This used to discard `err` and settle with a fixed sentence, so a
+          // child that died for a stated, actionable reason -- a managed policy refusing its
+          // permission mode, say -- reached the parent's model as "exited unexpectedly", which is both
+          // untrue and unactionable. The generic text is now the FALLBACK for a rejection with no
+          // message, never a replacement for one that has it.
+          const reason = err instanceof Error && err.message.length > 0 ? err.message : String(err ?? "");
+          settle("failed", reason.length > 0 ? `child engine exited: ${reason}` : "child engine process exited unexpectedly");
+        })
+          .finally(servers.release)
+          .then(() => undefined, () => undefined);
+        handedOver = true;
+      } finally {
+        // Fix round 1 (M1): a throw before `runEngine` took the generation's server-name claims over
+        // releases them here -- on the spawn and the resume path alike.
+        if (!handedOver) servers.release();
+      }
 
       channel.host.output.write({ type: "user", text: liveText });
     }
@@ -1307,8 +1474,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       // `ChildInheritance`. The assembler applies it; this is only the channel.
       ...(inherit.outputStyle !== undefined ? { outputStyle: inherit.outputStyle } : {}),
       // I4: child-scoped servers only -- the parent's own declared servers are reached through the
-      // inherited state source below, never re-declared (and therefore never re-connected) here.
-      ...(hasChildScopedMcpServers ? { mcpServers: childScopedMcpServers } : {}),
+      // inherited state source below, never re-declared (and therefore never re-connected) here. WS-24:
+      // set per GENERATION by `startGeneration`, from that generation's own allocation.
     };
 
     // Phase 4 fix wave (C1 + I6): ONE generation's own RuntimeConfig -- `baseConfig` plus the mode
@@ -1393,6 +1560,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // `buildForkInitialMessages` appended to `initialMessages` above (consecutive user-role history
     // entries merge, and a `"tool"`-role message is user-role for that purpose), reproducing claude's
     // own single "tool_result + directive text" wire message without a bespoke merge here.
+    // WS-24: the first generation's servers, allocated (and their names claimed) here so a rename reaches
+    // the child's first turn with the other definition warnings.
+    let serverAllocation = allocateChildScopedServers(childScopedMcpServers, parentVisibleServers(), undefined, parentMcp?.declaredServers);
+    pendingServerRelease = serverAllocation.release;
+    definitionWarnings.push(...serverAllocation.notes);
     const firstTurnText =
       req.fork === true
         ? buildForkDirectiveText({ prompt: req.prompt, ...(req.isolation === "worktree" ? { worktree: { parentRoot: inherit.sessionRoot, worktreeRoot: workspace.root } } : {}) })
@@ -1632,7 +1804,23 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // Under P4-J it survived a resume only because it sat in the rebuilt message history; now
         // that it rides `system`, a resume that omitted it would silently run a persona-less child --
         // exactly the C1 defect P4-J was created to fix, reintroduced by the move.
-        startGeneration(generationConfig(resumeMode), rebuilt, msg.body, resolvedSystemPrompt);
+        // WS-24: the names are re-claimed for this generation -- the same ones where still free; a name a
+        // sibling took while this child was idle is re-allocated, and the child is told.
+        const previous = serverAllocation.actual;
+        // Fix round 1 (M1): the previous generation's names are released only once its `runEngine` has
+        // returned (its lifecycle's teardown closes clients first), while `record.status` went terminal
+        // synchronously at settle -- so a quick resume waits for that, bounded, rather than finding its
+        // own names still claimed and renaming a server that collides with nothing.
+        const ticket = { stopped: false };
+        pendingResume = ticket;
+        await Promise.race([lastGenerationDone, new Promise<void>((resolve) => setTimeout(resolve, GENERATION_TEARDOWN_WAIT_MS).unref?.())]);
+        pendingResume = undefined;
+        // Fix round 3: a `stop()` that landed during that wait had no generation of its own to settle (the
+        // previous one already had), so it is honoured here -- the new generation never starts.
+        if (ticket.stopped) return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: `child ${agentId} was stopped while resuming` };
+        serverAllocation = allocateChildScopedServers(childScopedMcpServers, parentVisibleServers(), previous, parentMcp?.declaredServers);
+        const moved = [...serverAllocation.actual].filter(([declared, name]) => previous.get(declared) !== name).map(([declared, name]) => `this agent's own "${declared}" is now connected as "${name}" (its tools are named mcp__${name}__<tool>)`);
+        startGeneration(generationConfig(resumeMode), rebuilt, moved.length > 0 ? `${msg.body}\n\n[winter: ${moved.join("; ")}]` : msg.body, resolvedSystemPrompt, serverAllocation);
         return { status: "resumed_and_delivered", messageId: msg.messageId };
       },
       async result(): Promise<ChildResult> {
@@ -1640,6 +1828,14 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       },
       async stop(): Promise<void> {
         if (record.status !== "running") return; // already terminal -- idempotent
+        // Fix round 3: a resume still waiting for the previous generation's teardown has nothing to settle
+        // yet -- the stop cancels that resume instead, and the child is recorded stopped.
+        if (pendingResume !== undefined) {
+          pendingResume.stopped = true;
+          record.status = "stopped";
+          void writer?.writeMetadata({ ...record });
+          return;
+        }
         // Routed through the CURRENT generation's own gated `settle` (never a parallel, ungated
         // status mutation) -- see startGeneration's own header comment on `currentSettle` for why:
         // whichever of {this stop, a genuine result frame arriving moments later} reaches the gate
@@ -1661,12 +1857,14 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     } catch {
       /* see above */
     }
-    startGeneration(generationConfig(inherit.policy.effectiveMode), initialMessages, firstTurnText, resolvedSystemPrompt);
+    startGeneration(generationConfig(inherit.policy.effectiveMode), initialMessages, firstTurnText, resolvedSystemPrompt, serverAllocation);
 
     spawnRegistered = false; // ownership of the depth/concurrency slot has moved into the generation's own settle()/stop()
+    pendingServerRelease = undefined; // ...and of the server-name claims, into its `runEngine`
     return handle;
   } catch (err) {
     if (spawnRegistered) releaseSpawn(agentId);
+    pendingServerRelease?.();
     throw err;
   }
 }

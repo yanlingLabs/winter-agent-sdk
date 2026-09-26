@@ -72,9 +72,25 @@ describe("transformChildFrame (WS-10 §4)", () => {
     }
   });
 
-  test("another system-subtype data frame (e.g. hook_started) passes through unchanged -- this engine's own genuine child activity, never merged into a parent message", () => {
-    const frame: WinterFrame = { type: "data", message: { type: "system", subtype: "hook_started", hook_id: "h1", hook_name: "x", hook_event: "PreToolUse", session_id: "c1", uuid: "u1" } };
-    expect(transformChildFrame(frame, CORR, false)).toEqual(frame);
+  // WS-24 (cross-lane, the phone review): a child's own system frames carry its parent_tool_use_id, so a
+  // host that threads by it files them on the child's thread, never the main one.
+  test("a child's own system frames (hook lifecycle, informational, continuity_warning, model_switch, ...) carry its parent_tool_use_id, never merged into a parent message", () => {
+    for (const message of [
+      { type: "system", subtype: "hook_started", hook_id: "h1", hook_name: "x", hook_event: "PreToolUse", session_id: "c1", uuid: "u1" },
+      { type: "system", subtype: "informational", content: "SubagentStop blocked", level: "warning", prevent_continuation: true, session_id: "c1", uuid: "u2" },
+      { type: "system", subtype: "continuity_warning", warning: "reasoning_state_unsaved", detail: "x", session_id: "c1", uuid: "u3" },
+      { type: "system", subtype: "model_switch", reason: "fallback", from_model: "a", to_model: "b", provider: "p", session_id: "c1", uuid: "u4" },
+    ]) {
+      const frame: WinterFrame = { type: "data", message } as WinterFrame;
+      expect(transformChildFrame(frame, CORR, false)).toEqual({ type: "data", message: { ...message, parent_tool_use_id: CORR.parentToolUseId } } as WinterFrame);
+    }
+  });
+
+  test("the session-level task-registry frames pass through unchanged: they are folded by their own task id", () => {
+    for (const subtype of ["task_started", "task_progress", "task_notification", "task_updated", "background_tasks_changed"]) {
+      const frame: WinterFrame = { type: "data", message: { type: "system", subtype, task_id: "t1", session_id: "c1", uuid: "u1" } } as WinterFrame;
+      expect(transformChildFrame(frame, CORR, false)).toEqual(frame);
+    }
   });
 });
 

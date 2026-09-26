@@ -445,6 +445,14 @@ export interface ParentMcpState {
    * `JP($n, Y2(yr.mcp.tools.concat(pn)))`, dump byte 18016381).
    */
   visibleServerNames?: () => readonly string[];
+  /**
+   * WS-24 (fix round 3): the parent run's own `EngineOptions.mcpServerRenames` -- `{ actual: declared }`
+   * for every server in its scope that runs under a name other than the one it was declared with. A
+   * renamed server is in `visibleServerNames` above, so a descendant can call it; the descendant merges
+   * these into its own renames, so session rules and hooks written against the declared name keep
+   * governing it at every depth.
+   */
+  serverRenames?: Readonly<Record<string, string>>;
 }
 
 // The three rule buckets a child's own `RuntimeConfig.permissions` carries. `allowedTools`/
@@ -556,10 +564,30 @@ export function transformChildFrame(
     return { ...frame, message: { ...message, parent_tool_use_id: correlation.parentToolUseId } } as WinterFrame;
   }
 
-  // Every other system-subtype data frame (hook lifecycle, permission_denied, task_* progress,
-  // status, etc.): forwarded unchanged. These are the child's own genuine activity, reported as
-  // their own independent frames -- "never flattened into the main assistant stream" is satisfied
-  // at the object-identity level (nothing here merges child content INTO a parent message), even
-  // for the subset of frame kinds this function doesn't itself stamp a correlation field onto.
+  // WS-24 (cross-lane, the phone review): a child's own SYSTEM frames describe the CHILD's conversation --
+  // a hook's notice (`informational`: a SubagentStop's reason, a `continue: false`), what its history
+  // lost (`continuity_warning`), its model moving (`model_switch`, a fallback), its compaction
+  // (`compact_boundary`, `status`), its hook lifecycle (`hook_started`/`hook_response`), its permission
+  // outcomes (`permission_denied`/`permission_deferred`) and its idle/running state
+  // (`session_state_changed`). Forwarded UNCORRELATED they read as the session's own: a host that threads
+  // by `parent_tool_use_id` (Winter's daemon does) filed a subagent's stop notice on the main thread,
+  // where it looked like the main turn stopping, and a child's fallback moved the main model. So they
+  // carry the child's `parent_tool_use_id` -- an ADDITIVE field on these messages (the pin's
+  // `SDKSystemMessage` has none), overwriting a grandchild's exactly as the assistant/user frames above do,
+  // so the whole subtree stays on the thread the host knows.
+  //
+  // NOT stamped, deliberately: the task-registry family (`task_started`/`task_progress`/
+  // `task_notification`/`task_updated`) and `background_tasks_changed`. Those report SESSION-level task
+  // records keyed by their own task id -- a child's background task is the session's task -- and a host
+  // folds them by that id, whichever thread produced them. `init` is swallowed above.
+  if (message["type"] === "system" && !SESSION_LEVEL_SYSTEM_SUBTYPES.has(String(message["subtype"]))) {
+    return { ...frame, message: { ...message, parent_tool_use_id: correlation.parentToolUseId } } as WinterFrame;
+  }
+
+  // Anything else (an unknown message type): forwarded unchanged. Nothing here merges child content INTO
+  // a parent message, so "never flattened into the main assistant stream" holds at the object level.
   return frame;
 }
+
+/** WS-24: the system subtypes that report session-level records keyed by their own id, forwarded from a child uncorrelated (see `transformChildFrame`). */
+const SESSION_LEVEL_SYSTEM_SUBTYPES: ReadonlySet<string> = new Set(["task_started", "task_progress", "task_notification", "task_updated", "background_tasks_changed"]);

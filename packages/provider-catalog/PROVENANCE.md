@@ -90,6 +90,7 @@ twin and a test asserts the two agree, so this document cannot drift away from t
 | `model.inlineToolDefinitions` | official-doc derived | **overlay only**; the same page (tools defined by value, `inline-tools-2026-09-15`; Claude API only) |
 | `model.clientToolSearch` | official-doc derived | **overlay only**; OpenAI's tool-search guide (client-executed `tool_search`, GPT-5.4 and later) and codex-rs's `models.json` (`supports_search_tool`) for the Codex backend |
 | `model.additionalToolsItem` | official-doc derived | **overlay only**; OpenAI's tool-search guide (`additional_tools` developer item; no model list, so set only where `clientToolSearch` is documented, never on codex-oauth before the live probe) |
+| `model.undeclaredToolCalls` | live-probe proven | **never set from a page**; WS-24's `scripts/probe-fork-undeclared-tool.ts` (a call to a tool absent from `tools` and its history accepted); set on no row until that probe passes for it |
 | `model.allowedToolsChoice` | official-doc derived | **overlay only**; OpenAI's function-calling guide (`tool_choice: allowed_tools`; no model list, same rows as `additionalToolsItem`) |
 | `model.assistantPrefill` | official-doc derived | **overlay only**; the Opus 5.5 migration guide (prefill is a 400 on Opus 4.6 and later, Opus 5.5, Sonnet 5) and the Fable 5.1 guide; only `false` is recorded |
 
