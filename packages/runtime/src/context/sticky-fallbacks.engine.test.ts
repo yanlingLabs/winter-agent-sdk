@@ -42,11 +42,13 @@ async function drive(opts: {
   steps: Step[];
   initialMessages?: ProviderMessage[];
   generate?: (req: ProviderRequest) => ProviderTurn;
+  describe?: ModelDescription;
+  effort?: RuntimeConfig["effort"];
 }): Promise<ProviderRequest[]> {
   const { host, runtime } = createInMemoryChannel();
   const requests: ProviderRequest[] = [];
   const done = runEngine({
-    config: { sessionId: `sticky-${Math.random().toString(36).slice(2)}`, cwd: "/winter-fixture", model: opts.identity.modelKey } as RuntimeConfig,
+    config: { sessionId: `sticky-${Math.random().toString(36).slice(2)}`, cwd: "/winter-fixture", model: opts.identity.modelKey, ...(opts.effort !== undefined ? { effort: opts.effort } : {}) } as RuntimeConfig,
     input: runtime.input,
     output: runtime.output,
     provider: {
@@ -57,7 +59,7 @@ async function drive(opts: {
     },
     tools: stubExecutor,
     providerIdentity: opts.identity,
-    describeModel: () => REFERENCE_ROW,
+    describeModel: () => opts.describe ?? REFERENCE_ROW,
     ...(opts.initialMessages !== undefined ? { initialMessages: opts.initialMessages } : {}),
     store: {
       recordUserEntry() {},
@@ -143,5 +145,59 @@ describe("WS-24: a refused request feature is persisted per provider+model", () 
     addTool("zz_sticky_a");
     const requests = await drive({ identity: OPUS, records: [], initialMessages: history(), steps: [{ user: "again" }] });
     expect(requests[0]!.toolChanges).toBe(true);
+  });
+});
+
+// Fix round 1 (M4): the same round trip for the per-message effort beta, which rides EVERY request on a
+// row that documents it (a leading effort `system` marker), so its refusal lands on turn one.
+describe("WS-24: a refused per-message effort beta is persisted and honoured on resume", () => {
+  const PER_MESSAGE_ROW: ModelDescription = { efforts: ["low", "medium", "high", "xhigh", "max"], wire: { perMessageEffort: true } };
+  const markers = (req: ProviderRequest): number => req.messages.filter((m) => m.role === "system").length;
+  const EFFORT_REFUSAL = () => new ProviderTurnError("provider request failed (bad_request): HTTP 400 — output_config.effort requires a model that supports per-turn effort; this model does not", { status: 400, code: "bad_request", retryable: false });
+
+  test("refused live: the record is written under the refusing model, and a resume on that model sends no marker from its first request", async () => {
+    const records: ProviderStateRecord[] = [];
+    const original = console.error;
+    console.error = () => {};
+    try {
+      const live = await drive({
+        identity: OPUS,
+        records,
+        describe: PER_MESSAGE_ROW,
+        effort: "high",
+        steps: [{ user: "one" }],
+        generate: (req) => {
+          if (markers(req) > 0) throw EFFORT_REFUSAL();
+          return { kind: "text", text: "ok" };
+        },
+      });
+      expect(live.map(markers)).toEqual([1, 0]);
+    } finally {
+      console.error = original;
+    }
+    expect(records.filter((r) => r.kind === "feature-rejected").map((r) => [r.model, r.payload])).toEqual([[OPUS.modelKey, { feature: "per-message-effort" }]]);
+
+    const resumed = await drive({
+      identity: OPUS,
+      records,
+      describe: PER_MESSAGE_ROW,
+      effort: "high",
+      initialMessages: history(),
+      steps: [{ user: "again" }],
+      generate: (req) => {
+        if (markers(req) > 0) throw EFFORT_REFUSAL();
+        return { kind: "text", text: "ok" };
+      },
+    });
+    // One request, no marker: the doomed one is skipped.
+    expect(resumed.map(markers)).toEqual([0]);
+  });
+
+  test("another model ignores it, and without the record the resumed session sends its marker as before", async () => {
+    const record = toProviderStateRecord({ sessionId: "s", anchorUuid: "x", provider: OPUS.providerId, model: OPUS.modelKey, family: OPUS.family, itemIndex: 0, kind: "feature-rejected", payload: { feature: "per-message-effort" } });
+    const other = await drive({ identity: SONNET, records: [record], describe: PER_MESSAGE_ROW, effort: "high", initialMessages: history(), steps: [{ user: "again" }] });
+    expect(markers(other[0]!)).toBeGreaterThan(0);
+    const control = await drive({ identity: OPUS, records: [], describe: PER_MESSAGE_ROW, effort: "high", initialMessages: history(), steps: [{ user: "again" }] });
+    expect(markers(control[0]!)).toBeGreaterThan(0);
   });
 });
