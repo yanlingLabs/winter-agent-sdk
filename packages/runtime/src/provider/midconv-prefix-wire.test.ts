@@ -17,7 +17,7 @@ import { runEngine, type EngineOptions } from "../engine.ts";
 import { buildSessionProvider } from "./session-provider.ts";
 import { describeCatalogModel } from "../production-wiring.ts";
 import { createSystemPromptAssembler } from "../context/assembler.ts";
-import { registerMcpServerTools, replaceExecutor, unregisterMcpServerTools } from "../tools/registry.ts";
+import { registerMcpServerTools, registerTool, replaceExecutor, unregisterMcpServerTools, unregisterToolForTest } from "../tools/registry.ts";
 import { createFakeMcpServerStateSource } from "../mcp/state.ts";
 import { fakeAnthropicCatalog, startAnthropicFake } from "./anthropic-fake.test-support.ts";
 import { fakeResponsesCatalog, startResponsesFake, type ResponsesFakeAnswer } from "./responses-fake.test-support.ts";
@@ -293,4 +293,60 @@ describe("the cached prefix on the wire through mid-session changes (WS-23 midco
     expect(JSON.stringify(output)).toContain('"description":"Look up a customer."');
     expect(inputs[4]!.find((item) => item["type"] === "function_call")).toMatchObject({ name: "lookup", namespace: `mcp__${SERVER}` });
   });
+
+  for (const [label, error] of [
+    ["the live body (param names tool_choice)", { message: "Invalid value: 'tool_search'. Supported values are: 'file_search', 'function', 'mcp', 'custom', 'apply_patch'.", param: "tool_choice.tools[1].type", code: "invalid_value" }],
+    ["no param at all", { message: "Invalid value: 'tool_search'. Supported values are: 'file_search', 'function', 'mcp', 'custom', 'apply_patch'." }],
+  ] as const) {
+    test(`live L2 (gpt-6-astra, ${label}): refusing tool_choice allowed_tools turns off ONLY the restriction -- the client tool_search stays on`, async () => {
+      const SERVER = "wsmidl2";
+      const MODAL = "WsMidL2BypassOnly";
+      registerMcpServerTools(SERVER, [{ name: "lookup", description: "Look up a customer.", inputSchema: { type: "object" } }], { deferredDefault: true });
+      cleanups.push(() => unregisterMcpServerTools(SERVER));
+      registerTool({
+        descriptor: { canonicalName: MODAL, advertisedName: MODAL, source: "sdk", inputSchema: { type: "object" }, description: "only in bypass", exposure: "eager", permissionClass: "read", availability: { modes: ["bypassPermissions"] }, capabilityRequirements: [], disposition: "implement-now" },
+        executor: { async execute() { return { output: "ok" }; } },
+      });
+      cleanups.push(() => unregisterToolForTest(MODAL));
+      const errors: string[] = [];
+      const original = console.error;
+      console.error = (...args: unknown[]) => void errors.push(args.join(" "));
+      cleanups.push(() => void (console.error = original));
+      const fake = await startResponsesFake((r) =>
+        (r.body["tool_choice"] as { type?: string } | undefined)?.type === "allowed_tools" ? { status: 400, error: { type: "invalid_request_error", ...error } } : { items: [{ type: "text", text: "ok" }] },
+      );
+      cleanups.push(() => fake.close());
+      const model = "openai/gpt-6-astra";
+      const frames = await drive({
+        config: {
+          sessionId: "midconv-wire-openai-l2",
+          cwd: "/tmp/midconv-wire",
+          model,
+          effort: "high",
+          persistSession: false,
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+          toolSearchEnabled: true,
+          capabilities: ["winter.mcp"],
+          provider: { providerId: "openai", authRef: { kind: "inline", value: "fixture" }, connection: { baseUrl: fake.url, local: true } },
+        } as RuntimeConfig,
+        catalog: fakeResponsesCatalog("openai", fake.url, [model]),
+        family: "openai",
+        servers: [SERVER],
+        steps: [{ user: "one" }, { control: "set_permission_mode", payload: "plan" }, { user: "two" }, { user: "three" }],
+      });
+      console.error = original;
+      expect(isErrorResult(frames)).toEqual([false, false, false]);
+      const reqs = fake.requests.filter((r) => r.path.endsWith("/responses"));
+      // one / two (restricted, refused) / two again (no restriction) / three (no restriction).
+      expect(reqs.map((r) => (r.body["tool_choice"] as { type?: string } | string))).toEqual(["auto", expect.objectContaining({ type: "allowed_tools" }), "auto", "auto"]);
+      // The allowed list never names the tool search (live L1).
+      expect(JSON.stringify(reqs[1]!.body["tool_choice"])).not.toContain("tool_search");
+      // The tool search is still the native tool on every request -- `tools` byte-identical throughout.
+      for (const r of reqs) expect(JSON.stringify(r.body["tools"])).toBe(JSON.stringify(reqs[0]!.body["tools"]));
+      expect((reqs[3]!.body["tools"] as Block[]).some((t) => t["type"] === "tool_search")).toBe(true);
+      expect(errors.filter((e) => e.includes("refused tool_choice allowed_tools"))).toHaveLength(1);
+      expect(errors.filter((e) => e.includes("refused its client tool search"))).toHaveLength(0);
+    });
+  }
 });

@@ -577,7 +577,8 @@ function isPerMessageEffortRejection(err: unknown): boolean {
  * 'tool_(addition|removal|definition)'` (a platform without the blocks), the documented
  * `tool_reference_unresolved` / `tool_name_conflict` / `available_tools_limit_exceeded` codes, or any
  * message naming the blocks (claude 2.1.282 classifies the same phrases before its one-time fallback).
- * OpenAI: a message naming the `additional_tools` item or the `allowed_tools` choice. A false positive
+ * OpenAI: a message naming the `additional_tools` item (`allowed_tools` has its own, narrower fallback --
+ * `isAllowedToolsRejection`). A false positive
  * costs one retried request that rebuilds `tools`, never a wrong answer.
  */
 function isToolChangeRejection(err: unknown, carriedChangeMessage = false): boolean {
@@ -587,7 +588,7 @@ function isToolChangeRejection(err: unknown, carriedChangeMessage = false): bool
   // so a placement refusal that did not fall back would refuse every later request the same way.
   if (carriedChangeMessage && /system message|role.{0,4}system|must (immediately )?(follow|precede)|end the array|paused assistant turn/i.test(err instanceof Error ? err.message : "")) return true;
   // The bounded error snippet is the raw body, so a documented `error.details.error_code` is matched too.
-  return /mid-conversation-tool-changes|inline-tools|tool_addition|tool_removal|tool_definition|tool_reference_unresolved|tool_name_conflict|available_tools_limit_exceeded|cannot yet be defined in a message|additional_tools|allowed_tools/i.test(err instanceof Error ? err.message : "");
+  return /mid-conversation-tool-changes|inline-tools|tool_addition|tool_removal|tool_definition|tool_reference_unresolved|tool_name_conflict|available_tools_limit_exceeded|cannot yet be defined in a message|additional_tools/i.test(err instanceof Error ? err.message : "");
 }
 
 /**
@@ -597,7 +598,31 @@ function isToolChangeRejection(err: unknown, carriedChangeMessage = false): bool
  */
 function isToolSearchRejection(err: unknown): boolean {
   if (!isProviderTurnError(err) || (err.status !== 400 && err.status !== 422)) return false;
-  return /tool_search|defer_loading|namespace/i.test(err instanceof Error ? err.message : "");
+  const text = err instanceof Error ? err.message : "";
+  // A refusal of the `tool_choice` field is `allowed_tools`', not the tool search's (fix round 1, live L2).
+  if (errorParam(text)?.startsWith("tool_choice") === true) return false;
+  return /tool_search|defer_loading|namespace/i.test(text);
+}
+
+/** The `param` an OpenAI-style error body names (the normalised message carries the raw body), or `undefined`. */
+function errorParam(text: string): string | undefined {
+  return /"param"\s*:\s*"([^"]*)"/.exec(text)?.[1];
+}
+
+/**
+ * WS-23 (midconv, fix round 1, live L2): a 400 refusing the request's `tool_choice: allowed_tools`. Checked
+ * BEFORE the tool-search fallback, and only for a request that sent the choice: the live refusal of an
+ * `allowed_tools` entry read "Invalid value: 'tool_search'...", which the tool-search matcher also takes --
+ * it turned the WHOLE client tool search off, and the cache with it. Keyed on the error's own `param`
+ * (`tool_choice...`) when the body names one; without a `param`, the narrower feature goes first: if the tool
+ * search was the real problem, the retry fails again and the tool-search fallback takes it then.
+ */
+function isAllowedToolsRejection(err: unknown): boolean {
+  if (!isProviderTurnError(err) || (err.status !== 400 && err.status !== 422)) return false;
+  const text = err instanceof Error ? err.message : "";
+  const param = errorParam(text);
+  if (param !== undefined) return param.startsWith("tool_choice");
+  return /allowed_tools|tool_choice|tool_search/i.test(text);
 }
 
 /**
@@ -3046,6 +3071,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // WS-23 (midconv): sticky too -- the API refused OpenAI's client `tool_search` (or a namespace), so the
   // session goes back to today's shape: loaded deferred tools appended to `tools` as plain functions.
   let nativeToolSearchRejected = false;
+  // WS-23 (midconv, fix round 1): sticky -- the API refused `tool_choice: allowed_tools`. Only the
+  // restriction goes: a withdrawn tool then starts a new epoch (today's rebuild), and the tool search stays.
+  let allowedToolsRejected = false;
   let forceNewToolEpoch = false;
   let toolEpochRestartLogged = false;
   // WS-23: the last MAIN-LOOP response's id and the model it came from -- the next request's
@@ -7393,9 +7421,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const wire = currentModelDescription()?.wire;
     if (wire?.toolChanges === "inline") return { mechanism: "anthropic-inline", caps: {} };
     if (wire?.toolChanges === "reference") return { mechanism: "anthropic-reference", caps: {} };
-    if (wire?.additionalToolsItem === true || wire?.allowedToolsChoice === true) {
-      return { mechanism: "openai", caps: { additionalTools: wire.additionalToolsItem === true, allowedTools: wire.allowedToolsChoice === true } };
-    }
+    const additionalTools = wire?.additionalToolsItem === true;
+    const allowedTools = wire?.allowedToolsChoice === true && !allowedToolsRejected;
+    if (additionalTools || allowedTools) return { mechanism: "openai", caps: { additionalTools, allowedTools } };
     return undefined;
   };
 
@@ -8157,6 +8185,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       let sentToolChanges = false;
       let sentNativeToolSearch = false;
       let sentToolChangeMessage = false;
+      let sentAllowedTools = false;
       // WS-23 (midconv): this generation re-sends a paused turn (set by the `pause_turn` branch below).
       const resumesPausedTurn = resendingPausedTurn;
       resendingPausedTurn = false;
@@ -8168,8 +8197,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // outbound messages are built from.
         const toolPlan = await planToolsForRequest();
         const toolSpecs = toolPlan.tools;
-        sentToolChanges = toolPlan.optIn === true || toolPlan.allowedTools !== undefined || (toolPlan.toolChanges?.render.size ?? 0) > 0;
+        sentToolChanges = toolPlan.optIn === true || (toolPlan.toolChanges?.render.size ?? 0) > 0;
         sentNativeToolSearch = toolSpecs.some((t) => t.toolSearch === true);
+        sentAllowedTools = toolPlan.allowedTools !== undefined;
         const outboundMessages = requestMessages(context, effortPlan.markers, toolPlan.toolChanges);
         sentToolChangeMessage = outboundMessages.some((m) => m.toolChanges !== undefined);
         generationEffort = effortPlan.stamp;
@@ -8328,6 +8358,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // WS-23 (midconv): OpenAI's client tool search REFUSED -- same one-time, sticky fallback, to the
         // shape every other row has (loaded deferred tools as plain functions). A new epoch, since the
         // frozen list carried the native tool search.
+        if (sentAllowedTools && !allowedToolsRejected && isAllowedToolsRejection(err)) {
+          allowedToolsRejected = true;
+          console.error(`winter: the provider refused tool_choice allowed_tools (${err instanceof Error ? err.message : String(err)}); session ${config.sessionId} no longer restricts its callable set that way (its tool search is unaffected)`);
+          continue roundLoop;
+        }
         if (sentNativeToolSearch && !nativeToolSearchRejected && isToolSearchRejection(err)) {
           nativeToolSearchRejected = true;
           forceNewToolEpoch = true;

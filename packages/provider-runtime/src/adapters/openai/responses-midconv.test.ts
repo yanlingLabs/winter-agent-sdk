@@ -167,13 +167,13 @@ describe("additional_tools and allowed_tools (WS-23 midconv addendum)", () => {
     expect(input[1]).toEqual({ type: "additional_tools", role: "developer", tools: [{ type: "function", name: "Late", description: "Late tool", parameters: { type: "object" }, strict: false }] });
   });
 
-  test("`allowed_tools` restricts WITHOUT touching `tools`: the allowed functions, the native tool search, and every loaded deferred tool (namespaced ones by namespace)", () => {
+  test("`allowed_tools` restricts WITHOUT touching `tools`, and lists FUNCTIONS ONLY (live L1): never `tool_search`, never a namespace -- a loaded namespaced tool by the name it was loaded as", () => {
     const row = searchRow({ allowed: true });
-    // The engine's list names ToolSearch too; on a client-search request it is `{"type": "tool_search"}`,
-    // never a function (the probe's dry run caught this).
+    // The engine's list names ToolSearch too; on a client-search request it is the native tool, unlisted.
     const restricted = body({ allowedTools: ["Bash", "ToolSearch"] }, row);
     expect(restricted["tools"]).toEqual(body({}, row)["tools"]);
-    expect(restricted["tool_choice"]).toEqual({ type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "Bash" }, { type: "tool_search" }, { type: "function", name: "NotebookEdit" }, { type: "namespace", name: "mcp__crm" }] });
+    expect(restricted["tool_choice"]).toEqual({ type: "allowed_tools", mode: "auto", tools: [{ type: "function", name: "Bash" }, { type: "function", name: "NotebookEdit" }, { type: "function", name: "list_orders" }] });
+    expect(JSON.stringify(restricted["tool_choice"])).not.toMatch(/"type":"(tool_search|namespace)"/);
     expect(body({ allowedTools: ["Bash"], toolChoice: { type: "any" } }, row)["tool_choice"]).toMatchObject({ type: "allowed_tools", mode: "required" });
     // A forced choice (the classifier, structured output) outranks the restriction.
     expect(body({ allowedTools: ["Bash"], toolChoice: { type: "tool", name: "Bash" } }, row)["tool_choice"]).toEqual({ type: "function", name: "Bash" });
