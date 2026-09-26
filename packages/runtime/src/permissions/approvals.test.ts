@@ -539,6 +539,8 @@ describe("revalidateApproval — the 5 revalidation axes", () => {
     symlinkSync(join(workDir, "missing-b", "file.txt"), join(workDir, "link"));
 
     expect(revalidateApproval(stamped, ctxFor(stamped))).toMatchObject({ ok: false, axis: "paths" });
+    // The two-ended key is a JSON array of [real target, chain target] -- never a string a path could spell.
+    expect(JSON.parse(stamped.issuedResolvedTargets![0]!)).toEqual([join(workDir, "link"), join(workDir, "missing-a", "file.txt")]);
   });
 
   test("axis: paths — a key for an ordinary path is the plain real target, as records written before WS-24 stamped it", () => {

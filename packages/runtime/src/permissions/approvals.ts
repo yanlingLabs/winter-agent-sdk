@@ -186,11 +186,13 @@ export type RevalidationVerdict = { ok: true } | { ok: false; axis: Revalidation
 // it (`resolveSymlinkEnds`, the same call `checkSymlinkBothEnds` makes), not by its real target alone.
 // Whenever the full chain agrees with the real target the key IS the real target, byte-identical to what
 // earlier records stamped, so a record written before this change still revalidates; where they differ
-// both ends are in the key, and a change to either one is a drift. Never `\u0000` inside a key: that is
-// the separator the comparison joins targets with.
+// both ends are in the key, and a change to either one is a drift. The two-ended key is a JSON array: no
+// path text can forge it (as a path containing a hand-picked separator could), it can never equal a plain
+// key (an absolute path starts with `/`, the array with `[`), and JSON escapes `\u0000`, the separator
+// the comparison joins targets with.
 function durableTargetKey(absPath: string): string {
   const { target, chainTarget } = resolveSymlinkEnds(absPath);
-  return chainTarget === target ? target : `${target} => ${chainTarget ?? "(unresolvable chain)"}`;
+  return chainTarget === target ? target : JSON.stringify([target, chainTarget ?? null]);
 }
 
 // Best-effort target extraction for the "normalized paths/destinations" axis — deliberately NOT
