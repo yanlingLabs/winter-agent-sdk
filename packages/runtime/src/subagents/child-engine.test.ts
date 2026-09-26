@@ -25,7 +25,7 @@ import { createChildEngineFactory, type ChildEngineFactoryDeps } from "./child-e
 import { resetSpawnLimitsForTest } from "./limits.ts";
 import { loadAgentDefinitions } from "./definitions.ts";
 import { TranscriptWriter } from "../store/dialect.ts";
-import { withHttpFixture, defaultFixtureSpec, pingFixtureCommand } from "../mcp/test-fixtures.ts";
+import { withHttpFixture, withModernHttpFixture, defaultFixtureSpec, pingFixtureCommand } from "../mcp/test-fixtures.ts";
 import { getToolSearchSessionRuntime } from "../toolsearch/search.ts";
 // Phase 5 residual round (NEW-4): the REAL production wiring and the REAL default child factory --
 // see the NEW-4 describe block for why a hand-built seed would measure the wrong thing.
@@ -4080,4 +4080,95 @@ describe("WS-24 fix round 1 (I1): rules naming a renamed server's declared name 
     expect(ran).toBe(1);
     expect(childResult).toContain("SHOUT-child");
   }, 30_000);
+});
+
+// WS-24 fix round 1 (M1): a resume waits for the previous generation's teardown before it allocates its
+// server names. The generation's claims are released only once its `runEngine` returns, after closing its
+// clients, while the child's status goes terminal at settle -- so a resume issued straight after the
+// result used to find its own `childsrv` still claimed and rename a server that collides with nothing.
+describe("WS-24 fix round 1 (M1): an immediate resume keeps a non-colliding server's name", () => {
+  test("result, then resume at once: the resumed generation is offered mcp__childsrv__shout, never a renamed twin", async () => {
+    const PROBE = "ws24_spawn_then_resume";
+    let resumed = "";
+    registerTool({
+      descriptor: {
+        canonicalName: PROBE, advertisedName: PROBE, source: "builtin", inputSchema: { type: "object" },
+        description: "spawns, awaits the result, resumes at once", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: {
+        async execute(input: unknown, ctx: ToolExecutionContext) {
+          const handle = await ctx.session.spawnChild!(input as SpawnChildRequest);
+          await handle.result();
+          const outcome = await handle.resume({ messageId: "m-1", body: "again" } as never);
+          resumed = outcome.status;
+          return { output: resumed };
+        },
+      },
+    });
+    cleanupToolNames.push(PROBE);
+    const childTools: string[][] = [];
+    const childProvider: Provider = {
+      async generate(request) {
+        childTools.push((request.tools ?? []).map((t) => t.name));
+        return { kind: "text", text: `generation ${childTools.length}` };
+      },
+    };
+    const spec = { tools: [{ name: "shout", description: "uppercases", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text" as const, text: "SHOUT" }] }) }], resources: [] };
+    // A fixture that serves every connection afresh -- the resumed generation connects again.
+    await withModernHttpFixture(spec, async (url) => {
+      const req: SpawnChildRequest = {
+        parentToolUseId: "call-1", prompt: "first", runInBackground: false,
+        definition: { description: "child with its own server", prompt: "persona", mcpServers: [{ childsrv: { type: "http", url: url.href } }] },
+      };
+      const { code } = await driveParent({ provider: childProvider, env: { MCP_CONNECTION_NONBLOCKING: "0" } }, baseConfig({ sessionId: `ws24-m1-${randomUUID()}` }), [
+        { kind: "tool_use", calls: [{ id: "call-1", name: PROBE, input: req }] },
+        { kind: "text", text: "parent done" },
+      ]);
+      expect(code).toBe(0);
+      expect(resumed).toBe("resumed_and_delivered");
+      for (let n = 0; n < 500 && childTools.length < 2; n++) await new Promise((r) => setTimeout(r, 10));
+    });
+    expect(childTools).toHaveLength(2);
+    expect(childTools[1]).toContain("mcp__childsrv__shout");
+    expect(childTools[1]!.some((t) => /^mcp__childsrv_\d/.test(t))).toBe(false);
+  }, 30_000);
+});
+
+// WS-24 fix round 1 (M2): the note for a colliding in-process (`sdk`) server says what the subagent
+// actually gets -- the session's own in-process server of that name, or (a different kind of server)
+// not its own server at all.
+describe("WS-24 fix round 1 (M2): a colliding in-process server's note is worded per case", () => {
+  async function firstTurnFor(parentServer: Record<string, unknown>): Promise<string> {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    let firstTurn = "";
+    const childProvider: Provider = {
+      async generate(request) {
+        if (firstTurn === "") firstTurn = userMessageText(request.messages.find((m) => m.role === "user"));
+        return { kind: "text", text: "child done" };
+      },
+    };
+    const req: SpawnChildRequest = {
+      parentToolUseId: "call-1", prompt: "go", runInBackground: false,
+      definition: { description: "child", prompt: "persona", mcpServers: [{ srv: { type: "sdk", name: "srv", tools: [{ name: "echo", inputSchema: { type: "object" } }] } }] },
+    };
+    const { code } = await driveParent({ provider: childProvider }, baseConfig({ sessionId: `ws24-m2-${randomUUID()}`, mcpServers: { srv: parentServer } as never }), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(code).toBe(0);
+    return firstTurn;
+  }
+
+  test("the session's own in-process `srv`: the session's is used", async () => {
+    const text = await firstTurnFor({ type: "sdk", name: "srv", tools: [{ name: "echo", inputSchema: { type: "object" } }] });
+    expect(text).toContain(`the session's "srv" is used`);
+  });
+
+  test("the session's `srv` is a different kind of server: said so, never 'the session's is used'", async () => {
+    const text = await firstTurnFor({ type: "http", url: "http://127.0.0.1:9/mcp" });
+    expect(text).toContain(`this session's "srv" is a different server`);
+    expect(text).not.toContain(`the session's "srv" is used`);
+  });
 });
