@@ -52,7 +52,13 @@ async function drive(opts: { config: RuntimeConfig; catalog: WinterCatalog; fami
   } as EngineOptions);
   const frames: WinterFrame[] = [];
   const reader = (async () => {
-    for await (const f of host.input) frames.push(f);
+    for await (const f of host.input) {
+      frames.push(f);
+      // A host answers every permission request (a deny) -- a turn that asks must still end.
+      if (f.type === "control_request" && (f as { subtype?: unknown }).subtype === "permission") {
+        host.output.write({ type: "control_response", requestId: (f as { requestId: string }).requestId, ok: true, payload: { behavior: "deny", message: "test host: denied" } });
+      }
+    }
   })();
   const results = (): number => frames.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").length;
   let users = 0;
@@ -349,4 +355,63 @@ describe("the cached prefix on the wire through mid-session changes (WS-23 midco
       expect(errors.filter((e) => e.includes("refused its client tool search"))).toHaveLength(0);
     });
   }
+
+  test(
+    "fix round 3 (live hang report): allowed_tools refused ONCE with the live text -- the retry IS sent, the retried turn's tool call in plan mode is asked of the host, and the turn COMPLETES",
+    async () => {
+      const SERVER = "wsmidhang";
+      const MODAL = "WsMidHangBypassOnly";
+      const TOOL = `mcp__${SERVER}__lookup`;
+      registerMcpServerTools(SERVER, [{ name: "lookup", description: "Look up a customer.", inputSchema: { type: "object" } }], { deferredDefault: false });
+      replaceExecutor(TOOL, { async execute() { return { output: "customer 7" }; } });
+      cleanups.push(() => unregisterMcpServerTools(SERVER));
+      registerTool({
+        descriptor: { canonicalName: MODAL, advertisedName: MODAL, source: "sdk", inputSchema: { type: "object" }, description: "only in bypass", exposure: "eager", permissionClass: "read", availability: { modes: ["bypassPermissions"] }, capabilityRequirements: [], disposition: "implement-now" },
+        executor: { async execute() { return { output: "ok" }; } },
+      });
+      cleanups.push(() => unregisterToolForTest(MODAL));
+      const original = console.error;
+      console.error = () => {};
+      cleanups.push(() => void (console.error = original));
+      let calledOnce = false;
+      const fake = await startResponsesFake((r) => {
+        if ((r.body["tool_choice"] as { type?: string } | undefined)?.type === "allowed_tools") {
+          return { status: 400, error: { type: "invalid_request_error", message: "Tool choice 'lookup' not found in 'tools' parameter.", param: "tool_choice" } };
+        }
+        const input = r.body["input"] as Block[];
+        if (JSON.stringify(input.at(-1)).includes("call it") && !calledOnce) {
+          calledOnce = true;
+          return { items: [{ type: "function_call", callId: "fc_plan", name: TOOL, arguments: {} }] };
+        }
+        return { items: [{ type: "text", text: "ok" }] };
+      });
+      cleanups.push(() => fake.close());
+      const model = "openai/gpt-6-astra";
+      const frames = await drive({
+        config: {
+          sessionId: "midconv-wire-openai-hang",
+          cwd: "/tmp/midconv-wire",
+          model,
+          effort: "high",
+          persistSession: false,
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+          toolSearchEnabled: true,
+          capabilities: ["winter.mcp"],
+          provider: { providerId: "openai", authRef: { kind: "inline", value: "fixture" }, connection: { baseUrl: fake.url, local: true } },
+        } as RuntimeConfig,
+        catalog: fakeResponsesCatalog("openai", fake.url, [model]),
+        family: "openai",
+        servers: [SERVER],
+        steps: [{ user: "one" }, { control: "set_permission_mode", payload: "plan" }, { user: "now call it" }, { user: "three" }],
+      });
+      console.error = original;
+      const reqs = fake.requests.filter((r) => r.path.endsWith("/responses"));
+      // one / "now call it" (refused) / its retry (sent: the tool call) / the round after the denied call / three.
+      expect(reqs.map((r) => (typeof r.body["tool_choice"] === "string" ? r.body["tool_choice"] : "allowed_tools"))).toEqual(["auto", "allowed_tools", "auto", "auto", "auto"]);
+      expect(frames.some((f) => f.type === "control_request" && (f as { subtype?: unknown }).subtype === "permission")).toBe(true);
+      expect(isErrorResult(frames)).toEqual([false, false, false]);
+    },
+    { timeout: 20_000 },
+  );
 });

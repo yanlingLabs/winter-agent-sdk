@@ -389,39 +389,38 @@ function namespaceDescription(namespace: string): string {
 
 /**
  * WS-23 (midconv): `tool_choice: allowed_tools` for a request whose callable set is a strict subset of
- * `tools` -- the engine's `allowedTools`, plus every deferred tool a search already loaded and the live
- * list still has ("When you use tool search, tool_choice still applies to the tools that are currently
- * callable in the turn"). A FORCED choice (the classifier, structured output) outranks it: the model must
- * call that one tool either way.
+ * `tools` -- the engine's `allowedTools`, or `undefined` when it cannot be expressed (below; the caller then
+ * sends the ordinary choice). A FORCED choice (the classifier, structured output) outranks it: the model
+ * must call that one tool either way.
  *
- * ONLY FUNCTION ENTRIES (fix round 1, live L1). The live API and the Codex backend both answered a
- * `{"type": "tool_search"}` entry with 400 "Invalid value: 'tool_search'. Supported values are:
- * 'file_search', ... 'function', 'mcp', ... 'custom', 'apply_patch'" -- the native tool search cannot be
- * listed, and neither can a `namespace` (not a callable tool type there, and no documented shape). A loaded
- * tool in a namespace is listed as the function it was loaded as, `{"type": "function", "name": <its name
- * inside the namespace>}` -- the name the model's own `function_call` carries. That spelling is INFERRED
- * (the page lists no namespaced example); `scripts/probe-openai-midconv.ts` checks it, and a refusal takes
- * the allowed_tools-only fallback, never the tool-search one.
+ * ONLY FUNCTION ENTRIES, AND ONLY FUNCTIONS `tools` DECLARES (live L1, then the fix-round-3 live probe).
+ * The API and the Codex backend refused a `{"type": "tool_search"}` entry ("Supported values are:
+ * 'file_search', ... 'function', 'mcp', ... 'custom', 'apply_patch'" -- no `namespace` either), and then
+ * refused a function a search had loaded into a namespace: `{"type": "function", "name": "lookup_order"}`
+ * -> 400 "Tool choice 'lookup_order' not found in 'tools' parameter." (param `tool_choice`). A
+ * search-loaded tool is never in `tools` (it arrives in a `tool_search_output`), and neither the
+ * function-calling nor the tool-search guide shows any way to name one there. So when a search has
+ * loaded ANY tool, this request sends NO `allowed_tools` at all (`undefined`): restricting the declared
+ * functions would also withdraw the loaded ones. The engine's own permission layer still enforces the
+ * live mode at dispatch; only the restriction's cache-friendly form is lost for such a session.
  */
 function allowedToolsChoice(req: TurnRequest): unknown {
+  // Only names `tools` declares AS FUNCTIONS: ToolSearch is the native `tool_search` (unlisted), and a
+  // deferred tool is not declared at all.
   const declared = new Map((req.tools ?? []).map((t) => [t.name, t] as const));
-  // Only names `tools` declares AS FUNCTIONS: ToolSearch is the native `tool_search` on a client-search
-  // request (unlisted), and a deferred tool is not declared at all (it is listed below, once loaded).
-  const functions = (req.allowedTools ?? []).filter((name) => {
-    const tool = declared.get(name);
-    return tool !== undefined && tool.deferLoading !== true && tool.toolSearch !== true;
-  });
-  const loaded = new Map<string, string>();
   for (const message of req.messages) {
     if (typeof message.content === "string") continue;
     for (const block of message.content) {
       if (block.type !== "tool_result") continue;
-      for (const d of storedDefinitions(block)) loaded.set(d.name, d.namespace !== undefined ? d.name.slice(d.namespace.length + 2) : d.name);
+      const loaded = (block as { loadedTools?: unknown }).loadedTools;
+      if (storedDefinitions(block).length > 0 || (Array.isArray(loaded) && loaded.length > 0)) return undefined;
     }
   }
-  const extra = [...loaded.entries()].filter(([name]) => declared.get(name)?.deferLoading === true).map(([, callName]) => callName);
-  const names = [...new Set([...functions, ...extra.sort()])];
-  return { type: "allowed_tools", mode: req.toolChoice?.type === "any" ? "required" : "auto", tools: names.map((name) => ({ type: "function", name })) };
+  const functions = (req.allowedTools ?? []).filter((name) => {
+    const tool = declared.get(name);
+    return tool !== undefined && tool.deferLoading !== true && tool.toolSearch !== true;
+  });
+  return { type: "allowed_tools", mode: req.toolChoice?.type === "any" ? "required" : "auto", tools: [...new Set(functions)].map((name) => ({ type: "function", name })) };
 }
 
 /**
@@ -486,7 +485,7 @@ export function buildResponsesBody(
   // WS-23 (midconv): the row's client tool search, when this request carries the tool that uses it.
   const clientToolSearch = descriptor?.clientToolSearch?.value === true && (req.tools ?? []).some((t) => t.toolSearch === true);
   // A forced choice outranks a restriction (see `allowedToolsChoice`).
-  const toolChoice = req.allowedTools !== undefined && req.toolChoice?.type !== "tool" ? allowedToolsChoice(req) : mapToolChoice(req.toolChoice);
+  const toolChoice = (req.allowedTools !== undefined && req.toolChoice?.type !== "tool" ? allowedToolsChoice(req) : undefined) ?? mapToolChoice(req.toolChoice);
   return {
     model: req.model,
     ...(req.system !== undefined && req.system.length > 0 ? { instructions: req.system } : {}),

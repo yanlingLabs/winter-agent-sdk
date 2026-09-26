@@ -163,6 +163,14 @@ function cannedResponse(body: Record<string, unknown>, headers: Headers): Respon
     return new Response(JSON.stringify({ error: { message: "You didn't provide an API key.", type: "invalid_request_error", code: null } }), { status: 401, headers: { "content-type": "application/json" } });
   }
   const input = Array.isArray(body["input"]) ? (body["input"] as Item[]) : [];
+  // The live API's answer to an `allowed_tools` entry naming a function `tools` does not declare at top
+  // level (a tool loaded inside a namespace): HTTP 400, `param: "tool_choice"` (live probe, 2026-09-26).
+  const choice = body["tool_choice"] as Item | undefined;
+  if (choice !== undefined && typeof choice === "object" && choice["type"] === "allowed_tools") {
+    const declared = new Set((Array.isArray(body["tools"]) ? (body["tools"] as Item[]) : []).map((t) => t["name"]));
+    const missing = (choice["tools"] as Item[]).find((t) => t["type"] === "function" && !declared.has(t["name"]));
+    if (missing !== undefined) return new Response(JSON.stringify({ error: { message: `Tool choice '${String(missing["name"])}' not found in 'tools' parameter.`, type: "invalid_request_error", param: "tool_choice", code: null } }), { status: 400, headers: { "content-type": "application/json" } });
+  }
   if (String(body["model"]).startsWith("gpt-5.6") && input.some((i) => i["type"] === "configuration_update")) {
     return new Response(JSON.stringify({ error: { message: "Invalid value: 'configuration_update'. (dry run)", type: "invalid_request_error", param: "input[0].type", code: "invalid_value" } }), { status: 400, headers: { "content-type": "application/json" } });
   }
@@ -174,6 +182,9 @@ function cannedResponse(body: Record<string, unknown>, headers: Headers): Respon
   let item: Item = { type: "message", role: "assistant", content: [{ type: "output_text", text: "ok" }] };
   if (asked && tools.some((t) => t["type"] === "tool_search") && searched === undefined) {
     item = { type: "tool_search_call", call_id: "ts_dry", execution: "client", status: "completed", arguments: { query: `select:${PROBE_TOOL}` } };
+  } else if (JSON.stringify(lastUser ?? {}).includes("again") && input.at(-1)?.["type"] === "message") {
+    // The plan-mode turn: the model calls the loaded namespaced tool again, as a live model does.
+    item = { type: "function_call", call_id: "fc_again", namespace: `mcp__${PROBE_SERVER}`, name: "lookup_order", arguments: '{"id":"8"}' };
   } else if (searched !== undefined && !called) {
     const ns = (searched["tools"] as Item[]).find((t) => t["type"] === "namespace");
     item = { type: "function_call", call_id: "fc_dry", ...(ns !== undefined ? { namespace: ns["name"], name: String(((ns["tools"] as Item[])[0] ?? {})["name"]) } : { name: PROBE_TOOL }), arguments: '{"id":"7"}' };
@@ -286,7 +297,17 @@ async function runSession(phase: string, model: string, patch: (row: Row) => Row
       deferrableContextShare: 100,
     } as EngineOptions);
     const reader = (async () => {
-      for await (const f of host.input) frames.push(f);
+      for await (const f of host.input) {
+        frames.push(f);
+        // A PERMISSION request (plan mode asks before a tool runs) is answered with a deny, so the turn
+        // ends. The first live run of the tools phases never answered one and hung for hours in plan
+        // mode -- the engine was waiting on its host, as designed.
+        if (f.type === "control_request" && (f as { subtype?: unknown }).subtype === "permission") {
+          const requestId = (f as { requestId: string }).requestId;
+          console.log(`\n[${phase}] a permission request -> denied (plan mode; the probe answers every one)`);
+          host.output.write({ type: "control_response", requestId, ok: true, payload: { behavior: "deny", message: "probe-openai-midconv: denied (plan mode)" } });
+        }
+      }
     })();
     const results = (): Array<Record<string, unknown>> => frames.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").map((f) => (f as unknown as { message: Record<string, unknown> }).message);
     let controls = 0;
