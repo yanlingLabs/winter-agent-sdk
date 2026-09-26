@@ -170,7 +170,16 @@ export function createShippedAdapters(catalog: WinterCatalog): ProviderAdapter[]
       identityHeaders,
       generatedBaseUrls: generatedBaseUrlsForAdapter(catalog, "winter.openai-responses"),
     }),
-    createChatCompletionsAdapter({ descriptors: lookup("winter.openai-chat-completions"), identityHeaders, ...generated(catalog, "winter.openai-chat-completions") }),
+    // WS-24 (follow-up 2): this adapter serves every OpenAI-compatible dialect (DeepSeek, OpenRouter,
+    // Azure's deployment path, the twelve local servers — 159 rows on the current catalog), so it
+    // gets the SAME per-provider lookup the Responses adapter got in WS-23, for the identical reason:
+    // the single-URL `generated(...)` form always answers `undefined` once an adapter serves more
+    // than one provider (`generatedBaseUrlForAdapter`'s own guard), so this adapter had NO generated
+    // endpoint at all until now and fell through to the adapter's `vendorFallbackFor` -- which refuses
+    // every provider but `openai` typed rather than resolving DeepSeek/OpenRouter/etc. from the
+    // catalog. A caller that skips the runtime's own `connectionForProvider` wiring (any other
+    // consumer of `createShippedAdapters`) now reaches the reviewed row instead of a refusal.
+    createChatCompletionsAdapter({ descriptors: lookup("winter.openai-chat-completions"), identityHeaders, generatedBaseUrls: generatedBaseUrlsForAdapter(catalog, "winter.openai-chat-completions") }),
     createCodexOauthAdapter({ descriptors: lookup("winter.codex-oauth"), identityHeaders, ...generated(catalog, "winter.codex-oauth") }),
     // `winter.xai-oauth` — the chat adapter at xAI's SUBSCRIPTION proxy. `generated(...)` reads the
     // endpoint off the catalog row rather than the adapter's own constant, which is what keeps the

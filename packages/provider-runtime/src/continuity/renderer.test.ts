@@ -16,12 +16,17 @@ function buildRegistry(): ProviderRegistry {
       fixtureProvider({ id: "anthropic", family: "anthropic", adapterId: "anthropic-adapter" }),
       fixtureProvider({ id: "openai", family: "openai", adapterId: "openai-adapter" }),
       fixtureProvider({ id: "deepseek", family: "openai", adapterId: "deepseek-adapter" }),
+      // WS-24 (follow-up 7): the real catalog's own shape (verified against `loadCatalog()`) --
+      // `console` is its OWN provider id on the SAME adapter/wire family as `anthropic`, never a
+      // second `anthropic` row. See the "a Winter-native console/* entry" describe block below.
+      fixtureProvider({ id: "console", family: "anthropic", adapterId: "anthropic-adapter" }),
     ],
     [
       fixtureModel({ key: "anthropic/claude-a", providerId: "anthropic", reasoning: fixtureReasoning({ readableState: "summary", summaryRequest: { field: "display", values: ["summarized"] } }) }),
       fixtureModel({ key: "anthropic/claude-b", providerId: "anthropic", reasoning: fixtureReasoning({ readableState: "summary", summaryRequest: { field: "display", values: ["summarized"] } }) }),
       fixtureModel({ key: "openai/o-reason", providerId: "openai", reasoning: fixtureReasoning({ readableState: "summary", domain: ["openai/o-reason"], summaryRequest: { field: "reasoning.summary", values: ["detailed"] } }) }),
       fixtureModel({ key: "deepseek/r-reason", providerId: "deepseek", reasoning: fixtureReasoning({ readableState: "full-exposed", domain: ["deepseek/r-reason"] }) }),
+      fixtureModel({ key: "console/claude-fable", providerId: "console", reasoning: fixtureReasoning({ readableState: "summary", domain: ["console/claude-fable"], summaryRequest: { field: "display", values: ["summarized"] } }) }),
     ],
   );
   const registry = createRegistry(catalog);
@@ -489,6 +494,73 @@ describe("W18-17 (G1): an official-written entry with no sidecar origin", () => 
     // still be present, because the target is claude itself.
     expect(JSON.stringify(content)).toContain("SIG-FIRST-OPAQUE");
     expect(report.replayedNatively).toBe(0); // no nativeState on this message -- the counter is for THAT carrier, not for the thinking blocks
+  });
+});
+
+// WS-24 (follow-up 7, assess-then-fix-or-close): follow_up.md reads "the Mac/CLI renderer assumes
+// `anthropic` for `console/*` entries", naming this file's `providerId: "anthropic"` structural
+// fallback above. CLOSED AS MOOT for a Winter-native `console/*` session -- it is not affected at
+// all, and this describes the evidence:
+//
+//   1. The fallback above fires ONLY when BOTH `message.origin` and the sidecar chain's origin are
+//      absent (the `??` chain a few tests up this file already proves message.origin wins outright
+//      when present). That absence is the OFFICIAL leg's own signature (its child process never
+//      calls Winter's `recordAssistant` at all) -- never a Winter-native session's.
+//   2. `engine.ts`'s `recordAssistant` (~3728) stamps `origin: { providerId: identity.providerId,
+//      ... }` on EVERY assistant entry a live session writes, unconditionally, from the session's
+//      OWN resolved `providerIdentity` -- which for a console session is the literal id `"console"`,
+//      never `"anthropic"` (`session-provider.ts`'s wiring resolves the real catalog row). So a
+//      Winter-native console entry's `message.origin.providerId` is ALREADY "console" before the
+//      renderer ever runs; the fallback's hard-coded "anthropic" is never consulted for it.
+//   3. The real catalog (verified against `loadCatalog()`, not just this fixture) carries `console`
+//      as its OWN provider id -- 13 models, `adapterId: "winter.anthropic-messages"` (the same wire
+//      adapter `anthropic` uses), `family: "anthropic"` -- so `resolveEndpoint` resolves a
+//      console-origin message through the ordinary registry path and gets the CONSOLE row's own
+//      reasoning evidence, never the `anthropic` row's, and never needs the structural fallback to
+//      get there.
+//
+// The bug is real for what remains of it: a transcript the RETIRED official leg wrote under the
+// pre-WS-23 catalog shape (Console was a second `anthropic` row then, so "anthropic" was in fact
+// correct for those specific entries) is unaffected too, by coincidence of history rather than by
+// design -- but per the user's own ruling, legacy claude-era sessions may be disposed of, so this is
+// not pursued further here.
+describe("WS-24 (follow-up 7): a Winter-native console/* entry is NOT affected by the official-leg structural fallback", () => {
+  function consoleMessage(): ProviderMessageLike {
+    return {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "console-session reasoning", signature: "SIG-CONSOLE-OPAQUE" },
+        { type: "text", text: "the visible answer" },
+      ],
+      uuid: "c1",
+      // Exactly what `recordAssistant` stamps for a live console session -- NEVER absent, which is
+      // precisely why the structural fallback (`message.model`) is never reached for one.
+      origin: { providerId: "console", modelKey: "console/claude-fable", family: "anthropic", continuationDomain: "console/claude-fable" },
+    };
+  }
+
+  test("its origin is read as `console`, never defaulted to `anthropic` -- decorating a foreign target uses the CONSOLE row's own facts", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const { report } = renderer.renderWithReport([consoleMessage()], chainOf({}), OPENAI);
+    expect(report.decorations[0]).toMatchObject({ source: { providerId: "console", modelKey: "console/claude-fable" } });
+  });
+
+  test("a console target replays it NATIVELY -- console/claude-fable is its own domain, so no decoration and the real signature rides unchanged", () => {
+    const CONSOLE_TARGET: HistoryTarget = { family: "anthropic", continuationDomain: "console/claude-fable", readableState: "summary" };
+    const renderer = createHistoryRenderer(buildRegistry());
+    const { messages, report } = renderer.renderWithReport([consoleMessage()], chainOf({}), CONSOLE_TARGET);
+    expect(messages[0]!.decoration).toBeUndefined();
+    expect(JSON.stringify(messages[0]!.content)).toContain("SIG-CONSOLE-OPAQUE");
+    expect(report.decorations).toEqual([]);
+  });
+
+  test("were `message.origin` ever absent for such an entry, ONLY THEN would the structural fallback (and its `anthropic` assumption) apply -- proving the two paths are mutually exclusive, not that the fallback is safe in general", () => {
+    // The SAME content, but shaped like an official-leg entry: no origin, a bare structural `model`.
+    // This is the ONLY circumstance that reaches the assumption follow_up.md is concerned about.
+    const officialShaped = { role: "assistant" as const, content: consoleMessage().content, model: "anthropic/claude-a" };
+    const renderer = createHistoryRenderer(buildRegistry());
+    const { report } = renderer.renderWithReport([officialShaped], chainOf({}), OPENAI);
+    expect(report.decorations[0]).toMatchObject({ source: { providerId: "anthropic", modelKey: "anthropic/claude-a" } });
   });
 });
 

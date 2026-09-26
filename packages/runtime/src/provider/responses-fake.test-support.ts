@@ -29,7 +29,7 @@ export type ResponsesFakeItem =
   | { type: "reasoning"; encrypted: string; summary?: string[] };
 
 export type ResponsesFakeAnswer =
-  | { items: ResponsesFakeItem[]; usage?: { input_tokens: number; output_tokens: number; cached_tokens?: number } }
+  | { items: ResponsesFakeItem[]; usage?: { input_tokens: number; output_tokens: number; cached_tokens?: number; reasoning_tokens?: number } }
   | { status: number; error: { message: string; type?: string; code?: string | null; param?: string | null } }
   /** WS-23 review r1 (I-6): an in-stream failure -- `response.created`, then `response.failed` carrying `error`. */
   | { streamFailure: { code: string; message: string } };
@@ -110,7 +110,19 @@ export async function startResponsesFake(script: (request: ResponsesFakeRequest,
       const usage = answer.usage ?? { input_tokens: 10, output_tokens: 2 };
       out += frame({
         type: "response.completed",
-        response: { id: `resp_${requests.length}`, model, status: "completed", usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens, input_tokens_details: { cached_tokens: usage.cached_tokens ?? 0 } }, output: [] },
+        response: {
+          id: `resp_${requests.length}`,
+          model,
+          status: "completed",
+          usage: {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            input_tokens_details: { cached_tokens: usage.cached_tokens ?? 0 },
+            // WS-24 (follow-up 1): only present when a script asks for it -- absence must stay absence.
+            ...(usage.reasoning_tokens !== undefined ? { output_tokens_details: { reasoning_tokens: usage.reasoning_tokens } } : {}),
+          },
+          output: [],
+        },
       });
       return new Response(out, { headers: { "content-type": "text/event-stream" } });
     },

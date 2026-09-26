@@ -136,6 +136,27 @@ export function shouldRequestSummary(descriptor: WinterModelDescriptor | undefin
 }
 
 /**
+ * The part of a resolution that depends ONLY on (`providerId`, `modelKey`) -- safe to memoize for the
+ * life of the resolver. `family` and the origin-echoed continuation-domain fallback are deliberately
+ * NOT here (WS-24 follow-up 4): both are properties of the CALLER's stamped `MessageOrigin`, not of
+ * the registry row, and caching them under this key was the bug -- see `createEndpointResolver`'s header.
+ */
+type RegistryLookup =
+  | { resolved: false }
+  | {
+      resolved: true;
+      providerId: string;
+      modelKey: string;
+      /** The registry's own CERTIFIED domain id, when it has one. */
+      certifiedDomain: string | undefined;
+      /** Whether the registry found NO continuation-domain evidence at all -- the one condition under which an origin's own stamped domain may still stand in (mirrors the original inline test, `resolved.continuationDomain === undefined`). */
+      domainFallbackEligible: boolean;
+      continuation: ReasoningCapabilities["continuation"] | undefined;
+      readableState: ReadableState;
+      summaryRequest: { field: string; values: string[] } | undefined;
+    };
+
+/**
  * Turns a stamped `MessageOrigin` into the full endpoint facts, through the REGISTRY.
  *
  * The registry is the only capability authority (R6-12: Lane C reads capability facts through T2's
@@ -150,48 +171,73 @@ export function shouldRequestSummary(descriptor: WinterModelDescriptor | undefin
  * same model string under two providers (a bare provider-local id, which the official-leg structural
  * fallback carries verbatim) is two rows with two sets of facts, and a cache keyed by the model alone
  * answered the second provider with the first's.
+ *
+ * WS-24 (follow-up 4): only the REGISTRY-DERIVED half of the answer is cached (`RegistryLookup`
+ * above) -- `family` and the origin-continuationDomain fallback are recombined from the CURRENT
+ * `origin` on every call, never served from a stale snapshot. Before this, the whole
+ * `ContinuityEndpoint` was cached by the key, so a SECOND message stamped with the same
+ * (`providerId`, `modelKey`) but a DIFFERENT `origin.family` or `origin.continuationDomain` (a
+ * resumed/adopted transcript whose stamping convention shifted, or a family taxonomy correction)
+ * silently got the FIRST caller's echoed values back -- which is exactly the shape of a spurious
+ * `sameFamily`/`sameDomain` verdict and the lossy-switch prompt it can raise on a lossless transfer,
+ * or vice versa.
  */
 export function createEndpointResolver(registry: ProviderRegistry): (origin: MessageOrigin) => ContinuityEndpoint {
-  const cache = new Map<string, ContinuityEndpoint>();
+  const cache = new Map<string, RegistryLookup>();
   return (origin: MessageOrigin): ContinuityEndpoint => {
     const key = `${origin.providerId}\u0000${origin.modelKey}`;
-    const cached = cache.get(key);
-    if (cached !== undefined) return cached;
-    const facts = endpointFromRegistry(registry, origin);
-    cache.set(key, facts);
-    return facts;
+    let lookup = cache.get(key);
+    if (lookup === undefined) {
+      lookup = lookupRegistry(registry, origin);
+      cache.set(key, lookup);
+    }
+    return endpointFromLookup(lookup, origin);
   };
 }
 
-function endpointFromRegistry(registry: ProviderRegistry, origin: MessageOrigin): ContinuityEndpoint {
+function lookupRegistry(registry: ProviderRegistry, origin: MessageOrigin): RegistryLookup {
   const resolved = registry.resolve({ model: origin.modelKey, provider: { providerId: origin.providerId } });
-  if (resolved instanceof WinterProviderResolutionError) return endpointFromOrigin(origin);
+  if (resolved instanceof WinterProviderResolutionError) return { resolved: false };
   const descriptor = resolved.descriptor;
-  const summaryRequest = summaryRequestOf(descriptor);
   // Review I2: an id derived from `inferred`/`unknown`-confidence evidence is a GUESS that a domain
   // is shared, and §8.4 suppresses the warning only for a CERTIFIED one. The gate is applied on the
   // SOURCE side, in the safe direction: an uncertified claim yields no domain id at all, so the
   // native state is stripped and the switch warns. (The asymmetry against the bridge's
   // `target.continuationDomain`, which the registry computes ungated, is deliberate and disclosed --
   // it can only ever cause MORE stripping, never less.)
-  const domain = certifiedDomain(resolved.continuationDomain, descriptor);
+  const certified = certifiedDomain(resolved.continuationDomain, descriptor);
   return {
+    resolved: true,
     providerId: resolved.providerId,
     modelKey: resolved.modelKey,
+    certifiedDomain: certified,
+    domainFallbackEligible: resolved.continuationDomain === undefined,
+    // A descriptor with no `reasoning` block at all is a POSITIVE fact -- this model does not reason
+    // -- and is recorded as `"none"`. Only a resolution with no descriptor leaves it unknown.
+    continuation: descriptor !== undefined ? (descriptor.reasoning?.continuation ?? "none") : undefined,
+    readableState: readableStateOf(descriptor),
+    summaryRequest: summaryRequestOf(descriptor),
+  };
+}
+
+/** Combines a (cached) registry lookup with THIS call's origin -- `family` and the domain fallback never come from the cache. */
+function endpointFromLookup(lookup: RegistryLookup, origin: MessageOrigin): ContinuityEndpoint {
+  if (!lookup.resolved) return endpointFromOrigin(origin);
+  return {
+    providerId: lookup.providerId,
+    modelKey: lookup.modelKey,
     family: origin.family,
     // The registry's OWN id wins over the stamped one when both exist -- a catalog refresh that
     // certifies a new domain should take effect for messages already in the history, which is the
     // §9.7 "returning to an earlier provider" case seen from the other side.
-    ...(domain !== undefined
-      ? { continuationDomain: domain }
-      : resolved.continuationDomain === undefined && origin.continuationDomain !== undefined
+    ...(lookup.certifiedDomain !== undefined
+      ? { continuationDomain: lookup.certifiedDomain }
+      : lookup.domainFallbackEligible && origin.continuationDomain !== undefined
         ? { continuationDomain: origin.continuationDomain }
         : {}),
-    // A descriptor with no `reasoning` block at all is a POSITIVE fact -- this model does not reason
-    // -- and is recorded as `"none"`. Only a resolution with no descriptor leaves it unknown.
-    ...(descriptor !== undefined ? { continuation: descriptor.reasoning?.continuation ?? "none" } : {}),
-    readableState: readableStateOf(descriptor),
-    ...(summaryRequest !== undefined ? { summaryRequest } : {}),
+    ...(lookup.continuation !== undefined ? { continuation: lookup.continuation } : {}),
+    readableState: lookup.readableState,
+    ...(lookup.summaryRequest !== undefined ? { summaryRequest: lookup.summaryRequest } : {}),
   };
 }
 

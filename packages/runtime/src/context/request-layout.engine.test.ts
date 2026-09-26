@@ -9,11 +9,14 @@ import { createInMemoryChannel } from "../protocol/channel.ts";
 import { runEngine, type ContentBlock, type EngineOptions, type ProviderMessage, type ProviderRequest, type ProviderTurn } from "../engine.ts";
 import { stubExecutor } from "../provider/mock.ts";
 import { createSystemPromptAssembler } from "./assembler.ts";
-import { attachmentMessage, registerAttachmentRenderer } from "./attachments.ts";
+import { attachmentMessage, PLAN_MODE_EXITED_TEXT, registerAttachmentRenderer } from "./attachments.ts";
 import { getSessionRequestLayout, reloadSessionContext } from "./request-layout.ts";
 import { makeGitFixture, type GitFixture } from "./git-fixture.ts";
 import { _clearProjectRootCacheForTests, WINTER_MD_BASENAME } from "./winter-md.ts";
 import type { SkillListing } from "./seam.ts";
+// WS-24 (I-1): the REAL ExitPlanMode executor, for the one test that needs its own
+// `ctx.session.setPermissionMode` -- no test-supplied `tools:` override reaches that seam.
+import "../tools/impl/index.ts";
 
 let home: string;
 let cwd: string;
@@ -333,5 +336,175 @@ describe("the reusable doors", () => {
     expect(seen!.userContext.map(([k]) => k)).toEqual(["currentDate"]);
     expect(seen!.tools.length).toBeGreaterThan(0);
     expect(getSessionRequestLayout(sessionId)).toBeUndefined();
+  });
+});
+
+// WS-24 (I-1 fix round): plan mode as a persisted attachment (`context/attachments.ts`'s `plan_mode`),
+// replacing the old inline system-prompt block. `system`/`tools` must stay byte-identical across a
+// toggle now -- the whole point of the move: the old inline block busted the WHOLE downstream prefix
+// on EVERY toggle, on every provider, because it sat ahead of the conversation history rather than
+// after it (WS-24 follow-up 8's confirmed live finding). This describe block is
+// `seam.contract.test.ts`'s retired "planMode reflects THIS run's live permission mode" test, one
+// level down: against the live request, not the assembler's input.
+describe("plan_mode (WS-24 I-1)", () => {
+  const PLAN_HEADER = "## Plan mode";
+
+  /** A small harness with control-request access -- plan mode is driven by `set_permission_mode`, not by a prompt alone. `run()` above has no door for that. */
+  async function driveControlled(opts: {
+    config?: Partial<RuntimeConfig>;
+    engine?: Partial<EngineOptions>;
+    script?: Script;
+    steps: Array<{ user: string } | { control: string; payload: unknown }>;
+    /**
+     * WS-24: the mid-turn ExitPlanMode test needs the REAL tool registry (its executor's
+     * `ctx.session.setPermissionMode`, which no test-supplied `tools:` override can reach -- that
+     * seam takes only `{id,name,input}`, no session context at all). Every other test here runs
+     * under `bypassPermissions` against the stub, which never needs one.
+     */
+    realTools?: boolean;
+  }): Promise<{ requests: ProviderRequest[]; frames: WinterFrame[] }> {
+    const requests: ProviderRequest[] = [];
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      config: { sessionId: `layout-plan-${Math.random().toString(36).slice(2)}`, cwd, model: "winter-test/layout", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, ...(opts.config ?? {}) },
+      input: runtime.input,
+      output: runtime.output,
+      provider: {
+        async generate(req) {
+          requests.push({ ...req, messages: structuredClone(req.messages) });
+          return opts.script?.(req, requests.length - 1) ?? { kind: "text", text: "ok" };
+        },
+      },
+      ...(opts.realTools === true ? {} : { tools: stubExecutor }),
+      systemPromptAssembler: createSystemPromptAssembler({ home, settings: () => ({}) }),
+      ...(opts.engine ?? {}),
+    } as EngineOptions);
+    const frames: WinterFrame[] = [];
+    const reader = (async () => {
+      for await (const f of host.input) {
+        frames.push(f);
+        // WS-24: auto-approve any live permission prompt -- needed for the real ExitPlanMode
+        // executor (a `mode`-class tool) to actually run under a genuinely live "plan" mode.
+        if (f.type === "control_request" && (f as { subtype?: unknown }).subtype === "permission") {
+          host.output.write({ type: "control_response", requestId: (f as { requestId: string }).requestId, ok: true, payload: { behavior: "allow" } });
+        }
+      }
+    })();
+    const results = (): number => frames.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").length;
+    let users = 0;
+    let controls = 0;
+    for (const step of opts.steps) {
+      if ("control" in step) {
+        const requestId = `c${++controls}`;
+        host.output.write({ type: "control_request", requestId, subtype: step.control, payload: step.payload });
+        for (let n = 0; n < 500 && !frames.some((f) => f.type === "control_response" && (f as { requestId: string }).requestId === requestId); n++) await new Promise((r) => setTimeout(r, 2));
+        continue;
+      }
+      host.output.write({ type: "user", text: step.user });
+      users++;
+      for (let n = 0; n < 600 && results() < users; n++) await new Promise((r) => setTimeout(r, 5));
+    }
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    await done;
+    await reader;
+    return { requests, frames };
+  }
+
+  test("entering plan mode: system and tools stay byte-identical across the toggle; the notice appears exactly once, never repeated on later turns", async () => {
+    const { requests } = await driveControlled({
+      steps: [{ user: "one" }, { control: "set_permission_mode", payload: "plan" }, { user: "two" }, { user: "three" }],
+    });
+    expect(requests).toHaveLength(3);
+    expect(requests[1]!.system).toBe(requests[0]!.system);
+    expect(requests[2]!.system).toBe(requests[0]!.system);
+    expect(JSON.stringify(requests[1]!.tools)).toBe(JSON.stringify(requests[0]!.tools));
+    expect(count(requests[0]!, PLAN_HEADER)).toBe(0);
+    expect(count(requests[1]!, PLAN_HEADER)).toBe(1);
+    // Persisted in history, so it rides every LATER request too -- but never a second copy.
+    expect(count(requests[2]!, PLAN_HEADER)).toBe(1);
+  });
+
+  test("leaving plan mode via a host/UI switch (no tool call): the exited notice appears once, and system/tools are unaffected by either transition", async () => {
+    const { requests } = await driveControlled({
+      steps: [
+        { user: "one" },
+        { control: "set_permission_mode", payload: "plan" },
+        { user: "two" },
+        { control: "set_permission_mode", payload: "default" },
+        { user: "three" },
+        { user: "four" },
+      ],
+    });
+    expect(requests).toHaveLength(4);
+    expect(count(requests[1]!, PLAN_HEADER)).toBe(1);
+    expect(count(requests[2]!, PLAN_MODE_EXITED_TEXT)).toBe(1);
+    expect(count(requests[3]!, PLAN_MODE_EXITED_TEXT)).toBe(1); // persisted, never repeated
+    expect(requests[3]!.system).toBe(requests[0]!.system);
+  });
+
+  test("a compaction while plan mode is ACTIVE re-announces it -- a summary would otherwise be the last word on it", async () => {
+    let compacted = false;
+    let generated = 0;
+    const { requests } = await driveControlled({
+      steps: [{ user: "one" }, { control: "set_permission_mode", payload: "plan" }, { user: "two" }],
+      script: () => {
+        generated++;
+        return { kind: "text", text: "ok" };
+      },
+      engine: {
+        compactionController: {
+          // Compacts once, right after turn one's generation -- so turn two's own request is the
+          // POST-compaction one, with plan mode already live.
+          shouldCompact: () => !compacted && generated > 0,
+          async compact() {
+            compacted = true;
+            return { summary: "SUMMARY", retained: [], preTokens: 1, evidencedToolNames: [] };
+          },
+        },
+      },
+    });
+    expect(compacted).toBe(true);
+    const post = requests[1]!;
+    expect(post.messages).toHaveLength(1); // everything folded into the one summary message
+    expect(count(post, PLAN_HEADER)).toBe(1);
+    expect(texts(post.messages[0]).at(-1)).toBe("SUMMARY");
+  });
+
+  test("a resumed session whose history's last word differs from its live mode catches up on its first turn", async () => {
+    // Stands in for a real resume: `initialMessages` is exactly what a resumed session's history is
+    // seeded with (`store/resume.ts`'s own door into the engine) -- the mechanism under test is the
+    // FOLD reacting to a mismatch, not the disk round trip that produces one. The history's last word
+    // is "entered"; the live mode this run actually starts under is `bypassPermissions` (the user left
+    // plan mode, or the session resumes under a different mode, while it was stopped).
+    const entered = attachmentMessage({ type: "plan_mode", state: "entered", plansDirectory: ".winter/plans" })!;
+    const { requests } = await driveControlled({
+      engine: { initialMessages: [{ role: "user", content: "earlier" }, entered] },
+      steps: [{ user: "one" }],
+    });
+    expect(requests).toHaveLength(1);
+    expect(count(requests[0]!, PLAN_MODE_EXITED_TEXT)).toBe(1);
+  });
+
+  test("a mid-turn ExitPlanMode approval (the REAL executor, genuinely live plan mode) emits the exited notice in the SAME tool round, right after the tool result", async () => {
+    const { requests } = await driveControlled({
+      realTools: true,
+      config: { permissionMode: "plan" },
+      steps: [{ user: "go" }],
+      script: (_req, i) => (i === 0 ? { kind: "tool_use", calls: [{ id: "t1", name: "ExitPlanMode", input: { plan: "do the thing" } }] } : { kind: "text", text: "done" }),
+    });
+    expect(requests).toHaveLength(2);
+    // A session that starts DIRECTLY in plan mode gets the entered notice on its very first
+    // turn-start scan too -- there is no session state before the first generation for the fold to
+    // have compared against, so "live=plan, history=exited (the default)" is already a difference.
+    expect(count(requests[0]!, PLAN_HEADER)).toBe(1);
+    const toolTurn = requests[1]!.messages;
+    const toolIndex = toolTurn.findIndex((m) => m.role === "tool");
+    expect(toolIndex).toBeGreaterThanOrEqual(0);
+    // The notice arrives in THIS round's own request -- not delayed to the next turn-start scan.
+    // (Folded into the tool result's own content, the SAME tool-round placement `queued_command`
+    // task notifications get -- `scanAttachments`'s own header on the mid-turn delivery -- rather
+    // than a separate top-level message; the text is present exactly once either way.)
+    expect(count(requests[1]!, PLAN_MODE_EXITED_TEXT)).toBe(1);
+    expect(texts(toolTurn[toolIndex]).some((t) => t.includes(PLAN_MODE_EXITED_TEXT))).toBe(true);
   });
 });

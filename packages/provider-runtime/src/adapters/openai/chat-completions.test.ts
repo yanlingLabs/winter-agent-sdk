@@ -1,9 +1,11 @@
 // The Chat Completions mapping, as pure functions. The live half is in the conformance package.
 
-import { describe, expect, test } from "bun:test";
-import { ChatStreamMapper, buildChatBody, mapChatMessages, mapChatTools } from "./chat-completions.ts";
+import { afterEach, describe, expect, test } from "bun:test";
+import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
+import { ChatStreamMapper, buildChatBody, createChatCompletionsAdapter, mapChatMessages, mapChatTools, OPENAI_CHAT_BASE_URL } from "./chat-completions.ts";
 import { resolveReasoning } from "./shared.ts";
-import { descriptor } from "./testing.ts";
+import { collect, descriptor, soleError, testContext, testDiscoveryContext } from "./testing.ts";
+import { createShippedAdapters } from "../index.ts";
 import type { ProviderEvent, ProviderMessageLike, TurnRequest } from "../../types.ts";
 
 function req(overrides: Partial<TurnRequest> = {}): TurnRequest {
@@ -262,6 +264,19 @@ describe("ChatStreamMapper usage: normalized to the seam's convention", () => {
     const events = drive(new ChatStreamMapper(false), [{ choices: [], usage: { prompt_tokens: 40, completion_tokens: 2 } }]);
     expect(events.find((e) => e.type === "usage")).toEqual({ type: "usage", inputTokens: 40, outputTokens: 2 });
   });
+
+  // WS-24 (I-2): this dialect's own name for the same fact responses.ts's
+  // `output_tokens_details.reasoning_tokens` reports (DeepSeek's `deepseek-reasoner` and any other
+  // row that documents it over this wire) -- a subset of `completion_tokens`, never invented as 0.
+  test("completion_tokens_details.reasoning_tokens becomes reasoningTokens", () => {
+    const events = drive(new ChatStreamMapper(false), [{ choices: [], usage: { prompt_tokens: 100, completion_tokens: 50, completion_tokens_details: { reasoning_tokens: 30 } } }]);
+    expect(events.find((e) => e.type === "usage")).toEqual({ type: "usage", inputTokens: 100, outputTokens: 50, reasoningTokens: 30 });
+  });
+
+  test("no completion_tokens_details -> reasoningTokens is absent, never invented as 0", () => {
+    const events = drive(new ChatStreamMapper(false), [{ choices: [], usage: { prompt_tokens: 100, completion_tokens: 50 } }]);
+    expect(events.find((e) => e.type === "usage")).toEqual({ type: "usage", inputTokens: 100, outputTokens: 50 });
+  });
 });
 
 // R-S4: the OpenAI family has no error field on a tool reply -- the error TEXT is what carries it.
@@ -399,9 +414,183 @@ describe("mapChatMessages: consecutive assistant messages merge into one (fix ro
   });
 });
 
+// WS-24 (follow-up 3): follow_up.md lists this as still open ("goes out as one assistant message per
+// call"), but fix round 24 (133ff79, 2026-09-24 -- above) already merges ANY run of consecutive
+// assistant messages by adjacency alone, with no gate on how the batch arrived (a claude-rebuilt
+// history, a fresh Winter-native switch-time render, or anything else). That is exactly what this
+// item asks for, so these two tests are the brief's own acceptance scenarios rather than a new fix:
+// a 3-call batch renders as one assistant message plus 3 tool messages, and an ordinary (non-batch)
+// history's rendered request is unaffected -- byte-identical to what `buildChatBody` always produced.
+describe("buildChatBody: a parallel tool batch renders as one assistant message (WS-24 item 3, verified against the existing general merge)", () => {
+  test("a 3-call batch (one transcript entry per call, Winter's own history -- not a claude rebuild) renders as ONE assistant message plus 3 tool messages, ids kept", () => {
+    const batch: ProviderMessageLike[] = [
+      { role: "user", content: "do three things" },
+      { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "Read", input: { path: "a" } }] },
+      { role: "assistant", content: [{ type: "tool_use", id: "call_2", name: "Read", input: { path: "b" } }] },
+      { role: "assistant", content: [{ type: "tool_use", id: "call_3", name: "Read", input: { path: "c" } }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "call_1", content: "A" }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "call_2", content: "B" }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "call_3", content: "C" }] },
+    ];
+    const r = req({ messages: batch });
+    const body = buildChatBody(r, resolveReasoning(r, DEEPSEEK), DEEPSEEK, false);
+    expect(body.messages).toEqual([
+      { role: "user", content: "do three things" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          { id: "call_1", type: "function", function: { name: "Read", arguments: '{"path":"a"}' } },
+          { id: "call_2", type: "function", function: { name: "Read", arguments: '{"path":"b"}' } },
+          { id: "call_3", type: "function", function: { name: "Read", arguments: '{"path":"c"}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "call_1", content: "A" },
+      { role: "tool", tool_call_id: "call_2", content: "B" },
+      { role: "tool", tool_call_id: "call_3", content: "C" },
+    ]);
+    expect(toolRepliesFollowTheirCalls(body.messages as unknown[])).toBe(true);
+  });
+
+  test("a non-batch history (no two consecutive assistant entries) renders byte-identical to the pre-merge shape", () => {
+    const ordinary: ProviderMessageLike[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+      { role: "user", content: "run one thing" },
+      { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "Read", input: { path: "a" } }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "call_1", content: "A" }] },
+      { role: "assistant", content: "done" },
+    ];
+    const r = req({ messages: ordinary });
+    const body = buildChatBody(r, resolveReasoning(r, DEEPSEEK), DEEPSEEK, false);
+    expect(body.messages).toEqual([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+      { role: "user", content: "run one thing" },
+      { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "Read", arguments: '{"path":"a"}' } }] },
+      { role: "tool", tool_call_id: "call_1", content: "A" },
+      { role: "assistant", content: "done" },
+    ]);
+  });
+});
+
 describe("mapChatMessages: an is_error tool result keeps its text (no wire field to map it to)", () => {
   test("the content is sent verbatim", () => {
     const out = mapChatMessages([{ role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "Agent type 'x' not found.", is_error: true }] }], false);
     expect(out).toEqual([{ role: "tool", tool_call_id: "c1", content: "Agent type 'x' not found." }]);
+  });
+});
+
+// WS-24 (follow-up 2): mirrors responses.ts's `vendorFallbackFor` fix (WS-23) on THIS adapter, which
+// serves every OpenAI-compatible dialect (DeepSeek, OpenRouter, Azure, the local servers, and any
+// other row wired against it). A connection with no `baseUrl` and no catalog `defaultEndpoints` entry
+// used to fall back to `OPENAI_CHAT_BASE_URL` regardless of `providerId` -- sending that provider's
+// own credential to OpenAI's host, silently. It is refused typed now, except for `openai` itself.
+let restoreFetch: (() => void) | undefined;
+afterEach(() => {
+  restoreFetch?.();
+  restoreFetch = undefined;
+});
+
+/** Replaces `fetch` for one test; every request is recorded (method + url) and answered from a script. */
+function stubFetch(respond: () => Response): Array<{ method: string; url: string }> {
+  const original = globalThis.fetch;
+  const requests: Array<{ method: string; url: string }> = [];
+  const fake = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    requests.push({ method: init?.method ?? "GET", url: typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url });
+    return respond();
+  };
+  globalThis.fetch = fake as unknown as typeof fetch;
+  restoreFetch = () => {
+    globalThis.fetch = original;
+  };
+  return requests;
+}
+
+function chatSse(): Response {
+  const events = [{ choices: [{ delta: { content: "ok" }, finish_reason: null }] }, { choices: [{ delta: {}, finish_reason: "stop" }] }];
+  const text = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n";
+  return new Response(text, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
+describe("the base URL is the PROVIDER's own, never the adapter's vendor's (WS-24 item 2)", () => {
+  test("a `deepseek` turn with NO connection baseUrl and no generated endpoint is refused typed -- never sent to OpenAI", async () => {
+    const requests = stubFetch(chatSse);
+    const adapter = createChatCompletionsAdapter({ descriptors: () => undefined });
+    const events = await collect(adapter.streamTurn({ model: "deepseek-chat", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "deepseek" })));
+    const error = soleError(events).error;
+    expect([error.code, error.retryable]).toEqual(["capability", false]);
+    expect(error.message).toContain('provider "deepseek" has no endpoint');
+    expect(requests).toEqual([]);
+  });
+
+  test("`openai` on the same hand-wired adapter still reaches api.openai.com", async () => {
+    const requests = stubFetch(chatSse);
+    const adapter = createChatCompletionsAdapter({ descriptors: () => undefined });
+    const events = await collect(adapter.streamTurn({ model: "gpt-4.1", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "openai" })));
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+    expect(requests).toEqual([{ method: "POST", url: `${OPENAI_CHAT_BASE_URL}/chat/completions` }]);
+  });
+
+  test("a connection profile's own `baseUrl` is unaffected either way (DeepSeek's ordinary wiring)", async () => {
+    const requests = stubFetch(chatSse);
+    const adapter = createChatCompletionsAdapter({ descriptors: () => undefined });
+    const events = await collect(adapter.streamTurn({ model: "deepseek-chat", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "deepseek", baseUrl: "https://api.deepseek.com" })));
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+    expect(requests).toEqual([{ method: "POST", url: "https://api.deepseek.com/chat/completions" }]);
+  });
+
+  test("credential validation and discovery follow the same rule", async () => {
+    const adapter = createChatCompletionsAdapter({ descriptors: () => undefined });
+    await expect(adapter.validateCredential({ kind: "keychain", account: "openai:test" }, testContext({ providerId: "glm" }))).rejects.toThrow(/provider "glm" has no endpoint/);
+    await expect(adapter.listModels(testDiscoveryContext({ providerId: "glm" }))).rejects.toThrow(/provider "glm" has no endpoint/);
+  });
+
+  // The SHIPPED wiring (`createShippedAdapters`): this is what a real session actually runs, and the
+  // discriminating check for whether the fix reaches production. Before this batch,
+  // `createChatCompletionsAdapter` had NO `generatedBaseUrls` at all (only the Responses adapter did),
+  // so a `deepseek`/`openrouter` connection with no `baseUrl` fell all the way to `vendorFallbackFor`
+  // and was refused -- or, pre-WS-24, silently sent to `api.openai.com`. The catalog's own rows are
+  // now wired the same way as Responses.
+  test("shipped wiring: `deepseek` with NO connection baseUrl reaches api.deepseek.com from the catalog row -- never api.openai.com", async () => {
+    const catalog = loadCatalog();
+    const adapter = createShippedAdapters(catalog).find((a) => a.id === "winter.openai-chat-completions")!;
+    const requests = stubFetch(chatSse);
+    const events = await collect(adapter.streamTurn({ model: "deepseek-chat", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "deepseek" })));
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+    expect(requests).toEqual([{ method: "POST", url: "https://api.deepseek.com/chat/completions" }]);
+  });
+
+  test("shipped wiring: `openrouter` with NO connection baseUrl reaches its own catalog row -- never api.openai.com", async () => {
+    const catalog = loadCatalog();
+    const adapter = createShippedAdapters(catalog).find((a) => a.id === "winter.openai-chat-completions")!;
+    const requests = stubFetch(chatSse);
+    const events = await collect(adapter.streamTurn({ model: "openai/gpt-4.1", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "openrouter" })));
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+    expect(requests).toEqual([{ method: "POST", url: "https://openrouter.ai/api/v1/chat/completions" }]);
+  });
+
+  // `openai` itself has no row on THIS adapter at all (its models run on `winter.openai-responses`),
+  // so the shipped `generatedBaseUrls` lookup answers `undefined` for it here and this adapter's
+  // `vendorFallbackFor` is unreachable in the shipped wiring (`resolveEndpoint`'s per-provider lookup
+  // REPLACES the fallback once it is wired, rather than preceding it -- a documented rule, not a gap):
+  // the outcome is still a typed refusal, never api.openai.com, which is what the no-silent-fallback
+  // rule actually requires. `vendorFallbackFor` remains live for a HAND-WIRED adapter with no
+  // `generatedBaseUrls` at all (the tests above), which is the only shape it was ever needed for.
+  test("shipped wiring: a provider the catalog does not put on this adapter (including `openai` itself) is refused typed, not routed to OpenAI", async () => {
+    const catalog = loadCatalog();
+    const adapter = createShippedAdapters(catalog).find((a) => a.id === "winter.openai-chat-completions")!;
+    const requests = stubFetch(chatSse);
+    const events = await collect(adapter.streamTurn({ model: "some-model", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "not-on-this-adapter" })));
+    const error = soleError(events).error;
+    expect([error.code, error.retryable]).toEqual(["capability", false]);
+    expect(error.message).toContain('provider "not-on-this-adapter" has no endpoint');
+    expect(requests).toEqual([]);
+
+    const openaiEvents = await collect(adapter.streamTurn({ model: "gpt-4.1", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "openai" })));
+    const openaiError = soleError(openaiEvents).error;
+    expect([openaiError.code, openaiError.retryable]).toEqual(["capability", false]);
+    expect(openaiError.message).toContain('provider "openai" has no endpoint');
+    expect(requests).toEqual([]);
   });
 });

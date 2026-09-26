@@ -1022,6 +1022,9 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
         // P7a fix wave (item 5, M-1): the SESSION's own instructions file, so the classifier prompt
         // labels the operator's `ACME.md` block as theirs instead of naming Winter's.
         ...(config.brand !== undefined ? { instructionsFile: config.brand.instructionsFile } : {}),
+        // WS-24 (M-1 fix round): the SAME evidence `resolveToolChoice` gates its forced-choice
+        // downgrade on -- only such a row gets the classifier's text-fallback path.
+        forcedToolChoiceUnsupported: classifierResolved.descriptor?.unsupportedParameters.includes("tool_choice.tool") === true,
       });
     } catch (err) {
       classifier = undefined;
@@ -1035,6 +1038,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       provider: buildProvider(resolved),
       model: resolved.providerModelId,
       ...(config.brand !== undefined ? { instructionsFile: config.brand.instructionsFile } : {}),
+      forcedToolChoiceUnsupported: resolved.descriptor?.unsupportedParameters.includes("tool_choice.tool") === true,
     });
     classifierIdentity = { modelKey: resolved.modelKey };
   }

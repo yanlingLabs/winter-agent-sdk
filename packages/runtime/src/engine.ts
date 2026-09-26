@@ -197,7 +197,17 @@ import { ForkRequestLayoutUnavailableError } from "./subagents/fork.ts";
 import { resolveBackgroundTasksDisabled, resolveBackgroundByDefaultEnabled } from "./subagents/policy.ts";
 import { agentInputSchemaFor, renderAgentToolDescription, AGENT_TOOL_GATE_DEFAULTS, type AgentToolGateState } from "./tools/descriptors/agent.ts";
 import type { AgentListingEntry } from "./context/agent-listing.ts";
-import { attachmentMessage, dateChangeAnnounced, localDateString, skillListingResumeSeed, type AttachmentPayload, type DateChangeAttachment, type SkillListingAttachment } from "./context/attachments.ts";
+import {
+  attachmentMessage,
+  dateChangeAnnounced,
+  lastPlanModeState,
+  localDateString,
+  skillListingResumeSeed,
+  type AttachmentPayload,
+  type DateChangeAttachment,
+  type PlanModeAttachment,
+  type SkillListingAttachment,
+} from "./context/attachments.ts";
 import { notificationQueueFor, clearNotificationQueue, taskNotificationAttachment, withNotificationPreamble, type SessionNotificationQueue } from "./subagents/notification-queue.ts";
 import { computeAgentListingDelta } from "./context/agent-listing.ts";
 import {
@@ -1000,6 +1010,11 @@ export interface ProviderUsage {
   cacheMiss?: { type: string; missedInputTokens?: number };
   /** WS-23: replayed thinking blocks the provider dropped (Anthropic's `input_transformations`). */
   thinkingBlocksDropped?: number;
+  /**
+   * WS-24 (follow-up 1, lane `providers`): the Responses family's reasoning-token count -- a SUBSET
+   * of `outputTokens`. Anthropic reports no separate count and leaves this absent.
+   */
+  reasoningTokens?: number;
 }
 
 // Phase 6 Task 3 (R6-3): both production kinds gain `usage`/`stopReason`/`thinking`/`nativeState`,
@@ -7310,7 +7325,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       date: localDateString(clock()),
       ...(currentModel !== undefined ? { model: currentModel } : {}),
       ...(modelDisplayName !== undefined ? { modelDisplayName } : {}),
-      planMode: policyStateStore.getState().mode === "plan",
+      // WS-24 (I-1 fix round): NO `planMode` here any more -- the live mode reaches the model through
+      // `planModeAttachment()`'s own fold (below), never through the assembler's snapshot. See that
+      // function's header for why.
       ...(agentSystemPrompt !== undefined ? { agentPrompt: agentSystemPrompt } : {}),
       ...(omitProjectContext === true ? { omitProjectContext: true } : {}),
     };
@@ -7560,6 +7577,37 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return { type: "date_change", newDate: today };
   };
 
+  /**
+   * WS-24 (I-1 fix round): the plan-mode block's replacement for rendering inline on every request.
+   * Compares the LIVE permission mode against `lastPlanModeState`'s fold over the history and emits
+   * only on a genuine difference -- never every turn, and never twice for the same transition. Runs
+   * wherever `dateChangeAttachment` runs (turn-start, tool-round, compaction; see `scanAttachments`'s
+   * gated block below), which is exactly the coverage this needs:
+   *   - turn-start:  a host/UI `set_permission_mode` between turns is caught on the next envelope;
+   *   - tool-round:  an `ExitPlanMode` approval flips the live mode mid-turn (`exitPlanModeExecutor`,
+   *                  `session.setPermissionMode`) and the very next tool-round scan sees it, landing
+   *                  the `exited` notice right after that round's own tool result;
+   *   - compaction:  a summary can otherwise be the last word on plan mode; re-announcing an ACTIVE
+   *                  plan mode after one (this fold reads the same history a compaction just
+   *                  rewrote) keeps the restriction visible to the model past the boundary.
+   * A fork never reaches this at all (`scanAttachments`'s own gate, `exactRequestLayout !== undefined`
+   * skips the whole block) -- it inherits the parent's exact captured messages, attachment included,
+   * byte for byte.
+   */
+  const planModeAttachment = (): PlanModeAttachment | undefined => {
+    const live = policyStateStore.getState().mode === "plan";
+    if (live === (lastPlanModeState(messages) === "entered")) return undefined;
+    if (!live) return { type: "plan_mode", state: "exited" };
+    const rendered = systemPromptAssembler?.planModeInput?.(promptInput());
+    return {
+      type: "plan_mode",
+      state: "entered",
+      ...(rendered?.plansDirectory !== undefined ? { plansDirectory: rendered.plansDirectory } : {}),
+      ...(rendered?.plansDirectoryFallback !== undefined ? { plansDirectoryFallback: rendered.plansDirectoryFallback } : {}),
+      ...(rendered?.hostPlanBody !== undefined ? { hostPlanBody: rendered.hostPlanBody } : {}),
+    };
+  };
+
   const recordAttachment = async (attachment: AttachmentPayload): Promise<void> => {
     if (store?.recordAttachmentEntry === undefined) return;
     try {
@@ -7574,7 +7622,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * continues the turn, and after a compaction. Each attachment is appended to the history right
    * after what triggered it (the user prompt, the tool results, the summary) and persisted; the
    * request builder then places it where claude does. Order: the agent listing, the skill listing,
-   * the date change, then any host/lane producers.
+   * the date change, the plan-mode notice (WS-24 I-1), then any host/lane producers.
    */
   const scanAttachments = async (phase: "turn-start" | "tool-round" | "compaction"): Promise<void> => {
     const produced: AttachmentPayload[] = [];
@@ -7607,6 +7655,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       if (skills !== undefined) produced.push(skills);
       const date = dateChangeAttachment();
       if (date !== undefined) produced.push(date);
+      const plan = planModeAttachment();
+      if (plan !== undefined) produced.push(plan);
     }
     // SDK 0.0.16 Lane N: the MID-TURN delivery. After a tool round the engine drains the
     // `next`-priority notifications addressed to ITS OWN agent id and appends them to the tool
@@ -8446,13 +8496,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // claude's per-turn `result.usage` (a fresh QueryEngine's `totalUsage` per prompt in SDK mode):
     // the sum of THIS turn's main-loop generations -- not a subagent's, not a tool's inner pass, which
     // land on `modelUsage` instead. Stamped on this turn's terminal result, priced row or not.
-    const turnUsage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cache_creation_1h_input_tokens: 0 };
+    const turnUsage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cache_creation_1h_input_tokens: 0, reasoning_tokens: 0 };
     // WS-23: this turn's cache verdicts, surfaced on the result only when there is one.
     const turnCacheMisses: NonNullable<WireResultUsage["cache_misses"]> = [];
     // claude's full `NonNullableUsage` shape around the four real counts (frames.ts's WireResultUsage
     // says what each filled field means).
     const resultUsage = (): WireResultUsage => ({
-      output_tokens_details: { thinking_tokens: 0 },
+      // WS-24 (follow-up 1): threaded from the Responses family's `reasoning_tokens` when a
+      // generation reported one; still 0 for a turn on a family that reports none (Anthropic).
+      output_tokens_details: { thinking_tokens: turnUsage.reasoning_tokens },
       input_tokens: turnUsage.input_tokens,
       cache_creation_input_tokens: turnUsage.cache_creation_input_tokens,
       cache_read_input_tokens: turnUsage.cache_read_input_tokens,
@@ -8820,6 +8872,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           turnUsage.cache_read_input_tokens += turn.usage.cacheReadTokens ?? 0;
           turnUsage.cache_creation_input_tokens += turn.usage.cacheWriteTokens ?? 0;
           turnUsage.cache_creation_1h_input_tokens += Math.min(turn.usage.cacheWrite1hTokens ?? 0, turn.usage.cacheWriteTokens ?? 0);
+          turnUsage.reasoning_tokens += turn.usage.reasoningTokens ?? 0;
           if (turn.usage.cacheMiss !== undefined || turn.usage.thinkingBlocksDropped !== undefined) {
             turnCacheMisses.push({
               ...(turn.usage.cacheMiss !== undefined ? { type: turn.usage.cacheMiss.type } : {}),

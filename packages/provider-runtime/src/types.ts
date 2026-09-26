@@ -335,6 +335,13 @@ export type ProviderEvent =
       cacheWrite1hTokens?: number;
       cacheMiss?: { type: string; missedInputTokens?: number };
       thinkingBlocksDropped?: number;
+      /**
+       * WS-24 (follow-up 1): the Responses family's `output_tokens_details.reasoning_tokens` — a
+       * SUBSET of `outputTokens`, never added on top (the vendor bills reasoning tokens as ordinary
+       * output). Anthropic reports no separate reasoning count (its thinking tokens ARE the visible
+       * thinking blocks), so its adapter leaves this absent rather than inventing a zero.
+       */
+      reasoningTokens?: number;
     }
   /**
    * R6-B: SUBSCRIPTION-QUOTA states ONLY, and the `kind` discriminant is what says so at the type

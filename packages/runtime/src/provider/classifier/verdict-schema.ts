@@ -76,7 +76,11 @@ export const CLASSIFIER_NO_VERDICT_REASONS = [
   "provider_error",
   /** `timeoutMs` elapsed before the generation resolved. */
   "timeout",
-  /** The tool call arrived but its input does not satisfy the verdict schema. */
+  /**
+   * The tool call arrived but its input does not satisfy the verdict schema -- or (WS-24 follow-up
+   * 6) the model used the prompt's text-fallback path instead and the JSON it replied with does not
+   * satisfy the schema either. Both are "an answer arrived, and it did not fit the shape".
+   */
   "schema_invalid",
 ] as const;
 

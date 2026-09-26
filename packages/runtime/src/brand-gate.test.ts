@@ -844,7 +844,7 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/runtime/src/settings/env-filter.ts:64": "ALL_TIER_REFUSED_ENV's WINTER_HOME entry -- a module-scope CONSTANT list (envName(WINTER_BRAND, \"HOME\")), the identical pattern WINTER_MD_BASENAME above already uses; a settings-env filter has no per-call brand to thread, only the router's own env-name derivation, which is always WINTER_BRAND's for this SDK's own runtime",
   "packages/runtime/src/settings/env-filter.ts:102": "HOST_MANAGED_REFUSED_ENV_PATTERNS' Winter-brand-twin entry (fix round 1, item 3) -- the SAME module-scope CONSTANT list as line 64 above, for the identical reason: no per-call brand to thread",
   "packages/runtime/src/plugins/manifest.ts:23": "WINTER_PLUGIN_MANIFEST_DIR -- Winter's own value; `pluginManifestDirs(brand)` derives a session's",
-  "packages/runtime/src/provider/classifier/prompt.ts:265": "the `instructionsFile` option's DEFAULT; session-provider.ts passes the session brand's (M-1's fix)",
+  "packages/runtime/src/provider/classifier/prompt.ts:272": "the `instructionsFile` option's DEFAULT; session-provider.ts passes the session brand's (M-1's fix; line shifted by WS-24 follow-up 6's text-fallback prompt addition above it)",
   "packages/runtime/src/permissions/protected.ts:92": "the SEED of the protected set; `isProtectedWrite` adds the session brand's own file per call",
   "packages/runtime/src/skills/store.ts:43": "PROJECT_PLUGIN_NAME -- Winter's own value; a session's is `SkillIndexOptions.brand.projectDirName`",
   "packages/runtime/src/tools/impl/web-fetch.ts:96": "brandNameFor's DEFAULT for the domain-floor refusal text; the call site is `ctx.brand?.productName ?? WINTER_BRAND.productName`, a session's own brand always wins",

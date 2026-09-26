@@ -49,7 +49,7 @@ import { gitInstructionsEnabled } from "./git-status.ts";
 import type { ContextEntry } from "./request-layout.ts";
 import { memoryDirFor } from "./memory-key.ts";
 import { resolveOutputStyle, type PluginOutputStyleSource, type ResolvedOutputStyle } from "./output-styles.ts";
-import { renderPlanModeBlock } from "./plan-mode.ts";
+import type { PlanModeInput } from "./plan-mode.ts";
 
 export interface SystemPromptAssemblerDeps {
   /**
@@ -276,22 +276,21 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
         ...region.staticBlocks.map((block) => (dropCodingInstructions ? dropCodingInstructionsSection(block) : block)),
         region.excludeDynamicSections ? renderStaticEnvironmentSection(environment) : undefined,
       ];
+      // WS-24 (I-1 fix round): the plan-mode block is GONE from here. It used to render inline,
+      // ahead of `# auto memory`/`# Environment` and (critically) ahead of the whole conversation
+      // history that follows `system` on the wire -- so a toggle shifted every downstream token and
+      // busted the cached prefix for the rest of that request, on every provider, confirmed live
+      // (WS-24 follow-up 8: OpenAI's byte-exact prefix match; Anthropic's `org` dynamic system block,
+      // `request-layout.ts`). It now rides a persisted attachment at the TAIL of the conversation
+      // (`context/attachments.ts`'s `plan_mode`, produced by the engine's own fold against the live
+      // permission mode) -- a toggle costs one cache miss on the turn it happens, not on every
+      // request while the mode holds steady. `planModeInput()` below is what the engine calls to get
+      // this render's inputs when it decides to emit the attachment; the block's own render happens
+      // there, at attachment-render time, never here.
       const dynamicHalf: (string | undefined)[] = [
         ...region.callerDynamicBlocks,
         styleBody,
         input.agentPrompt,
-        // P7a (D19): the plans-directory default follows the session's OWN project dot-dir, not the
-        // module-level `DEFAULT_PLANS_DIRECTORY` (which is Winter's). Byte-identical under
-        // `WINTER_BRAND`; a reuser gets `<their dir>/plans` instead of being sent into Winter's own.
-        input.planMode
-          ? renderPlanModeBlock({
-              plansDirectory: config.plansDirectory ?? settings?.plansDirectory ?? `${brand.projectDirName}/plans`,
-              // P7a fix r1 (Minor-1): and the REFUSAL fallback follows the brand too, or a malformed
-              // project setting sends the model to Winter's own directory.
-              plansDirectoryFallback: `${brand.projectDirName}/plans`,
-              ...(input.hostPlanBody !== undefined ? { hostPlanBody: input.hostPlanBody } : {}),
-            })
-          : undefined,
         region.excludeDynamicSections || memoryDir === undefined ? undefined : renderAutoMemorySection(memoryDir, brand.instructionsFile),
         region.excludeDynamicSections ? undefined : renderEnvironmentSection(environment),
       ];
@@ -381,6 +380,22 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
         if (memoryDir !== undefined) entries.push(["auto memory", renderAutoMemoryContextValue(memoryDir, brand.instructionsFile)]);
       }
       return entries;
+    },
+
+    // WS-24 (I-1 fix round): the SAME precedence `assemble()`'s dynamic half used to apply inline
+    // (config, then settings, then the session's own project dot-dir), now the engine's own door for
+    // producing the `plan_mode` attachment (context/attachments.ts) instead of rendering the block
+    // into the system prompt on every request while the mode holds.
+    planModeInput(input: SystemPromptInput): PlanModeInput {
+      const config = input.config;
+      const { settings, brand } = resolveContext(deps, input);
+      return {
+        plansDirectory: config.plansDirectory ?? settings?.plansDirectory ?? `${brand.projectDirName}/plans`,
+        // P7a fix r1 (Minor-1): the REFUSAL fallback follows the brand too, or a malformed project
+        // setting sends the model to Winter's own directory.
+        plansDirectoryFallback: `${brand.projectDirName}/plans`,
+        ...(input.hostPlanBody !== undefined ? { hostPlanBody: input.hostPlanBody } : {}),
+      };
     },
   };
 }

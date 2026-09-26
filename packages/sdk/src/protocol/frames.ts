@@ -52,8 +52,9 @@ export interface ControlResponseFrame { type: "control_response"; requestId: str
  *     adapters send `{type: "ephemeral"}` with no ttl), so `ephemeral_5m_input_tokens` equals
  *     `cache_creation_input_tokens` and `ephemeral_1h_input_tokens` is 0;
  *   - `server_tool_use`: Winter's WebSearch/WebFetch run client-side, never as billed server tools: 0/0;
- *   - `output_tokens_details.thinking_tokens`: 0 -- providers' reasoning-token counts are not threaded
- *     through Winter's usage yet (they are included in `output_tokens`);
+ *   - `output_tokens_details.thinking_tokens`: the Responses family's reasoning-token count (WS-24
+ *     follow-up 1) when the turn's provider reported one, else 0 -- always a SUBSET of `output_tokens`,
+ *     never added on top. Anthropic reports no separate count, so a Claude-only turn stays 0;
  *   - `service_tier: "standard"`, `inference_geo: ""`, `iterations: []`, `speed: "standard"`: the
  *     pinned EMPTY_USAGE's own values.
  */

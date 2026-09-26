@@ -60,7 +60,7 @@ async function runOneTurn(opts: { assembler?: SystemPromptAssembler; agentSystem
 describe("context/seam.ts -- SystemPromptAssembler (Lane C implements, the engine consumes)", () => {
   test("the interface is structural: any object with assemble() satisfies it, no base class, no registration", () => {
     const inline: SystemPromptAssembler = { assemble: (): AssembledPrompt => ({ system: "s" }) };
-    expect(inline.assemble({ config: baseConfig(), cwd: "/x", env: {}, platform: "darwin", osVersion: "26", shell: "/bin/zsh", date: "2026-09-04", planMode: false })).toEqual({
+    expect(inline.assemble({ config: baseConfig(), cwd: "/x", env: {}, platform: "darwin", osVersion: "26", shell: "/bin/zsh", date: "2026-09-04" })).toEqual({
       system: "s",
     });
   });
@@ -96,7 +96,7 @@ describe("context/seam.ts -- SystemPromptAssembler (Lane C implements, the engin
     expect(requests.map((r) => r.system)).toEqual(["S", "S"]);
   });
 
-  test("the assembler receives a plain-data snapshot: cwd/platform/date/planMode are populated from the live run, never left undefined", async () => {
+  test("the assembler receives a plain-data snapshot: cwd/platform/date are populated from the live run, never left undefined", async () => {
     const calls: SystemPromptInput[] = [];
     await runOneTurn({ assembler: fakeSystemPromptAssembler({ calls }) });
     const input = calls[0]!;
@@ -107,30 +107,15 @@ describe("context/seam.ts -- SystemPromptAssembler (Lane C implements, the engin
     expect(typeof input.osVersion).toBe("string");
     expect(typeof input.shell).toBe("string");
     expect(input.date).toMatch(/^\d{4}-\d{2}-\d{2}/);
-    expect(input.planMode).toBe(false);
     expect(input.env).toBeDefined();
   });
 
-  test("planMode reflects THIS run's live permission mode, not a config snapshot taken before a mode switch", async () => {
-    const calls: SystemPromptInput[] = [];
-    const { host, runtime } = createInMemoryChannel();
-    const { provider } = recordingProvider(["done", "done"]);
-    const done = runEngine({
-      config: baseConfig({ permissionMode: "plan" }),
-      input: runtime.input,
-      output: runtime.output,
-      provider,
-      tools: stubExecutor,
-      systemPromptAssembler: fakeSystemPromptAssembler({ calls }),
-    });
-    host.output.write({ type: "user", text: "one" });
-    host.output.write({ type: "control_request", requestId: "m", subtype: "set_permission_mode", payload: "default" });
-    host.output.write({ type: "user", text: "two" });
-    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
-    await drain(host.input);
-    await done;
-    expect(calls.map((c) => c.planMode)).toEqual([true, false]);
-  });
+  // WS-24 (I-1 fix round): `SystemPromptInput` no longer carries a `planMode` snapshot -- the live
+  // permission mode reaches the model through the engine's own `plan_mode` attachment fold
+  // (`context/attachments.ts`'s `lastPlanModeState`, engine.ts's `planModeAttachment`), not through
+  // the assembler. `context/request-layout.engine.test.ts`'s "plan_mode (WS-24 I-1)" describe block
+  // is this test's replacement -- it asserts the SAME "reflects the live mode across a switch" claim,
+  // against the live request's messages rather than the assembler's input.
 
   test("SDK 0.0.16: the userContext is ONE index-0 message, merged ahead of the prompt, identical on every request, and never in history", async () => {
     const CTX = [["claudeMd", "RULES"], ["currentDate", "Today's date is 2026-09-04."]] as const;
@@ -251,9 +236,8 @@ describe("context/seam.ts -- SystemPromptAssembler (Lane C implements, the engin
   test("the fake echoes its inputs and records call order -- a lane can develop against it before Lane C lands", () => {
     const calls: SystemPromptInput[] = [];
     const fake = fakeSystemPromptAssembler({ calls, presetVersion: "v9" });
-    const out = fake.assemble({ config: baseConfig(), cwd: "/w", env: {}, platform: "darwin", osVersion: "26", shell: "/bin/zsh", date: "2026-09-04", planMode: true });
+    const out = fake.assemble({ config: baseConfig(), cwd: "/w", env: {}, platform: "darwin", osVersion: "26", shell: "/bin/zsh", date: "2026-09-04" });
     expect(out.system).toContain("cwd=/w");
-    expect(out.system).toContain("planMode=true");
     expect(out.presetVersion).toBe("v9");
     expect(calls).toHaveLength(1);
   });

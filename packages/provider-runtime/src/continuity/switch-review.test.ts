@@ -133,6 +133,27 @@ describe("reviewModelSwitch (W18-20/21)", () => {
     expect(review.classification?.warnings).toEqual([]);
   });
 
+  // WS-24 (follow-up 5): `midTurnAbort` is the CALLER's own fact now (default `false`, unchanged from
+  // the test above), never the hard-coded `false` `switchFactsFor`'s snapshot always reported.
+  test("Sonnet -> Opus mid-turn abort (an interrupt-driven switch): the same-family skip does NOT apply -- the review prompts, carrying the cancellation warning", () => {
+    const entries = oneTurnEntries("a1");
+    const records = [origin("a1", SONNET.providerId, SONNET.modelKey, SONNET.family), summary("a1", "s")];
+    const review = reviewModelSwitch({ entries, sidecarRecords: records, from: SONNET, to: OPUS, catalog: FIXTURE_CATALOG, midTurnAbort: true });
+    expect(review.skipped).toBeUndefined();
+    expect(review.prompt).toBe(true);
+    expect(review.classification?.lossClass).toBe("warned-lossy");
+    expect(review.classification?.warnings.some((w) => w.includes("cancelled before it finished"))).toBe(true);
+  });
+
+  test("Sonnet -> Opus with `midTurnAbort` explicitly false: identical to omitting it", () => {
+    const entries = oneTurnEntries("a1");
+    const records = [origin("a1", SONNET.providerId, SONNET.modelKey, SONNET.family), summary("a1", "s")];
+    const withFalse = reviewModelSwitch({ entries, sidecarRecords: records, from: SONNET, to: OPUS, catalog: FIXTURE_CATALOG, midTurnAbort: false });
+    const omitted = reviewModelSwitch({ entries, sidecarRecords: records, from: SONNET, to: OPUS, catalog: FIXTURE_CATALOG });
+    expect(withFalse).toEqual(omitted);
+    expect(withFalse.skipped).toBe("same-family");
+  });
+
   test("Terra -> Luna: skipped same-family (by MODEL LINEAGE, via the injected fixture catalog)", () => {
     const entries = oneTurnEntries("a1");
     const records = [origin("a1", TERRA.providerId, TERRA.modelKey, TERRA.family), summary("a1", "s")];
