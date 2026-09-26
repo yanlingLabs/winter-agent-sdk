@@ -159,8 +159,14 @@ export function redactForSummary(messages: readonly ProviderMessage[], opts: { t
  * The prefix-reusing request (`summarizeOverPrefix`) already ends with its instruction as a user turn.
  */
 export function summaryRequestMessages(messages: readonly ProviderMessage[], instruction: string): ProviderMessage[] {
-  return [...messages, { role: "user", content: instruction }];
+  // And never START on an assistant turn either (claude 2.1.282's prompt-too-long retry prepends a user
+  // marker for the same reason): a window cut after an earlier summary can open on a reply.
+  const lead: ProviderMessage[] = messages[0]?.role === "assistant" ? [{ role: "user", content: SUMMARY_WINDOW_OPENS_MID_CONVERSATION }] : [];
+  return [...lead, ...messages, { role: "user", content: instruction }];
 }
+
+/** WS-23 (midconv): the user marker in front of a summarised window that opens on an assistant reply. */
+export const SUMMARY_WINDOW_OPENS_MID_CONVERSATION = "[The conversation continues from an earlier point.]";
 
 export class CompactionSummarizerError extends Error {}
 

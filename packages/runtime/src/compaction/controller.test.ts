@@ -108,6 +108,32 @@ describe("every summary request ends with a USER turn (WS-23 midconv live gate: 
     expect(requests[0]!.system).toBe(WINTER_SUMMARY_INSTRUCTION);
   });
 
+  test("the redacted fallback is flattened to text and carries nothing Opus 5.5 refuses: no tools, no tool_choice, no thinking or effort, no tool blocks at all -- and never STARTS on an assistant turn", async () => {
+    const { provider, requests } = recordingProvider("A SUMMARY");
+    const controller = createCompactionController();
+    const accountant = createContextAccountant({ limit: 1000 });
+    accountant.record({ inputTokens: 700, outputTokens: 60 });
+    // A window that opens on a reply, and carries a ToolSearch result whose `loadedTools` would become
+    // `tool_reference` blocks on the wire ("Tool reference ... not found" once `tools` is empty).
+    const opensOnReply: ProviderMessage[] = [
+      assistant("reply zero"),
+      user("turn one"),
+      toolUse("s1", "ToolSearch", { query: "select:mcp__x__y" }),
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "s1", content: '{"matches":["mcp__x__y"]}', loadedTools: ["mcp__x__y"] }] },
+      ...longConversation().slice(1),
+    ];
+    await controller.compact({ messages: opensOnReply, trigger: "auto", customInstructions: null, accountant, provider });
+    const req = requests[0]!;
+    expect(req.tools).toBeUndefined();
+    expect(req.toolChoice).toBeUndefined();
+    expect(req.thinking).toBeUndefined();
+    expect(req.effort).toBeUndefined();
+    expect(req.messages.every((m) => typeof m.content === "string")).toBe(true);
+    expect(JSON.stringify(req.messages)).not.toContain("loadedTools");
+    expect(req.messages[0]!.role).toBe("user");
+    expect(req.messages.at(-1)!.role).toBe("user");
+  });
+
   test("the prefix-reusing request ends with its instruction as a user turn too, even after an assistant tail", async () => {
     const { provider, requests } = recordingProvider("A SUMMARY");
     const controller = createCompactionController();
