@@ -23,6 +23,7 @@ import {
   // Phase 5 Task 2 (R5-3/R5-4): the session defaults are exported CONSTANTS, resolved here when the
   // corresponding RuntimeConfig field is absent -- never baked into the wire by query.ts.
   DEFAULT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_COMPACTION_THRESHOLD,
   DEFAULT_OUTPUT_STYLE,
   type InitPluginInfo,
   // Phase 6 Task 3 (R6-D): the wire vocabularies are declared ONCE, in the sdk. `ProviderRawStreamEvent`
@@ -84,7 +85,7 @@ import { getDefaultMessagingRuntime, UnattributableSenderError, classifyDelivery
 import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, SystemPromptBlock, ToolChangeSet, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 // P6 fix wave (Ruling E-2): the two PURE continuity functions the switch point calls. Value imports
 // from the provider-runtime barrel, one direction (runtime -> provider-runtime), same as every adapter.
-import { WinterProviderResolutionError, buildPortableHandoff, classifySwitch, isWinterBookkeepingItem, reasoningBlockItems, separateReasoningBlocks } from "@yanlinglabs/winter-provider-runtime";
+import { DECORATION_CHAR_BUDGET, ESTIMATE_CHARS_PER_TOKEN, ESTIMATE_MARGIN, WinterProviderResolutionError, buildPortableHandoff, classifySwitch, estimateTokensFromChars, fitBudgetTokens, fitVerdict, isWinterBookkeepingItem, reasoningBlockItems, separateReasoningBlocks, type FitVerdict } from "@yanlinglabs/winter-provider-runtime";
 export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
@@ -646,6 +647,9 @@ export interface ModelDescription {
   /** The row's own `reasoning.defaultEffort`: the level in force when no effort is named. */
   defaultEffort?: string;
   wire?: ModelWireFeatures;
+  /** WS-23 (reasoning-state, decision 5): the row's context window and output ceiling, in tokens -- the switch fit check's budget and the context accountant's limit after a switch. */
+  contextWindow?: number;
+  maxOutputTokens?: number;
 }
 
 // --- Phase 5 Task 2 (R5-3): the provider seam extension -------------------------------------------
@@ -1125,6 +1129,12 @@ export interface ContextAccountant {
    * the context reading would make the parent compact on a window it does not have.
    */
   recordDescendantUsage(usage: ProviderUsage): void;
+  /**
+   * WS-23 (reasoning-state, decision 5): the window moves with the model. A switch re-sources the limit
+   * from the TARGET's row -- the auto-compaction threshold used to keep reading the first model's window
+   * for the rest of the session. Optional: an injected accountant without it keeps its own limit.
+   */
+  setLimit?(limit: number): void;
 }
 
 // Re-exported so a lane reads the seam's default from the SAME module the seam itself lives in
@@ -1143,7 +1153,7 @@ function promptTokens(usage: ProviderUsage): number {
 }
 
 export function createContextAccountant(opts: ContextAccountantOptions = {}): ContextAccountant {
-  const limit = typeof opts.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0 ? opts.limit : DEFAULT_CONTEXT_WINDOW_TOKENS;
+  let limit = typeof opts.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0 ? opts.limit : DEFAULT_CONTEXT_WINDOW_TOKENS;
   let last = 0;
   // P5-J: the SECOND counter. `last` is overwritten per call (the context reading); `spent` only
   // ever accumulates. Every generation touches both; a descendant's usage touches only `spent`.
@@ -1163,6 +1173,10 @@ export function createContextAccountant(opts: ContextAccountantOptions = {}): Co
     },
     recordDescendantUsage(usage: ProviderUsage) {
       spent += promptTokens(usage) + usage.outputTokens;
+    },
+    setLimit(next: number) {
+      // The constructor's own rule: a non-positive or non-finite value is ignored.
+      if (Number.isFinite(next) && next > 0) limit = next;
     },
   };
 }
@@ -3043,6 +3057,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // written to the sidecar with the NEXT assistant entry, anchored to it (the reply to the request that
   // introduced it), and put back right before that entry on a resume.
   const pendingBookkeeping: AttachmentPayload[] = [];
+  // WS-23 (reasoning-state, decision 5): a model switch whose target has not sent its first request yet.
+  // That request is where the FIT CHECK runs (the system prompt and tools it will carry are known there),
+  // and `source` is the model the session LEFT -- the one that compacts when the history does not fit
+  // (user decision: the source pays). `source()` answers `undefined` when that model is out of reach
+  // (a resume onto another provider; the daemon compacts on the source before such a switch instead).
+  let pendingFitCheck: { from: string | undefined; source: () => Provider | undefined } | undefined;
   // WS-23 (midconv): the tool epoch's session state (context/tool-epoch.ts; `planToolsForRequest`).
   // `toolChangesRejected` is sticky, like `perMessageEffortRejected`: the API refused a tool change, so
   // every later request rebuilds `tools` (claude 2.1.282's own one-time fallback). `forceNewToolEpoch` is
@@ -6469,6 +6489,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // model changed, and a host with no frame could not know (disclosed, WS-13 §13).
     const resumedTo = currentProviderIdentity?.modelKey ?? currentModel ?? config.model;
     if (persisted !== undefined && resumedTo !== undefined && persisted.modelKey !== resumedTo) {
+      // WS-23 (decision 5): the first request of this run checks the fit. The source is reachable from
+      // here only when the switch seam can build it (the same provider; a cross-provider source is the
+      // daemon's to compact BEFORE the switch, through the `compact` control).
+      pendingFitCheck = {
+        from: persisted.modelKey,
+        source: () => {
+          const built = resolveModelSwitch?.(persisted.modelKey, currentOrigin());
+          return built !== undefined && !("refused" in built) ? built.provider : undefined;
+        },
+      };
+      resourceContextLimit();
       if (resolveModelSwitch !== undefined && currentProviderIdentity !== undefined) {
         const compared = resolveModelSwitch(currentProviderIdentity.modelKey, { providerId: persisted.providerId, modelKey: persisted.modelKey, family: "" });
         if (!("refused" in compared) && compared.from !== undefined) {
@@ -6762,7 +6793,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
   // WS-23: `opts.reason: "overflow"` is for the reactive recovery after a context-overflow refusal --
   // the summary then never re-sends the refused history (see `CompactionInput.reason`).
-  const performCompaction = async (trigger: "auto" | "manual", customInstructions: string | null, opts: { reason?: "overflow" } = {}): Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }> => {
+  // WS-23 (reasoning-state): `opts.provider` is the model that SUMMARIZES when it is not the live one (a
+  // switch's source model, decision 5); `opts.maxInputChars` bounds the summarizer's request for one
+  // smaller than the history (see `CompactionInput.maxInputChars`).
+  const performCompaction = async (trigger: "auto" | "manual", customInstructions: string | null, opts: { reason?: "overflow"; provider?: Provider; maxInputChars?: number } = {}): Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }> => {
     if (compactionController === undefined) {
       return { ok: false, error: "No compaction controller is configured for this session (R5-4: the compaction vehicle is supplied by the host; the engine never summarizes on its own)." };
     }
@@ -6784,10 +6818,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         customInstructions: effectiveInstructions.length > 0 ? effectiveInstructions : null,
         accountant: contextAccountant,
         // The LIVE provider (fix wave): after a `set_model` the summariser must run on the model the
-        // session is generating with, not the one it started on.
-        provider: activeProvider,
+        // session is generating with, not the one it started on -- unless the caller names another
+        // (WS-23: a switch's source model, which the user chose to pay for the compaction).
+        provider: opts.provider ?? activeProvider,
         ...(prefixRequest !== undefined ? { prefixRequest } : {}),
         ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
+        ...(opts.maxInputChars !== undefined ? { maxInputChars: opts.maxInputChars } : {}),
       });
     } catch (err) {
       // A failed compaction is REPORTED, never fatal: the turn continues on the un-compacted history
@@ -6845,6 +6881,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
     messages.length = 0;
     messages.push({ role: "user", content: result.summary }, ...result.retained);
+    // WS-23 (reasoning-state): bookkeeping waiting for its reply is persisted only if the compacted
+    // history still holds it (a tool epoch the summary replaced is gone for good).
+    const kept = new Set(messages.flatMap((m) => (m.meta !== undefined ? [m.meta.attachment] : [])));
+    pendingBookkeeping.splice(0, pendingBookkeeping.length, ...pendingBookkeeping.filter((attachment) => kept.has(attachment)));
     lastCompactionTokens = contextAccountant.contextTokens();
     // WS-23: the history the last fingerprint described is gone; the next request opts in afresh.
     lastMainResponse = undefined;
@@ -6912,6 +6952,23 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     await scanAttachments("compaction");
 
     return { ok: true, summary: result.summary, retainedCount: result.retained.length };
+  };
+
+  /**
+   * WS-23 (reasoning-state, decision 5): the compaction a switch's fit check calls for. On the SOURCE
+   * model when it is reachable -- never reusing a request prefix (the last one was the source's, laid out
+   * for it) -- else on the target, whose summarizer is then bounded to what the target can read. One
+   * stderr line of counts says which, and why.
+   */
+  const compactForSwitch = async (check: { from: string | undefined; source: () => Provider | undefined }, fit: FitVerdict): Promise<boolean> => {
+    const source = check.source();
+    const to = currentProviderIdentity?.modelKey ?? currentModel ?? "";
+    const bound = source === undefined ? summarizerInputChars() : undefined;
+    console.error(
+      `winter: session ${config.sessionId} switched from ${check.from ?? "?"} to ${to} with about ${fit.estimatedTokens} tokens of context against a ${fit.window}-token window; compacting on ${source !== undefined ? `the source model (${check.from ?? "?"})` : `the target (${to}), because the source model is not reachable from this process`} first`,
+    );
+    const outcome = await performCompaction("auto", null, { reason: "overflow", ...(source !== undefined ? { provider: source } : {}), ...(bound !== undefined ? { maxInputChars: bound } : {}) });
+    return outcome.ok;
   };
 
   // R5-14's `/compact [instructions]`: the MANUAL trigger, never subject to the auto re-entrancy
@@ -7097,6 +7154,54 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const currentModelDescription = (): ModelDescription | undefined => {
     const key = currentProviderIdentity?.modelKey ?? currentModel;
     return key !== undefined ? describeModel?.(key, currentProviderIdentity?.providerId) : undefined;
+  };
+
+  // --- WS-23 (reasoning-state, decision 5): the model switch FIT CHECK ------------------------------
+  //
+  // A switch replays the conversation as it is (nothing is summarized or forked), so the target must be
+  // able to hold it. The check runs on the target's FIRST request, over that request as it will be sent
+  // (provider-runtime `continuity/fit.ts` has the estimate and the budget); when it does not fit, the
+  // SOURCE model compacts the history before the request goes out.
+
+  /** The session's compaction threshold, by the controller's own rule (a value outside (0, 1] is ignored). */
+  const compactionThreshold = (): number => {
+    const raw = config.compactionThreshold;
+    return typeof raw === "number" && Number.isFinite(raw) && raw > 0 && raw <= 1 ? raw : DEFAULT_COMPACTION_THRESHOLD;
+  };
+
+  /** The live model's window budget, or `undefined` when its row declares no window (nothing to check against). */
+  const liveWindow = (): { window: number; maxOutputTokens: number | undefined } | undefined => {
+    const described = currentModelDescription();
+    if (described?.contextWindow === undefined) return undefined;
+    return { window: described.contextWindow, maxOutputTokens: config.maxOutputTokens ?? described.maxOutputTokens };
+  };
+
+  /**
+   * The fit of one outbound request on the live model. Counted: the system prompt, the tool specs, every
+   * message's content, and the native state of the model's OWN replies (it replays); a history that holds
+   * another model's replies is charged the whole decoration budget the renderer may add for them.
+   */
+  const requestFit = (system: string, tools: readonly ProviderToolSpec[], outbound: readonly ProviderMessage[]): FitVerdict | undefined => {
+    const target = liveWindow();
+    if (target === undefined) return undefined;
+    const owns = ownedBy(currentProviderIdentity?.modelKey ?? currentModel);
+    let chars = system.length + (tools.length > 0 ? JSON.stringify(tools).length : 0);
+    let foreign = false;
+    for (const message of outbound) {
+      chars += typeof message.content === "string" ? message.content.length : JSON.stringify(message.content).length;
+      if (message.role !== "assistant") continue;
+      if (!owns(message)) foreign = true;
+      else if (message.nativeState !== undefined) chars += JSON.stringify(message.nativeState.items).length;
+    }
+    if (foreign) chars += DECORATION_CHAR_BUDGET;
+    return fitVerdict(estimateTokensFromChars(chars), target.window, compactionThreshold(), target.maxOutputTokens);
+  };
+
+  /** The most characters a summarizer on the live model may be sent, for a compaction that must fit it. */
+  const summarizerInputChars = (): number | undefined => {
+    const target = liveWindow();
+    if (target === undefined) return undefined;
+    return Math.floor((fitBudgetTokens(target.window, compactionThreshold(), target.maxOutputTokens) * ESTIMATE_CHARS_PER_TOKEN) / ESTIMATE_MARGIN);
   };
 
   /**
@@ -7800,7 +7905,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // No seam (a scripted double): the pre-fix shape, verbatim -- the string goes on the wire.
       if (next === undefined || next === currentModel) return;
       const from = currentModel;
+      // WS-23 (decision 5): one provider object serves both models here, so it is also the source.
+      const sameProvider = activeProvider;
+      pendingFitCheck = { from, source: () => sameProvider };
       currentModel = next;
+      resourceContextLimit();
       store?.recordProviderSwitch?.({ from: from ?? "", to: next, reason });
       output.write({
         type: "data",
@@ -7812,7 +7921,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // RULING E-2: classify and, when lossy, warn and hand off -- BEFORE the swap, because the handoff
     // and the classification read the SOURCE's messages and chain.
     if (resolution.from !== undefined) announceLossyTransfer(resolution.from, resolution.to, reason);
+    // WS-23 (decision 5): the model being left stays reachable for the fit check's compaction.
+    const sourceProvider = activeProvider;
+    pendingFitCheck = { from: currentProviderIdentity?.modelKey ?? currentModel, source: () => sourceProvider };
     installIdentity(resolution, reason);
+  }
+
+  /**
+   * WS-23 (reasoning-state, decision 5): re-sources the context accountant's limit from the LIVE model's
+   * row, when it declares a window -- the auto-compaction threshold used to keep reading the first model's
+   * window for the rest of the session. A hoisted declaration that reads only early state, because the
+   * pump can apply a switch before the rest of this function's constants exist.
+   */
+  function resourceContextLimit(): void {
+    const key = currentProviderIdentity?.modelKey ?? currentModel;
+    const window = key !== undefined ? describeModel?.(key, currentProviderIdentity?.providerId)?.contextWindow : undefined;
+    if (window !== undefined) contextAccountant.setLimit?.(window);
   }
 
   /**
@@ -7829,6 +7953,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // would reach the wire verbatim.
     currentModel = resolution.identity.modelKey;
     stampIdentity();
+    // WS-23 (decision 5): the accountant's window is the new model's.
+    resourceContextLimit();
     store?.recordProviderSwitch?.({ from, to: resolution.identity.modelKey, reason });
     output.write({
       type: "data",
@@ -7947,6 +8073,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     currentProviderIdentity = restored.identity;
     currentModel = restored.model;
     stampIdentity();
+    resourceContextLimit();
     const to = restored.identity?.modelKey ?? restored.model;
     store?.recordProviderSwitch?.({ from, to, reason: "fallback" });
     output.write({
@@ -8235,7 +8362,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       if (overflowRetryPending) return { retry: false, why: "the retry after a reactive compaction overflowed the context window again" };
       // WS-23 (anthropic-cache C1): `reason: "overflow"` -- the summary must NOT reuse the session's own
       // request prefix here, because that exact history was just refused as too long and would be again.
-      const outcome = await performCompaction("auto", null, { reason: "overflow" });
+      const bound = summarizerInputChars();
+      const outcome = await performCompaction("auto", null, { reason: "overflow", ...(bound !== undefined ? { maxInputChars: bound } : {}) });
       if (!outcome.ok) return { retry: false, why: `the reactive compaction did not run (${outcome.error})` };
       overflowRetryPending = true;
       return { retry: true };
@@ -8315,6 +8443,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // `ProviderTurnError`, so it lands on R6-F's result shape through the catch below.
         assertMessagesWithinCap(outboundMessages);
         const outboundSystem = requestSystem(assembled, context);
+        // WS-23 (reasoning-state, decision 5): the FIRST request after a model switch checks that the
+        // conversation fits the target. When it does not, the model the session left compacts it (the
+        // user's rule: the source pays; the target's own summarizer, bounded to what it can read, only
+        // when the source is out of reach), and the request is rebuilt over the compacted history.
+        if (pendingFitCheck !== undefined) {
+          const check = pendingFitCheck;
+          pendingFitCheck = undefined;
+          const fit = requestFit(outboundSystem.system, toolSpecs, outboundMessages);
+          if (fit !== undefined && !fit.fits && (await compactForSwitch(check, fit))) continue roundLoop;
+        }
         // WS-23: what compaction's summary reuses (see `compactionPrefixRequest`).
         const { tools: _declared, ...toolPlanRest } = toolPlan;
         lastMainRequestShape = { modelKey: currentProviderIdentity?.modelKey ?? currentModel, system: outboundSystem, userContextText: context.userContextText, tools: toolSpecs, toolPlan: toolPlanRest };

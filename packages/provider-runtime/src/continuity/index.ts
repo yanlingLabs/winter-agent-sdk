@@ -33,6 +33,10 @@ export {
 } from "./reasoning-blocks.ts";
 export type { InDialectReasoningBlock, ReasoningBlockAt, ReasoningBlockItem } from "./reasoning-blocks.ts";
 
+// WS-23 (reasoning-state, decision 5): the switch fit estimate.
+export { DECORATION_CHAR_BUDGET, ESTIMATE_CHARS_PER_TOKEN, ESTIMATE_MARGIN, MAX_DECORATION_CHARS, estimateTokensFromChars, fitBudgetTokens, fitVerdict } from "./fit.ts";
+export type { FitVerdict } from "./fit.ts";
+
 export { classifySwitch } from "./warnings.ts";
 export type { LossClass, SwitchClassification, SwitchFacts } from "./warnings.ts";
 

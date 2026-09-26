@@ -717,6 +717,9 @@ export function describeCatalogModel(catalog: WinterCatalog, model: string, prov
     ...(row.reasoning !== undefined && row.reasoning.efforts.length > 0 ? { efforts: [...row.reasoning.efforts] } : {}),
     ...(row.reasoning?.defaultEffort !== undefined ? { defaultEffort: row.reasoning.defaultEffort } : {}),
     ...(Object.keys(wire).length > 0 ? { wire } : {}),
+    // WS-23 (reasoning-state, decision 5): the switch fit check's budget and the accountant's limit.
+    ...(typeof row.contextWindow?.value === "number" ? { contextWindow: row.contextWindow.value } : {}),
+    ...(typeof row.maxOutputTokens?.value === "number" ? { maxOutputTokens: row.maxOutputTokens.value } : {}),
   };
   return Object.keys(description).length > 0 ? description : undefined;
 }

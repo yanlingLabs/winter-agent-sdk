@@ -40,6 +40,20 @@ export interface CompactionControllerOptions {
 
 export class NothingToCompactError extends Error {}
 
+/** WS-23: the redacted window cut to `maxChars` from the OLDEST end, and how many messages that left out. */
+function boundedForSummary(messages: ProviderMessage[], maxChars: number | undefined): { messages: ProviderMessage[]; omitted: number } {
+  if (maxChars === undefined) return { messages, omitted: 0 };
+  const size = (m: ProviderMessage): number => (typeof m.content === "string" ? m.content.length : JSON.stringify(m.content).length);
+  let total = messages.reduce((n, m) => n + size(m), 0);
+  let start = 0;
+  while (total > maxChars && start < messages.length - 1) total -= size(messages[start++]!);
+  return { messages: start === 0 ? messages : messages.slice(start), omitted: start };
+}
+
+function omittedNote(omitted: number): string {
+  return `(The ${omitted} earliest message${omitted === 1 ? " was" : "s were"} too long to include here and ${omitted === 1 ? "is" : "are"} left out; summarize what follows.)`;
+}
+
 function resolveThreshold(raw: number | undefined): number {
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0 || raw > 1) return DEFAULT_COMPACTION_THRESHOLD;
   return raw;
@@ -103,8 +117,12 @@ export function createCompactionController(opts: CompactionControllerOptions = {
       // Belt and braces for the same failure at a different layer: a window can be foldable BY COUNT
       // and still leave the summarizer nothing legible (blank text, or blocks whose types the
       // redaction deliberately does not know). An empty request is never worth making.
-      const redacted = redactForSummary(plan.summarized, previewOpts);
-      if (redacted.length === 0) refuse("the messages it would replace carry no summarizable content");
+      const full = redactForSummary(plan.summarized, previewOpts);
+      if (full.length === 0) refuse("the messages it would replace carry no summarizable content");
+      // WS-23 (reasoning-state, decision 5): a summarizer smaller than the history reads the NEWEST part
+      // of it that fits -- the part nearest the retained tail -- rather than being sent a request it must
+      // refuse. At least the newest message always goes.
+      const { messages: redacted, omitted } = boundedForSummary(full, input.maxInputChars);
 
       // WS-23: when the engine hands over its own outbound request, the summary REUSES it -- the whole
       // conversation reads from the prompt cache, and the carried summary stays verbatim (the model is
@@ -127,7 +145,8 @@ export function createCompactionController(opts: CompactionControllerOptions = {
           overPrefix = undefined;
         }
       }
-      const fresh = overPrefix ?? (await summarize(input.provider, redacted, buildSummaryInstruction(input.customInstructions, instruction)));
+      const bounded = omitted > 0 ? `${instruction}\n\n${omittedNote(omitted)}` : instruction;
+      const fresh = overPrefix ?? (await summarize(input.provider, redacted, buildSummaryInstruction(input.customInstructions, bounded)));
       const summary = carried === null ? fresh : `${carried}\n\n${fresh}`;
       lastSummary = summary;
 

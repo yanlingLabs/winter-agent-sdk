@@ -163,6 +163,13 @@ export {
   reasoningBlocksVisibleText,
   separateReasoningBlocks,
   spliceReasoningBlocks,
+  DECORATION_CHAR_BUDGET,
+  ESTIMATE_CHARS_PER_TOKEN,
+  ESTIMATE_MARGIN,
+  MAX_DECORATION_CHARS,
+  estimateTokensFromChars,
+  fitBudgetTokens,
+  fitVerdict,
 } from "./continuity/index.ts";
 export type {
   Decoration,
@@ -196,4 +203,5 @@ export type {
   InDialectReasoningBlock,
   ReasoningBlockAt,
   ReasoningBlockItem,
+  FitVerdict,
 } from "./continuity/index.ts";

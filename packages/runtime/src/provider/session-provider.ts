@@ -49,6 +49,8 @@ import {
   estimateCostUsd,
   createFileCredentialStore,
   createHistoryRenderer,
+  DECORATION_CHAR_BUDGET,
+  MAX_DECORATION_CHARS,
   createMemoryCredentialStore,
   createRegistry,
   createShippedAdapters,
@@ -561,16 +563,8 @@ export function resolveSessionKeychainService(config: RuntimeConfig): string | u
   return config.brand?.keychainService ?? config.keychainService;
 }
 
-/**
- * WS-23 (reasoning-state): the cross-family decoration caps. 4,000 characters is about 1,100 tokens at
- * the ~3.5 characters/token the fit check estimates with -- room for a Claude turn's summarized
- * thinking or a Responses summary in full (both are typically a few hundred to two thousand characters),
- * and a hard stop for an open model's raw trace, which can run to tens of thousands. 24,000 in total is
- * about 6,900 tokens: under 4% of a 200k window and under 6% of a 128k one, so even a history made
- * mostly of another family's turns leaves the target its window.
- */
-export const MAX_DECORATION_CHARS = 4_000;
-export const DECORATION_CHAR_BUDGET = 24_000;
+/** WS-23 (reasoning-state): the cross-family decoration caps -- declared beside the fit estimate that accounts for them (provider-runtime `continuity/fit.ts`, where the rationale is). */
+export { DECORATION_CHAR_BUDGET, MAX_DECORATION_CHARS };
 
 export function buildSessionProvider(opts: SessionProviderOptions): SessionProviderWiring {
   const { config, env } = opts;
