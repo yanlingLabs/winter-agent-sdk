@@ -12,13 +12,18 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   request, as the session does, so a server that connects within that is offered on it.
 - A subagent's inline MCP server whose name the session (or a live sibling) already uses no longer
   replaces and then unregisters the session's tools: it is connected under a fresh name (`srv_2`, ...)
-  for that subagent, which is told so on its first turn. A colliding in-process (`sdk`) server uses
-  the session's.
+  for that subagent, which is told so on its first turn. Its definition's `disallowedTools`, and every
+  rule and hook matcher written against the declared name, keep governing it. A colliding in-process
+  (`sdk`) server is not connected (the note says whether the session's own is used instead).
 - Control requests (interrupt, `set_model`, `set_permission_mode`, `mcp_status`, ...) are answered while
   the first-turn MCP wait runs; a user message still waits for the servers. The `type:"init"` handshake
   now reflects the servers as they stood before that wait; `system/init` still reflects them after it.
 - A fork can run a tool it loads itself through ToolSearch; its `tools` (the parent's exact layout)
-  never moves, and the definition rides the ToolSearch result where the frozen list lacks it.
+  never moves. A tool the frozen list does not declare is callable only where the definition travels by
+  a documented mechanism (OpenAI's client `tool_search`) or on a row with the new live-probe-proven
+  catalog key `model.undeclaredToolCalls` (set on no row yet; `scripts/probe-fork-undeclared-tool.ts`
+  gathers the evidence), where it rides the ToolSearch result as text. Elsewhere such a call keeps its
+  "No such tool available".
 - The one-time request-feature fallbacks (per-message effort, mid-conversation tool changes, OpenAI
   client `tool_search`, `tool_choice: allowed_tools`) are kept per provider+model and persisted as a
   `feature-rejected` provider-state record, so a resume skips the doomed request and another model
