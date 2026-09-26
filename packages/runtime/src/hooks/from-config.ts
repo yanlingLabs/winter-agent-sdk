@@ -199,6 +199,13 @@ export function buildHookEntriesFromSettings(perSource: readonly SettingsHookSou
             rejected.push({ ...where, event, reason: `the "async" flag on hook ${groupIndex}:${hookIndex}: it is fail-closed, and a fail-closed ${event} hook always runs synchronously (it gates the call), so it was registered without async` });
             isAsync = false;
           }
+          // WS-24 fix round 1: nor on SessionEnd -- there is no safe point after it to deliver anything,
+          // and the session's teardown kills every background hook right after firing it, so an async
+          // SessionEnd hook would be SIGKILLed within milliseconds, silently. Kept, synchronous, reported.
+          if (isAsync && event === "SessionEnd") {
+            rejected.push({ ...where, event, reason: `the "async" flag on hook ${groupIndex}:${hookIndex}: a SessionEnd hook runs as the session ends, when no background hook survives, so it was registered without async` });
+            isAsync = false;
+          }
           entries.push({
             id: `${event}:${source}:${groupIndex}:${hookIndex}`,
             event: event as HookEvent,

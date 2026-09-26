@@ -44,7 +44,12 @@ import { capHookText } from "./bounds.ts";
 
 /** Ten minutes: background work (a test run after an edit, a lint of the tree) is minutes, not seconds -- the gating hooks' 60 s would cut it off. */
 export const DEFAULT_ASYNC_HOOK_TIMEOUT_MS = 600_000;
-/** Concurrent background hooks per session. A PostToolUse hook on every call of a 50-call burst must not become 50 processes. */
+/**
+ * Concurrent background hooks per ENGINE. A PostToolUse hook on every call of a 50-call burst must not
+ * become 50 processes. Per engine, not per session: a subagent's engine builds its own command invoker
+ * and so its own queue (killed at that engine's teardown), so a session running N subagents at once can
+ * hold up to (N + 1) x this many -- each still bounded, and each gone with its engine.
+ */
 export const MAX_RUNNING_ASYNC_HOOKS = 16;
 /** Finished outputs waiting for the next safe point. At `MAX_HOOK_TEXT_CHARS` each, one delivery stays far below the per-message cap. */
 export const MAX_PENDING_ASYNC_HOOK_OUTPUTS = 16;

@@ -244,6 +244,19 @@ describe("fail-closed floors stay synchronous", () => {
     expect(built.entries.find((e) => e.event === "PostToolUse")!.async).toBe(true);
   });
 
+  test("`async` on a SessionEnd handler is refused too: nothing survives the session's end to run it in the background", () => {
+    const built = buildHookEntriesFromSettings([
+      { source: "user", settings: { hooks: { SessionEnd: [{ hooks: [{ type: "command", command: "bye.sh", async: true }] }], Stop: [{ hooks: [{ type: "command", command: "stop.sh", async: true }] }] } } },
+    ]);
+    const end = built.entries.find((e) => e.event === "SessionEnd")!;
+    expect(end.command).toBe("bye.sh");
+    expect(end.async).toBeUndefined();
+    expect(built.rejected).toHaveLength(1);
+    expect(built.rejected[0]!.reason).toContain("SessionEnd");
+    expect(built.rejected[0]!.reason).toContain("registered without async");
+    expect(built.entries.find((e) => e.event === "Stop")!.async).toBe(true);
+  });
+
   test("a fail-closed gating hook that ANNOUNCES async is not backgrounded: it is malformed, so the call is denied", async () => {
     const { invoker, ctx } = setup([{ id: "h", event: "PreToolUse", source: "user", failClosed: true, command: `echo '{"async":true}'; sleep 0.2` }]);
     const composite = await runHooks("PreToolUse", { toolUseID: "tu", toolName: "Bash", input: {} }, ctx);

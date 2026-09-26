@@ -16,15 +16,19 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   appends hook context (after a tool round, with the next prompt, after a compaction) as an
   `async_hook_response` `<system-reminder>`, never mid-request; a `systemMessage` is also the host's
   `system/informational` notice. Bounded: its timeout is `asyncTimeout` when announced, else the handler's `timeout`, else
-  10 minutes; at most 16 run at once per session (a 17th is refused and killed); at most 16 finished outputs
-  wait for delivery (the oldest is dropped, and the model is told how many); texts are capped like every
-  hook's; session end kills them. `async` on a fail-closed `PreToolUse`/`PermissionRequest` hook is refused at
-  registration -- the hook is kept and runs synchronously, and the refusal is reported -- and such a hook
-  announcing `{"async": true}` is malformed output (a deny), as before.
+  10 minutes; at most 16 run at once per engine (a 17th is refused and killed; a subagent's engine has its own
+  queue, so a session with N live subagents can hold (N + 1) x 16); at most 16 finished outputs wait for
+  delivery (the oldest is dropped, and the model is told how many); texts are capped like every hook's; an
+  engine's end kills its own. `async` is refused at registration -- the hook is kept and runs synchronously,
+  and the refusal is reported -- on a fail-closed `PreToolUse`/`PermissionRequest` hook (a floor must gate the
+  call) and on `SessionEnd` (the session's teardown would kill it at once); a fail-closed gating hook announcing
+  `{"async": true}` is malformed output (a deny), as before.
 - **MCP provenance on hook inputs.** For a tool a connected MCP server registered, `PreToolUse`, `PostToolUse`,
   `PostToolUseFailure`, `PermissionRequest` and `PermissionDenied` inputs carry `mcp_server_name` and
-  `mcp_tool_name` beside `tool_name`, on the callback (`HookInput`) and the command-hook stdin alike. Read
-  from the registry's owner index, never by splitting `tool_name` (server names may contain `__`).
+  `mcp_tool_name` beside `tool_name`, on the callback (`HookInput`) and the command-hook stdin alike.
+  `mcp_server_name` is the server's name AS REGISTERED -- the name in `tool_name`, which for a subagent's own
+  server can differ from the name it was declared under -- read from the registry's owner index, never by
+  splitting `tool_name` (server names may contain `__`).
   Additive: `HookInvocationPayload` gains `mcpServerName`/`mcpToolName`; the new `McpToolProvenance` type is
   exported.
 - **A timed-out callback hook is cancelled on the host.** When the runner gives up on a hook callback, the
@@ -43,6 +47,13 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   `legacy`. `stdio` and `sse` still default to `legacy`: a server that ignores the probe would pay its bound
   (up to 5 s) on every connect, past the 5 s first-turn batch deadline, and one that exits on it would start
   twice, for no 2026-07-28 feature a stdio server needs today.
+- **A discovery-cached MCP server becomes `connected` at its first live call.** It used to stay `cached` with a
+  live connection behind it, so a tool-list change it announced was parked forever and `RefreshMcpTools` and
+  the resource tools refused it.
+- **New public subpath `@yanlinglabs/winter-agent-runtime/mcp-client`**: `connectMcpServer`,
+  `ConnectedMcpClient`, `McpConnectError` (+ its codes, the tool/resource shapes, `resolveVersionNegotiation`)
+  and `createElicitationAsker` -- the runtime's own MCP client, for a host that talks to MCP servers itself.
+  It loads no engine state, so a host may import it on its main thread.
 - `verify:mcp-compiled` gains two legs: stdio `auto` against a server that exits on the probe, and a
   2026-07-28 Streamable HTTP endpoint (the modern era, compiled).
 - **Embedded sessions mirror their process groups to the host.** Every `detached` spawn in a session's realm
@@ -50,12 +61,14 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   worker -- is recorded while its group lives (`process-groups.ts`), and an embedded Worker posts each change
   (`EmbeddedProcessGroupMessage`). `EmbeddedWorkerProcess.processGroups()` lists what is still live, readable
   after `exited` settles: a host SIGKILLs those when a Worker was terminated or crashed (a healthy close
-  leaves it empty). A spawned `winter` child that is SIGKILLed still orphans its groups; there is no cheap
+  leaves it empty: a finished session's `exit` waits up to 250 ms for its teardown's kills to be reported,
+  and the list never names the host's own pid). A spawned `winter` child that is SIGKILLed still orphans its groups; there is no cheap
   equivalent (the ledger would have to ride the frame stream).
 - **Test network guard: children really inherit the block.** On Bun 1.3 the proxy variables are
   non-enumerable, so every `{ ...process.env }` -- the guard's own injected environment included -- dropped
   them and no child saw the recording proxy. They are now enumerable accessors that keep Bun's write-through,
-  and `exec`/`execSync` (shell children, e.g. a test shelling out to `curl`) are wrapped too. CI's Bun (1.4)
+  and `exec`/`execSync` (shell children, e.g. a test shelling out to `curl`) are wrapped too (a `null` options
+  argument is replaced, never shifted, and `util.promisify(exec)` keeps its shape). CI's Bun (1.4)
   already enumerated them, so this aligns a local run with CI; `withNpmRegistryAccess` is unchanged.
 
 ## 0.0.27
