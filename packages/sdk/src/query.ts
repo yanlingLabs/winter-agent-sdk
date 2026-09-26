@@ -491,7 +491,7 @@ function makeHookHandler(hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>
     });
   }
 
-  return async (payload: unknown): Promise<ControlRequestHandlerResult> => {
+  return async (payload: unknown, handlerCtx?: { signal: AbortSignal }): Promise<ControlRequestHandlerResult> => {
     const req = payload as HookInvocationPayload;
     const callback = byId.get(req.hookId);
     if (!callback) {
@@ -504,6 +504,12 @@ function makeHookHandler(hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>
     const controller = new AbortController();
     if (abortController?.signal.aborted) controller.abort();
     else abortController?.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    // WS-24: ...and the runtime's own cancellation of THIS invocation (`control_cancel_request`): the
+    // runner timed the hook out and stopped waiting (runtime hooks/bridge-invoker.ts), so the callback's
+    // signal aborts and a well-behaved callback stops working on an answer nobody will read -- exactly
+    // what `makePermissionHandler` does for a prompt the runtime abandoned.
+    if (handlerCtx?.signal.aborted === true) controller.abort();
+    else handlerCtx?.signal.addEventListener("abort", () => controller.abort(), { once: true });
 
     const input = buildHookInput(req, cwd);
     let output: HookJSONOutput;
