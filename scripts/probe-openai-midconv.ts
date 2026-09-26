@@ -28,6 +28,15 @@
 //                      no changes at all: turn 2 and 3's `cached` should be most of their input on BOTH now
 //                      that codex requests carry `session-id` / `thread-id` (codex-rs's cache affinity;
 //                      each request line prints whether `session-id` was sent).
+//   8. plan-cache   -- (WS-24 follow-up 8) ISOLATES a plan-mode switch from every other prefix-changing
+//                      mechanism above (no late tool, no tool_search, no additional_tools): a baseline
+//                      turn, `set_permission_mode plan`, a turn (the one the WS-23 live probe read
+//                      `cached=0` on), `set_permission_mode bypassPermissions`, a turn (does leaving plan
+//                      mode ALSO cost a cache miss?), then a turn with no change (does it recover?).
+//                      Each request line prints `instructions_length` beside `cached` -- the assembled
+//                      system prompt carries the plan-mode block (context/assembler.ts's dynamic system
+//                      half), so a length change lining up with a cache drop on the SAME request is the
+//                      evidence for "the block's insertion/removal shifted the whole downstream prefix".
 // Every request prints its SHAPE (item types in order, the update's placement, tools, tool_choice, the
 // top-level effort) and the response's usage (`input_tokens`, `cached_tokens`); a non-2xx prints its error
 // body, truncated.
@@ -46,7 +55,7 @@
 //
 // COST: roughly thirty small generations across gpt-6-astra/sol/luna and gpt-5.6 (tiny prompts, effort
 // high/low). Pick phases with WINTER_OPENAI_MIDCONV_PROBE_PHASES (comma-separated; default: all):
-//   cfg-openai,cfg-error,cfg-codex,search,tools-openai,tools-codex,cache
+//   cfg-openai,cfg-error,cfg-codex,search,tools-openai,tools-codex,cache,plan-cache
 //
 // Usage (from the worktree root):
 //   WINTER_OPENAI_MIDCONV_PROBE=1 bun run scripts/probe-openai-midconv.ts
@@ -82,7 +91,7 @@ if (process.env["WINTER_OPENAI_MIDCONV_PROBE"] !== "1") {
   process.exit(0);
 }
 const DRY_RUN = process.env["WINTER_OPENAI_MIDCONV_PROBE_DRY_RUN"] === "1";
-const PHASES = new Set((process.env["WINTER_OPENAI_MIDCONV_PROBE_PHASES"] ?? "cfg-openai,cfg-error,cfg-codex,search,tools-openai,tools-codex,cache").split(",").map((p) => p.trim()));
+const PHASES = new Set((process.env["WINTER_OPENAI_MIDCONV_PROBE_PHASES"] ?? "cfg-openai,cfg-error,cfg-codex,search,tools-openai,tools-codex,cache,plan-cache").split(",").map((p) => p.trim()));
 
 // --- the dev-pinned, read-only credential store --------------------------------------------------------
 
@@ -151,10 +160,20 @@ function describeRequest(body: Record<string, unknown>, headers: Headers): strin
   const tools = Array.isArray(body["tools"]) ? (body["tools"] as Item[]).map((t) => (t["type"] === "tool_search" ? "tool_search" : String(t["name"]))) : [];
   const choice = body["tool_choice"];
   const choiceShape = choice !== null && typeof choice === "object" ? `${String((choice as Item)["type"])}${(choice as Item)["type"] === "allowed_tools" ? `(${String((choice as Item)["mode"])}: ${JSON.stringify(((choice as Item)["tools"] as Item[]).map((t) => `${String(t["type"])}${t["name"] !== undefined ? `:${String(t["name"])}` : ""}`))})` : ""}` : JSON.stringify(choice);
+  // WS-24 (follow-up 8): `instructions` is the WHOLE assembled system prompt (responses.ts:491),
+  // sent as one top-level field, and it carries the plan-mode block (context/assembler.ts's "WHAT
+  // GOES WHERE": the block sits in the dynamic system half, BEFORE `# auto memory`/`# Environment`,
+  // which precede the conversation proper). Its byte length is printed alongside `cached` so the
+  // controller can read the two side by side: a length change here that lines up with a `cached`
+  // drop on the SAME request is the smoking gun for "a system-prompt content change shifted the
+  // whole downstream prefix, breaking OpenAI's prefix-cache alignment for everything after it" --
+  // never a secret (a count, not the text).
+  const instructions = typeof body["instructions"] === "string" ? (body["instructions"] as string) : undefined;
   return [
     `model=${String(body["model"])} reasoning=${JSON.stringify(body["reasoning"] ?? null)} placement=${currentPlacement}`,
     `input=[${shape.join(", ")}]`,
     `tools=${tools.length} tool_search=${tools.includes("tool_search")} tool_choice=${choiceShape} prompt_cache_key=${body["prompt_cache_key"] !== undefined ? "set" : "absent"} session-id=${headers.get("session-id") !== null ? "set" : "absent"} thread-id=${headers.get("thread-id") !== null ? "set" : "absent"}`,
+    `instructions_length=${instructions !== undefined ? instructions.length : "(absent)"}`,
   ].join(" | ");
 }
 
@@ -413,13 +432,29 @@ try {
     await runSession("cache", "openai/gpt-6-astra", (row) => row, plain);
     await runSession("cache", "codex-oauth/gpt-6-astra", (row) => row, plain);
   }
+  if (PHASES.has("plan-cache")) {
+    // WS-24 (follow-up 8): NO late tool, NO tool_search, NO additional_tools -- the ONLY thing that
+    // changes across this session's turns is the permission mode, so any cache effect is attributable
+    // to the mode switch (and the system-prompt change it carries) alone, unconfounded by the other
+    // mechanisms `toolSteps` above also exercises before its own plan-mode turn.
+    const planCacheSteps: Step[] = [
+      { turn: "Reply with the single word: one.", label: "turn 1 (baseline, bypassPermissions)" },
+      { mode: "plan" },
+      { turn: "Reply with the single word: two.", label: "turn 2 (right after entering plan mode -- the WS-23 live probe's cached=0 turn)" },
+      { mode: "bypassPermissions" },
+      { turn: "Reply with the single word: three.", label: "turn 3 (right after LEAVING plan mode -- does the reverse switch also cost a cache miss?)" },
+      { turn: "Reply with the single word: four.", label: "turn 4 (no change since turn 3: should recover and read cache again)" },
+    ];
+    await runSession("plan-cache", "openai/gpt-6-astra", (row) => row, planCacheSteps);
+    await runSession("plan-cache", "codex-oauth/gpt-6-astra", (row) => row, planCacheSteps);
+  }
 
   console.log("\n=== per request (request shape, then the response) ===");
   observed.forEach((o, i) => {
     console.log(`\n#${i + 1} [${o.label}] HTTP ${o.status} ${o.url}\n  sent:   ${o.sent}\n  usage:  ${o.usage ?? "(none)"}\n  output: ${o.outputItems ?? "(none)"}${o.error !== undefined ? `\n  error:  ${o.error}` : ""}`);
   });
   console.log(
-    "\nREAD IT AS: cfg-* -- a 2xx on turn 2 means the placement is accepted (compare before-user vs after-user; if only after-user passes, flip CONFIGURATION_UPDATE_PLACEMENT), `cached` on turn 2 should be close to turn 1's input, and the top-level reasoning.effort never moves; cfg-error / gpt-5.6 prints the API's own error text for the item (the engine's fallback regex keys on `configuration_update`); cfg-codex decides whether codex-oauth/gpt-6-* may record the item. search -- tools unchanged across the round trip, the namespaced call accepted. tools-* -- tools unchanged; turn 2 carries additional_tools, turn 4 tool_choice allowed_tools without the bypass-only tool, functions only (a 400 here names the allowed_tools spelling the endpoint refused, and the session's one fallback line must say allowed_tools, not tool search), turn 5 back to auto. cache -- codex turn 2/3 `cached` near their input, as on api.openai.com; still 0 means the backend does not report it (or needs more than the headers).",
+    "\nREAD IT AS: cfg-* -- a 2xx on turn 2 means the placement is accepted (compare before-user vs after-user; if only after-user passes, flip CONFIGURATION_UPDATE_PLACEMENT), `cached` on turn 2 should be close to turn 1's input, and the top-level reasoning.effort never moves; cfg-error / gpt-5.6 prints the API's own error text for the item (the engine's fallback regex keys on `configuration_update`); cfg-codex decides whether codex-oauth/gpt-6-* may record the item. search -- tools unchanged across the round trip, the namespaced call accepted. tools-* -- tools unchanged; turn 2 carries additional_tools, turn 4 tool_choice allowed_tools without the bypass-only tool, functions only (a 400 here names the allowed_tools spelling the endpoint refused, and the session's one fallback line must say allowed_tools, not tool search), turn 5 back to auto. cache -- codex turn 2/3 `cached` near their input, as on api.openai.com; still 0 means the backend does not report it (or needs more than the headers). plan-cache (WS-24 #8) -- turn 1's `instructions_length` is the baseline; if turn 2's (entering plan mode) differs AND its `cached` drops relative to turn 1's `input`, that is the plan-mode block (context/assembler.ts) shifting the whole downstream prefix, not a Winter bug -- expect the SAME pattern on turn 3 (leaving plan mode, `instructions_length` reverts) and a cache recovery by turn 4 (unchanged from turn 3). If `cached` stays high on turn 2/3 despite the length change, the hypothesis is wrong and the real cause is still open.",
   );
 } finally {
   unregisterMcpServerTools(PROBE_SERVER);
