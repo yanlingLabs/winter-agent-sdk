@@ -43,6 +43,11 @@ export interface McpSessionOAuth {
   store: McpOAuthStore;
   /** Asks the host to refresh. Absent: always in-process. */
   askHost?: McpOAuthHostAsk;
+  /**
+   * WS-25 §7: the host OWNS renewal (a host-brokered session: `store` is read-only, and no refresh token
+   * is in this process). A host answer of "unhandled" is then `transient`, never the in-process refresh.
+   */
+  hostOwnsRefresh?: boolean;
   /** The sign-in door, for a server name -- the text a `needs-auth` error names (e.g. `winter mcp login linear`). */
   signInHint: (serverName: string) => string;
   /** The clock (tests). Epoch ms. */
@@ -111,7 +116,9 @@ export function createSessionAuthProvider(opts: { serverName: string; serverUrl:
     if (oauth.askHost !== undefined) {
       const answer = await oauth.askHost(request).catch((): McpOAuthRefreshAnswer => ({ ok: false, reason: "transient" }));
       if (answer !== "unhandled") return answer;
+      if (oauth.hostOwnsRefresh === true) return { ok: false, reason: "transient" };
     }
+    if (oauth.hostOwnsRefresh === true) return { ok: false, reason: "transient" };
     const result = await refreshMcpOAuthToken({ account, store: oauth.store, generation, ...(stepUpScope !== undefined ? { stepUpScope } : {}), ...(oauth.fetch !== undefined ? { fetch: oauth.fetch } : {}), ...(oauth.now !== undefined ? { now: oauth.now } : {}) });
     return result.ok ? { ok: true } : result;
   }

@@ -12,7 +12,7 @@ import { mcpNeedsAuthAttachment, needsAuthToolHint } from "./engine-wiring.ts";
 import { startMcpOAuthLogin } from "./login.ts";
 import { refreshMcpOAuthToken } from "./refresh.ts";
 import { mcpSignInHint, type McpOAuthHostAsk } from "./session-provider.ts";
-import { createMemoryMcpOAuthStore, readTokenRecord, writeTokenRecord, type McpOAuthStore } from "./store.ts";
+import { createHostBrokeredMcpOAuthStore, createMemoryMcpOAuthStore, MCP_OAUTH_HOST_HELD_REFRESH_TOKEN, readTokenRecord, toSessionMcpTokenRecord, writeTokenRecord, type McpOAuthStore } from "./store.ts";
 import { startFixtureAs, type FixtureAs, type FixtureAsOptions } from "./test-fixture-as.ts";
 import { renderAttachment } from "../context/attachments.ts";
 
@@ -212,6 +212,69 @@ describe("fix round 1: expiry margin and the preflight bound", () => {
     await lifecycle.start();
     expect(stateOf(lifecycle, name)).toMatchObject({ state: "failed", errorCode: "timeout" });
     expect(Date.now() - started).toBeLessThan(2000);
+  });
+});
+
+describe("§7: a HOST-BROKERED session's MCP sign-ins (no Keychain, no refresh token in the session)", () => {
+  /** The child's store: every read is a `credential_resolve` the host answers from ITS store, refresh token masked. */
+  function brokered(hostStore: McpOAuthStore): { store: McpOAuthStore; served: string[] } {
+    const served: string[] = [];
+    const sender = {
+      async request<T>(subtype: string, payload: unknown): Promise<T> {
+        expect(subtype).toBe("credential_resolve");
+        const raw = await hostStore.read((payload as { ref: { account: string } }).ref.account);
+        if (raw === null) return { ok: false, reason: "not_found" } as T;
+        const material = toSessionMcpTokenRecord(raw);
+        served.push(material);
+        return { ok: true, material, generation: 1 } as T;
+      },
+    };
+    return { store: createHostBrokeredMcpOAuthStore(sender), served };
+  }
+
+  test("expired with a (host-held) refresh token: the host refreshes, the session re-reads, connects -- and never saw a refresh token", async () => {
+    const fx = fixture();
+    const hostStore = createMemoryMcpOAuthStore();
+    await signIn(fx, hostStore);
+    await expire(hostStore, fx);
+    const { store, served } = brokered(hostStore);
+    const host = fakeHost(hostStore);
+    const name = `oauth-${++counter}`;
+    const lifecycle = createMcpLifecycle({
+      servers: [{ name, origin: "explicit", config: { type: "http", url: fx.mcpUrl, versionNegotiation: "legacy" } }],
+      envConfig: parseMcpEnvConfig({ MCP_CONNECTION_NONBLOCKING: "0", MCP_TIMEOUT: "5000" }),
+      elicitationAsk: createElicitationAsker(undefined),
+      oauth: { store, askHost: host.askHost, hostOwnsRefresh: true, signInHint: (server) => mcpSignInHint(BRAND, server) },
+    });
+    lifecycles.push(lifecycle);
+    await lifecycle.start();
+    expect(stateOf(lifecycle, name).state).toBe("connected");
+    expect(host.asks.length).toBe(1);
+    const realRefresh = (await readTokenRecord(hostStore, mcpOAuthTokenAccount(fx.mcpUrl)))!.refreshToken!;
+    expect(served.length).toBeGreaterThan(0);
+    for (const m of served) {
+      expect(JSON.parse(m).refreshToken).toBe(MCP_OAUTH_HOST_HELD_REFRESH_TOKEN);
+      expect(m).not.toContain(realRefresh);
+    }
+  });
+
+  test("a host that does not answer the refresh is `transient` -- the session never refreshes in-process", async () => {
+    const fx = fixture();
+    const hostStore = createMemoryMcpOAuthStore();
+    await signIn(fx, hostStore);
+    await expire(hostStore, fx);
+    const { store } = brokered(hostStore);
+    const name = `oauth-${++counter}`;
+    const lifecycle = createMcpLifecycle({
+      servers: [{ name, origin: "explicit", config: { type: "http", url: fx.mcpUrl, versionNegotiation: "legacy" } }],
+      envConfig: parseMcpEnvConfig({ MCP_CONNECTION_NONBLOCKING: "0", MCP_TIMEOUT: "5000" }),
+      elicitationAsk: createElicitationAsker(undefined),
+      oauth: { store, askHost: async () => "unhandled", hostOwnsRefresh: true, signInHint: (server) => mcpSignInHint(BRAND, server) },
+    });
+    lifecycles.push(lifecycle);
+    await lifecycle.start();
+    expect(stateOf(lifecycle, name)).toMatchObject({ state: "failed", errorCode: "auth_refresh_failed" });
+    expect(fx.tokenPosts).toEqual(["authorization_code"]);
   });
 });
 

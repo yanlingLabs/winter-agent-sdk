@@ -49,6 +49,23 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   only when it is in the ORIGINAL process environment (every settings tier refuses the name) and the
   session names a non-default Keychain service (the gates only).
 
+### Prompt-free credentials (WS-25 §7)
+
+- A host that sets `Options.onCredentialResolve` resolves every Keychain credential its session reads:
+  `query()` puts `hostCredentials: true` on the wire (a flag only), and the runtime sends
+  `{ subtype: "credential_resolve", ref, minGeneration? }` -> `{ ok: true, material, expiresAt?, generation }
+  | { ok: false, reason: "not_found" | "not_allowed" | "stale" | "unavailable" }` instead of reading the
+  Keychain -- provider auth, advisor/web/cross-provider refs, tool keys (Exa) and MCP sign-ins alike. No
+  Keychain store is built in such a session, so a child binary never raises a macOS consent prompt.
+- Such a session never persists a credential and holds no refresh token: `set`/`delete` refuse typed;
+  `CredentialStore.refresh` (new, optional, provider-runtime) makes `refreshOauthMaterial` ASK the host for
+  a newer generation (`minGeneration`) instead of posting a grant; MCP sessions read their token records
+  through the host (`toSessionMcpTokenRecord` masks the refresh token with
+  `MCP_OAUTH_HOST_HELD_REFRESH_TOKEN`), and never refresh in-process.
+- The material travels only in the control_response frame; it reaches no frame the host iterates, no
+  stderr line and no file under the session's home (tested end to end). Standalone SDK users (no
+  handler) keep the Keychain store.
+
 ## 0.0.28
 
 ### Engine (WS-24)

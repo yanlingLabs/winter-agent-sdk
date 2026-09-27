@@ -15,6 +15,7 @@ export {
   isMcpOAuthTokenAccount,
   mcpOAuthAccountId,
   mcpOAuthClientAccount,
+  mcpOAuthClientSecretAccount,
   mcpOAuthTokenAccount,
   MCP_OAUTH_CLIENT_ACCOUNT_PREFIX,
   MCP_OAUTH_TOKEN_ACCOUNT_PREFIX,
@@ -30,7 +31,7 @@ export {
   type McpOAuthClientRecord,
   type McpOAuthTokenRecord,
 } from "./mcp-auth/records.ts";
-export { createKeychainMcpOAuthStore, createMemoryMcpOAuthStore, type McpOAuthStore } from "./mcp-auth/store.ts";
+export { createKeychainMcpOAuthStore, createMemoryMcpOAuthStore, MCP_OAUTH_HOST_HELD_REFRESH_TOKEN, toSessionMcpTokenRecord, type McpOAuthStore } from "./mcp-auth/store.ts";
 export {
   MCP_OAUTH_CALLBACK_PATH,
   MCP_OAUTH_EXPIRY_SKEW_MS,
@@ -42,7 +43,7 @@ export { startMcpOAuthLogin, type McpOAuthLogin, type McpOAuthLoginOutcome, type
 export { refreshMcpOAuthToken, type RefreshMcpOAuthTokenOptions, type RefreshMcpOAuthTokenResult } from "./mcp-auth/refresh.ts";
 export { revokeMcpOAuth, type RevokeMcpOAuthOptions } from "./mcp-auth/revoke.ts";
 // The wire half, declared in the SDK package (a host that never imports the runtime still types it).
-export { MCP_OAUTH_REFRESH_SUBTYPE, type McpOAuthConfig, type McpOAuthRefreshAnswer, type McpOAuthRefreshRequest, type McpOAuthSecretRef } from "@yanlinglabs/winter-agent-sdk";
+export { CREDENTIAL_RESOLVE_SUBTYPE, type CredentialResolveAnswer, type CredentialResolveRequest, MCP_OAUTH_REFRESH_SUBTYPE, type McpOAuthConfig, type McpOAuthRefreshAnswer, type McpOAuthRefreshRequest, type McpOAuthSecretRef } from "@yanlinglabs/winter-agent-sdk";
 
 /** The status string `mcp_status` / `system/init.mcp_servers` report for a server that needs sign-in. */
 export const MCP_STATUS_NEEDS_AUTH = "needs-auth";

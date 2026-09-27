@@ -29,9 +29,10 @@ function isAnswer(value: unknown): value is McpOAuthRefreshAnswer {
  * trip (a timeout, a dead transport, a malformed answer) is `transient`: a host that HAS a handler must
  * never be bypassed by a session that then posts the refresh itself.
  */
-export function createSessionMcpOAuth(opts: { store: McpOAuthStore; sender: McpOAuthHostSender; brand: { homeDirName: string; productName: string } }): McpSessionOAuth {
+export function createSessionMcpOAuth(opts: { store: McpOAuthStore; sender: McpOAuthHostSender; brand: { homeDirName: string; productName: string }; hostOwnsRefresh?: boolean }): McpSessionOAuth {
   return {
     store: opts.store,
+    ...(opts.hostOwnsRefresh === true ? { hostOwnsRefresh: true } : {}),
     signInHint: (serverName) => mcpSignInHint(opts.brand, serverName),
     askHost: async (request: McpOAuthRefreshRequest) => {
       try {

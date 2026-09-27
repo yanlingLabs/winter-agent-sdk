@@ -7,6 +7,7 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { DEFAULT_KEYCHAIN_SERVICE, envName, WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { createKeychainRawStore } from "../provider/keychain-store.ts";
+import { resolveFromHost, type HostRequestSender } from "../provider/host-credentials.ts";
 import { McpOAuthError } from "./errors.ts";
 import { decodeMcpOAuthClientRecord, decodeMcpOAuthTokenRecord, encodeMcpOAuthClientRecord, encodeMcpOAuthTokenRecord, type McpOAuthClientRecord, type McpOAuthTokenRecord } from "./records.ts";
 
@@ -146,4 +147,44 @@ export function resolveSessionMcpOAuthStore(opts: { keychainService: string | un
     return createTestFileMcpOAuthStore(testStoreFile);
   }
   return createKeychainMcpOAuthStore(keychainService);
+}
+
+// --- WS-25 §7: the HOST-BROKERED session store ------------------------------------------------------
+
+/**
+ * What a session sees in place of an MCP sign-in's refresh token when its host holds the real one: a
+ * non-secret marker that says "a refresh is possible -- ask the host". The session provider only ever
+ * tests a record's `refreshToken` for PRESENCE, so this keeps §1.2's startup rules exact (expired WITH a
+ * refresh token -> ask the host; WITHOUT -> needs-auth) while no refresh token enters the session.
+ */
+export const MCP_OAUTH_HOST_HELD_REFRESH_TOKEN = "host-held";
+
+/**
+ * For the HOST answering `credential_resolve` for an `mcp-oauth:<id>` account: the stored record's JSON
+ * with its refresh token replaced by `MCP_OAUTH_HOST_HELD_REFRESH_TOKEN` (and nothing else changed).
+ * Validates on the way (a malformed or newer record is thrown typed, like every read).
+ */
+export function toSessionMcpTokenRecord(raw: string): string {
+  const record = decodeMcpOAuthTokenRecord(raw);
+  return encodeMcpOAuthTokenRecord(record.refreshToken === undefined ? record : { ...record, refreshToken: MCP_OAUTH_HOST_HELD_REFRESH_TOKEN });
+}
+
+/**
+ * A host-brokered session's MCP token store: `read` is one `credential_resolve` for the account; there is
+ * no Keychain read in this process at all. `write`/`remove` refuse typed -- the host is the only writer
+ * (it refreshes on `mcp_oauth_refresh`, and signs in and out on its own doors).
+ */
+export function createHostBrokeredMcpOAuthStore(sender: HostRequestSender): McpOAuthStore {
+  const refuse = (account: string): McpOAuthError => new McpOAuthError("invalid_account", `a host-brokered session never writes its MCP sign-ins (${account}); its host does`);
+  return {
+    async read(account) {
+      return (await resolveFromHost(sender, { kind: "keychain", account }))?.material ?? null;
+    },
+    async write(account) {
+      throw refuse(account);
+    },
+    async remove(account) {
+      throw refuse(account);
+    },
+  };
 }
