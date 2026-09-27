@@ -48,6 +48,17 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   refresh token. Sessions read the `WINTER_TEST_MCP_OAUTH_STORE_FILE` test store instead of the Keychain
   only when it is in the ORIGINAL process environment (every settings tier refuses the name) and the
   session names a non-default Keychain service (the gates only).
+- Cross-lane fix (daemon origin-only comparison): `StartMcpOAuthLogin`'s result now carries `issuer`, the
+  full verified issuer string alongside `issuerOrigin`/`authorizeOrigin` -- a host that compared servers by
+  ORIGIN alone could not tell two tenants apart behind one reverse-proxy origin
+  (`https://host/tenant/a` vs `https://host/tenant/b`). New `discoverMcpOAuthIssuer({ serverUrl, oauth?,
+  fetch? })`: a side-effect-free discovery (PRM -> AS metadata, or the configured
+  `oauth.authServerMetadataUrl` under the same RFC 8414 issuer-location check `startMcpOAuthLogin` uses) --
+  no registration, no code exchange, no store read or write, no listener -- for a caller that must know a
+  server's issuer before, or without, an interactive sign-in. `records.ts`'s `sameIssuer` (exact, or
+  differing only by one trailing slash) is now re-exported from `/mcp-auth` as THE comparison every caller
+  uses to tell servers apart; `loadAuthorizationServer`'s own issuer check was folded into it so there is
+  only one implementation.
 
 ### Prompt-free credentials (WS-25 §7)
 
