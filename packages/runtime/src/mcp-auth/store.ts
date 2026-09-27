@@ -137,13 +137,15 @@ export const MCP_OAUTH_TEST_STORE_ENV = mcpOAuthTestStoreEnvName(WINTER_BRAND);
  *   - `testStoreFile` came from the ORIGINAL process environment (the caller reads it before any
  *     settings tier's `env` is merged -- production-wiring captures it first, and the tiers refuse the
  *     name anyway);
- *   - the session names a Keychain service explicitly, and it is NOT the SDK's default production service
- *     (`DEFAULT_KEYCHAIN_SERVICE`, the dist profile's): a gate names its own throwaway
+ *   - the session names a Keychain service explicitly, and it is NEITHER the SDK's default production
+ *     service (`DEFAULT_KEYCHAIN_SERVICE`, the dist profile's) NOR its `.dev` twin: a gate names its own throwaway
  *     service, a production session never can without also changing where its real credentials live.
  */
 export function resolveSessionMcpOAuthStore(opts: { keychainService: string | undefined; testStoreFile: string | undefined }): McpOAuthStore {
   const { keychainService, testStoreFile } = opts;
-  if (testStoreFile !== undefined && testStoreFile !== "" && keychainService !== undefined && keychainService !== DEFAULT_KEYCHAIN_SERVICE) {
+  // Fix round 2 (M-c): the dev profile's service (`<default>.dev`, the user's own dev daemon) is refused
+  // as well -- only a gate's throwaway service reaches the seam.
+  if (testStoreFile !== undefined && testStoreFile !== "" && keychainService !== undefined && keychainService !== DEFAULT_KEYCHAIN_SERVICE && keychainService !== `${DEFAULT_KEYCHAIN_SERVICE}.dev`) {
     return createTestFileMcpOAuthStore(testStoreFile);
   }
   return createKeychainMcpOAuthStore(keychainService);
@@ -178,7 +180,16 @@ export function createHostBrokeredMcpOAuthStore(sender: HostRequestSender): McpO
   const refuse = (account: string): McpOAuthError => new McpOAuthError("invalid_account", `a host-brokered session never writes its MCP sign-ins (${account}); its host does`);
   return {
     async read(account) {
-      return (await resolveFromHost(sender, { kind: "keychain", account }))?.material ?? null;
+      const material = (await resolveFromHost(sender, { kind: "keychain", account }))?.material;
+      if (material === undefined) return null;
+      // Fix round 2 (M-a): masked HERE too, whatever the host sent -- a real refresh token never stays in
+      // this process even when a host forgets `toSessionMcpTokenRecord`. A value that is not a token record
+      // is passed through for the provider's own lenient read to judge.
+      try {
+        return toSessionMcpTokenRecord(material);
+      } catch {
+        return material;
+      }
     },
     async write(account) {
       throw refuse(account);

@@ -81,6 +81,7 @@ describe("the sign-in test seam cannot be reached by configuration (fix round 1 
   test("honoured only for an explicit, non-default Keychain service -- never the production default", () => {
     expect("testFile" in resolveSessionMcpOAuthStore({ keychainService: "com.winter.test.gate", testStoreFile: "/tmp/x.json" })).toBe(true);
     expect("testFile" in resolveSessionMcpOAuthStore({ keychainService: DEFAULT_KEYCHAIN_SERVICE, testStoreFile: "/tmp/x.json" })).toBe(false);
+    expect("testFile" in resolveSessionMcpOAuthStore({ keychainService: `${DEFAULT_KEYCHAIN_SERVICE}.dev`, testStoreFile: "/tmp/x.json" })).toBe(false);
     expect("testFile" in resolveSessionMcpOAuthStore({ keychainService: undefined, testStoreFile: "/tmp/x.json" })).toBe(false);
     expect("testFile" in resolveSessionMcpOAuthStore({ keychainService: "com.winter.test.gate", testStoreFile: undefined })).toBe(false);
   });

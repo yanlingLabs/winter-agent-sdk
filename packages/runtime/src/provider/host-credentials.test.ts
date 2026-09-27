@@ -6,7 +6,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query, type CredentialResolveAnswer, type CredentialResolveRequest } from "@yanlinglabs/winter-agent-sdk";
-import { refreshOauthMaterial } from "@yanlinglabs/winter-provider-runtime";
+import { createCompositeCredentialStore, refreshOauthMaterial } from "@yanlinglabs/winter-provider-runtime";
 import { inMemoryProcess } from "../testing.ts";
 import { echoProvider } from "./mock.ts";
 import { getRegisteredTool, replaceExecutor } from "../tools/registry.ts";
@@ -60,6 +60,11 @@ describe("the host-brokered credential store", () => {
     expect((err as Error).message).toContain("codex-oauth:default");
     expect((err as Error).message).toContain("stale");
     expect((err as Error).message).not.toContain("at-2");
+  });
+
+  test("M-b: the composite routes ONLY keychain refs to the host renewer", async () => {
+    const composite = createCompositeCredentialStore([createHostBrokeredCredentialStore(fakeHost({}))]);
+    await expect(composite.refresh!({ kind: "env", name: "X" } as never)).rejects.toMatchObject({ code: "unsupported" });
   });
 
   test("the tool-secret reader returns the item's string; a refusal never quotes the host", async () => {

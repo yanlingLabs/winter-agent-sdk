@@ -112,7 +112,16 @@ export function createCompositeCredentialStore(stores: readonly CredentialStore[
   // keychain ref can be refreshed, and only one member serves keychain refs, so the first is the one.
   const renewer = stores.find((store) => store.refresh !== undefined);
   return {
-    ...(renewer !== undefined ? { refresh: (ref: Extract<CredentialRef, { kind: "keychain" }>) => renewer.refresh!(ref) } : {}),
+    ...(renewer !== undefined
+      ? {
+          refresh: async (ref: Extract<CredentialRef, { kind: "keychain" }>) => {
+            // Fix round 2 (M-b): typed as keychain, checked at run time too -- only a keychain ref is the
+            // renewer's to answer; anything else never reaches the host.
+            if ((ref as CredentialRef).kind !== "keychain") throw unsupported("composite credential store (only keychain refs are renewed elsewhere)", ref);
+            return renewer.refresh!(ref);
+          },
+        }
+      : {}),
     async get(ref: CredentialRef): Promise<CredentialMaterial | null> {
       let lastUnsupported: CredentialResolutionError | undefined;
       for (const store of stores) {

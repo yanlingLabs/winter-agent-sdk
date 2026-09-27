@@ -22,7 +22,7 @@ import { loadAuthorizationServer, resolveResourceIndicator } from "./discovery.t
 import { McpOAuthError } from "./errors.ts";
 import { createMcpAuthFetch, isLoopbackMcpServer } from "./fetch-policy.ts";
 import type { McpOAuthTokenRecord } from "./records.ts";
-import { readClientRecord, readTokenRecordLenient, writeClientRecord, writeTokenRecord, type McpOAuthStore } from "./store.ts";
+import { MCP_OAUTH_HOST_HELD_REFRESH_TOKEN, readClientRecord, readTokenRecordLenient, writeClientRecord, writeTokenRecord, type McpOAuthStore } from "./store.ts";
 
 export interface RefreshMcpOAuthTokenOptions {
   /** The token item's FULL account name, `mcp-oauth:<id>`. The client item is its prefix swap. */
@@ -106,6 +106,12 @@ async function refreshOnce(opts: RefreshMcpOAuthTokenOptions, clientAccount: str
     return { ok: false, reason: "needs_auth" };
   }
   if (record.refreshToken === undefined) return { ok: false, reason: "needs_auth" };
+  // Fix round 2 (M-a): the session-side MARKER is not a refresh token. A store holding it is a session's
+  // view, not the host's record -- never posted to a token endpoint.
+  if (record.refreshToken === MCP_OAUTH_HOST_HELD_REFRESH_TOKEN) {
+    log(account, "the record holds the host-held marker, not a refresh token (a session's view, not the host's store)");
+    return { ok: false, reason: "needs_auth" };
+  }
 
   let client;
   try {
