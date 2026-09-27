@@ -6,6 +6,41 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
+### MCP OAuth (WS-25)
+
+- New public subpath `@yanlinglabs/winter-agent-runtime/mcp-auth` (main-thread safe) for the HOST that
+  owns MCP sign-ins: `startMcpOAuthLogin` (discovery incl. RFC 9728 and the legacy metadata-less
+  fallback, registration pre-registered > CIMD (when advertised) > DCR, PKCE S256, a loopback listener
+  bound and registered as the same `http://127.0.0.1:<port>/callback`, a 32-byte `state` checked before
+  the code is redeemed, one flow per server, a 5-minute bound), `refreshMcpOAuthToken` (single-flight per
+  account, a generation re-read before posting, `invalid_grant` clears the sign-in, `invalid_client`
+  clears the registration), `revokeMcpOAuth` (best-effort RFC 7009, then the local sign-out; the client
+  registration is kept unless `forgetClient`), `mcpOAuthAccountId` (the Keychain key: sha256 of the
+  canonical server URL), the two record types and their codec (an unknown `v` is refused typed), the
+  `McpOAuthStore` seam, `validateMcpOAuthConfig`, and `WINTER_MCP_CLIENT_METADATA_URL`
+  (`https://yanlinglabs.com/winter/oauth-client.json`).
+- Every auth request goes through one policy: HTTPS except a literal loopback address, literal
+  private/link-local addresses refused, no cross-origin redirects, size caps (over `boundedFetch`).
+- Remote (`http`/`sse`) MCP servers without a static `Authorization` header connect with a READ-ONLY
+  bearer provider reading the session's Keychain. At connect a usable token is used as is (never
+  refreshed), an expired one with a refresh token is refreshed by asking the host over the new
+  `mcp_oauth_refresh` control request (names only; `Options.onMcpOAuthRefresh` answers it; a host with no
+  handler leaves the session to refresh in-process), and an expired one without a refresh token is
+  `needs-auth` with no request sent. A `needs-auth` server's tools are not registered; a call that finds
+  the sign-in gone withdraws them and answers with the door (`winter mcp login <server>`); a `403
+  insufficient_scope` fails only that call and the host records the scope for the next sign-in. The
+  model is told which servers need sign-in through a persisted `mcp_needs_auth` attachment. Authenticated
+  MCP traffic refuses redirects. New `McpConnectErrorCode` `auth_refresh_failed` (a refresh that could not
+  run now).
+- `validateServerConfig` accepts `oauth` on http/sse servers (`clientId`, `clientSecretRef` -- a Keychain
+  locator, never a value --, `callbackPort`, `authServerMetadataUrl`, `scopes`) and refuses it elsewhere.
+- `Query.reconnectMcpServer(serverName)` (over `mcp_reconnect`); `/mcp-client`'s `connectMcpServer` takes an
+  optional `oauthStore`.
+- `bun run verify:mcp-oauth`: a compiled host signs in against a fixture authorization server, a compiled
+  session connects on the stored token, refreshes through a fake host, and is `needs-auth` without a
+  refresh token. Sessions read the `WINTER_TEST_MCP_OAUTH_STORE_FILE` test store instead of the Keychain
+  when it is set (the gates only).
+
 ## 0.0.28
 
 ### Engine (WS-24)
