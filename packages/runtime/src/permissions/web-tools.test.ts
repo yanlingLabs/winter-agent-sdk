@@ -212,6 +212,7 @@ describe("WebFetch(domain:...) rules are LIVE against a real {url, prompt} call"
       handleResponse: () => false,
       rejectAllPending: () => {},
       cancel: () => {},
+      open: () => {},
     } satisfies RpcBridge;
     const h = harness({});
     const ctx = { ...h.ctx, promptStage: createBridgePromptStage(bridge) };

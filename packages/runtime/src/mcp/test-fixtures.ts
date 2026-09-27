@@ -406,6 +406,7 @@ export function createFakeMcpLifecycle(overrides: FakeMcpLifecycleOverrides = {}
       setServers: async () => ({ added: [], removed: [], errors: {} }),
     },
     start: async () => {},
+    launch: () => undefined,
     dispose: async () => {},
     listConnectedServerNames: () => Object.keys(connected),
     getConnectedClient: (name: string) => connected[name],

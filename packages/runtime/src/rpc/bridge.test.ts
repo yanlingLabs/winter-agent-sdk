@@ -285,3 +285,74 @@ test("a request that settles normally never emits a cancel frame, even if its si
   controller.abort();
   expect(written.map((f) => f.type)).toEqual(["control_request"]);
 });
+
+// --- holdUntilOpen: the init-order gate (WS-25 live bug: a control_request ahead of the handshake) ------
+
+test("holdUntilOpen: nothing is written before open(); open() writes every held request in ISSUE order, then later ones go out at once", async () => {
+  const { sink, written } = recordingSink();
+  const bridge = createRpcBridge(sink, { holdUntilOpen: true });
+  const p1 = bridge.request<{ n: number }>("credential_resolve", { n: 1 });
+  const p2 = bridge.request<{ n: number }>("mcp_oauth_refresh", { n: 2 });
+  expect(written).toEqual([]);
+  // The handshake is the host's first frame -- the engine writes it, then opens.
+  sink.write({ type: "init" } as WinterFrame);
+  bridge.open();
+  expect(written.map((f) => (f as ControlRequestFrame).subtype ?? f.type)).toEqual(["init", "credential_resolve", "mcp_oauth_refresh"]);
+  const p3 = bridge.request("rpc_probe", {});
+  expect((written[3] as ControlRequestFrame).subtype).toBe("rpc_probe");
+  // Held requests were registered all along: their answers route normally.
+  bridge.handleResponse({ type: "control_response", requestId: (written[2] as ControlRequestFrame).requestId, ok: true, payload: { n: 2 } });
+  bridge.handleResponse({ type: "control_response", requestId: (written[1] as ControlRequestFrame).requestId, ok: true, payload: { n: 1 } });
+  bridge.handleResponse({ type: "control_response", requestId: (written[3] as ControlRequestFrame).requestId, ok: true, payload: {} });
+  expect(await p1).toEqual({ n: 1 });
+  expect(await p2).toEqual({ n: 2 });
+  await p3;
+  bridge.open(); // idempotent
+  expect(written.length).toBe(4);
+});
+
+test("holdUntilOpen: a held request that is ABORTED is dropped -- neither it nor a control_cancel_request is ever written", async () => {
+  const { sink, written } = recordingSink();
+  const bridge = createRpcBridge(sink, { holdUntilOpen: true });
+  const controller = new AbortController();
+  const aborted = bridge.request("permission", { a: 1 }, { signal: controller.signal });
+  const kept = bridge.request("credential_resolve", { k: 1 });
+  controller.abort();
+  const err = await aborted.catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(WinterRpcError);
+  expect((err as WinterRpcError).code).toBe("cancelled");
+  bridge.open();
+  expect(written.length).toBe(1);
+  expect((written[0] as ControlRequestFrame).subtype).toBe("credential_resolve");
+  bridge.handleResponse({ type: "control_response", requestId: (written[0] as ControlRequestFrame).requestId, ok: true, payload: 1 });
+  expect(await kept).toBe(1);
+});
+
+test("holdUntilOpen: a held request that TIMES OUT, is cancel()ed, or is rejected by rejectAllPending is never written", async () => {
+  const { sink, written } = recordingSink();
+  const bridge = createRpcBridge(sink, { holdUntilOpen: true });
+  const timedOut = bridge.request("credential_resolve", {}, { timeoutMs: 5 });
+  const cancelled = bridge.request("hook", {}, { requestId: "to-cancel" });
+  void cancelled;
+  expect(await timedOut.catch((e: unknown) => e)).toBeInstanceOf(WinterRpcTimeoutError);
+  bridge.cancel("to-cancel");
+  bridge.open();
+  expect(written).toEqual([]);
+
+  const { sink: sink2, written: written2 } = recordingSink();
+  const bridge2 = createRpcBridge(sink2, { holdUntilOpen: true });
+  const dead = bridge2.request("credential_resolve", {});
+  bridge2.rejectAllPending(new WinterRpcError("connection_closed", "gone"));
+  expect(await dead.catch((e: unknown) => e)).toBeInstanceOf(WinterRpcError);
+  bridge2.open();
+  expect(written2).toEqual([]);
+});
+
+test("a bridge built without holdUntilOpen writes at once (every pre-existing caller), and open() is a no-op on it", () => {
+  const { sink, written } = recordingSink();
+  const bridge = createRpcBridge(sink);
+  void bridge.request("x", {});
+  expect(written.length).toBe(1);
+  bridge.open();
+  expect(written.length).toBe(1);
+});

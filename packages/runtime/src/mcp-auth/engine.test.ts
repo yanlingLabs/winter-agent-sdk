@@ -34,8 +34,10 @@ async function signedInThenExpired(): Promise<McpOAuthStore> {
 }
 
 // DEFAULT startup (nonblocking, no alwaysLoad): the refresh ask is answered because the input pump is
-// already reading by the first-turn wait. An `alwaysLoad` server that must refresh AT connect waits out the
-// batch deadline instead (start() runs before the pump) -- a known limit, reported, not exercised here.
+// already reading by the first-turn wait. An `alwaysLoad` server that must refresh AT connect used to wait
+// out the batch deadline (startup awaited it before the pump); it no longer does -- the engine launches the
+// connects, writes the handshake, starts the pump, and only then awaits them. That case, and the host-
+// brokered token read ahead of the handshake, are pinned through `query()` in brokered-init-order.test.ts.
 /** One session whose model calls `mcp__<name>__whoami`; `answer` is how the host treats `mcp_oauth_refresh`. */
 async function runSession(name: string, store: McpOAuthStore, answer: "refresh" | "unhandled"): Promise<{ asks: ControlRequestFrame[]; toolText: string }> {
   const { host, runtime } = createInMemoryChannel();

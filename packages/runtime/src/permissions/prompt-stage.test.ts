@@ -30,6 +30,7 @@ function fakeBridge(impl: (subtype: string, payload: unknown, opts?: { timeoutMs
     handleResponse: () => false,
       rejectAllPending: () => {},
       cancel: () => {},
+      open: () => {},
     },
   };
 }

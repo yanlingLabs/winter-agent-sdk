@@ -31,6 +31,7 @@ function fakeBridge(impl: (subtype: string, payload: unknown, opts?: { timeoutMs
       cancel: (requestId: string) => {
         cancelled.push(requestId);
       },
+      open: () => {},
     },
   };
 }

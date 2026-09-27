@@ -2772,7 +2772,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // round loop further down (rpc_probe). Exactly one bridge instance per run, built from the SAME
   // `output` every other runtime->host frame goes through — there is no second writer to race
   // against.
-  const bridge = createRpcBridge(output);
+  //
+  // HELD until the `type:"init"` handshake is written (`bridge.open()`, right after it, below): a
+  // request can be ISSUED before the handshake -- the MCP startup connect's host-brokered token read
+  // (`credential_resolve`) or refresh ask (`mcp_oauth_refresh`), production wiring's fire-and-forget
+  // credential-presence probes, a credential read parked on `hostCredentialChannel` that the bind just
+  // below wakes -- and a host reads anything but `init` first as a protocol violation. That was a live
+  // WS-25 bug: a code session with a signed-in OAuth MCP server died at start with `query()`'s
+  // "expected 'init' as the first frame, got 'control_request'". See `RpcBridgeOptions.holdUntilOpen`.
+  const bridge = createRpcBridge(output, { holdUntilOpen: true });
   // WS-25 §7: a host-brokered session's credential reads ride THIS bridge (the one top-level engine binds;
   // a child engine never receives the channel, and shares the parent's binding through the stores).
   hostCredentialChannel?.bind(bridge);
@@ -4761,6 +4769,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // PARENT's real MCP state instead of a child-local void.
   const sessionStateKey = config.agentId ?? config.sessionId;
   let mcpLifecycle: McpLifecycle | undefined;
+  // The startup wait `launch()` handed back (an `alwaysLoad` server, or the whole batch under
+  // MCP_CONNECTION_NONBLOCKING=0), awaited AFTER the input pump starts -- see its use below the pump.
+  let mcpStartupWait: Promise<void> | undefined;
   let disposeSessionMcpLifecycle: (() => void) | undefined;
   // Fix wave follow-up (3), whole-branch review M2: the lifecycle is now built UNCONDITIONALLY, from
   // whatever this session declared -- including nothing at all. Before, a session that declared no
@@ -4810,11 +4821,20 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // WS-25: the session's MCP sign-ins, refreshed by the HOST over this session's own bridge.
       ...(mcpOAuthStore !== undefined ? { oauth: createSessionMcpOAuth({ store: mcpOAuthStore, sender: bridge, brand: sessionBrand, ...(config.hostCredentials === true ? { hostOwnsRefresh: true } : {}) }) } : {}),
     });
-    // WS-09 §2's three-deadline model lives entirely inside `start()`: an ordinary server connects
-    // in the background and this returns immediately; `MCP_CONNECTION_NONBLOCKING=0` or an
-    // `alwaysLoad` server makes it wait, bounded by MCP_CONNECT_TIMEOUT_MS. Awaited BEFORE the init
-    // frame is written so `mcp_servers` reflects the batch snapshot the spec describes.
-    await mcpLifecycle.start();
+    // WS-09 §2's three-deadline model lives inside the lifecycle: every server starts connecting here
+    // (an ordinary one in the background); `MCP_CONNECTION_NONBLOCKING=0` or an `alwaysLoad` server
+    // makes startup wait, bounded by MCP_CONNECT_TIMEOUT_MS.
+    //
+    // THAT WAIT IS NO LONGER AWAITED HERE (the WS-25 init-order fix). It used to be, before the
+    // `type:"init"` handshake and before the input pump -- and a connect that needs a HOST answer (a
+    // host-brokered OAuth token over `credential_resolve`, a refresh over `mcp_oauth_refresh`) can only
+    // have that answer routed back by the pump. So an `alwaysLoad` OAuth server waited out the whole
+    // connect deadline and came up pending (the "known limit" mcp-auth/engine.test.ts used to report),
+    // and its request went on the wire ahead of the handshake. It is awaited below the pump now, before
+    // the first-turn wait and `system/init`, which is where every consumer of "connected at startup"
+    // reads it; the `type:"init"` handshake reflects the servers as launched (the SDK reads only its
+    // protocol version -- the same trade the WS-24 note below the pump already states).
+    mcpStartupWait = mcpLifecycle.launch();
     // The FIRST-TURN wait for this lifecycle's pending servers is no longer here: it runs once the
     // input pump is reading (WS-24, see `awaitFirstTurnMcpServers` below the pump), so a control
     // request is answered while the servers connect instead of queueing behind the wait.
@@ -5582,6 +5602,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     tools: advertisedToolNames,
     ...(mcpServersWire !== undefined ? { mcp_servers: mcpServersWire } : {}),
   });
+  // The handshake is on the wire: release every runtime->host request issued before it (in issue
+  // order), and write every later one at once. Nothing above this line can have put a control_request
+  // on the wire -- the bridge was built holding (see its declaration).
+  bridge.open();
   // Phase 5 Task 2 (derived-shapes-p5.md item (b), `sdk.d.ts:4853-4913`): the loaded-surface fields.
   // Emitted with WINTER DEFAULTS, unconditionally -- `output_style` and `skills` are REQUIRED on the
   // pin, so a conditional spread (the convention `mcp_servers` above uses precisely to keep goldens
@@ -6624,7 +6648,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // and tools from live state (33881679); Winter writes its startup `system/init` once, before the first
   // turn, so the wait comes first and `writeSdkInit()` right after it. Settled means not `pending`
   // (connected, cached, failed, needs-auth): a server that cannot spawn ends the wait at once. `alwaysLoad`
-  // is unchanged (`start()` already awaited it).
+  // (and the MCP_CONNECTION_NONBLOCKING=0 batch) is awaited just before it, bounded by its own
+  // MCP_CONNECT_TIMEOUT_MS (`mcpStartupWait`, launched where the lifecycle is built).
   //
   // WS-24: AFTER THE PUMP, not before it. The wait used to sit ahead of everything the pump closes over,
   // so every control request (interrupt, set_model, set_permission_mode, mcp_status ...) queued behind it
@@ -6661,6 +6686,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       envConfig: mcpEnvConfig,
     });
   };
+  // The startup wait `launch()` deferred (above, where the lifecycle is built): an `alwaysLoad` server, or
+  // the whole batch under MCP_CONNECTION_NONBLOCKING=0. Here, not before the handshake, because the pump
+  // is now reading -- a connect waiting on its host (`credential_resolve`, `mcp_oauth_refresh`) gets its
+  // answer. `undefined` (nothing to wait for, every ordinary session) adds no `await` at all.
+  if (mcpStartupWait !== undefined) await mcpStartupWait;
   {
     const deadlineMs = firstTurnMcpWaitMs();
     if (deadlineMs !== undefined && mcpLifecycle!.stateSource.snapshot().some((server) => server.state === "pending")) {

@@ -60,6 +60,27 @@ export interface RpcBridge {
   // anymore. A requestId that is already unknown (never issued, already settled, or already
   // cancelled) is a silent no-op — never throws.
   cancel(requestId: string): void;
+  // Releases a bridge built with `holdUntilOpen` (see `RpcBridgeOptions`): every request issued so far
+  // is written, in issue order, and every later one is written at once. A bridge built without the
+  // option is open from birth, so this is a no-op there. Idempotent.
+  open(): void;
+}
+
+export interface RpcBridgeOptions {
+  // The runtime's `type:"init"` handshake MUST be the first frame a host reads (WS-04 §4.1; `query()`
+  // refuses anything else as a protocol violation) -- and a runtime->host request can be ISSUED before
+  // it: the MCP startup connect reads a host-brokered OAuth token (`credential_resolve`) or asks the host
+  // to refresh it (`mcp_oauth_refresh`), production wiring's credential-presence probes fire while the
+  // handshake's own tool list is being derived, and a credential read parked on the host channel wakes
+  // the moment the engine binds it. Rather than proving every one of those (and every future one) cannot
+  // happen before init, the engine builds its bridge HOLDING and opens it on the line after the
+  // handshake is written: one gate at the one writer.
+  //
+  // A held request is registered as usual (its timeout runs, it can be aborted or cancelled); it simply
+  // is not on the wire yet. So one that settles while held -- timed out, aborted, cancelled, or rejected
+  // by `rejectAllPending` -- is dropped from the queue and NEVER written, and no `control_cancel_request`
+  // is sent for it: the host never saw the request it would cancel.
+  holdUntilOpen?: boolean;
 }
 
 interface PendingRpc {
@@ -81,8 +102,11 @@ interface PendingRpc {
 // (host-originated interrupt/setPermissionMode awaiting the runtime's ack) — not this function.
 // The two are never merged: this factory is runtime-side (packages/runtime), and the sdk package
 // never imports the runtime (WS-02 §3), even though the shape rhymes.
-export function createRpcBridge(output: FrameSink): RpcBridge {
+export function createRpcBridge(output: FrameSink, bridgeOpts: RpcBridgeOptions = {}): RpcBridge {
   const pending = new Map<string, PendingRpc>();
+  // The requests written nowhere yet, keyed by requestId in ISSUE order (a Map iterates in insertion
+  // order), or `undefined` once the bridge is open. See `RpcBridgeOptions.holdUntilOpen`.
+  let held: Map<string, ControlRequestFrame> | undefined = bridgeOpts.holdUntilOpen === true ? new Map() : undefined;
   // T10 (WS-08 §10 lifecycle wiring): once rejectAllPending has fired, the transport is PROVABLY
   // dead (per that method's own doc comment) — any request issued AFTER that point (e.g. a
   // SessionEnd hook RPC racing the pump's true-EOF teardown in single-shot mode, where the
@@ -109,6 +133,7 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
           const timeoutMs = opts.timeoutMs;
           entry.timer = setTimeout(() => {
             pending.delete(requestId);
+            held?.delete(requestId);
             entry.detach?.();
             reject(new WinterRpcTimeoutError(subtype, timeoutMs));
           }, timeoutMs);
@@ -120,7 +145,8 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
             if (pending.get(requestId) !== entry) return;
             pending.delete(requestId);
             if (entry.timer !== undefined) clearTimeout(entry.timer);
-            output.write({ type: "control_cancel_request", requestId });
+            // Still held: the host never saw it, so there is nothing to cancel on the wire.
+            if (held?.delete(requestId) !== true) output.write({ type: "control_cancel_request", requestId });
             reject(new WinterRpcError("cancelled", `the '${subtype}' request was cancelled: the runtime stopped waiting for it`));
           };
           signal.addEventListener("abort", onAbort, { once: true });
@@ -128,8 +154,15 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
         }
         pending.set(requestId, entry);
         const frame: ControlRequestFrame = { type: "control_request", requestId, subtype, payload };
-        output.write(frame);
+        if (held !== undefined) held.set(requestId, frame);
+        else output.write(frame);
       });
+    },
+    open(): void {
+      if (held === undefined) return;
+      const queued = [...held.values()];
+      held = undefined;
+      for (const frame of queued) output.write(frame);
     },
     ownsRequest(requestId: string): boolean {
       return pending.has(requestId);
@@ -161,6 +194,7 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
         entry.reject(err);
       }
       pending.clear();
+      held?.clear();
     },
     cancel(requestId: string): void {
       const entry = pending.get(requestId);
@@ -168,6 +202,7 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
       if (entry.timer !== undefined) clearTimeout(entry.timer);
       entry.detach?.();
       pending.delete(requestId);
+      held?.delete(requestId);
       // Deliberately NEITHER resolve() NOR reject() -- the caller has already moved on by the time
       // it calls cancel() (its own timer raced ahead); settling this promise now would just be
       // resolving/rejecting something nobody is awaiting anymore.

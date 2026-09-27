@@ -628,6 +628,19 @@ export interface McpLifecycle {
   // ordinary (non-alwaysLoad) server keeps connecting in the background regardless of when this
   // resolves.
   start(): Promise<void>;
+  // `start()` in two halves, for a caller that must do something BETWEEN launching the connects and
+  // waiting for them: starts every connect exactly as `start()` does (synchronously -- the deadline
+  // timer starts here too, so the bound is the same) and returns the startup wait `start()` would have
+  // awaited, or `undefined` when there is nothing to wait for (no `alwaysLoad` server, nothing pending
+  // under MCP_CONNECTION_NONBLOCKING=0) so that caller can skip an `await` entirely.
+  //
+  // WHY THE ENGINE NEEDS IT (the WS-25 init-order fix): a server's startup connect can need a HOST
+  // answer -- a host-brokered OAuth token (`credential_resolve`) or a refresh (`mcp_oauth_refresh`) --
+  // and that answer is only ever routed back by the engine's input pump, which starts after the
+  // `type:"init"` handshake. Awaiting an `alwaysLoad` server (or the whole blocking batch) BEFORE the
+  // handshake therefore waited out the full connect deadline and left the server pending. The engine
+  // launches here, writes the handshake, starts the pump, and awaits this wait after it.
+  launch(): Promise<void> | undefined;
   // Closes every live connection and unregisters every tool this instance ever registered -- for
   // tests and orderly shutdown; never called by production code today (this instance is not yet
   // wired into a live session's teardown path, see this task's own report).
@@ -986,6 +999,10 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
   }
 
   async function start(): Promise<void> {
+    await launch();
+  }
+
+  function launch(): Promise<void> | undefined {
     const alwaysLoadWaits: Promise<void>[] = [];
     for (const slot of slots.values()) {
       // RULING P5-K: a slot the host has not trusted (or has toggled off) is not connected at
@@ -1017,13 +1034,17 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     }
     if (deps.envConfig.connectionNonblocking === false) {
       // MCP_CONNECTION_NONBLOCKING=0: startup waits for the WHOLE batch, bounded by the
-      // batch-snapshot deadline.
-      await stateSource.waitForPending(undefined, deps.envConfig.connectTimeoutMs);
-    } else if (alwaysLoadWaits.length > 0) {
-      await Promise.race([Promise.all(alwaysLoadWaits), new Promise<void>((resolve) => setTimeout(resolve, deps.envConfig.connectTimeoutMs).unref?.())]);
+      // batch-snapshot deadline. Nothing pending (no servers, every one cached or disabled) is
+      // nothing to wait for.
+      if (!stateSource.snapshot().some((server) => server.state === "pending")) return undefined;
+      return stateSource.waitForPending(undefined, deps.envConfig.connectTimeoutMs).then(() => undefined);
+    }
+    if (alwaysLoadWaits.length > 0) {
+      return Promise.race([Promise.all(alwaysLoadWaits).then(() => undefined), new Promise<void>((resolve) => setTimeout(resolve, deps.envConfig.connectTimeoutMs).unref?.())]);
     }
     // Otherwise: fully nonblocking, `start()` returns immediately; every ordinary server keeps
     // connecting in the background (WS-09 §2's own default row).
+    return undefined;
   }
 
   async function dispose(): Promise<void> {
@@ -1235,6 +1256,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     stateSource,
     controlSeam: createMcpControlSeam(internals, { ...(deps.reservedServerName !== undefined ? { reservedServerName: deps.reservedServerName } : {}) }),
     start,
+    launch,
     dispose,
     listConnectedServerNames,
     getConnectedClient,
