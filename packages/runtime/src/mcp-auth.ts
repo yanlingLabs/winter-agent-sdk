@@ -3,8 +3,10 @@
 //
 // WHO USES IT. The HOST -- Winter's daemon and CLI: `startMcpOAuthLogin` on `mcp.login` / `winter mcp
 // login`, `refreshMcpOAuthToken` when a session asks (`mcp_oauth_refresh`), `revokeMcpOAuth` on logout,
-// and `mcpOAuthAccountId` to find a server's Keychain items from its config alone. Sessions reach the
-// same records through the runtime's own MCP client; they only ever READ the token item.
+// `mcpOAuthAccountId` to find a server's Keychain items from its config alone, and (WS-25, additive)
+// `discoverMcpOAuthIssuer` for the daemon's own authorization-server bookkeeping -- comparing servers by
+// their FULL issuer (`sameIssuer`), never by origin, before or without an interactive sign-in. Sessions
+// reach the same records through the runtime's own MCP client; they only ever READ the token item.
 //
 // LIGHT ON PURPOSE, like `./mcp-client`: this entry reaches the `mcp-auth` module, the keychain store and
 // the MCP client package's auth functions -- never the engine, the tool registry or anything with
@@ -31,9 +33,15 @@ export {
   decodeMcpOAuthTokenRecord,
   encodeMcpOAuthClientRecord,
   encodeMcpOAuthTokenRecord,
+  // THE issuer comparison every `mcp-auth` door uses (exact, or differing only by one trailing slash) --
+  // compare a `discoverMcpOAuthIssuer`/`McpOAuthLogin.issuer` string against a stored record's `issuer`
+  // with THIS, never by origin (an origin can host many issuers behind tenant paths) and never a
+  // second, hand-rolled comparison that could drift from the one the secret binding (login.ts) enforces.
+  sameIssuer,
   type McpOAuthClientRecord,
   type McpOAuthTokenRecord,
 } from "./mcp-auth/records.ts";
+export { discoverMcpOAuthIssuer, type DiscoverMcpOAuthIssuerOptions, type McpOAuthIssuerInfo } from "./mcp-auth/discovery.ts";
 export { createKeychainMcpOAuthStore, createMemoryMcpOAuthStore, MCP_OAUTH_HOST_HELD_REFRESH_TOKEN, toSessionMcpTokenRecord, type McpOAuthStore } from "./mcp-auth/store.ts";
 export {
   MCP_OAUTH_CALLBACK_PATH,
