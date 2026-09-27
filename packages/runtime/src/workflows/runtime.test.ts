@@ -11,7 +11,10 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WorkflowRuntime, type WorkflowRuntimeDeps } from "./runtime.ts";
+import { WorkflowRuntime, WORKFLOW_SANDBOX_REFUSED_EXIT_CODE, STDERR_CARRY_CAP, STDERR_LINE_CAP, realWorkerSpawner, stderrTail, workerExitMessage, type WorkerSpawner, type WorkflowRuntimeDeps } from "./runtime.ts";
+import { PassThrough } from "node:stream";
+import { buildWorkerSpawn } from "./sandbox.ts";
+import { buildWorkflowWorkerSeatbeltProfile as exportedProfileBuilder } from "../index.ts";
 import { inProcessWorkerSpawner } from "./worker-harness.ts";
 import { fakeWorkflowRunHost, type WorkflowProgress } from "./seam.ts";
 import { fakeStructuredOutputSeam } from "../structured/seam.ts";
@@ -936,5 +939,90 @@ describe("isolation from the real environment", () => {
     const launched = launch(r, META + `return 1;`);
     expect(launched.scriptPath.startsWith(r.winterHome)).toBe(true);
     await r.runtime.await(launched.runId);
+  });
+});
+
+// WS-27: a host's workflow worker exits 77 when it finds itself outside a sandbox that denies Keychain access.
+// That is a REFUSAL, not a crash, and the run says so -- with the worker's own last stderr line.
+describe("WS-27: exit 77 is a sandbox refusal", () => {
+  test("workerExitMessage: 77 names the sandbox (with the stderr line when there is one); any other code is the crash text", () => {
+    expect(workerExitMessage(77, "keychain reachable: refusing")).toBe("workflow sandbox not in effect — the workflow worker refused to run (exit 77): keychain reachable: refusing");
+    expect(workerExitMessage(77)).toBe("workflow sandbox not in effect — the workflow worker refused to run (exit 77)");
+    expect(workerExitMessage(1, "boom")).toBe("the workflow worker exited (code 1) without reporting a result");
+    expect(workerExitMessage(null)).toBe("the workflow worker exited (code signal) without reporting a result");
+    expect(WORKFLOW_SANDBOX_REFUSED_EXIT_CODE).toBe(77);
+  });
+
+  test("a worker that exits 77 fails the run with the refusal and its last stderr line", async () => {
+    const winterHome = mkdtempSync(join(tmpdir(), "winter-wf-77-home-"));
+    const sessionTempDir = mkdtempSync(join(tmpdir(), "winter-wf-77-temp-"));
+    try {
+      const refusing: WorkerSpawner = () => {
+        let exit: ((code: number | null) => void) | undefined;
+        setTimeout(() => exit?.(77), 5);
+        return {
+          stdin: new PassThrough(),
+          stdout: new PassThrough(),
+          onExit: (cb) => (exit = cb),
+          onError: () => {},
+          kill: () => {},
+          lastStderrLine: () => "winter: workflow worker: no Keychain-denying sandbox; refusing to run",
+        };
+      };
+      const runtime = new WorkflowRuntime({
+        session: { winterHome, projectKey: "-proj", sessionTempDir, structured: fakeStructuredOutputSeam(), accountant: createContextAccountant({ limit: 100_000 }) },
+        spawnWorker: refusing,
+      });
+      const host = fakeWorkflowRunHost({ structured: fakeStructuredOutputSeam(), accountant: createContextAccountant({ limit: 100_000 }), spawnAgent: async () => fakeChild(), log: [] });
+      const launched = runtime.launch({ sessionId: "sess-1", cwd: "/synthetic", trustedWorkspace: true, parentToolUseId: "t", source: META + `return 1;`, meta: { name: "wf", description: "d" } }, host);
+      const view = await runtime.await(launched.runId);
+      expect(view.status).toBe("failed");
+      expect(view.error).toBe("workflow sandbox not in effect — the workflow worker refused to run (exit 77): winter: workflow worker: no Keychain-denying sandbox; refusing to run");
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+      rmSync(sessionTempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("the real spawner keeps the worker's last non-empty stderr line", async () => {
+    const worker = realWorkerSpawner({ sandbox: false })({ file: "/bin/sh", args: ["-c", "echo first >&2; echo 'no Keychain-denying sandbox' >&2; echo >&2; exit 77"] }, {});
+    const code = await new Promise<number | null>((resolve) => worker.onExit(resolve));
+    expect(code).toBe(77);
+    expect(worker.lastStderrLine?.()).toBe("no Keychain-denying sandbox");
+  });
+
+  test("stderrTail: a multi-byte character split across chunks decodes intact; control and bidi characters are stripped", () => {
+    const stream = new PassThrough();
+    const tail = stderrTail(stream);
+    const bytes = Buffer.from("refusé\n", "utf8");
+    const split = bytes.indexOf(0xc3) + 1; // inside the two-byte "é"
+    stream.write(bytes.subarray(0, split));
+    stream.write(bytes.subarray(split));
+    expect(tail()).toBe("refusé");
+    // A line dressed with bidi overrides/isolates/marks and control characters reports only its text.
+    stream.write("\u202eevil\u202c \u2066x\u2069\u200e\u200f\u0007\u001b[31mred\r\n");
+    expect(tail()).toBe("evil x[31mred");
+  });
+
+  test(`stderrTail caps: a reported line is at most ${STDERR_LINE_CAP} characters, an unterminated one keeps its last ${STDERR_CARRY_CAP}`, () => {
+    const stream = new PassThrough();
+    const tail = stderrTail(stream);
+    stream.write(`${"x".repeat(STDERR_LINE_CAP * 2)}\n`);
+    expect(tail()).toBe("x".repeat(STDERR_LINE_CAP));
+    // No newline: only the last STDERR_CARRY_CAP characters are held, so the A-run is gone entirely.
+    stream.write("A".repeat(6000) + "B".repeat(STDERR_CARRY_CAP));
+    expect(tail()).toBe("B".repeat(STDERR_LINE_CAP));
+    stream.write("C".repeat(100));
+    // The carry is still bounded after more input: its oldest characters (the B-run's start) fell off.
+    expect(tail()).toBe("B".repeat(STDERR_LINE_CAP));
+    stream.write("\n");
+    expect(tail()).toBe("B".repeat(STDERR_LINE_CAP));
+  });
+
+  test("the seatbelt profile builder is exported from the package entry, and is the one the spawner embeds", () => {
+    const profile = exportedProfileBuilder("/opt/winter/bin/winter-core", { home: "/Users/u" });
+    expect(profile).toContain("(version 1)");
+    const spawn = buildWorkerSpawn({ command: { file: "/opt/winter/bin/winter-core", args: ["x"] }, home: "/Users/u" });
+    expect(spawn.args[1]).toBe(profile);
   });
 });

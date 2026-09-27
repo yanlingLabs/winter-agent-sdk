@@ -84,6 +84,8 @@ export function createHookStage(deps: HookStageDeps): HookStage {
         {
           ...(call.toolUseId !== undefined ? { toolUseID: call.toolUseId } : {}),
           toolName: call.toolName,
+          // WS-27: the CALLED tool's server, which `toolName` (possibly a renamed server's declared spelling) may not name.
+          ...(call.mcpServer !== undefined ? { mcpServer: call.mcpServer } : {}),
           input: call.input,
         },
         {

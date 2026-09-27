@@ -209,6 +209,16 @@ export function commandHookInput(request: HookInvocationRequest, ctx: { cwd: str
     // WS-24: the MCP server behind the tool, and its own name there -- the sdk's `McpToolProvenance`.
     ...(request.mcpServerName !== undefined ? { mcp_server_name: request.mcpServerName } : {}),
     ...(request.mcpToolName !== undefined ? { mcp_tool_name: request.mcpToolName } : {}),
+    // WS-27: the exact server identity -- the sdk's `WinterMcpServerHookField`.
+    ...(request.mcpServer !== undefined
+      ? {
+          winter_mcp_server: {
+            name: request.mcpServer.name,
+            config_name: request.mcpServer.configName,
+            ...(request.mcpServer.readOnlyHint !== undefined ? { read_only_hint: request.mcpServer.readOnlyHint } : {}),
+          },
+        }
+      : {}),
     ...(request.input !== undefined ? { tool_input: request.input } : {}),
     ...(request.toolUseID !== undefined ? { tool_use_id: request.toolUseID } : {}),
     ...payload,

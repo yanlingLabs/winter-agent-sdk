@@ -88,12 +88,21 @@ export const MCP_ELICITATION_SUBTYPE = "mcp_elicitation";
 // The narrow dependency (see this file's own header) -- structurally satisfied by the real
 // `RpcBridge` (rpc/bridge.ts) without importing it, and trivially fake-able in tests.
 export interface ElicitationSender {
-  request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number }): Promise<T>;
+  request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<T>;
 }
 
-export type ElicitationAsker = (payload: ElicitationRequestPayload) => Promise<ElicitationResultPayload>;
+/**
+ * WS-27: `opts.signal` aborts when the elicitation stops mattering -- the MCP server cancelled its request,
+ * or the tool call that raised it ended. The asker then stops waiting at once: the bridge sends the host a
+ * `control_cancel_request` (which aborts `Options.onElicitation`'s own `options.signal`), a host answer that
+ * arrives afterwards is dropped as an unknown request id, and the server is answered `cancel`.
+ */
+export type ElicitationAsker = (payload: ElicitationRequestPayload, opts?: { signal?: AbortSignal }) => Promise<ElicitationResultPayload>;
 
 const DETERMINISTIC_DECLINE: ElicitationResultPayload = { action: "decline" };
+// WS-27: the answer for an elicitation that was CANCELLED before the user decided -- not a decline, which
+// would claim the user refused. The server that cancelled it ignores the answer anyway.
+const CANCELLED: ElicitationResultPayload = { action: "cancel" };
 
 function isElicitationAction(value: unknown): value is ElicitationAction {
   return value === "accept" || value === "decline" || value === "cancel";
@@ -120,11 +129,15 @@ export function createElicitationAsker(sender: ElicitationSender | undefined): E
   if (!sender) {
     return async () => DETERMINISTIC_DECLINE;
   }
-  return async (payload: ElicitationRequestPayload): Promise<ElicitationResultPayload> => {
+  return async (payload: ElicitationRequestPayload, opts?: { signal?: AbortSignal }): Promise<ElicitationResultPayload> => {
+    const signal = opts?.signal;
+    const cancelled = (): boolean => signal?.aborted === true;
+    if (cancelled()) return CANCELLED;
     let raw: unknown;
     try {
-      raw = await sender.request(MCP_ELICITATION_SUBTYPE, payload);
+      raw = await sender.request(MCP_ELICITATION_SUBTYPE, payload, signal !== undefined ? { signal } : undefined);
     } catch {
+      if (cancelled()) return CANCELLED;
       // Case 2 of this file's own header: `unhandled_subtype` (no host callback registered),
       // `handler_threw` (the host callback threw), a timeout, or a dead transport -- every one of
       // these is "the round trip did not produce an answer," and every one declines identically.
@@ -187,10 +200,22 @@ function rawElicitParamsOf(params: ElicitRequestParams): RawElicitParams {
 // handler at the protocol level -- the deterministic-decline behavior lives inside `ask` itself (via
 // `createElicitationAsker`), not in whether a handler exists at all; this is what guarantees "never a
 // hang" all the way down to the wire, regardless of session configuration.
-export function installElicitationHandler(client: Client, serverName: string, ask: ElicitationAsker): void {
-  client.setRequestHandler("elicitation/create", async (request) => {
+//
+// WS-27: CANCELLATION reaches the asker as one signal, aborted by whichever comes first --
+//   - the MCP request's own (`ctx.mcpReq.signal`): the server sent `notifications/cancelled` for its
+//     `elicitation/create`, or -- a 2026-07-28 `input_required` elicitation, which the v2 client fulfils
+//     inside `callTool` -- the originating call's signal, which the SDK links to it;
+//   - `callScope()`, when the caller gives one: the tool calls in flight on this connection when the
+//     elicitation arrived (mcp/client.ts). A 2025-era server->client request carries no link to the call
+//     that raised it, and a server need not cancel its own elicitation when its call is cancelled, so the
+//     signal aborts once EVERY call that could have raised it has ended -- exact with one call in flight,
+//     and never early with several.
+export function installElicitationHandler(client: Client, serverName: string, ask: ElicitationAsker, callScope?: () => AbortSignal | undefined): void {
+  client.setRequestHandler("elicitation/create", async (request, ctx) => {
     const payload = buildElicitationPayload(serverName, rawElicitParamsOf(request.params));
-    const result = await ask(payload);
+    const signals = [ctx?.mcpReq?.signal, callScope?.()].filter((s): s is AbortSignal => s !== undefined);
+    const signal = signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+    const result = await ask(payload, signal !== undefined ? { signal } : undefined);
     if (result.content === undefined) return { action: result.action };
     const content = toWireElicitContent(result.content);
     // The same "never forward garbage" rule `toResultPayload` applies to the action: content the

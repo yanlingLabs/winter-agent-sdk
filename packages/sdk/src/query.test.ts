@@ -644,6 +644,51 @@ test("mcp_elicitation: a throwing callback fails closed to a decline, never an u
   expect(response?.payload).toEqual({ action: "decline" });
 });
 
+// WS-27: the runtime cancels an elicitation that stopped mattering (the MCP server cancelled it, or the tool
+// call that raised it ended) with a `control_cancel_request`; the host's callback is told through its own
+// `options.signal`, as `canUseTool` already was, and whatever it answers afterwards is never written.
+test("mcp_elicitation: control_cancel_request aborts onElicitation's signal, and the late answer is dropped", async () => {
+  const writes: string[] = [];
+  let resolveCallbackSawAbort!: () => void;
+  const callbackSawAbort = new Promise<void>((r) => {
+    resolveCallbackSawAbort = r;
+  });
+  const proc: SpawnedRuntimeProcess = {
+    stdin: {
+      write(chunk: string) {
+        writes.push(chunk);
+      },
+      end() {},
+    },
+    stdout: (async function* () {
+      yield encodeFrame({ type: "init", protocolVersion: PROTOCOL_VERSION, sessionId: "s", cwd: "/x", model: "sonnet", permissionMode: "default", tools: [] });
+      yield encodeFrame({ type: "control_request", requestId: "elicit-cancel", subtype: "mcp_elicitation", payload: { serverName: "fixture", message: "still there?" } });
+      yield encodeFrame({ type: "control_cancel_request", requestId: "elicit-cancel" });
+      await callbackSawAbort;
+      yield encodeFrame({ type: "data", message: { type: "result", subtype: "success", is_error: false } });
+    })(),
+    kill() {},
+    exited: Promise.resolve({ code: 0, signal: null }),
+    pid: null,
+  };
+  let aborted = false;
+  const onElicitation = (_request: unknown, opts: { signal: AbortSignal }) =>
+    new Promise<{ action: "accept"; content: Record<string, unknown> }>((resolve) => {
+      opts.signal.addEventListener("abort", () => {
+        aborted = true;
+        resolveCallbackSawAbort();
+        // The host answers anyway (a card the user clicked just as it was withdrawn).
+        resolve({ action: "accept", content: { late: true } });
+      });
+    });
+  for await (const _msg of query({ prompt: "hi", options: { onElicitation, spawnClaudeCodeProcess: () => proc } })) {
+    /* drain */
+  }
+  expect(aborted).toBe(true);
+  await new Promise((r) => setTimeout(r, 10));
+  expect(decodeControlResponse(writes, "elicit-cancel")).toBeUndefined();
+});
+
 test("runtime-originated control_request reaches a registered handler; the response lands runtime-side", async () => {
   const requestId = "probe-1";
   const { proc, writes } = recordingProcessWithControlRequest("test_subtype", requestId);
@@ -1228,6 +1273,54 @@ test("WS-24: an MCP tool's hook input names its server and bare tool (mcp_server
   expect(seen[0]).toMatchObject({ tool_name: "mcp__winter__sessions__list", mcp_server_name: "winter__sessions", mcp_tool_name: "list" });
   expect("mcp_server_name" in seen[1]!).toBe(false);
   expect("mcp_tool_name" in seen[1]!).toBe(false);
+});
+
+test("WS-27: an MCP tool's hook input carries winter_mcp_server (name, config_name, read_only_hint when stated); a built-in's does not", async () => {
+  const seen: HookInput[] = [];
+  for (const payload of [
+    // A renamed subagent server with a read-only tool.
+    fullHookPayload({ toolName: "mcp__cf_2__list", mcpServerName: "cf_2", mcpToolName: "list", mcpServer: { name: "cf_2", configName: "cf", readOnlyHint: true }, requestId: "hook-1" }),
+    // A plain server whose tool states no annotations.
+    fullHookPayload({ toolName: "mcp__gh__open", mcpServerName: "gh", mcpToolName: "open", mcpServer: { name: "gh", configName: "gh" }, requestId: "hook-1" }),
+    fullHookPayload({ requestId: "hook-1" }),
+  ]) {
+    const { proc } = recordingProcessWithHookRequest(payload);
+    const gen = query({
+      prompt: "hi",
+      options: {
+        cwd: "/work",
+        spawnClaudeCodeProcess: () => proc,
+        hooks: { PreToolUse: [{ hooks: [async (input) => (seen.push(input), {})] }] },
+      },
+    });
+    for await (const _msg of gen) {
+      /* drain */
+    }
+  }
+  expect(seen[0]).toMatchObject({ tool_name: "mcp__cf_2__list", winter_mcp_server: { name: "cf_2", config_name: "cf", read_only_hint: true } });
+  expect((seen[1] as { winter_mcp_server?: unknown }).winter_mcp_server).toEqual({ name: "gh", config_name: "gh" });
+  expect("winter_mcp_server" in seen[2]!).toBe(false);
+});
+
+test("WS-27: canUseTool receives mcpServer for an MCP tool, verbatim; the pinned fields are unchanged beside it", async () => {
+  const payload = fullPermissionPayload({ toolName: "mcp__cf_2__list", mcpServer: { name: "cf_2", configName: "cf", readOnlyHint: false } });
+  const { proc } = recordingProcessWithPermissionRequest(payload);
+  let receivedOpts: Record<string, unknown> | undefined;
+  const gen = query({
+    prompt: "hi",
+    options: {
+      spawnClaudeCodeProcess: () => proc,
+      canUseTool: async (_toolName, _input, opts) => {
+        receivedOpts = { ...opts };
+        return { behavior: "allow" };
+      },
+    },
+  });
+  for await (const _msg of gen) {
+    /* drain */
+  }
+  expect(receivedOpts?.mcpServer).toEqual({ name: "cf_2", configName: "cf", readOnlyHint: false });
+  expect(receivedOpts?.toolUseID).toBe("call-1");
 });
 
 test("WS-24: a control_cancel_request for a running hook (the runner timed it out) aborts the callback's signal, and no answer is written for it", async () => {

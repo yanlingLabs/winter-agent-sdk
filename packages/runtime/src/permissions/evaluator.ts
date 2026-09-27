@@ -35,7 +35,7 @@
 //   - The standing-exception (critical-removal/protected-write/plan-write) "mustPrompt" null branch
 //     was ALSO already deny-on-null (T7) — also unchanged by this ruling.
 import { resolve } from "node:path";
-import type { PermissionBehavior, PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionClassification } from "@yanlinglabs/winter-agent-sdk";
+import type { McpServerIdentity, PermissionBehavior, PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionClassification } from "@yanlinglabs/winter-agent-sdk";
 import { FILE_RULE_TOOLS, matchesRule, isRecognizedReadOnly, leadingWord, shellWords, stripWrappers, type ParsedRule } from "./grammar.ts";
 import { checkSymlinkBothEnds, resolveRealTarget, resolveSymlinkTargetChain, resolveTargetPath } from "./paths.ts";
 import {
@@ -110,6 +110,12 @@ export interface PermissionCall {
   input: Record<string, unknown>;
   toolUseId?: string;
   agentId?: string;
+  /**
+   * WS-27: the MCP server the CALLED tool belongs to (hooks/runner.ts's `mcpServerIdentity`, computed
+   * by the engine from the name the model called -- `toolName` may be a renamed server's declared
+   * spelling). Carried to the PreToolUse hook's `winter_mcp_server` and `canUseTool`'s `mcpServer`.
+   */
+  mcpServer?: McpServerIdentity;
 }
 
 // Task 8 (WS-07 §8): the one magic tool name this phase's evaluator recognizes by identity — the

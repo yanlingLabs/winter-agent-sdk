@@ -147,7 +147,11 @@ export interface ConnectedMcpClient {
   listTools(): Promise<McpToolInfo[]>;
   listResources(): Promise<McpResourceInfo[]>;
   readResource(uri: string, opts?: { timeoutMs?: number }): Promise<McpResourceContent[]>;
-  callTool(toolName: string, args: Record<string, unknown>, opts?: { timeoutMs?: number }): Promise<McpToolCallResult>;
+  /**
+   * WS-27: `opts.signal` is the calling tool execution's abort (a turn interrupt). It cancels the MCP
+   * request (`notifications/cancelled`) and any elicitation the call raised (see `callScope` below).
+   */
+  callTool(toolName: string, args: Record<string, unknown>, opts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<McpToolCallResult>;
   close(): Promise<void>;
 }
 
@@ -529,7 +533,21 @@ async function connectOnce(opts: ConnectMcpServerOptions, mode: McpVersionNegoti
           : {}),
       },
     );
-    installElicitationHandler(client, name, elicitationAsk);
+    // WS-27: the tool calls in flight on this connection, so an elicitation that arrives during one is
+    // cancelled when the call that raised it ends (elicitation.ts's `installElicitationHandler`).
+    const callsInFlight = new Set<Promise<unknown>>();
+    const callScope = (): AbortSignal | undefined => {
+      if (callsInFlight.size === 0) return undefined;
+      const ended = new AbortController();
+      let remaining = callsInFlight.size;
+      const settle = (): void => {
+        remaining--;
+        if (remaining === 0) ended.abort();
+      };
+      for (const call of callsInFlight) void call.then(settle, settle);
+      return ended.signal;
+    };
+    installElicitationHandler(client, name, elicitationAsk, callScope);
 
     await raceConnect(client, transport, connectTimeoutMs);
     const protocolVersion = client.getNegotiatedProtocolVersion();
@@ -599,9 +617,20 @@ async function connectOnce(opts: ConnectMcpServerOptions, mode: McpVersionNegoti
           return { uri: c.uri, ...(mimeType !== undefined ? { mimeType } : {}), text: "text" in c ? c.text : "" };
         });
       },
-      async callTool(toolName: string, args: Record<string, unknown>, callOpts?: { timeoutMs?: number }): Promise<McpToolCallResult> {
+      async callTool(toolName: string, args: Record<string, unknown>, callOpts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<McpToolCallResult> {
         // v2's `callTool(params, options)` -- the v1 middle `resultSchema` argument is gone.
-        const result = await client.callTool({ name: toolName, arguments: args }, callOpts?.timeoutMs !== undefined ? { timeout: callOpts.timeoutMs } : undefined);
+        const requestOpts = {
+          ...(callOpts?.timeoutMs !== undefined ? { timeout: callOpts.timeoutMs } : {}),
+          ...(callOpts?.signal !== undefined ? { signal: callOpts.signal } : {}),
+        };
+        const call = client.callTool({ name: toolName, arguments: args }, Object.keys(requestOpts).length > 0 ? requestOpts : undefined);
+        callsInFlight.add(call);
+        let result: Awaited<typeof call>;
+        try {
+          result = await call;
+        } finally {
+          callsInFlight.delete(call);
+        }
         return {
           content: (result as { content?: unknown[] }).content ?? [],
           ...((result as { isError?: boolean }).isError === true ? { isError: true as const } : {}),

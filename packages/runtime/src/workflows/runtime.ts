@@ -9,6 +9,7 @@
 // child spawn happens here. The worker mirrors the caps so it can fail fast and produce a good error
 // message, but a worker that ignored its mirror entirely could still not spawn one agent past the
 // cap -- which is the property that makes the mirror an optimisation rather than a security control.
+import { StringDecoder } from "node:string_decoder";
 import { randomBytes } from "node:crypto";
 import { spawn as spawnProcess } from "node:child_process";
 // STATIC, never `await import(...)`: this module is bundled into the `bun build --compile`
@@ -63,6 +64,63 @@ export interface WorkerProcess {
   onExit(cb: (code: number | null) => void): void;
   onError(cb: (err: Error) => void): void;
   kill(): void;
+  /** WS-27: the worker's last non-empty stderr line so far, when the spawner captures stderr (the real one does). */
+  lastStderrLine?(): string | undefined;
+}
+
+/**
+ * WS-27: the exit code a workflow worker uses to REFUSE to run -- it found itself outside a sandbox that
+ * denies Keychain access (a host's workers check this at start). Reported as a sandbox failure, never as a
+ * crash, so the host can tell the user what is actually wrong.
+ */
+export const WORKFLOW_SANDBOX_REFUSED_EXIT_CODE = 77;
+
+/** The failure text for a worker that exited without a terminal bridge message. */
+export function workerExitMessage(code: number | null, lastStderrLine?: string): string {
+  if (code === WORKFLOW_SANDBOX_REFUSED_EXIT_CODE) {
+    return `workflow sandbox not in effect — the workflow worker refused to run (exit ${WORKFLOW_SANDBOX_REFUSED_EXIT_CODE})${lastStderrLine !== undefined ? `: ${lastStderrLine}` : ""}`;
+  }
+  return `the workflow worker exited (code ${code ?? "signal"}) without reporting a result`;
+}
+
+// Stripped from a reported stderr line: C0/C1 control characters, and the bidi embedding / override /
+// isolate controls and marks (U+202A-202E, U+2066-2069, U+200E/200F) -- a worker's line lands in a
+// tool result and a host's UI, where either could hide or reorder the text around it.
+const UNSAFE_LINE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+/** At most this many characters of the reported line. */
+export const STDERR_LINE_CAP = 500;
+/** At most this many characters of an unterminated line are held while waiting for its newline. */
+export const STDERR_CARRY_CAP = 4096;
+
+function sanitizeStderrLine(line: string): string {
+  return line.replace(UNSAFE_LINE_CHARS, "").trim().slice(0, STDERR_LINE_CAP);
+}
+
+/**
+ * Keeps the last non-empty line of a stream, bounded -- never the whole of a chatty worker's stderr.
+ * Decoded with a streaming `StringDecoder`, so a multi-byte character split across two chunks survives;
+ * the reported line is sanitized (`UNSAFE_LINE_CHARS`) and capped at `STDERR_LINE_CAP`, and an
+ * unterminated line keeps only its last `STDERR_CARRY_CAP` characters.
+ */
+export function stderrTail(stream: NodeJS.ReadableStream | null | undefined): () => string | undefined {
+  const decoder = new StringDecoder("utf8");
+  let carry = "";
+  let last: string | undefined;
+  const take = (text: string): void => {
+    carry += text;
+    const lines = carry.split("\n");
+    carry = (lines.pop() ?? "").slice(-STDERR_CARRY_CAP);
+    for (const line of lines) {
+      const clean = sanitizeStderrLine(line);
+      if (clean !== "") last = clean;
+    }
+  };
+  stream?.on("data", (chunk: Buffer | string) => take(typeof chunk === "string" ? chunk : decoder.write(chunk)));
+  stream?.on("end", () => take(decoder.end()));
+  return () => {
+    const pending = sanitizeStderrLine(carry);
+    return pending !== "" ? pending : last;
+  };
 }
 
 export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; winterHome?: string; brand?: SandboxBrand; cwd?: string }) => WorkerProcess;
@@ -98,10 +156,13 @@ export function realWorkerSpawner(opts: { sandbox?: boolean } = {}): WorkerSpawn
       child.once("close", releaseGroup);
       child.once("error", releaseGroup);
     }
+    // WS-27: read (and so drained) for the one line a refusal or a crash leaves behind.
+    const lastStderrLine = stderrTail(child.stderr);
     return {
       stdin: child.stdin!,
       stdout: child.stdout!,
       ...(child.pid !== undefined ? { pid: child.pid } : {}),
+      lastStderrLine,
       onExit: (cb) => child.on("close", (code) => cb(code)),
       onError: (cb) => child.on("error", cb),
       kill: () => {
@@ -344,7 +405,9 @@ export class WorkflowRuntime {
     // already tore the run down and its terminal status must not be overwritten by the exit.
     worker.onExit((code) => {
       if (this.live.has(runId)) {
-        this.teardown(runId, () => this.finish(runId, "failed", `the workflow worker exited (code ${code ?? "signal"}) without reporting a result`));
+        // WS-27: exit 77 is the worker REFUSING to run outside its Keychain-denying sandbox -- said so, with
+        // the worker's own last stderr line when there is one.
+        this.teardown(runId, () => this.finish(runId, "failed", workerExitMessage(code, worker.lastStderrLine?.())));
       }
     });
     worker.onError((err) => {

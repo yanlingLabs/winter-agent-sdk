@@ -405,6 +405,10 @@ export interface Options {
   // handler ONLY when this is set — see that file's own comment on why the two are equivalent from
   // the runtime's point of view: no callback and "no handler answered it" collapse to the identical
   // wire outcome). §7.3: paired with a static shadow-warning check at query() construction time.
+  // WS-27: for an MCP tool, its options carry Winter's `mcpServer` (`McpServerIdentity` in
+  // permissions/types.ts: the server's name after any rename, its config name before it, the tool's
+  // stated `readOnlyHint`) -- the same facts the PreToolUse/PostToolUse/PostToolUseFailure hook input
+  // carries as `winter_mcp_server`.
   canUseTool?: CanUseTool;
 
   // --- Task 9 (WS-08 §1/§2; derived-shapes-p2.md item (a), verbatim): the SDK-callback hooks
@@ -416,7 +420,9 @@ export interface Options {
   // deliberately NOT keyed by the closed `HookEvent` union this field uses. Wiring the actual
   // Options.hooks -> RuntimeConfig.hooks conversion (and the reverse: dispatching an inbound `hook`
   // control_request back to the matching callback here) is query.ts's job, owned by a later task —
-  // this field only pins the verbatim public shape a host program writes against.
+  // this field only pins the verbatim public shape a host program writes against. WS-27: a
+  // PreToolUse/PostToolUse/PostToolUseFailure input for an MCP tool also carries Winter's
+  // `winter_mcp_server` (`WinterMcpServerHookField` in permissions/types.ts).
   hooks?: Partial<Record<HookEvent, HookCallbackMatcher[]>>;
 
   // Task 10 (WS-08 §9; derived-shapes item (d), doc-asserted `@default false`): gates the public
@@ -499,6 +505,10 @@ export interface Options {
   // reproduced) — this callback has no out-of-band response escape hatch at all, so "accidental null"
   // and "deliberate decline" are the same signal here by construction, and the safer reading (never
   // hang) is the one Winter ships.
+  //
+  // WS-27: `options.signal` aborts when the elicitation stops mattering -- the MCP server cancels it,
+  // the tool call that raised it ends (an interrupt included), or the query is aborted. Take the
+  // prompt down then; an answer returned after the abort is dropped (never written to the runtime).
   onElicitation?: (
     request: {
       serverName: string;

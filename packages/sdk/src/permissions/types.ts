@@ -77,12 +77,40 @@ export type RuleSource = "managed" | "user" | "project" | "local" | "cliArg" | "
 
 // --- Task 8 (WS-07 §7.1/§7.2, verbatim; derived-shapes-p2.md item (c) cross-checked field-for-field) ---
 //
-// `CanUseTool`'s `options` object matches the pinned 0.3.250 declaration EXACTLY: all 11 fields,
+// `CanUseTool`'s `options` object carries the pinned 0.3.250 declaration's 11 fields EXACTLY --
 // identical names/types/optionality, including the nested `matchedAskRule` shape (derived-shapes
-// item (c)'s own verdict: "MATCHES WS-07 §7.1's verbatim block exactly"). Note `matchedAskRule.source`
+// item (c)'s own verdict: "MATCHES WS-07 §7.1's verbatim block exactly") -- plus ONE Winter-only,
+// optional addition, `mcpServer` (WS-27, see `McpServerIdentity` below). Note `matchedAskRule.source`
 // is a bare `string` here — NOT `RuleSource` — matching the pinned declaration precisely; the
 // runtime's own internal seam (evaluator.ts's PromptStageMeta) is free to be more specific
 // (RuleSource narrows to string, so assigning a RuleSource value into this field is always valid).
+
+/**
+ * WS-27 (Winter-only): WHICH MCP SERVER a tool call is for, stated exactly by the runtime -- on
+ * `canUseTool`'s options as `mcpServer`, and on the PreToolUse / PostToolUse / PostToolUseFailure hook
+ * input as `winter_mcp_server` (`WinterMcpServerHookField`, the same facts in snake_case). Present when
+ * the tool belongs to a connected MCP server (a stdio/http/sse server, or a host's in-process `sdk` one);
+ * absent for every other tool, and on an older runtime -- a host keeps its own resolver as the fallback.
+ *
+ * - `name`: the server's name as it appears in the tool name `mcp__<name>__<tool>` -- AFTER any rename.
+ *   A subagent definition's inline server that collides with a name already in use is connected under a
+ *   fresh one (`cf` -> `cf_2`); `name` is then `cf_2`.
+ * - `configName`: the key the server had in the config it came from, BEFORE any rename (`cf` above);
+ *   equal to `name` when nothing was renamed. For a plugin's server, the raw name its `.mcp.json` (or
+ *   manifest) declares -- the runtime registers plugin servers under exactly that name.
+ * - `readOnlyHint`: the tool's own `annotations.readOnlyHint` from that server's `tools/list`, only when
+ *   the server states it as a boolean. Absent means "not stated", never "false".
+ *
+ * Why the runtime states it: `mcp__<server>__<tool>` cannot be split reliably (a server name may contain
+ * `__`), a rename is invisible in the tool name, and the annotation lives only on the runtime's side of
+ * the wire.
+ */
+export interface McpServerIdentity {
+  name: string;
+  configName: string;
+  readOnlyHint?: boolean;
+}
+
 export type CanUseTool = (
   toolName: string,
   input: Record<string, unknown>,
@@ -98,6 +126,8 @@ export type CanUseTool = (
     agentID?: string;
     requestId: string;
     matchedAskRule?: { source: string; toolName: string; ruleContent?: string };
+    /** WS-27, Winter-only: the MCP server this tool belongs to -- see `McpServerIdentity`. */
+    mcpServer?: McpServerIdentity;
   },
 ) => Promise<PermissionResult | null>;
 
@@ -146,6 +176,8 @@ export interface PermissionRequestPayload {
   agentID?: string;
   requestId: string;
   matchedAskRule?: { source: string; toolName: string; ruleContent?: string };
+  /** WS-27: forwarded to `canUseTool` verbatim -- see `McpServerIdentity`. */
+  mcpServer?: McpServerIdentity;
   policyVersion: number;
 }
 
@@ -273,13 +305,31 @@ export interface McpToolProvenance {
   mcp_tool_name?: string;
 }
 
-export interface PreToolUseHookInput extends BaseHookInput, McpToolProvenance {
+// WS-27 (Winter-only): the exact server identity -- `McpServerIdentity`'s facts in snake_case -- on the
+// three hook inputs a per-server tool policy decides or observes a call from: PreToolUse, PostToolUse and
+// PostToolUseFailure. Beside `mcp_server_name` (which names the server that REGISTERED the hook's
+// `tool_name`), this one names the server the MODEL CALLED, with its pre-rename config key and the tool's
+// stated read-only hint. The two differ for a renamed subagent server: the hook's subject can be the
+// DECLARED spelling (`mcp__cf__x`, when a hook matcher names it), while `winter_mcp_server.name` stays the
+// connected `cf_2`. Present exactly when `McpServerIdentity` would be; absent on an older runtime.
+export interface WinterMcpServerHookField {
+  winter_mcp_server?: {
+    /** The server's name in the called tool's name `mcp__<name>__<tool>`, after any rename. */
+    name: string;
+    /** The server's key in the config it came from, before any rename (a plugin server: the raw name its `.mcp.json` declares). */
+    config_name: string;
+    /** The tool's own `annotations.readOnlyHint` from the server's `tools/list`, only when stated. */
+    read_only_hint?: boolean;
+  };
+}
+
+export interface PreToolUseHookInput extends BaseHookInput, McpToolProvenance, WinterMcpServerHookField {
   hook_event_name: "PreToolUse";
   tool_name: string;
   tool_input: unknown;
   tool_use_id: string;
 }
-export interface PostToolUseHookInput extends BaseHookInput, McpToolProvenance {
+export interface PostToolUseHookInput extends BaseHookInput, McpToolProvenance, WinterMcpServerHookField {
   hook_event_name: "PostToolUse";
   tool_name: string;
   tool_input: unknown;
@@ -287,7 +337,7 @@ export interface PostToolUseHookInput extends BaseHookInput, McpToolProvenance {
   tool_use_id: string;
   duration_ms?: number;
 }
-export interface PostToolUseFailureHookInput extends BaseHookInput, McpToolProvenance {
+export interface PostToolUseFailureHookInput extends BaseHookInput, McpToolProvenance, WinterMcpServerHookField {
   hook_event_name: "PostToolUseFailure";
   tool_name: string;
   tool_input: unknown;
@@ -539,6 +589,8 @@ export interface HookInvocationPayload {
   mcpServerName?: string;
   /** WS-24: for an MCP tool, the tool's own name on that server -- see `McpToolProvenance`. */
   mcpToolName?: string;
+  /** WS-27: PreToolUse/PostToolUse/PostToolUseFailure only -- becomes `winter_mcp_server`, see `McpServerIdentity`. */
+  mcpServer?: McpServerIdentity;
   input?: Record<string, unknown>;
   payload?: unknown;
   policyVersion: string;

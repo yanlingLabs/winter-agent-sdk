@@ -51,6 +51,12 @@ export type { ScenarioFake, ScenarioFakeOptions, ScenarioRequest } from "./provi
 // Phase 5 Task 2 (R5-4 / WS-09 §8.5): the compaction reset seam.
 export { onCompaction } from "./tools/registry.ts";
 
+// WS-27: the workflow worker's seatbelt profile builder, so a host that spawns the runtime's worker can pin
+// its own profile against it; and the exit code a worker uses to refuse to run outside that sandbox.
+export { buildWorkflowWorkerSeatbeltProfile } from "./sandbox/profile.ts";
+export type { SandboxBrand } from "./sandbox/profile.ts";
+export { WORKFLOW_SANDBOX_REFUSED_EXIT_CODE } from "./workflows/runtime.ts";
+
 export { createInMemoryChannel } from "./protocol/channel.ts";
 export type { Duplex, FrameSource, FrameSink } from "./protocol/channel.ts";
 

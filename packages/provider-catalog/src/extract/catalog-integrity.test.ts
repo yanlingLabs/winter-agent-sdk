@@ -292,6 +292,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "openai/o3",
       "openai/o3-mini",
       "openai/o4-mini",
+      "opencode/space-bunny-free",
       "openrouter/openai/gpt-4.1",
       "openrouter/openai/gpt-5.4",
       "openrouter/openai/gpt-5.4-mini",
@@ -302,6 +303,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "openrouter/openai/gpt-5.6-luna",
       "openrouter/openai/gpt-5.6-sol",
       "openrouter/openai/gpt-5.6-terra",
+      "openrouter/stealth/space-bunny-alpha",
       "perplexity/sonar",
       "perplexity/sonar-deep-research",
       "perplexity/sonar-pro",
@@ -1589,4 +1591,23 @@ describe("WS-23: the api-key `xai` provider speaks Responses, and its rows say w
       expect([row.key, row.endpoints]).toEqual([row.key, row.key === "xai/grok-4.20-multi-agent-0309" ? ["responses"] : ["chat", "responses"]]);
     }
   });
+});
+
+// WS-27: the coding-agent-gateway ruling, applied CONSISTENTLY. OpenCode Zen is the OpenCode coding agent's
+// model gateway and its docs list these ids for that agent, so each is `native` at `inferred` -- the Claude
+// Code guide ruling -- citing that page, never promoted to `declared` without a field-level statement.
+describe("WS-27: OpenCode Zen rows on the coding-agent-gateway ruling", () => {
+  for (const key of ["opencode/big-pickle", "opencode/space-bunny-free"]) {
+    test(`${key} is native at inferred, citing https://opencode.ai/docs/zen/`, () => {
+      const row = catalog.models.find((m) => m.key === key)!;
+      for (const evidence of [row.toolCalling, row.nativeTools]) {
+        expect(evidence.confidence).toBe("inferred");
+        expect(evidence.source).toBe("official-doc");
+        expect(evidence.sourceRef).toStartWith("https://opencode.ai/docs/zen/");
+        expect(evidence.sourceRef).toContain("CODING AGENT");
+      }
+      expect(row.toolCalling.value).toBe("native");
+      expect(row.nativeTools.value).toBe(true);
+    });
+  }
 });

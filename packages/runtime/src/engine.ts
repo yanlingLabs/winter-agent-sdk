@@ -47,6 +47,8 @@ import {
   // project/user tier gating matches skills'/agents' own `settingSources` gate, not `trustedWorkspace`
   // alone.
   type SettingSource,
+  // WS-27: the MCP server identity a tool call's hooks and permission prompt carry.
+  type McpServerIdentity,
 } from "@yanlinglabs/winter-agent-sdk";
 // R-7b-4: the per-session messaging facet's wire shapes + the guards this side runs on an incoming
 // request, and the messaging contract the handler answers with.
@@ -260,7 +262,7 @@ import { createCommandHookInvoker } from "./hooks/command-invoker.ts";
 // found and why the per-tier permissive filter deliberately does NOT live here.
 import { defaultTrustSource } from "./settings/trust.ts";
 import { createBridgeHookInvoker } from "./hooks/bridge-invoker.ts";
-import { runHooks, type HookAuditRecord, type HookAuditRecorder, type HookInvoker, type RunHooksCallInfo } from "./hooks/runner.ts";
+import { mcpServerIdentity, runHooks, type HookAuditRecord, type HookAuditRecorder, type HookInvoker, type RunHooksCallInfo } from "./hooks/runner.ts";
 import type { HookComposite } from "./hooks/reducer.ts";
 import { createRegistryToolInputValidator } from "./hooks/input-validator.ts";
 import { asyncHookDroppedAttachment, asyncHookResponseAttachment, contextStrings, hookAdditionalContextAttachment, hookFeedbackAttachment } from "./hooks/additional-context.ts";
@@ -5721,6 +5723,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // The MCP control subtypes' own serial chain (see their dispatch in the pump): run beside the pump, in
   // arrival order among themselves.
   let mcpControlChain: Promise<void> = Promise.resolve();
+  // WS-27: the links on that chain that CONNECT a server (reconnect, toggle, set_servers), recorded at
+  // dispatch -- synchronously, in the pump -- and dropped when they settle. A turn that starts while one
+  // is outstanding waits for it, bounded (`awaitMcpControlConnects`, at turn start).
+  const mcpConnectingLinks = new Set<Promise<void>>();
+  // ...and the server names those links connect (`serverName`, or every name `mcp_set_servers` declares),
+  // kept past the link itself until a turn start consumes them: `mcp_set_servers` settles at once while its
+  // new servers are still `pending`.
+  const mcpControlTouched = new Set<string>();
   let compactOnControl: ((instructions: string | null) => Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }>) | undefined;
   /** True while the RUNNING turn is one a task notification started (no host input produced it). */
   let turnStartedByNotification = false;
@@ -6590,7 +6600,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             const subtype = cf.subtype;
             const requestId = cf.requestId;
             const payload = cf.payload;
-            mcpControlChain = mcpControlChain.then(async () => {
+            const link = mcpControlChain.then(async () => {
               let result: McpControlResult;
               try {
                 result =
@@ -6613,6 +6623,24 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             }).catch(() => {
               /* a write after the session ended: nothing left to answer */
             });
+            mcpControlChain = link;
+            // Recorded HERE, before the pump reads the next frame: a user message right behind a reconnect
+            // reaches the turn loop before the link has even started (and a reconnect closes the old client
+            // before its slot turns `pending`), so the state board alone cannot tell the turn to wait.
+            if (subtype !== "mcp_status") {
+              const p = payload as { serverName?: unknown; servers?: unknown } | null | undefined;
+              const names =
+                subtype === "mcp_set_servers"
+                  ? typeof p?.servers === "object" && p.servers !== null
+                    ? Object.keys(p.servers)
+                    : []
+                  : typeof p?.serverName === "string"
+                    ? [p.serverName]
+                    : [];
+              for (const name of names) mcpControlTouched.add(name);
+              mcpConnectingLinks.add(link);
+              void link.finally(() => mcpConnectingLinks.delete(link));
+            }
             continue;
           }
           // WS-04 §3.1: an unrecognized subtype gets a structured error response, never a dropped
@@ -6710,6 +6738,46 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...(config.mcpServers !== undefined ? { explicitServers: config.mcpServers } : {}),
       envConfig: mcpEnvConfig,
     });
+  };
+  // WS-27: the same wait, at EVERY turn start, for a server the host is reconnecting (`mcp_reconnect`, and
+  // the other two connecting subtypes). Since 0.0.32 those run beside the pump (the brokered-reconnect
+  // fix), so a turn that started while one was still connecting was built without that server's tools.
+  // The turn now waits for the outstanding links, with the first-turn wait's own scope and bound: this
+  // engine's own lifecycle only (a host that owns its MCP stack is never waited on) and
+  // `firstTurnMcpWaitMs()` at most -- a reconnect slower than that still joins a later request.
+  //
+  // Awaited by the TURN LOOP, never by the pump: a link's connect can need a host answer
+  // (`credential_resolve`, `mcp_oauth_refresh`, an elicitation) that only the pump routes back, and the
+  // pump keeps reading while the turn waits. Nothing on the chain waits for a turn, so this cannot close a
+  // cycle. No `await` at all when nothing is outstanding (every ordinary turn).
+  //
+  // Two stages, one bound. First the links themselves settle (a reconnect or an enable connects INSIDE its
+  // link). Then, for the servers they named, the first-turn wait's own `waitForPending`: `mcp_set_servers`
+  // starts its connects fire-and-forget (lifecycle.ts's `addAndConnect`), so its link settles while the new
+  // server is still `pending`.
+  const awaitMcpControlConnects = (): Promise<void> | undefined => {
+    if (mcpConnectingLinks.size === 0 && mcpControlTouched.size === 0) return undefined;
+    const names = [...mcpControlTouched];
+    mcpControlTouched.clear();
+    const deadlineMs = firstTurnMcpWaitMs();
+    if (deadlineMs === undefined) return undefined;
+    const lifecycle = mcpLifecycle!;
+    if (mcpConnectingLinks.size === 0 && !lifecycle.stateSource.snapshot().some((server) => server.state === "pending" && names.includes(server.name))) return undefined;
+    const deadlineAt = Date.now() + deadlineMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, deadlineMs);
+      timer.unref?.();
+    });
+    return (async () => {
+      try {
+        if (mcpConnectingLinks.size > 0) await Promise.race([Promise.all([...mcpConnectingLinks]), deadline]);
+      } finally {
+        clearTimeout(timer);
+      }
+      const remaining = deadlineAt - Date.now();
+      if (remaining > 0 && names.length > 0) await lifecycle.stateSource.waitForPending(names, remaining);
+    })();
   };
   // The startup wait `launch()` deferred (above, where the lifecycle is built): an `alwaysLoad` server, or
   // the whole batch under MCP_CONNECTION_NONBLOCKING=0. Here, not before the handshake, because the pump
@@ -8174,6 +8242,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * includes the deferred names, so a deferred-but-unloaded tool still reaches the load-first
    * boundary and its "use ToolSearch" answer.
    */
+  /**
+   * WS-27: the MCP server identity of a call (hooks/runner.ts's `mcpServerIdentity`, rename-aware). A slot
+   * still in the discovery cache's `cached` state has no live connection behind its tool list yet, so its
+   * `readOnlyHint` is withheld (review) -- a hint read from a cached listing may be stale.
+   */
+  const mcpServerIdentityForCall = (toolName: string): McpServerIdentity | undefined => {
+    const identity = mcpServerIdentity(toolName, mcpServerRenames);
+    if (identity?.readOnlyHint === undefined) return identity;
+    const cached = effectiveMcpStateSource?.snapshot().some((server) => server.name === identity.name && server.state === "cached") === true;
+    return cached ? { name: identity.name, configName: identity.configName } : identity;
+  };
   /** WS-24: `mcp__<declared>[__tool]` for a call to a renamed own server (`EngineOptions.mcpServerRenames`), else `undefined`. */
   const declaredMcpIdentity = (toolName: string): string | undefined => {
     if (mcpServerRenames === undefined) return undefined;
@@ -8564,6 +8643,18 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       turnAbort.abort();
       abortForegroundChildren();
     };
+    // WS-27: a server the host is reconnecting joins this turn, bounded (`awaitMcpControlConnects`). HERE,
+    // once the turn is ACTIVE (review I-1): the session reports `running`, a `compact` arriving meanwhile
+    // is answered `busy`, a `set_model` parks for the boundary just below, and an interrupt ends the wait
+    // at once -- the turn then takes the ordinary interrupted-result path with no generation at all
+    // (`interruptedAwaitingMcp`, checked at the top of the round loop): command resolution and the
+    // UserPromptSubmit hook are skipped too, since nothing of this prompt is going to run. A BUILT-IN
+    // command (`/compact`) skips the wait altogether: it never becomes a provider turn, so no tool list
+    // is built for it. (Recognised here, before the wait -- a pure, synchronous match on the text.)
+    const builtinCommand = resolveBuiltinCommand(userFrame.text);
+    let interruptedAwaitingMcp = false;
+    const mcpConnects = builtinCommand === undefined ? awaitMcpControlConnects() : undefined;
+    if (mcpConnects !== undefined) interruptedAwaitingMcp = (await raceInterrupt(mcpConnects, interruptSignal)).kind === "interrupted";
     // Phase 6 Task 3 (R6-I): the QUIESCENT BOUNDARY. A `set_model` parked during the previous turn
     // takes effect here -- before this envelope's first generation -- so a turn never spans two models.
     // Fix wave (Ruling E-3): the primary a fallback displaced is re-tried at each user turn, FIRST --
@@ -8619,9 +8710,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // The built-in is recognised FIRST, so a project `commands/compact.md` in an untrusted clone
     // cannot shadow a built-in with real engine-side power (the same self-grant shape P5-A closes on
     // the settings side). The resolver is only ever offered a `/name` the engine did not claim.
-    const builtinCommand = resolveBuiltinCommand(userFrame.text);
+    // (`builtinCommand` itself is recognised above, before the reconnect wait.)
     let resolvedPromptText = userFrame.text;
-    if (builtinCommand === undefined && commandResolver !== undefined && looksLikeCommand(userFrame.text)) {
+    if (!interruptedAwaitingMcp && builtinCommand === undefined && commandResolver !== undefined && looksLikeCommand(userFrame.text)) {
       const resolution = await commandResolver.resolve(userFrame.text, config.cwd);
       if (resolution.kind === "expand") resolvedPromptText = resolution.text;
     }
@@ -8678,9 +8769,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // Fix round 1 (M2): what was queued BEFORE this prompt's hook (SessionStart's context, waiting for
     // the first user turn) is not this prompt's -- a blocked prompt drops only its own hook's context.
     const pendingBeforePrompt = pendingHookAttachments.length;
-    const promptHooks = await fireObservationalHook("UserPromptSubmit", { payload: { prompt: userText } });
-    absorbHookComposite(promptHooks, { hookName: "UserPromptSubmit", context: true });
-    const promptBlock = contextStrings(promptHooks.blockReasons);
+    // WS-27: an interrupt during the reconnect wait skips the hook -- the prompt goes straight to the
+    // interrupted path (below, at the top of the round loop).
+    const promptHooks = interruptedAwaitingMcp ? undefined : await fireObservationalHook("UserPromptSubmit", { payload: { prompt: userText } });
+    if (promptHooks !== undefined) absorbHookComposite(promptHooks, { hookName: "UserPromptSubmit", context: true });
+    const promptBlock = promptHooks !== undefined ? contextStrings(promptHooks.blockReasons) : [];
     const promptStop = currentTurnStop();
     if (promptBlock.length > 0 || promptStop !== undefined) {
       interruptCurrentTurn.current = null;
@@ -8810,6 +8903,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     });
 
     roundLoop: while (true) {
+      // WS-27 (review I-1): interrupted while waiting for a reconnecting MCP server -- no request goes out.
+      if (interruptedAwaitingMcp) {
+        interrupted = true;
+        break roundLoop;
+      }
       // Phase 5 Task 3 (R5-10): `outputFormat` with no seam fails LOUDLY, on the first round, before
       // a single token is spent -- see EngineOptions.structuredOutput for why silence is the worse
       // outcome here.
@@ -9284,6 +9382,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: `Structured output validation failed: ${validation.errors.join("; ")}. Call ${STRUCTURED_OUTPUT_TOOL_NAME} again with a corrected value.`, error: true });
           continue;
         }
+        // WS-27: the MCP server this call's tool belongs to, read ONCE from the name the model called (a
+        // renamed server's gating hook may run under its declared spelling, which the registry resolves to a
+        // different server) -- for the PreToolUse / PostToolUse / PostToolUseFailure `winter_mcp_server` and
+        // `canUseTool`'s `mcpServer`. Before the `try`, so the catch's PostToolUseFailure has it too.
+        const callMcpServer = mcpServerIdentityForCall(call.name);
         try {
           // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.5): the load-first execution-boundary check runs
           // BEFORE permission evaluation even starts — an unloaded deferred tool is not yet
@@ -9449,6 +9552,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // `permission_deferred` stream messages' own `agent_id` field (both already conditional
             // on this field being set, unchanged since P2/T8).
             ...(config.agentId !== undefined ? { agentId: config.agentId } : {}),
+            ...(callMcpServer !== undefined ? { mcpServer: callMcpServer } : {}),
           };
           const decisionRaced = await raceInterrupt(evaluateWithFreshPolicy(permissionCall), interruptSignal);
           if (decisionRaced.kind === "interrupted") {
@@ -9762,12 +9866,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
               ? await fireObservationalHook("PostToolUseFailure", {
                   toolUseID: call.id,
                   toolName: postToolHookSubject("PostToolUseFailure", call.name),
+                  ...(callMcpServer !== undefined ? { mcpServer: callMcpServer } : {}),
                   input: executedCall.input as Record<string, unknown>,
                   payload: { error: raced.value.output },
                 })
               : await fireObservationalHook("PostToolUse", {
                   toolUseID: call.id,
                   toolName: postToolHookSubject("PostToolUse", call.name),
+                  ...(callMcpServer !== undefined ? { mcpServer: callMcpServer } : {}),
                   input: executedCall.input as Record<string, unknown>,
                   payload: { tool_response: raced.value.output },
                 });
@@ -9807,6 +9913,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             await fireObservationalHook("PostToolUseFailure", {
               toolUseID: call.id,
               toolName: postToolHookSubject("PostToolUseFailure", call.name),
+              ...(callMcpServer !== undefined ? { mcpServer: callMcpServer } : {}),
               input: typeof call.input === "object" && call.input !== null ? (call.input as Record<string, unknown>) : {},
               payload: { error: text },
             }),
