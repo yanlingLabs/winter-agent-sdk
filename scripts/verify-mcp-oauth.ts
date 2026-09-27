@@ -28,6 +28,17 @@
 //   5. brokered   -- WS-25 §7: `hostCredentials: true`. The session resolves its provider key AND its MCP
 //                    token through the gate (`credential_resolve`), refreshes through it, and the key is
 //                    seen only by the model endpoint -- never in a frame or on stderr.
+//   6. brokered-alwaysload -- the same, with the OAuth server `alwaysLoad` (startup WAITS for it) and an
+//                    expired sign-in, so its connect needs BOTH host doors before `system/init`. The connect
+//                    deadline is set far above the leg's wall-clock bound: a startup wait that sits ahead of
+//                    the handshake or the input pump (the only thing that routes the host's answers back)
+//                    fails the leg instead of quietly waiting the deadline out. `system/init` must say
+//                    `connected`.
+//
+// EVERY leg asserts the runtime's first frame is the `type:"init"` handshake. This gate's raw reader used
+// to accept frames in any order, which is how a host-brokered session's `credential_resolve` written
+// AHEAD of the handshake passed here and died in a real daemon's `query()` ("expected 'init' as the first
+// frame, got 'control_request'") -- the WS-25 live gate's init-order bug.
 //
 // Usage: `bun run verify:mcp-oauth` (compiles two binaries to a temp dir, deleted after).
 import { mkdtempSync, rmSync } from "node:fs";
@@ -136,7 +147,10 @@ async function legLogin(loginBin: string, fx: FixtureAs, storeFile: string): Pro
   console.log(`verify:mcp-oauth [login] OK -- compiled sign-in: DCR ${client.clientId}, redirect ${client.redirectUri}, token generation ${token.generation}`);
 }
 
-type SessionLeg = "connect" | "refresh" | "needs-auth" | "brokered";
+type SessionLeg = "connect" | "refresh" | "needs-auth" | "brokered" | "brokered-alwaysload";
+/** Leg 6's connect deadline (far above its wall-clock bound) and that bound. */
+const ALWAYS_LOAD_CONNECT_DEADLINE_MS = 120_000;
+const ALWAYS_LOAD_LEG_BOUND_MS = 30_000;
 /** The brokered leg's provider key: it may appear ONLY in the model request's header. */
 const BROKERED_KEY = "sk-verify-brokered-4242";
 
@@ -150,7 +164,9 @@ async function legSession(winterBin: string, fx: FixtureAs, storeFile: string, l
   const asks: unknown[] = [];
   const resolves: string[] = [];
   try {
-    const brokeredLeg = leg === "brokered";
+    const brokeredLeg = leg === "brokered" || leg === "brokered-alwaysload";
+    const alwaysLoadLeg = leg === "brokered-alwaysload";
+    const startedAt = Date.now();
     const config = {
       sessionId: `verify-mcp-oauth-${leg}`,
       // The test store is honoured only for an explicit, non-default Keychain service (mcp-auth/store.ts).
@@ -164,11 +180,11 @@ async function legSession(winterBin: string, fx: FixtureAs, storeFile: string, l
       toolSearchEnabled: false,
       settingSources: [],
       strictMcpConfig: true,
-      mcpServers: { [SERVER]: { type: "http", url: fx.mcpUrl, versionNegotiation: "legacy" } },
+      mcpServers: { [SERVER]: { type: "http", url: fx.mcpUrl, versionNegotiation: "legacy", ...(alwaysLoadLeg ? { alwaysLoad: true } : {}) } },
     };
     const proc = Bun.spawn([winterBin, "--run", "--config-json", JSON.stringify(config)], {
       cwd: REPO_ROOT,
-      env: { ...process.env, WINTER_HOME: winterHome, WINTER_TEST_MCP_OAUTH_STORE_FILE: storeFile },
+      env: { ...process.env, WINTER_HOME: winterHome, WINTER_TEST_MCP_OAUTH_STORE_FILE: storeFile, ...(alwaysLoadLeg ? { MCP_CONNECT_TIMEOUT_MS: String(ALWAYS_LOAD_CONNECT_DEADLINE_MS) } : {}) },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -223,7 +239,13 @@ async function legSession(winterBin: string, fx: FixtureAs, storeFile: string, l
     const status = init?.mcp_servers?.find((s) => s.name === SERVER)?.status;
     const posts = fx.tokenPosts.slice(postsBefore);
     if (exitCode !== 0) fail("the compiled binary exited non-zero");
-    if (leg === "brokered") {
+    if (frames[0]?.type !== "init") fail(`the first frame was '${frames[0]?.type}'${frames[0]?.type === "control_request" ? ` (${(frames[0] as { subtype?: string }).subtype})` : ""}, not the init handshake -- a host's query() refuses that session`);
+    if (alwaysLoadLeg) {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed > ALWAYS_LOAD_LEG_BOUND_MS) fail(`the alwaysLoad session took ${elapsed} ms -- startup waited on a host answer nothing could route back`);
+      if (status !== "connected") fail(`the alwaysLoad server was not connected in system/init (status ${status})`);
+    }
+    if (brokeredLeg) {
       if (!model.apiKeys.includes(BROKERED_KEY)) fail("the provider request did not carry the host-resolved key");
       if (!resolves.includes("anthropic:default") || !resolves.includes(account)) fail(`the session did not resolve its credentials through the host: ${JSON.stringify(resolves)}`);
       if (asks.length !== 1 || JSON.stringify(posts) !== JSON.stringify(["refresh_token"])) fail(`expected one host refresh (asks ${JSON.stringify(asks)}, posts ${JSON.stringify(posts)})`);
@@ -277,6 +299,10 @@ if (import.meta.main) {
     await legLogin(loginBin, fx, storeFile);
     await expireStored(storeFile, fx, false);
     await legSession(winterBin, fx, storeFile, "brokered");
+    // The same host-brokered session with the server `alwaysLoad` and the sign-in expired again: startup
+    // waits for a connect that needs `credential_resolve` AND `mcp_oauth_refresh` answered.
+    await expireStored(storeFile, fx, false);
+    await legSession(winterBin, fx, storeFile, "brokered-alwaysload");
     console.log("verify:mcp-oauth OK -- a compiled host signs in, a compiled session connects on the stored token, refreshes through its host, and is needs-auth without a refresh token");
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
