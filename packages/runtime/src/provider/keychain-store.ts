@@ -145,6 +145,59 @@ export function createKeychainSecretReader(service: string = DEFAULT_KEYCHAIN_SE
   };
 }
 
+/**
+ * WS-25 (MCP OAuth): a RAW string store over ONE Keychain service -- `read`/`write`/`remove` of an
+ * uninterpreted value under an account name. It is the default `McpOAuthStore` (`mcp-auth/store.ts`):
+ * an MCP sign-in record is JSON this SDK writes and validates itself (`mcp-auth/records.ts`), not a
+ * provider's `CredentialMaterial`, so neither `get` above (which insists on material) nor the reader
+ * (read-only) fits. It lives HERE for the same reason the reader does: this is the one file allowed to
+ * name the secrets backend.
+ *
+ * Every failure is the same typed, account-named `io` error the rest of this file raises; the value is
+ * never quoted, and neither is the backend's own message (it can quote the item).
+ *
+ * SIZE (WS-25 spec §4.1, measured -- `mcp-auth/size-gate.test.ts`, opt-in): `Bun.secrets` round-trips a
+ * 4 MiB value intact on macOS 26, so an item's size is not what splits a sign-in into two items (an
+ * access + refresh token record is a few KiB at most). The 4096-byte limit Claude Code hit is the
+ * `security -i` command line's, a tool Winter never drives.
+ */
+export interface KeychainRawStore {
+  read(account: string): Promise<string | null>;
+  write(account: string, value: string): Promise<void>;
+  remove(account: string): Promise<void>;
+}
+
+export function createKeychainRawStore(service: string = DEFAULT_KEYCHAIN_SERVICE, opts: KeychainCredentialStoreOptions = {}): KeychainRawStore {
+  const backend = (): SecretsBackend => opts.secrets ?? defaultSecretsBackend();
+  const failure = (what: string, account: string): CredentialResolutionError => new CredentialResolutionError("io", `keychain ${what} failed for account ${JSON.stringify(account)}`);
+  return {
+    async read(account) {
+      try {
+        return await backend().get({ service, name: account });
+      } catch (err) {
+        if (err instanceof CredentialResolutionError) throw err;
+        throw failure("lookup", account);
+      }
+    },
+    async write(account, value) {
+      try {
+        await backend().set({ service, name: account, value });
+      } catch (err) {
+        if (err instanceof CredentialResolutionError) throw err;
+        throw failure("write", account);
+      }
+    },
+    async remove(account) {
+      try {
+        await backend().delete({ service, name: account });
+      } catch (err) {
+        if (err instanceof CredentialResolutionError) throw err;
+        throw failure("delete", account);
+      }
+    },
+  };
+}
+
 /** `account = "<providerId>:<accountId>"` (R6-10). One helper, so a caller never assembles the key by hand and drifts. */
 export function keychainAccountName(providerId: string, accountId: string): string {
   return `${providerId}:${accountId}`;
