@@ -151,6 +151,8 @@ describe("sign-in: CIMD and pre-registered clients", () => {
     const { outcome } = await signIn(fx, store, { oauth: { clientId: "gh-app", clientSecretRef: { kind: "keychain" }, callbackPort: port } });
     expect(outcome).toEqual({ ok: true });
     expect(decodeMcpOAuthClientSecretItem((await store.read(mcpOAuthClientSecretAccount(fx.mcpUrl)))!)).toEqual({ secret: "pre-secret-value", issuer: fx.issuer });
+    // The pre-registered client carries its issuer stamp: the MCP client logs no SEP-2352 "no issuer" line.
+    for (const line of logged) expect(line).not.toContain("SEP-2352");
   });
 
   test("I-A: a redeclared server whose authServerMetadataUrl names ANOTHER authorization server never gets the secret", async () => {
