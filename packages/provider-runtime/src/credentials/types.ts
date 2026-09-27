@@ -108,7 +108,11 @@ export function readOnlyWriteRefusal(storeName: string): CredentialResolutionErr
  * "ambient keys are NEVER scanned implicitly" forbids.
  */
 export function createCompositeCredentialStore(stores: readonly CredentialStore[]): CredentialStore {
+  // WS-25 §7: renewal is forwarded to the member that owns it (a host-brokered Keychain member). Only a
+  // keychain ref can be refreshed, and only one member serves keychain refs, so the first is the one.
+  const renewer = stores.find((store) => store.refresh !== undefined);
   return {
+    ...(renewer !== undefined ? { refresh: (ref: Extract<CredentialRef, { kind: "keychain" }>) => renewer.refresh!(ref) } : {}),
     async get(ref: CredentialRef): Promise<CredentialMaterial | null> {
       let lastUnsupported: CredentialResolutionError | undefined;
       for (const store of stores) {
