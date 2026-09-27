@@ -21,6 +21,8 @@
  * - `authorization_denied` -- the authorization server redirected back with `error=...`.
  * - `client_secret_unavailable` -- a pre-registered client's `clientSecretRef` could not be read.
  * - `callback_port_unavailable` -- the configured `oauth.callbackPort` is taken.
+ * - `metadata_issuer_mismatch` -- a configured authorization server metadata document names an issuer it
+ *   was not published under (RFC 8414 §3.3).
  * - `client_secret_issuer_mismatch` -- a pre-registered client secret would go to an authorization server
  *   other than the one it is bound to (its stamped/expected issuer, or an existing registration's).
  * - `login_failed` -- discovery, registration or the code exchange failed (the message says which step,
@@ -42,6 +44,7 @@ export type McpOAuthErrorCode =
   | "client_secret_unavailable"
   | "callback_port_unavailable"
   | "client_secret_issuer_mismatch"
+  | "metadata_issuer_mismatch"
   | "login_failed"
   | "not_implemented";
 

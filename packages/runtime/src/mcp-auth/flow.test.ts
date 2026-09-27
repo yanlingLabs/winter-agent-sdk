@@ -7,6 +7,8 @@ import { refreshMcpOAuthToken } from "./refresh.ts";
 import { revokeMcpOAuth } from "./revoke.ts";
 import { createHostBrokeredMcpOAuthStore, createMemoryMcpOAuthStore, MCP_OAUTH_HOST_HELD_REFRESH_TOKEN, readClientRecord, readTokenRecord, writeTokenRecord, type McpOAuthStore } from "./store.ts";
 import { decodeMcpOAuthClientSecretItem, encodeMcpOAuthClientSecretItem } from "./records.ts";
+import { fetchAuthorizationServerMetadataDocument } from "./discovery.ts";
+import { createMcpAuthFetch } from "./fetch-policy.ts";
 import { startFixtureAs, type FixtureAs, type FixtureAsOptions } from "./test-fixture-as.ts";
 
 const CIMD_URL = "https://winter.test/oauth-client.json";
@@ -204,23 +206,87 @@ describe("sign-in: CIMD and pre-registered clients", () => {
   });
 
   test("oauth.authServerMetadataUrl seeds discovery (a server with no protected-resource metadata)", async () => {
-    const fx = fixture({ metadata: false });
-    // The fixture's own RFC 8414 document is 404 in the legacy variant, so serve one at a separate URL.
-    const doc = Bun.serve({
+    const fx = fixture({ metadata: false, issParameter: false });
+    // The authorization server publishes its own RFC 8414 document at ITS OWN well-known location (the
+    // issuer is the document's origin); its endpoints live on the MCP fixture's host.
+    const doc: ReturnType<typeof Bun.serve> = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
-      fetch: () =>
-        Response.json({ issuer: fx.issuer, authorization_endpoint: `${fx.origin}/authorize`, token_endpoint: `${fx.origin}/token`, registration_endpoint: `${fx.origin}/register`, response_types_supported: ["code"], code_challenge_methods_supported: ["S256"] }),
+      fetch: (req): Response =>
+        new URL(req.url).pathname === "/.well-known/oauth-authorization-server"
+          ? Response.json({ issuer: `http://127.0.0.1:${doc.port}`, authorization_endpoint: `${fx.origin}/authorize`, token_endpoint: `${fx.origin}/token`, registration_endpoint: `${fx.origin}/register`, response_types_supported: ["code"], code_challenge_methods_supported: ["S256"] })
+          : new Response("not found", { status: 404 }),
     });
     try {
       const metadataUrl = `http://127.0.0.1:${doc.port}/.well-known/oauth-authorization-server`;
       const store = createMemoryMcpOAuthStore();
-      const { outcome } = await signIn(fx, store, { oauth: { authServerMetadataUrl: metadataUrl } });
+      const { outcome, login } = await signIn(fx, store, { oauth: { authServerMetadataUrl: metadataUrl } });
       expect(outcome).toEqual({ ok: true });
+      expect(login.issuerOrigin).toBe(`http://127.0.0.1:${doc.port}`);
       expect((await readClientRecord(store, mcpOAuthClientAccount(fx.mcpUrl)))!.authorizationServerUrl).toBe(metadataUrl);
       expect(await refreshMcpOAuthToken({ account: mcpOAuthTokenAccount(fx.mcpUrl), store })).toEqual({ ok: true, generation: 2 });
     } finally {
       doc.stop(true);
+    }
+  });
+
+  test("fix round 3: a configured metadata document claiming ANOTHER host's issuer is refused -- the secret (bound or stamped) goes nowhere", async () => {
+    const legit = fixture({ preregistered: [{ clientId: "gh-app", clientSecret: "pre-secret-value", redirectUris: ["http://127.0.0.1:47010/callback"] }] });
+    const evilHits: string[] = [];
+    const evil: ReturnType<typeof Bun.serve> = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(req): Promise<Response> {
+        const path = new URL(req.url).pathname;
+        evilHits.push(`${req.method} ${path}`);
+        if (path === "/.well-known/oauth-authorization-server") {
+          // The probe: the LEGIT issuer claimed by a document served from the attacker's host.
+          return Response.json({ issuer: legit.issuer, authorization_endpoint: `http://127.0.0.1:${evil.port}/authorize`, token_endpoint: `http://127.0.0.1:${evil.port}/token`, response_types_supported: ["code"], code_challenge_methods_supported: ["S256"] });
+        }
+        await req.text();
+        return new Response("no", { status: 400 });
+      },
+    });
+    try {
+      const attack = { clientId: "gh-app", clientSecretRef: { kind: "keychain" as const }, authServerMetadataUrl: `http://127.0.0.1:${evil.port}/.well-known/oauth-authorization-server`, callbackPort: 47011 };
+      // (a) the secret was bound to the legit issuer up front
+      const bound = createMemoryMcpOAuthStore({ [mcpOAuthClientSecretAccount(legit.mcpUrl)]: encodeMcpOAuthClientSecretItem("pre-secret-value", legit.issuer) });
+      const errA = await startMcpOAuthLogin({ serverUrl: legit.mcpUrl, store: bound, oauth: attack }).catch((e: unknown) => e);
+      expect((errA as { code?: string }).code).toBe("metadata_issuer_mismatch");
+      // (b) stamped by a legitimate first sign-in (TOFU)
+      const tofu = createMemoryMcpOAuthStore({ [mcpOAuthClientSecretAccount(legit.mcpUrl)]: "pre-secret-value" });
+      const first = await startMcpOAuthLogin({ serverUrl: legit.mcpUrl, store: tofu, oauth: { clientId: "gh-app", clientSecretRef: { kind: "keychain" }, callbackPort: 47010 } });
+      await legit.approve(first.authUrl);
+      expect(await first.done).toEqual({ ok: true });
+      const errB = await startMcpOAuthLogin({ serverUrl: legit.mcpUrl, store: tofu, oauth: attack }).catch((e: unknown) => e);
+      expect((errB as { code?: string }).code).toBe("metadata_issuer_mismatch");
+      // Only the document itself was ever fetched from the attacker; its endpoints received nothing.
+      expect(evilHits.every((h) => h === "GET /.well-known/oauth-authorization-server")).toBe(true);
+      expect(activeMcpOAuthLoginCount()).toBe(0);
+    } finally {
+      evil.stop(true);
+    }
+  });
+
+  test("fix round 3: the document's location must be ITS issuer's well-known one (RFC 8414 §3.3 and OIDC forms)", async () => {
+    const served: Record<string, unknown> = {};
+    const srv = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (req) => (served[new URL(req.url).pathname] !== undefined ? Response.json(served[new URL(req.url).pathname]) : new Response("nf", { status: 404 })) });
+    const origin = `http://127.0.0.1:${srv.port}`;
+    const docFor = (issuer: string) => ({ issuer, authorization_endpoint: `${origin}/a`, token_endpoint: `${origin}/t`, response_types_supported: ["code"] });
+    served["/.well-known/oauth-authorization-server/tenant/x"] = docFor(`${origin}/tenant/x`);
+    served["/tenant/x/.well-known/openid-configuration"] = docFor(`${origin}/tenant/x`);
+    served["/.well-known/oauth-authorization-server"] = docFor(`${origin}/tenant/x`); // wrong: path issuer at the root
+    served["/elsewhere/metadata.json"] = docFor(origin);
+    const fetchFn = createMcpAuthFetch({ allowLoopback: true });
+    try {
+      expect((await fetchAuthorizationServerMetadataDocument(`${origin}/.well-known/oauth-authorization-server/tenant/x`, fetchFn)).issuer).toBe(`${origin}/tenant/x`);
+      expect((await fetchAuthorizationServerMetadataDocument(`${origin}/tenant/x/.well-known/openid-configuration`, fetchFn)).issuer).toBe(`${origin}/tenant/x`);
+      for (const bad of ["/.well-known/oauth-authorization-server", "/elsewhere/metadata.json"]) {
+        const err = await fetchAuthorizationServerMetadataDocument(`${origin}${bad}`, fetchFn).catch((e: unknown) => e);
+        expect([bad, (err as { code?: string }).code]).toEqual([bad, "metadata_issuer_mismatch"]);
+      }
+    } finally {
+      srv.stop(true);
     }
   });
 });

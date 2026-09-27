@@ -203,6 +203,7 @@ export async function startMcpOAuthLogin(opts: StartMcpOAuthLoginOptions): Promi
   let redirectUri = "";
   let existingClient: McpOAuthClientRecord | null = null;
   let requestedScope: string | undefined;
+  let recordFor: ((info: StoredOAuthClientInformation, issuer: string) => McpOAuthClientRecord) | undefined;
   let preSecretItem: McpOAuthClientSecretItem | undefined;
   let preSecret: string | undefined;
   const state = randomBytes(MCP_OAUTH_STATE_BYTES).toString("base64url");
@@ -253,6 +254,7 @@ export async function startMcpOAuthLogin(opts: StartMcpOAuthLoginOptions): Promi
         const metadata = await fetchAuthorizationServerMetadataDocument(oauth.authServerMetadataUrl, fetchFn);
         discovery = { authorizationServerUrl: metadata.issuer, authorizationServerMetadata: metadata };
       } catch (err) {
+        if (err instanceof McpOAuthError && (err.code === "metadata_issuer_mismatch" || err.code === "policy_refused")) throw err;
         throw new McpOAuthError("login_failed", `the configured authorization server metadata (oauth.authServerMetadataUrl) could not be read: ${boundedReason(err)}`);
       }
       checkpoint();
@@ -282,6 +284,7 @@ export async function startMcpOAuthLogin(opts: StartMcpOAuthLoginOptions): Promi
       };
     };
 
+    recordFor = clientRecordFor;
     const clientInformation = (ctx?: OAuthClientInformationContext): StoredOAuthClientInformation | undefined => {
       if (clientDecision !== undefined) return clientDecision;
       if (oauth.clientId !== undefined) {
@@ -299,8 +302,10 @@ export async function startMcpOAuthLogin(opts: StartMcpOAuthLoginOptions): Promi
             );
           }
         }
-        // Pre-registered first (spec §1.4): the MCP client stamps the issuer and saves it back.
-        return { client_id: oauth.clientId, ...(preSecret !== undefined ? { client_secret: preSecret } : {}) };
+        // Pre-registered first (spec §1.4), stamped with its issuer (SEP-2352) so the MCP client neither logs
+        // a "no issuer stamp" line nor re-stamps it.
+        const stamp = ctx?.issuer;
+        return { client_id: oauth.clientId, ...(preSecret !== undefined ? { client_secret: preSecret } : {}), ...(stamp !== undefined ? { issuer: stamp } : {}) };
       }
       if (forgetExisting || existing === null || ctx === undefined || existing.issuer !== ctx.issuer) return undefined;
       if (existing.registeredVia === "dcr" && reuseRegistration && existing.redirectUri === redirectUri) {
@@ -474,6 +479,10 @@ export async function startMcpOAuthLogin(opts: StartMcpOAuthLoginOptions): Promi
         ...(tokens.scope !== undefined ? { scope: tokens.scope } : {}),
         generation: (previous?.generation ?? 0) + 1,
       });
+      // The registration this sign-in actually used, persisted on success: a pre-registered client arrives
+      // already issuer-stamped (above), so the MCP client never saves it itself -- and a refresh needs it.
+      if (recordFor !== undefined) await writeClientRecord(opts.store, clientAccount, recordFor(client, issuer));
+      if (finished) return page("This sign-in has already finished", 410);
       // TRUST ON FIRST USE (fix round 2, I-A): an unbound secret is bound now to the issuer that just
       // accepted it. Only in `store` -- a host that reads the secret elsewhere (`readClientSecret`) binds it
       // there itself (`encodeMcpOAuthClientSecretItem(secret, expectedIssuer)`); the client record written
