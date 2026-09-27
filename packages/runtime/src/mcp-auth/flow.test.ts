@@ -1,7 +1,7 @@
 // WS-25: the host's three doors -- sign in, refresh, revoke -- against the fixture authorization server
 // (test-fixture-as.ts). Each test pins a behaviour the spec names; none reaches a real server.
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mcpOAuthClientAccount, mcpOAuthTokenAccount } from "./account.ts";
+import { mcpOAuthClientAccount, mcpOAuthClientSecretAccount, mcpOAuthTokenAccount } from "./account.ts";
 import { activeMcpOAuthLoginCount, startMcpOAuthLogin } from "./login.ts";
 import { refreshMcpOAuthToken } from "./refresh.ts";
 import { revokeMcpOAuth } from "./revoke.ts";
@@ -66,6 +66,7 @@ describe("sign-in: DCR", () => {
     expect(outcome).toEqual({ ok: true });
     expect(callbackStatus).toBe(200);
     expect(login.issuerOrigin).toBe(fx.origin);
+    expect(login.authorizeOrigin).toBe(fx.origin);
     const token = await readTokenRecord(store, mcpOAuthTokenAccount(fx.mcpUrl));
     expect(token).toMatchObject({ v: 1, kind: "mcp-oauth", serverUrl: fx.mcpUrl, issuer: fx.issuer, generation: 1, scope: "read" });
     expect(token!.refreshToken).toBeString();
@@ -123,13 +124,13 @@ describe("sign-in: CIMD and pre-registered clients", () => {
     expect(fx.authorizeRedirects[0]).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/);
   });
 
-  test("a PRE-REGISTERED confidential client beats CIMD and DCR; its secret comes from a Keychain locator and is kept for refresh", async () => {
+  test("a PRE-REGISTERED confidential client beats CIMD and DCR; its secret comes from its DERIVED Keychain account and is kept for refresh", async () => {
     const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
     const port = probe.port as number;
     probe.stop(true);
     const fx = fixture({ cimd: true, cimdDocuments: {}, preregistered: [{ clientId: "gh-app", clientSecret: "pre-secret-value", redirectUris: [`http://127.0.0.1:${port}/callback`] }] });
-    const store = createMemoryMcpOAuthStore({ "mcp-oauth-secret:gh": "pre-secret-value" });
-    const { outcome } = await signIn(fx, store, { oauth: { clientId: "gh-app", clientSecretRef: { kind: "keychain", account: "mcp-oauth-secret:gh" }, callbackPort: port } });
+    const store = createMemoryMcpOAuthStore({ [mcpOAuthClientSecretAccount(fx.mcpUrl)]: "pre-secret-value" });
+    const { outcome } = await signIn(fx, store, { oauth: { clientId: "gh-app", clientSecretRef: { kind: "keychain" }, callbackPort: port } });
     expect(outcome).toEqual({ ok: true });
     expect(fx.registrations).toEqual([]);
     const client = await readClientRecord(store, mcpOAuthClientAccount(fx.mcpUrl));
@@ -138,11 +139,22 @@ describe("sign-in: CIMD and pre-registered clients", () => {
     expect(await refreshMcpOAuthToken({ account: mcpOAuthTokenAccount(fx.mcpUrl), store })).toEqual({ ok: true, generation: 2 });
   });
 
-  test("a missing pre-registered secret is refused typed before anything binds", async () => {
+  test("the secret is read ONLY from the derived account -- never a provider key a config (or anyone) names", async () => {
     const fx = fixture();
-    const err = await startMcpOAuthLogin({ serverUrl: fx.mcpUrl, store: createMemoryMcpOAuthStore(), oauth: { clientId: "x", clientSecretRef: { kind: "keychain", account: "nope" } } }).catch((e: unknown) => e);
+    const reads: string[] = [];
+    const inner = createMemoryMcpOAuthStore({ "openai:default": "sk-provider-key" });
+    const store: McpOAuthStore = { read: async (a) => (reads.push(a), inner.read(a)), write: inner.write, remove: inner.remove };
+    // A config that still tries to name an account never gets past the type or validateServerConfig; even
+    // cast through, the sign-in ignores it and reads the derived account, which is empty -> refused typed.
+    const err = await startMcpOAuthLogin({ serverUrl: fx.mcpUrl, store, oauth: { clientId: "x", clientSecretRef: { kind: "keychain", account: "openai:default" } as never } }).catch((e: unknown) => e);
     expect((err as { code?: string }).code).toBe("client_secret_unavailable");
+    expect(reads).toEqual([mcpOAuthClientSecretAccount(fx.mcpUrl)]);
+    expect(fx.tokenPosts).toEqual([]);
     expect(activeMcpOAuthLoginCount()).toBe(0);
+    // A host reader is called with that same derived account, and nothing else.
+    const asked: string[] = [];
+    await startMcpOAuthLogin({ serverUrl: fx.mcpUrl, store: createMemoryMcpOAuthStore(), oauth: { clientId: "x", clientSecretRef: { kind: "keychain" } }, readClientSecret: async (a) => (asked.push(a), null) }).catch(() => {});
+    expect(asked).toEqual([mcpOAuthClientSecretAccount(fx.mcpUrl)]);
   });
 
   test("the LEGACY variant (no metadata anywhere) falls back to /authorize, /token and /register", async () => {
@@ -214,6 +226,56 @@ describe("sign-in: the callback and the flow's lifetime", () => {
     const login = await startMcpOAuthLogin({ serverUrl: fx.mcpUrl, store: createMemoryMcpOAuthStore(), timeoutMs: 30 });
     expect(await login.done).toEqual({ ok: false, reason: "login_timeout" });
     expect(await listenerIsClosed(new URL(login.authUrl).searchParams.get("redirect_uri")!)).toBe(true);
+  });
+
+  test("one flow per server, even when two sign-ins START concurrently: one listener survives, the other unwinds", async () => {
+    const fx = fixture();
+    const store = createMemoryMcpOAuthStore();
+    const [a, b] = await Promise.allSettled([startMcpOAuthLogin({ serverUrl: fx.mcpUrl, store }), startMcpOAuthLogin({ serverUrl: fx.mcpUrl, store })]);
+    const live: Array<Awaited<ReturnType<typeof startMcpOAuthLogin>>> = [];
+    const outcomes: unknown[] = [];
+    for (const r of [a, b]) {
+      if (r.status === "rejected") outcomes.push((r.reason as { code?: string }).code);
+      else live.push(r.value);
+    }
+    const settled = await Promise.all(live.map((l) => Promise.race([l.done, Bun.sleep(50).then(() => "pending")])));
+    // Exactly one flow is still waiting for its callback; the other was superseded (early or late).
+    expect(settled.filter((o) => o === "pending").length + 0).toBe(1);
+    expect([...outcomes, ...settled.filter((o) => o !== "pending").map((o) => (o as { reason: string }).reason)]).toEqual(["login_superseded"]);
+    expect(activeMcpOAuthLoginCount()).toBe(1);
+    const winner = live[settled.indexOf("pending")]!;
+    await fx.approve(winner.authUrl);
+    expect(await winner.done).toEqual({ ok: true });
+    expect(activeMcpOAuthLoginCount()).toBe(0);
+  });
+
+  test("the code exchange runs ONCE: an invalid_client answer is reported by code, never retried, never logged verbatim, and the dead registration is cleared", async () => {
+    const fx = fixture();
+    const store = createMemoryMcpOAuthStore();
+    const login = await startMcpOAuthLogin({ serverUrl: fx.mcpUrl, store });
+    // The browser leg by hand: approved at /authorize, THEN the authorization server forgets the client.
+    const consent = await fetch(login.authUrl, { redirect: "manual" });
+    fx.forgetRegistrations();
+    await (await fetch(consent.headers.get("location")!)).text();
+    expect(await login.done).toEqual({ ok: false, reason: "token_exchange_failed:oauth_error:invalid_client" });
+    expect(fx.tokenPosts).toEqual(["authorization_code"]); // the single-use code was posted once
+    expect(fx.registrations.length).toBe(1); // no re-registration
+    expect(await store.read(mcpOAuthClientAccount(fx.mcpUrl))).toBeNull();
+    expect(await store.read(mcpOAuthTokenAccount(fx.mcpUrl))).toBeNull();
+    for (const line of logged) expect(line).not.toContain("fixture: invalid_client");
+  });
+
+  test("a sign-in that ends DURING its code exchange (cancel, timeout) writes no tokens", async () => {
+    const fx = fixture({ tokenDelayMs: 150 });
+    const store = createMemoryMcpOAuthStore();
+    const login = await startMcpOAuthLogin({ serverUrl: fx.mcpUrl, store });
+    const approving = fx.approve(login.authUrl).catch(() => undefined);
+    await Bun.sleep(40);
+    login.cancel();
+    await approving;
+    await Bun.sleep(200);
+    expect(await login.done).toEqual({ ok: false, reason: "login_cancelled" });
+    expect(await store.read(mcpOAuthTokenAccount(fx.mcpUrl))).toBeNull();
   });
 
   test("one flow per server: a second sign-in supersedes the first", async () => {
