@@ -288,12 +288,11 @@ describe("WS-23 item 5: the interleaved-thinking beta on the budget-only 4.5 row
     });
   }
 
-  test("Haiku 4.5: the catalog declares NO reasoning for its rows, so a thinking request is refused before the wire and the beta never arises (a catalog-evidence gap, not an adapter rule)", async () => {
-    const s = start(() => sse(messageStart + ending("end_turn")));
-    const events: ProviderEvent[] = [];
-    for await (const e of adapter().streamTurn({ model: "claude-haiku-4.5", messages: [{ role: "user", content: "hi" }], thinking: { type: "enabled", budgetTokens: 4_096 }, tools: TOOLS }, ctx(s.url))) events.push(e);
-    expect(error(events)?.error.message).toMatch(/does not declare reasoning support/);
-    expect(s.requests).toHaveLength(0);
+  test("Haiku 4.5: its rows now DECLARE manual (budget) thinking (cat34, from Anthropic's Haiku 4.5 page), so a budget + tools gets the beta like the other 4.5 rows", async () => {
+    // This used to pin the opposite -- a thinking request refused before the wire because the catalog carried
+    // no reasoning block for Haiku 4.5. That was recorded as a catalog-evidence gap, not an adapter rule; the
+    // gap is closed now, and the adapter rule (budget rows + tools -> the interleaved-thinking beta) applies.
+    expect(await betasOf({ model: "claude-haiku-4.5", thinking: { type: "enabled", budgetTokens: 4_096 }, tools: TOOLS })).toContain(INTERLEAVED_THINKING_BETA);
   });
 
   test("effort on Opus 4.5 maps to a budget, so it gets the beta too", async () => {
