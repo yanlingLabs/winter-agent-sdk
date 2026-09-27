@@ -60,6 +60,19 @@ export function mcpOAuthClientAccount(serverUrl: string): string {
   return `${MCP_OAUTH_CLIENT_ACCOUNT_PREFIX}${mcpOAuthAccountId(serverUrl)}`;
 }
 
+/** The pre-registered client secret's account prefix: `mcp-oauth-client-secret:<id>`. Only the host reads it. */
+export const MCP_OAUTH_CLIENT_SECRET_ACCOUNT_PREFIX = "mcp-oauth-client-secret:";
+
+/**
+ * The ONE Keychain account a pre-registered client's secret is read from: `mcp-oauth-client-secret:<id>`,
+ * DERIVED from the server URL and never named by a config (see `McpOAuthSecretRef`: a config-named
+ * account could point the sign-in at a provider API key and hand it to an attacker's authorization
+ * server). The host writes the secret here (a masked prompt, a secure field); the sign-in reads it here.
+ */
+export function mcpOAuthClientSecretAccount(serverUrl: string): string {
+  return `${MCP_OAUTH_CLIENT_SECRET_ACCOUNT_PREFIX}${mcpOAuthAccountId(serverUrl)}`;
+}
+
 const ACCOUNT_SHAPE = /^mcp-oauth:[0-9a-f]{16}$/;
 
 /** True for a well-formed token account name (`mcp-oauth:` + 16 lower-case hex). */

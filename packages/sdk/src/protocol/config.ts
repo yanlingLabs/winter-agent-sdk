@@ -215,16 +215,16 @@ export interface McpServerToolPolicy {
  */
 export type McpVersionNegotiation = "legacy" | "auto" | { pin: string };
 /**
- * WS-25, WINTER-OWNED: a LOCATOR for a pre-registered OAuth client's secret -- the Keychain item that
- * holds it, never the value. The same `{ kind: "keychain", account, service? }` shape as a provider
- * credential's `CredentialRef` keychain arm (WS-20 names credentials on the wire, never material);
- * `service` absent means the host's own service. A config that carries a secret VALUE is refused
- * (`validateServerConfig`): a server config reaches settings files, hook inputs and `mcp.get`.
+ * WS-25, WINTER-OWNED: "this pre-registered client has a secret, stored in the Keychain". It is a MARKER,
+ * not a locator: the Keychain account is DERIVED from the server's canonical URL
+ * (`mcp-oauth-client-secret:<id>`, `/mcp-auth`'s `mcpOAuthClientSecretAccount`), in the host's own service,
+ * and a config can name neither. A config-named account would let any config source -- a trusted
+ * repository's MCP list, copied verbatim into a session -- point the sign-in at ANY Keychain item (a
+ * provider API key) and send it to an authorization server of its choosing as `client_secret`.
+ * `validateServerConfig` refuses any other key (`account`, `service`, a value).
  */
 export interface McpOAuthSecretRef {
   kind: "keychain";
-  account: string;
-  service?: string;
 }
 /**
  * WS-25, WINTER-OWNED: how Winter signs in to ONE remote (http/sse) MCP server over OAuth. Every field is
@@ -234,7 +234,8 @@ export interface McpOAuthSecretRef {
  * `mcpOAuthAccountId`).
  *
  * - `clientId` -- a PRE-REGISTERED client (preferred over CIMD and DCR when present).
- * - `clientSecretRef` -- that client's secret, as a Keychain locator (see `McpOAuthSecretRef`).
+ * - `clientSecretRef` -- `{ kind: "keychain" }`: that client has a secret, stored at the DERIVED Keychain
+ *   account (see `McpOAuthSecretRef`).
  * - `callbackPort` -- the loopback port the sign-in listener binds (`http://127.0.0.1:<port>/callback`);
  *   a pre-registered client usually needs it fixed. Absent: an ephemeral port (DCR persists it).
  * - `authServerMetadataUrl` -- the authorization server's RFC 8414 metadata document, for a server that
