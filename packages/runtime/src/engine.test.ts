@@ -2917,6 +2917,218 @@ describe("WS-27: a turn waits for a reconnect in flight, bounded", () => {
   }, 30_000);
 });
 
+// WS-27 (review): the wait runs inside an ACTIVE turn -- interruptible, `compact` refused `busy`, end_input
+// clean -- and every CONNECTING control request holds the next turn (mcp_toggle, mcp_set_servers), while
+// mcp_status does not. One proxy in front of a real MCP endpoint that can be told to hold every request.
+describe("WS-27 (review): the reconnect wait inside an active turn, and which control requests hold one", () => {
+  type ProxyMode = "forward" | "hold" | "fail";
+  async function withHoldingProxy(fn: (proxy: { url: string; set(mode: ProxyMode): void; release(): void }) => Promise<void>): Promise<void> {
+    await withModernHttpFixture(defaultFixtureSpec(), async (target) => {
+      let mode: ProxyMode = "forward";
+      let releaseHeld!: () => void;
+      const held = new Promise<void>((resolve) => (releaseHeld = resolve));
+      const proxy = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        async fetch(req) {
+          if (mode === "fail") return new Response("unavailable", { status: 503 });
+          if (mode === "hold") await held;
+          const url = new URL(req.url);
+          const body = req.method === "GET" || req.method === "HEAD" ? null : await req.arrayBuffer();
+          const res = await fetch(new URL(url.pathname + url.search, target), { method: req.method, headers: req.headers, body });
+          return new Response(res.body, { status: res.status, headers: res.headers });
+        },
+      });
+      try {
+        await fn({ url: `http://127.0.0.1:${proxy.port}/mcp`, set: (m) => (mode = m), release: () => releaseHeld() });
+      } finally {
+        releaseHeld();
+        proxy.stop(true);
+      }
+    });
+  }
+  interface Run {
+    code: number;
+    frames: WinterFrame[];
+    generateAt: number[];
+    results: Array<{ at: number; message: Record<string, unknown> }>;
+    responses: Map<string, { at: number; frame: ControlResponseFrame }>;
+  }
+  // Turn 1 runs; then `afterFirst` sends whatever the scenario needs (it returns when turn 2's user message
+  // went out); after turn 2's result, `afterSecond` runs and the input ends.
+  async function drive(opts: {
+    sources?: Parameters<typeof runEngine>[0]["extraMcpServerSources"];
+    afterFirst: (write: (f: WinterFrame) => void) => void;
+    afterSecond?: () => void;
+    endInputWithSecond?: boolean;
+  }): Promise<Run> {
+    const generateAt: number[] = [];
+    const provider: Provider = {
+      async generate() {
+        generateAt.push(Date.now());
+        return { kind: "text", text: "ok" };
+      },
+    };
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      config: baseConfig({ sessionId: `ws27-review-${randomUUID()}`, toolSearchEnabled: false }),
+      input: runtime.input,
+      output: runtime.output,
+      provider,
+      ...(opts.sources !== undefined ? { extraMcpServerSources: opts.sources } : {}),
+      env: { MCP_TIMEOUT: "20000" },
+    });
+    const run: Run = { code: -1, frames: [], generateAt, results: [], responses: new Map() };
+    const write = (f: WinterFrame): void => host.output.write(f);
+    const reader = (async () => {
+      for await (const f of host.input) {
+        run.frames.push(f);
+        if (f.type === "control_response") run.responses.set((f as ControlResponseFrame).requestId, { at: Date.now(), frame: f as ControlResponseFrame });
+        if (f.type !== "data" || (f as { message: { type: string } }).message.type !== "result") continue;
+        run.results.push({ at: Date.now(), message: (f as { message: Record<string, unknown> }).message });
+        if (run.results.length === 1) {
+          opts.afterFirst(write);
+          if (opts.endInputWithSecond === true) write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+        }
+        if (run.results.length === 2) {
+          opts.afterSecond?.();
+          if (opts.endInputWithSecond !== true) write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+        }
+      }
+    })();
+    write({ type: "user", text: "first" });
+    run.code = await done;
+    await reader;
+    return run;
+  }
+
+  test("an interrupt during the wait ends the turn at once as interrupted, with no generation", async () => {
+    await withHoldingProxy(async (proxy) => {
+      let sentAt = 0;
+      const run = await drive({
+        sources: [{ origin: "settings", servers: { srv: { type: "http", url: proxy.url } } }],
+        afterFirst: (write) => {
+          proxy.set("hold");
+          write({ type: "control_request", requestId: "rc-1", subtype: "mcp_reconnect", payload: { serverName: "srv" } });
+          write({ type: "user", text: "again" });
+          sentAt = Date.now();
+          setTimeout(() => write({ type: "control_request", requestId: "int-1", subtype: "interrupt", payload: { scope: "turn" } }), 300);
+        },
+        afterSecond: () => proxy.release(),
+      });
+      expect(run.code).toBe(0);
+      expect(run.results[1]!.message).toMatchObject({ type: "result", interrupted: true });
+      // Well inside the 2 s bound: the interrupt, not the deadline, ended the wait...
+      expect(run.results[1]!.at - sentAt).toBeLessThan(1500);
+      // ...and turn 2 never called the provider.
+      expect(run.generateAt).toHaveLength(1);
+    });
+  }, 30_000);
+
+  test("a compact during the wait is answered busy (the turn is already active)", async () => {
+    await withHoldingProxy(async (proxy) => {
+      const run = await drive({
+        sources: [{ origin: "settings", servers: { srv: { type: "http", url: proxy.url } } }],
+        afterFirst: (write) => {
+          proxy.set("hold");
+          write({ type: "control_request", requestId: "rc-1", subtype: "mcp_reconnect", payload: { serverName: "srv" } });
+          write({ type: "user", text: "again" });
+          setTimeout(() => write({ type: "control_request", requestId: "cmp-1", subtype: "compact", payload: {} }), 300);
+        },
+        afterSecond: () => proxy.release(),
+      });
+      expect(run.code).toBe(0);
+      const compact = run.responses.get("cmp-1")!;
+      expect(compact.frame).toMatchObject({ ok: false, error: { code: "busy" } });
+      expect(compact.at).toBeLessThan(run.results[1]!.at);
+      // No compaction generation slipped in: turn 1 and turn 2 only.
+      expect(run.generateAt).toHaveLength(2);
+    });
+  }, 30_000);
+
+  test("end_input right behind the held turn is clean: the turn still runs, every request is answered once, the engine exits 0", async () => {
+    await withHoldingProxy(async (proxy) => {
+      const run = await drive({
+        sources: [{ origin: "settings", servers: { srv: { type: "http", url: proxy.url } } }],
+        endInputWithSecond: true,
+        afterFirst: (write) => {
+          proxy.set("hold");
+          write({ type: "control_request", requestId: "rc-1", subtype: "mcp_reconnect", payload: { serverName: "srv" } });
+          write({ type: "user", text: "again" });
+          setTimeout(() => {
+            proxy.set("forward");
+            proxy.release();
+          }, 300);
+        },
+      });
+      expect(run.code).toBe(0);
+      expect(run.results).toHaveLength(2);
+      expect(run.generateAt).toHaveLength(2);
+      expect(run.frames.filter((f) => f.type === "control_response" && (f as ControlResponseFrame).requestId === "rc-1")).toHaveLength(1);
+    });
+  }, 30_000);
+
+  test("mcp_toggle (enabling a server) holds the next turn, bounded", async () => {
+    await withHoldingProxy(async (proxy) => {
+      proxy.set("fail"); // comes up failed: no live client, so enabling it is a real connect
+      let sentAt = 0;
+      const run = await drive({
+        sources: [{ origin: "settings", servers: { tog: { type: "http", url: proxy.url } } }],
+        afterFirst: (write) => {
+          proxy.set("hold");
+          write({ type: "control_request", requestId: "tg-1", subtype: "mcp_toggle", payload: { serverName: "tog", enabled: true } });
+          write({ type: "user", text: "again" });
+          sentAt = Date.now();
+        },
+        afterSecond: () => {
+          proxy.set("forward");
+          proxy.release();
+        },
+      });
+      expect(run.code).toBe(0);
+      const delay = run.generateAt[1]! - sentAt;
+      expect(delay).toBeGreaterThanOrEqual(2000 - 250);
+      expect(delay).toBeLessThan(6000);
+    });
+  }, 30_000);
+
+  test("mcp_set_servers (adding a server) holds the next turn, bounded", async () => {
+    await withHoldingProxy(async (proxy) => {
+      let sentAt = 0;
+      const run = await drive({
+        afterFirst: (write) => {
+          proxy.set("hold");
+          write({ type: "control_request", requestId: "ss-1", subtype: "mcp_set_servers", payload: { servers: { added: { type: "http", url: proxy.url } } } });
+          write({ type: "user", text: "again" });
+          sentAt = Date.now();
+        },
+        afterSecond: () => {
+          proxy.set("forward");
+          proxy.release();
+        },
+      });
+      expect(run.code).toBe(0);
+      const delay = run.generateAt[1]! - sentAt;
+      expect(delay).toBeGreaterThanOrEqual(2000 - 250);
+      expect(delay).toBeLessThan(6000);
+    });
+  }, 30_000);
+
+  test("mcp_status never holds a turn", async () => {
+    let sentAt = 0;
+    const run = await drive({
+      afterFirst: (write) => {
+        write({ type: "control_request", requestId: "st-1", subtype: "mcp_status", payload: undefined });
+        write({ type: "user", text: "again" });
+        sentAt = Date.now();
+      },
+    });
+    expect(run.code).toBe(0);
+    expect(run.responses.get("st-1")?.frame.ok).toBe(true);
+    expect(run.generateAt[1]! - sentAt).toBeLessThan(1000);
+  }, 30_000);
+});
+
 describe("Phase 4 Task 3: system/init.mcp_servers (MUST 3)", () => {
   test("both init frames carry mcp_servers when a state source is configured", async () => {
     const { host, runtime } = createInMemoryChannel();

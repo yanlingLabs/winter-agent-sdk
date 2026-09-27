@@ -140,17 +140,20 @@ describe("WS-27: mcpServerIdentity and winter_mcp_server", () => {
   });
 
   for (const event of ["PreToolUse", "PostToolUse", "PostToolUseFailure"] as const) {
-    test(`${event}: the request carries mcpServer -- the caller's when given, else looked up from toolName`, async () => {
+    test(`${event}: the request carries exactly the caller's mcpServer, and the runner never derives one from toolName`, async () => {
       registerAnnotated();
       const { invoker, requests } = recordingInvoker();
       const c = ctx(invoker, [{ id: "h", event, source: "sdk" }]);
-      await runHooks(event, { toolUseID: "tu", toolName: `mcp__${RO}__read`, input: {} }, c);
-      // The engine's explicit identity wins over the lookup (the hook subject may be a declared spelling).
-      await runHooks(event, { toolUseID: "tu2", toolName: "mcp__cf__read", mcpServer: { name: "cf_2", configName: "cf" }, input: {} }, c);
+      // Stated by the engine: carried verbatim, whatever the subject (here a renamed server's declared spelling).
+      await runHooks(event, { toolUseID: "tu", toolName: "mcp__cf__read", mcpServer: { name: "cf_2", configName: "cf" }, input: {} }, c);
+      // NOT stated: absent, even though the registry could resolve the subject (review I-2 -- no guessing).
+      await runHooks(event, { toolUseID: "tu2", toolName: `mcp__${RO}__read`, input: {} }, c);
       await runHooks(event, { toolUseID: "tu3", toolName: "Bash", input: { command: "ls" } }, c);
-      expect(requests[0]!.mcpServer).toEqual({ name: RO, configName: RO, readOnlyHint: true });
-      expect(requests[1]!.mcpServer).toEqual({ name: "cf_2", configName: "cf" });
+      expect(requests[0]!.mcpServer).toEqual({ name: "cf_2", configName: "cf" });
+      expect("mcpServer" in requests[1]!).toBe(false);
       expect("mcpServer" in requests[2]!).toBe(false);
+      // The provenance fields are unaffected (they name the server that registered the subject).
+      expect(requests[1]).toMatchObject({ mcpServerName: RO, mcpToolName: "read" });
     });
   }
 

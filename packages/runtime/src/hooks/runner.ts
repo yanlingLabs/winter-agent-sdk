@@ -138,8 +138,8 @@ export function mcpToolProvenance(toolName: string): McpToolProvenanceInfo | und
 // registered under the raw name its `.mcp.json` declares, so its `configName` is that name.
 //
 // The ENGINE computes this from the called name and hands it to the hook runner and the permission
-// prompt explicitly: a renamed server's gating hook can run under the DECLARED spelling
-// (`mcp__cf__x`), which the registry resolves to a different server (the parent's `cf`).
+// prompt explicitly -- the runner never derives it: a renamed server's gating hook can run under the
+// DECLARED spelling (`mcp__cf__x`), which the registry resolves to a different server (the parent's `cf`).
 export function mcpServerIdentity(toolName: string, renames?: Readonly<Record<string, string>>): McpServerIdentity | undefined {
   const name = mcpServerOwningTool(toolName);
   if (name === undefined) return undefined;
@@ -265,7 +265,7 @@ const DEFER_CAPABLE_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(["PreToolUse",
 export interface RunHooksCallInfo {
   toolUseID?: string;
   toolName?: string;
-  /** WS-27: the called tool's server identity, when the caller knows it (the engine always does); else looked up from `toolName`. */
+  /** WS-27: the called tool's server identity, as the ENGINE computed it (`mcpServerIdentity`, from the name the model called). Never derived here. */
   mcpServer?: McpServerIdentity;
   input?: Record<string, unknown>;
   payload?: unknown;
@@ -868,9 +868,10 @@ export async function runHooks(event: HookEvent, call: RunHooksCallInfo, ctx: Ru
   // WS-24: looked up once per run -- the same tool for every participant, and a registry that changes
   // mid-run (a server reconnecting) must not hand two hooks of one call two different answers.
   const provenance = call.toolName !== undefined && matched.length > 0 ? (ctx.mcpProvenance ?? mcpToolProvenance)(call.toolName) : undefined;
-  // WS-27: once per run too, and only for the three events the contract names.
-  const mcpServer =
-    MCP_SERVER_IDENTITY_EVENTS.has(event) && matched.length > 0 ? (call.mcpServer ?? (call.toolName !== undefined ? mcpServerIdentity(call.toolName) : undefined)) : undefined;
+  // WS-27: only for the three events the contract names, and only what the caller STATED -- never looked
+  // up from `toolName` here (review I-2): the subject can be a renamed server's declared spelling, which
+  // the registry resolves to a different server, so a guess would be wrong exactly where it matters.
+  const mcpServer = MCP_SERVER_IDENTITY_EVENTS.has(event) && matched.length > 0 ? call.mcpServer : undefined;
   const results: HookOutcomeEntry[] = [];
   let denied = false;
   // Invocation-time chaining (rule 3 sentence 1) -- see this file's own header for the split from

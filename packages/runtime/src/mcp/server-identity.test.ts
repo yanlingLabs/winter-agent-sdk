@@ -10,7 +10,7 @@ import type { ControlRequestFrame, RuntimeConfig, WinterFrame } from "@yanlingla
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { runEngine } from "../engine.ts";
 import { scriptedProvider } from "../provider/mock.ts";
-import { withHttpFixture, type FixtureServerSpec } from "./test-fixtures.ts";
+import { withHttpFixture, withModernHttpFixture, type FixtureServerSpec } from "./test-fixtures.ts";
 
 const spec: FixtureServerSpec = {
   tools: [
@@ -95,5 +95,88 @@ test("hook and permission requests name the called tool's server: explicit and p
       const results = JSON.stringify(frames.filter((f) => f.type === "data"));
       for (const text of ["LOOK", "BARE"]) expect(results).toContain(text);
     });
+  });
+}, 30_000);
+
+test("PostToolUseFailure names the called tool's server too (a tool that reports isError)", async () => {
+  const failing: FixtureServerSpec = {
+    tools: [{ name: "fails", description: "always fails", inputSchema: { type: "object", properties: {} }, annotations: { readOnlyHint: false }, handler: () => ({ content: [{ type: "text", text: "nope" }], isError: true }) }],
+    resources: [],
+  };
+  await withHttpFixture(failing, async (url) => {
+    const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "f1", name: "mcp__failsrv__fails", input: {} }] }, { kind: "text", text: "done" }]);
+    const config = {
+      sessionId: `ws27-identity-failure-${randomUUID()}`,
+      cwd: "/winter-fixture",
+      model: "winter-test/echo",
+      toolSearchEnabled: false,
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      mcpServers: { failsrv: { type: "http", url: url.href } },
+      hooks: { PostToolUse: [{ hookCount: 1, source: "sdk" }], PostToolUseFailure: [{ hookCount: 1, source: "sdk" }] },
+    } as RuntimeConfig;
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config, input: runtime.input, output: runtime.output, provider, env: { MCP_CONNECTION_NONBLOCKING: "0" } });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    const hooks: Array<{ event: string; toolName: string; mcpServer?: unknown }> = [];
+    for await (const f of host.input) {
+      if (f.type !== "control_request") continue;
+      const cf = f as ControlRequestFrame;
+      if (cf.subtype === "hook") {
+        const p = cf.payload as { event: string; toolName: string; mcpServer?: unknown };
+        hooks.push({ event: p.event, toolName: p.toolName, ...("mcpServer" in p ? { mcpServer: p.mcpServer } : {}) });
+      }
+      host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: cf.subtype === "permission" ? { behavior: "allow" } : {} });
+    }
+    expect(await done).toBe(0);
+    expect(hooks).toEqual([{ event: "PostToolUseFailure", toolName: "mcp__failsrv__fails", mcpServer: { name: "failsrv", configName: "failsrv", readOnlyHint: false } }]);
+  });
+}, 30_000);
+
+test("a server served from the discovery cache (`cached`) states no readOnlyHint until its live connection is back", async () => {
+  await withModernHttpFixture(spec, async (url) => {
+    const provider = scriptedProvider([
+      { kind: "text", text: "turn 1" },
+      { kind: "tool_use", calls: [{ id: "c1", name: "mcp__cachesrv__look", input: {} }] },
+      { kind: "text", text: "turn 2" },
+      { kind: "tool_use", calls: [{ id: "c2", name: "mcp__cachesrv__look", input: {} }] },
+      { kind: "text", text: "turn 3" },
+    ]);
+    const config = {
+      sessionId: `ws27-identity-cached-${randomUUID()}`,
+      cwd: "/winter-fixture",
+      model: "winter-test/echo",
+      toolSearchEnabled: false,
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      mcpServers: { cachesrv: { type: "http", url: url.href } },
+      hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] },
+    } as RuntimeConfig;
+    const { host, runtime } = createInMemoryChannel();
+    // MCP_DISCOVERY_CACHE=1: a reconnect is served from the cache -- the slot is `cached`, with no live client.
+    const done = runEngine({ config, input: runtime.input, output: runtime.output, provider, env: { MCP_CONNECTION_NONBLOCKING: "0", MCP_DISCOVERY_CACHE: "1" } });
+    host.output.write({ type: "user", text: "one" });
+    const identities: unknown[] = [];
+    let results = 0;
+    for await (const f of host.input) {
+      if (f.type === "control_request") {
+        const cf = f as ControlRequestFrame;
+        if (cf.subtype === "hook") identities.push((cf.payload as { mcpServer?: unknown }).mcpServer);
+        host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: {} });
+      }
+      if (f.type === "control_response" && (f as { requestId: string }).requestId === "rc-1") host.output.write({ type: "user", text: "two" });
+      if (f.type !== "data" || (f as { message: { type: string } }).message.type !== "result") continue;
+      results++;
+      if (results === 1) host.output.write({ type: "control_request", requestId: "rc-1", subtype: "mcp_reconnect", payload: { serverName: "cachesrv" } });
+      if (results === 2) host.output.write({ type: "user", text: "three" });
+      if (results === 3) host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    }
+    expect(await done).toBe(0);
+    // Turn 2 called it while `cached`: no hint. Its first call connected it live, so turn 3's call states it.
+    expect(identities).toEqual([
+      { name: "cachesrv", configName: "cachesrv" },
+      { name: "cachesrv", configName: "cachesrv", readOnlyHint: true },
+    ]);
   });
 }, 30_000);

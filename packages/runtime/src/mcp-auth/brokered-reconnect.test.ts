@@ -166,12 +166,13 @@ test("a turn that starts mid-reconnect waits for it and gets the server's tools 
     { kind: "text", text: "second done" },
   ]);
   const offered: string[][] = [];
-  const generateAt: number[] = [];
+  // One ordered log of what happened, on both sides -- the assertion below is on ORDER, never on timestamps.
+  const events: string[] = [];
   const provider: typeof script = {
     ...script,
     async generate(request, ...rest) {
       offered.push((request.tools ?? []).map((t) => t.name));
-      generateAt.push(Date.now());
+      events.push("generate");
       return script.generate(request, ...rest);
     },
   };
@@ -199,6 +200,7 @@ test("a turn that starts mid-reconnect waits for it and gets the server's tools 
         if (req.ref.account !== account) return { ok: false, reason: "not_allowed" };
         // The reconnect's read is answered only after a delay: the reconnect is still connecting when turn 2 starts.
         if (slowAnswers) await Bun.sleep(SLOW_ANSWER_MS);
+        if (slowAnswers) events.push("reconnect-sign-in-answered");
         const stored = await store.read(account);
         return stored !== null ? { ok: true, material: toSessionMcpTokenRecord(stored), generation: 1 } : { ok: false, reason: "not_found" };
       },
@@ -207,7 +209,7 @@ test("a turn that starts mid-reconnect waits for it and gets the server's tools 
   });
 
   const toolOutputs: string[] = [];
-  let reconnect: Promise<{ at: number; error?: string }> | undefined;
+  let reconnect: Promise<{ error?: string }> | undefined;
   let results = 0;
   for await (const m of q) {
     const msg = m as { type: string; message?: { content?: Array<{ content?: unknown }> } };
@@ -218,8 +220,8 @@ test("a turn that starts mid-reconnect waits for it and gets the server's tools 
       // The host reconnects the server and, WITHOUT waiting for it, sends the next message.
       slowAnswers = true;
       reconnect = q.reconnectMcpServer!(name).then(
-        () => ({ at: Date.now() }),
-        (err: unknown) => ({ at: Date.now(), error: err instanceof Error ? err.message : String(err) }),
+        () => ({}),
+        (err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }),
       );
       releaseFirst();
     }
@@ -230,7 +232,8 @@ test("a turn that starts mid-reconnect waits for it and gets the server's tools 
   // Turn 2's first request offered the server's tool, and the call ran on the reconnected server...
   expect(offered[2]).toContain(`mcp__${name}__whoami`);
   expect(toolOutputs).toEqual(["PONG-ok-read", "PONG-ok-read"]);
-  // ...because that request went out only once the reconnect had finished.
+  // ...because that request went out only once the reconnect had its (slow) sign-in answer: turn 1's two
+  // generations, then the answer, then turn 2's.
   expect(reconnected.error).toBeUndefined();
-  expect(generateAt[2]!).toBeGreaterThanOrEqual(reconnected.at);
+  expect(events.slice(0, 4)).toEqual(["generate", "generate", "reconnect-sign-in-answered", "generate"]);
 }, 30_000);

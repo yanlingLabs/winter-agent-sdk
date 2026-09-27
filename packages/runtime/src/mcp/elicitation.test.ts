@@ -225,9 +225,13 @@ describe("WS-27: elicitation cancellation reaches the host and a late answer is 
     expect(frames).toEqual([]);
   });
 
-  test("the SERVER cancels its elicitation/create (notifications/cancelled): the asker's signal aborts", async () => {
+  test("the SERVER cancels its elicitation/create (notifications/cancelled): the asker's signal aborts while the call is still open", async () => {
     let asked!: () => void;
     const askedP = new Promise<void>((r) => (asked = r));
+    // Review I-3: the call stays OPEN after the server gives up on its question (a latch the test releases),
+    // so an abort seen here can only be the MCP request's own cancellation -- never the call ending.
+    let releaseCall!: () => void;
+    const callLatch = new Promise<void>((r) => (releaseCall = r));
     let signalAborted = false;
     const server = createFixtureMcpServer({
       tools: [
@@ -241,6 +245,7 @@ describe("WS-27: elicitation cancellation reaches the host and a late answer is 
               () => "answered",
               () => "gave up",
             );
+            await callLatch;
             return { content: [{ type: "text", text: outcome }] };
           },
         },
@@ -256,10 +261,15 @@ describe("WS-27: elicitation cancellation reaches the host and a late answer is 
       });
     const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: ask, inProcessServer: server });
     try {
-      const result = await client.callTool("ask_then_give_up", {});
-      expect((result.content[0] as { text: string }).text).toBe("gave up");
+      let callSettled = false;
+      const call = client.callTool("ask_then_give_up", {}).finally(() => (callSettled = true));
+      for (let i = 0; i < 100 && !signalAborted; i++) await Bun.sleep(10);
       expect(signalAborted).toBe(true);
+      expect(callSettled).toBe(false);
+      releaseCall();
+      expect(((await call).content[0] as { text: string }).text).toBe("gave up");
     } finally {
+      releaseCall();
       await client.close();
       await server.close();
     }
