@@ -20,6 +20,8 @@ export {
   MCP_OAUTH_TOKEN_ACCOUNT_PREFIX,
 } from "./mcp-auth/account.ts";
 export { McpOAuthError, type McpOAuthErrorCode } from "./mcp-auth/errors.ts";
+export { validateMcpOAuthConfig } from "./mcp-auth/config.ts";
+export { evaluateMcpAuthUrl } from "./mcp-auth/fetch-policy.ts";
 export {
   decodeMcpOAuthClientRecord,
   decodeMcpOAuthTokenRecord,

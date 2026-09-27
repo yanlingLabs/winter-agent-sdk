@@ -13,9 +13,11 @@
 //
 // `elicitationAsk` is required by `connectMcpServer`: pass `createElicitationAsker(undefined)` for "no
 // host UI" (every elicitation is declined deterministically, never left hanging).
-import type { McpServerConfigForProcessTransport } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, type McpServerConfigForProcessTransport } from "@yanlinglabs/winter-agent-sdk";
 import { connectMcpServer as connectInternal, type ConnectedMcpClient } from "./mcp/client.ts";
 import type { ElicitationAsker } from "./mcp/elicitation.ts";
+import { createSessionAuthProvider, mcpSignInHint } from "./mcp-auth/session-provider.ts";
+import type { McpOAuthStore } from "./mcp-auth/store.ts";
 
 export {
   McpConnectError,
@@ -28,6 +30,9 @@ export {
   type McpResourceContent,
   type McpToolCallResult,
 } from "./mcp/client.ts";
+// WS-25: the store type `ConnectMcpServerOptions.oauthStore` names, re-exported so this subpath's
+// declarations stay self-contained (the same store the `/mcp-auth` subpath exports).
+export type { McpOAuthStore } from "./mcp-auth/store.ts";
 export {
   createElicitationAsker,
   type ElicitationAction,
@@ -55,6 +60,13 @@ export interface ConnectMcpServerOptions {
   elicitationAsk: ElicitationAsker;
   /** REQUIRED for a stdio server: the directory it starts in (never the host process's cwd by default). */
   cwd?: string;
+  /**
+   * WS-25 (MCP OAuth), narrow: the HOST's sign-in store. Present, an `http`/`sse` server without a static
+   * `Authorization` header connects with the stored bearer (from `@yanlinglabs/winter-agent-runtime/mcp-auth`'s
+   * records), and a dead sign-in rejects `needs_auth` without a request. A host IS the refresher, so an
+   * expired token with a refresh token is refreshed IN THIS PROCESS (single-flight, generation-checked).
+   */
+  oauthStore?: McpOAuthStore;
 }
 
 /** Connect ONE MCP server and return its live client. Rejects with a typed `McpConnectError` (see its `code`). */
@@ -65,5 +77,13 @@ export function connectMcpServer(opts: ConnectMcpServerOptions): Promise<Connect
     connectTimeoutMs: opts.connectTimeoutMs,
     elicitationAsk: opts.elicitationAsk,
     ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+    ...hostAuth(opts),
   });
+}
+
+function hostAuth(opts: ConnectMcpServerOptions): { auth?: ReturnType<typeof createSessionAuthProvider> } {
+  const { config, oauthStore } = opts;
+  if (oauthStore === undefined || (config.type !== "http" && config.type !== "sse")) return {};
+  if (Object.keys(config.headers ?? {}).some((h) => h.toLowerCase() === "authorization")) return {};
+  return { auth: createSessionAuthProvider({ serverName: opts.name, serverUrl: config.url, oauth: { store: oauthStore, signInHint: (name) => mcpSignInHint(WINTER_BRAND, name) } }) };
 }

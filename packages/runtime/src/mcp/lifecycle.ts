@@ -30,7 +30,9 @@ import type { McpServerState, McpServerStateKind, McpServerStateSource } from ".
 import type { McpControlSeam } from "./control-seam.ts";
 import type { McpEnvConfig } from "./env.ts";
 import { capMcpOutput } from "./output-cap.ts";
-import { connectMcpServer, McpConnectError, type McpToolInfo, type ConnectedMcpClient } from "./client.ts";
+import { classifyMcpAuthFailure, connectMcpServer, insufficientScopeOf, McpConnectError, type McpToolInfo, type ConnectedMcpClient } from "./client.ts";
+import { createSessionAuthProvider, type McpSessionAuthProvider, type McpSessionOAuth } from "../mcp-auth/session-provider.ts";
+import { validateMcpOAuthConfig } from "../mcp-auth/config.ts";
 import type { ElicitationAsker } from "./elicitation.ts";
 import type { InProcessMcpServer } from "./transports/sdk.ts";
 import { createMcpControlSeam } from "./control.ts";
@@ -156,6 +158,14 @@ function validateServerConfig(raw: unknown): { ok: true; config: McpServerConfig
     if (negotiation !== "legacy" && negotiation !== "auto" && !pinOk) {
       return { ok: false, reason: `MCP server config 'versionNegotiation' must be "legacy", "auto" or { "pin": "<YYYY-MM-DD revision>" }; got ${JSON.stringify(negotiation)}` };
     }
+  }
+  // WS-25: `oauth` is ACCEPTED on a remote server and validated strictly (mcp-auth/config.ts); refused on
+  // stdio/sdk, which have no HTTP to authorize -- a typo'd transport must not look signed-in-able.
+  const oauth = (raw as { oauth?: unknown }).oauth;
+  if (oauth !== undefined) {
+    if (type !== "http" && type !== "sse") return { ok: false, reason: "'oauth' applies only to a remote (http/sse) MCP server" };
+    const reason = validateMcpOAuthConfig(oauth);
+    if (reason !== undefined) return { ok: false, reason };
   }
   return { ok: true, config: raw as McpServerConfigForProcessTransport };
 }
@@ -337,6 +347,10 @@ interface ConnectionSlot {
   // is always from a `tools/list` sent AFTER the last request.
   refreshing?: Promise<RefreshServerToolsResult> | undefined;
   refreshAgain?: boolean | undefined;
+  // WS-25: the live connection's read-only bearer provider (a remote server with no static
+  // `Authorization` header, in a session that has MCP sign-ins). Fresh per connection, so a reconnect
+  // re-reads the Keychain from scratch.
+  auth?: McpSessionAuthProvider | undefined;
 }
 
 function toWireState(slot: ConnectionSlot): McpServerState {
@@ -479,6 +493,34 @@ function toolInfoToDefinition(tool: McpToolInfo): McpToolDefinition {
   };
 }
 
+// --- WS-25: which remote connections carry the session's sign-in ----------------------------------
+
+/**
+ * A config that states its own `Authorization` header is the user's static credential and is left alone:
+ * the provider would put a second, different bearer on the same request.
+ */
+function hasStaticAuthorization(config: McpServerConfigForProcessTransport): boolean {
+  if (config.type !== "http" && config.type !== "sse") return false;
+  return Object.keys(config.headers ?? {}).some((h) => h.toLowerCase() === "authorization");
+}
+
+/** The read-only bearer provider for one NEW connection to `config`, when it gets one (see `McpLifecycleDeps.oauth`). */
+function sessionAuthFor(name: string, config: McpServerConfigForProcessTransport, oauth: McpSessionOAuth | undefined): McpSessionAuthProvider | undefined {
+  if (oauth === undefined || (config.type !== "http" && config.type !== "sse") || hasStaticAuthorization(config)) return undefined;
+  try {
+    return createSessionAuthProvider({ serverName: name, serverUrl: config.url, oauth });
+  } catch {
+    // An URL the account derivation refuses (userinfo): the connection proceeds exactly as before WS-25.
+    return undefined;
+  }
+}
+
+/** Untrusted `WWW-Authenticate` text, reduced to what a scope list can contain before a model reads it. */
+function displayScope(scope: string | undefined): string {
+  const cleaned = (scope ?? "").replace(/[^A-Za-z0-9:._/ -]/g, "").trim().slice(0, 200);
+  return cleaned === "" ? "unstated" : cleaned;
+}
+
 // --- The discovery cache (WS-09 §2: "MCP_DISCOVERY_CACHE=1... a remote HTTP/SSE server with a
 // valid cache entry supplies its cached tool list without connecting") ---------------------------
 
@@ -567,6 +609,13 @@ export interface McpLifecycleDeps {
   reservedServerName?: string;
   /** WS-23: the session cwd every stdio server of this lifecycle is spawned in (see `ConnectMcpServerOptions.cwd`). */
   cwd?: string;
+  /**
+   * WS-25 (MCP OAuth): the session's sign-ins -- the token store (read-only), the host's refresh door and
+   * the sign-in hint. Present, every `http`/`sse` server WITHOUT a static `Authorization` header connects
+   * through a read-only bearer provider (`sessionAuthFor`); a server that answers 401 then lands in
+   * `needsAuth` with its tools unregistered. Absent: no provider anywhere, byte-identical to before.
+   */
+  oauth?: McpSessionOAuth;
 }
 
 export type RefreshServerToolsResult = { ok: true; toolNames: string[] } | { ok: false; reason: string };
@@ -736,6 +785,18 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
             });
             return { output: capped.text, ...(result.isError === true ? { isError: true as const } : {}) };
           } catch (err) {
+            // WS-25 (spec §1.3): a call that finds the sign-in gone turns the server `needsAuth` -- its tools
+            // are withdrawn, like any other connection that dies -- and returns the typed error naming the
+            // door. A step-up (403 insufficient_scope) fails only THIS call; the host records the scope so
+            // the next sign-in asks for it. Neither opens a browser or waits on a person.
+            const authFailure = classifyMcpAuthFailure(err);
+            if (authFailure === "needs_auth") return { output: `Error: ${markNeedsAuth(slot, slot.client, err)}`, isError: true };
+            if (authFailure === "insufficient_scope") {
+              const challenge = insufficientScopeOf(err);
+              void slot.auth?.reportInsufficientScope(challenge?.requiredScope);
+              const hint = deps.oauth?.signInHint(slot.name) ?? "";
+              return { output: `Error: mcp tool call "${toolName}" on server "${slot.name}" needs additional permission the current sign-in does not grant (scope: ${displayScope(challenge?.requiredScope)}). ${hint}`.trim(), isError: true };
+            }
             const message = err instanceof Error ? err.message : String(err);
             return { output: `Error: mcp tool call "${toolName}" on server "${slot.name}" failed: ${message}`, isError: true };
           }
@@ -759,6 +820,25 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
   // has touched this slot since the attempt began, whatever its state string happens to be.
   function isCurrentAttempt(slot: ConnectionSlot, gen: number): boolean {
     return slots.get(slot.name) === slot && slot.gen === gen;
+  }
+
+  /**
+   * WS-25: a LIVE connection's request found the sign-in gone. The slot becomes `needsAuth` -- the SAME
+   * end state a connect that hit a 401 reaches: the connection closed, the tools unregistered (never left
+   * advertised with an executor that can only fail), the reason recorded. Only for the connection that
+   * failed: a slot already moved on (reconnected, replaced, disabled) is left alone. Returns the typed
+   * message naming the sign-in door.
+   */
+  function markNeedsAuth(slot: ConnectionSlot, failed: ConnectedMcpClient | undefined, err: unknown): string {
+    const hint = deps.oauth?.signInHint(slot.name) ?? "";
+    const message = err instanceof McpConnectError || (err instanceof Error && err.name === "McpNeedsAuthError") ? (err as Error).message : `MCP server "${slot.name}" needs sign-in (the server answered 401). ${hint}`.trim();
+    if (slots.get(slot.name) !== slot || failed === undefined || slot.client !== failed) return message;
+    slot.gen++; // supersede anything in flight on this connection
+    slot.client = undefined;
+    void failed.close().catch(() => {});
+    unregisterMcpServerTools(slot.name);
+    setSlotState(slot.name, "needsAuth", { errorCode: "needs_auth", error: message });
+    return `${message} Its tools are unavailable until then.`;
   }
 
   // Bumps and returns the slot's own attempt generation -- called exactly once by whichever call
@@ -812,6 +892,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     let connection: ConnectedMcpClient | undefined;
     // A fresh connection's own initial `tools/list` (below) supersedes anything parked for an older one.
     slot.toolListStale = false;
+    const auth = sessionAuthFor(slot.name, slot.config, deps.oauth);
     const client = await connectMcpServer({
       name: slot.name,
       config: slot.config,
@@ -822,6 +903,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       onToolListChanged: onToolListChangedFor(slot, () => connection),
       ...(deps.inProcessServers?.[slot.name] !== undefined ? { inProcessServer: deps.inProcessServers[slot.name] } : {}),
       ...(deps.cwd !== undefined ? { cwd: deps.cwd } : {}),
+      ...(auth !== undefined ? { auth } : {}),
     });
     connection = client;
     const tools = await client.listTools();
@@ -835,6 +917,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       return false;
     }
     slot.client = client;
+    slot.auth = auth;
     slot.toolNames = tools.map((t) => t.name);
     slot.savedTools = tools;
     registerMcpServerTools(slot.name, tools.map(toolInfoToDefinition), {
@@ -1034,6 +1117,8 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       setSlotState(name, "connected", { toolNames: slot.toolNames });
       return { ok: true, toolNames: slot.toolNames };
     } catch (err) {
+      // WS-25: a refresh that finds the sign-in gone ends in `needsAuth`, like a tool call that does.
+      if (classifyMcpAuthFailure(err) === "needs_auth") return { ok: false, reason: markNeedsAuth(slot, client, err) };
       const message = err instanceof Error ? err.message : String(err);
       return { ok: false, reason: `refreshing server "${name}" failed: ${message}` };
     }

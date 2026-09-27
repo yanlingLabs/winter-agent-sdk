@@ -4,6 +4,7 @@
 // string means. A host passes its Keychain store (Winter's daemon: its own profile's service); tests pass
 // the memory store below. Nothing in `mcp-auth` ever writes a record anywhere else: no file, no env var,
 // no log line.
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createKeychainRawStore } from "../provider/keychain-store.ts";
 import { McpOAuthError } from "./errors.ts";
 import { decodeMcpOAuthClientRecord, decodeMcpOAuthTokenRecord, encodeMcpOAuthClientRecord, encodeMcpOAuthTokenRecord, type McpOAuthClientRecord, type McpOAuthTokenRecord } from "./records.ts";
@@ -72,4 +73,55 @@ export async function readTokenRecordLenient(store: McpOAuthStore, account: stri
     if (err instanceof McpOAuthError && err.code === "malformed_record") return null;
     throw err;
   }
+}
+
+// --- The SESSION's store ---------------------------------------------------------------------------
+
+/**
+ * TEST-ONLY: a JSON file of `{ account: value }`, re-read on every read so a second process's write
+ * (a fake host's refresh) is seen. Selected ONLY by `WINTER_TEST_MCP_OAUTH_STORE_FILE`, the same
+ * named-test-seam posture as `WINTER_TEST_PROVIDER`: the compiled-binary gate (`verify:mcp-oauth`) must
+ * hand a spawned `winter` the fixture's sign-ins without the Keychain, which would prompt for an item a
+ * different binary wrote. It writes the fixture's throwaway tokens to a temp file -- which is exactly why
+ * nothing but that variable selects it.
+ */
+export function createTestFileMcpOAuthStore(path: string): McpOAuthStore {
+  const load = (): Record<string, string> => {
+    try {
+      return JSON.parse(readFileSync(path, "utf8")) as Record<string, string>;
+    } catch {
+      return {};
+    }
+  };
+  const save = (entries: Record<string, string>): void => {
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(entries), { mode: 0o600 });
+    renameSync(tmp, path);
+  };
+  return {
+    async read(account) {
+      return load()[account] ?? null;
+    },
+    async write(account, value) {
+      save({ ...load(), [account]: value });
+    },
+    async remove(account) {
+      const entries = load();
+      delete entries[account];
+      save(entries);
+    },
+  };
+}
+
+/** The env name of the test seam above. */
+export const MCP_OAUTH_TEST_STORE_ENV = "WINTER_TEST_MCP_OAUTH_STORE_FILE";
+
+/**
+ * The store a SESSION reads its sign-ins from: the session's own Keychain service (the brand's, as for
+ * every other `{ kind: "keychain" }` credential), or the test seam when its variable is set.
+ */
+export function resolveSessionMcpOAuthStore(opts: { keychainService: string | undefined; env: Record<string, string | undefined> }): McpOAuthStore {
+  const testFile = opts.env[MCP_OAUTH_TEST_STORE_ENV];
+  if (testFile !== undefined && testFile !== "") return createTestFileMcpOAuthStore(testFile);
+  return createKeychainMcpOAuthStore(opts.keychainService);
 }

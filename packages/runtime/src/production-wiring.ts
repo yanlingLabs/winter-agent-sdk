@@ -76,7 +76,8 @@ import { DEFAULT_OUTPUT_STYLE } from "@yanlinglabs/winter-agent-sdk";
 // own header makes. Before this, `main.ts` picked a provider from an env var and `testing.ts` took
 // one as a parameter -- two entrypoints, two policies, and NEITHER of them the catalog-first
 // selection R6-9 requires. Now both call this module and this module calls one builder.
-import { buildSessionProvider, type SessionProviderOptions, type SessionProviderWiring } from "./provider/session-provider.ts";
+import { buildSessionProvider, resolveSessionKeychainService, type SessionProviderOptions, type SessionProviderWiring } from "./provider/session-provider.ts";
+import { resolveSessionMcpOAuthStore, type McpOAuthStore } from "./mcp-auth/store.ts";
 import type { ProviderStateRecordInput } from "./store/provider-state.ts";
 import type { Provider } from "./engine.ts";
 import type { ClassifierInterface } from "./permissions/auto/engine.ts";
@@ -579,6 +580,8 @@ export interface ProductionWiring {
      */
     pluginWorkflows?: readonly { name: string; workflowsPath?: string; workflowsPaths?: readonly string[] }[];
     extraMcpServerSources: readonly McpServerSource[];
+    /** WS-25: where the session reads its MCP sign-ins (the session's Keychain service; the test seam's file under `verify:mcp-oauth`). */
+    mcpOAuthStore: McpOAuthStore;
     initSlashCommands: readonly string[];
     initSkills: readonly string[];
     initPlugins: readonly InitPluginInfo[];
@@ -1836,6 +1839,9 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // threads to every one of those (line 623).
       ...(settingSources !== undefined ? { settingSources } : {}),
       extraMcpServerSources,
+      // WS-25: the SAME service every other `{ kind: "keychain" }` credential of this session resolves
+      // under. Lazy: nothing touches the Keychain until a remote MCP server actually connects.
+      mcpOAuthStore: resolveSessionMcpOAuthStore({ keychainService: resolveSessionKeychainService(config), env }),
       initSlashCommands,
       initSkills,
       initPlugins,
