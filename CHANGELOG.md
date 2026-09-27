@@ -6,6 +6,8 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
+## 0.0.31
+
 ### Init order (credential before init)
 
 #### Fixes
