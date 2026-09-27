@@ -1686,7 +1686,8 @@
         "class": "review-required",
         "reasons": [
           "audit OQ-6: no Zen terms of service or acceptable-use page was located, and no vendor statement that Zen keys may be used from clients other than the `opencode` CLI — the docs show standard AI-SDK usage, which implies it, but implication is not documentation",
-          "free-tier models carry a data-collection caveat (\"During its free period, collected data may be used to improve the model\"; NVIDIA-backed free endpoints log usage under NVIDIA's own trial terms) that a host must surface"
+          "free-tier models carry a data-collection caveat (\"During its free period, collected data may be used to improve the model\"; NVIDIA-backed free endpoints log usage under NVIDIA's own trial terms) that a host must surface",
+          "`space-bunny-free` (a stealth model, free for a limited time): Zen's docs say its provider follows a zero-retention policy and does not use request data for training (https://opencode.ai/docs/zen/, read 2026-09-27) -- a VENDOR CLAIM this application has not verified, about a model whose maker is undisclosed"
         ]
       },
       "pricingBasis": "token",
@@ -1762,7 +1763,8 @@
       "risk": {
         "class": "review-required",
         "reasons": [
-          "gateway: capability parity is model-by-model (WS-13 §14.4), and per-request provider/data-policy controls must be preserved before any row here is promoted past `candidate`"
+          "gateway: capability parity is model-by-model (WS-13 §14.4), and per-request provider/data-policy controls must be preserved before any row here is promoted past `candidate`",
+          "stealth models (`stealth/*`, e.g. `stealth/space-bunny-alpha`): under OpenRouter's stealth-model terms (https://openrouter.ai/terms/stealth, read 2026-09-27) prompts and completions may be collected and shared with the model's provider, including for training -- a host must surface this before a user sends anything sensitive"
         ]
       },
       "$comment": "liveCatalogAuthority is \"partial\", not \"authoritative\": a gateway routes hundreds of models that change constantly, and which of them a given key can actually reach depends on upstream routing and data-policy settings the list does not express. R6-F's own wording anticipates this (\"local/gateway providers with a non-authoritative live catalog\"). Marking it authoritative made an absent id a definitive fact, which closed the `allowUnlisted` door on exactly the provider whose real ids are other vendors' qualified ids.",

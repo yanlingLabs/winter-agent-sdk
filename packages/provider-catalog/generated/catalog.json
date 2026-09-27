@@ -4831,7 +4831,8 @@
         "class": "review-required",
         "reasons": [
           "audit OQ-6: no Zen terms of service or acceptable-use page was located, and no vendor statement that Zen keys may be used from clients other than the `opencode` CLI — the docs show standard AI-SDK usage, which implies it, but implication is not documentation",
-          "free-tier models carry a data-collection caveat (\"During its free period, collected data may be used to improve the model\"; NVIDIA-backed free endpoints log usage under NVIDIA's own trial terms) that a host must surface"
+          "free-tier models carry a data-collection caveat (\"During its free period, collected data may be used to improve the model\"; NVIDIA-backed free endpoints log usage under NVIDIA's own trial terms) that a host must surface",
+          "`space-bunny-free` (a stealth model, free for a limited time): Zen's docs say its provider follows a zero-retention policy and does not use request data for training (https://opencode.ai/docs/zen/, read 2026-09-27) -- a VENDOR CLAIM this application has not verified, about a model whose maker is undisclosed"
         ]
       },
       "pricingBasis": "token",
@@ -4906,7 +4907,8 @@
       "risk": {
         "class": "review-required",
         "reasons": [
-          "gateway: capability parity is model-by-model (WS-13 §14.4), and per-request provider/data-policy controls must be preserved before any row here is promoted past `candidate`"
+          "gateway: capability parity is model-by-model (WS-13 §14.4), and per-request provider/data-policy controls must be preserved before any row here is promoted past `candidate`",
+          "stealth models (`stealth/*`, e.g. `stealth/space-bunny-alpha`): under OpenRouter's stealth-model terms (https://openrouter.ai/terms/stealth, read 2026-09-27) prompts and completions may be collected and shared with the model's provider, including for training -- a host must surface this before a user sends anything sensitive"
         ]
       },
       "pricingBasis": "token",
@@ -7958,18 +7960,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/agentrouter/index.ts#claude-opus-4-8",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://agentrouter.org/docs/claude-code.html — AgentRouter's Claude Code guide sets ANTHROPIC_BASE_URL to https://agentrouter.org and names the Claude Opus models (claude-opus-5, claude-opus-4-8) as the ones to use through that Anthropic route",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/agentrouter/index.ts#claude-opus-4-8",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://agentrouter.org/docs/claude-code.html — AgentRouter's Claude Code guide sets ANTHROPIC_BASE_URL to https://agentrouter.org and names the Claude Opus models (claude-opus-5, claude-opus-4-8) as the ones to use through that Anthropic route",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -8011,18 +8013,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/agentrouter/index.ts#claude-opus-5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://agentrouter.org/docs/claude-code.html — AgentRouter's Claude Code guide sets ANTHROPIC_BASE_URL to https://agentrouter.org and names the Claude Opus models (claude-opus-5, claude-opus-4-8) as the ones to use through that Anthropic route",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/agentrouter/index.ts#claude-opus-5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://agentrouter.org/docs/claude-code.html — AgentRouter's Claude Code guide sets ANTHROPIC_BASE_URL to https://agentrouter.org and names the Claude Opus models (claude-opus-5, claude-opus-4-8) as the ones to use through that Anthropic route",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -47819,17 +47821,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#abacusai/dracarys-llama-3.1-70b-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/abacusai/dracarys-llama-3_1-70b-instruct — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#abacusai/dracarys-llama-3.1-70b-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/abacusai/dracarys-llama-3_1-70b-instruct — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -47865,17 +47867,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#google/gemma-2-2b-it",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/google/gemma-2-2b-it — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#google/gemma-2-2b-it",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/google/gemma-2-2b-it — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -47911,17 +47913,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#google/gemma-3n-e2b-it",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/google/gemma-3n-e2b-it — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#google/gemma-3n-e2b-it",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/google/gemma-3n-e2b-it — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -47956,18 +47958,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#google/gemma-4-31b-it",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/google/gemma-4-31b-it — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#google/gemma-4-31b-it",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/google/gemma-4-31b-it — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48002,18 +48004,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.1-8b-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-3_1-8b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.1-8b-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-3_1-8b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48050,17 +48052,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-11b-vision-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/meta-llama-3_2-11b-vision-instruct — the model reference documents no tool/function-calling parameters; the build.nvidia.com model page no longer resolves (re-checked 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-11b-vision-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/meta-llama-3_2-11b-vision-instruct — the model reference documents no tool/function-calling parameters; the build.nvidia.com model page no longer resolves (re-checked 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48095,18 +48097,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-1b-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-3.2-1b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-1b-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-3.2-1b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48141,18 +48143,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-3b-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-3.2-3b-instruct — the model page's capability record states `modelCapability.functionCalling: true`, but the model's API reference lists no `tools`/`tool_choice` fields, so the claim is held at a lower confidence (re-read 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-3b-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-3.2-3b-instruct — the model page's capability record states `modelCapability.functionCalling: true`, but the model's API reference lists no `tools`/`tool_choice` fields, so the claim is held at a lower confidence (re-read 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48189,17 +48191,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-90b-vision-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/meta-llama-3_2-90b-vision-instruct — the model reference documents no tool/function-calling parameters; the build.nvidia.com model page no longer resolves (re-checked 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-90b-vision-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/meta-llama-3_2-90b-vision-instruct — the model reference documents no tool/function-calling parameters; the build.nvidia.com model page no longer resolves (re-checked 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48234,18 +48236,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-4-maverick-17b-128e-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.nvidia.com/nim/vision-language-models/1.4.1/function-calling.html — NIM for VLMs' function-calling guide covers Llama 4 Maverick 17B 128E Instruct. The build.nvidia.com model page no longer resolves and the id is absent from https://integrate.api.nvidia.com/v1/models (both re-checked 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-4-maverick-17b-128e-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.nvidia.com/nim/vision-language-models/1.4.1/function-calling.html — NIM for VLMs' function-calling guide covers Llama 4 Maverick 17B 128E Instruct. The build.nvidia.com model page no longer resolves and the id is absent from https://integrate.api.nvidia.com/v1/models (both re-checked 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48281,17 +48283,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-guard-4-12b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-guard-4-12b — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-guard-4-12b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-guard-4-12b — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48326,18 +48328,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#minimaxai/minimax-m2.7",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/minimaxai/minimax-m2.7 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#minimaxai/minimax-m2.7",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/minimaxai/minimax-m2.7 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48372,18 +48374,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/devstral-2-123b-instruct-2512",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/devstral-2-123b-instruct-2512 — the model page presents an agentic coding model and its request template carries `tools`, but states no structured `functionCalling` flag (re-read 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/devstral-2-123b-instruct-2512",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/devstral-2-123b-instruct-2512 — the model page presents an agentic coding model and its request template carries `tools`, but states no structured `functionCalling` flag (re-read 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48418,18 +48420,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/ministral-14b-instruct-2512",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/ministral-14b-instruct-2512 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/ministral-14b-instruct-2512",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/ministral-14b-instruct-2512 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48464,18 +48466,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-large-3-675b-instruct-2512",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-large-3-675b-instruct-2512 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-large-3-675b-instruct-2512",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-large-3-675b-instruct-2512 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48510,18 +48512,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-medium-3.5-128b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-medium-3.5-128b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-medium-3.5-128b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-medium-3.5-128b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48556,18 +48558,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-nemotron",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-nemotron — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-nemotron",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-nemotron — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48602,18 +48604,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-small-4-119b-2603",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-small-4-119b-2603 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-small-4-119b-2603",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-small-4-119b-2603 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48649,17 +48651,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mixtral-8x7b-instruct-v0.1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mixtral-8x7b-instruct — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mixtral-8x7b-instruct-v0.1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mixtral-8x7b-instruct — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48694,18 +48696,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#moonshotai/kimi-k2.6",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/moonshotai-kimi-k2-6 — the model reference describes tool calling. The build.nvidia.com model page no longer resolves (re-checked 2026-09-27); the id is still listed by https://integrate.api.nvidia.com/v1/models",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#moonshotai/kimi-k2.6",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/moonshotai-kimi-k2-6 — the model reference describes tool calling. The build.nvidia.com model page no longer resolves (re-checked 2026-09-27); the id is still listed by https://integrate.api.nvidia.com/v1/models",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48741,17 +48743,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/ising-calibration-1-35b-a3b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/ising-calibration-1-35b-a3b — a calibration model; the page's capability record states `modelCapability.functionCalling: false`, but the URL now renders a differently-named release (ising-calibration-1.5-31b), so the claim is held at `inferred` (re-read 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/ising-calibration-1-35b-a3b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/ising-calibration-1-35b-a3b — a calibration model; the page's capability record states `modelCapability.functionCalling: false`, but the URL now renders a differently-named release (ising-calibration-1.5-31b), so the claim is held at `inferred` (re-read 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -48798,17 +48800,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemoguard-8b-content-safety",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemoguard-8b-content-safety — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemoguard-8b-content-safety",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemoguard-8b-content-safety — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48844,17 +48846,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemoguard-8b-topic-control",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemoguard-8b-topic-control — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemoguard-8b-topic-control",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemoguard-8b-topic-control — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48889,18 +48891,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemotron-nano-8b-v1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemotron-nano-8b-v1 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemotron-nano-8b-v1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemotron-nano-8b-v1 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48937,17 +48939,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3.1-nemotron-nano-vl-8b-v1 — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3.1-nemotron-nano-vl-8b-v1 — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -48983,17 +48985,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemotron-safety-guard-8b-v3 — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemotron-safety-guard-8b-v3 — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -49028,18 +49030,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.3-nemotron-super-49b-v1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.3-nemotron-super-49b-v1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -49139,17 +49141,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-content-safety",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-content-safety — a content-safety CLASSIFIER: its output is a safety verdict, not an agent turn. NOTE the page's own capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27), which this ruling overrides on the model's documented purpose; held at `inferred` for that reason",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-content-safety",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-content-safety — a content-safety CLASSIFIER: its output is a safety verdict, not an agent turn. NOTE the page's own capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27), which this ruling overrides on the model's documented purpose; held at `inferred` for that reason",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -49451,17 +49453,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3.5-content-safety",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3.5-content-safety — a content-safety CLASSIFIER: its output is a safety verdict, not an agent turn. NOTE the page's own capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27), which this ruling overrides on the model's documented purpose; held at `inferred` for that reason",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3.5-content-safety",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3.5-content-safety — a content-safety CLASSIFIER: its output is a safety verdict, not an agent turn. NOTE the page's own capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27), which this ruling overrides on the model's documented purpose; held at `inferred` for that reason",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -49496,18 +49498,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-mini-4b-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-mini-4b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-mini-4b-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-mini-4b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -49543,18 +49545,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-nano-12b-v2-vl",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-nano-12b-v2-vl — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-nano-12b-v2-vl",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-nano-12b-v2-vl — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -49665,17 +49667,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/riva-translate-4b-instruct-v1.1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/riva-translate-4b-instruct-v1_1 — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/riva-translate-4b-instruct-v1.1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/riva-translate-4b-instruct-v1_1 — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -49710,18 +49712,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#openai/gpt-oss-120b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/openai/gpt-oss-120b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#openai/gpt-oss-120b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/openai/gpt-oss-120b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -49756,18 +49758,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#openai/gpt-oss-20b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/openai/gpt-oss-20b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#openai/gpt-oss-20b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/openai/gpt-oss-20b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -49802,18 +49804,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#qwen/qwen3-next-80b-a3b-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/qwen/qwen3-next-80b-a3b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#qwen/qwen3-next-80b-a3b-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/qwen/qwen3-next-80b-a3b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -49859,18 +49861,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#qwen/qwen3.5-122b-a10b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/qwen/qwen3.5-122b-a10b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#qwen/qwen3.5-122b-a10b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/qwen/qwen3.5-122b-a10b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -49905,18 +49907,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#qwen/qwen3.5-397b-a17b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/qwen/qwen3.5-397b-a17b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#qwen/qwen3.5-397b-a17b",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/qwen/qwen3.5-397b-a17b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -49951,18 +49953,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#sarvamai/sarvam-m",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/sarvamai/sarvam-m — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#sarvamai/sarvam-m",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/sarvamai/sarvam-m — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -49997,18 +49999,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#stepfun-ai/step-3.5-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/stepfun-ai/step-3.5-flash — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#stepfun-ai/step-3.5-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/stepfun-ai/step-3.5-flash — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -50043,18 +50045,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#stepfun-ai/step-3.7-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/stepfun-ai/step-3.7-flash — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#stepfun-ai/step-3.7-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/stepfun-ai/step-3.7-flash — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -50136,17 +50138,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#upstage/solar-10.7b-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/upstage/solar-10_7b-instruct — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#upstage/solar-10.7b-instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/upstage/solar-10_7b-instruct — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -50181,18 +50183,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#z-ai/glm-5.2",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/z-ai/glm-5.2 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#z-ai/glm-5.2",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/z-ai/glm-5.2 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -53927,6 +53929,63 @@
       "modelFamily": "other"
     },
     {
+      "key": "opencode/space-bunny-free",
+      "providerId": "opencode",
+      "upstreamId": "space-bunny-free",
+      "displayName": "Space Bunny (OpenCode Zen)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: Zen's model table (https://opencode.ai/docs/zen/, read 2026-09-27) states no modality for this id, so `text` is Winter's floor for a chat registry, NOT a vendor statement.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: Zen's model table (https://opencode.ai/docs/zen/, read 2026-09-27) states no modality for this id, so `text` is Winter's floor for a chat registry, NOT a vendor statement.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://opencode.ai/docs/zen/ (read 2026-09-27) — Zen's docs state no tool-calling capability for `space-bunny-free`; the only statement found is a THIRD-PARTY metadata mirror (models.dev: `tool_call: true`), which is not vendor evidence, and nothing documents that this id is the same model OpenRouter lists as `stealth/space-bunny-alpha`. ABSENT fails CLOSED (WS-13 §8.1: `native` is never inferred from silence) — the `opencode/big-pickle` precedent.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://opencode.ai/docs/zen/ (read 2026-09-27) — Zen's docs state no tool-calling capability for `space-bunny-free`; the only statement found is a THIRD-PARTY metadata mirror (models.dev: `tool_call: true`), which is not vendor evidence, and nothing documents that this id is the same model OpenRouter lists as `stealth/space-bunny-alpha`. ABSENT fails CLOSED (WS-13 §8.1: `native` is never inferred from silence) — the `opencode/big-pickle` precedent.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0,
+          "outputPerMTokUsd": 0,
+          "cacheReadPerMTokUsd": 0
+        },
+        "source": "official-doc",
+        "sourceRef": "https://opencode.ai/docs/zen/ — Zen's pricing table lists Space Bunny as Free for input, output and cached read, observed 2026-09-27. Free for a LIMITED TIME with no end date published: re-check before relying on it; no cache-write rate is published.",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "canonicalModelId": "space-bunny-free",
+      "modelFamily": "other"
+    },
+    {
       "key": "openference/GLM-5.2",
       "providerId": "openference",
       "upstreamId": "GLM-5.2",
@@ -55015,6 +55074,96 @@
       "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "openrouter/auto",
+      "modelFamily": "other"
+    },
+    {
+      "key": "openrouter/stealth/space-bunny-alpha",
+      "providerId": "openrouter",
+      "upstreamId": "stealth/space-bunny-alpha",
+      "displayName": "Space Bunny Alpha (via OpenRouter)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — public entry stealth/space-bunny-alpha: context_length 1000000, max_completion_tokens 524288, input text/image/video, output text, supported parameters include tools, tool_choice, reasoning_effort and response_format; reasoning mandatory with efforts max/xhigh/high/medium/low (default max); observed 2026-09-27",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — public entry stealth/space-bunny-alpha: context_length 1000000, max_completion_tokens 524288, input text/image/video, output text, supported parameters include tools, tool_choice, reasoning_effort and response_format; reasoning mandatory with efforts max/xhigh/high/medium/low (default max); observed 2026-09-27",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — public entry stealth/space-bunny-alpha: context_length 1000000, max_completion_tokens 524288, input text/image/video, output text, supported parameters include tools, tool_choice, reasoning_effort and response_format; reasoning mandatory with efforts max/xhigh/high/medium/low (default max); observed 2026-09-27",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — public entry stealth/space-bunny-alpha: context_length 1000000, max_completion_tokens 524288, input text/image/video, output text, supported parameters include tools, tool_choice, reasoning_effort and response_format; reasoning mandatory with efforts max/xhigh/high/medium/low (default max); observed 2026-09-27",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — public entry stealth/space-bunny-alpha: context_length 1000000, max_completion_tokens 524288, input text/image/video, output text, supported parameters include tools, tool_choice, reasoning_effort and response_format; reasoning mandatory with efforts max/xhigh/high/medium/low (default max); observed 2026-09-27",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 524288,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — public entry stealth/space-bunny-alpha: context_length 1000000, max_completion_tokens 524288, input text/image/video, output text, supported parameters include tools, tool_choice, reasoning_effort and response_format; reasoning mandatory with efforts max/xhigh/high/medium/low (default max); observed 2026-09-27",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://openrouter.ai/api/v1/models — public entry stealth/space-bunny-alpha: context_length 1000000, max_completion_tokens 524288, input text/image/video, output text, supported parameters include tools, tool_choice, reasoning_effort and response_format; reasoning mandatory with efforts max/xhigh/high/medium/low (default max); observed 2026-09-27",
+          "confidence": "declared",
+          "observedAt": "2026-09-27T00:00:00Z"
+        },
+        "efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "defaultEffort": "max",
+        "continuation": "none"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0,
+          "outputPerMTokUsd": 0
+        },
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own current public price for stealth/space-bunny-alpha: prompt 0 / completion 0 per token (no cache rates published), observed 2026-09-27. Free for a LIMITED TIME: `expiration_date` is null and no end date is published, so re-check before relying on it.",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "canonicalModelId": "stealth/space-bunny-alpha",
       "modelFamily": "other"
     },
     {
@@ -56767,18 +56916,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -56834,18 +56983,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -56901,18 +57050,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -56968,18 +57117,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -57035,18 +57184,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -57081,18 +57230,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -57127,18 +57276,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -57173,18 +57322,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -66805,18 +66954,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130097 — the Coding Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/coding/anthropic (this row's endpoint); the plan's model names are https://cloud.tencent.com/document/product/1823/130092",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130097 — the Coding Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/coding/anthropic (this row's endpoint); the plan's model names are https://cloud.tencent.com/document/product/1823/130092",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -66862,18 +67011,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130097 — the Coding Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/coding/anthropic (this row's endpoint); the plan's model names are https://cloud.tencent.com/document/product/1823/130092",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130097 — the Coding Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/coding/anthropic (this row's endpoint); the plan's model names are https://cloud.tencent.com/document/product/1823/130092",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -67062,18 +67211,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -67143,18 +67292,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -67223,18 +67372,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -67303,18 +67452,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -67383,18 +67532,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -67463,18 +67612,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -67541,18 +67690,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -67806,18 +67955,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -67884,18 +68033,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -67964,18 +68113,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -68037,18 +68186,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -68094,18 +68243,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -78094,18 +78243,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-4.7",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-4.7 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-4.7",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-4.7 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -78151,18 +78300,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-4.7-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-4.7 lists Function Call (the GLM-4.7 page's GLM-4.7-Flash tab; the flash slug has no page of its own)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-4.7-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-4.7 lists Function Call (the GLM-4.7 page's GLM-4.7-Flash tab; the flash slug has no page of its own)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -78208,18 +78357,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -78265,18 +78414,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5-turbo",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5-turbo lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5-turbo",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5-turbo lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "deprecated",
@@ -78311,18 +78460,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5.1 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5.1 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -78368,18 +78517,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.2",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5.2 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.2",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5.2 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",

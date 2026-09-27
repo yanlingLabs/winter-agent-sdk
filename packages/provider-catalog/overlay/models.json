@@ -14510,6 +14510,7 @@
       "upstreamId": "glm-4.7",
       "displayName": "GLM 4.7",
       "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence. Controller ruling: an official vendor page telling users to point Claude Code at this endpoint is tool-use evidence for it (Claude Code cannot work without tool use), at `inferred` -- below a field-level spec.",
       "endpoints": [
         "chat"
       ],
@@ -14532,18 +14533,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-4.7",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-4.7 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-4.7",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-4.7 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -14565,6 +14566,7 @@
       "upstreamId": "glm-4.7-flash",
       "displayName": "GLM 4.7 Flash",
       "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence. Controller ruling: an official vendor page telling users to point Claude Code at this endpoint is tool-use evidence for it (Claude Code cannot work without tool use), at `inferred` -- below a field-level spec.",
       "endpoints": [
         "chat"
       ],
@@ -14587,18 +14589,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-4.7-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-4.7 lists Function Call (the GLM-4.7 page's GLM-4.7-Flash tab; the flash slug has no page of its own)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-4.7-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-4.7 lists Function Call (the GLM-4.7 page's GLM-4.7-Flash tab; the flash slug has no page of its own)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -14620,6 +14622,7 @@
       "upstreamId": "glm-5",
       "displayName": "GLM 5",
       "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence. Controller ruling: an official vendor page telling users to point Claude Code at this endpoint is tool-use evidence for it (Claude Code cannot work without tool use), at `inferred` -- below a field-level spec.",
       "endpoints": [
         "chat"
       ],
@@ -14642,18 +14645,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -14675,6 +14678,7 @@
       "upstreamId": "glm-5.1",
       "displayName": "GLM 5.1",
       "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence. Controller ruling: an official vendor page telling users to point Claude Code at this endpoint is tool-use evidence for it (Claude Code cannot work without tool use), at `inferred` -- below a field-level spec.",
       "endpoints": [
         "chat"
       ],
@@ -14697,18 +14701,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5.1 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5.1 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -14730,6 +14734,7 @@
       "upstreamId": "glm-5.2",
       "displayName": "GLM 5.2",
       "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence. Controller ruling: an official vendor page telling users to point Claude Code at this endpoint is tool-use evidence for it (Claude Code cannot work without tool use), at `inferred` -- below a field-level spec.",
       "endpoints": [
         "chat"
       ],
@@ -14752,18 +14757,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.2",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5.2 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5.2",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5.2 lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -24425,7 +24430,7 @@
       "upstreamId": "glm-5-turbo",
       "displayName": "GLM 5 Turbo",
       "aliases": [],
-      "$comment": "DEPRECATED 2026-09-25 refresh: absent from Z.AI's current pricing page and chat model enum (https://docs.z.ai/guides/overview/pricing, checked 2026-09-25); no successor named.",
+      "$comment": "DEPRECATED 2026-09-25 refresh: absent from Z.AI's current pricing page and chat model enum (https://docs.z.ai/guides/overview/pricing, checked 2026-09-25); no successor named. WS-27 (2026-09-27): tool-calling evidence. Controller ruling: an official vendor page telling users to point Claude Code at this endpoint is tool-use evidence for it (Claude Code cannot work without tool use), at `inferred` -- below a field-level spec.",
       "endpoints": [
         "chat"
       ],
@@ -24448,18 +24453,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5-turbo",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5-turbo lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/zai/index.ts#glm-5-turbo",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.z.ai/devpack/tool/claude — the GLM Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://api.z.ai/api/anthropic (this row's endpoint); https://docs.z.ai/guides/llm/glm-5-turbo lists Function Call",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "deprecated"
@@ -40098,18 +40103,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -40164,18 +40169,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -40230,18 +40235,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -40275,18 +40280,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -40341,18 +40346,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -40407,18 +40412,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -40473,18 +40478,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -40518,18 +40523,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert function calling per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/imlg0beiu — Coding Plan page does not assert native tools per fixed model ID.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T09:59:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.baidu.com/doc/qianfan/s/0mn2mnemj — the Coding Plan's Claude Code guide points ANTHROPIC_BASE_URL at https://qianfan.baidubce.com/anthropic/coding (this row's endpoint); plan details https://cloud.baidu.com/doc/qianfan/s/imlg0beiu",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -41827,18 +41832,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130097 — the Coding Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/coding/anthropic (this row's endpoint); the plan's model names are https://cloud.tencent.com/document/product/1823/130092",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130097 — the Coding Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/coding/anthropic (this row's endpoint); the plan's model names are https://cloud.tencent.com/document/product/1823/130092",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -41895,18 +41900,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130097 — the Coding Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/coding/anthropic (this row's endpoint); the plan's model names are https://cloud.tencent.com/document/product/1823/130092",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130092 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130097 — the Coding Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/coding/anthropic (this row's endpoint); the plan's model names are https://cloud.tencent.com/document/product/1823/130092",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -43091,18 +43096,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -43160,18 +43165,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -43240,18 +43245,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -43319,18 +43324,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -43391,18 +43396,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -43470,18 +43475,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -43549,18 +43554,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -43628,18 +43633,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -43707,18 +43712,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -43784,18 +43789,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -43952,18 +43957,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -44029,18 +44034,18 @@
         "observedAt": "2026-09-25T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated. ",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — No model-specific function calling is stated.",
-        "confidence": "unknown",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130070 — the Token Plan's Claude Code guide sets ANTHROPIC_BASE_URL to https://api.lkeap.cloud.tencent.com/plan/anthropic (this row's endpoint); the plan's model list is https://cloud.tencent.com/document/product/1823/130119",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {
@@ -51824,6 +51829,2182 @@
       },
       "unsupportedParameters": [],
       "status": "candidate"
+    },
+    {
+      "key": "nvidia/openai/gpt-oss-120b",
+      "providerId": "nvidia",
+      "upstreamId": "openai/gpt-oss-120b",
+      "displayName": "GPT OSS 120B",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#openai/gpt-oss-120b",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#openai/gpt-oss-120b — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/openai/gpt-oss-120b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/openai/gpt-oss-120b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/openai/gpt-oss-20b",
+      "providerId": "nvidia",
+      "upstreamId": "openai/gpt-oss-20b",
+      "displayName": "GPT OSS 20B",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#openai/gpt-oss-20b",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#openai/gpt-oss-20b — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/openai/gpt-oss-20b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/openai/gpt-oss-20b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/meta/llama-3.1-8b-instruct",
+      "providerId": "nvidia",
+      "upstreamId": "meta/llama-3.1-8b-instruct",
+      "displayName": "Llama 3.1 8B Instruct",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.1-8b-instruct",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.1-8b-instruct — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-3_1-8b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-3_1-8b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/meta/llama-3.2-1b-instruct",
+      "providerId": "nvidia",
+      "upstreamId": "meta/llama-3.2-1b-instruct",
+      "displayName": "Llama 3.2 1B Instruct",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-1b-instruct",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-1b-instruct — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-3.2-1b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-3.2-1b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/google/gemma-4-31b-it",
+      "providerId": "nvidia",
+      "upstreamId": "google/gemma-4-31b-it",
+      "displayName": "Gemma 4 31B",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#google/gemma-4-31b-it",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#google/gemma-4-31b-it — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/google/gemma-4-31b-it — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/google/gemma-4-31b-it — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/mistralai/ministral-14b-instruct-2512",
+      "providerId": "nvidia",
+      "upstreamId": "mistralai/ministral-14b-instruct-2512",
+      "displayName": "Ministral 14B Instruct 2512",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/ministral-14b-instruct-2512",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/ministral-14b-instruct-2512 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/ministral-14b-instruct-2512 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/ministral-14b-instruct-2512 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/mistralai/mistral-large-3-675b-instruct-2512",
+      "providerId": "nvidia",
+      "upstreamId": "mistralai/mistral-large-3-675b-instruct-2512",
+      "displayName": "Mistral Large 3 675B",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-large-3-675b-instruct-2512",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-large-3-675b-instruct-2512 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-large-3-675b-instruct-2512 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-large-3-675b-instruct-2512 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/mistralai/mistral-medium-3.5-128b",
+      "providerId": "nvidia",
+      "upstreamId": "mistralai/mistral-medium-3.5-128b",
+      "displayName": "Mistral Medium 3.5 128B",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-medium-3.5-128b",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-medium-3.5-128b — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-medium-3.5-128b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-medium-3.5-128b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/mistralai/mistral-nemotron",
+      "providerId": "nvidia",
+      "upstreamId": "mistralai/mistral-nemotron",
+      "displayName": "Mistral Nemotron",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-nemotron",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-nemotron — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-nemotron — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-nemotron — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/mistralai/mistral-small-4-119b-2603",
+      "providerId": "nvidia",
+      "upstreamId": "mistralai/mistral-small-4-119b-2603",
+      "displayName": "Mistral Small 4 2603",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-small-4-119b-2603",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mistral-small-4-119b-2603 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-small-4-119b-2603 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mistral-small-4-119b-2603 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/qwen/qwen3-next-80b-a3b-instruct",
+      "providerId": "nvidia",
+      "upstreamId": "qwen/qwen3-next-80b-a3b-instruct",
+      "displayName": "Qwen3 Next 80B A3B Instruct",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#qwen/qwen3-next-80b-a3b-instruct",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#qwen/qwen3-next-80b-a3b-instruct — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/qwen/qwen3-next-80b-a3b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/qwen/qwen3-next-80b-a3b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#qwen/qwen3-next-80b-a3b-instruct",
+          "observedAt": "2026-09-05T00:00:00Z",
+          "confidence": "inferred"
+        },
+        "efforts": [],
+        "continuation": "none"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/qwen/qwen3.5-122b-a10b",
+      "providerId": "nvidia",
+      "upstreamId": "qwen/qwen3.5-122b-a10b",
+      "displayName": "Qwen3.5-122B-A10B",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#qwen/qwen3.5-122b-a10b",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#qwen/qwen3.5-122b-a10b — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/qwen/qwen3.5-122b-a10b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/qwen/qwen3.5-122b-a10b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/qwen/qwen3.5-397b-a17b",
+      "providerId": "nvidia",
+      "upstreamId": "qwen/qwen3.5-397b-a17b",
+      "displayName": "Qwen3.5-397B-A17B",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#qwen/qwen3.5-397b-a17b",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#qwen/qwen3.5-397b-a17b — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/qwen/qwen3.5-397b-a17b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/qwen/qwen3.5-397b-a17b — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/z-ai/glm-5.2",
+      "providerId": "nvidia",
+      "upstreamId": "z-ai/glm-5.2",
+      "displayName": "GLM 5.2",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#z-ai/glm-5.2",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#z-ai/glm-5.2 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/z-ai/glm-5.2 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/z-ai/glm-5.2 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/stepfun-ai/step-3.5-flash",
+      "providerId": "nvidia",
+      "upstreamId": "stepfun-ai/step-3.5-flash",
+      "displayName": "Step 3.5 Flash",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#stepfun-ai/step-3.5-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#stepfun-ai/step-3.5-flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/stepfun-ai/step-3.5-flash — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/stepfun-ai/step-3.5-flash — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/stepfun-ai/step-3.7-flash",
+      "providerId": "nvidia",
+      "upstreamId": "stepfun-ai/step-3.7-flash",
+      "displayName": "Step 3.7 Flash",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#stepfun-ai/step-3.7-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#stepfun-ai/step-3.7-flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/stepfun-ai/step-3.7-flash — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/stepfun-ai/step-3.7-flash — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/minimaxai/minimax-m2.7",
+      "providerId": "nvidia",
+      "upstreamId": "minimaxai/minimax-m2.7",
+      "displayName": "MiniMax M2.7",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#minimaxai/minimax-m2.7",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#minimaxai/minimax-m2.7 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/minimaxai/minimax-m2.7 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/minimaxai/minimax-m2.7 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/sarvamai/sarvam-m",
+      "providerId": "nvidia",
+      "upstreamId": "sarvamai/sarvam-m",
+      "displayName": "Sarvam M",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#sarvamai/sarvam-m",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#sarvamai/sarvam-m — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/sarvamai/sarvam-m — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/sarvamai/sarvam-m — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/llama-3.1-nemotron-nano-8b-v1",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/llama-3.1-nemotron-nano-8b-v1",
+      "displayName": "Llama 3.1 Nemotron Nano 8B v1",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemotron-nano-8b-v1",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemotron-nano-8b-v1 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemotron-nano-8b-v1 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemotron-nano-8b-v1 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/llama-3.3-nemotron-super-49b-v1",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/llama-3.3-nemotron-super-49b-v1",
+      "displayName": "Llama 3.3 Nemotron Super 49B v1",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.3-nemotron-super-49b-v1",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.3-nemotron-super-49b-v1 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_3-nemotron-super-49b-v1 — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/nemotron-mini-4b-instruct",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/nemotron-mini-4b-instruct",
+      "displayName": "Nemotron Mini 4B Instruct",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-mini-4b-instruct",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-mini-4b-instruct — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-mini-4b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-mini-4b-instruct — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/nemotron-nano-12b-v2-vl",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/nemotron-nano-12b-v2-vl",
+      "displayName": "Nemotron Nano 12B v2 VL",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-nano-12b-v2-vl",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-nano-12b-v2-vl — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-nano-12b-v2-vl — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-nano-12b-v2-vl — the model page's structured capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-nano-12b-v2-vl",
+          "observedAt": "2026-09-05T00:00:00Z",
+          "confidence": "inferred"
+        },
+        "efforts": [],
+        "continuation": "none"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/meta/llama-3.2-3b-instruct",
+      "providerId": "nvidia",
+      "upstreamId": "meta/llama-3.2-3b-instruct",
+      "displayName": "Llama 3.2 3B Instruct",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-3b-instruct",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-3b-instruct — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-3.2-3b-instruct — the model page's capability record states `modelCapability.functionCalling: true`, but the model's API reference lists no `tools`/`tool_choice` fields, so the claim is held at a lower confidence (re-read 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-3.2-3b-instruct — the model page's capability record states `modelCapability.functionCalling: true`, but the model's API reference lists no `tools`/`tool_choice` fields, so the claim is held at a lower confidence (re-read 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/mistralai/devstral-2-123b-instruct-2512",
+      "providerId": "nvidia",
+      "upstreamId": "mistralai/devstral-2-123b-instruct-2512",
+      "displayName": "Devstral 2 123B",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/devstral-2-123b-instruct-2512",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/devstral-2-123b-instruct-2512 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/devstral-2-123b-instruct-2512 — the model page presents an agentic coding model and its request template carries `tools`, but states no structured `functionCalling` flag (re-read 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/devstral-2-123b-instruct-2512 — the model page presents an agentic coding model and its request template carries `tools`, but states no structured `functionCalling` flag (re-read 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/moonshotai/kimi-k2.6",
+      "providerId": "nvidia",
+      "upstreamId": "moonshotai/kimi-k2.6",
+      "displayName": "Kimi K2.6",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#moonshotai/kimi-k2.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#moonshotai/kimi-k2.6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/moonshotai-kimi-k2-6 — the model reference describes tool calling. The build.nvidia.com model page no longer resolves (re-checked 2026-09-27); the id is still listed by https://integrate.api.nvidia.com/v1/models",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/moonshotai-kimi-k2-6 — the model reference describes tool calling. The build.nvidia.com model page no longer resolves (re-checked 2026-09-27); the id is still listed by https://integrate.api.nvidia.com/v1/models",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/meta/llama-4-maverick-17b-128e-instruct",
+      "providerId": "nvidia",
+      "upstreamId": "meta/llama-4-maverick-17b-128e-instruct",
+      "displayName": "Llama 4 Maverick 17B 128E Instruct",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-4-maverick-17b-128e-instruct",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-4-maverick-17b-128e-instruct — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.nvidia.com/nim/vision-language-models/1.4.1/function-calling.html — NIM for VLMs' function-calling guide covers Llama 4 Maverick 17B 128E Instruct. The build.nvidia.com model page no longer resolves and the id is absent from https://integrate.api.nvidia.com/v1/models (both re-checked 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.nvidia.com/nim/vision-language-models/1.4.1/function-calling.html — NIM for VLMs' function-calling guide covers Llama 4 Maverick 17B 128E Instruct. The build.nvidia.com model page no longer resolves and the id is absent from https://integrate.api.nvidia.com/v1/models (both re-checked 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/meta/llama-guard-4-12b",
+      "providerId": "nvidia",
+      "upstreamId": "meta/llama-guard-4-12b",
+      "displayName": "Llama Guard 4 12B",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-guard-4-12b",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-guard-4-12b — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-guard-4-12b — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/meta/llama-guard-4-12b — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/abacusai/dracarys-llama-3.1-70b-instruct",
+      "providerId": "nvidia",
+      "upstreamId": "abacusai/dracarys-llama-3.1-70b-instruct",
+      "displayName": "Dracarys Llama 3.1 70B Instruct",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#abacusai/dracarys-llama-3.1-70b-instruct",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#abacusai/dracarys-llama-3.1-70b-instruct — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/abacusai/dracarys-llama-3_1-70b-instruct — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/abacusai/dracarys-llama-3_1-70b-instruct — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/google/gemma-2-2b-it",
+      "providerId": "nvidia",
+      "upstreamId": "google/gemma-2-2b-it",
+      "displayName": "Gemma 2 2B IT",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#google/gemma-2-2b-it",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#google/gemma-2-2b-it — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/google/gemma-2-2b-it — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/google/gemma-2-2b-it — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/google/gemma-3n-e2b-it",
+      "providerId": "nvidia",
+      "upstreamId": "google/gemma-3n-e2b-it",
+      "displayName": "Gemma 3n E2B IT",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#google/gemma-3n-e2b-it",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#google/gemma-3n-e2b-it — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/google/gemma-3n-e2b-it — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/google/gemma-3n-e2b-it — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/mistralai/mixtral-8x7b-instruct-v0.1",
+      "providerId": "nvidia",
+      "upstreamId": "mistralai/mixtral-8x7b-instruct-v0.1",
+      "displayName": "Mixtral 8x7B Instruct v0.1",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mixtral-8x7b-instruct-v0.1",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#mistralai/mixtral-8x7b-instruct-v0.1 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mixtral-8x7b-instruct — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/mistralai/mixtral-8x7b-instruct — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/upstage/solar-10.7b-instruct",
+      "providerId": "nvidia",
+      "upstreamId": "upstage/solar-10.7b-instruct",
+      "displayName": "Solar 10.7B Instruct",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#upstage/solar-10.7b-instruct",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#upstage/solar-10.7b-instruct — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/upstage/solar-10_7b-instruct — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/upstage/solar-10_7b-instruct — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/llama-3.1-nemoguard-8b-content-safety",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/llama-3.1-nemoguard-8b-content-safety",
+      "displayName": "Llama 3.1 Nemoguard 8B Content Safety",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemoguard-8b-content-safety",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemoguard-8b-content-safety — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemoguard-8b-content-safety — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemoguard-8b-content-safety — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/llama-3.1-nemoguard-8b-topic-control",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/llama-3.1-nemoguard-8b-topic-control",
+      "displayName": "Llama 3.1 Nemoguard 8B Topic Control",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemoguard-8b-topic-control",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemoguard-8b-topic-control — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemoguard-8b-topic-control — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemoguard-8b-topic-control — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
+      "displayName": "Llama 3.1 Nemotron Nano VL 8B v1",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemotron-nano-vl-8b-v1 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3.1-nemotron-nano-vl-8b-v1 — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3.1-nemotron-nano-vl-8b-v1 — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
+      "displayName": "Llama 3.1 Nemotron Safety Guard 8B v3",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/llama-3.1-nemotron-safety-guard-8b-v3 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemotron-safety-guard-8b-v3 — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/llama-3_1-nemotron-safety-guard-8b-v3 — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/riva-translate-4b-instruct-v1.1",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/riva-translate-4b-instruct-v1.1",
+      "displayName": "Riva Translate 4B Instruct v1.1",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/riva-translate-4b-instruct-v1.1",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/riva-translate-4b-instruct-v1.1 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/riva-translate-4b-instruct-v1_1 — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/riva-translate-4b-instruct-v1_1 — the model page's structured capability record states `modelCapability.functionCalling: false` (re-read 2026-09-27)",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/nemotron-3-content-safety",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/nemotron-3-content-safety",
+      "displayName": "Nemotron 3 Content Safety",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-content-safety",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3-content-safety — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-content-safety — a content-safety CLASSIFIER: its output is a safety verdict, not an agent turn. NOTE the page's own capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27), which this ruling overrides on the model's documented purpose; held at `inferred` for that reason",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3-content-safety — a content-safety CLASSIFIER: its output is a safety verdict, not an agent turn. NOTE the page's own capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27), which this ruling overrides on the model's documented purpose; held at `inferred` for that reason",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/nemotron-3.5-content-safety",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/nemotron-3.5-content-safety",
+      "displayName": "Nemotron 3.5 Content Safety",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3.5-content-safety",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/nemotron-3.5-content-safety — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3.5-content-safety — a content-safety CLASSIFIER: its output is a safety verdict, not an agent turn. NOTE the page's own capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27), which this ruling overrides on the model's documented purpose; held at `inferred` for that reason",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/nemotron-3.5-content-safety — a content-safety CLASSIFIER: its output is a safety verdict, not an agent turn. NOTE the page's own capability record states `modelCapability.functionCalling: true` (re-read 2026-09-27), which this ruling overrides on the model's documented purpose; held at `inferred` for that reason",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/nvidia/ising-calibration-1-35b-a3b",
+      "providerId": "nvidia",
+      "upstreamId": "nvidia/ising-calibration-1-35b-a3b",
+      "displayName": "Ising Calibration 1 35B A3B",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/ising-calibration-1-35b-a3b",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/ising-calibration-1-35b-a3b — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/ising-calibration-1-35b-a3b — a calibration model; the page's capability record states `modelCapability.functionCalling: false`, but the URL now renders a differently-named release (ising-calibration-1.5-31b), so the claim is held at `inferred` (re-read 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://build.nvidia.com/nvidia/ising-calibration-1-35b-a3b — a calibration model; the page's capability record states `modelCapability.functionCalling: false`, but the URL now renders a differently-named release (ising-calibration-1.5-31b), so the claim is held at `inferred` (re-read 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#nvidia/ising-calibration-1-35b-a3b",
+          "observedAt": "2026-09-05T00:00:00Z",
+          "confidence": "inferred"
+        },
+        "efforts": [],
+        "continuation": "none"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/meta/llama-3.2-11b-vision-instruct",
+      "providerId": "nvidia",
+      "upstreamId": "meta/llama-3.2-11b-vision-instruct",
+      "displayName": "Llama 3.2 11B Vision Instruct",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-11b-vision-instruct",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-11b-vision-instruct — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/meta-llama-3_2-11b-vision-instruct — the model reference documents no tool/function-calling parameters; the build.nvidia.com model page no longer resolves (re-checked 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/meta-llama-3_2-11b-vision-instruct — the model reference documents no tool/function-calling parameters; the build.nvidia.com model page no longer resolves (re-checked 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nvidia/meta/llama-3.2-90b-vision-instruct",
+      "providerId": "nvidia",
+      "upstreamId": "meta/llama-3.2-90b-vision-instruct",
+      "displayName": "Llama 3.2 90B Vision Instruct",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence ruling for NVIDIA's hosted endpoint. This row is otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one), and only `toolCalling`/`nativeTools` differ.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-90b-vision-instruct",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/nvidia/index.ts#meta/llama-3.2-90b-vision-instruct — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/meta-llama-3_2-90b-vision-instruct — the model reference documents no tool/function-calling parameters; the build.nvidia.com model page no longer resolves (re-checked 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.api.nvidia.com/nim/reference/meta-llama-3_2-90b-vision-instruct — the model reference documents no tool/function-calling parameters; the build.nvidia.com model page no longer resolves (re-checked 2026-09-27)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "agentrouter/claude-opus-5",
+      "providerId": "agentrouter",
+      "upstreamId": "claude-opus-5",
+      "displayName": "Claude Opus 5",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence. Controller ruling: an official vendor page telling users to point Claude Code at this endpoint is tool-use evidence for it (Claude Code cannot work without tool use), at `inferred` -- below a field-level spec. `gpt-5.6-sol` on this provider is deliberately NOT given the same claim: the guide routes only the Claude Opus models through the Anthropic base URL.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/agentrouter/index.ts#claude-opus-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/agentrouter/index.ts#claude-opus-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/agentrouter/index.ts#claude-opus-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://agentrouter.org/docs/claude-code.html — AgentRouter's Claude Code guide sets ANTHROPIC_BASE_URL to https://agentrouter.org and names the Claude Opus models (claude-opus-5, claude-opus-4-8) as the ones to use through that Anthropic route",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://agentrouter.org/docs/claude-code.html — AgentRouter's Claude Code guide sets ANTHROPIC_BASE_URL to https://agentrouter.org and names the Claude Opus models (claude-opus-5, claude-opus-4-8) as the ones to use through that Anthropic route",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "agentrouter/claude-opus-4-8",
+      "providerId": "agentrouter",
+      "upstreamId": "claude-opus-4-8",
+      "displayName": "Claude Opus 4.8",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): tool-calling evidence. Controller ruling: an official vendor page telling users to point Claude Code at this endpoint is tool-use evidence for it (Claude Code cannot work without tool use), at `inferred` -- below a field-level spec. `gpt-5.6-sol` on this provider is deliberately NOT given the same claim: the guide routes only the Claude Opus models through the Anthropic base URL.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/agentrouter/index.ts#claude-opus-4-8",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/agentrouter/index.ts#claude-opus-4-8",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "open-sse/config/providers/registry/agentrouter/index.ts#claude-opus-4-8 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://agentrouter.org/docs/claude-code.html — AgentRouter's Claude Code guide sets ANTHROPIC_BASE_URL to https://agentrouter.org and names the Claude Opus models (claude-opus-5, claude-opus-4-8) as the ones to use through that Anthropic route",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://agentrouter.org/docs/claude-code.html — AgentRouter's Claude Code guide sets ANTHROPIC_BASE_URL to https://agentrouter.org and names the Claude Opus models (claude-opus-5, claude-opus-4-8) as the ones to use through that Anthropic route",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "opencode/space-bunny-free",
+      "providerId": "opencode",
+      "upstreamId": "space-bunny-free",
+      "displayName": "Space Bunny (OpenCode Zen)",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): a STEALTH model -- its maker is not disclosed, so no family is stated and the row stamps `other`. Zen serves it at https://opencode.ai/zen/v1/chat/completions and lists the id at https://opencode.ai/zen/v1/models. Context window, output limit, modalities and reasoning efforts are deliberately ABSENT: the only source for them is a third-party metadata mirror (models.dev), and the catalog's evidence vocabulary has no member for a third party -- dressing it as `official-doc` is what the big-pickle row's own comment forbids. Free for a limited time with no end date published: the zero price is dated, not permanent. Data handling (Zen: the provider claims zero retention and no training use) is on the provider row's risk reasons.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: Zen's model table (https://opencode.ai/docs/zen/, read 2026-09-27) states no modality for this id, so `text` is Winter's floor for a chat registry, NOT a vendor statement.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: Zen's model table (https://opencode.ai/docs/zen/, read 2026-09-27) states no modality for this id, so `text` is Winter's floor for a chat registry, NOT a vendor statement.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "winter-default",
+        "sourceRef": "https://opencode.ai/docs/zen/ (read 2026-09-27) — Zen's docs state no tool-calling capability for `space-bunny-free`; the only statement found is a THIRD-PARTY metadata mirror (models.dev: `tool_call: true`), which is not vendor evidence, and nothing documents that this id is the same model OpenRouter lists as `stealth/space-bunny-alpha`. ABSENT fails CLOSED (WS-13 §8.1: `native` is never inferred from silence) — the `opencode/big-pickle` precedent.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "winter-default",
+        "sourceRef": "https://opencode.ai/docs/zen/ (read 2026-09-27) — Zen's docs state no tool-calling capability for `space-bunny-free`; the only statement found is a THIRD-PARTY metadata mirror (models.dev: `tool_call: true`), which is not vendor evidence, and nothing documents that this id is the same model OpenRouter lists as `stealth/space-bunny-alpha`. ABSENT fails CLOSED (WS-13 §8.1: `native` is never inferred from silence) — the `opencode/big-pickle` precedent.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0,
+          "outputPerMTokUsd": 0,
+          "cacheReadPerMTokUsd": 0
+        },
+        "source": "official-doc",
+        "sourceRef": "https://opencode.ai/docs/zen/ — Zen's pricing table lists Space Bunny as Free for input, output and cached read, observed 2026-09-27. Free for a LIMITED TIME with no end date published: re-check before relying on it; no cache-write rate is published.",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      }
+    },
+    {
+      "key": "openrouter/stealth/space-bunny-alpha",
+      "providerId": "openrouter",
+      "upstreamId": "stealth/space-bunny-alpha",
+      "displayName": "Space Bunny Alpha (via OpenRouter)",
+      "aliases": [],
+      "$comment": "WS-27 (2026-09-27): a STEALTH model (https://openrouter.ai/stealth/space-bunny-alpha) -- its maker is not disclosed, so no family is stated and the row stamps `other`. Every field is OpenRouter's own public model entry. Reasoning is MANDATORY on this id (no `none` tier), so `efforts` lists only what the entry declares. Free for a limited time (`expiration_date: null`, no end date published): the zero price is dated. Data handling (OpenRouter's stealth-model terms: prompts and completions may be collected and shared with the model's provider for training) is on the provider row's risk reasons.",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — public entry stealth/space-bunny-alpha: context_length 1000000, max_completion_tokens 524288, input text/image/video, output text, supported parameters include tools, tool_choice, reasoning_effort and response_format; reasoning mandatory with efforts max/xhigh/high/medium/low (default max); observed 2026-09-27",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — public entry stealth/space-bunny-alpha: context_length 1000000, max_completion_tokens 524288, input text/image/video, output text, supported parameters include tools, tool_choice, reasoning_effort and response_format; reasoning mandatory with efforts max/xhigh/high/medium/low (default max); observed 2026-09-27",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — public entry stealth/space-bunny-alpha: context_length 1000000, max_completion_tokens 524288, input text/image/video, output text, supported parameters include tools, tool_choice, reasoning_effort and response_format; reasoning mandatory with efforts max/xhigh/high/medium/low (default max); observed 2026-09-27",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — public entry stealth/space-bunny-alpha: context_length 1000000, max_completion_tokens 524288, input text/image/video, output text, supported parameters include tools, tool_choice, reasoning_effort and response_format; reasoning mandatory with efforts max/xhigh/high/medium/low (default max); observed 2026-09-27",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — public entry stealth/space-bunny-alpha: context_length 1000000, max_completion_tokens 524288, input text/image/video, output text, supported parameters include tools, tool_choice, reasoning_effort and response_format; reasoning mandatory with efforts max/xhigh/high/medium/low (default max); observed 2026-09-27",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 524288,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — public entry stealth/space-bunny-alpha: context_length 1000000, max_completion_tokens 524288, input text/image/video, output text, supported parameters include tools, tool_choice, reasoning_effort and response_format; reasoning mandatory with efforts max/xhigh/high/medium/low (default max); observed 2026-09-27",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://openrouter.ai/api/v1/models — public entry stealth/space-bunny-alpha: context_length 1000000, max_completion_tokens 524288, input text/image/video, output text, supported parameters include tools, tool_choice, reasoning_effort and response_format; reasoning mandatory with efforts max/xhigh/high/medium/low (default max); observed 2026-09-27",
+          "confidence": "declared",
+          "observedAt": "2026-09-27T00:00:00Z"
+        },
+        "efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "defaultEffort": "max",
+        "continuation": "none"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0,
+          "outputPerMTokUsd": 0
+        },
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own current public price for stealth/space-bunny-alpha: prompt 0 / completion 0 per token (no cache rates published), observed 2026-09-27. Free for a LIMITED TIME: `expiration_date` is null and no end date is published, so re-check before relying on it.",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
+      }
     }
   ]
 }
