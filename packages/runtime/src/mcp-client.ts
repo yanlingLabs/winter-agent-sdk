@@ -47,7 +47,8 @@ export {
  * (`type: "sdk"`) server (a host that has the server object in hand does not need a protocol client to
  * reach it), no redirect refusal (the runtime's web search backend's concern) and no list-changed hook
  * (the runtime's lifecycle owns re-registration). Everything it references is exported from here or from
- * `@yanlinglabs/winter-agent-sdk`, so this subpath's declarations reach into nothing private.
+ * `@yanlinglabs/winter-agent-sdk` (WS-25's `McpOAuthStore` is re-exported here for `oauthStore`), so this
+ * subpath's declarations reach into nothing private.
  */
 export interface ConnectMcpServerOptions {
   /** The server's name: prefixes its diagnostics and is `ConnectedMcpClient.serverName`. */

@@ -249,6 +249,14 @@ describe("refresh: one refresher, rotating tokens", () => {
     expect(after.issuer).toBe(before.issuer);
   });
 
+  test("the RFC 8707 resource is sent VERBATIM on refresh -- a pathless PRM resource is not turned into `origin/`", async () => {
+    const fx = fixture({ pathlessResource: true });
+    const store = createMemoryMcpOAuthStore();
+    await signIn(fx, store);
+    expect(await refreshMcpOAuthToken({ account: mcpOAuthTokenAccount(fx.mcpUrl), store })).toEqual({ ok: true, generation: 2 });
+    expect(fx.tokenResources).toEqual([fx.origin, fx.origin]);
+  });
+
   test("SINGLE-FLIGHT: five concurrent asks post ONE refresh grant", async () => {
     const fx = fixture();
     const store = createMemoryMcpOAuthStore();

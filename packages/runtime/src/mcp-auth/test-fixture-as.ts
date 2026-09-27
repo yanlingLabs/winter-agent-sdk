@@ -50,6 +50,8 @@ export interface FixtureAsOptions {
   issParameter?: boolean;
   /** Advertise `revocation_endpoint`. Default true. */
   revocation?: boolean;
+  /** Publish the protected resource as the bare ORIGIN (no path) -- the RFC 8707 indicator form a URL round trip would change. */
+  pathlessResource?: boolean;
 }
 
 interface CodeGrant {
@@ -78,6 +80,8 @@ export interface FixtureAs {
   readonly log: string[];
   /** Every POST to `/token`, by grant type, in order. */
   readonly tokenPosts: string[];
+  /** The `resource` form parameter of every POST to `/token`, in order (`null` when absent). */
+  readonly tokenResources: Array<string | null>;
   /** Every request that reached `/mcp` (answered or 401). */
   readonly mcpRequests: number;
   /** Registered DCR clients, in order. */
@@ -137,6 +141,7 @@ export function startFixtureAs(opts: FixtureAsOptions = {}): FixtureAs {
 
   const log: string[] = [];
   const tokenPosts: string[] = [];
+  const tokenResources: Array<string | null> = [];
   const registrations: Array<{ clientId: string; redirectUris: string[] }> = [];
   const authorizeRedirects: string[] = [];
   const reuseRevokedFamilies: string[] = [];
@@ -161,7 +166,7 @@ export function startFixtureAs(opts: FixtureAsOptions = {}): FixtureAs {
 
       if (url.pathname === "/.well-known/oauth-protected-resource/mcp" || url.pathname === "/.well-known/oauth-protected-resource") {
         if (!metadata) return new Response("not found", { status: 404 });
-        return json({ resource: mcpUrl, authorization_servers: [issuer], scopes_supported: scopesSupported, bearer_methods_supported: ["header"] });
+        return json({ resource: opts.pathlessResource === true ? origin : mcpUrl, authorization_servers: [issuer], scopes_supported: scopesSupported, bearer_methods_supported: ["header"] });
       }
       if (url.pathname === "/.well-known/oauth-authorization-server") {
         if (!metadata) return new Response("not found", { status: 404 });
@@ -219,6 +224,7 @@ export function startFixtureAs(opts: FixtureAsOptions = {}): FixtureAs {
         const form = new URLSearchParams(await req.text());
         const grantType = form.get("grant_type") ?? "";
         tokenPosts.push(grantType);
+        tokenResources.push(form.get("resource"));
         const auth = authenticateClient(req, form);
         if (auth === "invalid") return oauthError("invalid_client", 401);
         if (grantType === "authorization_code") {
@@ -354,6 +360,7 @@ export function startFixtureAs(opts: FixtureAsOptions = {}): FixtureAs {
     mcpUrl,
     log,
     tokenPosts,
+    tokenResources,
     get mcpRequests() {
       return mcpRequests;
     },

@@ -48,7 +48,12 @@ export interface RefreshMcpOAuthTokenOptions {
 
 export type RefreshMcpOAuthTokenResult = { ok: true; generation: number } | { ok: false; reason: "needs_auth" | "transient" };
 
-/** Per store, per account: the refresh in flight. A WeakMap so a store (a test's, a host's) never outlives its own use. */
+/**
+ * Per store, per account: the refresh in flight. A WeakMap so a store (a test's, a host's) never outlives
+ * its own use. KEYED ON THE STORE OBJECT: a host must pass ONE store instance per process for every
+ * refresh -- building a fresh `createKeychainMcpOAuthStore()` per request would give every request its
+ * own single-flight map, i.e. none at all (the generation re-read still guards, but only after discovery).
+ */
 const inflight = new WeakMap<McpOAuthStore, Map<string, Promise<RefreshMcpOAuthTokenResult>>>();
 
 /** The OAuth errors after which only a new sign-in helps. Everything else (5xx, 429, the network) is `transient`. */
@@ -59,6 +64,10 @@ function log(account: string, what: string): void {
   console.error(`winter: mcp-auth: refresh for ${account}: ${what}`);
 }
 
+/**
+ * Refreshes ONE sign-in (see this file's header). Pass the SAME `store` instance on every call in a process:
+ * the single-flight is per store object.
+ */
 export async function refreshMcpOAuthToken(opts: RefreshMcpOAuthTokenOptions): Promise<RefreshMcpOAuthTokenResult> {
   // Validated first, outside the single-flight: a malformed account is the caller's bug, thrown typed.
   const clientAccount = clientAccountForTokenAccount(opts.account);
@@ -125,7 +134,9 @@ async function refreshOnce(opts: RefreshMcpOAuthTokenOptions, clientAccount: str
       ...(server.metadata !== undefined ? { metadata: server.metadata } : {}),
       clientInformation: { client_id: client.clientId, ...(client.clientSecret !== undefined ? { client_secret: client.clientSecret } : {}) },
       refreshToken: record.refreshToken,
-      ...(resource !== undefined ? { resource: new URL(resource) } : {}),
+      // The PRM string VERBATIM, exactly as the sign-in's `auth()` sent it: a `URL` would turn a pathless
+      // `https://mcp.example.com` into `https://mcp.example.com/`, a different indicator (`invalid_target`).
+      ...(resource !== undefined ? { resource } : {}),
       fetchFn,
     });
     const generation = record.generation + 1;
