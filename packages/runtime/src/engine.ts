@@ -132,6 +132,7 @@ import { createElicitationAsker } from "./mcp/elicitation.ts";
 // WS-25 (MCP OAuth): the session's sign-ins, the needs-auth call hint and the needs-auth notice.
 import { createSessionMcpOAuth, mcpNeedsAuthAttachment, needsAuthToolHint } from "./mcp-auth/engine-wiring.ts";
 import type { McpOAuthStore } from "./mcp-auth/store.ts";
+import type { HostCredentialChannel } from "./provider/host-credentials.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
 import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildInheritance, type ParentMcpState, type ParentRuleMirror, type SpawnChildRequest } from "./subagents/child-handle.ts";
@@ -1710,6 +1711,12 @@ export interface EngineOptions {
    */
   mcpOAuthStore?: McpOAuthStore;
   /**
+   * WS-25 §7: the host-credential channel production wiring built for a host-brokered session
+   * (`RuntimeConfig.hostCredentials`). Bound to this run's control bridge the moment it exists, so every
+   * `credential_resolve` rides the session's own stdio pipe. Absent: nothing to bind.
+   */
+  hostCredentialChannel?: HostCredentialChannel;
+  /**
    * `system/init.slash_commands`. Produced by `slashCommandNames(resolver, cwd)`, which ALREADY
    * includes the engine's own `/compact` -- the engine must not prepend it a second time.
    */
@@ -2435,6 +2442,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     subagentHooks,
     extraMcpServerSources,
     mcpOAuthStore,
+    hostCredentialChannel,
     initSlashCommands,
     initSkills,
     initPlugins,
@@ -2765,6 +2773,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // `output` every other runtime->host frame goes through — there is no second writer to race
   // against.
   const bridge = createRpcBridge(output);
+  // WS-25 §7: a host-brokered session's credential reads ride THIS bridge (the one top-level engine binds;
+  // a child engine never receives the channel, and shares the parent's binding through the stores).
+  hostCredentialChannel?.bind(bridge);
   // Task 8: one stateless instance for the whole run — createBridgePromptStage's own closure only
   // ever reads `bridge` (constant for the run), so there is nothing to gain from rebuilding it on
   // every evaluate() call the way makeEvalCtx's own per-call PolicyState snapshot must be.
@@ -4797,7 +4808,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // implicitly; an embedded session's Worker has only the host daemon's cwd to inherit.
       cwd: config.cwd,
       // WS-25: the session's MCP sign-ins, refreshed by the HOST over this session's own bridge.
-      ...(mcpOAuthStore !== undefined ? { oauth: createSessionMcpOAuth({ store: mcpOAuthStore, sender: bridge, brand: sessionBrand }) } : {}),
+      ...(mcpOAuthStore !== undefined ? { oauth: createSessionMcpOAuth({ store: mcpOAuthStore, sender: bridge, brand: sessionBrand, ...(config.hostCredentials === true ? { hostOwnsRefresh: true } : {}) }) } : {}),
     });
     // WS-09 §2's three-deadline model lives entirely inside `start()`: an ordinary server connects
     // in the background and this returns immediately; `MCP_CONNECTION_NONBLOCKING=0` or an

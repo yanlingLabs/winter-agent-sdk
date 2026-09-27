@@ -203,6 +203,23 @@ export function keychainAccountName(providerId: string, accountId: string): stri
   return `${providerId}:${accountId}`;
 }
 
+/**
+ * WS-25 §7: the SAME interpretation `get` applies to a Keychain item's string, for a value that arrived
+ * another way (a host-brokered session receives the item's string from its host). Typed errors name the
+ * ref, never the value.
+ */
+export function parseStoredCredentialMaterial(raw: string, ref: CredentialRef): CredentialMaterial {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new CredentialResolutionError("malformed", `the credential record for ${redactRef(ref)} is not valid JSON credential material`);
+  }
+  const material = coerceMaterial(parsed);
+  if (material === undefined) throw new CredentialResolutionError("malformed", `the credential record for ${redactRef(ref)} is not a recognized credential material shape`);
+  return material;
+}
+
 const MATERIAL_KINDS: ReadonlySet<string> = new Set(["api-key", "bearer", "oauth", "aws", "gcp-service-account", "gcp-access-token"]);
 
 /**

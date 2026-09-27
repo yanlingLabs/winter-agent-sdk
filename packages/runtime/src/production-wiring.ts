@@ -76,8 +76,9 @@ import { DEFAULT_OUTPUT_STYLE } from "@yanlinglabs/winter-agent-sdk";
 // own header makes. Before this, `main.ts` picked a provider from an env var and `testing.ts` took
 // one as a parameter -- two entrypoints, two policies, and NEITHER of them the catalog-first
 // selection R6-9 requires. Now both call this module and this module calls one builder.
-import { buildSessionProvider, resolveSessionKeychainService, type SessionProviderOptions, type SessionProviderWiring } from "./provider/session-provider.ts";
-import { mcpOAuthTestStoreEnvName, resolveSessionMcpOAuthStore, type McpOAuthStore } from "./mcp-auth/store.ts";
+import { buildSessionProvider, createProductionCredentialStore, resolveSessionKeychainService, type SessionProviderOptions, type SessionProviderWiring } from "./provider/session-provider.ts";
+import { createHostBrokeredCredentialStore, createHostBrokeredSecretReader, createHostCredentialChannel, type HostCredentialChannel } from "./provider/host-credentials.ts";
+import { createHostBrokeredMcpOAuthStore, mcpOAuthTestStoreEnvName, resolveSessionMcpOAuthStore, type McpOAuthStore } from "./mcp-auth/store.ts";
 import type { ProviderStateRecordInput } from "./store/provider-state.ts";
 import type { Provider } from "./engine.ts";
 import type { ClassifierInterface } from "./permissions/auto/engine.ts";
@@ -580,8 +581,10 @@ export interface ProductionWiring {
      */
     pluginWorkflows?: readonly { name: string; workflowsPath?: string; workflowsPaths?: readonly string[] }[];
     extraMcpServerSources: readonly McpServerSource[];
-    /** WS-25: where the session reads its MCP sign-ins (the session's Keychain service; the test seam's file under `verify:mcp-oauth`). */
+    /** WS-25: where the session reads its MCP sign-ins (the session's Keychain service; the test seam's file under `verify:mcp-oauth`; the host, §7). */
     mcpOAuthStore: McpOAuthStore;
+    /** WS-25 §7: present when the host resolves credentials; `runEngine` binds it to its control bridge. */
+    hostCredentialChannel?: HostCredentialChannel;
     initSlashCommands: readonly string[];
     initSkills: readonly string[];
     initPlugins: readonly InitPluginInfo[];
@@ -1303,9 +1306,21 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // The operator still gets the reason on STDERR, through the same `warnings` channel every other
   // non-fatal wiring problem uses. Two channels, deliberately: the host reads frames, the operator
   // reads stderr, and a session that cannot name its model owes both an answer.
+  // WS-25 §7 (prompt-free credentials): a host that answers `credential_resolve` resolves EVERY Keychain
+  // credential this session reads -- provider auth, advisor/web/cross-provider refs, tool keys, MCP
+  // sign-ins -- over the control channel the engine binds at start. No Keychain store is built at all.
+  const hostCredentialChannel = config.hostCredentials === true ? createHostCredentialChannel() : undefined;
+  const hostCredentialOptions =
+    hostCredentialChannel !== undefined
+      ? {
+          credentials: createProductionCredentialStore(config, env, opts.provider?.home ?? env["HOME"] ?? "", createHostBrokeredCredentialStore(hostCredentialChannel)),
+          readKeychainSecret: createHostBrokeredSecretReader(hostCredentialChannel),
+        }
+      : {};
   const providerWiring = buildSessionProvider({
     config,
     env,
+    ...hostCredentialOptions,
     // WS-13b R6b-7: the per-provider enable setting, threaded as a GETTER over the SAME live
     // `settingsGetter` every other consumer reads. That is what makes it hot-reloadable within this
     // module's own contract (see this file's header): nothing here watches a file, but a host that
@@ -1845,7 +1860,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       extraMcpServerSources,
       // WS-25: the SAME service every other `{ kind: "keychain" }` credential of this session resolves
       // under. Lazy: nothing touches the Keychain until a remote MCP server actually connects.
-      mcpOAuthStore: resolveSessionMcpOAuthStore({ keychainService: resolveSessionKeychainService(config), testStoreFile: mcpOAuthTestStoreFile }),
+      mcpOAuthStore:
+        hostCredentialChannel !== undefined
+          ? createHostBrokeredMcpOAuthStore(hostCredentialChannel)
+          : resolveSessionMcpOAuthStore({ keychainService: resolveSessionKeychainService(config), testStoreFile: mcpOAuthTestStoreFile }),
+      ...(hostCredentialChannel !== undefined ? { hostCredentialChannel } : {}),
       initSlashCommands,
       initSkills,
       initPlugins,
