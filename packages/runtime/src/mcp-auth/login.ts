@@ -38,7 +38,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { mcpOAuthClientAccount, mcpOAuthClientSecretAccount, mcpOAuthTokenAccount } from "./account.ts";
 import { MCP_OAUTH_CALLBACK_PATH, MCP_OAUTH_LOGIN_TIMEOUT_MS, MCP_OAUTH_STATE_BYTES, WINTER_MCP_CLIENT_METADATA_URL } from "./constants.ts";
 import { fetchAuthorizationServerMetadataDocument } from "./discovery.ts";
-import { McpOAuthError } from "./errors.ts";
+import { boundedReason, McpOAuthError } from "./errors.ts";
 import { createMcpAuthFetch, evaluateMcpAuthUrl, isLoopbackMcpServer } from "./fetch-policy.ts";
 import { decodeMcpOAuthClientSecretItem, encodeMcpOAuthClientSecretItem, sameIssuer, type McpOAuthClientRecord, type McpOAuthClientSecretItem } from "./records.ts";
 import { readClientRecord, readTokenRecordLenient, writeClientRecord, writeTokenRecord, type McpOAuthStore } from "./store.ts";
@@ -73,6 +73,14 @@ export type McpOAuthLoginOutcome = { ok: true } | { ok: false; reason: string };
 export interface McpOAuthLogin {
   /** The authorization server's authorize URL, for the HOST to open in a browser. HTTPS (or literal loopback). */
   authUrl: string;
+  /**
+   * The FULL verified issuer string this sign-in used -- RFC 8414 `issuer` when the server published
+   * metadata, else the authorization server URL discovery landed on (the legacy variant). Two tenants
+   * behind one reverse proxy (`https://host/tenant/a`, `https://host/tenant/b`) share an ORIGIN but never
+   * this string: a caller that must tell them apart (the daemon's own authorization-server bookkeeping)
+   * compares THIS, with `sameIssuer` (`records.ts`), never `issuerOrigin`.
+   */
+  issuer: string;
   /** The authorization server's issuer ORIGIN, to show the user before the browser opens. */
   issuerOrigin: string;
   /**
@@ -137,14 +145,6 @@ async function readSecret(opts: StartMcpOAuthLoginOptions, account: string): Pro
   }
   if (secret === null || secret === "") throw new McpOAuthError("client_secret_unavailable", `no client secret is stored at Keychain account "${account}"`);
   return secret;
-}
-
-/** Error text for a host: a code, or a name and a bounded, control-free message (never an unbounded server string). */
-function boundedReason(err: unknown): string {
-  if (err instanceof McpOAuthError) return err.message.slice(0, 300);
-  if (err instanceof OAuthError) return `oauth_error:${err.code}`;
-  if (err instanceof Error) return `${err.name}: ${err.message.replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 200)}`;
-  return "failed";
 }
 
 function originOf(url: string): string {
@@ -505,6 +505,7 @@ export async function startMcpOAuthLogin(opts: StartMcpOAuthLoginOptions): Promi
 
   return {
     authUrl: authorizeUrl.toString(),
+    issuer,
     issuerOrigin,
     authorizeOrigin: authorizeUrl.origin,
     done,

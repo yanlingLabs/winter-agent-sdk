@@ -5,6 +5,7 @@
 // client secret, or an authorization server's response body (an `error_description` is the server's
 // text, and a token endpoint that echoes its request would put the refresh token in it). WS-25 spec §5's
 // security review checks exactly this.
+import { OAuthError } from "@modelcontextprotocol/client";
 
 /**
  * - `malformed_record` / `unsupported_record_version` -- a Keychain item that is not a record this SDK
@@ -55,4 +56,19 @@ export class McpOAuthError extends Error {
     this.name = "McpOAuthError";
     this.code = code;
   }
+}
+
+/**
+ * Error text safe to hand a host: an `McpOAuthError`'s own message (already bounded and code-shaped by its
+ * throw site), an `OAuthError`'s code alone, or a bounded, control-free NAME + message -- never an
+ * authorization server's raw response body (a token endpoint that echoes its request would put a refresh
+ * token or a client secret in it). Shared by every `mcp-auth` door that wraps a step it did not throw
+ * itself (login's discovery/registration leg, this file's discovery-only door) so the bound lives in ONE
+ * place rather than one copy per door drifting apart.
+ */
+export function boundedReason(err: unknown): string {
+  if (err instanceof McpOAuthError) return err.message.slice(0, 300);
+  if (err instanceof OAuthError) return `oauth_error:${err.code}`;
+  if (err instanceof Error) return `${err.name}: ${err.message.replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 200)}`;
+  return "failed";
 }
