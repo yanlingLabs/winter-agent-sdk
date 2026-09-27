@@ -161,3 +161,53 @@ export function encodeMcpOAuthClientRecord(record: McpOAuthClientRecord): string
   decodeMcpOAuthClientRecord(text);
   return text;
 }
+
+// --- Fix round 2 (I-A): the pre-registered client secret, BOUND TO ITS ISSUER --------------------------
+
+/**
+ * The item at `mcp-oauth-client-secret:<id>`. A secret is only ever sent to the authorization server it
+ * belongs to: a config source that can redeclare the server (a trusted project overriding the user's
+ * scope) could otherwise point `authServerMetadataUrl` at its own token endpoint and have a Sign in click
+ * post the user's secret there.
+ *
+ * - `issuer` present: the secret goes to that issuer only (the host set it when the user knew it --
+ *   `encodeMcpOAuthClientSecretItem(secret, expectedIssuer)`, or the sign-in stamped it, below).
+ * - `issuer` absent: TRUST ON FIRST USE -- the first SUCCESSFUL pre-registered sign-in stamps the issuer it
+ *   used, and every later sign-in must match it (so does an existing pre-registered client record's).
+ *
+ * A bare string (a secret a host wrote before this shape) reads as `{ secret, issuer: undefined }`.
+ */
+export interface McpOAuthClientSecretItem {
+  secret: string;
+  issuer?: string;
+}
+
+export function decodeMcpOAuthClientSecretItem(raw: string): McpOAuthClientSecretItem {
+  if (raw.startsWith("{")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = undefined;
+    }
+    if (typeof parsed === "object" && parsed !== null && (parsed as { kind?: unknown }).kind === "mcp-oauth-client-secret") {
+      const o = parsed as Record<string, unknown>;
+      if (o.v !== 1) throw new McpOAuthError(typeof o.v === "number" ? "unsupported_record_version" : "malformed_record", "the MCP client secret record has an unreadable version");
+      if (typeof o.secret !== "string" || o.secret === "") throw new McpOAuthError("malformed_record", 'the MCP client secret record has no "secret"');
+      if (o.issuer !== undefined && (typeof o.issuer !== "string" || o.issuer === "")) throw new McpOAuthError("malformed_record", 'the MCP client secret record\'s "issuer" is not a string');
+      return { secret: o.secret, ...(typeof o.issuer === "string" ? { issuer: o.issuer } : {}) };
+    }
+  }
+  return { secret: raw };
+}
+
+/** What a host writes at `mcpOAuthClientSecretAccount(serverUrl)`; `expectedIssuer` binds it up front. */
+export function encodeMcpOAuthClientSecretItem(secret: string, expectedIssuer?: string): string {
+  if (secret === "") throw new McpOAuthError("malformed_record", "an MCP client secret cannot be empty");
+  return JSON.stringify({ v: 1, kind: "mcp-oauth-client-secret", secret, ...(expectedIssuer !== undefined ? { issuer: expectedIssuer } : {}) });
+}
+
+/** Issuer equality as the MCP client compares it: exact, or differing only by one trailing slash. */
+export function sameIssuer(a: string, b: string): boolean {
+  return a === b || a === `${b}/` || `${a}/` === b;
+}

@@ -25,6 +25,9 @@ export { validateMcpOAuthConfig } from "./mcp-auth/config.ts";
 export { evaluateMcpAuthUrl } from "./mcp-auth/fetch-policy.ts";
 export {
   decodeMcpOAuthClientRecord,
+  decodeMcpOAuthClientSecretItem,
+  encodeMcpOAuthClientSecretItem,
+  type McpOAuthClientSecretItem,
   decodeMcpOAuthTokenRecord,
   encodeMcpOAuthClientRecord,
   encodeMcpOAuthTokenRecord,

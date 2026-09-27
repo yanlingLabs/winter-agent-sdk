@@ -21,6 +21,8 @@
  * - `authorization_denied` -- the authorization server redirected back with `error=...`.
  * - `client_secret_unavailable` -- a pre-registered client's `clientSecretRef` could not be read.
  * - `callback_port_unavailable` -- the configured `oauth.callbackPort` is taken.
+ * - `client_secret_issuer_mismatch` -- a pre-registered client secret would go to an authorization server
+ *   other than the one it is bound to (its stamped/expected issuer, or an existing registration's).
  * - `login_failed` -- discovery, registration or the code exchange failed (the message says which step,
  *   and on the exchange never quotes the authorization server).
  * - `not_implemented` -- a contract stub (WS-25 lands its types first).
@@ -39,6 +41,7 @@ export type McpOAuthErrorCode =
   | "authorization_denied"
   | "client_secret_unavailable"
   | "callback_port_unavailable"
+  | "client_secret_issuer_mismatch"
   | "login_failed"
   | "not_implemented";
 

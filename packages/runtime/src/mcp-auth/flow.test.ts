@@ -5,7 +5,8 @@ import { mcpOAuthClientAccount, mcpOAuthClientSecretAccount, mcpOAuthTokenAccoun
 import { activeMcpOAuthLoginCount, startMcpOAuthLogin } from "./login.ts";
 import { refreshMcpOAuthToken } from "./refresh.ts";
 import { revokeMcpOAuth } from "./revoke.ts";
-import { createMemoryMcpOAuthStore, readClientRecord, readTokenRecord, writeTokenRecord, type McpOAuthStore } from "./store.ts";
+import { createHostBrokeredMcpOAuthStore, createMemoryMcpOAuthStore, MCP_OAUTH_HOST_HELD_REFRESH_TOKEN, readClientRecord, readTokenRecord, writeTokenRecord, type McpOAuthStore } from "./store.ts";
+import { decodeMcpOAuthClientSecretItem, encodeMcpOAuthClientSecretItem } from "./records.ts";
 import { startFixtureAs, type FixtureAs, type FixtureAsOptions } from "./test-fixture-as.ts";
 
 const CIMD_URL = "https://winter.test/oauth-client.json";
@@ -137,6 +138,41 @@ describe("sign-in: CIMD and pre-registered clients", () => {
     expect(client).toMatchObject({ registeredVia: "preregistered", clientId: "gh-app", clientSecret: "pre-secret-value", redirectUri: `http://127.0.0.1:${port}/callback` });
     // ...and the refresh authenticates as that confidential client.
     expect(await refreshMcpOAuthToken({ account: mcpOAuthTokenAccount(fx.mcpUrl), store })).toEqual({ ok: true, generation: 2 });
+  });
+
+  test("I-A: the normal pre-registered flow binds the secret to its issuer on first success (TOFU)", async () => {
+    const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+    const port = probe.port as number;
+    probe.stop(true);
+    const fx = fixture({ preregistered: [{ clientId: "gh-app", clientSecret: "pre-secret-value", redirectUris: [`http://127.0.0.1:${port}/callback`] }] });
+    const store = createMemoryMcpOAuthStore({ [mcpOAuthClientSecretAccount(fx.mcpUrl)]: "pre-secret-value" });
+    const { outcome } = await signIn(fx, store, { oauth: { clientId: "gh-app", clientSecretRef: { kind: "keychain" }, callbackPort: port } });
+    expect(outcome).toEqual({ ok: true });
+    expect(decodeMcpOAuthClientSecretItem((await store.read(mcpOAuthClientSecretAccount(fx.mcpUrl)))!)).toEqual({ secret: "pre-secret-value", issuer: fx.issuer });
+  });
+
+  test("I-A: a redeclared server whose authServerMetadataUrl names ANOTHER authorization server never gets the secret", async () => {
+    const legit = fixture({ preregistered: [{ clientId: "gh-app", clientSecret: "pre-secret-value", redirectUris: ["http://127.0.0.1:47000/callback"] }] });
+    const attacker = fixture({ preregistered: [{ clientId: "gh-app", redirectUris: ["http://127.0.0.1:47001/callback"] }] });
+    const attackerMetadata = `${attacker.origin}/.well-known/oauth-authorization-server`;
+    const attack = { clientId: "gh-app", clientSecretRef: { kind: "keychain" as const }, authServerMetadataUrl: attackerMetadata, callbackPort: 47001 };
+    // (a) the user bound the secret up front (the host's door passes the issuer when the user knows it)
+    const bound = createMemoryMcpOAuthStore({ [mcpOAuthClientSecretAccount(legit.mcpUrl)]: encodeMcpOAuthClientSecretItem("pre-secret-value", legit.issuer) });
+    const errA = await startMcpOAuthLogin({ serverUrl: legit.mcpUrl, store: bound, oauth: attack }).catch((e: unknown) => e);
+    expect((errA as { code?: string }).code).toBe("client_secret_issuer_mismatch");
+    // (b) an unbound secret whose server already has a pre-registered registration with the legit issuer
+    const tofu = createMemoryMcpOAuthStore({ [mcpOAuthClientSecretAccount(legit.mcpUrl)]: "pre-secret-value" });
+    const login = await startMcpOAuthLogin({ serverUrl: legit.mcpUrl, store: tofu, oauth: { clientId: "gh-app", clientSecretRef: { kind: "keychain" }, callbackPort: 47000 } });
+    await legit.approve(login.authUrl);
+    expect(await login.done).toEqual({ ok: true });
+    await tofu.write(mcpOAuthClientSecretAccount(legit.mcpUrl), "pre-secret-value"); // even with the stamp undone
+    const errB = await startMcpOAuthLogin({ serverUrl: legit.mcpUrl, store: tofu, oauth: attack }).catch((e: unknown) => e);
+    expect((errB as { code?: string }).code).toBe("client_secret_issuer_mismatch");
+    expect((errB as Error).message).not.toContain("pre-secret-value");
+    // Nothing was ever sent to the attacker's token endpoint, and no record names its issuer.
+    expect(attacker.tokenPosts).toEqual([]);
+    expect((await readClientRecord(tofu, mcpOAuthClientAccount(legit.mcpUrl)))!.issuer).toBe(legit.issuer);
+    expect(activeMcpOAuthLoginCount()).toBe(0);
   });
 
   test("the secret is read ONLY from the derived account -- never a provider key a config (or anyone) names", async () => {
@@ -413,6 +449,24 @@ describe("refresh: one refresher, rotating tokens", () => {
     await refreshMcpOAuthToken({ account, store });
     expect(logged.length).toBeGreaterThan(0); // the reuse was logged -- by account and code
     for (const line of logged) for (const secret of seen) expect(line.includes(secret)).toBe(false);
+  });
+});
+
+describe("fix round 2 M-a: the host-held marker", () => {
+  test("a brokered read masks a real refresh token even when the host forgot to, and refresh refuses the marker", async () => {
+    const fx = fixture();
+    const hostStore = createMemoryMcpOAuthStore();
+    await signIn(fx, hostStore);
+    const account = mcpOAuthTokenAccount(fx.mcpUrl);
+    const raw = (await hostStore.read(account))!;
+    const real = JSON.parse(raw).refreshToken as string;
+    const child = createHostBrokeredMcpOAuthStore({ request: async <T,>() => ({ ok: true, material: raw, generation: 1 }) as T });
+    const seen = (await child.read(account))!;
+    expect(JSON.parse(seen).refreshToken).toBe(MCP_OAUTH_HOST_HELD_REFRESH_TOKEN);
+    expect(seen).not.toContain(real);
+    const view = createMemoryMcpOAuthStore({ [account]: seen, [mcpOAuthClientAccount(fx.mcpUrl)]: (await hostStore.read(mcpOAuthClientAccount(fx.mcpUrl)))! });
+    expect(await refreshMcpOAuthToken({ account, store: view })).toEqual({ ok: false, reason: "needs_auth" });
+    expect(fx.tokenPosts.filter((g) => g === "refresh_token")).toEqual([]);
   });
 });
 

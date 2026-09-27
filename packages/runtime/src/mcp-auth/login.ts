@@ -40,7 +40,7 @@ import { MCP_OAUTH_CALLBACK_PATH, MCP_OAUTH_LOGIN_TIMEOUT_MS, MCP_OAUTH_STATE_BY
 import { fetchAuthorizationServerMetadataDocument } from "./discovery.ts";
 import { McpOAuthError } from "./errors.ts";
 import { createMcpAuthFetch, evaluateMcpAuthUrl, isLoopbackMcpServer } from "./fetch-policy.ts";
-import type { McpOAuthClientRecord } from "./records.ts";
+import { decodeMcpOAuthClientSecretItem, encodeMcpOAuthClientSecretItem, sameIssuer, type McpOAuthClientRecord, type McpOAuthClientSecretItem } from "./records.ts";
 import { readClientRecord, readTokenRecordLenient, writeClientRecord, writeTokenRecord, type McpOAuthStore } from "./store.ts";
 
 export interface StartMcpOAuthLoginOptions {
@@ -147,6 +147,14 @@ function boundedReason(err: unknown): string {
   return "failed";
 }
 
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "an unparseable issuer";
+  }
+}
+
 /** Binds the loopback listener; `port` 0 is ephemeral. Throws when a FIXED port is taken. */
 function bindListener(port: number, handler: (req: Request) => Promise<Response> | Response): ReturnType<typeof Bun.serve> {
   return Bun.serve({ hostname: "127.0.0.1", port, fetch: handler });
@@ -195,13 +203,15 @@ export async function startMcpOAuthLogin(opts: StartMcpOAuthLoginOptions): Promi
   let redirectUri = "";
   let existingClient: McpOAuthClientRecord | null = null;
   let requestedScope: string | undefined;
+  let preSecretItem: McpOAuthClientSecretItem | undefined;
   let preSecret: string | undefined;
   const state = randomBytes(MCP_OAUTH_STATE_BYTES).toString("base64url");
 
   try {
     // The secret is read ONLY from its derived account (fix round 1 C1): a config marks that a secret
     // exists, never where it lives.
-    preSecret = oauth.clientId !== undefined && oauth.clientSecretRef !== undefined ? await readSecret(opts, mcpOAuthClientSecretAccount(opts.serverUrl)) : undefined;
+    preSecretItem = oauth.clientId !== undefined && oauth.clientSecretRef !== undefined ? decodeMcpOAuthClientSecretItem(await readSecret(opts, mcpOAuthClientSecretAccount(opts.serverUrl))) : undefined;
+    preSecret = preSecretItem?.secret;
     checkpoint();
     // A malformed registration is treated as none (a fresh one is made); it is overwritten on success.
     existingClient = await readClientRecord(opts.store, clientAccount).catch(() => null);
@@ -275,6 +285,20 @@ export async function startMcpOAuthLogin(opts: StartMcpOAuthLoginOptions): Promi
     const clientInformation = (ctx?: OAuthClientInformationContext): StoredOAuthClientInformation | undefined => {
       if (clientDecision !== undefined) return clientDecision;
       if (oauth.clientId !== undefined) {
+        // Fix round 2 (I-A): a secret goes ONLY to the issuer it is bound to -- its item's own (set by the
+        // host, or stamped on the first successful sign-in), else an existing pre-registered
+        // registration's. Checked HERE, where the MCP client asks with the discovered issuer and before
+        // anything is saved or sent: a config source that redeclares the server with its own
+        // `authServerMetadataUrl` must not get the user's secret posted to its token endpoint.
+        if (preSecretItem !== undefined) {
+          const bound = preSecretItem.issuer ?? (existing?.registeredVia === "preregistered" ? existing.issuer : undefined);
+          if (ctx === undefined || (bound !== undefined && !sameIssuer(bound, ctx.issuer))) {
+            throw new McpOAuthError(
+              "client_secret_issuer_mismatch",
+              `the pre-registered client secret for this server belongs to ${bound !== undefined ? originOf(bound) : "another authorization server"}, but this sign-in's authorization server is ${ctx !== undefined ? originOf(ctx.issuer) : "unknown"}; it is not sent`,
+            );
+          }
+        }
         // Pre-registered first (spec §1.4): the MCP client stamps the issuer and saves it back.
         return { client_id: oauth.clientId, ...(preSecret !== undefined ? { client_secret: preSecret } : {}) };
       }
@@ -450,6 +474,13 @@ export async function startMcpOAuthLogin(opts: StartMcpOAuthLoginOptions): Promi
         ...(tokens.scope !== undefined ? { scope: tokens.scope } : {}),
         generation: (previous?.generation ?? 0) + 1,
       });
+      // TRUST ON FIRST USE (fix round 2, I-A): an unbound secret is bound now to the issuer that just
+      // accepted it. Only in `store` -- a host that reads the secret elsewhere (`readClientSecret`) binds it
+      // there itself (`encodeMcpOAuthClientSecretItem(secret, expectedIssuer)`); the client record written
+      // above already binds this server's registration either way.
+      if (preSecretItem !== undefined && preSecretItem.issuer === undefined && opts.readClientSecret === undefined) {
+        await opts.store.write(mcpOAuthClientSecretAccount(opts.serverUrl), encodeMcpOAuthClientSecretItem(preSecretItem.secret, issuer)).catch(() => {});
+      }
       finish({ ok: true });
       return page("Signed in to the MCP server", 200);
     } catch (err) {
