@@ -144,7 +144,7 @@ async function legSession(winterBin: string, fx: FixtureAs, storeFile: string, l
     const config = {
       sessionId: `verify-mcp-oauth-${leg}`,
       // The test store is honoured only for an explicit, non-default Keychain service (mcp-auth/store.ts).
-      keychainService: "com.winter.test.verify-mcp-oauth",
+      keychainService: "ws25.verify-mcp-oauth.test",
       cwd: REPO_ROOT,
       model: MODEL,
       provider: { providerId: "anthropic", authRef: { kind: "inline", value: "test" }, connection: { baseUrl: model.url, local: true } },

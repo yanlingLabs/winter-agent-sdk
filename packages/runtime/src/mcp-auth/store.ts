@@ -137,7 +137,7 @@ export const MCP_OAUTH_TEST_STORE_ENV = mcpOAuthTestStoreEnvName(WINTER_BRAND);
  *     settings tier's `env` is merged -- production-wiring captures it first, and the tiers refuse the
  *     name anyway);
  *   - the session names a Keychain service explicitly, and it is NOT the SDK's default production service
- *     (`DEFAULT_KEYCHAIN_SERVICE`, `com.winter.core` on the dist profile): a gate names its own throwaway
+ *     (`DEFAULT_KEYCHAIN_SERVICE`, the dist profile's): a gate names its own throwaway
  *     service, a production session never can without also changing where its real credentials live.
  */
 export function resolveSessionMcpOAuthStore(opts: { keychainService: string | undefined; testStoreFile: string | undefined }): McpOAuthStore {
