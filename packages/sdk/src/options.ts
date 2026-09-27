@@ -23,6 +23,8 @@ import type {
   CredentialRef,
   McpOAuthRefreshRequest,
   McpOAuthRefreshAnswer,
+  CredentialResolveRequest,
+  CredentialResolveAnswer,
 } from "./protocol/config.ts";
 import type { SettingSource } from "./settings/types.ts";
 import type { SessionStore } from "./store/session-store.ts";
@@ -88,6 +90,9 @@ export const DEFAULT_KEYCHAIN_SERVICE = WINTER_BRAND.keychainService;
  * `query.ts` registers the handler under it and the runtime sends it.
  */
 export const MCP_OAUTH_REFRESH_SUBTYPE = "mcp_oauth_refresh";
+
+/** WS-25 §7: the runtime -> host control subtype a host-brokered session resolves a Keychain credential with (`CredentialResolveRequest` -> `CredentialResolveAnswer`). */
+export const CREDENTIAL_RESOLVE_SUBTYPE = "credential_resolve";
 
 // --- The web tools' defaults and their one reader -------------------------------------------------
 //
@@ -524,6 +529,19 @@ export interface Options {
    * Never serialized (a JS function), like `onElicitation`. Carries no material in either direction.
    */
   onMcpOAuthRefresh?: (request: McpOAuthRefreshRequest, options: { signal: AbortSignal }) => Promise<McpOAuthRefreshAnswer>;
+
+  /**
+   * WS-25 §7 (prompt-free credentials), WINTER-ONLY: the host resolves this session's Keychain
+   * credentials. When set, `query()` puts `hostCredentials: true` on the wire and answers the runtime's
+   * `credential_resolve` requests with it; the session then never touches the Keychain (no macOS consent
+   * prompt for a child binary reading items the host created) and never persists a credential -- renewal
+   * is the host's, and a 401 asks again with `minGeneration`.
+   *
+   * The host answers ONLY for refs this session's `Options` named, and never with a refresh token (see
+   * `CredentialResolveAnswer`). Never serialized (a JS function); the material crosses only in the
+   * control_response frame.
+   */
+  onCredentialResolve?: (request: CredentialResolveRequest, options: { signal: AbortSignal }) => Promise<CredentialResolveAnswer>;
 
   // --- Phase 5 Task 2 (WS-11; derived-shapes-p5.md items (b)/(c)/(d)/(e)) --------------------------
   //

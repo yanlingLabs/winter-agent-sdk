@@ -278,6 +278,36 @@ export interface McpOAuthRefreshRequest {
  * `transient` means try again later (the network, the authorization server's 5xx).
  */
 export type McpOAuthRefreshAnswer = { ok: true } | { ok: false; reason: "needs_auth" | "transient" };
+/**
+ * WS-25 §7: the runtime -> host `credential_resolve` control request (subtype `CREDENTIAL_RESOLVE_SUBTYPE`),
+ * sent only when `RuntimeConfig.hostCredentials` is set. A session asks its host for ONE Keychain item
+ * instead of reading the Keychain itself (a child reading an item another binary created is what raises
+ * the macOS consent prompt).
+ *
+ * - `ref` -- the Keychain LOCATOR the session was configured with (a provider `authRef`, a tool key's
+ *   ref) or, for an MCP sign-in, `{ kind: "keychain", account: "mcp-oauth:<id>" }`. The host answers ONLY
+ *   for refs that session's `Options` named (plus what its own MCP config implies) -- the allowlist is
+ *   the host's.
+ * - `minGeneration` -- after a 401 (or an expiry): "I hold generation N-1; answer only with N or newer".
+ *   The host refreshes (single-flight, its own job) until it can, or answers `stale`.
+ */
+export interface CredentialResolveRequest {
+  ref: { kind: "keychain"; account: string; service?: string };
+  minGeneration?: number;
+}
+/**
+ * The host's answer. `material` is the item's value EXACTLY as the Keychain would hold it -- a JSON
+ * `CredentialMaterial` for a provider credential, the bare key for a tool secret, the token record JSON
+ * for an MCP sign-in -- with every REFRESH token removed (a session never holds one; MCP records carry
+ * `MCP_OAUTH_HOST_HELD_REFRESH_TOKEN` in its place so the session knows a refresh is possible).
+ * `generation` counts the host's writes of that item. It travels ONLY in this `control_response` frame
+ * over the session's own stdio pipe -- never argv, env, `Options`, a transcript, a log or an error.
+ *
+ * `reason`: `not_found` (no such item -- the session behaves as with an empty Keychain),
+ * `not_allowed` (the ref is outside this session's allowlist), `stale` (no generation >= `minGeneration`
+ * could be produced -- a refresh failed), `unavailable` (retry later).
+ */
+export type CredentialResolveAnswer = { ok: true; material: string; expiresAt?: number; generation: number } | { ok: false; reason: "not_found" | "not_allowed" | "stale" | "unavailable" };
 export interface McpStdioServerConfig {
   type?: "stdio"; // the ONLY optional discriminant of the four transport variants (derived-shapes item (a))
   command: string;
@@ -642,6 +672,14 @@ export interface RuntimeConfig {
   /** WS-23: `Options.maxOutputTokens`, carried to every main-loop `TurnRequest`. See its own doc. */
   maxOutputTokens?: number;
   keychainService?: string;
+  /**
+   * WS-25 §7 (prompt-free credentials), WINTER-ONLY: `true` when the host answers `credential_resolve`
+   * (`Options.onCredentialResolve`). The runtime then NEVER reads or writes the Keychain for this
+   * session: every `{ kind: "keychain" }` credential, tool key and MCP sign-in is asked of the host over
+   * the control channel, and renewal is the host's (a 401 asks again with `minGeneration`). Absent: the
+   * runtime's own Keychain store, as before (a standalone SDK user). A flag, never material.
+   */
+  hostCredentials?: boolean;
   autoClassifier?: AutoClassifierConfig;
   advisor?: AdvisorConfig;
   /** The wire twin of `Options.web` -- see `WebToolsConfig`. Pure passthrough; absent means every default in `WEB_TOOLS_DEFAULTS`. */

@@ -2457,3 +2457,47 @@ test("WS-25: reconnectMcpServer rides the runtime's mcp_reconnect and rejects on
   expect((err as WinterRpcError).code).toBe("mcp_reconnect_failed");
   expect((err as WinterRpcError).message).toContain('unknown server "not-configured"');
 });
+
+describe("WS-25 §7: credential_resolve", () => {
+  const request = { ref: { kind: "keychain", account: "anthropic:default" }, minGeneration: 2 };
+
+  test("Options.onCredentialResolve puts ONLY a flag on the wire and answers the runtime's request verbatim", async () => {
+    const capture = captureConfigJson();
+    for await (const _msg of query({ prompt: "ping", options: { onCredentialResolve: async () => ({ ok: false, reason: "not_found" }), spawnClaudeCodeProcess: capture.hook } })) {
+      /* drain */
+    }
+    expect(capture.get()).toMatchObject({ hostCredentials: true });
+    const none = captureConfigJson();
+    for await (const _msg of query({ prompt: "ping", options: { spawnClaudeCodeProcess: none.hook } })) {
+      /* drain */
+    }
+    expect((none.get() as Record<string, unknown>).hostCredentials).toBeUndefined();
+
+    let seen: unknown;
+    const { proc, writes } = recordingProcessWithControlRequestPayload("credential_resolve", "cred-1", request);
+    for await (const _msg of query({ prompt: "hi", options: { onCredentialResolve: async (req) => ((seen = req), { ok: true, material: "m", generation: 2 }), spawnClaudeCodeProcess: () => proc } })) {
+      /* drain */
+    }
+    expect(seen).toEqual(request);
+    expect(decodeControlResponse(writes, "cred-1")).toMatchObject({ ok: true, payload: { ok: true, material: "m", generation: 2 } });
+  });
+
+  test("a throwing or garbage callback answers `unavailable`, and the log names the account and error NAME only", async () => {
+    for (const [id, cb] of [
+      ["cred-2", async () => { throw new Error("keychain said sk-LEAK"); }],
+      ["cred-3", async () => ({ ok: true, material: 7 }) as never],
+    ] as const) {
+      const { proc, writes } = recordingProcessWithControlRequestPayload("credential_resolve", id, request);
+      const spy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        for await (const _msg of query({ prompt: "hi", options: { onCredentialResolve: cb as never, spawnClaudeCodeProcess: () => proc } })) {
+          /* drain */
+        }
+        for (const call of spy.mock.calls) expect(call.join(" ")).not.toContain("sk-LEAK");
+      } finally {
+        spy.mockRestore();
+      }
+      expect(decodeControlResponse(writes, id)).toMatchObject({ ok: true, payload: { ok: false, reason: "unavailable" } });
+    }
+  });
+});

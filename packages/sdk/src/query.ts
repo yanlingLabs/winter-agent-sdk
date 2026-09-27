@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
-import type { AccountInfo, AgentInfo, EffortLevel, ModelInfo, ModelFamilyListing, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, McpOAuthRefreshAnswer, McpOAuthRefreshRequest, RewindFilesResult } from "./protocol/config.ts";
-import { isWinterMcpServerInstance, MCP_OAUTH_REFRESH_SUBTYPE, type Options, type McpServerConfig } from "./options.ts";
+import type { AccountInfo, AgentInfo, CredentialResolveAnswer, CredentialResolveRequest, EffortLevel, ModelInfo, ModelFamilyListing, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, McpOAuthRefreshAnswer, McpOAuthRefreshRequest, RewindFilesResult } from "./protocol/config.ts";
+import { CREDENTIAL_RESOLVE_SUBTYPE, isWinterMcpServerInstance, MCP_OAUTH_REFRESH_SUBTYPE, type Options, type McpServerConfig } from "./options.ts";
 import type {
   PermissionMode,
   CanUseTool,
@@ -454,6 +454,46 @@ function makeMcpOAuthRefreshHandler(onMcpOAuthRefresh: NonNullable<Options["onMc
   };
 }
 
+// WS-25 §7: the runtime-originated `credential_resolve` responder, registered ONLY with
+// `Options.onCredentialResolve` (which also sets `hostCredentials` on the wire, so a runtime never asks a
+// host that cannot answer). Every outcome is a well-formed ANSWER; a throwing or garbage-returning
+// callback answers `unavailable`. The material is passed through untouched and never logged: the log
+// line on a throw names the ACCOUNT and the error's NAME only.
+function isCredentialResolveRequest(payload: unknown): payload is CredentialResolveRequest {
+  if (typeof payload !== "object" || payload === null) return false;
+  const p = payload as { ref?: unknown; minGeneration?: unknown };
+  const ref = p.ref as { kind?: unknown; account?: unknown; service?: unknown } | undefined;
+  return (
+    typeof ref === "object" && ref !== null && ref.kind === "keychain" && typeof ref.account === "string" && (ref.service === undefined || typeof ref.service === "string") && (p.minGeneration === undefined || (typeof p.minGeneration === "number" && Number.isInteger(p.minGeneration)))
+  );
+}
+function isCredentialResolveAnswer(value: unknown): value is CredentialResolveAnswer {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as { ok?: unknown; material?: unknown; generation?: unknown; expiresAt?: unknown; reason?: unknown };
+  if (v.ok === true) return typeof v.material === "string" && typeof v.generation === "number" && (v.expiresAt === undefined || typeof v.expiresAt === "number");
+  return v.ok === false && (v.reason === "not_found" || v.reason === "not_allowed" || v.reason === "stale" || v.reason === "unavailable");
+}
+function makeCredentialResolveHandler(onCredentialResolve: NonNullable<Options["onCredentialResolve"]>, abortController: AbortController | undefined): ControlRequestHandler {
+  return async (payload: unknown, handlerCtx?: { signal: AbortSignal }): Promise<ControlRequestHandlerResult> => {
+    if (!isCredentialResolveRequest(payload)) return { ok: false, error: { code: "invalid_payload", message: "credential_resolve expects { ref: { kind: \"keychain\", account, service? }, minGeneration? }" } };
+    const controller = new AbortController();
+    if (abortController?.signal.aborted === true || handlerCtx?.signal.aborted === true) controller.abort();
+    abortController?.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    handlerCtx?.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    const request: CredentialResolveRequest = {
+      ref: { kind: "keychain", account: payload.ref.account, ...(payload.ref.service !== undefined ? { service: payload.ref.service } : {}) },
+      ...(payload.minGeneration !== undefined ? { minGeneration: payload.minGeneration } : {}),
+    };
+    try {
+      const answer = await onCredentialResolve(request, { signal: controller.signal });
+      return { ok: true, payload: isCredentialResolveAnswer(answer) ? answer : { ok: false, reason: "unavailable" } };
+    } catch (err) {
+      console.error(`winter: onCredentialResolve threw for account '${payload.ref.account}' (${err instanceof Error ? err.name : "error"}) -- answering unavailable`);
+      return { ok: true, payload: { ok: false, reason: "unavailable" } };
+    }
+  };
+}
+
 // Builds the wire-safe RuntimeConfig.hooks shape from a real Options.hooks value — undefined when
 // there is nothing to send at all (an absent/empty hooks option must serialize to an ABSENT
 // `hooks` key, never `{}`, so the runtime's own "hooks default-off, byte-identical wire trace" claim
@@ -801,6 +841,8 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     // The condition below is byte-identical to before whenever NOBODY chose a service, and emits
     // exactly when somebody did (through either surface).
     ...(brand.keychainService !== WINTER_BRAND.keychainService || options.keychainService !== undefined ? { keychainService: brand.keychainService } : {}),
+    // WS-25 §7: a flag only -- the host's answers ride control responses, never the wire config.
+    ...(options.onCredentialResolve !== undefined ? { hostCredentials: true } : {}),
     ...(options.autoClassifier !== undefined ? { autoClassifier: options.autoClassifier } : {}),
     ...(options.advisor !== undefined ? { advisor: options.advisor } : {}),
     // The web tools' and auto-memory's own blocks: pure passthrough, same convention as `advisor`.
@@ -1025,6 +1067,9 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   }
   if (options.onElicitation) {
     controlRequestHandlers.set("mcp_elicitation", makeElicitationHandler(options.onElicitation, options.abortController));
+  }
+  if (options.onCredentialResolve) {
+    controlRequestHandlers.set(CREDENTIAL_RESOLVE_SUBTYPE, makeCredentialResolveHandler(options.onCredentialResolve, options.abortController));
   }
   if (options.onMcpOAuthRefresh) {
     controlRequestHandlers.set(MCP_OAUTH_REFRESH_SUBTYPE, makeMcpOAuthRefreshHandler(options.onMcpOAuthRefresh, options.abortController));
