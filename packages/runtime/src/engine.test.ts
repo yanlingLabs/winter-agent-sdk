@@ -2961,6 +2961,9 @@ describe("WS-27 (review): the reconnect wait inside an active turn, and which co
     afterFirst: (write: (f: WinterFrame) => void) => void;
     afterSecond?: () => void;
     endInputWithSecond?: boolean;
+    config?: Partial<RuntimeConfig>;
+    engine?: Partial<Parameters<typeof runEngine>[0]>;
+    onHook?: (payload: { event: string; payload?: unknown }) => void;
   }): Promise<Run> {
     const generateAt: number[] = [];
     const provider: Provider = {
@@ -2971,12 +2974,13 @@ describe("WS-27 (review): the reconnect wait inside an active turn, and which co
     };
     const { host, runtime } = createInMemoryChannel();
     const done = runEngine({
-      config: baseConfig({ sessionId: `ws27-review-${randomUUID()}`, toolSearchEnabled: false }),
+      config: baseConfig({ sessionId: `ws27-review-${randomUUID()}`, toolSearchEnabled: false, ...(opts.config ?? {}) }),
       input: runtime.input,
       output: runtime.output,
       provider,
       ...(opts.sources !== undefined ? { extraMcpServerSources: opts.sources } : {}),
       env: { MCP_TIMEOUT: "20000" },
+      ...(opts.engine ?? {}),
     });
     const run: Run = { code: -1, frames: [], generateAt, results: [], responses: new Map() };
     const write = (f: WinterFrame): void => host.output.write(f);
@@ -2984,6 +2988,10 @@ describe("WS-27 (review): the reconnect wait inside an active turn, and which co
       for await (const f of host.input) {
         run.frames.push(f);
         if (f.type === "control_response") run.responses.set((f as ControlResponseFrame).requestId, { at: Date.now(), frame: f as ControlResponseFrame });
+        if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "hook") {
+          opts.onHook?.((f as ControlRequestFrame).payload as { event: string; payload?: unknown });
+          write({ type: "control_response", requestId: (f as ControlRequestFrame).requestId, ok: true, payload: {} });
+        }
         if (f.type !== "data" || (f as { message: { type: string } }).message.type !== "result") continue;
         run.results.push({ at: Date.now(), message: (f as { message: Record<string, unknown> }).message });
         if (run.results.length === 1) {
@@ -3022,6 +3030,64 @@ describe("WS-27 (review): the reconnect wait inside an active turn, and which co
       expect(run.results[1]!.at - sentAt).toBeLessThan(1500);
       // ...and turn 2 never called the provider.
       expect(run.generateAt).toHaveLength(1);
+    });
+  }, 30_000);
+
+  test("an interrupt during the wait also skips command resolution and the UserPromptSubmit hook", async () => {
+    await withHoldingProxy(async (proxy) => {
+      const prompts: string[] = [];
+      const resolved: string[] = [];
+      const run = await drive({
+        sources: [{ origin: "settings", servers: { srv: { type: "http", url: proxy.url } } }],
+        config: { hooks: { UserPromptSubmit: [{ hookCount: 1, source: "sdk" }] } },
+        engine: {
+          commandResolver: {
+            async resolve(prompt) {
+              resolved.push(prompt);
+              return { kind: "none" };
+            },
+          },
+        },
+        onHook: (p) => {
+          if (p.event === "UserPromptSubmit") prompts.push(String((p.payload as { prompt?: unknown } | undefined)?.prompt));
+        },
+        afterFirst: (write) => {
+          proxy.set("hold");
+          write({ type: "control_request", requestId: "rc-1", subtype: "mcp_reconnect", payload: { serverName: "srv" } });
+          write({ type: "user", text: "/review again" });
+          setTimeout(() => write({ type: "control_request", requestId: "int-1", subtype: "interrupt", payload: { scope: "turn" } }), 300);
+        },
+        afterSecond: () => proxy.release(),
+      });
+      expect(run.code).toBe(0);
+      expect(run.results[1]!.message).toMatchObject({ type: "result", interrupted: true });
+      expect(run.generateAt).toHaveLength(1);
+      // Turn 1's prompt reached the hook; turn 2's reached neither the hook nor the command resolver.
+      expect(prompts).toEqual(["first"]);
+      expect(resolved).toEqual([]);
+    });
+  }, 30_000);
+
+  test("a built-in command (/compact) skips the reconnect wait altogether", async () => {
+    await withHoldingProxy(async (proxy) => {
+      let sentAt = 0;
+      const run = await drive({
+        sources: [{ origin: "settings", servers: { srv: { type: "http", url: proxy.url } } }],
+        afterFirst: (write) => {
+          proxy.set("hold");
+          write({ type: "control_request", requestId: "rc-1", subtype: "mcp_reconnect", payload: { serverName: "srv" } });
+          write({ type: "user", text: "/compact" });
+          sentAt = Date.now();
+        },
+        afterSecond: () => {
+          proxy.set("forward");
+          proxy.release();
+        },
+      });
+      expect(run.code).toBe(0);
+      // Answered well inside the 2 s bound the reconnect would have held a prompt for.
+      expect(run.results[1]!.at - sentAt).toBeLessThan(1500);
+      expect(run.results[1]!.message.interrupted).toBeUndefined();
     });
   }, 30_000);
 

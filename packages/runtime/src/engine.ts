@@ -8647,9 +8647,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // once the turn is ACTIVE (review I-1): the session reports `running`, a `compact` arriving meanwhile
     // is answered `busy`, a `set_model` parks for the boundary just below, and an interrupt ends the wait
     // at once -- the turn then takes the ordinary interrupted-result path with no generation at all
-    // (`interruptedAwaitingMcp`, checked at the top of the round loop).
+    // (`interruptedAwaitingMcp`, checked at the top of the round loop): command resolution and the
+    // UserPromptSubmit hook are skipped too, since nothing of this prompt is going to run. A BUILT-IN
+    // command (`/compact`) skips the wait altogether: it never becomes a provider turn, so no tool list
+    // is built for it. (Recognised here, before the wait -- a pure, synchronous match on the text.)
+    const builtinCommand = resolveBuiltinCommand(userFrame.text);
     let interruptedAwaitingMcp = false;
-    const mcpConnects = awaitMcpControlConnects();
+    const mcpConnects = builtinCommand === undefined ? awaitMcpControlConnects() : undefined;
     if (mcpConnects !== undefined) interruptedAwaitingMcp = (await raceInterrupt(mcpConnects, interruptSignal)).kind === "interrupted";
     // Phase 6 Task 3 (R6-I): the QUIESCENT BOUNDARY. A `set_model` parked during the previous turn
     // takes effect here -- before this envelope's first generation -- so a turn never spans two models.
@@ -8706,9 +8710,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // The built-in is recognised FIRST, so a project `commands/compact.md` in an untrusted clone
     // cannot shadow a built-in with real engine-side power (the same self-grant shape P5-A closes on
     // the settings side). The resolver is only ever offered a `/name` the engine did not claim.
-    const builtinCommand = resolveBuiltinCommand(userFrame.text);
+    // (`builtinCommand` itself is recognised above, before the reconnect wait.)
     let resolvedPromptText = userFrame.text;
-    if (builtinCommand === undefined && commandResolver !== undefined && looksLikeCommand(userFrame.text)) {
+    if (!interruptedAwaitingMcp && builtinCommand === undefined && commandResolver !== undefined && looksLikeCommand(userFrame.text)) {
       const resolution = await commandResolver.resolve(userFrame.text, config.cwd);
       if (resolution.kind === "expand") resolvedPromptText = resolution.text;
     }
@@ -8765,9 +8769,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // Fix round 1 (M2): what was queued BEFORE this prompt's hook (SessionStart's context, waiting for
     // the first user turn) is not this prompt's -- a blocked prompt drops only its own hook's context.
     const pendingBeforePrompt = pendingHookAttachments.length;
-    const promptHooks = await fireObservationalHook("UserPromptSubmit", { payload: { prompt: userText } });
-    absorbHookComposite(promptHooks, { hookName: "UserPromptSubmit", context: true });
-    const promptBlock = contextStrings(promptHooks.blockReasons);
+    // WS-27: an interrupt during the reconnect wait skips the hook -- the prompt goes straight to the
+    // interrupted path (below, at the top of the round loop).
+    const promptHooks = interruptedAwaitingMcp ? undefined : await fireObservationalHook("UserPromptSubmit", { payload: { prompt: userText } });
+    if (promptHooks !== undefined) absorbHookComposite(promptHooks, { hookName: "UserPromptSubmit", context: true });
+    const promptBlock = promptHooks !== undefined ? contextStrings(promptHooks.blockReasons) : [];
     const promptStop = currentTurnStop();
     if (promptBlock.length > 0 || promptStop !== undefined) {
       interruptCurrentTurn.current = null;

@@ -1592,3 +1592,22 @@ describe("WS-23: the api-key `xai` provider speaks Responses, and its rows say w
     }
   });
 });
+
+// WS-27: the coding-agent-gateway ruling, applied CONSISTENTLY. OpenCode Zen is the OpenCode coding agent's
+// model gateway and its docs list these ids for that agent, so each is `native` at `inferred` -- the Claude
+// Code guide ruling -- citing that page, never promoted to `declared` without a field-level statement.
+describe("WS-27: OpenCode Zen rows on the coding-agent-gateway ruling", () => {
+  for (const key of ["opencode/big-pickle", "opencode/space-bunny-free"]) {
+    test(`${key} is native at inferred, citing https://opencode.ai/docs/zen/`, () => {
+      const row = catalog.models.find((m) => m.key === key)!;
+      for (const evidence of [row.toolCalling, row.nativeTools]) {
+        expect(evidence.confidence).toBe("inferred");
+        expect(evidence.source).toBe("official-doc");
+        expect(evidence.sourceRef).toStartWith("https://opencode.ai/docs/zen/");
+        expect(evidence.sourceRef).toContain("CODING AGENT");
+      }
+      expect(row.toolCalling.value).toBe("native");
+      expect(row.nativeTools.value).toBe(true);
+    });
+  }
+});

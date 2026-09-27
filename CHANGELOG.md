@@ -21,7 +21,9 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   turn. The wait runs inside the ACTIVE turn -- after the session reports `running` and the interrupt
   is installed -- and never in the input pump:
   - a brokered reconnect's `credential_resolve` is still answered while the turn waits;
-  - an interrupt ends the wait at once, and the turn ends interrupted with no generation;
+  - an interrupt ends the wait at once, and the turn ends interrupted with no generation -- skipping
+    command resolution and the UserPromptSubmit hook as well;
+  - a built-in command (`/compact`) skips the wait altogether: it never becomes a provider turn;
   - a `compact` arriving meanwhile is answered `busy`;
   - `end_input` right behind the held turn is clean.
 
@@ -70,8 +72,10 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 - A workflow worker that exits 77 -- a host's worker refusing to run outside a sandbox that denies
   Keychain access -- now fails the run with "workflow sandbox not in effect — the workflow worker
   refused to run (exit 77)", followed by the worker's last non-empty stderr line when there is one. Any
-  other exit keeps the crash text. The real spawner now reads (and so drains) the worker's stderr,
-  keeping only a bounded tail.
+  other exit keeps the crash text. The real spawner now reads (and so drains) the worker's stderr through
+  a streaming UTF-8 decoder, keeping only a bounded tail: an unterminated line holds at most its last
+  4096 characters, the reported line is capped at 500, and control and bidi characters (U+202A-202E,
+  U+2066-2069, U+200E/200F) are stripped from it.
 - The package entry exports `buildWorkflowWorkerSeatbeltProfile` (with its `SandboxBrand` type), so a
   host that spawns the runtime's worker can pin its own profile against it, and
   `WORKFLOW_SANDBOX_REFUSED_EXIT_CODE`.
@@ -114,7 +118,8 @@ corresponds to one `chore(release): vX.Y.Z` commit.
     Zen is the model gateway of the OpenCode coding agent, and https://opencode.ai/docs/zen/ lists
     `space-bunny-free` for use in that agent. Otherwise it states only what Zen's docs state: there is
     no context, modality or effort data, because the only other source is a third-party mirror.
-    `opencode/big-pickle` is unchanged.
+- **`opencode/big-pickle`** is `native` at `inferred` on the same coding-agent-gateway ruling, with the
+  same citation shape as Space Bunny on Zen -- the ruling applied consistently to Zen's rows.
 
 ## 0.0.32
 

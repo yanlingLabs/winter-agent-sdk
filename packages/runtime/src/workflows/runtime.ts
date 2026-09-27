@@ -9,6 +9,7 @@
 // child spawn happens here. The worker mirrors the caps so it can fail fast and produce a good error
 // message, but a worker that ignored its mirror entirely could still not spawn one agent past the
 // cap -- which is the property that makes the mirror an optimisation rather than a security control.
+import { StringDecoder } from "node:string_decoder";
 import { randomBytes } from "node:crypto";
 import { spawn as spawnProcess } from "node:child_process";
 // STATIC, never `await import(...)`: this module is bundled into the `bun build --compile`
@@ -82,17 +83,44 @@ export function workerExitMessage(code: number | null, lastStderrLine?: string):
   return `the workflow worker exited (code ${code ?? "signal"}) without reporting a result`;
 }
 
-/** Keeps the last non-empty line of a stream, bounded -- never the whole of a chatty worker's stderr. */
-function stderrTail(stream: NodeJS.ReadableStream | null | undefined): () => string | undefined {
+// Stripped from a reported stderr line: C0/C1 control characters, and the bidi embedding / override /
+// isolate controls and marks (U+202A-202E, U+2066-2069, U+200E/200F) -- a worker's line lands in a
+// tool result and a host's UI, where either could hide or reorder the text around it.
+const UNSAFE_LINE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+/** At most this many characters of the reported line. */
+export const STDERR_LINE_CAP = 500;
+/** At most this many characters of an unterminated line are held while waiting for its newline. */
+export const STDERR_CARRY_CAP = 4096;
+
+function sanitizeStderrLine(line: string): string {
+  return line.replace(UNSAFE_LINE_CHARS, "").trim().slice(0, STDERR_LINE_CAP);
+}
+
+/**
+ * Keeps the last non-empty line of a stream, bounded -- never the whole of a chatty worker's stderr.
+ * Decoded with a streaming `StringDecoder`, so a multi-byte character split across two chunks survives;
+ * the reported line is sanitized (`UNSAFE_LINE_CHARS`) and capped at `STDERR_LINE_CAP`, and an
+ * unterminated line keeps only its last `STDERR_CARRY_CAP` characters.
+ */
+export function stderrTail(stream: NodeJS.ReadableStream | null | undefined): () => string | undefined {
+  const decoder = new StringDecoder("utf8");
   let carry = "";
   let last: string | undefined;
-  stream?.on("data", (chunk: Buffer | string) => {
-    carry += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+  const take = (text: string): void => {
+    carry += text;
     const lines = carry.split("\n");
-    carry = (lines.pop() ?? "").slice(-4096);
-    for (const line of lines) if (line.trim() !== "") last = line.trim().slice(0, 500);
-  });
-  return () => (carry.trim() !== "" ? carry.trim().slice(0, 500) : last);
+    carry = (lines.pop() ?? "").slice(-STDERR_CARRY_CAP);
+    for (const line of lines) {
+      const clean = sanitizeStderrLine(line);
+      if (clean !== "") last = clean;
+    }
+  };
+  stream?.on("data", (chunk: Buffer | string) => take(typeof chunk === "string" ? chunk : decoder.write(chunk)));
+  stream?.on("end", () => take(decoder.end()));
+  return () => {
+    const pending = sanitizeStderrLine(carry);
+    return pending !== "" ? pending : last;
+  };
 }
 
 export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; winterHome?: string; brand?: SandboxBrand; cwd?: string }) => WorkerProcess;

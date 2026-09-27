@@ -4599,7 +4599,7 @@
       "upstreamId": "big-pickle",
       "displayName": "Big Pickle (OpenCode Zen)",
       "aliases": [],
-      "$comment": "Upstream records that this id is served by a DeepSeek thinking-mode upstream and declares the interleaved `reasoning_content` contract for it. `reasoning.continuation` stays `none` here rather than `plaintext`: the continuity contract is a documented per-provider fact (WS-13 §8.2) and no Zen document states it — the pinned tree's comment is a third party's observation, not the vendor's.",
+      "$comment": "Upstream records that this id is served by a DeepSeek thinking-mode upstream and declares the interleaved `reasoning_content` contract for it. `reasoning.continuation` stays `none` here rather than `plaintext`: the continuity contract is a documented per-provider fact (WS-13 §8.2) and no Zen document states it — the pinned tree's comment is a third party's observation, not the vendor's. WS-27: tool calling is `native` at `inferred` on the coding-agent-gateway ruling, applied as for `opencode/space-bunny-free` (see its sourceRef).",
       "endpoints": [
         "chat"
       ],
@@ -4622,18 +4622,18 @@
         "observedAt": "2026-09-06T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/opencode/index.ts#big-pickle at v3.8.50 (5458026c) — upstream states no `toolCalling` flag; ABSENT fails CLOSED (WS-13 §8.1: `native` is what makes a model agent-eligible, so it is never inferred from silence)",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://opencode.ai/docs/zen/ (read 2026-09-27) — OpenCode Zen is the model gateway of the OpenCode CODING AGENT, and this page lists `big-pickle` for use in that agent, which cannot work without tool use. The same ruling as a vendor's Claude Code guide: tool-use evidence for this endpoint, held at `inferred` below a field-level spec. Zen's docs state no tool field for the id itself.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/opencode/index.ts#big-pickle at v3.8.50 (5458026c) — no `toolCalling` flag; fails closed",
-        "confidence": "unknown",
-        "observedAt": "2026-09-06T00:00:00Z"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://opencode.ai/docs/zen/ (read 2026-09-27) — OpenCode Zen is the model gateway of the OpenCode CODING AGENT, and this page lists `big-pickle` for use in that agent, which cannot work without tool use. The same ruling as a vendor's Claude Code guide: tool-use evidence for this endpoint, held at `inferred` below a field-level spec. Zen's docs state no tool field for the id itself.",
+        "confidence": "inferred",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "reasoning": {
         "supported": {

@@ -11,7 +11,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WorkflowRuntime, WORKFLOW_SANDBOX_REFUSED_EXIT_CODE, realWorkerSpawner, workerExitMessage, type WorkerSpawner, type WorkflowRuntimeDeps } from "./runtime.ts";
+import { WorkflowRuntime, WORKFLOW_SANDBOX_REFUSED_EXIT_CODE, STDERR_CARRY_CAP, STDERR_LINE_CAP, realWorkerSpawner, stderrTail, workerExitMessage, type WorkerSpawner, type WorkflowRuntimeDeps } from "./runtime.ts";
 import { PassThrough } from "node:stream";
 import { buildWorkerSpawn } from "./sandbox.ts";
 import { buildWorkflowWorkerSeatbeltProfile as exportedProfileBuilder } from "../index.ts";
@@ -989,6 +989,34 @@ describe("WS-27: exit 77 is a sandbox refusal", () => {
     const code = await new Promise<number | null>((resolve) => worker.onExit(resolve));
     expect(code).toBe(77);
     expect(worker.lastStderrLine?.()).toBe("no Keychain-denying sandbox");
+  });
+
+  test("stderrTail: a multi-byte character split across chunks decodes intact; control and bidi characters are stripped", () => {
+    const stream = new PassThrough();
+    const tail = stderrTail(stream);
+    const bytes = Buffer.from("refusé\n", "utf8");
+    const split = bytes.indexOf(0xc3) + 1; // inside the two-byte "é"
+    stream.write(bytes.subarray(0, split));
+    stream.write(bytes.subarray(split));
+    expect(tail()).toBe("refusé");
+    // A line dressed with bidi overrides/isolates/marks and control characters reports only its text.
+    stream.write("\u202eevil\u202c \u2066x\u2069\u200e\u200f\u0007\u001b[31mred\r\n");
+    expect(tail()).toBe("evil x[31mred");
+  });
+
+  test(`stderrTail caps: a reported line is at most ${STDERR_LINE_CAP} characters, an unterminated one keeps its last ${STDERR_CARRY_CAP}`, () => {
+    const stream = new PassThrough();
+    const tail = stderrTail(stream);
+    stream.write(`${"x".repeat(STDERR_LINE_CAP * 2)}\n`);
+    expect(tail()).toBe("x".repeat(STDERR_LINE_CAP));
+    // No newline: only the last STDERR_CARRY_CAP characters are held, so the A-run is gone entirely.
+    stream.write("A".repeat(6000) + "B".repeat(STDERR_CARRY_CAP));
+    expect(tail()).toBe("B".repeat(STDERR_LINE_CAP));
+    stream.write("C".repeat(100));
+    // The carry is still bounded after more input: its oldest characters (the B-run's start) fell off.
+    expect(tail()).toBe("B".repeat(STDERR_LINE_CAP));
+    stream.write("\n");
+    expect(tail()).toBe("B".repeat(STDERR_LINE_CAP));
   });
 
   test("the seatbelt profile builder is exported from the package entry, and is the one the spawner embeds", () => {
