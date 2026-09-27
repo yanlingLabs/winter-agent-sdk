@@ -505,6 +505,10 @@ export interface Options {
   // reproduced) — this callback has no out-of-band response escape hatch at all, so "accidental null"
   // and "deliberate decline" are the same signal here by construction, and the safer reading (never
   // hang) is the one Winter ships.
+  //
+  // WS-27: `options.signal` aborts when the elicitation stops mattering -- the MCP server cancels it,
+  // the tool call that raised it ends (an interrupt included), or the query is aborted. Take the
+  // prompt down then; an answer returned after the abort is dropped (never written to the runtime).
   onElicitation?: (
     request: {
       serverName: string;

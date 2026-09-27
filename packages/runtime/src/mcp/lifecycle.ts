@@ -784,7 +784,9 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
           }
           const timeoutMs = resolveToolCallTimeoutMs(slot.config, deps.envConfig);
           try {
-            const result = await slot.client.callTool(toolName, (input ?? {}) as Record<string, unknown>, { timeoutMs });
+            // WS-27: the execution's abort (a turn interrupt) cancels the MCP request -- and with it any
+            // elicitation the call raised, so the host's prompt comes down with the call.
+            const result = await slot.client.callTool(toolName, (input ?? {}) as Record<string, unknown>, { timeoutMs, ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}) });
             // RULING P4-K: over the threshold, the full payload is PERSISTED and the model gets the
             // `<persisted-output>` envelope naming the file. `ctx.tempDir` is a lazy getter (the
             // registry's own ToolExecutionContext literal), so an ordinary under-threshold call still

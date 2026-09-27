@@ -644,6 +644,51 @@ test("mcp_elicitation: a throwing callback fails closed to a decline, never an u
   expect(response?.payload).toEqual({ action: "decline" });
 });
 
+// WS-27: the runtime cancels an elicitation that stopped mattering (the MCP server cancelled it, or the tool
+// call that raised it ended) with a `control_cancel_request`; the host's callback is told through its own
+// `options.signal`, as `canUseTool` already was, and whatever it answers afterwards is never written.
+test("mcp_elicitation: control_cancel_request aborts onElicitation's signal, and the late answer is dropped", async () => {
+  const writes: string[] = [];
+  let resolveCallbackSawAbort!: () => void;
+  const callbackSawAbort = new Promise<void>((r) => {
+    resolveCallbackSawAbort = r;
+  });
+  const proc: SpawnedRuntimeProcess = {
+    stdin: {
+      write(chunk: string) {
+        writes.push(chunk);
+      },
+      end() {},
+    },
+    stdout: (async function* () {
+      yield encodeFrame({ type: "init", protocolVersion: PROTOCOL_VERSION, sessionId: "s", cwd: "/x", model: "sonnet", permissionMode: "default", tools: [] });
+      yield encodeFrame({ type: "control_request", requestId: "elicit-cancel", subtype: "mcp_elicitation", payload: { serverName: "fixture", message: "still there?" } });
+      yield encodeFrame({ type: "control_cancel_request", requestId: "elicit-cancel" });
+      await callbackSawAbort;
+      yield encodeFrame({ type: "data", message: { type: "result", subtype: "success", is_error: false } });
+    })(),
+    kill() {},
+    exited: Promise.resolve({ code: 0, signal: null }),
+    pid: null,
+  };
+  let aborted = false;
+  const onElicitation = (_request: unknown, opts: { signal: AbortSignal }) =>
+    new Promise<{ action: "accept"; content: Record<string, unknown> }>((resolve) => {
+      opts.signal.addEventListener("abort", () => {
+        aborted = true;
+        resolveCallbackSawAbort();
+        // The host answers anyway (a card the user clicked just as it was withdrawn).
+        resolve({ action: "accept", content: { late: true } });
+      });
+    });
+  for await (const _msg of query({ prompt: "hi", options: { onElicitation, spawnClaudeCodeProcess: () => proc } })) {
+    /* drain */
+  }
+  expect(aborted).toBe(true);
+  await new Promise((r) => setTimeout(r, 10));
+  expect(decodeControlResponse(writes, "elicit-cancel")).toBeUndefined();
+});
+
 test("runtime-originated control_request reaches a registered handler; the response lands runtime-side", async () => {
   const requestId = "probe-1";
   const { proc, writes } = recordingProcessWithControlRequest("test_subtype", requestId);

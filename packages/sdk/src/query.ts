@@ -384,11 +384,17 @@ interface McpElicitationRequestPayload {
   description?: string;
 }
 function makeElicitationHandler(onElicitation: NonNullable<Options["onElicitation"]>, abortController: AbortController | undefined): ControlRequestHandler {
-  return async (payload: unknown): Promise<ControlRequestHandlerResult> => {
+  return async (payload: unknown, handlerCtx?: { signal: AbortSignal }): Promise<ControlRequestHandlerResult> => {
     const req = payload as McpElicitationRequestPayload;
     const controller = new AbortController();
     if (abortController?.signal.aborted) controller.abort();
     else abortController?.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    // WS-27: ...and the runtime's own cancellation of THIS request (`control_cancel_request`) -- sent when
+    // the MCP server cancels its elicitation, or the tool call that raised it ends -- exactly as
+    // `makePermissionHandler` honours it. The host's card can come down; an answer it gives anyway is not
+    // written (the dispatcher drops the response of a cancelled request).
+    if (handlerCtx?.signal.aborted === true) controller.abort();
+    else handlerCtx?.signal.addEventListener("abort", () => controller.abort(), { once: true });
 
     let result: Awaited<ReturnType<NonNullable<Options["onElicitation"]>>>;
     try {

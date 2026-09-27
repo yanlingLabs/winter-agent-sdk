@@ -8,8 +8,13 @@ import {
   buildElicitationPayload,
   MCP_ELICITATION_SUBTYPE,
   type ElicitationSender,
+  type ElicitationRequestPayload,
   type ElicitationResultPayload,
 } from "./elicitation.ts";
+import type { ControlRequestFrame, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
+import { createRpcBridge } from "../rpc/bridge.ts";
+import { connectMcpServer } from "./client.ts";
+import { createFixtureMcpServer } from "./test-fixtures.ts";
 
 // A properly GENERIC fake -- `ElicitationSender.request` mirrors `RpcBridge.request`'s own
 // `<T = unknown>(...) => Promise<T>` shape (elicitation.ts's own header explains why); an arrow
@@ -182,6 +187,148 @@ describe("installElicitationHandler: end-to-end over a real MCP Client/Server pa
       expect(JSON.parse(content[0]!.text)).toEqual({ action: "decline" });
     } finally {
       await close();
+    }
+  });
+});
+
+// WS-27: an elicitation that stops mattering is CANCELLED all the way to the host. Before, the asker passed
+// no signal to the bridge and the handler ignored the MCP request's own cancellation, so a server that gave
+// up on its question -- or a tool call interrupted mid-question -- left the host's prompt up until the
+// host's own timeout.
+describe("WS-27: elicitation cancellation reaches the host and a late answer is dropped", () => {
+  function recordingBridge() {
+    const frames: WinterFrame[] = [];
+    const bridge = createRpcBridge({ write: (f) => void frames.push(f), end() {} });
+    return { frames, bridge };
+  }
+  const requestFrame = (frames: WinterFrame[]) => frames.find((f) => f.type === "control_request" && (f as ControlRequestFrame).subtype === MCP_ELICITATION_SUBTYPE) as ControlRequestFrame | undefined;
+
+  test("an abort while the host is asking: control_cancel_request for that request, the server gets `cancel`, and the host's late answer is dropped", async () => {
+    const { frames, bridge } = recordingBridge();
+    const ask = createElicitationAsker(bridge);
+    const ac = new AbortController();
+    const answer = ask({ serverName: "s", message: "q?" }, { signal: ac.signal });
+    const req = requestFrame(frames)!;
+    expect(req).toBeDefined();
+    ac.abort();
+    expect(await answer).toEqual({ action: "cancel" });
+    expect(frames).toContainEqual({ type: "control_cancel_request", requestId: req.requestId });
+    // The host answers anyway: an unknown request id now, dropped without effect.
+    expect(bridge.handleResponse({ type: "control_response", requestId: req.requestId, ok: true, payload: { action: "accept", content: { a: "late" } } })).toBe(false);
+  });
+
+  test("an already-aborted signal asks nothing at all and answers `cancel`", async () => {
+    const { frames, bridge } = recordingBridge();
+    const ac = new AbortController();
+    ac.abort();
+    expect(await createElicitationAsker(bridge)({ serverName: "s", message: "q?" }, { signal: ac.signal })).toEqual({ action: "cancel" });
+    expect(frames).toEqual([]);
+  });
+
+  test("the SERVER cancels its elicitation/create (notifications/cancelled): the asker's signal aborts", async () => {
+    let asked!: () => void;
+    const askedP = new Promise<void>((r) => (asked = r));
+    let signalAborted = false;
+    const server = createFixtureMcpServer({
+      tools: [
+        {
+          name: "ask_then_give_up",
+          inputSchema: { type: "object", properties: {} },
+          handler: async (_args, srv) => {
+            const giveUp = new AbortController();
+            void askedP.then(() => giveUp.abort());
+            const outcome = await srv.elicitInput({ message: "still there?", requestedSchema: { type: "object", properties: {} } }, { signal: giveUp.signal }).then(
+              () => "answered",
+              () => "gave up",
+            );
+            return { content: [{ type: "text", text: outcome }] };
+          },
+        },
+      ],
+    });
+    const ask = (_p: ElicitationRequestPayload, opts?: { signal?: AbortSignal }): Promise<ElicitationResultPayload> =>
+      new Promise((resolve) => {
+        asked();
+        opts?.signal?.addEventListener("abort", () => {
+          signalAborted = true;
+          resolve({ action: "cancel" });
+        });
+      });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: ask, inProcessServer: server });
+    try {
+      const result = await client.callTool("ask_then_give_up", {});
+      expect((result.content[0] as { text: string }).text).toBe("gave up");
+      expect(signalAborted).toBe(true);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  test("the TOOL CALL that raised it is aborted (a turn interrupt): the asker's signal aborts and the call rejects", async () => {
+    let asked!: () => void;
+    const askedP = new Promise<void>((r) => (asked = r));
+    let signalAborted = false;
+    // A server that never cancels its own question: only the call's abort can take the prompt down.
+    const server = createFixtureMcpServer({
+      tools: [
+        {
+          name: "ask",
+          inputSchema: { type: "object", properties: {} },
+          handler: async (_args, srv) => ({ content: [{ type: "text", text: JSON.stringify(await srv.elicitInput({ message: "q", requestedSchema: { type: "object", properties: {} } })) }] }),
+        },
+      ],
+    });
+    const ask = (_p: ElicitationRequestPayload, opts?: { signal?: AbortSignal }): Promise<ElicitationResultPayload> =>
+      new Promise((resolve) => {
+        asked();
+        opts?.signal?.addEventListener("abort", () => {
+          signalAborted = true;
+          resolve({ action: "cancel" });
+        });
+      });
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: ask, inProcessServer: server });
+    try {
+      const interrupt = new AbortController();
+      const call = client.callTool("ask", {}, { signal: interrupt.signal }).then(
+        () => "resolved",
+        () => "rejected",
+      );
+      await askedP;
+      interrupt.abort();
+      expect(await call).toBe("rejected");
+      // The scope aborts once the call has settled.
+      for (let i = 0; i < 50 && !signalAborted; i++) await Bun.sleep(10);
+      expect(signalAborted).toBe(true);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  test("an elicitation answered normally is never cancelled by its call ending afterwards", async () => {
+    let seenSignal: AbortSignal | undefined;
+    const server = createFixtureMcpServer({
+      tools: [
+        {
+          name: "ask",
+          inputSchema: { type: "object", properties: {} },
+          handler: async (_args, srv) => ({ content: [{ type: "text", text: JSON.stringify(await srv.elicitInput({ message: "q", requestedSchema: { type: "object", properties: { a: { type: "string" } } } })) }] }),
+        },
+      ],
+    });
+    const ask = async (_p: ElicitationRequestPayload, opts?: { signal?: AbortSignal }): Promise<ElicitationResultPayload> => {
+      seenSignal = opts?.signal;
+      return { action: "accept", content: { a: "yes" } };
+    };
+    const client = await connectMcpServer({ cwd: process.cwd(), name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: ask, inProcessServer: server });
+    try {
+      const result = await client.callTool("ask", {});
+      expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ action: "accept", content: { a: "yes" } });
+      expect(seenSignal).toBeDefined();
+    } finally {
+      await client.close();
+      await server.close();
     }
   });
 });
