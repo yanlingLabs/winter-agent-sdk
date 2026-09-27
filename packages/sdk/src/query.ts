@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
-import type { AccountInfo, AgentInfo, EffortLevel, ModelInfo, ModelFamilyListing, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, RewindFilesResult } from "./protocol/config.ts";
-import { isWinterMcpServerInstance, type Options, type McpServerConfig } from "./options.ts";
+import type { AccountInfo, AgentInfo, CredentialResolveAnswer, CredentialResolveRequest, EffortLevel, ModelInfo, ModelFamilyListing, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, McpOAuthRefreshAnswer, McpOAuthRefreshRequest, RewindFilesResult } from "./protocol/config.ts";
+import { CREDENTIAL_RESOLVE_SUBTYPE, isWinterMcpServerInstance, MCP_OAUTH_REFRESH_SUBTYPE, type Options, type McpServerConfig } from "./options.ts";
 import type {
   PermissionMode,
   CanUseTool,
@@ -182,6 +182,17 @@ export interface Query extends AsyncGenerator<SdkMessage> {
    * caller checks for it before calling.
    */
   compact?(opts?: { customInstructions?: string }): Promise<{ retainedCount: number }>;
+  /**
+   * WS-25 -- reconnect ONE MCP server now (the runtime's `mcp_reconnect` control subtype), and resolve
+   * once it is connected; rejects when the reconnect fails or leaves the server `failed`/`needs-auth`.
+   * The pinned shape (`sdk.d.ts:2668`, `reconnectMcpServer(serverName): Promise<void>`, "throws on
+   * failure"). A host calls it after a sign-in so a `needs-auth` server lists its tools in the live
+   * session -- a reconnect, never a restart of the session.
+   *
+   * OPTIONAL on the interface for the same reason as `compact` (a host's structural `Query` doubles keep
+   * type-checking); every `Query` this package returns has it.
+   */
+  reconnectMcpServer?(serverName: string): Promise<void>;
   /**
    * Phase 6 Task 10 (derived-shapes-p6 item (d), `sdk.d.ts:2566`): the models this session may select.
    *
@@ -405,6 +416,81 @@ function makeElicitationHandler(onElicitation: NonNullable<Options["onElicitatio
     // automatic decline, never a hang -- this callback has no out-of-band response escape hatch, so
     // there is no "already answered elsewhere" case for a null to legitimately mean here.
     return { ok: true, payload: result ?? { action: "decline" } };
+  };
+}
+
+// WS-25 (MCP OAuth): the runtime-originated `mcp_oauth_refresh` responder -- registered ONLY when
+// `Options.onMcpOAuthRefresh` is set (the same "no callback = no handler" posture as `mcp_elicitation`).
+// Absent, the runtime's request lands on the generic `unhandled_subtype` answer, which the runtime reads
+// as "no host refresher" and refreshes in-process. PRESENT, every outcome is a well-formed ANSWER: a
+// callback that throws, or returns garbage, answers `transient` -- never an `ok: false` control response,
+// which a runtime could otherwise mistake for "no handler" and refresh by itself behind the host's back.
+function isRefreshRequest(payload: unknown): payload is McpOAuthRefreshRequest {
+  if (typeof payload !== "object" || payload === null) return false;
+  const p = payload as Record<string, unknown>;
+  return typeof p.server === "string" && typeof p.account === "string" && typeof p.generation === "number" && Number.isInteger(p.generation) && (p.stepUpScope === undefined || typeof p.stepUpScope === "string");
+}
+function isRefreshAnswer(value: unknown): value is McpOAuthRefreshAnswer {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as { ok?: unknown; reason?: unknown };
+  return v.ok === true || (v.ok === false && (v.reason === "needs_auth" || v.reason === "transient"));
+}
+function makeMcpOAuthRefreshHandler(onMcpOAuthRefresh: NonNullable<Options["onMcpOAuthRefresh"]>, abortController: AbortController | undefined): ControlRequestHandler {
+  return async (payload: unknown, handlerCtx?: { signal: AbortSignal }): Promise<ControlRequestHandlerResult> => {
+    if (!isRefreshRequest(payload)) return { ok: false, error: { code: "invalid_payload", message: "mcp_oauth_refresh expects { server, account, generation, stepUpScope? }" } };
+    const controller = new AbortController();
+    if (abortController?.signal.aborted === true || handlerCtx?.signal.aborted === true) controller.abort();
+    abortController?.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    handlerCtx?.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    const request: McpOAuthRefreshRequest = { server: payload.server, account: payload.account, generation: payload.generation, ...(payload.stepUpScope !== undefined ? { stepUpScope: payload.stepUpScope } : {}) };
+    try {
+      const answer = await onMcpOAuthRefresh(request, { signal: controller.signal });
+      return { ok: true, payload: isRefreshAnswer(answer) ? answer : { ok: false, reason: "transient" } };
+    } catch (err) {
+      // Names only: the account and the callback's error NAME. A host's error text may quote a token endpoint.
+      console.error(`winter: onMcpOAuthRefresh threw for account '${payload.account}' (${err instanceof Error ? err.name : "error"}) -- answering transient`);
+      return { ok: true, payload: { ok: false, reason: "transient" } };
+    }
+  };
+}
+
+// WS-25 §7: the runtime-originated `credential_resolve` responder, registered ONLY with
+// `Options.onCredentialResolve` (which also sets `hostCredentials` on the wire, so a runtime never asks a
+// host that cannot answer). Every outcome is a well-formed ANSWER; a throwing or garbage-returning
+// callback answers `unavailable`. The material is passed through untouched and never logged: the log
+// line on a throw names the ACCOUNT and the error's NAME only.
+function isCredentialResolveRequest(payload: unknown): payload is CredentialResolveRequest {
+  if (typeof payload !== "object" || payload === null) return false;
+  const p = payload as { ref?: unknown; minGeneration?: unknown };
+  const ref = p.ref as { kind?: unknown; account?: unknown; service?: unknown } | undefined;
+  return (
+    typeof ref === "object" && ref !== null && ref.kind === "keychain" && typeof ref.account === "string" && (ref.service === undefined || typeof ref.service === "string") && (p.minGeneration === undefined || (typeof p.minGeneration === "number" && Number.isInteger(p.minGeneration)))
+  );
+}
+function isCredentialResolveAnswer(value: unknown): value is CredentialResolveAnswer {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as { ok?: unknown; material?: unknown; generation?: unknown; expiresAt?: unknown; reason?: unknown };
+  if (v.ok === true) return typeof v.material === "string" && typeof v.generation === "number" && (v.expiresAt === undefined || typeof v.expiresAt === "number");
+  return v.ok === false && (v.reason === "not_found" || v.reason === "not_allowed" || v.reason === "stale" || v.reason === "unavailable");
+}
+function makeCredentialResolveHandler(onCredentialResolve: NonNullable<Options["onCredentialResolve"]>, abortController: AbortController | undefined): ControlRequestHandler {
+  return async (payload: unknown, handlerCtx?: { signal: AbortSignal }): Promise<ControlRequestHandlerResult> => {
+    if (!isCredentialResolveRequest(payload)) return { ok: false, error: { code: "invalid_payload", message: "credential_resolve expects { ref: { kind: \"keychain\", account, service? }, minGeneration? }" } };
+    const controller = new AbortController();
+    if (abortController?.signal.aborted === true || handlerCtx?.signal.aborted === true) controller.abort();
+    abortController?.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    handlerCtx?.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    const request: CredentialResolveRequest = {
+      ref: { kind: "keychain", account: payload.ref.account, ...(payload.ref.service !== undefined ? { service: payload.ref.service } : {}) },
+      ...(payload.minGeneration !== undefined ? { minGeneration: payload.minGeneration } : {}),
+    };
+    try {
+      const answer = await onCredentialResolve(request, { signal: controller.signal });
+      return { ok: true, payload: isCredentialResolveAnswer(answer) ? answer : { ok: false, reason: "unavailable" } };
+    } catch (err) {
+      console.error(`winter: onCredentialResolve threw for account '${payload.ref.account}' (${err instanceof Error ? err.name : "error"}) -- answering unavailable`);
+      return { ok: true, payload: { ok: false, reason: "unavailable" } };
+    }
   };
 }
 
@@ -755,6 +841,8 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     // The condition below is byte-identical to before whenever NOBODY chose a service, and emits
     // exactly when somebody did (through either surface).
     ...(brand.keychainService !== WINTER_BRAND.keychainService || options.keychainService !== undefined ? { keychainService: brand.keychainService } : {}),
+    // WS-25 §7: a flag only -- the host's answers ride control responses, never the wire config.
+    ...(options.onCredentialResolve !== undefined ? { hostCredentials: true } : {}),
     ...(options.autoClassifier !== undefined ? { autoClassifier: options.autoClassifier } : {}),
     ...(options.advisor !== undefined ? { advisor: options.advisor } : {}),
     // The web tools' and auto-memory's own blocks: pure passthrough, same convention as `advisor`.
@@ -979,6 +1067,12 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   }
   if (options.onElicitation) {
     controlRequestHandlers.set("mcp_elicitation", makeElicitationHandler(options.onElicitation, options.abortController));
+  }
+  if (options.onCredentialResolve) {
+    controlRequestHandlers.set(CREDENTIAL_RESOLVE_SUBTYPE, makeCredentialResolveHandler(options.onCredentialResolve, options.abortController));
+  }
+  if (options.onMcpOAuthRefresh) {
+    controlRequestHandlers.set(MCP_OAUTH_REFRESH_SUBTYPE, makeMcpOAuthRefreshHandler(options.onMcpOAuthRefresh, options.abortController));
   }
 
   // Stderr is diagnostics only, never frames (WS-04 §6) — forwarded eagerly, independent of
@@ -1250,6 +1344,12 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     const payload = await sendControlRequest("compact", opts?.customInstructions !== undefined ? { custom_instructions: opts.customInstructions } : {});
     const retained = typeof payload === "object" && payload !== null ? (payload as { retained_count?: unknown }).retained_count : undefined;
     return { retainedCount: typeof retained === "number" ? retained : 0 };
+  };
+  // WS-25: the pinned `reconnectMcpServer(serverName)` over the runtime's existing `mcp_reconnect`
+  // subtype (payload `{ serverName }`, rpc/mcp-control.ts). Rejects with the runtime's own error when the
+  // reconnect fails or leaves the server failed/needs-auth -- "throws on failure", as pinned.
+  gen.reconnectMcpServer = async (serverName: string) => {
+    await sendControlRequest("mcp_reconnect", { serverName });
   };
   // Phase 6 Task 10: the pinned payload-free `list_models` (`sdk.d.ts:3855`) and Winter's own
   // `account_info`. A malformed/absent runtime payload degrades to an empty answer rather than a

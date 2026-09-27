@@ -129,6 +129,10 @@ import { resolveBuiltinCommand, looksLikeCommand, type CommandResolver } from ".
 // there is no seam exposing it outward, so main.ts structurally cannot construct one.
 import { createMcpLifecycle, FIRST_TURN_MCP_WAIT_DEFAULT_MS, firstTurnMcpWaitDeadlineMs, resolveMcpServerSources, registerSessionMcpLifecycle, type McpLifecycle, type McpServerSource } from "./mcp/lifecycle.ts";
 import { createElicitationAsker } from "./mcp/elicitation.ts";
+// WS-25 (MCP OAuth): the session's sign-ins, the needs-auth call hint and the needs-auth notice.
+import { createSessionMcpOAuth, mcpNeedsAuthAttachment, needsAuthToolHint } from "./mcp-auth/engine-wiring.ts";
+import type { McpOAuthStore } from "./mcp-auth/store.ts";
+import type { HostCredentialChannel } from "./provider/host-credentials.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
 import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildInheritance, type ParentMcpState, type ParentRuleMirror, type SpawnChildRequest } from "./subagents/child-handle.ts";
@@ -1699,6 +1703,20 @@ export interface EngineOptions {
    */
   extraMcpServerSources?: readonly McpServerSource[];
   /**
+   * WS-25 (MCP OAuth): where this session READS its MCP sign-ins -- the session's own Keychain service,
+   * supplied by production wiring (`resolveSessionMcpOAuthStore`). Present, every remote (`http`/`sse`)
+   * server without a static `Authorization` header connects with a read-only bearer provider that asks
+   * the host (`mcp_oauth_refresh`) to refresh. ABSENT -- every direct `runEngine` caller, every unit test --
+   * no provider is attached anywhere, the Keychain is never touched, and a 401 is `needs-auth` as before.
+   */
+  mcpOAuthStore?: McpOAuthStore;
+  /**
+   * WS-25 §7: the host-credential channel production wiring built for a host-brokered session
+   * (`RuntimeConfig.hostCredentials`). Bound to this run's control bridge the moment it exists, so every
+   * `credential_resolve` rides the session's own stdio pipe. Absent: nothing to bind.
+   */
+  hostCredentialChannel?: HostCredentialChannel;
+  /**
    * `system/init.slash_commands`. Produced by `slashCommandNames(resolver, cwd)`, which ALREADY
    * includes the engine's own `/compact` -- the engine must not prepend it a second time.
    */
@@ -2423,6 +2441,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     extraHookEntries,
     subagentHooks,
     extraMcpServerSources,
+    mcpOAuthStore,
+    hostCredentialChannel,
     initSlashCommands,
     initSkills,
     initPlugins,
@@ -2753,6 +2773,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // `output` every other runtime->host frame goes through — there is no second writer to race
   // against.
   const bridge = createRpcBridge(output);
+  // WS-25 §7: a host-brokered session's credential reads ride THIS bridge (the one top-level engine binds;
+  // a child engine never receives the channel, and shares the parent's binding through the stores).
+  hostCredentialChannel?.bind(bridge);
   // Task 8: one stateless instance for the whole run — createBridgePromptStage's own closure only
   // ever reads `bridge` (constant for the run), so there is nothing to gain from rebuilding it on
   // every evaluate() call the way makeEvalCtx's own per-call PolicyState snapshot must be.
@@ -4784,6 +4807,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // WS-23: stdio servers start in the SESSION cwd, stated -- a spawned child used to inherit it
       // implicitly; an embedded session's Worker has only the host daemon's cwd to inherit.
       cwd: config.cwd,
+      // WS-25: the session's MCP sign-ins, refreshed by the HOST over this session's own bridge.
+      ...(mcpOAuthStore !== undefined ? { oauth: createSessionMcpOAuth({ store: mcpOAuthStore, sender: bridge, brand: sessionBrand, ...(config.hostCredentials === true ? { hostOwnsRefresh: true } : {}) }) } : {}),
     });
     // WS-09 §2's three-deadline model lives entirely inside `start()`: an ordinary server connects
     // in the background and this returns immediately; `MCP_CONNECTION_NONBLOCKING=0` or an
@@ -7657,6 +7682,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       if (date !== undefined) produced.push(date);
       const plan = planModeAttachment();
       if (plan !== undefined) produced.push(plan);
+      // WS-25: which MCP servers need the user to sign in -- announced once per change of that set.
+      if (effectiveMcpStateSource !== undefined) {
+        const needsAuth = mcpNeedsAuthAttachment(effectiveMcpStateSource.snapshot(), messages, sessionBrand);
+        if (needsAuth !== undefined) produced.push(needsAuth);
+      }
     }
     // SDK 0.0.16 Lane N: the MID-TURN delivery. After a tool round the engine drains the
     // `next`-priority notifications addressed to ITS OWN agent id and appends them to the tool
@@ -8127,6 +8157,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       const pending = effectiveMcpStateSource?.snapshot().find((s) => s.state === "pending" && s.name === server);
       if (pending !== undefined) hint = `. The MCP server '${pending.name}' is still connecting. Call WaitForMcpServers to wait for it, then try again.`;
     }
+    // WS-25 (spec §1.3): a call to a tool of a server that needs sign-in -- its tools were withdrawn --
+    // answers with the sign-in door. Never a browser, never a model-callable auth tool.
+    if (hint === "" && toolName.startsWith("mcp__")) hint = needsAuthToolHint(effectiveMcpStateSource?.snapshot(), toolName, sessionBrand);
     return `<tool_use_error>Error: No such tool available: ${toolName}${hint}</tool_use_error>`;
   };
 

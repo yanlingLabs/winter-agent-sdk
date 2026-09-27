@@ -8,13 +8,19 @@
 // transport, which is why this lane's SSE fixture (mcp/test-fixtures.ts's `withSseFixture`) is now a
 // hand-written wire-level server rather than the SDK's own. Its default era negotiation is
 // `'legacy'` (mcp/client.ts's `resolveVersionNegotiation` says why).
-import { SSEClientTransport, type Transport } from "@modelcontextprotocol/client";
+import { SSEClientTransport, type AuthProvider, type Transport } from "@modelcontextprotocol/client";
 import type { McpSSEServerConfig } from "@yanlinglabs/winter-agent-sdk";
+import { refusingRedirectsFetch } from "./http.ts";
 
 // Returns the `Transport` INTERFACE type, uncast -- see transports/http.ts for why v1's cast is gone.
-export function buildSseTransport(cfg: McpSSEServerConfig): Transport {
+//
+// `opts.authProvider` (WS-25): as on http -- the read-only session provider, and every request (the
+// EventSource GET and the message POSTs alike, both of which go through the transport's `fetch`) refuses
+// redirects.
+export function buildSseTransport(cfg: McpSSEServerConfig, opts: { authProvider?: AuthProvider } = {}): Transport {
   const transport = new SSEClientTransport(new URL(cfg.url), {
     ...(cfg.headers !== undefined ? { requestInit: { headers: cfg.headers } } : {}),
+    ...(opts.authProvider !== undefined ? { authProvider: opts.authProvider, fetch: refusingRedirectsFetch } : {}),
   });
   return transport;
 }

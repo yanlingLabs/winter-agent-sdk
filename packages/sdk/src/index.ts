@@ -13,7 +13,7 @@ export { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_
 // `CredentialRef` in particular — it is declared ONCE, here in the dependency-free sdk, and
 // re-exported by @yanlinglabs/winter-provider-runtime, so a lane importing it from either package
 // gets the identical type rather than two structurally-similar twins that can drift.
-export { DEFAULT_PROVIDER_STALL_TIMEOUT_MS, DEFAULT_KEYCHAIN_SERVICE } from "./options.ts";
+export { DEFAULT_PROVIDER_STALL_TIMEOUT_MS, DEFAULT_KEYCHAIN_SERVICE, MCP_OAUTH_REFRESH_SUBTYPE, CREDENTIAL_RESOLVE_SUBTYPE } from "./options.ts";
 export { WEB_TOOLS_DEFAULTS, resolveWebToolsConfig } from "./options.ts";
 export type { ResolvedWebToolsConfig } from "./options.ts";
 export type { WebToolsConfig, WebSearchConfig, WebFetchConfig, WebPrivateAddressPolicy, AutoMemoryConfig } from "./protocol/config.ts";
@@ -69,6 +69,10 @@ export type { RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, Sandbo
 // (options.ts's own export above owns that name) -- see protocol/config.ts's own header for why the
 // two differ by exactly one field (`permissionMode`).
 export type { McpServerConfigForProcessTransport, McpVersionNegotiation, AgentMcpServerSpec, RuntimeAgentDefinition } from "./protocol/config.ts";
+// WS-25 (MCP OAuth): the per-server `oauth` block and the runtime -> host refresh request/answer.
+export type { McpOAuthConfig, McpOAuthSecretRef, McpOAuthRefreshRequest, McpOAuthRefreshAnswer } from "./protocol/config.ts";
+// WS-25 §7: the host-brokered credential request/answer.
+export type { CredentialResolveRequest, CredentialResolveAnswer } from "./protocol/config.ts";
 
 // Wire protocol (WS-02 §3: owned by the sdk, the runtime depends on it — never the reverse).
 // Previously reachable only via the runtime; now the sdk's own public surface.

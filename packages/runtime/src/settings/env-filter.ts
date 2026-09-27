@@ -24,6 +24,7 @@
 // lists above too), every tier's `env` additionally loses every provider/auth/proxy/TLS key, so a
 // settings file cannot override the host-managed provider identity.
 import { disableCronEnvName, envName, pluginCacheDirEnvName, providerManagedByHostEnvName, storeHomeEnvName, WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
+import { mcpOAuthTestStoreEnvName } from "../mcp-auth/store.ts";
 
 export type EnvFilterTier = "user" | "project" | "local" | "flag";
 
@@ -66,6 +67,9 @@ export const ALL_TIER_REFUSED_ENV: readonly string[] = [
   pluginCacheDirEnvName(WINTER_BRAND),
   providerManagedByHostEnvName(WINTER_BRAND),
   disableCronEnvName(WINTER_BRAND),
+  // WS-25: the MCP sign-in test seam -- a tier that set it would move the session's sign-ins into a file
+  // it controls. (Also read only from the original process env; this is the second lock.)
+  mcpOAuthTestStoreEnvName(WINTER_BRAND),
 ];
 
 /** A regex-metacharacter-safe literal match, for building a pattern out of a brand-derived name (never a hardcoded `WINTER_*` string -- see this file's own header). */

@@ -34,13 +34,14 @@
 // LOCALLY (a request timeout, a closed connection, a failed era negotiation, a non-OK HTTP answer) is
 // now an `SdkError` whose `code` is a STRING `SdkErrorCode` -- the HTTP status moved off `.code` onto
 // `SdkHttpError.status`. `classifyConnectError` below is where that move is absorbed.
-import { Client, ProtocolError, ProtocolErrorCode, SdkError, SdkErrorCode, SdkHttpError, SseError, UnauthorizedError, UnsupportedProtocolVersionError, type Transport, type VersionNegotiationMode } from "@modelcontextprotocol/client";
+import { Client, InsufficientScopeError, ProtocolError, ProtocolErrorCode, SdkError, SdkErrorCode, SdkHttpError, SseError, UnauthorizedError, UnsupportedProtocolVersionError, type AuthProvider, type Transport, type VersionNegotiationMode } from "@modelcontextprotocol/client";
 import type { McpServerConfigForProcessTransport, McpVersionNegotiation } from "@yanlinglabs/winter-agent-sdk";
 import { buildStdioTransport, WinterStdioTransport } from "./transports/stdio.ts";
 import { buildHttpTransport } from "./transports/http.ts";
 import { buildSseTransport } from "./transports/sse.ts";
 import { buildSdkTransport, type InProcessMcpServer } from "./transports/sdk.ts";
 import { installElicitationHandler, type ElicitationAsker } from "./elicitation.ts";
+import { McpAuthRefreshUnavailableError, McpNeedsAuthError, type McpSessionAuthProvider } from "../mcp-auth/session-provider.ts";
 
 // --- Public shapes ---------------------------------------------------------------------------
 
@@ -59,7 +60,12 @@ import { installElicitationHandler, type ElicitationAsker } from "./elicitation.
  * A probe that went unanswered is `timeout` and a probe answered with an HTTP error keeps
  * `handshake_failed` plus its `httpStatus`, as before.
  */
-export type McpConnectErrorCode = "timeout" | "spawn_failed" | "handshake_failed" | "version_mismatch" | "transport_closed" | "needs_auth" | "unknown";
+//
+// WS-25 adds `auth_refresh_failed`: the server's stored sign-in has expired and could not be refreshed
+// RIGHT NOW (the authorization server or the network did not answer) -- a retryable failure, deliberately
+// not `needs_auth`, which would send the user to sign in again for an outage. A sign-in that is actually
+// gone (no refresh token, `invalid_grant`) is `needs_auth`.
+export type McpConnectErrorCode = "timeout" | "spawn_failed" | "handshake_failed" | "version_mismatch" | "transport_closed" | "needs_auth" | "auth_refresh_failed" | "unknown";
 
 export class McpConnectError extends Error {
   readonly code: McpConnectErrorCode;
@@ -181,6 +187,14 @@ export interface ConnectMcpServerOptions {
    * notifications would have nothing to update.
    */
   onToolListChanged?: () => void;
+  /**
+   * WS-25 (MCP OAuth): the session's read-only bearer provider for THIS server (`http`/`sse` only;
+   * mcp-auth/session-provider.ts). Its `preflight()` runs before the transport exists -- a stored sign-in
+   * that is already dead is `needs_auth` with no request sent (spec §1.2) -- and the transport then reads
+   * the bearer from it per request, with every redirect refused. Absent: no `Authorization` beyond the
+   * config's own headers, exactly as before.
+   */
+  auth?: McpSessionAuthProvider;
 }
 
 // --- Protocol-version negotiation (WS-23; protocol revision 2026-07-28) ----------------------------
@@ -250,6 +264,12 @@ interface ConnectAttemptFacts {
 
 function classifyConnectError(err: unknown, facts: ConnectAttemptFacts = { transportClosed: false, pinned: false }): McpConnectError {
   if (err instanceof McpConnectError) return err;
+  // WS-25: the session's own auth provider decided (a dead sign-in, a refresh that could not run), and a
+  // `403 insufficient_scope` at connect (the minimal provider cannot step up; a sign-in with the wider
+  // scope is the only way on). Checked FIRST: each carries the reason the user needs verbatim.
+  if (err instanceof McpNeedsAuthError) return new McpConnectError("needs_auth", err.message);
+  if (err instanceof McpAuthRefreshUnavailableError) return new McpConnectError("auth_refresh_failed", err.message);
+  if (err instanceof InsufficientScopeError) return new McpConnectError("needs_auth", "the server requires additional permission (403 insufficient_scope); sign in again to grant it", 403);
   if (err instanceof UnauthorizedError) return new McpConnectError("needs_auth", err.message);
   // v2 moved every locally-raised failure onto `SdkError` with a STRING code; the v1 check this
   // replaces (`McpError` + `ErrorCode.RequestTimeout`) can no longer match anything.
@@ -366,7 +386,7 @@ function autoProbeTimeoutMs(connectTimeoutMs: number): number {
 // retry would cost a second process on stdio for nothing. `transport_closed` IS retried: it is exactly
 // the stdio server that exited on the unknown probe, which a fresh legacy spawn connects to.
 function retriesAsLegacy(err: McpConnectError): boolean {
-  if (err.code === "needs_auth" || err.code === "spawn_failed" || err.code === "version_mismatch") return false;
+  if (err.code === "needs_auth" || err.code === "auth_refresh_failed" || err.code === "spawn_failed" || err.code === "version_mismatch") return false;
   return err.httpStatus !== 401 && err.httpStatus !== 403;
 }
 
@@ -438,17 +458,24 @@ export async function connectMcpServer(opts: ConnectMcpServerOptions): Promise<C
 async function connectOnce(opts: ConnectMcpServerOptions, mode: McpVersionNegotiation, connectTimeoutMs: number, probeTimeoutMs?: number): Promise<ConnectedMcpClient> {
   const { name, config, elicitationAsk } = opts;
 
-  let transport: Transport;
+  // `undefined` until built: an attempt can end before one exists (WS-25's preflight refusal).
+  let transport: Transport | undefined;
   try {
     if (config.type === "sdk") {
       if (!opts.inProcessServer) {
         throw new McpConnectError("spawn_failed", `mcp client: server "${name}" is configured as type "sdk" but no in-process server instance was supplied to connectMcpServer`);
       }
       transport = await buildSdkTransport(opts.inProcessServer);
-    } else if (config.type === "http") {
-      transport = buildHttpTransport(config, opts.refuseHttpRedirects === true ? { refuseRedirects: true } : {});
-    } else if (config.type === "sse") {
-      transport = buildSseTransport(config);
+    } else if (config.type === "http" || config.type === "sse") {
+      // WS-25: a dead stored sign-in ends the attempt HERE, before any transport or request exists.
+      // Bounded by the SAME connect budget (fix round 1 M1): a preflight that waits on a host refresh must
+      // not stretch MCP_TIMEOUT (the outer race below starts only once a transport exists).
+      if (opts.auth !== undefined) await boundedPreflight(opts.auth, connectTimeoutMs);
+      const authProvider: AuthProvider | undefined = opts.auth !== undefined ? { token: () => opts.auth!.token(), onUnauthorized: () => opts.auth!.onUnauthorized() } : undefined;
+      transport =
+        config.type === "http"
+          ? buildHttpTransport(config, { ...(opts.refuseHttpRedirects === true ? { refuseRedirects: true } : {}), ...(authProvider !== undefined ? { authProvider } : {}) })
+          : buildSseTransport(config, authProvider !== undefined ? { authProvider } : {});
     } else {
       // WS-09 derived-shapes item (a): `type` is the ONLY optional discriminant of the four
       // variants -- an absent `type` field is structurally a stdio config. `WinterStdioTransport`
@@ -597,13 +624,17 @@ async function connectOnce(opts: ConnectMcpServerOptions, mode: McpVersionNegoti
     // that died or hung during startup leaves a diagnostic on the error a caller actually sees.
     // A hung server produces no child `error` event at all (the transport's own spawn-path
     // attachment cannot cover it) -- this is the handshake/timeout half of the same finding.
-    const stderrTail = transport! instanceof WinterStdioTransport ? (transport as WinterStdioTransport).stderrTail.trim() : "";
+    // WS-25: a `403 insufficient_scope` at connect -- the host records the scope for the next sign-in.
+    const scopeChallenge = insufficientScopeOf(err);
+    if (scopeChallenge !== undefined && opts.auth !== undefined) await opts.auth.reportInsufficientScope(scopeChallenge.requiredScope).catch(() => {});
+    const stderrTail = transport instanceof WinterStdioTransport ? (transport as WinterStdioTransport).stderrTail.trim() : "";
     // WS-24: observed on the transport, for `classifyConnectError` -- see `ConnectAttemptFacts`. Read
     // off the stdio transport's own "the server exited by itself" flag, which neither the v2 client's
     // teardown of a failed negotiation nor the close() below can set (both close it FROM this side).
-    const facts: ConnectAttemptFacts = { transportClosed: transport! instanceof WinterStdioTransport && (transport as WinterStdioTransport).exitedOnItsOwn, pinned: typeof mode === "object" };
+    const facts: ConnectAttemptFacts = { transportClosed: transport instanceof WinterStdioTransport && (transport as WinterStdioTransport).exitedOnItsOwn, pinned: typeof mode === "object" };
     try {
-      await transport!.close();
+      // `transport` is unassigned when the attempt ended before one existed (a preflight refusal).
+      await transport?.close();
     } catch {
       /* transport may never have started, or may already be closed -- either is fine here */
     }
@@ -614,4 +645,40 @@ async function connectOnce(opts: ConnectMcpServerOptions, mode: McpVersionNegoti
     // kind of aliasing that surprises a second reader of the same reference.
     throw new McpConnectError(classified.code, `${classified.message}\n--- server stderr (last ${stderrTail.length} chars) ---\n${stderrTail}`, classified.httpStatus);
   }
+}
+
+function boundedPreflight(auth: McpSessionAuthProvider, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const outer = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new McpConnectError("timeout", `mcp client: the sign-in check exceeded ${timeoutMs}ms`)), timeoutMs);
+    timer.unref?.();
+  });
+  return Promise.race([auth.preflight(), outer]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
+// --- WS-25: auth failures on a LIVE connection (a tool call, a refresh, a resource read) ------------
+
+/** A `403 insufficient_scope` challenge, found directly or as the cause the v2 client wrapped it in. */
+export function insufficientScopeOf(err: unknown): InsufficientScopeError | undefined {
+  for (let e: unknown = err, depth = 0; e !== undefined && e !== null && depth < 4; e = (e as { cause?: unknown }).cause, depth++) {
+    if (e instanceof InsufficientScopeError) return e;
+  }
+  return undefined;
+}
+
+/**
+ * What an error from a LIVE connection's request says about its sign-in: `needs_auth` (the sign-in is
+ * gone -- a 401 the provider could not recover, or the provider's own verdict), `insufficient_scope` (a
+ * 403 step-up this one call needs), or `undefined` (anything else: an ordinary tool failure). Walks a few
+ * `cause` links, since the v2 client wraps some transport failures.
+ */
+export function classifyMcpAuthFailure(err: unknown): "needs_auth" | "insufficient_scope" | undefined {
+  for (let e: unknown = err, depth = 0; e !== undefined && e !== null && depth < 4; e = (e as { cause?: unknown }).cause, depth++) {
+    if (e instanceof InsufficientScopeError) return "insufficient_scope";
+    if (e instanceof McpNeedsAuthError || e instanceof UnauthorizedError) return "needs_auth";
+    if (e instanceof SdkHttpError && e.status === 401) return "needs_auth";
+  }
+  return undefined;
 }

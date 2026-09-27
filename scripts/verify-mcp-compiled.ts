@@ -157,6 +157,8 @@ async function runLeg(binPath: string, leg: Leg, modernUrl?: string): Promise<vo
   try {
     const config = {
       sessionId: `verify-mcp-compiled-${leg}`,
+      // WS-25: a throwaway service, so the MCP sign-in test store below is honoured (never the real Keychain).
+      keychainService: "ws25.verify-mcp-compiled.test",
       cwd: REPO_ROOT,
       model: MODEL,
       provider: { providerId: "anthropic", authRef: { kind: "inline", value: "test" }, connection: { baseUrl: fake.url, local: true } },
@@ -170,7 +172,9 @@ async function runLeg(binPath: string, leg: Leg, modernUrl?: string): Promise<vo
     };
     const proc = Bun.spawn([binPath, "--run", "--config-json", JSON.stringify(config)], {
       cwd: REPO_ROOT,
-      env: { ...process.env, WINTER_HOME: winterHome },
+      // WS-25: a remote server now connects through the session's MCP sign-in store; the test seam keeps
+      // the http legs off the real Keychain (an empty temp file: no sign-in, so nothing changes on the wire).
+      env: { ...process.env, WINTER_HOME: winterHome, WINTER_TEST_MCP_OAUTH_STORE_FILE: join(winterHome, "mcp-oauth-store.json") },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",

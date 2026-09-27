@@ -9,7 +9,7 @@ import { test, expect, describe } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { CredentialResolutionError } from "@yanlinglabs/winter-provider-runtime";
-import { createKeychainCredentialStore, keychainAccountName, DEFAULT_KEYCHAIN_SERVICE, type SecretsBackend } from "./keychain-store.ts";
+import { createKeychainCredentialStore, createKeychainRawStore, keychainAccountName, DEFAULT_KEYCHAIN_SERVICE, type SecretsBackend } from "./keychain-store.ts";
 
 const SECRET = "sk-fixture-value-never-real";
 
@@ -136,6 +136,44 @@ describe("the keychain store's own behaviour", () => {
     await store.set(ref, { kind: "api-key", key: SECRET });
     await store.delete(ref);
     expect(await store.get(ref)).toBeNull();
+  });
+});
+
+describe("WS-25: the raw store (the default McpOAuthStore)", () => {
+  test("reads, writes and removes an UNINTERPRETED value under one service", async () => {
+    const backend = fakeBackend();
+    const store = createKeychainRawStore("svc.raw", { secrets: backend });
+    expect(await store.read("mcp-oauth:0123456789abcdef")).toBeNull();
+    await store.write("mcp-oauth:0123456789abcdef", "not json at all");
+    expect(await store.read("mcp-oauth:0123456789abcdef")).toBe("not json at all");
+    await store.remove("mcp-oauth:0123456789abcdef");
+    expect(await store.read("mcp-oauth:0123456789abcdef")).toBeNull();
+    expect(new Set(backend.calls.map((c) => c.service))).toEqual(new Set(["svc.raw"]));
+  });
+
+  test("a backend failure is a typed io error naming the ACCOUNT, never the value or the backend's message", async () => {
+    const leaky: SecretsBackend = {
+      async get() {
+        throw new Error(`item says ${SECRET}`);
+      },
+      async set() {
+        throw new Error(`item says ${SECRET}`);
+      },
+      async delete() {
+        throw new Error(`item says ${SECRET}`);
+      },
+    };
+    const store = createKeychainRawStore("svc.raw", { secrets: leaky });
+    for (const op of [() => store.read("mcp-oauth:a"), () => store.write("mcp-oauth:a", SECRET), () => store.remove("mcp-oauth:a")]) {
+      const err = await op().then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(CredentialResolutionError);
+      expect((err as CredentialResolutionError).code).toBe("io");
+      expect((err as Error).message).toContain("mcp-oauth:a");
+      expect((err as Error).message).not.toContain(SECRET);
+    }
   });
 });
 

@@ -397,7 +397,7 @@ export const DEFAULT_PROVIDER_ACCOUNT_ID = "default";
  * `keychain-store.ts` resolves `Bun.secrets` LAZILY — a session with no keychain ref never touches
  * it, and a runtime without it reports a typed failure at the point of use rather than at import.
  */
-export function createProductionCredentialStore(config: RuntimeConfig, env: Record<string, string | undefined>, home: string): CredentialStore {
+export function createProductionCredentialStore(config: RuntimeConfig, env: Record<string, string | undefined>, home: string, keychainMember?: CredentialStore): CredentialStore {
   // THE KEYCHAIN MEMBER IS ADAPTED, and the reason is a genuine disagreement between two shipped
   // contracts that only a live composition can expose.
   //
@@ -411,7 +411,9 @@ export function createProductionCredentialStore(config: RuntimeConfig, env: Reco
   //
   // Adapted at the composition site rather than fixed in either file: each is correct in isolation,
   // and this is the one place that has to pick a reading.
-  const keychain = createKeychainCredentialStore(resolveSessionKeychainService(config));
+  // WS-25 §7: a host-brokered session hands its OWN Keychain member (host-credentials.ts) -- the real
+  // Keychain store is then never constructed, so nothing in this session can read or write it.
+  const keychain = keychainMember ?? createKeychainCredentialStore(resolveSessionKeychainService(config));
   return createCompositeCredentialStore([
     {
       ...keychain,

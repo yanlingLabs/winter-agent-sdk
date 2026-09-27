@@ -88,6 +88,13 @@ export interface CredentialStore {
   get(ref: CredentialRef): Promise<CredentialMaterial | null>;
   set(ref: Extract<CredentialRef, { kind: "keychain" }>, material: CredentialMaterial): Promise<void>;
   delete(ref: Extract<CredentialRef, { kind: "keychain" }>): Promise<void>;
+  /**
+   * WS-25 §7, OPTIONAL: a store whose credentials are RENEWED BY SOMEONE ELSE (a host-brokered session:
+   * the host holds the refresh token and posts every grant). Present, `refreshOauthMaterial` never posts a
+   * refresh grant or writes anything: it asks this for material NEWER than what `get` last returned, and
+   * uses that. Absent (every Keychain-, env- or file-backed store), the grant is posted here as before.
+   */
+  refresh?(ref: Extract<CredentialRef, { kind: "keychain" }>): Promise<CredentialMaterial>;
 }
 
 /** The verdict of `ProviderAdapter.validateCredential`. `unsupported` means the adapter cannot check this ref KIND — not that the credential is bad. */

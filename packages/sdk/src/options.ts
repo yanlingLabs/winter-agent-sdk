@@ -21,6 +21,10 @@ import type {
   WebPrivateAddressPolicy,
   AutoMemoryConfig,
   CredentialRef,
+  McpOAuthRefreshRequest,
+  McpOAuthRefreshAnswer,
+  CredentialResolveRequest,
+  CredentialResolveAnswer,
 } from "./protocol/config.ts";
 import type { SettingSource } from "./settings/types.ts";
 import type { SessionStore } from "./store/session-store.ts";
@@ -79,6 +83,16 @@ export const DEFAULT_PROVIDER_STALL_TIMEOUT_MS = 120000;
 // `brand` gets ITS service through `RuntimeConfig.brand.keychainService`; this constant remains what
 // the runtime falls back to when neither the deprecated option nor a brand reached it.
 export const DEFAULT_KEYCHAIN_SERVICE = WINTER_BRAND.keychainService;
+
+/**
+ * WS-25 (MCP OAuth): the runtime -> host control subtype a session sends when a stored MCP sign-in needs
+ * refreshing (`McpOAuthRefreshRequest` -> `McpOAuthRefreshAnswer`, protocol/config.ts). Spelled once:
+ * `query.ts` registers the handler under it and the runtime sends it.
+ */
+export const MCP_OAUTH_REFRESH_SUBTYPE = "mcp_oauth_refresh";
+
+/** WS-25 §7: the runtime -> host control subtype a host-brokered session resolves a Keychain credential with (`CredentialResolveRequest` -> `CredentialResolveAnswer`). */
+export const CREDENTIAL_RESOLVE_SUBTYPE = "credential_resolve";
 
 // --- The web tools' defaults and their one reader -------------------------------------------------
 //
@@ -499,6 +513,35 @@ export interface Options {
     },
     options: { signal: AbortSignal; requestId: string },
   ) => Promise<{ action: "accept" | "decline" | "cancel"; content?: Record<string, unknown> } | null>;
+
+  /**
+   * WS-25 (MCP OAuth), WINTER-ONLY: the host refreshes this session's MCP sign-ins. When set, `query()`
+   * answers the runtime's `mcp_oauth_refresh` control request with it; the session then re-reads the
+   * token item from the Keychain and never posts a refresh grant itself. The host is the ONE refresher
+   * (single-flight per `account`, a `generation` re-read before posting), which is what keeps a
+   * ROTATING refresh token from being replayed by two processes.
+   *
+   * Absent: the runtime's request lands on the generic "no handler registered" answer and the session
+   * refreshes in-process -- correct for a standalone SDK user with one process. A host that runs
+   * several sessions (or refreshes elsewhere) MUST set this, and must set it here, before the session
+   * starts: a handler registered later leaves the first connects refreshing in-process.
+   *
+   * Never serialized (a JS function), like `onElicitation`. Carries no material in either direction.
+   */
+  onMcpOAuthRefresh?: (request: McpOAuthRefreshRequest, options: { signal: AbortSignal }) => Promise<McpOAuthRefreshAnswer>;
+
+  /**
+   * WS-25 §7 (prompt-free credentials), WINTER-ONLY: the host resolves this session's Keychain
+   * credentials. When set, `query()` puts `hostCredentials: true` on the wire and answers the runtime's
+   * `credential_resolve` requests with it; the session then never touches the Keychain (no macOS consent
+   * prompt for a child binary reading items the host created) and never persists a credential -- renewal
+   * is the host's, and a 401 asks again with `minGeneration`.
+   *
+   * The host answers ONLY for refs this session's `Options` named, and never with a refresh token (see
+   * `CredentialResolveAnswer`). Never serialized (a JS function); the material crosses only in the
+   * control_response frame.
+   */
+  onCredentialResolve?: (request: CredentialResolveRequest, options: { signal: AbortSignal }) => Promise<CredentialResolveAnswer>;
 
   // --- Phase 5 Task 2 (WS-11; derived-shapes-p5.md items (b)/(c)/(d)/(e)) --------------------------
   //

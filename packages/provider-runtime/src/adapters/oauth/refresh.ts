@@ -107,6 +107,15 @@ async function performRefresh(input: RefreshOauthMaterialInput): Promise<OauthMa
   const now = input.now ?? Date.now;
   const where = redactRef(ref);
 
+  // WS-25 §7: a store that owns renewal elsewhere (a host-brokered session) is ASKED for newer material;
+  // this process posts no grant and writes nothing -- the host is the one refresher, so a rotating
+  // refresh token is never replayed by a second process.
+  if (store.refresh !== undefined) {
+    const renewed = await store.refresh(ref);
+    if (renewed.kind !== "oauth") throw new CredentialResolutionError("malformed", `oauth refresh for ${where} was answered with ${renewed.kind} material`);
+    return renewed;
+  }
+
   const existing = await store.get(ref);
   if (existing === null) throw new CredentialResolutionError("io", `oauth refresh for ${where} found no credential record to refresh`);
   if (existing.kind !== "oauth") throw new CredentialResolutionError("malformed", `oauth refresh for ${where} found ${existing.kind} material, which carries no refresh token`);

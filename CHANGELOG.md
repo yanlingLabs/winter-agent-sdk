@@ -6,6 +6,66 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
+### MCP OAuth (WS-25)
+
+- New public subpath `@yanlinglabs/winter-agent-runtime/mcp-auth` (main-thread safe) for the HOST that
+  owns MCP sign-ins: `startMcpOAuthLogin` (discovery incl. RFC 9728 and the legacy metadata-less
+  fallback, registration pre-registered > CIMD (when advertised) > DCR, PKCE S256, a loopback listener
+  bound and registered as the same `http://127.0.0.1:<port>/callback`, a 32-byte `state` checked before
+  the code is redeemed, one flow per server, a 5-minute bound), `refreshMcpOAuthToken` (single-flight per
+  account, a generation re-read before posting, `invalid_grant` clears the sign-in, `invalid_client`
+  clears the registration), `revokeMcpOAuth` (best-effort RFC 7009, then the local sign-out; the client
+  registration is kept unless `forgetClient`), `mcpOAuthAccountId` (the Keychain key: sha256 of the
+  canonical server URL), the two record types and their codec (an unknown `v` is refused typed), the
+  `McpOAuthStore` seam, `validateMcpOAuthConfig`, and `WINTER_MCP_CLIENT_METADATA_URL`
+  (`https://yanlinglabs.com/winter/oauth-client.json`).
+- Every auth request goes through one policy: HTTPS except a literal loopback address, literal
+  private/link-local addresses refused, no cross-origin redirects, size caps (over `boundedFetch`).
+- Remote (`http`/`sse`) MCP servers without a static `Authorization` header connect with a READ-ONLY
+  bearer provider reading the session's Keychain. At connect a usable token is used as is (never
+  refreshed), an expired one with a refresh token is refreshed by asking the host over the new
+  `mcp_oauth_refresh` control request (names only; `Options.onMcpOAuthRefresh` answers it; a host with no
+  handler leaves the session to refresh in-process), and an expired one without a refresh token is
+  `needs-auth` with no request sent. A `needs-auth` server's tools are not registered; a call that finds
+  the sign-in gone withdraws them and answers with the door (`winter mcp login <server>`); a `403
+  insufficient_scope` fails only that call and the host records the scope for the next sign-in. The
+  model is told which servers need sign-in through a persisted `mcp_needs_auth` attachment. Authenticated
+  MCP traffic refuses redirects. New `McpConnectErrorCode` `auth_refresh_failed` (a refresh that could not
+  run now).
+- `validateServerConfig` accepts `oauth` on http/sse servers (`clientId`, `clientSecretRef`, `callbackPort`,
+  `authServerMetadataUrl`, `scopes`) and refuses it elsewhere. `clientSecretRef` is `{ kind: "keychain" }`
+  only -- a marker that a pre-registered secret exists: its Keychain account is always DERIVED from the
+  server URL (`mcp-oauth-client-secret:<id>`, `mcpOAuthClientSecretAccount`); a config naming an account or
+  a service is refused.
+- The sign-in's code exchange is posted exactly once (never retried) and reports OAuth error codes only;
+  concurrent sign-ins for one server leave one listener; a sign-in that ends during its exchange writes
+  nothing; `startMcpOAuthLogin` also returns `authorizeOrigin`. Auth requests reach a loopback address
+  only when the MCP server itself is on loopback, and the whole exchange (body included) is time-bounded.
+- `Query.reconnectMcpServer(serverName)` (over `mcp_reconnect`); `/mcp-client`'s `connectMcpServer` takes an
+  optional `oauthStore`.
+- `bun run verify:mcp-oauth`: a compiled host signs in against a fixture authorization server, a compiled
+  session connects on the stored token, refreshes through a fake host, and is `needs-auth` without a
+  refresh token. Sessions read the `WINTER_TEST_MCP_OAUTH_STORE_FILE` test store instead of the Keychain
+  only when it is in the ORIGINAL process environment (every settings tier refuses the name) and the
+  session names a non-default Keychain service (the gates only).
+
+### Prompt-free credentials (WS-25 §7)
+
+- A host that sets `Options.onCredentialResolve` resolves every Keychain credential its session reads:
+  `query()` puts `hostCredentials: true` on the wire (a flag only), and the runtime sends
+  `{ subtype: "credential_resolve", ref, minGeneration? }` -> `{ ok: true, material, expiresAt?, generation }
+  | { ok: false, reason: "not_found" | "not_allowed" | "stale" | "unavailable" }` instead of reading the
+  Keychain -- provider auth, advisor/web/cross-provider refs, tool keys (Exa) and MCP sign-ins alike. No
+  Keychain store is built in such a session, so a child binary never raises a macOS consent prompt.
+- Such a session never persists a credential and holds no refresh token: `set`/`delete` refuse typed;
+  `CredentialStore.refresh` (new, optional, provider-runtime) makes `refreshOauthMaterial` ASK the host for
+  a newer generation (`minGeneration`) instead of posting a grant; MCP sessions read their token records
+  through the host (`toSessionMcpTokenRecord` masks the refresh token with
+  `MCP_OAUTH_HOST_HELD_REFRESH_TOKEN`), and never refresh in-process.
+- The material travels only in the control_response frame; it reaches no frame the host iterates, no
+  stderr line and no file under the session's home (tested end to end). Standalone SDK users (no
+  handler) keep the Keychain store.
+
 ## 0.0.29
 
 ### Security (no-autoload)

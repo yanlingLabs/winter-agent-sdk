@@ -214,6 +214,100 @@ export interface McpServerToolPolicy {
  * revision is reported per server on the `mcp_status` control response.
  */
 export type McpVersionNegotiation = "legacy" | "auto" | { pin: string };
+/**
+ * WS-25, WINTER-OWNED: "this pre-registered client has a secret, stored in the Keychain". It is a MARKER,
+ * not a locator: the Keychain account is DERIVED from the server's canonical URL
+ * (`mcp-oauth-client-secret:<id>`, `/mcp-auth`'s `mcpOAuthClientSecretAccount`), in the host's own service,
+ * and a config can name neither. A config-named account would let any config source -- a trusted
+ * repository's MCP list, copied verbatim into a session -- point the sign-in at ANY Keychain item (a
+ * provider API key) and send it to an authorization server of its choosing as `client_secret`.
+ * `validateServerConfig` refuses any other key (`account`, `service`, a value).
+ */
+export interface McpOAuthSecretRef {
+  kind: "keychain";
+}
+/**
+ * WS-25, WINTER-OWNED: how Winter signs in to ONE remote (http/sse) MCP server over OAuth. Every field is
+ * optional, and so is the block: a server whose authorization server supports Client ID Metadata
+ * Documents or Dynamic Client Registration needs none of it. Tokens NEVER live here -- they live in the
+ * host's Keychain, keyed by the server's canonical URL (`@yanlinglabs/winter-agent-runtime/mcp-auth`'s
+ * `mcpOAuthAccountId`).
+ *
+ * - `clientId` -- a PRE-REGISTERED client (preferred over CIMD and DCR when present).
+ * - `clientSecretRef` -- `{ kind: "keychain" }`: that client has a secret, stored at the DERIVED Keychain
+ *   account (see `McpOAuthSecretRef`).
+ * - `callbackPort` -- the loopback port the sign-in listener binds (`http://127.0.0.1:<port>/callback`);
+ *   a pre-registered client usually needs it fixed. Absent: an ephemeral port (DCR persists it).
+ * - `authServerMetadataUrl` -- the authorization server's RFC 8414 metadata document, for a server that
+ *   publishes no RFC 9728 protected-resource metadata.
+ * - `scopes` -- the scopes to request (absent: the server's own `scopes_supported`).
+ */
+export interface McpOAuthConfig {
+  clientId?: string;
+  clientSecretRef?: McpOAuthSecretRef;
+  callbackPort?: number;
+  authServerMetadataUrl?: string;
+  scopes?: string[];
+}
+/**
+ * WS-25: the runtime -> host `mcp_oauth_refresh` control request (subtype `MCP_OAUTH_REFRESH_SUBTYPE`).
+ * A session never refreshes a token itself when its host answers this: the host (Winter's daemon) is the
+ * ONLY refresher, so a rotating refresh token is posted by one process, once (RFC 9700 §4.14's family
+ * revocation would otherwise punish N sessions refreshing the same token).
+ *
+ * Carries NO material -- names only:
+ * - `server` -- the server's config name in this session (diagnostics; the host may use it to find the
+ *   config);
+ * - `account` -- the FULL Keychain account name of the token item, `mcp-oauth:<id>` (the host keys its
+ *   single-flight on it and derives the client item by the prefix swap `mcp-oauth-client:<id>`);
+ * - `generation` -- the token record's `generation` the session last read. A host that already holds a
+ *   newer generation answers `{ ok: true }` without posting (another session asked first).
+ * - `stepUpScope` -- WS-25, additive: present when the server answered `403 insufficient_scope`. A refresh
+ *   cannot widen a grant (RFC 6749 §6), so the host records the scope on the client registration for the
+ *   next sign-in and answers `needs_auth`.
+ */
+export interface McpOAuthRefreshRequest {
+  server: string;
+  account: string;
+  generation: number;
+  stepUpScope?: string;
+}
+/**
+ * The host's answer. `{ ok: true }` means "re-read the Keychain item"; `needs_auth` means the sign-in is
+ * gone (no refresh token, `invalid_grant`, a revoked client) and the server is marked `needs-auth`;
+ * `transient` means try again later (the network, the authorization server's 5xx).
+ */
+export type McpOAuthRefreshAnswer = { ok: true } | { ok: false; reason: "needs_auth" | "transient" };
+/**
+ * WS-25 §7: the runtime -> host `credential_resolve` control request (subtype `CREDENTIAL_RESOLVE_SUBTYPE`),
+ * sent only when `RuntimeConfig.hostCredentials` is set. A session asks its host for ONE Keychain item
+ * instead of reading the Keychain itself (a child reading an item another binary created is what raises
+ * the macOS consent prompt).
+ *
+ * - `ref` -- the Keychain LOCATOR the session was configured with (a provider `authRef`, a tool key's
+ *   ref) or, for an MCP sign-in, `{ kind: "keychain", account: "mcp-oauth:<id>" }`. The host answers ONLY
+ *   for refs that session's `Options` named (plus what its own MCP config implies) -- the allowlist is
+ *   the host's.
+ * - `minGeneration` -- after a 401 (or an expiry): "I hold generation N-1; answer only with N or newer".
+ *   The host refreshes (single-flight, its own job) until it can, or answers `stale`.
+ */
+export interface CredentialResolveRequest {
+  ref: { kind: "keychain"; account: string; service?: string };
+  minGeneration?: number;
+}
+/**
+ * The host's answer. `material` is the item's value EXACTLY as the Keychain would hold it -- a JSON
+ * `CredentialMaterial` for a provider credential, the bare key for a tool secret, the token record JSON
+ * for an MCP sign-in -- with every REFRESH token removed (a session never holds one; MCP records carry
+ * `MCP_OAUTH_HOST_HELD_REFRESH_TOKEN` in its place so the session knows a refresh is possible).
+ * `generation` counts the host's writes of that item. It travels ONLY in this `control_response` frame
+ * over the session's own stdio pipe -- never argv, env, `Options`, a transcript, a log or an error.
+ *
+ * `reason`: `not_found` (no such item -- the session behaves as with an empty Keychain),
+ * `not_allowed` (the ref is outside this session's allowlist), `stale` (no generation >= `minGeneration`
+ * could be produced -- a refresh failed), `unavailable` (retry later).
+ */
+export type CredentialResolveAnswer = { ok: true; material: string; expiresAt?: number; generation: number } | { ok: false; reason: "not_found" | "not_allowed" | "stale" | "unavailable" };
 export interface McpStdioServerConfig {
   type?: "stdio"; // the ONLY optional discriminant of the four transport variants (derived-shapes item (a))
   command: string;
@@ -231,6 +325,7 @@ export interface McpHttpServerConfig {
   timeout?: number;
   alwaysLoad?: boolean;
   versionNegotiation?: McpVersionNegotiation; // WS-23, Winter-owned -- see McpVersionNegotiation
+  oauth?: McpOAuthConfig; // WS-25, Winter-owned -- see McpOAuthConfig (http/sse only: stdio has no HTTP to authorize)
 }
 export interface McpSSEServerConfig {
   type: "sse";
@@ -240,6 +335,7 @@ export interface McpSSEServerConfig {
   timeout?: number;
   alwaysLoad?: boolean;
   versionNegotiation?: McpVersionNegotiation; // WS-23, Winter-owned -- see McpVersionNegotiation
+  oauth?: McpOAuthConfig; // WS-25, Winter-owned -- see McpOAuthConfig
 }
 // Phase 4 Task 3 (WS-04 addendum -- "sdk_mcp_call host-side bridge", ledgered in T2's own report
 // concern 1 "PLAN GAP"): a JSON-safe mirror of registry.ts's own McpToolDefinition, WINTER-OWNED and
@@ -576,6 +672,14 @@ export interface RuntimeConfig {
   /** WS-23: `Options.maxOutputTokens`, carried to every main-loop `TurnRequest`. See its own doc. */
   maxOutputTokens?: number;
   keychainService?: string;
+  /**
+   * WS-25 §7 (prompt-free credentials), WINTER-ONLY: `true` when the host answers `credential_resolve`
+   * (`Options.onCredentialResolve`). The runtime then NEVER reads or writes the Keychain for this
+   * session: every `{ kind: "keychain" }` credential, tool key and MCP sign-in is asked of the host over
+   * the control channel, and renewal is the host's (a 401 asks again with `minGeneration`). Absent: the
+   * runtime's own Keychain store, as before (a standalone SDK user). A flag, never material.
+   */
+  hostCredentials?: boolean;
   autoClassifier?: AutoClassifierConfig;
   advisor?: AdvisorConfig;
   /** The wire twin of `Options.web` -- see `WebToolsConfig`. Pure passthrough; absent means every default in `WEB_TOOLS_DEFAULTS`. */
