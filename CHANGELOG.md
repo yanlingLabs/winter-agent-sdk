@@ -12,14 +12,21 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 - A turn that starts while an MCP server is reconnecting now waits for the reconnect, so it gets that
   server's tools. This closes the consequence 0.0.32 accepted. The connecting control subtypes
-  (`mcp_reconnect`, `mcp_toggle`, `mcp_set_servers`) are recorded when the pump dispatches them. The
-  turn loop waits for the outstanding ones at turn start, with the first-turn wait's scope (only the
-  engine's own MCP lifecycle, never a host-owned stack) and its bound (`firstTurnMcpWaitMs()`: 2 s, or
-  `MCP_TIMEOUT` for an explicit host server). A reconnect that never finishes delays the turn only up
-  to that bound. The wait runs in the turn loop, never in the input pump, so a brokered reconnect's
-  `credential_resolve` is still answered while the turn waits. Pinned by
-  `mcp-auth/brokered-reconnect.test.ts`, where the host answers the reconnect's sign-in read late, and
-  `engine.test.ts`, where a hung reconnect holds the turn for the 2 s bound, not the 20 s
+  (`mcp_reconnect`, `mcp_toggle`, `mcp_set_servers`) are recorded, with the server names they touch,
+  when the pump dispatches them. At turn start the turn waits for the outstanding ones, then for any
+  of those servers still `pending` (`mcp_set_servers` starts its connects without waiting for them).
+  The wait has the first-turn wait's scope (only the engine's own MCP lifecycle, never a host-owned
+  stack) and its bound (`firstTurnMcpWaitMs()`: 2 s, or `MCP_TIMEOUT` for an explicit host server), so
+  a reconnect that never finishes delays the turn only up to that bound. `mcp_status` never holds a
+  turn. The wait runs inside the ACTIVE turn -- after the session reports `running` and the interrupt
+  is installed -- and never in the input pump:
+  - a brokered reconnect's `credential_resolve` is still answered while the turn waits;
+  - an interrupt ends the wait at once, and the turn ends interrupted with no generation;
+  - a `compact` arriving meanwhile is answered `busy`;
+  - `end_input` right behind the held turn is clean.
+
+  Pinned by `mcp-auth/brokered-reconnect.test.ts`, where the host answers the reconnect's sign-in read
+  late, and `engine.test.ts`, where a hung reconnect holds the turn for the 2 s bound, not the 20 s
   `MCP_TIMEOUT`.
 - An elicitation that stops mattering is now cancelled all the way to the host. `Options.onElicitation`'s
   `options.signal` now aborts when:
@@ -52,27 +59,45 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   - `read_only_hint`/`readOnlyHint` is the tool's own `annotations.readOnlyHint`, only when the server
     states it.
 
-  The engine computes the identity once per call from the name the model called. A renamed server's
-  gating hook can run under its declared spelling, which the registry resolves to a different server.
-  The identity covers the in-process `sdk` servers too.
+  The engine computes the identity once per call from the name the model called, and the hook runner
+  carries only what the engine computed -- it never derives one from the hook's subject. A renamed
+  server's gating hook can run under its declared spelling, which the registry resolves to a different
+  server. The identity covers the in-process `sdk` servers too. A server served from the discovery
+  cache (`cached`, no live connection yet) states no `readOnlyHint` until it is connected again.
+
+### Workflows
+
+- A workflow worker that exits 77 -- a host's worker refusing to run outside a sandbox that denies
+  Keychain access -- now fails the run with "workflow sandbox not in effect — the workflow worker
+  refused to run (exit 77)", followed by the worker's last non-empty stderr line when there is one. Any
+  other exit keeps the crash text. The real spawner now reads (and so drains) the worker's stderr,
+  keeping only a bounded tail.
+- The package entry exports `buildWorkflowWorkerSeatbeltProfile` (with its `SandboxBrand` type), so a
+  host that spawns the runtime's worker can pin its own profile against it, and
+  `WORKFLOW_SANDBOX_REFUSED_EXIT_CODE`.
 
 ### Provider catalog (WS-27)
 
-- **Tool-calling evidence, NVIDIA.** 26 rows are now `native` and 16 are `none`.
+- **Tool-calling evidence, NVIDIA.** 25 rows are now `native` and 16 are `none`.
   - Where the model page's structured capability record (`modelCapability.functionCalling`) states it,
     the row is `declared`.
   - It is `inferred` where the build page is gone or silent and the evidence is the model reference or
-    NIM guide instead. That covers kimi-k2.6, llama-4-maverick, the two llama-3.2 vision rows,
-    llama-3.2-3b and devstral-2.
+    NIM guide instead. That covers kimi-k2.6, the two llama-3.2 vision rows, llama-3.2-3b and
+    devstral-2.
   - The two nemotron content-safety classifiers are `none` at `inferred`: their pages' capability
     record says `functionCalling: true`, and the ruling overrides that on the model's purpose.
-  - `stockmark-2-100b-instruct` stays `unknown`.
+  - `stockmark-2-100b-instruct` and `llama-4-maverick-17b-128e-instruct` stay `unknown`. Maverick is
+    absent from NVIDIA's live model list, so a guide covering the model is not evidence for this
+    endpoint.
 - **Tool-calling evidence, Anthropic-dialect endpoints.** An official vendor page telling users to point
   Claude Code at the endpoint counts as tool-use evidence, at `inferred`. These rows are now `native`:
   Tencent Token Plan (12), Tencent Coding Plan (2), Qianfan Coding Plan (8), Z.AI (6) and AgentRouter's
-  two Claude Opus rows. These stay `unknown`:
-  - Wafer's four rows: the cited pages no longer exist, and the live docs describe only an
-    OpenAI-compatible endpoint.
+  two Claude Opus rows. `wafer/DeepSeek-V4-Pro` is `native` at `declared`: Wafer's unauthenticated public
+  model list (`https://pass.wafer.ai/v1/models`) states `capabilities.messages.supported: true` and
+  `messages.tools: true` for it, so the provider's Anthropic Messages binding is right. These stay
+  `unknown`:
+  - Wafer's GLM-5.1, MiniMax-M2.7 and Qwen3.5-397B-A17B: absent from that live list, which the rows'
+    citations say.
   - AgentRouter's `gpt-5.6-sol`: the guide routes only the Opus models over Anthropic.
   - `qianfan-anthropic`'s ERNIE rows, the two `hy-role` rows and tabitoken.
 - **Space Bunny** (a stealth model with an undisclosed maker; no family is stated, so both rows stamp
@@ -85,8 +110,11 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   - The OpenRouter row carries OpenRouter's own entry: 1M context, 524,288 output tokens,
     text/image/video input, `native` tools, and mandatory reasoning with efforts `max`…`low` (default
     `max`).
-  - The Zen row states only what Zen's docs state. Tool calling stays fail-closed `unknown`, and there
-    is no context, modality or effort data, because the only other source is a third-party mirror.
+  - The Zen row is `native` at `inferred`, on the same ruling as a vendor's Claude Code guide: OpenCode
+    Zen is the model gateway of the OpenCode coding agent, and https://opencode.ai/docs/zen/ lists
+    `space-bunny-free` for use in that agent. Otherwise it states only what Zen's docs state: there is
+    no context, modality or effort data, because the only other source is a third-party mirror.
+    `opencode/big-pickle` is unchanged.
 
 ## 0.0.32
 
