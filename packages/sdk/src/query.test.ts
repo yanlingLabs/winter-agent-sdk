@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { query, type QueryInternal } from "./query.ts";
 import type { Options } from "./options.ts";
 import { WEB_TOOLS_DEFAULTS, resolveWebToolsConfig } from "./options.ts";
-import { ResultError, WinterRpcError, InvalidBrandError } from "./errors.ts";
+import { ResultError, WinterRpcError, InvalidBrandError, ProtocolDecodeError } from "./errors.ts";
 import { inMemoryProcess } from "@yanlinglabs/winter-agent-runtime/testing";
 import { echoProvider, testProviderByName } from "@yanlinglabs/winter-agent-runtime";
 import type { Provider, ProviderTurn } from "@yanlinglabs/winter-agent-runtime";
@@ -2500,4 +2500,28 @@ describe("WS-25 §7: credential_resolve", () => {
       expect(decodeControlResponse(writes, id)).toMatchObject({ ok: true, payload: { ok: false, reason: "unavailable" } });
     }
   });
+});
+
+// The first-frame check stays STRICT for every frame type -- a runtime->host control_request included (the
+// runtime holds those until its handshake is written; one ahead of `init` is a runtime bug). The refusal
+// names the request's subtype, so such a bug says which door fired early (WS-25: `credential_resolve`).
+test("a control_request before init is refused as a protocol violation that names its subtype", async () => {
+  const proc: SpawnedRuntimeProcess = {
+    stdin: { write() {}, end() {} },
+    stdout: (async function* () {
+      yield encodeFrame({ type: "control_request", requestId: "r1", subtype: "credential_resolve", payload: { ref: { kind: "keychain", account: "x" } } });
+      yield encodeFrame({ type: "init", protocolVersion: PROTOCOL_VERSION, sessionId: "s", cwd: "/x", model: "sonnet", permissionMode: "default", tools: [] });
+    })(),
+    kill() {},
+    exited: Promise.resolve({ code: 0, signal: null }),
+    pid: null,
+  };
+  let caught: unknown;
+  try {
+    for await (const _msg of query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc, onCredentialResolve: async () => ({ ok: false, reason: "not_allowed" }) } })) { /* drain */ }
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(ProtocolDecodeError);
+  expect((caught as Error).message).toBe("protocol violation: expected 'init' as the first frame, got 'control_request' (credential_resolve)");
 });

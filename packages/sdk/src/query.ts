@@ -1185,8 +1185,14 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
 
         for (const frame of frames) {
           if (!sawInit) {
+            // STRICT, deliberately, for every frame type -- a control_request included. The runtime is the
+            // only writer and holds every runtime->host request until its handshake is written (the
+            // engine's `holdUntilOpen` bridge), so a request ahead of `init` is a runtime bug; answering
+            // it here instead would hide the next one. The subtype is named so such a bug says which door
+            // fired early (it was `credential_resolve` for a host-brokered OAuth MCP sign-in, WS-25).
             if (frame.type !== "init") {
-              throw new ProtocolDecodeError(`protocol violation: expected 'init' as the first frame, got '${frame.type}'`);
+              const subtype = frame.type === "control_request" ? (frame as { subtype?: unknown }).subtype : undefined;
+              throw new ProtocolDecodeError(`protocol violation: expected 'init' as the first frame, got '${frame.type}'${typeof subtype === "string" ? ` (${subtype})` : ""}`);
             }
             const init = frame as InitFrame;
             const runtimeMajor = init.protocolVersion.split(".")[0];
