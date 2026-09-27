@@ -25,6 +25,9 @@
 //   4. needs-auth -- expired with NO refresh token: `needs-auth` at once -- no ask, no refresh grant, no
 //                    request to the MCP server -- the model is told which server needs sign-in, and its
 //                    stale call answers with the door (`winter mcp login oauthfx`).
+//   5. brokered   -- WS-25 §7: `hostCredentials: true`. The session resolves its provider key AND its MCP
+//                    token through the gate (`credential_resolve`), refreshes through it, and the key is
+//                    seen only by the model endpoint -- never in a frame or on stderr.
 //
 // Usage: `bun run verify:mcp-oauth` (compiles two binaries to a temp dir, deleted after).
 import { mkdtempSync, rmSync } from "node:fs";
@@ -35,7 +38,7 @@ import { fileURLToPath } from "node:url";
 import { buildRuntime } from "./build-runtime.ts";
 import { encodeFrame, splitFrames, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { startFixtureAs, type FixtureAs } from "../packages/runtime/src/mcp-auth/test-fixture-as.ts";
-import { createTestFileMcpOAuthStore, readTokenRecord, readClientRecord, writeTokenRecord } from "../packages/runtime/src/mcp-auth/store.ts";
+import { createTestFileMcpOAuthStore, readTokenRecord, readClientRecord, toSessionMcpTokenRecord, writeTokenRecord } from "../packages/runtime/src/mcp-auth/store.ts";
 import { mcpOAuthClientAccount, mcpOAuthTokenAccount } from "../packages/runtime/src/mcp-auth/account.ts";
 import { refreshMcpOAuthToken } from "../packages/runtime/src/mcp-auth/refresh.ts";
 
@@ -50,6 +53,7 @@ const MODEL = "anthropic/claude-sonnet-5";
 interface FakeModel {
   url: string;
   bodies: string[];
+  apiKeys: string[];
   close(): void;
 }
 function sse(events: Array<[string, unknown]>): Response {
@@ -57,6 +61,7 @@ function sse(events: Array<[string, unknown]>): Response {
 }
 function startFakeModel(): FakeModel {
   const bodies: string[] = [];
+  const apiKeys: string[] = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -64,6 +69,7 @@ function startFakeModel(): FakeModel {
       if (new URL(req.url).pathname !== "/v1/messages") return new Response("not found", { status: 404 });
       const body = await req.text();
       bodies.push(body);
+      apiKeys.push(req.headers.get("x-api-key") ?? "");
       const start: [string, unknown] = ["message_start", { type: "message_start", message: { id: "msg_ws25", type: "message", role: "assistant", model: "claude-sonnet-5", content: [], usage: { input_tokens: 5, output_tokens: 1 } } }];
       const block = !body.includes("tool_result")
         ? { type: "tool_use", id: "toolu_ws25", name: MCP_TOOL, input: {} }
@@ -79,7 +85,7 @@ function startFakeModel(): FakeModel {
       ]);
     },
   });
-  return { url: `http://127.0.0.1:${server.port}`, bodies, close: () => server.stop(true) };
+  return { url: `http://127.0.0.1:${server.port}`, bodies, apiKeys, close: () => server.stop(true) };
 }
 
 /** Reads a child's stdout as NDJSON lines, handing each to `onLine` as it arrives. */
@@ -126,11 +132,13 @@ async function legLogin(loginBin: string, fx: FixtureAs, storeFile: string): Pro
   const store = createTestFileMcpOAuthStore(storeFile);
   const token = await readTokenRecord(store, mcpOAuthTokenAccount(fx.mcpUrl));
   const client = await readClientRecord(store, mcpOAuthClientAccount(fx.mcpUrl));
-  if (token?.generation !== 1 || token.refreshToken === undefined || client?.registeredVia !== "dcr") throw new Error("verify:mcp-oauth [login]: the store does not hold a v1 sign-in with a refresh token and a DCR registration");
-  console.log(`verify:mcp-oauth [login] OK -- compiled sign-in: DCR ${client.clientId}, redirect ${client.redirectUri}, token generation 1`);
+  if (token === null || token.generation < 1 || token.refreshToken === undefined || client?.registeredVia !== "dcr") throw new Error("verify:mcp-oauth [login]: the store does not hold a sign-in with a refresh token and a DCR registration");
+  console.log(`verify:mcp-oauth [login] OK -- compiled sign-in: DCR ${client.clientId}, redirect ${client.redirectUri}, token generation ${token.generation}`);
 }
 
-type SessionLeg = "connect" | "refresh" | "needs-auth";
+type SessionLeg = "connect" | "refresh" | "needs-auth" | "brokered";
+/** The brokered leg's provider key: it may appear ONLY in the model request's header. */
+const BROKERED_KEY = "sk-verify-brokered-4242";
 
 async function legSession(winterBin: string, fx: FixtureAs, storeFile: string, leg: SessionLeg): Promise<void> {
   const winterHome = mkdtempSync(join(tmpdir(), `winter-verify-mcp-oauth-${leg}-`));
@@ -140,14 +148,18 @@ async function legSession(winterBin: string, fx: FixtureAs, storeFile: string, l
   const postsBefore = fx.tokenPosts.length;
   const mcpBefore = fx.mcpRequests;
   const asks: unknown[] = [];
+  const resolves: string[] = [];
   try {
+    const brokeredLeg = leg === "brokered";
     const config = {
       sessionId: `verify-mcp-oauth-${leg}`,
       // The test store is honoured only for an explicit, non-default Keychain service (mcp-auth/store.ts).
       keychainService: "ws25.verify-mcp-oauth.test",
+      // WS-25 §7: the brokered leg's session asks THIS script for every Keychain credential.
+      ...(brokeredLeg ? { hostCredentials: true } : {}),
       cwd: REPO_ROOT,
       model: MODEL,
-      provider: { providerId: "anthropic", authRef: { kind: "inline", value: "test" }, connection: { baseUrl: model.url, local: true } },
+      provider: { providerId: "anthropic", authRef: brokeredLeg ? { kind: "keychain", account: "anthropic:default" } : { kind: "inline", value: "test" }, connection: { baseUrl: model.url, local: true } },
       allowedTools: [MCP_TOOL],
       toolSearchEnabled: false,
       settingSources: [],
@@ -170,6 +182,22 @@ async function legSession(winterBin: string, fx: FixtureAs, storeFile: string, l
       const frame = splitFrames(`${line}\n`, "").frames[0];
       if (frame === undefined) return;
       frames.push(frame);
+      if (frame.type === "control_request" && (frame as { subtype?: string }).subtype === "credential_resolve") {
+        // THE FAKE HOST's credential door (§7): the provider key and the MCP token record (refresh token
+        // masked by `toSessionMcpTokenRecord`), nothing else.
+        const req = frame as { requestId: string; payload: { ref: { account: string } } };
+        resolves.push(req.payload.ref.account);
+        const accountName = req.payload.ref.account;
+        const raw = accountName === account ? await store.read(account) : null;
+        const answer =
+          accountName === "anthropic:default"
+            ? { ok: true, material: JSON.stringify({ kind: "api-key", key: BROKERED_KEY }), generation: 1 }
+            : raw !== null
+              ? { ok: true, material: toSessionMcpTokenRecord(raw), generation: 1 }
+              : { ok: false, reason: "not_allowed" };
+        proc.stdin.write(encodeFrame({ type: "control_response", requestId: req.requestId, ok: true, payload: answer }));
+        proc.stdin.flush();
+      }
       if (frame.type === "control_request" && (frame as { subtype?: string }).subtype === "mcp_oauth_refresh") {
         // THE FAKE HOST: a daemon's answer, through the same door a daemon runs.
         const req = frame as { requestId: string; payload: { account: string; generation: number } };
@@ -195,7 +223,13 @@ async function legSession(winterBin: string, fx: FixtureAs, storeFile: string, l
     const status = init?.mcp_servers?.find((s) => s.name === SERVER)?.status;
     const posts = fx.tokenPosts.slice(postsBefore);
     if (exitCode !== 0) fail("the compiled binary exited non-zero");
-    if (leg === "connect" || leg === "refresh") {
+    if (leg === "brokered") {
+      if (!model.apiKeys.includes(BROKERED_KEY)) fail("the provider request did not carry the host-resolved key");
+      if (!resolves.includes("anthropic:default") || !resolves.includes(account)) fail(`the session did not resolve its credentials through the host: ${JSON.stringify(resolves)}`);
+      if (asks.length !== 1 || JSON.stringify(posts) !== JSON.stringify(["refresh_token"])) fail(`expected one host refresh (asks ${JSON.stringify(asks)}, posts ${JSON.stringify(posts)})`);
+      if (model.bodies.length < 2 || !model.bodies[1]!.includes("PONG-ok-read")) fail("the authenticated tools/call never came back");
+      if (JSON.stringify(frames).includes(BROKERED_KEY) || stderr.includes(BROKERED_KEY)) fail("the brokered key leaked into a frame or stderr");
+    } else if (leg === "connect" || leg === "refresh") {
       if (model.bodies.length < 2 || !model.bodies[1]!.includes("PONG-ok-read")) fail(`the model's second request carries no PONG-ok-read -- the authenticated tools/call never came back (init status ${status})`);
       if (leg === "connect" && (asks.length !== 0 || posts.length !== 0)) fail(`a USABLE token was refreshed at connect (asks ${JSON.stringify(asks)}, token posts ${JSON.stringify(posts)}) -- spec §1.2`);
       if (leg === "refresh") {
@@ -209,7 +243,7 @@ async function legSession(winterBin: string, fx: FixtureAs, storeFile: string, l
       if (!model.bodies.some((b) => b.includes(`winter mcp login ${SERVER}`))) fail("the model was never told the sign-in door (winter mcp login <server>)");
     }
     if (!JSON.stringify(messages).includes(FINAL_TEXT)) fail("the session never produced the final answer");
-    console.log(`verify:mcp-oauth [${leg}] OK -- init status ${status}, host asks ${asks.length}, token posts ${JSON.stringify(posts)}`);
+    console.log(`verify:mcp-oauth [${leg}] OK -- init status ${status}, host asks ${asks.length}, credential resolves ${resolves.length}, token posts ${JSON.stringify(posts)}`);
   } finally {
     model.close();
     rmSync(winterHome, { recursive: true, force: true });
@@ -239,6 +273,10 @@ if (import.meta.main) {
     await legSession(winterBin, fx, storeFile, "refresh");
     await expireStored(storeFile, fx, true);
     await legSession(winterBin, fx, storeFile, "needs-auth");
+    // §7: a fresh sign-in, made expired, served to a HOST-BROKERED session (no Keychain, no test store).
+    await legLogin(loginBin, fx, storeFile);
+    await expireStored(storeFile, fx, false);
+    await legSession(winterBin, fx, storeFile, "brokered");
     console.log("verify:mcp-oauth OK -- a compiled host signs in, a compiled session connects on the stored token, refreshes through its host, and is needs-auth without a refresh token");
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
