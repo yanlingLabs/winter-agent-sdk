@@ -6,6 +6,30 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
+### Init order (credential before init)
+
+#### Fixes
+
+- A host-brokered session (`Options.onCredentialResolve`, i.e. `hostCredentials: true`) with a signed-in
+  OAuth `http`/`sse` MCP server no longer dies at start with `query()`'s `protocol violation: expected
+  'init' as the first frame, got 'control_request'`. The runtime launched its MCP connects before writing
+  the `type:"init"` handshake, and the connect's token read went out as a `credential_resolve` ahead of
+  it. The engine now builds its control bridge HOLDING (`createRpcBridge(output, { holdUntilOpen: true })`)
+  and opens it right after the handshake, so no runtime->host request -- `credential_resolve`,
+  `mcp_oauth_refresh`, elicitation, the wiring's credential-presence probes, a read parked on the host
+  channel -- can precede it; one that settles while held (timeout, abort, cancel) is never written, and no
+  `control_cancel_request` is sent for it. Both topologies (a spawned `winter`, an embedded Worker).
+- An `alwaysLoad` MCP server (or the whole batch under `MCP_CONNECTION_NONBLOCKING=0`) whose connect needs a
+  host answer no longer waits out `MCP_CONNECT_TIMEOUT_MS` and comes up pending: startup awaited it before
+  the input pump that routes the answer existed. The lifecycle's new `launch()` starts the connects and
+  hands the startup wait back; the engine awaits it after the pump, before `system/init` (which still
+  reports the server `connected`). The internal `type:"init"` handshake now reflects such a server as
+  launched; `query()` reads only its protocol version.
+- `query()` stays strict about the first frame (a request before `init` is a runtime bug); its refusal now
+  names a `control_request`'s subtype.
+- `verify:mcp-oauth` asserts the handshake is every leg's first frame and adds a brokered `alwaysLoad` leg
+  with an expired sign-in.
+
 ## 0.0.30
 
 ### MCP OAuth (WS-25)
