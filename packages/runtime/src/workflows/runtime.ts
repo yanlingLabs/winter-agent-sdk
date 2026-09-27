@@ -63,6 +63,36 @@ export interface WorkerProcess {
   onExit(cb: (code: number | null) => void): void;
   onError(cb: (err: Error) => void): void;
   kill(): void;
+  /** WS-27: the worker's last non-empty stderr line so far, when the spawner captures stderr (the real one does). */
+  lastStderrLine?(): string | undefined;
+}
+
+/**
+ * WS-27: the exit code a workflow worker uses to REFUSE to run -- it found itself outside a sandbox that
+ * denies Keychain access (a host's workers check this at start). Reported as a sandbox failure, never as a
+ * crash, so the host can tell the user what is actually wrong.
+ */
+export const WORKFLOW_SANDBOX_REFUSED_EXIT_CODE = 77;
+
+/** The failure text for a worker that exited without a terminal bridge message. */
+export function workerExitMessage(code: number | null, lastStderrLine?: string): string {
+  if (code === WORKFLOW_SANDBOX_REFUSED_EXIT_CODE) {
+    return `workflow sandbox not in effect — the workflow worker refused to run (exit ${WORKFLOW_SANDBOX_REFUSED_EXIT_CODE})${lastStderrLine !== undefined ? `: ${lastStderrLine}` : ""}`;
+  }
+  return `the workflow worker exited (code ${code ?? "signal"}) without reporting a result`;
+}
+
+/** Keeps the last non-empty line of a stream, bounded -- never the whole of a chatty worker's stderr. */
+function stderrTail(stream: NodeJS.ReadableStream | null | undefined): () => string | undefined {
+  let carry = "";
+  let last: string | undefined;
+  stream?.on("data", (chunk: Buffer | string) => {
+    carry += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    const lines = carry.split("\n");
+    carry = (lines.pop() ?? "").slice(-4096);
+    for (const line of lines) if (line.trim() !== "") last = line.trim().slice(0, 500);
+  });
+  return () => (carry.trim() !== "" ? carry.trim().slice(0, 500) : last);
 }
 
 export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; winterHome?: string; brand?: SandboxBrand; cwd?: string }) => WorkerProcess;
@@ -98,10 +128,13 @@ export function realWorkerSpawner(opts: { sandbox?: boolean } = {}): WorkerSpawn
       child.once("close", releaseGroup);
       child.once("error", releaseGroup);
     }
+    // WS-27: read (and so drained) for the one line a refusal or a crash leaves behind.
+    const lastStderrLine = stderrTail(child.stderr);
     return {
       stdin: child.stdin!,
       stdout: child.stdout!,
       ...(child.pid !== undefined ? { pid: child.pid } : {}),
+      lastStderrLine,
       onExit: (cb) => child.on("close", (code) => cb(code)),
       onError: (cb) => child.on("error", cb),
       kill: () => {
@@ -344,7 +377,9 @@ export class WorkflowRuntime {
     // already tore the run down and its terminal status must not be overwritten by the exit.
     worker.onExit((code) => {
       if (this.live.has(runId)) {
-        this.teardown(runId, () => this.finish(runId, "failed", `the workflow worker exited (code ${code ?? "signal"}) without reporting a result`));
+        // WS-27: exit 77 is the worker REFUSING to run outside its Keychain-denying sandbox -- said so, with
+        // the worker's own last stderr line when there is one.
+        this.teardown(runId, () => this.finish(runId, "failed", workerExitMessage(code, worker.lastStderrLine?.())));
       }
     });
     worker.onError((err) => {
