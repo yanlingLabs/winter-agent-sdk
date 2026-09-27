@@ -4283,6 +4283,52 @@ describe("WS-24 fix round 3: a renamed server stays governed at every depth; a s
     expect(postToolNames).toEqual(["mcp__srv__shout"]);
   }, 30_000);
 
+  // WS-27: the exact server identity survives the rename -- `name` is the connected `srv_2` (what the model
+  // called), `configName` the definition's `srv`, even where the hook's own subject is the declared spelling.
+  test("WS-27: a renamed subagent server's call names its server as srv_2 (configName srv) on every hook and on the permission request", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const seen: Array<{ subtype: string; event?: string; toolName?: string; mcpServer?: unknown }> = [];
+    await withHttpFixture(helloSpec, async (parentUrl) => {
+      await withHttpFixture(shoutSpec(() => {}), async (childUrl) => {
+        const req: SpawnChildRequest = {
+          parentToolUseId: "call-1", prompt: "shout", runInBackground: false,
+          definition: { description: "child with its own srv", prompt: "persona", mcpServers: [{ srv: { type: "http", url: childUrl.href } }] },
+        };
+        const { code } = await driveParentAnswering(
+          {
+            provider: scriptedProvider([{ kind: "tool_use", calls: [{ id: "c1", name: "mcp__srv_2__shout", input: {} }] }, { kind: "text", text: "child done" }]),
+            env: { MCP_CONNECTION_NONBLOCKING: "0" },
+            // One hook matching the DECLARED spelling (its subject becomes `mcp__srv__shout`), one matching everything.
+            parentHooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }], PostToolUse: [{ matcher: "mcp__srv__shout", hookCount: 1, source: "sdk" }] },
+          },
+          // An ask rule on the DECLARED name governs the renamed call too (strictest-of), so the call reaches the prompt.
+          baseConfig({ sessionId: `ws27-rename-${randomUUID()}`, mcpServers: { srv: { type: "http", url: parentUrl.href } }, permissions: { ask: ["mcp__srv__shout"] } }),
+          [
+            { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+            { kind: "text", text: "parent done" },
+          ],
+          (frame) => {
+            const subtype = (frame as { subtype?: string }).subtype ?? "";
+            const payload = (frame as { payload?: { event?: string; toolName?: string; mcpServer?: unknown } }).payload;
+            if ((subtype === "hook" || subtype === "permission") && payload?.toolName?.startsWith("mcp__srv")) {
+              seen.push({ subtype, ...(payload.event !== undefined ? { event: payload.event } : {}), toolName: payload.toolName, ...(payload.mcpServer !== undefined ? { mcpServer: payload.mcpServer } : {}) });
+            }
+            return subtype === "permission" ? { ok: true, payload: { behavior: "allow" } } : { ok: true, payload: {} };
+          },
+        );
+        expect(code).toBe(0);
+      });
+    });
+    const identity = { name: "srv_2", configName: "srv" };
+    expect(seen.find((s) => s.event === "PreToolUse")?.mcpServer).toEqual(identity);
+    // The PostToolUse hook's subject is the declared name -- which the registry resolves to the PARENT's `srv`
+    // -- yet the identity is still the server the child actually called.
+    expect(seen.find((s) => s.event === "PostToolUse")).toEqual({ subtype: "hook", event: "PostToolUse", toolName: "mcp__srv__shout", mcpServer: identity });
+    // The prompt's subject is the declared spelling the ask rule named; `mcpServer` is still the called server.
+    expect(seen.filter((x) => x.subtype === "permission")).toEqual([{ subtype: "permission", toolName: "mcp__srv__shout", mcpServer: identity }]);
+  }, 30_000);
+
   test("stop() while a resume waits for the previous generation's teardown cancels that resume: no new generation starts", async () => {
     const PROBE = "ws24_resume_then_stop";
     let outcome = "";

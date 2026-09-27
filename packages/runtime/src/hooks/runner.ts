@@ -42,11 +42,11 @@
 //     `decision: "block"` of UserPromptSubmit/Stop/SubagentStop/PostToolUse now have readers
 //     (`applyEnvelope`, the dedicated interpreters below) instead of falling through to "no opinion".
 import { randomUUID } from "node:crypto";
-import type { HookEvent, HookPermissionDecision, PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
+import type { HookEvent, HookPermissionDecision, McpServerIdentity, PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
 import { MATCHER_SUBJECT_FIELD, type HookRegistry, type SourcedHookEntry } from "./registry.ts";
 import { reduceHookOutcomes, type HookComposite, type HookOutcome, type HookOutcomeEntry } from "./reducer.ts";
 import { capHookText } from "./bounds.ts";
-import { mcpServerOwningTool } from "../tools/registry.ts";
+import { getRegisteredTool, mcpServerOwningTool } from "../tools/registry.ts";
 import type { AsyncHookQueue } from "./async-hooks.ts";
 
 // --- HookInvoker — the T10 swap point (WS-08 §10, verbatim request shape) -------------------------
@@ -94,6 +94,12 @@ export interface HookInvocationRequest {
    */
   mcpServerName?: string;
   mcpToolName?: string;
+  /**
+   * WS-27: the exact server identity (`mcpServerIdentity` below) -- PreToolUse/PostToolUse/
+   * PostToolUseFailure only (`MCP_SERVER_IDENTITY_EVENTS`). Both input builders turn it into
+   * `winter_mcp_server`.
+   */
+  mcpServer?: McpServerIdentity;
   input?: Record<string, unknown>;
   payload?: unknown;
   policyVersion: string;
@@ -122,6 +128,27 @@ export function mcpToolProvenance(toolName: string): McpToolProvenanceInfo | und
   if (!toolName.startsWith(prefix) || toolName.length === prefix.length) return undefined;
   return { server, tool: toolName.slice(prefix.length) };
 }
+
+// --- WS-27: the exact server identity ------------------------------------------------------------
+//
+// The sdk's `McpServerIdentity`: the server the model CALLED (the registry's owner of the called tool
+// name, so never a split on `__`), the key it had in its config before any rename, and the tool's own
+// stated `readOnlyHint`. `renames` is the engine's `mcpServerRenames` (`{ actual: declared }`): a
+// subagent's inline server connected under a fresh name, or an ancestor's. A plugin's server is
+// registered under the raw name its `.mcp.json` declares, so its `configName` is that name.
+//
+// The ENGINE computes this from the called name and hands it to the hook runner and the permission
+// prompt explicitly: a renamed server's gating hook can run under the DECLARED spelling
+// (`mcp__cf__x`), which the registry resolves to a different server (the parent's `cf`).
+export function mcpServerIdentity(toolName: string, renames?: Readonly<Record<string, string>>): McpServerIdentity | undefined {
+  const name = mcpServerOwningTool(toolName);
+  if (name === undefined) return undefined;
+  const readOnlyHint = getRegisteredTool(toolName)?.descriptor.annotations?.readOnlyHint;
+  return { name, configName: renames?.[name] ?? name, ...(typeof readOnlyHint === "boolean" ? { readOnlyHint } : {}) };
+}
+
+/** The events whose input carries `winter_mcp_server` (the pinned WS-27 contract). */
+export const MCP_SERVER_IDENTITY_EVENTS: ReadonlySet<HookEvent> = new Set<HookEvent>(["PreToolUse", "PostToolUse", "PostToolUseFailure"]);
 
 // The pinned HookCallback signature (derived-shapes item (a)) takes `{signal: AbortSignal}` as its
 // third argument — this seam mirrors that exactly so a real SDK-callback invoker (T10) and this
@@ -238,6 +265,8 @@ const DEFER_CAPABLE_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(["PreToolUse",
 export interface RunHooksCallInfo {
   toolUseID?: string;
   toolName?: string;
+  /** WS-27: the called tool's server identity, when the caller knows it (the engine always does); else looked up from `toolName`. */
+  mcpServer?: McpServerIdentity;
   input?: Record<string, unknown>;
   payload?: unknown;
 }
@@ -735,7 +764,15 @@ function failureCodeOf(err: unknown): string {
   return "hook_error";
 }
 
-function buildRequest(entry: SourcedHookEntry, event: HookEvent, call: RunHooksCallInfo, ctx: RunHooksContext, currentInput: Record<string, unknown> | undefined, provenance: McpToolProvenanceInfo | undefined): HookInvocationRequest {
+function buildRequest(
+  entry: SourcedHookEntry,
+  event: HookEvent,
+  call: RunHooksCallInfo,
+  ctx: RunHooksContext,
+  currentInput: Record<string, unknown> | undefined,
+  provenance: McpToolProvenanceInfo | undefined,
+  mcpServer: McpServerIdentity | undefined,
+): HookInvocationRequest {
   return {
     event,
     ...(entry.matcher !== undefined ? { matchedMatcher: entry.matcher } : {}),
@@ -744,6 +781,7 @@ function buildRequest(entry: SourcedHookEntry, event: HookEvent, call: RunHooksC
     ...(call.toolUseID !== undefined ? { toolUseID: call.toolUseID } : {}),
     ...(call.toolName !== undefined ? { toolName: call.toolName } : {}),
     ...(provenance !== undefined ? { mcpServerName: provenance.server, mcpToolName: provenance.tool } : {}),
+    ...(mcpServer !== undefined ? { mcpServer } : {}),
     ...(currentInput !== undefined ? { input: currentInput } : {}),
     ...(call.payload !== undefined ? { payload: call.payload } : {}),
     policyVersion: String(ctx.policyVersion),
@@ -830,6 +868,9 @@ export async function runHooks(event: HookEvent, call: RunHooksCallInfo, ctx: Ru
   // WS-24: looked up once per run -- the same tool for every participant, and a registry that changes
   // mid-run (a server reconnecting) must not hand two hooks of one call two different answers.
   const provenance = call.toolName !== undefined && matched.length > 0 ? (ctx.mcpProvenance ?? mcpToolProvenance)(call.toolName) : undefined;
+  // WS-27: once per run too, and only for the three events the contract names.
+  const mcpServer =
+    MCP_SERVER_IDENTITY_EVENTS.has(event) && matched.length > 0 ? (call.mcpServer ?? (call.toolName !== undefined ? mcpServerIdentity(call.toolName) : undefined)) : undefined;
   const results: HookOutcomeEntry[] = [];
   let denied = false;
   // Invocation-time chaining (rule 3 sentence 1) -- see this file's own header for the split from
@@ -844,7 +885,7 @@ export async function runHooks(event: HookEvent, call: RunHooksCallInfo, ctx: Ru
       continue;
     }
 
-    const request = buildRequest(entry, event, call, ctx, currentInput, provenance);
+    const request = buildRequest(entry, event, call, ctx, currentInput, provenance, mcpServer);
     const timeoutMs = defaultTimeoutMsFor(event, entry, ctx.timeouts);
     // T10 (WS-08 §9): "hook_started" fires for every hook actually invoked (never a skipped one,
     // handled above) — BEFORE the invocation, so a slow/hanging hook shows up in-flight on the

@@ -102,6 +102,8 @@ function buildPayload(call: PermissionCall, ctx: EvaluationContext, meta: Prompt
     ...(call.agentId !== undefined ? { agentID: call.agentId } : {}),
     requestId,
     ...(meta.matchedAskRule !== undefined ? { matchedAskRule: meta.matchedAskRule } : {}),
+    // WS-27: the called tool's MCP server, for `canUseTool`'s Winter-only `mcpServer`.
+    ...(call.mcpServer !== undefined ? { mcpServer: call.mcpServer } : {}),
     policyVersion: ctx.policy.version,
   };
 }

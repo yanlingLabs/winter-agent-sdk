@@ -286,7 +286,7 @@ export type { PermissionMode, PermissionBehavior, PermissionRuleValue } from "./
 export type { PermissionUpdate, PermissionUpdateDestination, RuleSource } from "./permissions/types.ts";
 // Task 8 (WS-07 §7.1/§7.2): canUseTool's verbatim callback/result contracts, plus Winter's own
 // "permission" control-request wire payload shape (see permissions/types.ts's own Task 8 banners).
-export type { CanUseTool, PermissionResult, PermissionDecisionClassification, PermissionRequestPayload } from "./permissions/types.ts";
+export type { CanUseTool, McpServerIdentity, PermissionResult, PermissionDecisionClassification, PermissionRequestPayload } from "./permissions/types.ts";
 // Task 9 (WS-08 §1/§2/§4/§6): the hooks pinned-types surface — HookEvent (31-member union, HookEventName
 // alias) + HOOK_EVENTS (the runtime membership list the type is derived from), HookSource
 // (Winter-original, mirrors RuleSource), the full HookInput/HookJSONOutput family, and the
@@ -302,6 +302,7 @@ export type {
   HookPermissionDecision,
   BaseHookInput,
   McpToolProvenance,
+  WinterMcpServerHookField,
   PreToolUseHookInput,
   PostToolUseHookInput,
   PostToolUseFailureHookInput,

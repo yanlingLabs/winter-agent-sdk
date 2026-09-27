@@ -15,6 +15,8 @@ import type {
   HookInput,
   HookJSONOutput,
   HookInvocationPayload,
+  McpServerIdentity,
+  WinterMcpServerHookField,
 } from "./permissions/types.ts";
 import { resolveRuntimeExecutable, defaultSpawn, type SpawnRuntimeOptions, type SpawnedRuntimeProcess } from "./transport.ts";
 import { ResultError, CLIConnectionError, ProtocolDecodeError, ProcessError, AbortError, WinterRpcError, InvalidBrandError } from "./errors.ts";
@@ -536,6 +538,10 @@ function buildRuntimeHooksConfig(hooks: Partial<Record<HookEvent, HookCallbackMa
 // e.g. PermissionRequest's permission_suggestions, UserPromptSubmit's prompt, Notification's
 // message/title/notification_type) — lossless forward-compatible construction, matching WS-08 §1.3's
 // own "forwards payloads losslessly, never invents field-level semantics" instruction.
+function winterMcpServerHookField(server: McpServerIdentity): NonNullable<WinterMcpServerHookField["winter_mcp_server"]> {
+  return { name: server.name, config_name: server.configName, ...(server.readOnlyHint !== undefined ? { read_only_hint: server.readOnlyHint } : {}) };
+}
+
 function buildHookInput(req: HookInvocationPayload, cwd: string): HookInput {
   const payload = (req.payload ?? {}) as Record<string, unknown>;
   return {
@@ -555,6 +561,9 @@ function buildHookInput(req: HookInvocationPayload, cwd: string): HookInput {
     // every other field of this input.
     ...(req.mcpServerName !== undefined ? { mcp_server_name: req.mcpServerName } : {}),
     ...(req.mcpToolName !== undefined ? { mcp_tool_name: req.mcpToolName } : {}),
+    // WS-27: the exact server identity (`WinterMcpServerHookField`) -- the runtime sends it only on
+    // PreToolUse/PostToolUse/PostToolUseFailure; mapped here and in `commandHookInput` alike.
+    ...(req.mcpServer !== undefined ? { winter_mcp_server: winterMcpServerHookField(req.mcpServer) } : {}),
     ...(req.input !== undefined ? { tool_input: req.input } : {}),
     ...(req.toolUseID !== undefined ? { tool_use_id: req.toolUseID } : {}),
     ...payload,
@@ -1015,6 +1024,8 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
           ...(req.agentID !== undefined ? { agentID: req.agentID } : {}),
           requestId: req.requestId,
           ...(req.matchedAskRule !== undefined ? { matchedAskRule: req.matchedAskRule } : {}),
+          // WS-27: Winter-only, see `McpServerIdentity`.
+          ...(req.mcpServer !== undefined ? { mcpServer: req.mcpServer } : {}),
         });
       } catch (err) {
         // Callback THROW = fail-closed deny (task instruction, verbatim) — a typed PermissionResult,

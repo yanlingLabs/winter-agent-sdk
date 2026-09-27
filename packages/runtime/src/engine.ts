@@ -260,7 +260,7 @@ import { createCommandHookInvoker } from "./hooks/command-invoker.ts";
 // found and why the per-tier permissive filter deliberately does NOT live here.
 import { defaultTrustSource } from "./settings/trust.ts";
 import { createBridgeHookInvoker } from "./hooks/bridge-invoker.ts";
-import { runHooks, type HookAuditRecord, type HookAuditRecorder, type HookInvoker, type RunHooksCallInfo } from "./hooks/runner.ts";
+import { mcpServerIdentity, runHooks, type HookAuditRecord, type HookAuditRecorder, type HookInvoker, type RunHooksCallInfo } from "./hooks/runner.ts";
 import type { HookComposite } from "./hooks/reducer.ts";
 import { createRegistryToolInputValidator } from "./hooks/input-validator.ts";
 import { asyncHookDroppedAttachment, asyncHookResponseAttachment, contextStrings, hookAdditionalContextAttachment, hookFeedbackAttachment } from "./hooks/additional-context.ts";
@@ -9321,6 +9321,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: `Structured output validation failed: ${validation.errors.join("; ")}. Call ${STRUCTURED_OUTPUT_TOOL_NAME} again with a corrected value.`, error: true });
           continue;
         }
+        // WS-27: the MCP server this call's tool belongs to, read ONCE from the name the model called (a
+        // renamed server's gating hook may run under its declared spelling, which the registry resolves to a
+        // different server) -- for the PreToolUse / PostToolUse / PostToolUseFailure `winter_mcp_server` and
+        // `canUseTool`'s `mcpServer`. Before the `try`, so the catch's PostToolUseFailure has it too.
+        const callMcpServer = mcpServerIdentity(call.name, mcpServerRenames);
         try {
           // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.5): the load-first execution-boundary check runs
           // BEFORE permission evaluation even starts — an unloaded deferred tool is not yet
@@ -9486,6 +9491,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // `permission_deferred` stream messages' own `agent_id` field (both already conditional
             // on this field being set, unchanged since P2/T8).
             ...(config.agentId !== undefined ? { agentId: config.agentId } : {}),
+            ...(callMcpServer !== undefined ? { mcpServer: callMcpServer } : {}),
           };
           const decisionRaced = await raceInterrupt(evaluateWithFreshPolicy(permissionCall), interruptSignal);
           if (decisionRaced.kind === "interrupted") {
@@ -9799,12 +9805,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
               ? await fireObservationalHook("PostToolUseFailure", {
                   toolUseID: call.id,
                   toolName: postToolHookSubject("PostToolUseFailure", call.name),
+                  ...(callMcpServer !== undefined ? { mcpServer: callMcpServer } : {}),
                   input: executedCall.input as Record<string, unknown>,
                   payload: { error: raced.value.output },
                 })
               : await fireObservationalHook("PostToolUse", {
                   toolUseID: call.id,
                   toolName: postToolHookSubject("PostToolUse", call.name),
+                  ...(callMcpServer !== undefined ? { mcpServer: callMcpServer } : {}),
                   input: executedCall.input as Record<string, unknown>,
                   payload: { tool_response: raced.value.output },
                 });
@@ -9844,6 +9852,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             await fireObservationalHook("PostToolUseFailure", {
               toolUseID: call.id,
               toolName: postToolHookSubject("PostToolUseFailure", call.name),
+              ...(callMcpServer !== undefined ? { mcpServer: callMcpServer } : {}),
               input: typeof call.input === "object" && call.input !== null ? (call.input as Record<string, unknown>) : {},
               payload: { error: text },
             }),

@@ -1230,6 +1230,54 @@ test("WS-24: an MCP tool's hook input names its server and bare tool (mcp_server
   expect("mcp_tool_name" in seen[1]!).toBe(false);
 });
 
+test("WS-27: an MCP tool's hook input carries winter_mcp_server (name, config_name, read_only_hint when stated); a built-in's does not", async () => {
+  const seen: HookInput[] = [];
+  for (const payload of [
+    // A renamed subagent server with a read-only tool.
+    fullHookPayload({ toolName: "mcp__cf_2__list", mcpServerName: "cf_2", mcpToolName: "list", mcpServer: { name: "cf_2", configName: "cf", readOnlyHint: true }, requestId: "hook-1" }),
+    // A plain server whose tool states no annotations.
+    fullHookPayload({ toolName: "mcp__gh__open", mcpServerName: "gh", mcpToolName: "open", mcpServer: { name: "gh", configName: "gh" }, requestId: "hook-1" }),
+    fullHookPayload({ requestId: "hook-1" }),
+  ]) {
+    const { proc } = recordingProcessWithHookRequest(payload);
+    const gen = query({
+      prompt: "hi",
+      options: {
+        cwd: "/work",
+        spawnClaudeCodeProcess: () => proc,
+        hooks: { PreToolUse: [{ hooks: [async (input) => (seen.push(input), {})] }] },
+      },
+    });
+    for await (const _msg of gen) {
+      /* drain */
+    }
+  }
+  expect(seen[0]).toMatchObject({ tool_name: "mcp__cf_2__list", winter_mcp_server: { name: "cf_2", config_name: "cf", read_only_hint: true } });
+  expect((seen[1] as { winter_mcp_server?: unknown }).winter_mcp_server).toEqual({ name: "gh", config_name: "gh" });
+  expect("winter_mcp_server" in seen[2]!).toBe(false);
+});
+
+test("WS-27: canUseTool receives mcpServer for an MCP tool, verbatim; the pinned fields are unchanged beside it", async () => {
+  const payload = fullPermissionPayload({ toolName: "mcp__cf_2__list", mcpServer: { name: "cf_2", configName: "cf", readOnlyHint: false } });
+  const { proc } = recordingProcessWithPermissionRequest(payload);
+  let receivedOpts: Record<string, unknown> | undefined;
+  const gen = query({
+    prompt: "hi",
+    options: {
+      spawnClaudeCodeProcess: () => proc,
+      canUseTool: async (_toolName, _input, opts) => {
+        receivedOpts = { ...opts };
+        return { behavior: "allow" };
+      },
+    },
+  });
+  for await (const _msg of gen) {
+    /* drain */
+  }
+  expect(receivedOpts?.mcpServer).toEqual({ name: "cf_2", configName: "cf", readOnlyHint: false });
+  expect(receivedOpts?.toolUseID).toBe("call-1");
+});
+
 test("WS-24: a control_cancel_request for a running hook (the runner timed it out) aborts the callback's signal, and no answer is written for it", async () => {
   const payload = fullHookPayload();
   const writes: string[] = [];

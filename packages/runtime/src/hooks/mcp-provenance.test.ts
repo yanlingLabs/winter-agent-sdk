@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HookEvent } from "@yanlinglabs/winter-agent-sdk";
 import { registerMcpServerTools, unregisterMcpServerTools } from "../tools/registry.ts";
-import { mcpToolProvenance, runHooks, type HookInvocationRequest, type HookInvoker, type RunHooksContext } from "./runner.ts";
+import { mcpServerIdentity, mcpToolProvenance, runHooks, type HookInvocationRequest, type HookInvoker, type RunHooksContext } from "./runner.ts";
 import { commandHookInput, createCommandHookInvoker } from "./command-invoker.ts";
 import { buildHookRegistry, type SourcedHookEntry } from "./registry.ts";
 
@@ -97,5 +97,80 @@ describe("the command hook's stdin (claude's wire, extended additively)", () => 
     const invoker = createCommandHookInvoker(entries, { next: recordingInvoker().invoker, cwd: dir });
     await runHooks("PreToolUse", { toolUseID: "tu", toolName: "mcp__ws24-srv__do_thing", input: { x: 1 } }, ctx(invoker, entries));
     expect(JSON.parse(readFileSync(out, "utf8"))).toMatchObject({ hook_event_name: "PreToolUse", tool_name: "mcp__ws24-srv__do_thing", mcp_server_name: "ws24-srv", mcp_tool_name: "do_thing", tool_input: { x: 1 } });
+  });
+});
+
+// WS-27: `winter_mcp_server` -- the exact identity of the server the model CALLED, on the three events the
+// contract names (PreToolUse / PostToolUse / PostToolUseFailure): the name in the tool name (after any
+// rename), the config key before it, and the tool's own stated `readOnlyHint`.
+describe("WS-27: mcpServerIdentity and winter_mcp_server", () => {
+  const RO = "ws27-ro";
+  afterEach(() => unregisterMcpServerTools(RO));
+  function registerAnnotated(): void {
+    registerMcpServerTools(
+      RO,
+      [
+        { name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+        { name: "write", inputSchema: { type: "object" }, annotations: { readOnlyHint: false, destructiveHint: true } },
+        { name: "bare", inputSchema: { type: "object" } },
+      ],
+      { deferredDefault: false },
+    );
+  }
+
+  test("a plain server: name === configName; readOnlyHint only when the server states it", () => {
+    registerAnnotated();
+    expect(mcpServerIdentity(`mcp__${RO}__read`)).toEqual({ name: RO, configName: RO, readOnlyHint: true });
+    expect(mcpServerIdentity(`mcp__${RO}__write`)).toEqual({ name: RO, configName: RO, readOnlyHint: false });
+    const bare = mcpServerIdentity(`mcp__${RO}__bare`)!;
+    expect(bare).toEqual({ name: RO, configName: RO });
+    expect("readOnlyHint" in bare).toBe(false);
+  });
+
+  test("a renamed server (`{ actual: declared }`): name is the connected name, configName the declared one; a `__` server resolves whole", () => {
+    registerFixtures();
+    registerAnnotated();
+    expect(mcpServerIdentity(`mcp__${RO}__read`, { [RO]: "cf" })).toEqual({ name: RO, configName: "cf", readOnlyHint: true });
+    expect(mcpServerIdentity("mcp__winter__sessions__list")).toEqual({ name: "winter__sessions", configName: "winter__sessions" });
+  });
+
+  test("no identity for a built-in or an unregistered mcp__ name", () => {
+    expect(mcpServerIdentity("Bash")).toBeUndefined();
+    expect(mcpServerIdentity("mcp__nobody__tool")).toBeUndefined();
+  });
+
+  for (const event of ["PreToolUse", "PostToolUse", "PostToolUseFailure"] as const) {
+    test(`${event}: the request carries mcpServer -- the caller's when given, else looked up from toolName`, async () => {
+      registerAnnotated();
+      const { invoker, requests } = recordingInvoker();
+      const c = ctx(invoker, [{ id: "h", event, source: "sdk" }]);
+      await runHooks(event, { toolUseID: "tu", toolName: `mcp__${RO}__read`, input: {} }, c);
+      // The engine's explicit identity wins over the lookup (the hook subject may be a declared spelling).
+      await runHooks(event, { toolUseID: "tu2", toolName: "mcp__cf__read", mcpServer: { name: "cf_2", configName: "cf" }, input: {} }, c);
+      await runHooks(event, { toolUseID: "tu3", toolName: "Bash", input: { command: "ls" } }, c);
+      expect(requests[0]!.mcpServer).toEqual({ name: RO, configName: RO, readOnlyHint: true });
+      expect(requests[1]!.mcpServer).toEqual({ name: "cf_2", configName: "cf" });
+      expect("mcpServer" in requests[2]!).toBe(false);
+    });
+  }
+
+  for (const event of ["PermissionRequest", "PermissionDenied"] as const) {
+    test(`${event}: not one of the contract's events -- no mcpServer (mcp_server_name still)`, async () => {
+      registerAnnotated();
+      const { invoker, requests } = recordingInvoker();
+      await runHooks(event, { toolUseID: "tu", toolName: `mcp__${RO}__read`, mcpServer: { name: RO, configName: RO }, input: {} }, ctx(invoker, [{ id: "h", event, source: "sdk" }]));
+      expect(requests[0]).toMatchObject({ mcpServerName: RO });
+      expect("mcpServer" in requests[0]!).toBe(false);
+    });
+  }
+
+  test("commandHookInput writes winter_mcp_server in snake_case, read_only_hint only when stated", () => {
+    const base = { event: "PreToolUse" as const, sessionId: "s", toolName: "mcp__cf_2__read", policyVersion: "1", requestId: "r", hookId: "h" };
+    expect(commandHookInput({ ...base, mcpServer: { name: "cf_2", configName: "cf", readOnlyHint: true } }, { cwd: "/w", transcriptPath: "" })).toMatchObject({
+      winter_mcp_server: { name: "cf_2", config_name: "cf", read_only_hint: true },
+    });
+    const noHint = commandHookInput({ ...base, mcpServer: { name: "gh", configName: "gh" } }, { cwd: "/w", transcriptPath: "" });
+    expect(noHint["winter_mcp_server"]).toEqual({ name: "gh", config_name: "gh" });
+    expect("winter_mcp_server" in commandHookInput({ ...base, toolName: "Bash" }, { cwd: "/w", transcriptPath: "" })).toBe(false);
   });
 });
