@@ -73,6 +73,9 @@
       ],
       "@yanlinglabs/winter-agent-runtime/mcp-client": [
         "./packages/runtime/src/mcp-client.ts"
+      ],
+      "@yanlinglabs/winter-agent-runtime/mcp-auth": [
+        "./packages/runtime/src/mcp-auth.ts"
       ]
     }
   }

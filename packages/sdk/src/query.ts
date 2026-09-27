@@ -183,6 +183,17 @@ export interface Query extends AsyncGenerator<SdkMessage> {
    */
   compact?(opts?: { customInstructions?: string }): Promise<{ retainedCount: number }>;
   /**
+   * WS-25 -- reconnect ONE MCP server now (the runtime's `mcp_reconnect` control subtype), and resolve
+   * once it is connected; rejects when the reconnect fails or leaves the server `failed`/`needs-auth`.
+   * The pinned shape (`sdk.d.ts:2668`, `reconnectMcpServer(serverName): Promise<void>`, "throws on
+   * failure"). A host calls it after a sign-in so a `needs-auth` server lists its tools in the live
+   * session -- a reconnect, never a restart of the session.
+   *
+   * OPTIONAL on the interface for the same reason as `compact` (a host's structural `Query` doubles keep
+   * type-checking); every `Query` this package returns has it.
+   */
+  reconnectMcpServer?(serverName: string): Promise<void>;
+  /**
    * Phase 6 Task 10 (derived-shapes-p6 item (d), `sdk.d.ts:2566`): the models this session may select.
    *
    * A BARE ARRAY — no envelope, no default marker, no "current model" field; the current model is read

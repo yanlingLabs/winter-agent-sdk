@@ -214,6 +214,69 @@ export interface McpServerToolPolicy {
  * revision is reported per server on the `mcp_status` control response.
  */
 export type McpVersionNegotiation = "legacy" | "auto" | { pin: string };
+/**
+ * WS-25, WINTER-OWNED: a LOCATOR for a pre-registered OAuth client's secret -- the Keychain item that
+ * holds it, never the value. The same `{ kind: "keychain", account, service? }` shape as a provider
+ * credential's `CredentialRef` keychain arm (WS-20 names credentials on the wire, never material);
+ * `service` absent means the host's own service. A config that carries a secret VALUE is refused
+ * (`validateServerConfig`): a server config reaches settings files, hook inputs and `mcp.get`.
+ */
+export interface McpOAuthSecretRef {
+  kind: "keychain";
+  account: string;
+  service?: string;
+}
+/**
+ * WS-25, WINTER-OWNED: how Winter signs in to ONE remote (http/sse) MCP server over OAuth. Every field is
+ * optional, and so is the block: a server whose authorization server supports Client ID Metadata
+ * Documents or Dynamic Client Registration needs none of it. Tokens NEVER live here -- they live in the
+ * host's Keychain, keyed by the server's canonical URL (`@yanlinglabs/winter-agent-runtime/mcp-auth`'s
+ * `mcpOAuthAccountId`).
+ *
+ * - `clientId` -- a PRE-REGISTERED client (preferred over CIMD and DCR when present).
+ * - `clientSecretRef` -- that client's secret, as a Keychain locator (see `McpOAuthSecretRef`).
+ * - `callbackPort` -- the loopback port the sign-in listener binds (`http://127.0.0.1:<port>/callback`);
+ *   a pre-registered client usually needs it fixed. Absent: an ephemeral port (DCR persists it).
+ * - `authServerMetadataUrl` -- the authorization server's RFC 8414 metadata document, for a server that
+ *   publishes no RFC 9728 protected-resource metadata.
+ * - `scopes` -- the scopes to request (absent: the server's own `scopes_supported`).
+ */
+export interface McpOAuthConfig {
+  clientId?: string;
+  clientSecretRef?: McpOAuthSecretRef;
+  callbackPort?: number;
+  authServerMetadataUrl?: string;
+  scopes?: string[];
+}
+/**
+ * WS-25: the runtime -> host `mcp_oauth_refresh` control request (subtype `MCP_OAUTH_REFRESH_SUBTYPE`).
+ * A session never refreshes a token itself when its host answers this: the host (Winter's daemon) is the
+ * ONLY refresher, so a rotating refresh token is posted by one process, once (RFC 9700 §4.14's family
+ * revocation would otherwise punish N sessions refreshing the same token).
+ *
+ * Carries NO material -- names only:
+ * - `server` -- the server's config name in this session (diagnostics; the host may use it to find the
+ *   config);
+ * - `account` -- the FULL Keychain account name of the token item, `mcp-oauth:<id>` (the host keys its
+ *   single-flight on it and derives the client item by the prefix swap `mcp-oauth-client:<id>`);
+ * - `generation` -- the token record's `generation` the session last read. A host that already holds a
+ *   newer generation answers `{ ok: true }` without posting (another session asked first).
+ * - `stepUpScope` -- WS-25, additive: present when the server answered `403 insufficient_scope`. A refresh
+ *   cannot widen a grant (RFC 6749 §6), so the host records the scope on the client registration for the
+ *   next sign-in and answers `needs_auth`.
+ */
+export interface McpOAuthRefreshRequest {
+  server: string;
+  account: string;
+  generation: number;
+  stepUpScope?: string;
+}
+/**
+ * The host's answer. `{ ok: true }` means "re-read the Keychain item"; `needs_auth` means the sign-in is
+ * gone (no refresh token, `invalid_grant`, a revoked client) and the server is marked `needs-auth`;
+ * `transient` means try again later (the network, the authorization server's 5xx).
+ */
+export type McpOAuthRefreshAnswer = { ok: true } | { ok: false; reason: "needs_auth" | "transient" };
 export interface McpStdioServerConfig {
   type?: "stdio"; // the ONLY optional discriminant of the four transport variants (derived-shapes item (a))
   command: string;
@@ -231,6 +294,7 @@ export interface McpHttpServerConfig {
   timeout?: number;
   alwaysLoad?: boolean;
   versionNegotiation?: McpVersionNegotiation; // WS-23, Winter-owned -- see McpVersionNegotiation
+  oauth?: McpOAuthConfig; // WS-25, Winter-owned -- see McpOAuthConfig (http/sse only: stdio has no HTTP to authorize)
 }
 export interface McpSSEServerConfig {
   type: "sse";
@@ -240,6 +304,7 @@ export interface McpSSEServerConfig {
   timeout?: number;
   alwaysLoad?: boolean;
   versionNegotiation?: McpVersionNegotiation; // WS-23, Winter-owned -- see McpVersionNegotiation
+  oauth?: McpOAuthConfig; // WS-25, Winter-owned -- see McpOAuthConfig
 }
 // Phase 4 Task 3 (WS-04 addendum -- "sdk_mcp_call host-side bridge", ledgered in T2's own report
 // concern 1 "PLAN GAP"): a JSON-safe mirror of registry.ts's own McpToolDefinition, WINTER-OWNED and

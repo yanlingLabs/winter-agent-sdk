@@ -1,0 +1,45 @@
+// WS-25 (MCP OAuth): the ONE error class every `mcp-auth` door throws or reports with.
+//
+// A CODE a caller branches on, plus a message for a human. Messages name an ACCOUNT, a server URL's
+// origin, an HTTP status or an OAuth error CODE -- never a token, a code, a `state`, a code verifier, a
+// client secret, or an authorization server's response body (an `error_description` is the server's
+// text, and a token endpoint that echoes its request would put the refresh token in it). WS-25 spec §5's
+// security review checks exactly this.
+
+/**
+ * - `malformed_record` / `unsupported_record_version` -- a Keychain item that is not a record this SDK
+ *   wrote (bad JSON, a missing field, the wrong `kind`), or one from a NEWER record version (`v`), which
+ *   is refused rather than guessed at.
+ * - `invalid_server_url` -- not an absolute http(s) URL, or one carrying userinfo.
+ * - `invalid_account` -- not an `mcp-oauth:<16 hex>` token account name.
+ * - `policy_refused` -- the auth-HTTP policy refused a URL (plain http off loopback, a literal private or
+ *   link-local address, a cross-origin redirect, an oversized answer).
+ * - `login_superseded` / `login_cancelled` / `login_timeout` -- the interactive sign-in ended without a
+ *   callback (a newer sign-in for the same server, `cancel()`, the 5-minute bound).
+ * - `state_mismatch` -- the loopback callback carried a `state` this flow never issued.
+ * - `authorization_denied` -- the authorization server redirected back with `error=...`.
+ * - `client_secret_unavailable` -- a pre-registered client's `clientSecretRef` could not be read.
+ * - `not_implemented` -- a contract stub (WS-25 lands its types first).
+ */
+export type McpOAuthErrorCode =
+  | "malformed_record"
+  | "unsupported_record_version"
+  | "invalid_server_url"
+  | "invalid_account"
+  | "policy_refused"
+  | "login_superseded"
+  | "login_cancelled"
+  | "login_timeout"
+  | "state_mismatch"
+  | "authorization_denied"
+  | "client_secret_unavailable"
+  | "not_implemented";
+
+export class McpOAuthError extends Error {
+  readonly code: McpOAuthErrorCode;
+  constructor(code: McpOAuthErrorCode, message: string) {
+    super(message);
+    this.name = "McpOAuthError";
+    this.code = code;
+  }
+}

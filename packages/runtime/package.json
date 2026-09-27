@@ -57,6 +57,11 @@
       "types": "./dist/mcp-client.d.ts",
       "bun": "./src/mcp-client.ts",
       "default": "./dist/mcp-client.js"
+    },
+    "./mcp-auth": {
+      "types": "./dist/mcp-auth.d.ts",
+      "bun": "./src/mcp-auth.ts",
+      "default": "./dist/mcp-auth.js"
     }
   },
   "files": [
@@ -102,6 +107,10 @@
       "./mcp-client": {
         "types": "./dist/mcp-client.d.ts",
         "default": "./dist/mcp-client.js"
+      },
+      "./mcp-auth": {
+        "types": "./dist/mcp-auth.d.ts",
+        "default": "./dist/mcp-auth.js"
       }
     }
   },
