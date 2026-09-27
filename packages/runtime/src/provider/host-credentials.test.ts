@@ -9,6 +9,8 @@ import { query, type CredentialResolveAnswer, type CredentialResolveRequest } fr
 import { refreshOauthMaterial } from "@yanlinglabs/winter-provider-runtime";
 import { inMemoryProcess } from "../testing.ts";
 import { echoProvider } from "./mock.ts";
+import { getRegisteredTool, replaceExecutor } from "../tools/registry.ts";
+import { ADVISOR_TOOL_NAME } from "../tools/impl/advisor.ts";
 import { createHostBrokeredCredentialStore, createHostBrokeredSecretReader, createHostCredentialChannel, type HostRequestSender } from "./host-credentials.ts";
 
 const SECRET = "sk-host-brokered-SECRET-4242";
@@ -117,6 +119,9 @@ test("end to end: the host's material reaches ONLY the provider request -- no fr
   const asks: CredentialResolveRequest[] = [];
   const stderr: string[] = [];
   const frames: string[] = [];
+  // A session on a REAL catalog provider installs a live advisor executor in the process-wide registry;
+  // put the module-load default back so no later test file inherits this session's.
+  const advisorBefore = getRegisteredTool(ADVISOR_TOOL_NAME)?.executor;
   try {
     const q = query({
       prompt: "hi",
@@ -139,6 +144,7 @@ test("end to end: the host's material reaches ONLY the provider request -- no fr
     for await (const msg of q) frames.push(JSON.stringify(msg));
   } finally {
     fake.stop(true);
+    if (advisorBefore !== undefined) replaceExecutor(ADVISOR_TOOL_NAME, advisorBefore);
   }
   expect(seenKeys).toContain(SECRET); // the provider request carried it
   expect(asks.map((a) => a.ref.account)).toContain("anthropic:default");
