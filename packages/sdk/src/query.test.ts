@@ -2384,3 +2384,76 @@ test("WS-23: a fail-closed matcher carries `failClosed: true` onto --config-json
   expect(groups[1]).toMatchObject({ matcher: "Edit|Write", hookCount: 1, source: "sdk" });
   expect(groups[1]).not.toHaveProperty("failClosed");
 });
+
+// --- WS-25 (MCP OAuth): the host's refresh door, and reconnectMcpServer ----------------------------
+
+describe("WS-25: mcp_oauth_refresh", () => {
+  const request = { server: "linear", account: "mcp-oauth:0123456789abcdef", generation: 4 };
+
+  test("Options.onMcpOAuthRefresh answers the runtime's request with the host's answer, and gets the request verbatim", async () => {
+    let seen: unknown;
+    const onMcpOAuthRefresh: NonNullable<Options["onMcpOAuthRefresh"]> = async (req) => {
+      seen = req;
+      return { ok: true };
+    };
+    const { proc, writes } = recordingProcessWithControlRequestPayload("mcp_oauth_refresh", "oauth-1", { ...request, stepUpScope: "read admin" });
+    for await (const _msg of query({ prompt: "hi", options: { onMcpOAuthRefresh, spawnClaudeCodeProcess: () => proc } })) {
+      /* drain */
+    }
+    expect(seen).toEqual({ ...request, stepUpScope: "read admin" });
+    expect(decodeControlResponse(writes, "oauth-1")).toMatchObject({ ok: true, payload: { ok: true } });
+  });
+
+  test("a throwing or garbage-returning callback answers `transient` -- never an ok:false the runtime could read as 'no handler'", async () => {
+    for (const [id, cb] of [
+      ["oauth-2", async () => { throw new Error("token endpoint said rt-secret"); }],
+      ["oauth-3", async () => ({ ok: "maybe" }) as never],
+    ] as const) {
+      const { proc, writes } = recordingProcessWithControlRequestPayload("mcp_oauth_refresh", id, request);
+      const spy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        for await (const _msg of query({ prompt: "hi", options: { onMcpOAuthRefresh: cb as never, spawnClaudeCodeProcess: () => proc } })) {
+          /* drain */
+        }
+        for (const call of spy.mock.calls) expect(call.join(" ")).not.toContain("rt-secret");
+      } finally {
+        spy.mockRestore();
+      }
+      expect(decodeControlResponse(writes, id)).toMatchObject({ ok: true, payload: { ok: false, reason: "transient" } });
+    }
+  });
+
+  test("a malformed request is refused typed; with NO callback the runtime gets unhandled_subtype (and refreshes in-process)", async () => {
+    const bad = recordingProcessWithControlRequestPayload("mcp_oauth_refresh", "oauth-4", { server: "x" });
+    for await (const _msg of query({ prompt: "hi", options: { onMcpOAuthRefresh: async () => ({ ok: true }), spawnClaudeCodeProcess: () => bad.proc } })) {
+      /* drain */
+    }
+    expect(decodeControlResponse(bad.writes, "oauth-4")?.error?.code).toBe("invalid_payload");
+    const none = recordingProcessWithControlRequestPayload("mcp_oauth_refresh", "oauth-5", request);
+    for await (const _msg of query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => none.proc } })) {
+      /* drain */
+    }
+    expect(decodeControlResponse(none.writes, "oauth-5")?.error?.code).toBe("unhandled_subtype");
+  });
+});
+
+test("WS-25: reconnectMcpServer rides the runtime's mcp_reconnect and rejects on failure (an unknown server here)", async () => {
+  let releasePrompt!: () => void;
+  const promptGate = new Promise<void>((resolve) => {
+    releasePrompt = resolve;
+  });
+  async function* prompt() {
+    yield "hi";
+    await promptGate;
+  }
+  const gen = query({ prompt: prompt(), options: { model: "winter-test/echo", spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, echoProvider) } });
+  let outcome: Promise<unknown> | undefined;
+  for await (const msg of gen) {
+    if (msg.type === "system" && outcome === undefined) outcome = gen.reconnectMcpServer!("not-configured").then(() => "resolved", (e: unknown) => e);
+    if (msg.type === "result") releasePrompt();
+  }
+  const err = await outcome;
+  expect(err).toBeInstanceOf(WinterRpcError);
+  expect((err as WinterRpcError).code).toBe("mcp_reconnect_failed");
+  expect((err as WinterRpcError).message).toContain('unknown server "not-configured"');
+});
