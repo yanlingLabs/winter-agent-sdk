@@ -5721,6 +5721,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // The MCP control subtypes' own serial chain (see their dispatch in the pump): run beside the pump, in
   // arrival order among themselves.
   let mcpControlChain: Promise<void> = Promise.resolve();
+  // WS-27: the links on that chain that CONNECT a server (reconnect, toggle, set_servers), recorded at
+  // dispatch -- synchronously, in the pump -- and dropped when they settle. A turn that starts while one
+  // is outstanding waits for it, bounded (`awaitMcpControlConnects`, at turn start).
+  const mcpConnectingLinks = new Set<Promise<void>>();
   let compactOnControl: ((instructions: string | null) => Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }>) | undefined;
   /** True while the RUNNING turn is one a task notification started (no host input produced it). */
   let turnStartedByNotification = false;
@@ -6590,7 +6594,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             const subtype = cf.subtype;
             const requestId = cf.requestId;
             const payload = cf.payload;
-            mcpControlChain = mcpControlChain.then(async () => {
+            const link = mcpControlChain.then(async () => {
               let result: McpControlResult;
               try {
                 result =
@@ -6613,6 +6617,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             }).catch(() => {
               /* a write after the session ended: nothing left to answer */
             });
+            mcpControlChain = link;
+            // Recorded HERE, before the pump reads the next frame: a user message right behind a reconnect
+            // reaches the turn loop before the link has even started (and a reconnect closes the old client
+            // before its slot turns `pending`), so the state board alone cannot tell the turn to wait.
+            if (subtype !== "mcp_status") {
+              mcpConnectingLinks.add(link);
+              void link.finally(() => mcpConnectingLinks.delete(link));
+            }
             continue;
           }
           // WS-04 §3.1: an unrecognized subtype gets a structured error response, never a dropped
@@ -6710,6 +6722,28 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...(config.mcpServers !== undefined ? { explicitServers: config.mcpServers } : {}),
       envConfig: mcpEnvConfig,
     });
+  };
+  // WS-27: the same wait, at EVERY turn start, for a server the host is reconnecting (`mcp_reconnect`, and
+  // the other two connecting subtypes). Since 0.0.32 those run beside the pump (the brokered-reconnect
+  // fix), so a turn that started while one was still connecting was built without that server's tools.
+  // The turn now waits for the outstanding links, with the first-turn wait's own scope and bound: this
+  // engine's own lifecycle only (a host that owns its MCP stack is never waited on) and
+  // `firstTurnMcpWaitMs()` at most -- a reconnect slower than that still joins a later request.
+  //
+  // Awaited by the TURN LOOP, never by the pump: a link's connect can need a host answer
+  // (`credential_resolve`, `mcp_oauth_refresh`, an elicitation) that only the pump routes back, and the
+  // pump keeps reading while the turn waits. Nothing on the chain waits for a turn, so this cannot close a
+  // cycle. No `await` at all when nothing is outstanding (every ordinary turn).
+  const awaitMcpControlConnects = (): Promise<void> | undefined => {
+    if (mcpConnectingLinks.size === 0) return undefined;
+    const deadlineMs = firstTurnMcpWaitMs();
+    if (deadlineMs === undefined) return undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, deadlineMs);
+      timer.unref?.();
+    });
+    return Promise.race([Promise.all([...mcpConnectingLinks]).then(() => undefined), deadline]).finally(() => clearTimeout(timer));
   };
   // The startup wait `launch()` deferred (above, where the lifecycle is built): an `alwaysLoad` server, or
   // the whole batch under MCP_CONNECTION_NONBLOCKING=0. Here, not before the handshake, because the pump
@@ -8511,6 +8545,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   for await (const userFrame of userFrames) {
     // WS-23 (decision 5): a host-requested compaction finishes before any turn starts.
     if (controlCompaction !== undefined) await controlCompaction;
+    // WS-27: ...and a server the host is reconnecting joins it, bounded (`awaitMcpControlConnects`).
+    const mcpConnects = awaitMcpControlConnects();
+    if (mcpConnects !== undefined) await mcpConnects;
     // SDK 0.0.16 Lane N. `turnActive` gates `pumpNotifications` (one notification turn at a time, and
     // never one that would race a host turn); `turnStartedByNotification` is what makes this an
     // UNSOLICITED turn rather than a host one -- it decides the second `system/init` frame below, the

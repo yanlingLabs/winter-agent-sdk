@@ -147,3 +147,90 @@ test("a brokered session: sign-out -> reconnect is needs-auth (fast), sign-in ->
   // Every read of the sign-in went through the host.
   expect(resolves.filter((a) => a === account).length).toBeGreaterThanOrEqual(3);
 }, 30_000);
+
+// WS-27: the consequence 0.0.32 accepted, closed. With the MCP control subtypes beside the pump, a turn that
+// started while a reconnect was still connecting was built without that server's tools. The turn now waits for
+// the reconnect, bounded by the first-turn wait -- and waits in the TURN LOOP, so the reconnect's own
+// `credential_resolve` (answered SLOWLY here, on purpose) is still routed by the pump meanwhile.
+test("a turn that starts mid-reconnect waits for it and gets the server's tools (the brokered read answered while it waits)", async () => {
+  const name = "brk-turn-wait";
+  const account = mcpOAuthTokenAccount(fx.mcpUrl);
+  const store = createMemoryMcpOAuthStore();
+  await signIn(store);
+  const SLOW_ANSWER_MS = 1000;
+  let slowAnswers = false;
+  const script = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "c1", name: `mcp__${name}__whoami`, input: {} }] },
+    { kind: "text", text: "first done" },
+    { kind: "tool_use", calls: [{ id: "c2", name: `mcp__${name}__whoami`, input: {} }] },
+    { kind: "text", text: "second done" },
+  ]);
+  const offered: string[][] = [];
+  const generateAt: number[] = [];
+  const provider: typeof script = {
+    ...script,
+    async generate(request, ...rest) {
+      offered.push((request.tools ?? []).map((t) => t.name));
+      generateAt.push(Date.now());
+      return script.generate(request, ...rest);
+    },
+  };
+  let releaseFirst!: () => void;
+  const afterFirst = new Promise<void>((resolve) => (releaseFirst = resolve));
+  let releaseSecond!: () => void;
+  const afterSecond = new Promise<void>((resolve) => (releaseSecond = resolve));
+  async function* prompt() {
+    yield "first";
+    await afterFirst;
+    yield "second";
+    await afterSecond;
+  }
+  const q = query({
+    prompt: prompt(),
+    options: {
+      model: "winter-test/echo",
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      toolSearchEnabled: false,
+      strictMcpConfig: true,
+      settingSources: [],
+      mcpServers: { [name]: { type: "http", url: fx.mcpUrl, versionNegotiation: "legacy" } as never },
+      onCredentialResolve: async (req): Promise<CredentialResolveAnswer> => {
+        if (req.ref.account !== account) return { ok: false, reason: "not_allowed" };
+        // The reconnect's read is answered only after a delay: the reconnect is still connecting when turn 2 starts.
+        if (slowAnswers) await Bun.sleep(SLOW_ANSWER_MS);
+        const stored = await store.read(account);
+        return stored !== null ? { ok: true, material: toSessionMcpTokenRecord(stored), generation: 1 } : { ok: false, reason: "not_found" };
+      },
+      spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, provider, undefined, SHORT_TIMEOUT),
+    },
+  });
+
+  const toolOutputs: string[] = [];
+  let reconnect: Promise<{ at: number; error?: string }> | undefined;
+  let results = 0;
+  for await (const m of q) {
+    const msg = m as { type: string; message?: { content?: Array<{ content?: unknown }> } };
+    if (msg.type === "user") toolOutputs.push(String(msg.message?.content?.[0]?.content ?? ""));
+    if (msg.type !== "result") continue;
+    results++;
+    if (results === 1) {
+      // The host reconnects the server and, WITHOUT waiting for it, sends the next message.
+      slowAnswers = true;
+      reconnect = q.reconnectMcpServer!(name).then(
+        () => ({ at: Date.now() }),
+        (err: unknown) => ({ at: Date.now(), error: err instanceof Error ? err.message : String(err) }),
+      );
+      releaseFirst();
+    }
+    if (results === 2) releaseSecond();
+  }
+  const reconnected = await reconnect!;
+
+  // Turn 2's first request offered the server's tool, and the call ran on the reconnected server...
+  expect(offered[2]).toContain(`mcp__${name}__whoami`);
+  expect(toolOutputs).toEqual(["PONG-ok-read", "PONG-ok-read"]);
+  // ...because that request went out only once the reconnect had finished.
+  expect(reconnected.error).toBeUndefined();
+  expect(generateAt[2]!).toBeGreaterThanOrEqual(reconnected.at);
+}, 30_000);

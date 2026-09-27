@@ -28,7 +28,7 @@ import "./tools/impl/index.ts"; // guarantees advisor.ts's own module-load defau
 import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
 // Phase 4 Task 8 (rider 11): Lane A's own loopback MCP fixture server, reused here to prove the
 // elicitation bridge end to end through a live runEngine rather than only at the unit level.
-import { withHttpFixture } from "./mcp/test-fixtures.ts";
+import { defaultFixtureSpec, withHttpFixture, withModernHttpFixture } from "./mcp/test-fixtures.ts";
 import { inMemoryProcess } from "./testing.ts";
 import { WinterPermissionError } from "./permissions/policy-state.ts";
 // Fix round 1, MAJOR item 1 (relocated by the P4 fix wave, KNOWN item 2): the SAME fixture the
@@ -2827,6 +2827,94 @@ describe("the MCP control chain: off the pump, serial, every request answered on
     const answers = frames.filter((f) => f.type === "control_response" && ["t1", "t2"].includes((f as ControlResponseFrame).requestId)) as ControlResponseFrame[];
     expect(answers.map((a) => [a.requestId, a.ok])).toEqual([["t1", true], ["t2", true]]);
   });
+});
+
+// WS-27: a turn that starts while the host is reconnecting a server waits for that reconnect -- but a reconnect
+// that never finishes delays the turn only up to the first-turn wait's own bound, never to its connect deadline.
+describe("WS-27: a turn waits for a reconnect in flight, bounded", () => {
+  test("a reconnect that hangs delays the next turn by the first-turn bound (2 s for a settings server), not MCP_TIMEOUT", async () => {
+    // A proxy in front of a real MCP endpoint that can be told to HOLD every request (a server gone silent).
+    let holding = false;
+    let releaseHeld!: () => void;
+    const held = new Promise<void>((resolve) => (releaseHeld = resolve));
+    await withModernHttpFixture(defaultFixtureSpec(), async (target) => {
+      const proxy = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        async fetch(req) {
+          if (holding) await held;
+          const url = new URL(req.url);
+          const body = req.method === "GET" || req.method === "HEAD" ? null : await req.arrayBuffer();
+          const res = await fetch(new URL(url.pathname + url.search, target), { method: req.method, headers: req.headers, body });
+          return new Response(res.body, { status: res.status, headers: res.headers });
+        },
+      });
+      try {
+        // MCP_TIMEOUT far above the 2 s default bound, so the two cannot be confused.
+        const MCP_TIMEOUT_MS = 20_000;
+        const generateAt: number[] = [];
+        const offered: string[][] = [];
+        const provider: Provider = {
+          async generate(request) {
+            generateAt.push(Date.now());
+            offered.push((request.tools ?? []).map((t) => t.name));
+            return { kind: "text", text: "ok" };
+          },
+        };
+        const { host, runtime } = createInMemoryChannel();
+        const done = runEngine({
+          config: baseConfig({ sessionId: `ws27-hung-reconnect-${randomUUID()}`, toolSearchEnabled: false }),
+          input: runtime.input,
+          output: runtime.output,
+          provider,
+          // A SETTINGS-tier server: not an explicit host declaration, so its first-turn bound is the 2 s default.
+          extraMcpServerSources: [{ origin: "settings", servers: { slowsrv: { type: "http", url: `http://127.0.0.1:${proxy.port}/mcp` } } }],
+          env: { MCP_TIMEOUT: String(MCP_TIMEOUT_MS) },
+        });
+        const frames: WinterFrame[] = [];
+        let results = 0;
+        let secondSentAt = 0;
+        let reconnectAnsweredAt: number | undefined;
+        const reader = (async () => {
+          for await (const f of host.input) {
+            frames.push(f);
+            if (f.type === "control_response" && (f as ControlResponseFrame).requestId === "rc-1") reconnectAnsweredAt = Date.now();
+            if (f.type !== "data" || (f as { message: { type: string } }).message.type !== "result") continue;
+            results++;
+            if (results === 1) {
+              // The server goes silent; the host reconnects it and sends the next message at once.
+              holding = true;
+              host.output.write({ type: "control_request", requestId: "rc-1", subtype: "mcp_reconnect", payload: { serverName: "slowsrv" } });
+              secondSentAt = Date.now();
+              host.output.write({ type: "user", text: "again" });
+            }
+            if (results === 2) {
+              // Let the held requests through, so the reconnect settles and teardown (which waits for it) is prompt.
+              releaseHeld();
+              host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+            }
+          }
+        })();
+        host.output.write({ type: "user", text: "first" });
+        expect(await done).toBe(0);
+        await reader;
+
+        // Turn 1 had the server's tools (it connected during the first-turn wait).
+        expect(offered[0]).toContain("mcp__slowsrv__echo");
+        const delay = generateAt[1]! - secondSentAt;
+        // Turn 2 waited for the reconnect for the whole bound...
+        expect(delay).toBeGreaterThanOrEqual(2000 - 250);
+        // ...and no longer: the reconnect was still hanging when the turn went ahead.
+        expect(delay).toBeLessThan(MCP_TIMEOUT_MS / 3);
+        expect(reconnectAnsweredAt === undefined || reconnectAnsweredAt > generateAt[1]!).toBe(true);
+        // Every request was still answered once.
+        expect(frames.filter((f) => f.type === "control_response" && (f as ControlResponseFrame).requestId === "rc-1")).toHaveLength(1);
+      } finally {
+        releaseHeld();
+        proxy.stop(true);
+      }
+    });
+  }, 30_000);
 });
 
 describe("Phase 4 Task 3: system/init.mcp_servers (MUST 3)", () => {
