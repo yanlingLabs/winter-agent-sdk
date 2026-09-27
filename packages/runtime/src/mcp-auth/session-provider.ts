@@ -159,7 +159,7 @@ export function createSessionAuthProvider(opts: { serverName: string; serverUrl:
 
 /**
  * The sign-in door a `needs-auth` error names, for a brand: `<cli> mcp login <server>` and the app's MCP
- * settings. The CLI name is the home directory's token (`.winter` -> `winter`), the one brand field that
+ * settings. The CLI name is the home directory's token (the dot-dir without its dot), the one brand field that
  * IS the command a user types.
  */
 export function mcpSignInHint(brand: { homeDirName: string; productName: string }, serverName: string): string {

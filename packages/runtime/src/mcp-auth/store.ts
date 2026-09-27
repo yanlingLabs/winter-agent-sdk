@@ -33,8 +33,8 @@ export function createMemoryMcpOAuthStore(initial: Record<string, string> = {}):
 }
 
 /**
- * The macOS Keychain, one service. `service` is the host's own (Winter: `com.winter.core` on the default
- * profile, `com.winter.core.dev` on dev); absent, the SDK's `DEFAULT_KEYCHAIN_SERVICE`.
+ * The macOS Keychain, one service. `service` is the host's own (its brand's `keychainService`, per
+ * profile); absent, the SDK's `DEFAULT_KEYCHAIN_SERVICE`.
  */
 export function createKeychainMcpOAuthStore(service?: string): McpOAuthStore {
   return service === undefined ? createKeychainRawStore() : createKeychainRawStore(service);

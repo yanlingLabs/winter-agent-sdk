@@ -1,6 +1,6 @@
 // WS-25 (MCP OAuth) §2: the ONE validator for a server config's `oauth` block -- the runtime's
 // `validateServerConfig` calls it, and a host that accepts the block at its own door (Winter's daemon:
-// settings, `mcp.add`, a project's `.winter/mcp.json`) can import it from `/mcp-auth` rather than
+// settings, `mcp.add`, a project's own MCP list) can import it from `/mcp-auth` rather than
 // re-deriving the rules.
 //
 // STRICT, because the block names where a SECRET lives: an unknown key is refused rather than ignored (a
