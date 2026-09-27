@@ -108,7 +108,7 @@ import { Queue } from "./protocol/channel.ts";
 import { createRpcBridge } from "./rpc/bridge.ts";
 // Phase 4 Task 3 (MUST 4): the host->runtime MCP control-request handlers, as pure functions --
 // this file's own pump (below) becomes a thin per-subtype dispatcher over these.
-import { handleMcpStatus, handleMcpReconnect, handleMcpToggle, handleMcpSetServers, mcpServerStatesToWire } from "./rpc/mcp-control.ts";
+import { handleMcpStatus, handleMcpReconnect, handleMcpToggle, handleMcpSetServers, mcpServerStatesToWire, type McpControlResult } from "./rpc/mcp-control.ts";
 import type { McpServerStateSource } from "./mcp/state.ts";
 import type { McpControlSeam } from "./mcp/control-seam.ts";
 // Phase 4 Task 2/3 (WS-09 §2/§7/§8.1): the unbranded MCP/Tool-Search env controls, parsed once per
@@ -5718,6 +5718,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // runs -- a turn does not start until it settles -- and its runner, assigned once `performCompaction`
   // exists (a control that arrives earlier is answered `busy`).
   let controlCompaction: Promise<void> | undefined;
+  // The MCP control subtypes' own serial chain (see their dispatch in the pump): run beside the pump, in
+  // arrival order among themselves.
+  let mcpControlChain: Promise<void> = Promise.resolve();
   let compactOnControl: ((instructions: string | null) => Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }>) | undefined;
   /** True while the RUNNING turn is one a task notification started (no host input produced it). */
   let turnStartedByNotification = false;
@@ -6571,23 +6574,45 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             continue;
           }
           // Phase 4 Task 3 (MUST 4, WS-04 §3.1, WS-09 §3): the four host->runtime MCP control
-          // subtypes -- thin dispatch over rpc/mcp-control.ts's own pure handlers, mirroring
-          // set_permission_mode's own "validate/delegate/respond" shape immediately above.
+          // subtypes -- thin dispatch over rpc/mcp-control.ts's own pure handlers.
+          //
+          // NEVER AWAITED BY THE PUMP (the WS-25 reconnect fix). A reconnect/enable/setServers connects a
+          // server, and a connect can need a HOST answer -- a host-brokered OAuth token over
+          // `credential_resolve`, a refresh over `mcp_oauth_refresh` -- that only THIS pump routes back.
+          // Awaited inline, the answer sat unread until the connect's own bound fired: a signed-in server's
+          // reconnect after a sign-in failed "the sign-in check exceeded MCP_TIMEOUT" (the slot `failed`,
+          // never `connected`), and every later control request queued behind it. So the work runs beside
+          // the pump (like `compact` below), answered when it settles. The four stay SERIALISED among
+          // themselves on one chain -- a toggle after a reconnect of the same slot, or a status after
+          // either, is still handled in arrival order, exactly as the inline await ordered them.
           if (cf.subtype === "mcp_status" || cf.subtype === "mcp_reconnect" || cf.subtype === "mcp_toggle" || cf.subtype === "mcp_set_servers") {
             const mcpDeps = { ...(effectiveMcpStateSource !== undefined ? { stateSource: effectiveMcpStateSource } : {}), ...(effectiveMcpControlSeam !== undefined ? { controlSeam: effectiveMcpControlSeam } : {}) };
-            const result =
-              cf.subtype === "mcp_status"
-                ? await handleMcpStatus(mcpDeps)
-                : cf.subtype === "mcp_reconnect"
-                  ? await handleMcpReconnect(mcpDeps, cf.payload)
-                  : cf.subtype === "mcp_toggle"
-                    ? await handleMcpToggle(mcpDeps, cf.payload)
-                    : await handleMcpSetServers(mcpDeps, cf.payload);
-            output.write(
-              result.ok
-                ? { type: "control_response", requestId: cf.requestId, ok: true, ...(result.payload !== undefined ? { payload: result.payload } : {}) }
-                : { type: "control_response", requestId: cf.requestId, ok: false, error: result.error },
-            );
+            const subtype = cf.subtype;
+            const requestId = cf.requestId;
+            const payload = cf.payload;
+            mcpControlChain = mcpControlChain.then(async () => {
+              let result: McpControlResult;
+              try {
+                result =
+                  subtype === "mcp_status"
+                    ? await handleMcpStatus(mcpDeps)
+                    : subtype === "mcp_reconnect"
+                      ? await handleMcpReconnect(mcpDeps, payload)
+                      : subtype === "mcp_toggle"
+                        ? await handleMcpToggle(mcpDeps, payload)
+                        : await handleMcpSetServers(mcpDeps, payload);
+              } catch (err) {
+                // The handlers answer every failure structured; this is only the never-a-dropped-request floor.
+                result = { ok: false, error: { code: `${subtype}_failed`, message: err instanceof Error ? err.message : String(err) } };
+              }
+              output.write(
+                result.ok
+                  ? { type: "control_response", requestId, ok: true, ...(result.payload !== undefined ? { payload: result.payload } : {}) }
+                  : { type: "control_response", requestId, ok: false, error: result.error },
+              );
+            }).catch(() => {
+              /* a write after the session ended: nothing left to answer */
+            });
             continue;
           }
           // WS-04 §3.1: an unrecognized subtype gets a structured error response, never a dropped

@@ -6,6 +6,20 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
+### MCP reconnect (host-brokered sign-ins)
+
+#### Fixes
+
+- `Query.reconnectMcpServer` (the runtime's `mcp_reconnect`) on a host-brokered session no longer
+  deadlocks against its own sign-in read. The engine's input pump awaited the MCP control subtypes
+  (`mcp_reconnect`, `mcp_toggle`, `mcp_set_servers`) inline, and a reconnect of an OAuth `http`/`sse`
+  server reads the sign-in over `credential_resolve` -- whose answer only that same pump routes back.
+  So a reconnect after a sign-in (or a sign-out) failed with "the sign-in check exceeded <MCP_TIMEOUT>ms"
+  (the slot `failed`, never `connected`/`needs-auth`), and every later control request queued behind it.
+  The four MCP control subtypes now run beside the pump on one serial chain (arrival order among
+  themselves kept) and answer when they settle, like `compact`. Pinned by
+  `mcp-auth/brokered-reconnect.test.ts` (sign-out -> needs-auth, sign-in -> connected, the tool runs again).
+
 ## 0.0.31
 
 ### Init order (credential before init)
