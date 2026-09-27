@@ -77,7 +77,7 @@ import { DEFAULT_OUTPUT_STYLE } from "@yanlinglabs/winter-agent-sdk";
 // one as a parameter -- two entrypoints, two policies, and NEITHER of them the catalog-first
 // selection R6-9 requires. Now both call this module and this module calls one builder.
 import { buildSessionProvider, resolveSessionKeychainService, type SessionProviderOptions, type SessionProviderWiring } from "./provider/session-provider.ts";
-import { resolveSessionMcpOAuthStore, type McpOAuthStore } from "./mcp-auth/store.ts";
+import { mcpOAuthTestStoreEnvName, resolveSessionMcpOAuthStore, type McpOAuthStore } from "./mcp-auth/store.ts";
 import type { ProviderStateRecordInput } from "./store/provider-state.ts";
 import type { Provider } from "./engine.ts";
 import type { ClassifierInterface } from "./permissions/auto/engine.ts";
@@ -752,6 +752,10 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // Winter", which is precisely the failure the profile exists to make impossible. One fallback,
   // one place, and every consumer below is handed a real profile.
   const brand = config.brand ?? WINTER_BRAND;
+  // WS-25: the MCP sign-in test seam is read from the ORIGINAL process env, HERE, before any settings
+  // tier's `env` block is merged into `env` below -- a settings file must never be able to move the
+  // session's sign-ins (and every tier refuses the name as well, settings/env-filter.ts).
+  const mcpOAuthTestStoreFile = env[mcpOAuthTestStoreEnvName(brand)];
   const winterHome = opts.winterHome ?? config.winterHome ?? resolveWinterHome(env, brand);
   // WS-21 §3.7/§6.3 item 11: the child reads these from its OWN env, exactly like `WINTER_HOME`
   // above -- `query.ts` maps neither of them, so this is the only place either name is read.
@@ -1841,7 +1845,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       extraMcpServerSources,
       // WS-25: the SAME service every other `{ kind: "keychain" }` credential of this session resolves
       // under. Lazy: nothing touches the Keychain until a remote MCP server actually connects.
-      mcpOAuthStore: resolveSessionMcpOAuthStore({ keychainService: resolveSessionKeychainService(config), env }),
+      mcpOAuthStore: resolveSessionMcpOAuthStore({ keychainService: resolveSessionKeychainService(config), testStoreFile: mcpOAuthTestStoreFile }),
       initSlashCommands,
       initSkills,
       initPlugins,

@@ -9,7 +9,7 @@
 //
 // HERMETIC: loopback only, a temp WINTER_HOME, no paid API, and NO KEYCHAIN -- the fixture's throwaway
 // tokens live in a temp file named by `WINTER_TEST_MCP_OAUTH_STORE_FILE`, the runtime's one named test
-// seam for this (mcp-auth/store.ts). A Keychain item written by this bun process would prompt when the
+// seam for this (mcp-auth/store.ts), honoured because the session names a throwaway Keychain service. A Keychain item written by this bun process would prompt when the
 // compiled binary (another signing identity) read it.
 //
 // THE LEGS, in order, against ONE fixture authorization server + protected MCP server
@@ -143,6 +143,8 @@ async function legSession(winterBin: string, fx: FixtureAs, storeFile: string, l
   try {
     const config = {
       sessionId: `verify-mcp-oauth-${leg}`,
+      // The test store is honoured only for an explicit, non-default Keychain service (mcp-auth/store.ts).
+      keychainService: "com.winter.test.verify-mcp-oauth",
       cwd: REPO_ROOT,
       model: MODEL,
       provider: { providerId: "anthropic", authRef: { kind: "inline", value: "test" }, connection: { baseUrl: model.url, local: true } },

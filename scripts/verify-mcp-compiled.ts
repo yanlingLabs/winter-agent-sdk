@@ -157,6 +157,8 @@ async function runLeg(binPath: string, leg: Leg, modernUrl?: string): Promise<vo
   try {
     const config = {
       sessionId: `verify-mcp-compiled-${leg}`,
+      // WS-25: a throwaway service, so the MCP sign-in test store below is honoured (never the real Keychain).
+      keychainService: "com.winter.test.verify-mcp-compiled",
       cwd: REPO_ROOT,
       model: MODEL,
       provider: { providerId: "anthropic", authRef: { kind: "inline", value: "test" }, connection: { baseUrl: fake.url, local: true } },
