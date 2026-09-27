@@ -256,6 +256,13 @@ export async function buildPackages(opts: { root?: string; packages?: readonly P
       "--format=esm",
       "--packages=external",
       "--splitting",
+      // WS-25: the common root is STATED, not inferred. Measured on bun 1.3.14: with a ninth entry (the
+      // runtime's `./mcp-auth`) bun stopped computing the common root of the entrypoints and emitted every
+      // entry under `dist/src/...`, so `dist/index.js` did not exist; dropping ANY one entry (or adding any
+      // other ninth) flips it back and forth. Every entry lives under `src/` (the header above), so `src`
+      // IS the root on every package, and saying so makes the mirror independent of the entry count.
+      "--root",
+      "src",
       "--outdir",
       "dist",
     ];
