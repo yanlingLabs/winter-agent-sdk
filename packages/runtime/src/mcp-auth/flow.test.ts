@@ -6,8 +6,8 @@ import { activeMcpOAuthLoginCount, startMcpOAuthLogin } from "./login.ts";
 import { refreshMcpOAuthToken } from "./refresh.ts";
 import { revokeMcpOAuth } from "./revoke.ts";
 import { createHostBrokeredMcpOAuthStore, createMemoryMcpOAuthStore, MCP_OAUTH_HOST_HELD_REFRESH_TOKEN, readClientRecord, readTokenRecord, writeTokenRecord, type McpOAuthStore } from "./store.ts";
-import { decodeMcpOAuthClientSecretItem, encodeMcpOAuthClientSecretItem } from "./records.ts";
-import { fetchAuthorizationServerMetadataDocument } from "./discovery.ts";
+import { decodeMcpOAuthClientSecretItem, encodeMcpOAuthClientSecretItem, sameIssuer } from "./records.ts";
+import { discoverMcpOAuthIssuer, fetchAuthorizationServerMetadataDocument } from "./discovery.ts";
 import { createMcpAuthFetch } from "./fetch-policy.ts";
 import { startFixtureAs, type FixtureAs, type FixtureAsOptions } from "./test-fixture-as.ts";
 
@@ -68,6 +68,7 @@ describe("sign-in: DCR", () => {
     const { login, callbackStatus, outcome } = await signIn(fx, store);
     expect(outcome).toEqual({ ok: true });
     expect(callbackStatus).toBe(200);
+    expect(login.issuer).toBe(fx.issuer);
     expect(login.issuerOrigin).toBe(fx.origin);
     expect(login.authorizeOrigin).toBe(fx.origin);
     const token = await readTokenRecord(store, mcpOAuthTokenAccount(fx.mcpUrl));
@@ -224,6 +225,7 @@ describe("sign-in: CIMD and pre-registered clients", () => {
       const store = createMemoryMcpOAuthStore();
       const { outcome, login } = await signIn(fx, store, { oauth: { authServerMetadataUrl: metadataUrl } });
       expect(outcome).toEqual({ ok: true });
+      expect(login.issuer).toBe(`http://127.0.0.1:${doc.port}`);
       expect(login.issuerOrigin).toBe(`http://127.0.0.1:${doc.port}`);
       expect((await readClientRecord(store, mcpOAuthClientAccount(fx.mcpUrl)))!.authorizationServerUrl).toBe(metadataUrl);
       expect(await refreshMcpOAuthToken({ account: mcpOAuthTokenAccount(fx.mcpUrl), store })).toEqual({ ok: true, generation: 2 });
@@ -290,6 +292,129 @@ describe("sign-in: CIMD and pre-registered clients", () => {
     } finally {
       srv.stop(true);
     }
+  });
+});
+
+// WS-25 cross-lane fix: the daemon compared authorization servers by ORIGIN alone, so two tenants behind
+// one reverse-proxy origin looked identical. `discoverMcpOAuthIssuer` runs the SAME two discovery steps
+// `startMcpOAuthLogin` does -- with no registration, no code exchange, no store and no listener -- so a
+// caller can tell them apart (`sameIssuer`, never `issuerOrigin`) before, or without, an interactive sign-in.
+describe("discoverMcpOAuthIssuer: side-effect-free issuer discovery", () => {
+  test("matches a DCR sign-in's own issuer exactly, and touches only the AS's discovery endpoints", async () => {
+    const fx = fixture();
+    const discovered = await discoverMcpOAuthIssuer({ serverUrl: fx.mcpUrl });
+    expect(discovered.issuer).toBe(fx.issuer);
+    expect(discovered.issuerOrigin).toBe(fx.origin);
+    expect(discovered.authorizeOrigin).toBe(fx.origin);
+    // No registration, no code exchange, no listener: only GETs against the well-known endpoints.
+    expect(fx.log.every((l) => l.startsWith("GET /.well-known/"))).toBe(true);
+    expect(fx.registrations).toEqual([]);
+    expect(fx.tokenPosts).toEqual([]);
+    expect(fx.authorizeRedirects).toEqual([]);
+    expect(activeMcpOAuthLoginCount()).toBe(0);
+
+    // A sign-in on the same server stores the SAME issuer this door reported, in advance of it running.
+    const store = createMemoryMcpOAuthStore();
+    const { outcome } = await signIn(fx, store);
+    expect(outcome).toEqual({ ok: true });
+    expect((await readTokenRecord(store, mcpOAuthTokenAccount(fx.mcpUrl)))!.issuer).toBe(discovered.issuer);
+  });
+
+  test("the legacy variant (no metadata anywhere) reports the same issuer a sign-in would store", async () => {
+    const fx = fixture({ metadata: false });
+    const discovered = await discoverMcpOAuthIssuer({ serverUrl: fx.mcpUrl });
+    // No RFC 8414 document anywhere: the issuer is the server's own base URL, exactly as a sign-in's
+    // legacy fallback computes it (`new URL("/", serverUrl)`) -- note the trailing slash.
+    expect(discovered.issuer).toBe(new URL("/", fx.mcpUrl).toString());
+    const store = createMemoryMcpOAuthStore();
+    const { outcome } = await signIn(fx, store);
+    expect(outcome).toEqual({ ok: true });
+    expect(sameIssuer((await readTokenRecord(store, mcpOAuthTokenAccount(fx.mcpUrl)))!.issuer, discovered.issuer)).toBe(true);
+  });
+
+  test("a configured oauth.authServerMetadataUrl is discovered without ever probing the MCP server or registering", async () => {
+    const fx = fixture({ metadata: false, issParameter: false });
+    const doc: ReturnType<typeof Bun.serve> = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (req): Response =>
+        new URL(req.url).pathname === "/.well-known/oauth-authorization-server"
+          ? Response.json({ issuer: `http://127.0.0.1:${doc.port}`, authorization_endpoint: `${fx.origin}/authorize`, token_endpoint: `${fx.origin}/token`, response_types_supported: ["code"], code_challenge_methods_supported: ["S256"] })
+          : new Response("not found", { status: 404 }),
+    });
+    try {
+      const metadataUrl = `http://127.0.0.1:${doc.port}/.well-known/oauth-authorization-server`;
+      const discovered = await discoverMcpOAuthIssuer({ serverUrl: fx.mcpUrl, oauth: { authServerMetadataUrl: metadataUrl } });
+      expect(discovered.issuer).toBe(`http://127.0.0.1:${doc.port}`);
+      expect(discovered.issuerOrigin).toBe(`http://127.0.0.1:${doc.port}`);
+      expect(discovered.authorizeOrigin).toBe(fx.origin); // the document's own authorization_endpoint
+      expect(fx.log).toEqual([]); // the config already names the AS: the MCP server itself is never probed
+    } finally {
+      doc.stop(true);
+    }
+  });
+
+  test("two tenants behind one reverse-proxy origin report DIFFERENT issuers -- the daemon's motivating bug", async () => {
+    const served: Record<string, unknown> = {};
+    const srv = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (req) => (served[new URL(req.url).pathname] !== undefined ? Response.json(served[new URL(req.url).pathname]) : new Response("nf", { status: 404 })) });
+    const origin = `http://127.0.0.1:${srv.port}`;
+    const docFor = (issuer: string) => ({ issuer, authorization_endpoint: `${origin}/a`, token_endpoint: `${origin}/t`, response_types_supported: ["code"] });
+    served["/.well-known/oauth-authorization-server/tenant/a"] = docFor(`${origin}/tenant/a`);
+    served["/.well-known/oauth-authorization-server/tenant/b"] = docFor(`${origin}/tenant/b`);
+    try {
+      const a = await discoverMcpOAuthIssuer({ serverUrl: `${origin}/mcp`, oauth: { authServerMetadataUrl: `${origin}/.well-known/oauth-authorization-server/tenant/a` } });
+      const b = await discoverMcpOAuthIssuer({ serverUrl: `${origin}/mcp`, oauth: { authServerMetadataUrl: `${origin}/.well-known/oauth-authorization-server/tenant/b` } });
+      expect(a.issuer).not.toBe(b.issuer);
+      expect(sameIssuer(a.issuer, b.issuer)).toBe(false);
+      // Yet an origin-only comparison (the bug this function fixes) would wrongly call them one server.
+      expect(a.issuerOrigin).toBe(b.issuerOrigin);
+    } finally {
+      srv.stop(true);
+    }
+  });
+
+  test("a spoofed metadata document claiming another host's issuer is refused, never returned as discovered", async () => {
+    const legit = fixture();
+    const evilHits: string[] = [];
+    const evil: ReturnType<typeof Bun.serve> = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(req): Promise<Response> {
+        const path = new URL(req.url).pathname;
+        evilHits.push(`${req.method} ${path}`);
+        if (path === "/.well-known/oauth-authorization-server") {
+          return Response.json({ issuer: legit.issuer, authorization_endpoint: `http://127.0.0.1:${evil.port}/authorize`, token_endpoint: `http://127.0.0.1:${evil.port}/token`, response_types_supported: ["code"], code_challenge_methods_supported: ["S256"] });
+        }
+        await req.text();
+        return new Response("no", { status: 400 });
+      },
+    });
+    try {
+      const err = await discoverMcpOAuthIssuer({ serverUrl: legit.mcpUrl, oauth: { authServerMetadataUrl: `http://127.0.0.1:${evil.port}/.well-known/oauth-authorization-server` } }).catch((e: unknown) => e);
+      expect((err as { code?: string }).code).toBe("metadata_issuer_mismatch");
+      // Only the document itself was ever fetched from the attacker.
+      expect(evilHits).toEqual(["GET /.well-known/oauth-authorization-server"]);
+    } finally {
+      evil.stop(true);
+    }
+  });
+
+  test("a document not published at its own well-known location is refused (path-issuer at the root)", async () => {
+    const served: Record<string, unknown> = {};
+    const srv = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (req) => (served[new URL(req.url).pathname] !== undefined ? Response.json(served[new URL(req.url).pathname]) : new Response("nf", { status: 404 })) });
+    const origin = `http://127.0.0.1:${srv.port}`;
+    served["/.well-known/oauth-authorization-server"] = { issuer: `${origin}/tenant/x`, authorization_endpoint: `${origin}/a`, token_endpoint: `${origin}/t`, response_types_supported: ["code"] };
+    try {
+      const err = await discoverMcpOAuthIssuer({ serverUrl: `${origin}/mcp`, oauth: { authServerMetadataUrl: `${origin}/.well-known/oauth-authorization-server` } }).catch((e: unknown) => e);
+      expect((err as { code?: string }).code).toBe("metadata_issuer_mismatch");
+    } finally {
+      srv.stop(true);
+    }
+  });
+
+  test("a refused server URL is refused typed, before any network request", async () => {
+    const err = await discoverMcpOAuthIssuer({ serverUrl: "http://169.254.169.254/mcp" }).catch((e: unknown) => e);
+    expect((err as { code?: string }).code).toBe("policy_refused");
   });
 });
 
