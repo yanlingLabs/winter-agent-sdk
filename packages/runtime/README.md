@@ -55,7 +55,9 @@ each session needs its own JavaScript realm: run one session per Bun `Worker`.
   (`process.kill(-pgid, "SIGKILL")`). After a clean exit the list is empty.
 - `@yanlinglabs/winter-agent-runtime/embedded-worker` — the Worker entry. A compiled
   (`bun build --compile`) host passes its own one-line worker file as an extra entrypoint and
-  constructs the Worker from that file's plain relative path.
+  constructs the Worker from that file's plain relative path. Compile the host with
+  `--no-compile-autoload-bunfig --no-compile-autoload-dotenv`, as the `winter` binary is: a session
+  runs in a user's repository, and otherwise the binary reads that directory's `bunfig.toml` and `.env`.
 - `@yanlinglabs/winter-agent-runtime/embedded` — `runEmbeddedSession(...)`, one session with every
   process global (argv, env, stdio, exit) as a parameter.
 - `@yanlinglabs/winter-agent-runtime/workflow-worker` — the Workflow tool's sandboxed worker entry,

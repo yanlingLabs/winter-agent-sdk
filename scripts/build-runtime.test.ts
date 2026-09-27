@@ -7,10 +7,10 @@
 // existing run (Task S.1's own checkpoint), never re-proven here with a second full build.
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertBinaryDoesNotEmbedPath, copyCheckoutExcludingGit } from "./build-runtime.ts";
+import { assertBinaryDoesNotEmbedPath, COMPILE_NO_AUTOLOAD_FLAGS, copyCheckoutExcludingGit } from "./build-runtime.ts";
 
 const temps: string[] = [];
 afterAll(() => {
@@ -99,5 +99,19 @@ describe("buildRuntime's mutual-exclusivity guard (no build triggered)", () => {
   test("`out` and `platformPackage` together throw before any compile is attempted", async () => {
     const { buildRuntime } = await import("./build-runtime.ts");
     await expect(buildRuntime({ out: "/tmp/x", platformPackage: true })).rejects.toThrow(/mutually exclusive/);
+  });
+});
+
+// Lane no-autoload: the compiled `winter` must never read the bunfig.toml / .env of the directory it
+// is started in (a session's cwd is an arbitrary user repository). `verify:compiled` proves it on the
+// real binary; this pins the flags cheaply, and that the one shipped compile passes them.
+describe("buildRuntime compiles with the cwd autoloads off (no build triggered)", () => {
+  test("the flag set is exactly bunfig + dotenv off", () => {
+    expect([...COMPILE_NO_AUTOLOAD_FLAGS]).toEqual(["--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv"]);
+  });
+
+  test("the `bun build --compile` invocation spreads them", () => {
+    const src = readFileSync(join(import.meta.dir, "build-runtime.ts"), "utf8");
+    expect(src).toContain('"build", "--compile", ...COMPILE_NO_AUTOLOAD_FLAGS, entrypoint');
   });
 });

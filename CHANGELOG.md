@@ -6,6 +6,12 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
+### Security (no-autoload)
+
+- The compiled `winter` runtime no longer reads a `bunfig.toml` or `.env` file from the directory it
+  is started in. It runs with the session's working directory, so previously a repository's own
+  files could change how the runtime started. `verify:compiled` now proves this on the built binary.
+
 ## 0.0.28
 
 ### Engine (WS-24)

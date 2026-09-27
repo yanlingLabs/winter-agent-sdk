@@ -56,6 +56,21 @@ const ENTRYPOINT_REL = "packages/runtime/src/main.ts";
 const DEFAULT_OUT = fileURLToPath(new URL("../dist/winter", import.meta.url));
 const PLATFORM_PACKAGE_OUT = fileURLToPath(new URL("../packages/platform/darwin-arm64/bin/winter", import.meta.url));
 
+/**
+ * SECURITY (lane no-autoload): a `bun build --compile` binary, by default, reads the `bunfig.toml`
+ * and the `.env` files of the directory it is STARTED in -- a `preload` there runs as this binary,
+ * and `.env` values land in `process.env`. The `winter` child is spawned with the SESSION's cwd,
+ * which is whatever repository the user opened, so a cloned repo could run code as Winter before
+ * any sandbox, hook or approval exists. Both are switched off at compile time; the setting is
+ * baked into the executable, so every invocation of it (any argv, including the
+ * `__workflow-worker` self-spawn) inherits it. Bun's two other runtime autoloads (tsconfig.json,
+ * package.json) already default OFF for compiled binaries. Norma's own `compile`/`compile:core`
+ * carry the same two flags; its release row-16 rebuild runs THIS script, so they cannot drift.
+ * Not covered, and not ours to cover: `BUN_BE_BUN=1` in the environment turns any compiled bun
+ * binary back into `bun` -- that needs control of the spawner's env, which is already game over.
+ */
+export const COMPILE_NO_AUTOLOAD_FLAGS = ["--no-compile-autoload-bunfig", "--no-compile-autoload-dotenv"] as const;
+
 export interface BuildRuntimeOptions {
   out?: string; // explicit output path — wins over platformPackage
   platformPackage?: boolean; // stage into packages/platform/darwin-arm64/bin/winter
@@ -140,7 +155,7 @@ export async function buildRuntime(opts: BuildRuntimeOptions = {}): Promise<Buil
     const entrypoint = join(copyRoot, ENTRYPOINT_REL);
     // process.execPath under bun IS the bun binary (matches transport-equivalence.test.ts's own
     // spawnHook precedent for invoking bun itself rather than trusting a "bun" on PATH).
-    const proc = Bun.spawn([process.execPath, "build", "--compile", entrypoint, "--outfile", outPath], {
+    const proc = Bun.spawn([process.execPath, "build", "--compile", ...COMPILE_NO_AUTOLOAD_FLAGS, entrypoint, "--outfile", outPath], {
       cwd: scratchCwd,
       stdout: "pipe",
       stderr: "pipe",

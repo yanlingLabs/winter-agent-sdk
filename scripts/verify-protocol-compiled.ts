@@ -14,7 +14,7 @@
 //
 // On CI (ubuntu) this compiles a LINUX binary via the direct --out path — the darwin platform
 // package is never exercised there (that resolution path has its own darwin-only test instead).
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -124,6 +124,78 @@ async function verifyCatalogInBinary(binPath: string): Promise<void> {
   }
 }
 
+/**
+ * Lane no-autoload: THE BINARY IGNORES ITS CWD'S bunfig.toml AND .env.
+ *
+ * The `winter` child is spawned with the session's cwd -- an arbitrary repository the user opened.
+ * A `bun build --compile` binary by default loads that directory's `bunfig.toml` (whose `preload`
+ * would run as Winter, before any sandbox or approval) and its `.env` (into `process.env`).
+ * `build-runtime.ts` compiles with both switched off; this runs the REAL binary from a hostile cwd
+ * and proves neither took effect.
+ *
+ * Each negative leg has a positive control, so a green result cannot be a probe that sees nothing:
+ *   - bunfig: plain `bun` run in the same directory DOES execute the preload (the fixture is live);
+ *   - .env: the binary started with the same variable EXPORTED names it in a fatal error
+ *     (`assertRecognizedTestProviderEnv`, checked before anything else in a session), so the
+ *     variable is observable -- and the hostile-cwd run must not name it.
+ * The env is narrow on purpose: a `.env` never overrides a variable that is already set, so an
+ * inherited `WINTER_TEST_PROVIDER` would make the negative leg vacuous; `WINTER_HOME` is a temp dir
+ * because this production entry otherwise falls through to `~/.winter`.
+ */
+async function verifyCwdAutoloadIgnored(binPath: string): Promise<void> {
+  const hostile = mkdtempSync(join(tmpdir(), "winter-verify-noautoload-cwd-"));
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-verify-noautoload-home-"));
+  const envMarker = "winter-noautoload-dotenv-marker";
+  const preloadMarker = join(hostile, "PRELOAD_RAN");
+  try {
+    writeFileSync(join(hostile, "bunfig.toml"), 'preload = ["./preload.ts"]\n');
+    writeFileSync(join(hostile, "preload.ts"), `require("node:fs").writeFileSync(${JSON.stringify(preloadMarker)}, "ran");\n`);
+    writeFileSync(join(hostile, ".env"), `WINTER_TEST_PROVIDER=${envMarker}\n`);
+    writeFileSync(join(hostile, "noop.ts"), "\n");
+    const baseEnv = { PATH: process.env["PATH"] ?? "", HOME: winterHome, WINTER_HOME: winterHome };
+
+    console.log("verify:compiled — probing that the binary ignores its cwd's bunfig.toml and .env...");
+    // Positive control (bunfig): bun itself honours the fixture.
+    const control = Bun.spawnSync([process.execPath, "run", "noop.ts"], { cwd: hostile, env: baseEnv, stdout: "pipe", stderr: "pipe" });
+    if (!existsSync(preloadMarker)) throw new Error(`verify:compiled: the hostile bunfig fixture is inert even under plain bun (exit ${control.exitCode}) -- the probe below would prove nothing`);
+    rmSync(preloadMarker, { force: true });
+
+    const run = async (env: Record<string, string>): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
+      const proc = Bun.spawn([binPath, "--run", "--config-json", JSON.stringify({ sessionId: "verify-noautoload", cwd: hostile })], {
+        cwd: hostile,
+        env,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.write(encodeFrame({ type: "control_request", requestId: "c1", subtype: "end_input", payload: undefined }));
+      proc.stdin.flush();
+      await proc.stdin.end();
+      const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    // Positive control (.env): the variable, when really in the environment, is observable.
+    const exported = await run({ ...baseEnv, WINTER_TEST_PROVIDER: envMarker });
+    if (!exported.stderr.includes(envMarker)) throw new Error(`verify:compiled: an EXPORTED WINTER_TEST_PROVIDER was not observable (exit ${exported.exitCode}) -- the .env probe below would prove nothing\n${exported.stderr}`);
+    if (existsSync(preloadMarker)) throw new Error("verify:compiled: the compiled binary RAN its cwd's bunfig.toml preload");
+
+    // The subject: the same binary, same cwd, the variable only in the cwd's .env.
+    const hostileRun = await run(baseEnv);
+    if (existsSync(preloadMarker)) throw new Error("verify:compiled: the compiled binary RAN its cwd's bunfig.toml preload");
+    if (hostileRun.stderr.includes(envMarker) || hostileRun.stdout.includes(envMarker)) {
+      throw new Error(`verify:compiled: the compiled binary LOADED its cwd's .env (WINTER_TEST_PROVIDER reached process.env)\n${hostileRun.stderr}`);
+    }
+    // And it really ran a session there (not an early death that would also "load nothing").
+    const initFrame = splitFrames(hostileRun.stdout, "").frames.map((f) => (f as { message?: { type?: string; subtype?: string } }).message).find((m) => m?.type === "system" && m?.subtype === "init");
+    if (initFrame === undefined) throw new Error(`verify:compiled: the hostile-cwd session emitted no system/init frame (exit ${hostileRun.exitCode})\n${hostileRun.stderr}`);
+    console.log("verify:compiled OK — the compiled binary ignores its cwd's bunfig.toml (no preload) and .env (nothing in process.env)");
+  } finally {
+    rmSync(hostile, { recursive: true, force: true });
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
 if (import.meta.main) {
   const workDir = mkdtempSync(join(tmpdir(), "winter-verify-compiled-"));
   const binPath = join(workDir, "winter");
@@ -135,6 +207,7 @@ if (import.meta.main) {
     // bundling, every provider scenario in the suite below fails for one reason and reports it as
     // twenty.
     await verifyCatalogInBinary(binPath);
+    await verifyCwdAutoloadIgnored(binPath);
 
     console.log(`verify:compiled — running the transport-equivalence suite with WINTER_COMPILED_BIN=${binPath} ...`);
     const proc = Bun.spawn([process.execPath, "test", "packages/sdk/src/transport-equivalence.test.ts"], {
