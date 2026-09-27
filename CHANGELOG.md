@@ -6,6 +6,8 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
+## 0.0.32
+
 ### MCP reconnect (host-brokered sign-ins)
 
 #### Fixes
