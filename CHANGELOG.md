@@ -6,6 +6,88 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
+### MCP (WS-27)
+
+#### Fixes
+
+- A turn that starts while an MCP server is reconnecting now waits for the reconnect, so it gets that
+  server's tools. This closes the consequence 0.0.32 accepted. The connecting control subtypes
+  (`mcp_reconnect`, `mcp_toggle`, `mcp_set_servers`) are recorded when the pump dispatches them. The
+  turn loop waits for the outstanding ones at turn start, with the first-turn wait's scope (only the
+  engine's own MCP lifecycle, never a host-owned stack) and its bound (`firstTurnMcpWaitMs()`: 2 s, or
+  `MCP_TIMEOUT` for an explicit host server). A reconnect that never finishes delays the turn only up
+  to that bound. The wait runs in the turn loop, never in the input pump, so a brokered reconnect's
+  `credential_resolve` is still answered while the turn waits. Pinned by
+  `mcp-auth/brokered-reconnect.test.ts`, where the host answers the reconnect's sign-in read late, and
+  `engine.test.ts`, where a hung reconnect holds the turn for the 2 s bound, not the 20 s
+  `MCP_TIMEOUT`.
+- An elicitation that stops mattering is now cancelled all the way to the host. `Options.onElicitation`'s
+  `options.signal` now aborts when:
+  - the MCP server cancels its `elicitation/create`;
+  - the originating call is cancelled, for a 2026-07-28 `input_required` elicitation;
+  - the tool call that raised it ends, including on a turn interrupt;
+  - the query is aborted.
+
+  The runtime sends a `control_cancel_request` and answers the server `cancel`. A host answer that
+  arrives afterwards is dropped and never written. MCP tool calls now carry the tool execution's abort,
+  which sends `notifications/cancelled`. A 2025-era server-to-client request does not say which call
+  raised it, so the elicitation is cancelled once every tool call that was in flight on that connection
+  when it arrived has ended. With one call in flight that is exact; with several, it is never early.
+  Before this, the host's prompt stayed up until the host's own timeout.
+
+#### Added
+
+- **The exact MCP server identity on tool calls** (Winter-only, optional; absent on older runtimes):
+  - `winter_mcp_server: { name, config_name, read_only_hint? }` on the PreToolUse, PostToolUse and
+    PostToolUseFailure hook input. Both input builders carry it: the SDK callback's and a command
+    hook's stdin. The type is `WinterMcpServerHookField`.
+  - `mcpServer: { name, configName, readOnlyHint? }` on `canUseTool`'s options. The type is
+    `McpServerIdentity`.
+
+  The fields mean:
+  - `name` is the server as it appears in the called tool's name, after any rename. A subagent
+    definition's inline server that collides is connected as `srv_2`, and `name` is then `srv_2`.
+  - `config_name`/`configName` is the key before the rename. For a plugin server, it is the raw name
+    its `.mcp.json` declares.
+  - `read_only_hint`/`readOnlyHint` is the tool's own `annotations.readOnlyHint`, only when the server
+    states it.
+
+  The engine computes the identity once per call from the name the model called. A renamed server's
+  gating hook can run under its declared spelling, which the registry resolves to a different server.
+  The identity covers the in-process `sdk` servers too.
+
+### Provider catalog (WS-27)
+
+- **Tool-calling evidence, NVIDIA.** 26 rows are now `native` and 16 are `none`.
+  - Where the model page's structured capability record (`modelCapability.functionCalling`) states it,
+    the row is `declared`.
+  - It is `inferred` where the build page is gone or silent and the evidence is the model reference or
+    NIM guide instead. That covers kimi-k2.6, llama-4-maverick, the two llama-3.2 vision rows,
+    llama-3.2-3b and devstral-2.
+  - The two nemotron content-safety classifiers are `none` at `inferred`: their pages' capability
+    record says `functionCalling: true`, and the ruling overrides that on the model's purpose.
+  - `stockmark-2-100b-instruct` stays `unknown`.
+- **Tool-calling evidence, Anthropic-dialect endpoints.** An official vendor page telling users to point
+  Claude Code at the endpoint counts as tool-use evidence, at `inferred`. These rows are now `native`:
+  Tencent Token Plan (12), Tencent Coding Plan (2), Qianfan Coding Plan (8), Z.AI (6) and AgentRouter's
+  two Claude Opus rows. These stay `unknown`:
+  - Wafer's four rows: the cited pages no longer exist, and the live docs describe only an
+    OpenAI-compatible endpoint.
+  - AgentRouter's `gpt-5.6-sol`: the guide routes only the Opus models over Anthropic.
+  - `qianfan-anthropic`'s ERNIE rows, the two `hy-role` rows and tabitoken.
+- **Space Bunny** (a stealth model with an undisclosed maker; no family is stated, so both rows stamp
+  `other`):
+  - `opencode/space-bunny-free` and `openrouter/stealth/space-bunny-alpha`.
+  - Both are free for a limited time. The zero price is recorded with its observation date,
+    2026-09-27.
+  - The data-handling terms are on the provider rows' risk reasons. Zen's vendor claims zero retention;
+    under OpenRouter's stealth terms, prompts and completions may be collected for training.
+  - The OpenRouter row carries OpenRouter's own entry: 1M context, 524,288 output tokens,
+    text/image/video input, `native` tools, and mandatory reasoning with efforts `max`…`low` (default
+    `max`).
+  - The Zen row states only what Zen's docs state. Tool calling stays fail-closed `unknown`, and there
+    is no context, modality or effort data, because the only other source is a third-party mirror.
+
 ## 0.0.32
 
 ### MCP reconnect (host-brokered sign-ins)
