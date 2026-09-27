@@ -164,7 +164,7 @@ function validateServerConfig(raw: unknown): { ok: true; config: McpServerConfig
   const oauth = (raw as { oauth?: unknown }).oauth;
   if (oauth !== undefined) {
     if (type !== "http" && type !== "sse") return { ok: false, reason: "'oauth' applies only to a remote (http/sse) MCP server" };
-    const reason = validateMcpOAuthConfig(oauth);
+    const reason = validateMcpOAuthConfig(oauth, (raw as { url: string }).url);
     if (reason !== undefined) return { ok: false, reason };
   }
   return { ok: true, config: raw as McpServerConfigForProcessTransport };

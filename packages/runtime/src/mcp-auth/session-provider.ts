@@ -88,7 +88,16 @@ export function createSessionAuthProvider(opts: { serverName: string; serverUrl:
   let refreshing: Promise<McpOAuthRefreshAnswer> | undefined;
 
   const needsAuth = (why: string): McpNeedsAuthError => new McpNeedsAuthError(serverName, why, oauth.signInHint(serverName));
-  const usable = (record: McpOAuthTokenRecord): boolean => record.expiresAt === undefined || record.expiresAt - now() > MCP_OAUTH_EXPIRY_SKEW_MS;
+  // Fix round 1 M3. The 60 s margin is a reason to REFRESH EARLY, so it applies only when there is a
+  // refresh token: without one the token is used right up to its `expiresAt` (then needs-auth). And a
+  // generation this provider just refreshed INTO is used to its `expiresAt` too -- an authorization
+  // server that issues `expires_in <= 60` would otherwise be asked to refresh on every request.
+  let refreshedGeneration: number | undefined;
+  const usable = (record: McpOAuthTokenRecord): boolean => {
+    if (record.expiresAt === undefined) return true;
+    const margin = record.refreshToken !== undefined && record.generation !== refreshedGeneration ? MCP_OAUTH_EXPIRY_SKEW_MS : 0;
+    return record.expiresAt - now() > margin;
+  };
 
   async function read(force: boolean): Promise<McpOAuthTokenRecord | null> {
     if (!force && cached !== undefined && now() - cached.readAt < MCP_OAUTH_SESSION_CACHE_MS && (cached.record === null || usable(cached.record))) return cached.record;
@@ -125,6 +134,7 @@ export function createSessionAuthProvider(opts: { serverName: string; serverUrl:
     const next = await read(true);
     // `ok` means "re-read"; a record that did not move is a refresh that did not happen.
     if (next === null || next.generation === record.generation) throw needsAuth("the refreshed sign-in was not found");
+    refreshedGeneration = next.generation;
     return next;
   }
 

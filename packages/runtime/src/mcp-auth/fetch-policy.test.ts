@@ -17,9 +17,12 @@ function serve(fetch: (req: Request) => Response | Promise<Response>): string {
 describe("the URL rules", () => {
   test("https to a public name is allowed; http only to a LITERAL loopback address", () => {
     expect(evaluateMcpAuthUrl("https://as.example.com/token")).toMatchObject({ ok: true, loopback: false });
-    expect(evaluateMcpAuthUrl("http://127.0.0.1:9/token")).toMatchObject({ ok: true, loopback: true });
-    expect(evaluateMcpAuthUrl("http://[::1]:9/token")).toMatchObject({ ok: true, loopback: true });
-    expect(evaluateMcpAuthUrl("http://localhost:9/token")).toMatchObject({ ok: true, loopback: true });
+    expect(evaluateMcpAuthUrl("http://127.0.0.1:9/token", { allowLoopback: true })).toMatchObject({ ok: true, loopback: true });
+    expect(evaluateMcpAuthUrl("http://[::1]:9/token", { allowLoopback: true })).toMatchObject({ ok: true, loopback: true });
+    expect(evaluateMcpAuthUrl("http://localhost:9/token", { allowLoopback: true })).toMatchObject({ ok: true, loopback: true });
+    // ...and loopback at ALL (http or https) only for a server that is itself on loopback (M4).
+    expect(evaluateMcpAuthUrl("http://127.0.0.1:9/token").ok).toBe(false);
+    expect(evaluateMcpAuthUrl("https://127.0.0.1:9/token").ok).toBe(false);
     expect(evaluateMcpAuthUrl("http://as.example.com/token").ok).toBe(false);
   });
 
@@ -51,7 +54,7 @@ describe("the fetch", () => {
       if (path === "/cross") return new Response(null, { status: 302, headers: { location: `${other}/final` } });
       return new Response("final");
     });
-    const authFetch = createMcpAuthFetch();
+    const authFetch = createMcpAuthFetch({ allowLoopback: true });
     expect(await (await authFetch(`${origin}/same`)).text()).toBe("final");
     const err = await authFetch(`${origin}/cross`).catch((e: unknown) => e);
     expect((err as McpOAuthError).code).toBe("policy_refused");
@@ -60,15 +63,34 @@ describe("the fetch", () => {
 
   test("caps the body while reading", async () => {
     const origin = serve(() => new Response("x".repeat(4096)));
-    const authFetch = createMcpAuthFetch({ maxBodyBytes: 1024 });
+    const authFetch = createMcpAuthFetch({ maxBodyBytes: 1024, allowLoopback: true });
     const response = await authFetch(`${origin}/big`);
     await expect(response.text()).rejects.toThrow("1024-byte limit");
+  });
+
+  test("the WHOLE exchange is bounded: a body that drips past the deadline is aborted, not waited on (M9)", async () => {
+    const origin = serve(
+      () =>
+        new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(new TextEncoder().encode("{"));
+              await Bun.sleep(1000);
+              controller.close();
+            },
+          }),
+        ),
+    );
+    const response = await createMcpAuthFetch({ timeoutMs: 150, allowLoopback: true })(`${origin}/slow`);
+    const started = Date.now();
+    await expect(response.text()).rejects.toBeDefined();
+    expect(Date.now() - started).toBeLessThan(800);
   });
 
   test("a dead endpoint is `network` (retry later), not a policy refusal", async () => {
     const origin = serve(() => new Response("gone"));
     servers.splice(0).forEach((s) => s.stop(true));
-    const err = await createMcpAuthFetch()(`${origin}/token`).catch((e: unknown) => e);
+    const err = await createMcpAuthFetch({ allowLoopback: true })(`${origin}/token`).catch((e: unknown) => e);
     expect((err as McpOAuthError).code).toBe("network");
   });
 

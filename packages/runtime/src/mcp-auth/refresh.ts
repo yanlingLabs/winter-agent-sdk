@@ -20,7 +20,7 @@ import { computeScopeUnion, InsecureTokenEndpointError, OAuthError, OAuthErrorCo
 import { clientAccountForTokenAccount } from "./account.ts";
 import { loadAuthorizationServer, resolveResourceIndicator } from "./discovery.ts";
 import { McpOAuthError } from "./errors.ts";
-import { createMcpAuthFetch } from "./fetch-policy.ts";
+import { createMcpAuthFetch, isLoopbackMcpServer } from "./fetch-policy.ts";
 import type { McpOAuthTokenRecord } from "./records.ts";
 import { readClientRecord, readTokenRecordLenient, writeClientRecord, writeTokenRecord, type McpOAuthStore } from "./store.ts";
 
@@ -119,7 +119,7 @@ async function refreshOnce(opts: RefreshMcpOAuthTokenOptions, clientAccount: str
     return { ok: false, reason: "needs_auth" };
   }
 
-  const fetchFn = createMcpAuthFetch(opts.fetch !== undefined ? { fetch: opts.fetch } : {});
+  const fetchFn = createMcpAuthFetch({ ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}), allowLoopback: isLoopbackMcpServer(record.serverUrl) });
   try {
     const server = await loadAuthorizationServer({ authorizationServerUrl: client.authorizationServerUrl ?? record.issuer, expectedIssuer: record.issuer, fetchFn });
     const resource = await resolveResourceIndicator({ serverUrl: record.serverUrl, ...(client.resourceMetadataUrl !== undefined ? { resourceMetadataUrl: client.resourceMetadataUrl } : {}), fetchFn });

@@ -7,7 +7,7 @@
 // escapes, and nothing is logged beyond the account and a status.
 import { clientAccountForTokenAccount } from "./account.ts";
 import { loadAuthorizationServer } from "./discovery.ts";
-import { createMcpAuthFetch, type McpAuthFetch } from "./fetch-policy.ts";
+import { createMcpAuthFetch, isLoopbackMcpServer, type McpAuthFetch } from "./fetch-policy.ts";
 import { readClientRecord, readTokenRecordLenient, type McpOAuthStore } from "./store.ts";
 
 export interface RevokeMcpOAuthOptions {
@@ -40,7 +40,7 @@ async function revokeRemotely(opts: RevokeMcpOAuthOptions, clientAccount: string
   if (record === null) return;
   const client = await readClientRecord(opts.store, clientAccount).catch(() => null);
   if (client === null || client.issuer !== record.issuer) return;
-  const fetchFn = createMcpAuthFetch(opts.fetch !== undefined ? { fetch: opts.fetch } : {});
+  const fetchFn = createMcpAuthFetch({ ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}), allowLoopback: isLoopbackMcpServer(record.serverUrl) });
   const server = await loadAuthorizationServer({ authorizationServerUrl: client.authorizationServerUrl ?? record.issuer, expectedIssuer: record.issuer, fetchFn });
   const endpoint = (server.metadata as { revocation_endpoint?: unknown } | undefined)?.revocation_endpoint;
   if (typeof endpoint !== "string") return;

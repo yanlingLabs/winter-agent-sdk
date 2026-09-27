@@ -11,7 +11,9 @@
 //
 //   1. HTTPS ONLY, except a LITERAL loopback address (127.0.0.0/8, ::1, and the literal `localhost`,
 //      which provider-runtime's classifier and the MCP client's own `assertSecureTokenEndpoint` both read
-//      as loopback). Loopback is the RFC 8252 native-app case and the fixture server's.
+//      as loopback) -- and loopback at all (http OR https) ONLY when the MCP server itself is on loopback
+//      (`allowLoopback`, fix round 1 M4): a public server's documents must not steer the host into its
+//      own machine's services. A loopback server is a local installation (and the fixture's case).
 //   2. A LITERAL private, link-local, unique-local, CGNAT, multicast or unspecified address is refused
 //      whatever the scheme (SSRF). SYNCHRONOUS and resolver-free, exactly like provider-runtime's endpoint
 //      policy: a DNS name is never resolved here, so it is never "local", and there is no resolved address
@@ -20,7 +22,8 @@
 //      request carries a code verifier, a refresh token or a client secret in its BODY, and stripping
 //      headers protects none of that; a discovery GET that hops origins is a server steering the host.
 //      Same-origin hops (a trailing-slash redirect) are followed, at most `DEFAULT_MAX_REDIRECTS`.
-//   4. CAPS: response headers within `timeoutMs`, a body of at most `maxBodyBytes`.
+//   4. CAPS: the WHOLE exchange -- headers AND body -- within `timeoutMs` (a server that drips its body
+//      cannot hold a sign-in or a refresh open), a body of at most `maxBodyBytes`.
 //   5. No userinfo in any URL.
 //
 // THE NETWORK UNDER IT. By default, provider-runtime's `boundedFetch` (manual redirects re-validated
@@ -44,6 +47,8 @@ export interface McpAuthFetchOptions {
   fetch?: typeof fetch;
   timeoutMs?: number;
   maxBodyBytes?: number;
+  /** Whether a literal loopback address may be reached at all: true only when the MCP server itself is loopback. Default false. */
+  allowLoopback?: boolean;
 }
 
 export type McpAuthUrlVerdict = { ok: true; origin: string; loopback: boolean } | { ok: false; reason: string };
@@ -57,7 +62,7 @@ function stripBrackets(host: string): string {
  * the same rules to URLs it never fetches: the authorize URL a browser opens, and the MCP server URL
  * itself.
  */
-export function evaluateMcpAuthUrl(raw: string | URL): McpAuthUrlVerdict {
+export function evaluateMcpAuthUrl(raw: string | URL, opts: { allowLoopback?: boolean } = {}): McpAuthUrlVerdict {
   let url: URL;
   try {
     url = new URL(String(raw));
@@ -73,8 +78,15 @@ export function evaluateMcpAuthUrl(raw: string | URL): McpAuthUrlVerdict {
     return { ok: false, reason: `${url.origin} is a literal ${cls} address, which an auth request never reaches` };
   }
   const loopback = cls === "loopback";
+  if (loopback && opts.allowLoopback !== true) return { ok: false, reason: `${url.origin} is a loopback address, which an auth request reaches only for an MCP server that is itself on loopback` };
   if (url.protocol === "http:" && !loopback) return { ok: false, reason: `${url.origin} uses plain http; auth requests are https-only except to a literal loopback address` };
   return { ok: true, origin: url.origin, loopback };
+}
+
+/** True when the MCP server URL is itself a literal loopback address -- the one case its auth URLs may be too. */
+export function isLoopbackMcpServer(serverUrl: string): boolean {
+  const verdict = evaluateMcpAuthUrl(serverUrl, { allowLoopback: true });
+  return verdict.ok && verdict.loopback;
 }
 
 function refusal(reason: string): McpOAuthError {
@@ -82,7 +94,7 @@ function refusal(reason: string): McpOAuthError {
 }
 
 /** The policy object `boundedFetch` enforces for one request: its own origin, and nothing else. */
-function sameOriginOnlyPolicy(origin: string, loopback: boolean): EndpointPolicy {
+function sameOriginOnlyPolicy(origin: string, loopback: boolean, allowLoopback: boolean): EndpointPolicy {
   return {
     origin,
     local: loopback,
@@ -90,7 +102,7 @@ function sameOriginOnlyPolicy(origin: string, loopback: boolean): EndpointPolicy
     // privileged header could ever be attached through this policy.
     generated: false,
     evaluateRedirect(target: string) {
-      const verdict = evaluateMcpAuthUrl(target);
+      const verdict = evaluateMcpAuthUrl(target, { allowLoopback });
       if (!verdict.ok) return { ok: false, reason: verdict.reason };
       if (verdict.origin !== origin) return { ok: false, reason: `a redirect from ${origin} to ${verdict.origin} (auth requests never follow a cross-origin redirect)` };
       return { ok: true, origin: verdict.origin, sameOrigin: true };
@@ -133,29 +145,30 @@ function capResponse(response: Response, maxBodyBytes: number): Response {
 export function createMcpAuthFetch(opts: McpAuthFetchOptions = {}): McpAuthFetch {
   const timeoutMs = opts.timeoutMs ?? MCP_AUTH_FETCH_TIMEOUT_MS;
   const maxBodyBytes = opts.maxBodyBytes ?? MCP_AUTH_FETCH_MAX_BODY_BYTES;
+  const allowLoopback = opts.allowLoopback === true;
   return async (input, init) => {
     const target = String(input);
-    const verdict = evaluateMcpAuthUrl(target);
+    const verdict = evaluateMcpAuthUrl(target, { allowLoopback });
     if (!verdict.ok) throw refusal(verdict.reason);
     // `redirect`/`signal` are the two `RequestInit` keys `boundedFetch` owns itself; the caller's signal
-    // is carried through its own field.
+    // is combined with the WHOLE-EXCHANGE deadline below. The deadline's timer is left armed after the
+    // headers arrive, on purpose: it is what bounds the body read (it aborts a stream that has not
+    // finished by then, and does nothing to one that has). `unref`, so it never keeps a process alive.
     const { redirect: _redirect, signal, ...rest } = init ?? {};
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), timeoutMs);
+    timer.unref?.();
+    const combined = signal !== undefined && signal !== null ? AbortSignal.any([deadline.signal, signal]) : deadline.signal;
     if (opts.fetch !== undefined) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      const onAbort = (): void => controller.abort();
-      signal?.addEventListener("abort", onAbort, { once: true });
       try {
-        const response = await opts.fetch(target, { ...rest, headers: headersOf(init), redirect: "error", signal: controller.signal });
+        const response = await opts.fetch(target, { ...rest, headers: headersOf(init), redirect: "error", signal: combined });
         return capResponse(response, maxBodyBytes);
       } catch (err) {
+        clearTimeout(timer);
         if (err instanceof McpOAuthError) throw err;
         // A refused redirect and a dead connection both surface from `fetch` as a TypeError, so an
         // injected network cannot tell them apart; `network` (retryable) is the honest code for both.
         throw new McpOAuthError("network", `the auth request to ${verdict.origin} failed (${err instanceof Error ? err.name : "error"}); redirects are refused on an injected network`);
-      } finally {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
       }
     }
     try {
@@ -165,10 +178,11 @@ export function createMcpAuthFetch(opts: McpAuthFetchOptions = {}): McpAuthFetch
         timeoutMs,
         maxBodyBytes,
         maxRedirects: DEFAULT_MAX_REDIRECTS,
-        policy: sameOriginOnlyPolicy(verdict.origin, verdict.loopback),
-        ...(signal !== undefined && signal !== null ? { signal } : {}),
+        policy: sameOriginOnlyPolicy(verdict.origin, verdict.loopback, allowLoopback),
+        signal: combined,
       });
     } catch (err) {
+      clearTimeout(timer);
       // `boundedFetch`'s policy refusals (`capability`) and transport failures (`network`/`timeout`/
       // `aborted`) are typed `ProviderRequestError`s whose messages name origins and reasons only;
       // re-typed here so every auth door reports one class, keeping "refused" apart from "retry later".

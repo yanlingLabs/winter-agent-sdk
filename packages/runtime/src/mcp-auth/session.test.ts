@@ -176,6 +176,45 @@ describe("startup (spec §1.2, exactly)", () => {
   });
 });
 
+describe("fix round 1: expiry margin and the preflight bound", () => {
+  test("M3: a short-lived token (expires_in 30 s) is refreshed ONCE, not on every request", async () => {
+    const fx = fixture({ accessTokenTtlSec: 30 });
+    const store = createMemoryMcpOAuthStore();
+    await signIn(fx, store);
+    const host = fakeHost(store);
+    const { name } = await session(fx, store, host.askHost);
+    for (let i = 0; i < 3; i++) expect(await getRegisteredTool(`mcp__${name}__whoami`)!.executor!.execute({}, {} as never)).toEqual({ output: "PONG-ok-read" });
+    expect(fx.tokenPosts.filter((g) => g === "refresh_token")).toEqual(["refresh_token"]);
+  });
+
+  test("M3: WITHOUT a refresh token the margin does not apply -- a token 30 s from expiry is still used", async () => {
+    const fx = fixture({ accessTokenTtlSec: 30, refreshTokens: false });
+    const store = createMemoryMcpOAuthStore();
+    await signIn(fx, store);
+    const { lifecycle, name } = await session(fx, store, fakeHost(store).askHost);
+    expect(stateOf(lifecycle, name).state).toBe("connected");
+  });
+
+  test("M1: a host that never answers the refresh ask cannot stretch the connect budget", async () => {
+    const fx = fixture();
+    const store = createMemoryMcpOAuthStore();
+    await signIn(fx, store);
+    await expire(store, fx);
+    const name = `oauth-${++counter}`;
+    const lifecycle = createMcpLifecycle({
+      servers: [{ name, origin: "explicit", config: { type: "http", url: fx.mcpUrl, versionNegotiation: "legacy" } }],
+      envConfig: parseMcpEnvConfig({ MCP_CONNECTION_NONBLOCKING: "0", MCP_TIMEOUT: "300", MCP_CONNECT_TIMEOUT_MS: "3000" }),
+      elicitationAsk: createElicitationAsker(undefined),
+      oauth: { store, askHost: () => new Promise(() => {}), signInHint: (server) => mcpSignInHint(BRAND, server) },
+    });
+    lifecycles.push(lifecycle);
+    const started = Date.now();
+    await lifecycle.start();
+    expect(stateOf(lifecycle, name)).toMatchObject({ state: "failed", errorCode: "timeout" });
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+});
+
 describe("mid-session (spec §1.3)", () => {
   test("a 401 on a call re-reads, asks the host, and the retried call succeeds on the refreshed token", async () => {
     const fx = fixture();

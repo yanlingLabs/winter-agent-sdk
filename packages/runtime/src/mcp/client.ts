@@ -468,7 +468,9 @@ async function connectOnce(opts: ConnectMcpServerOptions, mode: McpVersionNegoti
       transport = await buildSdkTransport(opts.inProcessServer);
     } else if (config.type === "http" || config.type === "sse") {
       // WS-25: a dead stored sign-in ends the attempt HERE, before any transport or request exists.
-      if (opts.auth !== undefined) await opts.auth.preflight();
+      // Bounded by the SAME connect budget (fix round 1 M1): a preflight that waits on a host refresh must
+      // not stretch MCP_TIMEOUT (the outer race below starts only once a transport exists).
+      if (opts.auth !== undefined) await boundedPreflight(opts.auth, connectTimeoutMs);
       const authProvider: AuthProvider | undefined = opts.auth !== undefined ? { token: () => opts.auth!.token(), onUnauthorized: () => opts.auth!.onUnauthorized() } : undefined;
       transport =
         config.type === "http"
@@ -643,6 +645,17 @@ async function connectOnce(opts: ConnectMcpServerOptions, mode: McpVersionNegoti
     // kind of aliasing that surprises a second reader of the same reference.
     throw new McpConnectError(classified.code, `${classified.message}\n--- server stderr (last ${stderrTail.length} chars) ---\n${stderrTail}`, classified.httpStatus);
   }
+}
+
+function boundedPreflight(auth: McpSessionAuthProvider, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const outer = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new McpConnectError("timeout", `mcp client: the sign-in check exceeded ${timeoutMs}ms`)), timeoutMs);
+    timer.unref?.();
+  });
+  return Promise.race([auth.preflight(), outer]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
 }
 
 // --- WS-25: auth failures on a LIVE connection (a tool call, a refresh, a resource read) ------------

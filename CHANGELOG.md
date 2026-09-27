@@ -32,14 +32,22 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   model is told which servers need sign-in through a persisted `mcp_needs_auth` attachment. Authenticated
   MCP traffic refuses redirects. New `McpConnectErrorCode` `auth_refresh_failed` (a refresh that could not
   run now).
-- `validateServerConfig` accepts `oauth` on http/sse servers (`clientId`, `clientSecretRef` -- a Keychain
-  locator, never a value --, `callbackPort`, `authServerMetadataUrl`, `scopes`) and refuses it elsewhere.
+- `validateServerConfig` accepts `oauth` on http/sse servers (`clientId`, `clientSecretRef`, `callbackPort`,
+  `authServerMetadataUrl`, `scopes`) and refuses it elsewhere. `clientSecretRef` is `{ kind: "keychain" }`
+  only -- a marker that a pre-registered secret exists: its Keychain account is always DERIVED from the
+  server URL (`mcp-oauth-client-secret:<id>`, `mcpOAuthClientSecretAccount`); a config naming an account or
+  a service is refused.
+- The sign-in's code exchange is posted exactly once (never retried) and reports OAuth error codes only;
+  concurrent sign-ins for one server leave one listener; a sign-in that ends during its exchange writes
+  nothing; `startMcpOAuthLogin` also returns `authorizeOrigin`. Auth requests reach a loopback address
+  only when the MCP server itself is on loopback, and the whole exchange (body included) is time-bounded.
 - `Query.reconnectMcpServer(serverName)` (over `mcp_reconnect`); `/mcp-client`'s `connectMcpServer` takes an
   optional `oauthStore`.
 - `bun run verify:mcp-oauth`: a compiled host signs in against a fixture authorization server, a compiled
   session connects on the stored token, refreshes through a fake host, and is `needs-auth` without a
   refresh token. Sessions read the `WINTER_TEST_MCP_OAUTH_STORE_FILE` test store instead of the Keychain
-  when it is set (the gates only).
+  only when it is in the ORIGINAL process environment (every settings tier refuses the name) and the
+  session names a non-default Keychain service (the gates only).
 
 ## 0.0.28
 
