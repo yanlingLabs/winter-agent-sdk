@@ -36,8 +36,8 @@ export interface FixtureAsOptions {
   cimd?: boolean;
   /** Client ID Metadata Documents by their URL (the client_id). */
   cimdDocuments?: Record<string, { client_id: string; redirect_uris: string[]; [k: string]: unknown }>;
-  /** Pre-registered clients. `redirectUris` absent: any loopback IP redirect is accepted (RFC 8252 §7.3 matching). */
-  preregistered?: Array<{ clientId: string; clientSecret?: string; redirectUris?: string[] }>;
+  /** Pre-registered clients; each redirect URI must match exactly (port included). */
+  preregistered?: Array<{ clientId: string; clientSecret?: string; redirectUris: string[] }>;
   /** Access token lifetime in seconds; `null` issues no `expires_in` at all. Default 3600. */
   accessTokenTtlSec?: number | null;
   /** Issue refresh tokens. Default true. */
@@ -50,6 +50,8 @@ export interface FixtureAsOptions {
   issParameter?: boolean;
   /** Advertise `revocation_endpoint`. Default true. */
   revocation?: boolean;
+  /** Delay every `/token` answer by this many ms (a test ends a sign-in DURING its code exchange). */
+  tokenDelayMs?: number;
   /** Publish the protected resource as the bare ORIGIN (no path) -- the RFC 8707 indicator form a URL round trip would change. */
   pathlessResource?: boolean;
 }
@@ -94,6 +96,8 @@ export interface FixtureAs {
   readonly revokedViaEndpoint: string[];
   /** The browser: GET the authorize URL (auto-approved), then follow its 302 to the loopback callback. Returns the callback's status. */
   approve(authUrl: string): Promise<{ callbackStatus: number; location: string }>;
+  /** Forgets every DCR registration, as an authorization server that expired its dynamic clients does. */
+  forgetRegistrations(): void;
   /** Makes every access token issued so far invalid at `/mcp` (401), as an expiry would. */
   expireAllAccessTokens(): void;
   close(): void;
@@ -116,16 +120,22 @@ function isLoopbackIpRedirect(uri: string): boolean {
   }
 }
 
-/** RFC 8252 §7.3: a loopback IP literal redirect matches a registered one on everything but the port. */
-function redirectAllowed(requested: string, registered: readonly string[] | undefined): boolean {
-  if (registered === undefined) return isLoopbackIpRedirect(requested);
+/**
+ * Redirect matching, as a strict authorization server does it (fix round 1 I4):
+ *   - a REGISTERED client (DCR, pre-registered) matches EXACTLY -- port included -- so the tests that a
+ *     sign-in binds and registers the same literal URI, and reuses a persisted port, prove something;
+ *   - a CIMD document's PORTLESS loopback IP redirect (`http://127.0.0.1/callback`) matches that host and
+ *     path on ANY port (RFC 8252 §7.3), which is exactly what Winter's global document relies on.
+ */
+function redirectAllowed(requested: string, registered: readonly string[] | undefined, cimd: boolean): boolean {
+  if (registered === undefined) return false;
   if (registered.includes(requested)) return true;
-  if (!isLoopbackIpRedirect(requested)) return false;
+  if (!cimd || !isLoopbackIpRedirect(requested)) return false;
   const req = new URL(requested);
   return registered.some((r) => {
     if (!isLoopbackIpRedirect(r)) return false;
     const reg = new URL(r);
-    return reg.hostname === req.hostname && reg.pathname === req.pathname && reg.search === req.search;
+    return reg.port === "" && reg.hostname === req.hostname && reg.pathname === req.pathname && reg.search === req.search;
   });
 }
 
@@ -148,8 +158,8 @@ export function startFixtureAs(opts: FixtureAsOptions = {}): FixtureAs {
   const revokedViaEndpoint: string[] = [];
   let mcpRequests = 0;
 
-  const clients = new Map<string, { secret?: string; redirectUris?: string[] }>();
-  for (const c of opts.preregistered ?? []) clients.set(c.clientId, { ...(c.clientSecret !== undefined ? { secret: c.clientSecret } : {}), ...(c.redirectUris !== undefined ? { redirectUris: c.redirectUris } : {}) });
+  const clients = new Map<string, { secret?: string; redirectUris?: string[]; cimd?: boolean }>();
+  for (const c of opts.preregistered ?? []) clients.set(c.clientId, { ...(c.clientSecret !== undefined ? { secret: c.clientSecret } : {}), redirectUris: c.redirectUris });
   const codes = new Map<string, CodeGrant>();
   const accessTokens = new Map<string, TokenGrant>();
   /** refresh token -> grant; `active: false` once ROTATED (a replay of it is reuse). */
@@ -206,7 +216,7 @@ export function startFixtureAs(opts: FixtureAsOptions = {}): FixtureAs {
         const redirectUri = p.get("redirect_uri") ?? "";
         const client = resolveClient(clientId);
         if (client === undefined) return new Response("unknown client", { status: 400 });
-        if (!redirectAllowed(redirectUri, client.redirectUris)) return new Response("redirect_uri not registered", { status: 400 });
+        if (!redirectAllowed(redirectUri, client.redirectUris, client.cimd === true)) return new Response("redirect_uri not registered", { status: 400 });
         authorizeRedirects.push(redirectUri);
         if (p.get("response_type") !== "code" || p.get("code_challenge_method") !== "S256" || !p.get("code_challenge")) return new Response("PKCE S256 required", { status: 400 });
         const code = b64url(randomBytes(18));
@@ -222,6 +232,7 @@ export function startFixtureAs(opts: FixtureAsOptions = {}): FixtureAs {
 
       if (url.pathname === "/token" && req.method === "POST") {
         const form = new URLSearchParams(await req.text());
+        if (opts.tokenDelayMs !== undefined) await Bun.sleep(opts.tokenDelayMs);
         const grantType = form.get("grant_type") ?? "";
         tokenPosts.push(grantType);
         tokenResources.push(form.get("resource"));
@@ -273,13 +284,13 @@ export function startFixtureAs(opts: FixtureAsOptions = {}): FixtureAs {
   const mcpUrl: string = `${origin}/mcp`;
   const challenge = `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`;
 
-  function resolveClient(clientId: string): { secret?: string; redirectUris?: string[] } | undefined {
+  function resolveClient(clientId: string): { secret?: string; redirectUris?: string[]; cimd?: boolean } | undefined {
     const known = clients.get(clientId);
     if (known !== undefined) return known;
     if (opts.cimd === true && clientId.startsWith("https://")) {
       const doc = opts.cimdDocuments?.[clientId];
       if (doc === undefined || doc.client_id !== clientId) return undefined;
-      return { redirectUris: doc.redirect_uris };
+      return { redirectUris: doc.redirect_uris, cimd: true };
     }
     return undefined;
   }
@@ -375,6 +386,9 @@ export function startFixtureAs(opts: FixtureAsOptions = {}): FixtureAs {
       const callback = await fetch(location, { redirect: "manual" });
       await callback.text();
       return { callbackStatus: callback.status, location };
+    },
+    forgetRegistrations() {
+      for (const r of registrations) clients.delete(r.clientId);
     },
     expireAllAccessTokens() {
       for (const grant of accessTokens.values()) grant.active = false;
