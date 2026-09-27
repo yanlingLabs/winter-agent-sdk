@@ -306,12 +306,10 @@ describe("listModelInfo — pinned ModelInfo rows (R6-I, capture (J))", () => {
     // the opus ones — the omission is per-capability, and absent means UNKNOWN, not "unsupported".
     const rows = fullRegistry().listModelInfo("anthropic");
     const haiku = rows.find((r) => r.value === "anthropic/claude-haiku-4-5-20251001")!;
-    // The haiku row used to carry no `reasoning` block (capture (J) showed its capability booleans
-    // ABSENT). cat34 gave it Anthropic's own evidence -- manual extended thinking on the budget ladder
-    // that fits its 64K output cap, mirroring Sonnet 4.5 -- so it now reports that vocabulary. What this
-    // test pins is unchanged: a capability boolean is either TRUE with evidence or ABSENT, never false.
-    expect(haiku.supportsEffort).toBe(true);
-    expect(haiku.supportedEffortLevels).toEqual(["low", "medium", "high", "xhigh"]);
+    // The seed's haiku row deliberately carries no `reasoning` block (capture (J) showed its
+    // capability booleans ABSENT), so nothing here may claim an effort capability for it.
+    expect("supportsEffort" in haiku).toBe(false);
+    expect("supportedEffortLevels" in haiku).toBe(false);
     for (const row of rows) {
       for (const key of ["supportsEffort", "supportsAdaptiveThinking", "supportsFastMode", "supportsAutoMode"] as const) {
         if (key in row) expect(row[key]).not.toBe(false);

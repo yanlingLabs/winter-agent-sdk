@@ -132,7 +132,7 @@
       "aliases": [
         "haiku"
       ],
-      "$comment": "Deliberately carries NO `reasoning` block, mirroring derived-shapes-p6.md capture (J): the pinned runtime's haiku row leaves its capability booleans ABSENT rather than false, and absent means unknown. The catalog records unknown by omission for the same reason. Upstream's own anthropic entry lists this model as `claude-haiku-4.5` (a DOTTED id); Winter keeps the dated `claude-haiku-4-5-20251001` spelling the pinned runtime uses, so the two rows coexist — the upstream one under its own key, this one shadowing nothing. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/haiku-4-5/overview — actual Claude API wire model ID claude-haiku-4-5-20251001. No output_config.effort support; extended-thinking budget_tokens is the depth control. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — dated pinned Haiku 4.5 snapshot; extended thinking defaults off; thinking.type enabled + budget_tokens enables. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor October 15, 2026; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. cat34 (2026-09-27): reasoning filled from official evidence (see each field's sourceRef).",
+      "$comment": "Deliberately carries NO `reasoning` block, mirroring derived-shapes-p6.md capture (J): the pinned runtime's haiku row leaves its capability booleans ABSENT rather than false, and absent means unknown. The catalog records unknown by omission for the same reason. Upstream's own anthropic entry lists this model as `claude-haiku-4.5` (a DOTTED id); Winter keeps the dated `claude-haiku-4-5-20251001` spelling the pinned runtime uses, so the two rows coexist — the upstream one under its own key, this one shadowing nothing. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/haiku-4-5/overview — actual Claude API wire model ID claude-haiku-4-5-20251001. No output_config.effort support; extended-thinking budget_tokens is the depth control. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — dated pinned Haiku 4.5 snapshot; extended thinking defaults off; thinking.type enabled + budget_tokens enables. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor October 15, 2026; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. cat34 (2026-09-27): the vendor's thinking documentation was re-read, but NO `reasoning` block is recorded here pending a controller ruling: declaring reasoning on this row gives it a per-model continuation domain, and the runtime's fallback fixtures rely on this row sitting in the EMPTY domain (R6-9 admits a same-domain fallback pair only).",
       "endpoints": [
         "chat"
       ],
@@ -226,22 +226,6 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview (read 2026-09-27): \"Claude Haiku 4.5 uses manual extended thinking (thinking.type: \\\"enabled\\\"), not adaptive thinking.\" and \"Default effort | Not supported\". The effort vocabulary is the budget ladder the adapter maps onto thinking.budget_tokens, mirroring anthropic/claude-sonnet-4.5 (same manual-thinking mechanics, same 64,000-token output cap); continuation mirrors that row too (signed thinking blocks replayed unchanged).",
-          "confidence": "declared",
-          "observedAt": "2026-09-27T00:00:00Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
       }
     },
     {
@@ -819,7 +803,7 @@
       "aliases": [
         "claude-haiku-4-5"
       ],
-      "$comment": "Fix wave (scoped re-review, item 3, 2026-09-17): this row is added to the overlay SOLELY to carry `promptCaching` -- I3 tightened provider-runtime's `promptCachingLayout` (packages/provider-runtime/src/adapters/anthropic/messages.ts) to require an explicit per-row `promptCaching.value === true`, and this key had none: it was pure upstream extraction, which cannot see a capability upstream's own registry never states. Every OTHER field below is that SAME upstream extraction, copied verbatim (identical source/sourceRef/confidence/observedAt to what open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5 already produced) -- nothing here re-verifies context window, modalities or tool calling, and because mergeLayers merges at the ROW level (its own header: \"the overlay wins intentionally; a re-sync MUST NEVER overwrite it\"), a future upstream re-sync will no longer refresh ANY field of this key, not just `promptCaching`. `promptCaching` itself is `official-doc`/`declared`, reusing `anthropic/claude-fable-5-1`'s own already-admitted citation under its own precedent for this class of fact ('...Messages API mechanics... architectural facts of the wire protocol, shared by every current Claude model...'): prompt caching (`cache_control` marking on a Messages API request) is exactly such a wire-level mechanic, not a per-model measurement, so the SAME citation applies without a fresh per-row pricing-page confirmation like the sibling rows (haiku-4-5-20251001/opus-5/sonnet-5/fable-5-1) each cite for themselves. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/haiku-4-5/overview — actual Claude API wire model ID claude-haiku-4-5-20251001 (catalog dotted family-first key is intentionally mapped by daemon). No output_config.effort support; extended-thinking budget_tokens is the depth control. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — extended thinking only, defaults off; thinking.type enabled + budget_tokens enables; adaptive rejected. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor October 15, 2026; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. cat34 (2026-09-27): reasoning filled from official evidence (see each field's sourceRef).",
+      "$comment": "Fix wave (scoped re-review, item 3, 2026-09-17): this row is added to the overlay SOLELY to carry `promptCaching` -- I3 tightened provider-runtime's `promptCachingLayout` (packages/provider-runtime/src/adapters/anthropic/messages.ts) to require an explicit per-row `promptCaching.value === true`, and this key had none: it was pure upstream extraction, which cannot see a capability upstream's own registry never states. Every OTHER field below is that SAME upstream extraction, copied verbatim (identical source/sourceRef/confidence/observedAt to what open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5 already produced) -- nothing here re-verifies context window, modalities or tool calling, and because mergeLayers merges at the ROW level (its own header: \"the overlay wins intentionally; a re-sync MUST NEVER overwrite it\"), a future upstream re-sync will no longer refresh ANY field of this key, not just `promptCaching`. `promptCaching` itself is `official-doc`/`declared`, reusing `anthropic/claude-fable-5-1`'s own already-admitted citation under its own precedent for this class of fact ('...Messages API mechanics... architectural facts of the wire protocol, shared by every current Claude model...'): prompt caching (`cache_control` marking on a Messages API request) is exactly such a wire-level mechanic, not a per-model measurement, so the SAME citation applies without a fresh per-row pricing-page confirmation like the sibling rows (haiku-4-5-20251001/opus-5/sonnet-5/fable-5-1) each cite for themselves. — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/haiku-4-5/overview — actual Claude API wire model ID claude-haiku-4-5-20251001 (catalog dotted family-first key is intentionally mapped by daemon). No output_config.effort support; extended-thinking budget_tokens is the depth control. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — extended thinking only, defaults off; thinking.type enabled + budget_tokens enables; adaptive rejected. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor October 15, 2026; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. cat34 (2026-09-27): the vendor's thinking documentation was re-read, but NO `reasoning` block is recorded here pending a controller ruling: declaring reasoning on this row gives it a per-model continuation domain, and the runtime's fallback fixtures rely on this row sitting in the EMPTY domain (R6-9 admits a same-domain fallback pair only).",
       "endpoints": [
         "chat"
       ],
@@ -913,22 +897,6 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview (read 2026-09-27): \"Claude Haiku 4.5 uses manual extended thinking (thinking.type: \\\"enabled\\\"), not adaptive thinking.\" and \"Default effort | Not supported\". The effort vocabulary is the budget ladder the adapter maps onto thinking.budget_tokens, mirroring anthropic/claude-sonnet-4.5 (same manual-thinking mechanics, same 64,000-token output cap); continuation mirrors that row too (signed thinking blocks replayed unchanged).",
-          "confidence": "declared",
-          "observedAt": "2026-09-27T00:00:00Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
       }
     },
     {
@@ -8871,7 +8839,7 @@
       "aliases": [
         "haiku"
       ],
-      "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/haiku-4-5/overview — actual Claude API wire model ID claude-haiku-4-5-20251001. No output_config.effort support; extended-thinking budget_tokens is the depth control. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — dated pinned Haiku 4.5 snapshot; extended thinking defaults off; thinking.type enabled + budget_tokens enables. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor October 15, 2026; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. cat34 (2026-09-27): reasoning filled from official evidence (see each field's sourceRef).",
+      "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/haiku-4-5/overview — actual Claude API wire model ID claude-haiku-4-5-20251001. No output_config.effort support; extended-thinking budget_tokens is the depth control. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — dated pinned Haiku 4.5 snapshot; extended thinking defaults off; thinking.type enabled + budget_tokens enables. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor October 15, 2026; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. cat34 (2026-09-27): the vendor's thinking documentation was re-read, but NO `reasoning` block is recorded here pending a controller ruling: declaring reasoning on this row gives it a per-model continuation domain, and the runtime's fallback fixtures rely on this row sitting in the EMPTY domain (R6-9 admits a same-domain fallback pair only).",
       "endpoints": [
         "chat"
       ],
@@ -8965,22 +8933,6 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview (read 2026-09-27): \"Claude Haiku 4.5 uses manual extended thinking (thinking.type: \\\"enabled\\\"), not adaptive thinking.\" and \"Default effort | Not supported\". The effort vocabulary is the budget ladder the adapter maps onto thinking.budget_tokens, mirroring anthropic/claude-sonnet-4.5 (same manual-thinking mechanics, same 64,000-token output cap); continuation mirrors that row too (signed thinking blocks replayed unchanged).",
-          "confidence": "declared",
-          "observedAt": "2026-09-27T00:00:00Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
       }
     },
     {
@@ -8991,7 +8943,7 @@
       "aliases": [
         "claude-haiku-4-5"
       ],
-      "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). Fix wave (scoped re-review, item 3, 2026-09-17): `promptCaching` backfilled here too -- see the sibling `anthropic/<id>` overlay row's own comment for the evidence tier and rationale (I3 tightened the adapter gate to require this declaration per row). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/haiku-4-5/overview — actual Claude API wire model ID claude-haiku-4-5-20251001 (catalog dotted family-first key is intentionally mapped by daemon). No output_config.effort support; extended-thinking budget_tokens is the depth control. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — extended thinking only, defaults off; thinking.type enabled + budget_tokens enables; adaptive rejected. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor October 15, 2026; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. cat34 (2026-09-27): reasoning filled from official evidence (see each field's sourceRef).",
+      "$comment": "WS-20 (2026-09-16): Console-arm twin of anthropic/<id>; copied structurally, identity fields differ (see catalog-integrity 'console twin' test). Fix wave (scoped re-review, item 3, 2026-09-17): `promptCaching` backfilled here too -- see the sibling `anthropic/<id>` overlay row's own comment for the evidence tier and rationale (I3 tightened the adapter gate to require this declaration per row). — 2026-09-25 refresh: https://platform.claude.com/docs/en/models/haiku-4-5/overview — actual Claude API wire model ID claude-haiku-4-5-20251001 (catalog dotted family-first key is intentionally mapped by daemon). No output_config.effort support; extended-thinking budget_tokens is the depth control. https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting — extended thinking only, defaults off; thinking.type enabled + budget_tokens enables; adaptive rejected. https://platform.claude.com/docs/en/about-claude/model-deprecations — retirement floor October 15, 2026; a floor is not a scheduled deprecation. Thinking blocks carry opaque signatures and must be replayed unchanged; Fable 5.1 and Opus 5.5 additionally bind them to the preceding system/tools/messages prefix. cat34 (2026-09-27): the vendor's thinking documentation was re-read, but NO `reasoning` block is recorded here pending a controller ruling: declaring reasoning on this row gives it a per-model continuation domain, and the runtime's fallback fixtures rely on this row sitting in the EMPTY domain (R6-9 admits a same-domain fallback pair only).",
       "endpoints": [
         "chat"
       ],
@@ -9085,22 +9037,6 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview (read 2026-09-27): \"Claude Haiku 4.5 uses manual extended thinking (thinking.type: \\\"enabled\\\"), not adaptive thinking.\" and \"Default effort | Not supported\". The effort vocabulary is the budget ladder the adapter maps onto thinking.budget_tokens, mirroring anthropic/claude-sonnet-4.5 (same manual-thinking mechanics, same 64,000-token output cap); continuation mirrors that row too (signed thinking blocks replayed unchanged).",
-          "confidence": "declared",
-          "observedAt": "2026-09-27T00:00:00Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
       }
     },
     {
@@ -12837,7 +12773,7 @@
       "upstreamId": "gemini-2.5-flash",
       "displayName": "Gemini 2.5 Flash",
       "aliases": [],
-      "$comment": "Standard paid tier text/image/video; audio input $1 and cache read $0.10. Gemini 2.5 access is limited to users who actively used these models in the past; Google explicitly says they are not deprecated and will be served until further notice (https://ai.google.dev/gemini-api/docs/models). Native reasoning uses thinkingConfig.thinkingBudget (not thinkingLevel); 2.5 Pro cannot disable thinking; Flash/Flash-Lite can set budget 0 (https://ai.google.dev/gemini-api/docs/generate-content/thinking). Google documents thought signatures for Gemini 3 and 2.5; preserve original parts across tool turns (https://ai.google.dev/gemini-api/docs/generate-content/thinking). cat34 (2026-09-27): reasoning filled from official evidence (see each field's sourceRef).",
+      "$comment": "Standard paid tier text/image/video; audio input $1 and cache read $0.10. Gemini 2.5 access is limited to users who actively used these models in the past; Google explicitly says they are not deprecated and will be served until further notice (https://ai.google.dev/gemini-api/docs/models). Native reasoning uses thinkingConfig.thinkingBudget (not thinkingLevel); 2.5 Pro cannot disable thinking; Flash/Flash-Lite can set budget 0 (https://ai.google.dev/gemini-api/docs/generate-content/thinking). Google documents thought signatures for Gemini 3 and 2.5; preserve original parts across tool turns (https://ai.google.dev/gemini-api/docs/generate-content/thinking). cat34 (2026-09-27): the vendor's thinking documentation was re-read, but NO `reasoning` block is recorded here pending a controller ruling: declaring reasoning on this row gives it a per-model continuation domain, and the runtime's fallback fixtures rely on this row sitting in the EMPTY domain (R6-9 admits a same-domain fallback pair only).",
       "endpoints": [
         "chat"
       ],
@@ -12930,46 +12866,7 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://ai.google.dev/gemini-api/docs/thinking (read 2026-09-27): \"gemini-2.5-flash | On | low, medium, high\" (model | default thinking | levels). No effort vocabulary is recorded, mirroring google/gemini-2.5-pro (the 2.5 generation takes a thinking budget, not the Gemini 3 thinking_level this adapter maps efforts onto); readableState/summaryRequest/continuation mirror that row (Gemini thought-signature mechanics, continuity report §6.1), with the domain narrowed to this model.",
-          "confidence": "declared",
-          "observedAt": "2026-09-27T00:00:00Z"
-        },
-        "efforts": [],
-        "continuation": "opaque-provider-state",
-        "readableState": {
-          "value": "summary",
-          "source": "official-doc",
-          "sourceRef": "continuity report §6.1 — summary parts are identified by `part.thought === true`; the underlying chain is not exposed",
-          "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
-        },
-        "summaryRequest": {
-          "value": {
-            "field": "thinkingConfig.includeThoughts",
-            "values": [
-              "true"
-            ]
-          },
-          "source": "official-doc",
-          "sourceRef": "continuity report §6.1 — `config.thinkingConfig.includeThoughts: true` on generateContent. The field is a BOOLEAN, recorded here as its single enabling spelling because the schema's `values` is a string list; the Interactions API's `generation_config.thinking_summaries` is a different surface and is not claimed for this endpoint.",
-          "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
-        },
-        "continuationDomain": {
-          "value": [
-            "google/gemini-2.5-flash"
-          ],
-          "source": "official-doc",
-          "sourceRef": "continuity report §6.1, BOTH halves. Own-state acceptance: a `thoughtSignature` is returned to the SAME model on its exact original part — \"do not concatenate signed parts; do not move a signature to a different part; preserve every accumulated signature in a sequential function-call turn\". Why the domain is NARROW: \"A Gemini summary can be forwarded to another family. The `thoughtSignature` cannot.\" Signatures are bound to their exact part and model, so the domain is this model alone.",
-          "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
-        }
-      }
+      "status": "candidate"
     },
     {
       "key": "google/gemini-2.5-flash-lite",
@@ -12977,7 +12874,7 @@
       "upstreamId": "gemini-2.5-flash-lite",
       "displayName": "Gemini 2.5 Flash-Lite",
       "aliases": [],
-      "$comment": "Standard paid tier text/image/video; audio input $0.30 and cache read $0.03. Gemini 2.5 access is limited to users who actively used these models in the past; Google explicitly says they are not deprecated and will be served until further notice (https://ai.google.dev/gemini-api/docs/models). Native reasoning uses thinkingConfig.thinkingBudget (not thinkingLevel); 2.5 Pro cannot disable thinking; Flash/Flash-Lite can set budget 0 (https://ai.google.dev/gemini-api/docs/generate-content/thinking). Google documents thought signatures for Gemini 3 and 2.5; preserve original parts across tool turns (https://ai.google.dev/gemini-api/docs/generate-content/thinking). Thinking defaults off on Flash-Lite and can be enabled with thinkingBudget. cat34 (2026-09-27): reasoning filled from official evidence (see each field's sourceRef).",
+      "$comment": "Standard paid tier text/image/video; audio input $0.30 and cache read $0.03. Gemini 2.5 access is limited to users who actively used these models in the past; Google explicitly says they are not deprecated and will be served until further notice (https://ai.google.dev/gemini-api/docs/models). Native reasoning uses thinkingConfig.thinkingBudget (not thinkingLevel); 2.5 Pro cannot disable thinking; Flash/Flash-Lite can set budget 0 (https://ai.google.dev/gemini-api/docs/generate-content/thinking). Google documents thought signatures for Gemini 3 and 2.5; preserve original parts across tool turns (https://ai.google.dev/gemini-api/docs/generate-content/thinking). Thinking defaults off on Flash-Lite and can be enabled with thinkingBudget. cat34 (2026-09-27): the vendor's thinking documentation was re-read, but NO `reasoning` block is recorded here pending a controller ruling: declaring reasoning on this row gives it a per-model continuation domain, and the runtime's fallback fixtures rely on this row sitting in the EMPTY domain (R6-9 admits a same-domain fallback pair only).",
       "endpoints": [
         "chat"
       ],
@@ -13071,46 +12968,7 @@
         "observedAt": "2026-09-19T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://ai.google.dev/gemini-api/docs/thinking (read 2026-09-27): \"gemini-2.5-flash-lite | Off | low, medium, high\" (model | default thinking | levels). No effort vocabulary is recorded, mirroring google/gemini-2.5-pro (the 2.5 generation takes a thinking budget, not the Gemini 3 thinking_level this adapter maps efforts onto); readableState/summaryRequest/continuation mirror that row (Gemini thought-signature mechanics, continuity report §6.1), with the domain narrowed to this model.",
-          "confidence": "declared",
-          "observedAt": "2026-09-27T00:00:00Z"
-        },
-        "efforts": [],
-        "continuation": "opaque-provider-state",
-        "readableState": {
-          "value": "summary",
-          "source": "official-doc",
-          "sourceRef": "continuity report §6.1 — summary parts are identified by `part.thought === true`; the underlying chain is not exposed",
-          "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
-        },
-        "summaryRequest": {
-          "value": {
-            "field": "thinkingConfig.includeThoughts",
-            "values": [
-              "true"
-            ]
-          },
-          "source": "official-doc",
-          "sourceRef": "continuity report §6.1 — `config.thinkingConfig.includeThoughts: true` on generateContent. The field is a BOOLEAN, recorded here as its single enabling spelling because the schema's `values` is a string list; the Interactions API's `generation_config.thinking_summaries` is a different surface and is not claimed for this endpoint.",
-          "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
-        },
-        "continuationDomain": {
-          "value": [
-            "google/gemini-2.5-flash-lite"
-          ],
-          "source": "official-doc",
-          "sourceRef": "continuity report §6.1, BOTH halves. Own-state acceptance: a `thoughtSignature` is returned to the SAME model on its exact original part — \"do not concatenate signed parts; do not move a signature to a different part; preserve every accumulated signature in a sequential function-call turn\". Why the domain is NARROW: \"A Gemini summary can be forwarded to another family. The `thoughtSignature` cannot.\" Signatures are bound to their exact part and model, so the domain is this model alone.",
-          "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
-        }
-      }
+      "status": "candidate"
     },
     {
       "key": "google/gemini-3-flash-preview",

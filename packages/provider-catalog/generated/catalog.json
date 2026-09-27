@@ -15367,22 +15367,6 @@
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
       },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview (read 2026-09-27): \"Claude Haiku 4.5 uses manual extended thinking (thinking.type: \\\"enabled\\\"), not adaptive thinking.\" and \"Default effort | Not supported\". The effort vocabulary is the budget ladder the adapter maps onto thinking.budget_tokens, mirroring anthropic/claude-sonnet-4.5 (same manual-thinking mechanics, same 64,000-token output cap); continuation mirrors that row too (signed thinking blocks replayed unchanged).",
-          "confidence": "declared",
-          "observedAt": "2026-09-27T00:00:00Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
-      },
       "canonicalModelId": "claude-haiku-4.5-20251001",
       "modelFamily": "claude"
     },
@@ -15487,22 +15471,6 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview (read 2026-09-27): \"Claude Haiku 4.5 uses manual extended thinking (thinking.type: \\\"enabled\\\"), not adaptive thinking.\" and \"Default effort | Not supported\". The effort vocabulary is the budget ladder the adapter maps onto thinking.budget_tokens, mirroring anthropic/claude-sonnet-4.5 (same manual-thinking mechanics, same 64,000-token output cap); continuation mirrors that row too (signed thinking blocks replayed unchanged).",
-          "confidence": "declared",
-          "observedAt": "2026-09-27T00:00:00Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
       },
       "canonicalModelId": "claude-haiku-4.5",
       "modelFamily": "claude"
@@ -29629,22 +29597,6 @@
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
       },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview (read 2026-09-27): \"Claude Haiku 4.5 uses manual extended thinking (thinking.type: \\\"enabled\\\"), not adaptive thinking.\" and \"Default effort | Not supported\". The effort vocabulary is the budget ladder the adapter maps onto thinking.budget_tokens, mirroring anthropic/claude-sonnet-4.5 (same manual-thinking mechanics, same 64,000-token output cap); continuation mirrors that row too (signed thinking blocks replayed unchanged).",
-          "confidence": "declared",
-          "observedAt": "2026-09-27T00:00:00Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
-      },
       "canonicalModelId": "claude-haiku-4.5-20251001",
       "modelFamily": "claude"
     },
@@ -29749,22 +29701,6 @@
         "confidence": "declared",
         "observedAt": "2026-09-25T18:30:00Z",
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-4-5/overview (read 2026-09-27): \"Claude Haiku 4.5 uses manual extended thinking (thinking.type: \\\"enabled\\\"), not adaptive thinking.\" and \"Default effort | Not supported\". The effort vocabulary is the budget ladder the adapter maps onto thinking.budget_tokens, mirroring anthropic/claude-sonnet-4.5 (same manual-thinking mechanics, same 64,000-token output cap); continuation mirrors that row too (signed thinking blocks replayed unchanged).",
-          "confidence": "declared",
-          "observedAt": "2026-09-27T00:00:00Z"
-        },
-        "efforts": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "continuation": "opaque-provider-state"
       },
       "canonicalModelId": "claude-haiku-4.5",
       "modelFamily": "claude"
@@ -36757,45 +36693,6 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://ai.google.dev/gemini-api/docs/thinking (read 2026-09-27): \"gemini-2.5-flash | On | low, medium, high\" (model | default thinking | levels). No effort vocabulary is recorded, mirroring google/gemini-2.5-pro (the 2.5 generation takes a thinking budget, not the Gemini 3 thinking_level this adapter maps efforts onto); readableState/summaryRequest/continuation mirror that row (Gemini thought-signature mechanics, continuity report §6.1), with the domain narrowed to this model.",
-          "confidence": "declared",
-          "observedAt": "2026-09-27T00:00:00Z"
-        },
-        "efforts": [],
-        "continuation": "opaque-provider-state",
-        "readableState": {
-          "value": "summary",
-          "source": "official-doc",
-          "sourceRef": "continuity report §6.1 — summary parts are identified by `part.thought === true`; the underlying chain is not exposed",
-          "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
-        },
-        "summaryRequest": {
-          "value": {
-            "field": "thinkingConfig.includeThoughts",
-            "values": [
-              "true"
-            ]
-          },
-          "source": "official-doc",
-          "sourceRef": "continuity report §6.1 — `config.thinkingConfig.includeThoughts: true` on generateContent. The field is a BOOLEAN, recorded here as its single enabling spelling because the schema's `values` is a string list; the Interactions API's `generation_config.thinking_summaries` is a different surface and is not claimed for this endpoint.",
-          "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
-        },
-        "continuationDomain": {
-          "value": [
-            "google/gemini-2.5-flash"
-          ],
-          "source": "official-doc",
-          "sourceRef": "continuity report §6.1, BOTH halves. Own-state acceptance: a `thoughtSignature` is returned to the SAME model on its exact original part — \"do not concatenate signed parts; do not move a signature to a different part; preserve every accumulated signature in a sequential function-call turn\". Why the domain is NARROW: \"A Gemini summary can be forwarded to another family. The `thoughtSignature` cannot.\" Signatures are bound to their exact part and model, so the domain is this model alone.",
-          "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
-        }
-      },
       "canonicalModelId": "gemini-2.5-flash",
       "modelFamily": "gemini"
     },
@@ -36899,45 +36796,6 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "official-doc",
-          "sourceRef": "https://ai.google.dev/gemini-api/docs/thinking (read 2026-09-27): \"gemini-2.5-flash-lite | Off | low, medium, high\" (model | default thinking | levels). No effort vocabulary is recorded, mirroring google/gemini-2.5-pro (the 2.5 generation takes a thinking budget, not the Gemini 3 thinking_level this adapter maps efforts onto); readableState/summaryRequest/continuation mirror that row (Gemini thought-signature mechanics, continuity report §6.1), with the domain narrowed to this model.",
-          "confidence": "declared",
-          "observedAt": "2026-09-27T00:00:00Z"
-        },
-        "efforts": [],
-        "continuation": "opaque-provider-state",
-        "readableState": {
-          "value": "summary",
-          "source": "official-doc",
-          "sourceRef": "continuity report §6.1 — summary parts are identified by `part.thought === true`; the underlying chain is not exposed",
-          "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
-        },
-        "summaryRequest": {
-          "value": {
-            "field": "thinkingConfig.includeThoughts",
-            "values": [
-              "true"
-            ]
-          },
-          "source": "official-doc",
-          "sourceRef": "continuity report §6.1 — `config.thinkingConfig.includeThoughts: true` on generateContent. The field is a BOOLEAN, recorded here as its single enabling spelling because the schema's `values` is a string list; the Interactions API's `generation_config.thinking_summaries` is a different surface and is not claimed for this endpoint.",
-          "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
-        },
-        "continuationDomain": {
-          "value": [
-            "google/gemini-2.5-flash-lite"
-          ],
-          "source": "official-doc",
-          "sourceRef": "continuity report §6.1, BOTH halves. Own-state acceptance: a `thoughtSignature` is returned to the SAME model on its exact original part — \"do not concatenate signed parts; do not move a signature to a different part; preserve every accumulated signature in a sequential function-call turn\". Why the domain is NARROW: \"A Gemini summary can be forwarded to another family. The `thoughtSignature` cannot.\" Signatures are bound to their exact part and model, so the domain is this model alone.",
-          "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
-        }
-      },
       "canonicalModelId": "gemini-2.5-flash-lite",
       "modelFamily": "gemini"
     },
