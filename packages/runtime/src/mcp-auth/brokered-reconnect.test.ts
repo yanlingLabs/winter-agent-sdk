@@ -42,8 +42,11 @@ async function signIn(store: McpOAuthStore): Promise<void> {
 }
 
 // Short enough that the pre-fix deadlock fails this test in seconds (not 30 s), long enough for a real
-// loopback connect. The fingerprint of the deadlock is the preflight's own timeout text.
-const SHORT_TIMEOUT = { MCP_TIMEOUT: "3000" };
+// loopback connect. The fingerprint of the deadlock is the preflight's own timeout text; the timing bound
+// below is "well under MCP_TIMEOUT", never a tight latency claim (a loaded CI must not flake it).
+const MCP_TIMEOUT_MS = 6000;
+const SHORT_TIMEOUT = { MCP_TIMEOUT: String(MCP_TIMEOUT_MS) };
+const WELL_UNDER_TIMEOUT_MS = MCP_TIMEOUT_MS / 2;
 const DEADLOCK_FINGERPRINT = "sign-in check exceeded";
 
 test("a brokered session: sign-out -> reconnect is needs-auth (fast), sign-in -> reconnect connects and the tool runs again", async () => {
@@ -135,10 +138,10 @@ test("a brokered session: sign-out -> reconnect is needs-auth (fast), sign-in ->
   // preflight timeout.
   expect(outcome.signOut?.error).toBeDefined();
   expect(outcome.signOut?.error ?? "").not.toContain(DEADLOCK_FINGERPRINT);
-  expect(outcome.signOut!.ms).toBeLessThan(2_000);
+  expect(outcome.signOut!.ms).toBeLessThan(WELL_UNDER_TIMEOUT_MS);
   // Sign-in: the reconnect RESOLVES (connected), promptly.
   expect(outcome.signIn).toEqual({ ms: expect.any(Number) });
-  expect(outcome.signIn!.ms).toBeLessThan(2_000);
+  expect(outcome.signIn!.ms).toBeLessThan(WELL_UNDER_TIMEOUT_MS);
   // Turn 2's call on the same live session runs on the NEW sign-in.
   expect(toolOutputs[1]).toBe("PONG-ok-read");
   // Every read of the sign-in went through the host.

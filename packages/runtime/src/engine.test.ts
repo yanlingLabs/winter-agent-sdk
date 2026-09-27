@@ -2712,6 +2712,123 @@ describe("Phase 4 Task 3: mcp_status / mcp_reconnect / mcp_toggle / mcp_set_serv
   });
 });
 
+// The WS-25 reconnect fix: the MCP control subtypes run BESIDE the input pump on one serial chain (a brokered
+// reconnect's own `credential_resolve` answer is routed by that pump, so awaiting it inline deadlocked).
+describe("the MCP control chain: off the pump, serial, every request answered once, drained at teardown", () => {
+  function gate(): { promise: Promise<void>; release: () => void } {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => (release = resolve));
+    return { promise, release };
+  }
+
+  test("a link parked mid-reconnect does not block the pump (a turn runs), later links wait in arrival order, and throwing links (Error and non-Error) answer structured", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    const parked = gate();
+    const order: string[] = [];
+    const seam = {
+      async reconnect(name: string) {
+        order.push(`reconnect:${name}:start`);
+        if (name === "slow") await parked.promise;
+        if (name === "e") throw new Error("boom");
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- the non-Error link, on purpose
+        if (name === "s") throw "a string, not an Error";
+        order.push(`reconnect:${name}:end`);
+      },
+      async toggle(name: string, enabled: boolean) {
+        order.push(`toggle:${name}:${enabled}`);
+      },
+      async setServers() {
+        order.push("setServers");
+        return { added: [], removed: [], errors: {} };
+      },
+    };
+    const stateSource = createFakeMcpServerStateSource([{ name: "slow", state: "pending", toolNames: [] }]);
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor, mcpControlSeam: seam, mcpServerStateSource: stateSource });
+
+    host.output.write({ type: "control_request", requestId: "c1", subtype: "mcp_reconnect", payload: { serverName: "slow" } });
+    host.output.write({ type: "control_request", requestId: "c2", subtype: "mcp_toggle", payload: { serverName: "slow", enabled: false } });
+    host.output.write({ type: "control_request", requestId: "c3", subtype: "mcp_status", payload: undefined });
+    host.output.write({ type: "user", text: "go" });
+
+    const responses: ControlResponseFrame[] = [];
+    let sawResult = false;
+    let released = false;
+    const iterator = host.input[Symbol.asyncIterator]();
+    while (responses.length < 5) {
+      const next = await iterator.next();
+      if (next.done) break;
+      const f = next.value;
+      if (f.type === "data" && (f as { message: { type: string } }).message.type === "result" && !released) {
+        // The turn finished while c1 is still parked: the pump was never blocked by it -- and nothing queued
+        // behind c1 on the chain has run.
+        sawResult = true;
+        expect(responses).toEqual([]);
+        expect(order).toEqual(["reconnect:slow:start"]);
+        released = true;
+        parked.release();
+        // Two more links whose seam THROWS (an Error, then a non-Error): each still answers, structured.
+        host.output.write({ type: "control_request", requestId: "c4", subtype: "mcp_reconnect", payload: { serverName: "e" } });
+        host.output.write({ type: "control_request", requestId: "c5", subtype: "mcp_reconnect", payload: { serverName: "s" } });
+      }
+      if (f.type === "control_response" && ["c1", "c2", "c3", "c4", "c5"].includes((f as ControlResponseFrame).requestId)) {
+        responses.push(f as ControlResponseFrame);
+      }
+    }
+    expect(sawResult).toBe(true);
+    expect(responses.map((r) => r.requestId)).toEqual(["c1", "c2", "c3", "c4", "c5"]);
+    expect(responses[0]).toEqual({ type: "control_response", requestId: "c1", ok: true });
+    expect(responses[1]).toEqual({ type: "control_response", requestId: "c2", ok: true });
+    expect(responses[2]?.ok).toBe(true);
+    expect(responses[3]).toEqual({ type: "control_response", requestId: "c4", ok: false, error: { code: "mcp_reconnect_failed", message: "boom" } });
+    expect(responses[4]).toEqual({ type: "control_response", requestId: "c5", ok: false, error: { code: "mcp_reconnect_failed", message: "a string, not an Error" } });
+    expect(order).toEqual(["reconnect:slow:start", "reconnect:slow:end", "toggle:slow:false", "reconnect:e:start", "reconnect:s:start"]);
+
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    const rest = await (async () => {
+      const out: WinterFrame[] = [];
+      for (let n = await iterator.next(); !n.done; n = await iterator.next()) out.push(n.value);
+      return out;
+    })();
+    await done;
+    // Exactly once: no request id is answered a second time.
+    expect(rest.filter((f) => f.type === "control_response" && ["c1", "c2", "c3", "c4", "c5"].includes((f as ControlResponseFrame).requestId))).toEqual([]);
+  });
+
+  test("teardown waits for a pending link: it settles (and answers, once) BEFORE runEngine returns, so nothing commits after the lifecycle is disposed", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    const parked = gate();
+    let engineReturned = false;
+    let engineReturnedAtCommit: boolean | undefined;
+    const seam = {
+      async reconnect() {
+        await parked.promise;
+        engineReturnedAtCommit = engineReturned; // where a real reconnect would register tools / keep a live client
+      },
+      async toggle() {},
+      async setServers() {
+        return { added: [], removed: [], errors: {} };
+      },
+    };
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor, mcpControlSeam: seam }).then((code) => {
+      engineReturned = true;
+      return code;
+    });
+    host.output.write({ type: "control_request", requestId: "t1", subtype: "mcp_reconnect", payload: { serverName: "gh" } });
+    host.output.write({ type: "control_request", requestId: "t2", subtype: "mcp_toggle", payload: { serverName: "gh", enabled: true } });
+    sendAndCollectUntilResult(host); // a turn, then end_input: the turn loop drains and teardown begins
+    const collecting = drain(host.input);
+    // Teardown is now parked on the chain; the engine must not have returned.
+    await Bun.sleep(100);
+    expect(engineReturned).toBe(false);
+    parked.release();
+    const frames = await collecting;
+    await done;
+    expect(engineReturnedAtCommit).toBe(false);
+    const answers = frames.filter((f) => f.type === "control_response" && ["t1", "t2"].includes((f as ControlResponseFrame).requestId)) as ControlResponseFrame[];
+    expect(answers.map((a) => [a.requestId, a.ok])).toEqual([["t1", true], ["t2", true]]);
+  });
+});
+
 describe("Phase 4 Task 3: system/init.mcp_servers (MUST 3)", () => {
   test("both init frames carry mcp_servers when a state source is configured", async () => {
     const { host, runtime } = createInMemoryChannel();

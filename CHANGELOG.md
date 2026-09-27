@@ -19,6 +19,10 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   The four MCP control subtypes now run beside the pump on one serial chain (arrival order among
   themselves kept) and answer when they settle, like `compact`. Pinned by
   `mcp-auth/brokered-reconnect.test.ts` (sign-out -> needs-auth, sign-in -> connected, the tool runs again).
+  Teardown waits for the chain before the MCP lifecycle is disposed, so a reconnect still in flight never
+  commits a client or registers tools after the run ends, and every queued request is answered once.
+  Accepted consequence: a turn that starts while a reconnect is still connecting no longer waits for it,
+  so that turn does not see the server's tools (the next one does).
 
 ## 0.0.31
 

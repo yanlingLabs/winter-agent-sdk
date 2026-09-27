@@ -10002,6 +10002,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // was seen but `input` itself never closed), this is what actually stops it.
   stopReading();
   await pump.catch(() => {}); // the pump only throws on a truly unexpected input-source error; never let that crash teardown
+  // The MCP control subtypes run beside the pump (see their dispatch): teardown waits for the chain too, so a
+  // reconnect still in flight can never commit a live client (and register tools) after the lifecycle below
+  // is disposed, and every request already queued on it is answered before the run ends. It cannot hang:
+  // the pump's `finally` rejected every pending bridge request, so a brokered link fails fast; the worst
+  // case is one connect bounded by MCP_TIMEOUT, as when the pump awaited it inline.
+  await mcpControlChain;
   // Phase 4 Task 3 (registry singleton hygiene): unregisters every SDK-MCP-server tool this run
   // registered at startup -- the module-level tool registry (tools/registry.ts) is a process-wide
   // singleton every in-memory-leg run in one process shares (registry.ts's own header), so a
