@@ -6,6 +6,8 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
+## 0.0.29
+
 ### Security (no-autoload)
 
 - The compiled `winter` runtime no longer reads a `bunfig.toml` or `.env` file from the directory it
