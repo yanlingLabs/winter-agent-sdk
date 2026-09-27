@@ -14,11 +14,15 @@
  * - `invalid_account` -- not an `mcp-oauth:<16 hex>` token account name.
  * - `policy_refused` -- the auth-HTTP policy refused a URL (plain http off loopback, a literal private or
  *   link-local address, a cross-origin redirect, an oversized answer).
+ * - `network` -- an auth request never got an answer (a refused connection, a timeout): retry later.
  * - `login_superseded` / `login_cancelled` / `login_timeout` -- the interactive sign-in ended without a
  *   callback (a newer sign-in for the same server, `cancel()`, the 5-minute bound).
  * - `state_mismatch` -- the loopback callback carried a `state` this flow never issued.
  * - `authorization_denied` -- the authorization server redirected back with `error=...`.
  * - `client_secret_unavailable` -- a pre-registered client's `clientSecretRef` could not be read.
+ * - `callback_port_unavailable` -- the configured `oauth.callbackPort` is taken.
+ * - `login_failed` -- discovery, registration or the code exchange failed (the message says which step,
+ *   and on the exchange never quotes the authorization server).
  * - `not_implemented` -- a contract stub (WS-25 lands its types first).
  */
 export type McpOAuthErrorCode =
@@ -27,12 +31,15 @@ export type McpOAuthErrorCode =
   | "invalid_server_url"
   | "invalid_account"
   | "policy_refused"
+  | "network"
   | "login_superseded"
   | "login_cancelled"
   | "login_timeout"
   | "state_mismatch"
   | "authorization_denied"
   | "client_secret_unavailable"
+  | "callback_port_unavailable"
+  | "login_failed"
   | "not_implemented";
 
 export class McpOAuthError extends Error {
