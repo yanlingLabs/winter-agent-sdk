@@ -6,6 +6,8 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ## Unreleased
 
+## 0.0.30
+
 ### MCP OAuth (WS-25)
 
 - New public subpath `@yanlinglabs/winter-agent-runtime/mcp-auth` (main-thread safe) for the HOST that
