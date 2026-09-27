@@ -6,10 +6,9 @@
  * `client_id_metadata_document_supported` fetches THIS URL as Winter's client id, and no per-server
  * registration exists at all.
  *
- * PROVISIONAL (spec §1.5): the user's Cloudflare domain is `yanlinglabs.com`; the exact permanent URL is
- * pending the user's one-line confirmation, and publishing the document there is a separate controller
- * step. So it is ONE constant, and every door that uses it takes a `clientMetadataUrl` override (tests
- * pass their own).
+ * CONFIRMED by the user (2026-09-27, spec §1.5): the permanent URL on the user's Cloudflare domain
+ * `yanlinglabs.com`. Publishing the document there is a separate controller step. It is ONE constant,
+ * and every door that uses it takes a `clientMetadataUrl` override (tests pass their own).
  *
  * THE DOCUMENT'S REDIRECT URIS (spec §4.2, settled): `["http://127.0.0.1/callback"]` -- a loopback IP
  * literal with NO port. A CIMD document is global, so it cannot name the port one machine's listener
