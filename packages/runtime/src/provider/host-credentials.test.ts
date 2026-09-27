@@ -5,10 +5,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { query, type CredentialResolveAnswer, type CredentialResolveRequest } from "@yanlinglabs/winter-agent-sdk";
+import { query, type ControlRequestFrame, type CredentialResolveAnswer, type CredentialResolveRequest, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { createCompositeCredentialStore, refreshOauthMaterial } from "@yanlinglabs/winter-provider-runtime";
 import { inMemoryProcess } from "../testing.ts";
 import { echoProvider } from "./mock.ts";
+import { createInMemoryChannel } from "../protocol/channel.ts";
+import { runEngine } from "../engine.ts";
 import { getRegisteredTool, replaceExecutor } from "../tools/registry.ts";
 import { ADVISOR_TOOL_NAME } from "../tools/impl/advisor.ts";
 import { createHostBrokeredCredentialStore, createHostBrokeredSecretReader, createHostCredentialChannel, type HostRequestSender } from "./host-credentials.ts";
@@ -158,3 +160,30 @@ test("end to end: the host's material reaches ONLY the provider request -- no fr
   expect(stderr.join("")).not.toContain(SECRET);
   for (const file of filesUnder(home)) expect([file, readFileSync(file, "utf8").includes(SECRET)]).toEqual([file, false]);
 }, 30_000);
+
+test("a credential read parked on the channel BEFORE the engine exists goes on the wire only AFTER the init handshake", async () => {
+  // Production wiring builds the stores before `runEngine`; a read issued then parks on the channel, and the
+  // engine's bind wakes it -- which used to write its `credential_resolve` ahead of the handshake.
+  const channel = createHostCredentialChannel();
+  const early = createHostBrokeredSecretReader(channel)({ kind: "keychain", account: "exa:default" });
+  const { host, runtime } = createInMemoryChannel();
+  const done = runEngine({ config: { sessionId: "init-order", cwd: "/tmp/x", model: "winter-test/echo" }, input: runtime.input, output: runtime.output, provider: echoProvider, hostCredentialChannel: channel });
+  host.output.write({ type: "user", text: "hi" });
+  const seen: WinterFrame[] = [];
+  let ended = false;
+  for await (const f of host.input) {
+    seen.push(f);
+    if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "credential_resolve") {
+      host.output.write({ type: "control_response", requestId: (f as ControlRequestFrame).requestId, ok: true, payload: { ok: true, material: "exa-material", generation: 1 } });
+    }
+    if (!ended && f.type === "data" && (f as { message: { type: string } }).message.type === "result") {
+      ended = true;
+      host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    }
+  }
+  await done;
+  expect(seen[0]?.type).toBe("init");
+  const resolveAt = seen.findIndex((f) => f.type === "control_request" && (f as ControlRequestFrame).subtype === "credential_resolve");
+  expect(resolveAt).toBeGreaterThan(0);
+  expect(await early).toBe("exa-material");
+}, 20_000);
