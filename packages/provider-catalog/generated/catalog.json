@@ -48236,17 +48236,17 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "native",
+        "value": "none",
         "source": "official-doc",
-        "sourceRef": "https://docs.nvidia.com/nim/vision-language-models/1.4.1/function-calling.html — NIM for VLMs' function-calling guide covers Llama 4 Maverick 17B 128E Instruct. The build.nvidia.com model page no longer resolves and the id is absent from https://integrate.api.nvidia.com/v1/models (both re-checked 2026-09-27)",
-        "confidence": "inferred",
+        "sourceRef": "https://integrate.api.nvidia.com/v1/models (read 2026-09-27) — this id is ABSENT from NVIDIA's live model list and its build.nvidia.com page no longer resolves; NIM for VLMs' function-calling guide (https://docs.nvidia.com/nim/vision-language-models/1.4.1/function-calling.html) covers the model but not this hosted endpoint, so the row stays fail-closed `unknown`.",
+        "confidence": "unknown",
         "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": true,
+        "value": false,
         "source": "official-doc",
-        "sourceRef": "https://docs.nvidia.com/nim/vision-language-models/1.4.1/function-calling.html — NIM for VLMs' function-calling guide covers Llama 4 Maverick 17B 128E Instruct. The build.nvidia.com model page no longer resolves and the id is absent from https://integrate.api.nvidia.com/v1/models (both re-checked 2026-09-27)",
-        "confidence": "inferred",
+        "sourceRef": "https://integrate.api.nvidia.com/v1/models (read 2026-09-27) — this id is ABSENT from NVIDIA's live model list and its build.nvidia.com page no longer resolves; NIM for VLMs' function-calling guide (https://docs.nvidia.com/nim/vision-language-models/1.4.1/function-calling.html) covers the model but not this hosted endpoint, so the row stays fail-closed `unknown`.",
+        "confidence": "unknown",
         "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
@@ -53956,17 +53956,17 @@
         "observedAt": "2026-09-27T00:00:00Z"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "winter-default",
-        "sourceRef": "https://opencode.ai/docs/zen/ (read 2026-09-27) — Zen's docs state no tool-calling capability for `space-bunny-free`; the only statement found is a THIRD-PARTY metadata mirror (models.dev: `tool_call: true`), which is not vendor evidence, and nothing documents that this id is the same model OpenRouter lists as `stealth/space-bunny-alpha`. ABSENT fails CLOSED (WS-13 §8.1: `native` is never inferred from silence) — the `opencode/big-pickle` precedent.",
-        "confidence": "unknown",
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://opencode.ai/docs/zen/ (read 2026-09-27) — OpenCode Zen is the model gateway of the OpenCode CODING AGENT, and this page lists `space-bunny-free` for use in that agent, which cannot work without tool use. The same ruling as a vendor's Claude Code guide: tool-use evidence for this endpoint, held at `inferred` below a field-level spec. Zen's docs state no tool field for the id itself.",
+        "confidence": "inferred",
         "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "winter-default",
-        "sourceRef": "https://opencode.ai/docs/zen/ (read 2026-09-27) — Zen's docs state no tool-calling capability for `space-bunny-free`; the only statement found is a THIRD-PARTY metadata mirror (models.dev: `tool_call: true`), which is not vendor evidence, and nothing documents that this id is the same model OpenRouter lists as `stealth/space-bunny-alpha`. ABSENT fails CLOSED (WS-13 §8.1: `native` is never inferred from silence) — the `opencode/big-pickle` precedent.",
-        "confidence": "unknown",
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://opencode.ai/docs/zen/ (read 2026-09-27) — OpenCode Zen is the model gateway of the OpenCode CODING AGENT, and this page lists `space-bunny-free` for use in that agent, which cannot work without tool use. The same ruling as a vendor's Claude Code guide: tool-use evidence for this endpoint, held at `inferred` below a field-level spec. Zen's docs state no tool field for the id itself.",
+        "confidence": "inferred",
         "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
@@ -73795,18 +73795,18 @@
         "confidence": "unknown"
       },
       "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/wafer/index.ts#DeepSeek-V4-Pro",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://pass.wafer.ai/v1/models — Wafer's unauthenticated public model list, entry DeepSeek-V4-Pro read 2026-09-27: `capabilities.tools: true`, and for the Anthropic Messages dialect this row speaks `capabilities.messages.supported: true` with `messages.tools: true`.",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/wafer/index.ts#DeepSeek-V4-Pro",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://pass.wafer.ai/v1/models — Wafer's unauthenticated public model list, entry DeepSeek-V4-Pro read 2026-09-27: `capabilities.tools: true`, and for the Anthropic Messages dialect this row speaks `capabilities.messages.supported: true` with `messages.tools: true`.",
+        "confidence": "declared",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -73842,17 +73842,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/wafer/index.ts#GLM-5.1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://pass.wafer.ai/v1/models (read 2026-09-27) — `GLM-5.1` is ABSENT from Wafer's live public model list, so no capability can be read for it; it stays fail-closed `unknown` (and may no longer be served).",
+        "confidence": "unknown",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/wafer/index.ts#GLM-5.1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://pass.wafer.ai/v1/models (read 2026-09-27) — `GLM-5.1` is ABSENT from Wafer's live public model list, so no capability can be read for it; it stays fail-closed `unknown` (and may no longer be served).",
+        "confidence": "unknown",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -73888,17 +73888,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/wafer/index.ts#MiniMax-M2.7",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://pass.wafer.ai/v1/models (read 2026-09-27) — `MiniMax-M2.7` is ABSENT from Wafer's live public model list, so no capability can be read for it; it stays fail-closed `unknown` (and may no longer be served).",
+        "confidence": "unknown",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/wafer/index.ts#MiniMax-M2.7",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://pass.wafer.ai/v1/models (read 2026-09-27) — `MiniMax-M2.7` is ABSENT from Wafer's live public model list, so no capability can be read for it; it stays fail-closed `unknown` (and may no longer be served).",
+        "confidence": "unknown",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -73934,17 +73934,17 @@
       },
       "toolCalling": {
         "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/wafer/index.ts#Qwen3.5-397B-A17B",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://pass.wafer.ai/v1/models (read 2026-09-27) — `Qwen3.5-397B-A17B` is ABSENT from Wafer's live public model list, so no capability can be read for it; it stays fail-closed `unknown` (and may no longer be served).",
+        "confidence": "unknown",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "nativeTools": {
         "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/wafer/index.ts#Qwen3.5-397B-A17B",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "source": "official-doc",
+        "sourceRef": "https://pass.wafer.ai/v1/models (read 2026-09-27) — `Qwen3.5-397B-A17B` is ABSENT from Wafer's live public model list, so no capability can be read for it; it stays fail-closed `unknown` (and may no longer be served).",
+        "confidence": "unknown",
+        "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
