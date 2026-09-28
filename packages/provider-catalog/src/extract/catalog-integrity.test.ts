@@ -235,6 +235,32 @@ describe("pricing (R6-H, R6-9)", () => {
       "chutes/unsloth/Mistral-Nemo-Instruct-2407-TEE",
       "chutes/zai-org/GLM-5.1-TEE",
       "chutes/zai-org/GLM-5.2-TEE",
+      "cloudflare-workers-ai/@cf/aisingapore/gemma-sea-lion-v4-27b-it",
+      "cloudflare-workers-ai/@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
+      "cloudflare-workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731",
+      "cloudflare-workers-ai/@cf/deepseek-ai/deepseek-v4-pro-0813",
+      "cloudflare-workers-ai/@cf/google/gemma-4-26b-a4b-it",
+      "cloudflare-workers-ai/@cf/ibm-granite/granite-4.0-h-micro",
+      "cloudflare-workers-ai/@cf/meta/llama-3.1-8b-instruct-fp8",
+      "cloudflare-workers-ai/@cf/meta/llama-3.2-11b-vision-instruct",
+      "cloudflare-workers-ai/@cf/meta/llama-3.2-1b-instruct",
+      "cloudflare-workers-ai/@cf/meta/llama-3.2-3b-instruct",
+      "cloudflare-workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "cloudflare-workers-ai/@cf/meta/llama-4-scout-17b-16e-instruct",
+      "cloudflare-workers-ai/@cf/mistralai/mistral-small-3.1-24b-instruct",
+      "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6",
+      "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.7-code",
+      "cloudflare-workers-ai/@cf/nvidia/nemotron-3-120b-a12b",
+      "cloudflare-workers-ai/@cf/openai/gpt-oss-120b",
+      "cloudflare-workers-ai/@cf/openai/gpt-oss-20b",
+      "cloudflare-workers-ai/@cf/qwen/qwen2.5-coder-32b-instruct",
+      "cloudflare-workers-ai/@cf/qwen/qwen3-30b-a3b-fp8",
+      "cloudflare-workers-ai/@cf/qwen/qwen3.8-27b",
+      "cloudflare-workers-ai/@cf/qwen/qwq-32b",
+      "cloudflare-workers-ai/@cf/zai-org/glm-4.7-flash",
+      "cloudflare-workers-ai/@cf/zai-org/glm-5.2",
+      "cloudflare-workers-ai/@cf/zai-org/glm-5.3",
+      "cloudflare-workers-ai/@cf/zai-org/glm-5.3-flash",
       "cohere/command-a-03-2025",
       "cohere/command-r-08-2024",
       "cohere/command-r-plus-08-2024",
@@ -252,6 +278,16 @@ describe("pricing (R6-H, R6-9)", () => {
       "console/claude-sonnet-4.5",
       "console/claude-sonnet-4.6",
       "console/claude-sonnet-5",
+      "crusoe/deepseek-ai/DeepSeek-V4-Flash",
+      "crusoe/deepseek-ai/DeepSeek-V4-Pro",
+      "crusoe/google/gemma-4-31b-it",
+      "crusoe/moonshotai/Kimi-K2.6",
+      "crusoe/nvidia/Nemotron-3-Nano-30B-A3B",
+      "crusoe/nvidia/Nemotron-3-Super-120B-A12B",
+      "crusoe/nvidia/nemotron-3.5-lightning-30b-a3b",
+      "crusoe/openai/gpt-oss-120b",
+      "crusoe/zai/GLM-5.3",
+      "crusoe/zai/GLM-5.3-Flash",
       "deepinfra/ByteDance/Seed-1.8",
       "deepinfra/ByteDance/Seed-2.0-code",
       "deepinfra/ByteDance/Seed-2.0-mini",
@@ -583,6 +619,14 @@ describe("pricing (R6-H, R6-9)", () => {
       "openrouter/x-ai/grok-4.7",
       "openrouter/z-ai/glm-5.3",
       "openrouter/z-ai/glm-5.3-flash",
+      "ovhcloud/Meta-Llama-3_3-70B-Instruct",
+      "ovhcloud/Qwen2.5-VL-72B-Instruct",
+      "ovhcloud/Qwen3.5-397B-A17B",
+      "ovhcloud/Qwen3.5-9B",
+      "ovhcloud/Qwen3.6-27B",
+      "ovhcloud/Qwen3.8-27B",
+      "ovhcloud/gpt-oss-120b",
+      "ovhcloud/gpt-oss-20b",
       "perplexity/sonar",
       "perplexity/sonar-deep-research",
       "perplexity/sonar-pro",
@@ -642,6 +686,13 @@ describe("pricing (R6-H, R6-9)", () => {
       "tencent-tokenhub/hy-role",
       "tencent-tokenhub/hy3",
       "tencent-tokenhub/hy4-preview",
+      "tinfoil/deepseek-v4-1-flash",
+      "tinfoil/gemma4-31b",
+      "tinfoil/glm-5-3",
+      "tinfoil/glm-5-3-flash",
+      "tinfoil/gpt-oss-120b",
+      "tinfoil/kimi-k3",
+      "tinfoil/llama3-3-70b",
       "together/MiniMaxAI/MiniMax-M3",
       "together/Qwen/Qwen3.5-9B",
       "together/Qwen/Qwen3.7-Plus",
@@ -1229,9 +1280,11 @@ describe("WS-13b §2: `defaultEndpoints.api` carries the API ROOT on both layers
   // The validator enforces the per-ROW rules (template required, no `api` endpoint, no orphan
   // template). What it cannot see is whether the SHIPPED catalog's per-tenant set is the reviewed
   // one, and whether those rows sit where the runtime's user-endpoint path can actually reach them.
-  test("the shipped per-tenant set is exactly the two reviewed rows, and each ships a template and no endpoint", () => {
+  test("the shipped per-tenant set is exactly the reviewed rows, and each ships a template and no endpoint", () => {
     const perTenant = catalog.providers.filter((p) => p.requiresUserEndpoint === true);
-    expect(perTenant.map((p) => p.id).sort()).toEqual(["azure-ai", "oci"]);
+    // cat34 added three: Databricks (workspace host), Snowflake Cortex (account host) and Cloudflare
+    // Workers AI (account id in the path), each from the vendor's own fetched documentation.
+    expect(perTenant.map((p) => p.id).sort()).toEqual(["azure-ai", "cloudflare-workers-ai", "databricks", "oci", "snowflake-cortex"]);
     for (const row of perTenant) {
       // Restated on the SHIPPED document rather than left to the validator: a regeneration that
       // dropped the field would leave a row with a template and a live endpoint, which the validator
