@@ -259,13 +259,6 @@
       "sourceRef": "https://wiki.agnes-ai.com/en/docs/pricing (read 2026-09-27): \"agnes-2.5-flash | Cached input $0.005/M | Input tokens $0.05/M | Output tokens $0.15/M (List price column)\" — USD 0.05 input / 0.15 output / 0.005 cached input per 1M tokens; tiers: Current promotional price is $0/M for cached input, input, and output (\"Cached input, input tokens, and output tokens are currently free for agnes-2.5-flash\"). (the smallest-context standard tier is stored)",
       "confidence": "declared",
       "observedAt": "2026-09-27T00:00:00Z"
-    },
-    "api-airforce/x-ai/grok-3": {
-      "value": { "inputPerMTokUsd": 3.5, "outputPerMTokUsd": 17.5 },
-      "source": "official-doc",
-      "sourceRef": "https://api.airforce/models/grok-3/ (read 2026-09-27): \"priced at $3.50 per million input tokens and $17.50 per million output tokens.\" — USD 3.5 input / 17.5 output per 1M tokens",
-      "confidence": "declared",
-      "observedAt": "2026-09-27T00:00:00Z"
     }
   }
 }

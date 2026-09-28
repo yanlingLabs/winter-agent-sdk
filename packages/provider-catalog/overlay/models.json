@@ -14327,7 +14327,7 @@
       "upstreamId": "sonar",
       "displayName": "Sonar",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): contextWindow, maxOutputTokens, reasoning filled from official evidence (see each field's sourceRef). cat34 (2026-09-27): scheduled retirement 2026-09-27 (still `candidate` until that date passes) (https://docs.perplexity.ai/docs/getting-started/models (read 2026-09-27): \"Sonar Chat Completions is now Agent API. Sonar will be supported until September 27, 2026.\")",
+      "$comment": "cat34 (2026-09-27): contextWindow, maxOutputTokens, reasoning filled from official evidence (see each field's sourceRef). cat34 (2026-09-27): scheduled retirement 2026-09-27 (still `candidate` until that date passes) (https://docs.perplexity.ai/docs/getting-started/models (read 2026-09-27): \"Sonar Chat Completions is now Agent API. Sonar will be supported until September 27, 2026.\") cat34 review (2026-09-28): status `deprecated` — https://docs.perplexity.ai/docs/getting-started/models (read 2026-09-27): \"Sonar Chat Completions is now Agent API. Sonar will be supported until September 27, 2026.\" — that date has passed.",
       "endpoints": [
         "chat"
       ],
@@ -14364,7 +14364,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
+      "status": "deprecated",
       "pricing": {
         "value": {
           "inputPerMTokUsd": 1,
@@ -14407,7 +14407,7 @@
       "upstreamId": "sonar-deep-research",
       "displayName": "Sonar Deep Research",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): contextWindow, maxOutputTokens, reasoning filled from official evidence (see each field's sourceRef). cat34 (2026-09-27): scheduled retirement 2026-09-27 (still `candidate` until that date passes) (https://docs.perplexity.ai/docs/getting-started/models (read 2026-09-27): \"Sonar Chat Completions is now Agent API. Sonar will be supported until September 27, 2026.\")",
+      "$comment": "cat34 (2026-09-27): contextWindow, maxOutputTokens, reasoning filled from official evidence (see each field's sourceRef). cat34 (2026-09-27): scheduled retirement 2026-09-27 (still `candidate` until that date passes) (https://docs.perplexity.ai/docs/getting-started/models (read 2026-09-27): \"Sonar Chat Completions is now Agent API. Sonar will be supported until September 27, 2026.\") cat34 review (2026-09-28): status `deprecated` — https://docs.perplexity.ai/docs/getting-started/models (read 2026-09-27): \"Sonar Chat Completions is now Agent API. Sonar will be supported until September 27, 2026.\" — that date has passed.",
       "endpoints": [
         "chat"
       ],
@@ -14444,7 +14444,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
+      "status": "deprecated",
       "pricing": {
         "value": {
           "inputPerMTokUsd": 2,
@@ -14492,7 +14492,7 @@
       "upstreamId": "sonar-pro",
       "displayName": "Sonar Pro",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): contextWindow, maxOutputTokens, reasoning filled from official evidence (see each field's sourceRef). cat34 (2026-09-27): scheduled retirement 2026-09-27 (still `candidate` until that date passes) (https://docs.perplexity.ai/docs/getting-started/models (read 2026-09-27): \"Sonar Chat Completions is now Agent API. Sonar will be supported until September 27, 2026.\")",
+      "$comment": "cat34 (2026-09-27): contextWindow, maxOutputTokens, reasoning filled from official evidence (see each field's sourceRef). cat34 (2026-09-27): scheduled retirement 2026-09-27 (still `candidate` until that date passes) (https://docs.perplexity.ai/docs/getting-started/models (read 2026-09-27): \"Sonar Chat Completions is now Agent API. Sonar will be supported until September 27, 2026.\") cat34 review (2026-09-28): status `deprecated` — https://docs.perplexity.ai/docs/getting-started/models (read 2026-09-27): \"Sonar Chat Completions is now Agent API. Sonar will be supported until September 27, 2026.\" — that date has passed.",
       "endpoints": [
         "chat"
       ],
@@ -14529,7 +14529,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
+      "status": "deprecated",
       "pricing": {
         "value": {
           "inputPerMTokUsd": 3,
@@ -14572,7 +14572,7 @@
       "upstreamId": "sonar-reasoning-pro",
       "displayName": "Sonar Reasoning Pro",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): contextWindow, maxOutputTokens, reasoning filled from official evidence (see each field's sourceRef). cat34 (2026-09-27): scheduled retirement 2026-09-27 (still `candidate` until that date passes) (https://docs.perplexity.ai/docs/getting-started/models (read 2026-09-27): \"Sonar Chat Completions is now Agent API. Sonar will be supported until September 27, 2026.\")",
+      "$comment": "cat34 (2026-09-27): contextWindow, maxOutputTokens, reasoning filled from official evidence (see each field's sourceRef). cat34 (2026-09-27): scheduled retirement 2026-09-27 (still `candidate` until that date passes) (https://docs.perplexity.ai/docs/getting-started/models (read 2026-09-27): \"Sonar Chat Completions is now Agent API. Sonar will be supported until September 27, 2026.\") cat34 review (2026-09-28): status `deprecated` — https://docs.perplexity.ai/docs/getting-started/models (read 2026-09-27): \"Sonar Chat Completions is now Agent API. Sonar will be supported until September 27, 2026.\" — that date has passed.",
       "endpoints": [
         "chat"
       ],
@@ -14609,7 +14609,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
+      "status": "deprecated",
       "pricing": {
         "value": {
           "inputPerMTokUsd": 2,
@@ -14657,7 +14657,7 @@
       "upstreamId": "llama-3.3-70b-versatile",
       "displayName": "Llama 3.3 70B",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): reasoning, toolCalling filled from official evidence (see each field's sourceRef). cat34 (2026-09-27): retirement note: Groq's deprecations page retires this id for the free/developer tier on 2026-08-16 (\"llama-3.3-70b-versatile|08/16/26|openai/gpt-oss-120b or qwen/qwen3.6-27b\", https://console.groq.com/docs/deprecations, read 2026-09-27) but its models page still lists it for Enterprise (\"Contact Sales\"), and the `llama` family's slot names this model, so it is kept `candidate` pending a ruling.",
+      "$comment": "cat34 (2026-09-27): reasoning, toolCalling filled from official evidence (see each field's sourceRef). cat34 (2026-09-27): retirement note: Groq's deprecations page retires this id for the free/developer tier on 2026-08-16 (\"llama-3.3-70b-versatile|08/16/26|openai/gpt-oss-120b or qwen/qwen3.6-27b\", https://console.groq.com/docs/deprecations, read 2026-09-27) but its models page still lists it for Enterprise (\"Contact Sales\"), and the `llama` family's slot names this model, so it is kept `candidate` pending a ruling. cat34 review (2026-09-28): status `deprecated` — https://console.groq.com/docs/deprecations (read 2026-09-28): \"llama-3.3-70b-versatile 08/16/26 openai/gpt-oss-120b or qwen/qwen3.6-27b\" — the shutdown date has passed. The `llama` family's `3.3` slot now names `llama-3.3-70b-instruct-turbo` (Together, DeepInfra).",
       "endpoints": [
         "chat"
       ],
@@ -14694,7 +14694,7 @@
         "observedAt": "2026-09-27T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate",
+      "status": "deprecated",
       "contextWindow": {
         "value": 131072,
         "source": "official-doc",
@@ -44590,12 +44590,14 @@
       },
       "inputModalities": {
         "value": [
-          "text"
+          "text",
+          "image",
+          "video"
         ],
         "source": "official-doc",
-        "sourceRef": "https://cloud.tencent.com/document/product/1823/130060 — Token Plan Hy subset is text-only; general plan in AI-tool usage does not document multimodal support.",
-        "confidence": "declared",
-        "observedAt": "2026-09-25T10:06:30Z"
+        "sourceRef": "MAKER page for the model this row serves (the serving provider's own pages state nothing for it): https://platform.kimi.ai/docs/guide/use-kimi-vision-model — Moonshot lists kimi-k3 as understanding images and video. The row's earlier citation (https://cloud.tencent.com/document/product/1823/130060, (read 2026-09-28)) says \"可用模型暂不支持图片、视频等多模态能力\" only for the Hy Token Plan's models, not for the general plan's kimi-k3",
+        "confidence": "inferred",
+        "observedAt": "2026-09-28T00:00:00Z"
       },
       "outputModalities": {
         "value": [
@@ -59066,12 +59068,13 @@
       "inputModalities": {
         "value": [
           "text",
-          "image"
+          "image",
+          "video"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/novita/index.ts#moonshotai/kimi-k3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://novita.ai/models/model-detail/moonshotai-kimi-k3 (read 2026-09-28): \"Input Capabilities text, image, video Output Capabilities text\"",
+        "confidence": "declared",
+        "observedAt": "2026-09-28T00:00:00Z"
       },
       "outputModalities": {
         "value": [
@@ -60200,12 +60203,13 @@
       "pricing": {
         "value": {
           "inputPerMTokUsd": 1.788,
-          "outputPerMTokUsd": 3.576
+          "outputPerMTokUsd": 3.576,
+          "cacheReadPerMTokUsd": 0.149
         },
         "source": "official-doc",
-        "sourceRef": "https://help.aliyun.com/zh/model-studio/model-pricing (read 2026-09-27): \"deepseek-v4-pro ... 12 元 ... 24 元 ... 100 万 Token\" — CNY 12 input / 24 output per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: flat-rate; free quota 1 million tokens for 90 days (the smallest-context standard tier is stored)",
+        "sourceRef": "https://help.aliyun.com/zh/model-studio/deepseek-v4-pro (read 2026-09-28): \"华北 2（北京） 计费项 价格（元） 单位 输入 12 每百万 tokens 输出 24 每百万 tokens 输入（缓存命中） 1 每百万 tokens\" — CNY 12 input / 24 output / 1 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data)",
         "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
+        "observedAt": "2026-09-28T00:00:00Z"
       }
     },
     {
@@ -61021,7 +61025,7 @@
       "upstreamId": "anthropic/claude-3.7-sonnet",
       "displayName": "Claude 3.7 Sonnet (Free)",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ.",
+      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ. cat34 review (2026-09-28): unpriced — api.airforce bills through plan credits (https://api.airforce/pricing (read 2026-09-28): \"Every paid plan splits credits into three buckets\"), and no USD-per-credit rate is published, so a per-model dollar figure is not a token price.",
       "endpoints": [
         "chat"
       ],
@@ -61083,16 +61087,6 @@
         },
         "efforts": [],
         "continuation": "none"
-      },
-      "pricing": {
-        "value": {
-          "inputPerMTokUsd": 3.15,
-          "outputPerMTokUsd": 15.75
-        },
-        "source": "official-doc",
-        "sourceRef": "https://api.airforce/models/claude-3-7-sonnet-20250219/ (read 2026-09-27): \"priced at $3.15 per million input tokens and $15.75 per million output tokens. That is below the provider's $3.00 official input rate.\" — USD 3.15 input / 15.75 output per 1M tokens — Row display name says '(Free)' but the page states a non-zero standard per-token rate; see notes.",
-        "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
       }
     },
     {
@@ -61101,7 +61095,7 @@
       "upstreamId": "deepseek/deepseek-v3",
       "displayName": "DeepSeek V3 (Free)",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for contextWindow, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ.",
+      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for contextWindow, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ. cat34 review (2026-09-28): unpriced — api.airforce bills through plan credits (https://api.airforce/pricing (read 2026-09-28): \"Every paid plan splits credits into three buckets\"), and no USD-per-credit rate is published, so a per-model dollar figure is not a token price.",
       "endpoints": [
         "chat"
       ],
@@ -61113,11 +61107,11 @@
         "observedAt": "2026-09-27T00:00:00Z"
       },
       "maxOutputTokens": {
-        "value": 16384,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/api-airforce/index.ts#deepseek/deepseek-v3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": 8192,
+        "source": "official-doc",
+        "sourceRef": "https://api.airforce/models/deepseek-v3/ (read 2026-09-28): Specifications \"Max output 8K tokens\" (read as 8192 per the controller review)",
+        "confidence": "declared",
+        "observedAt": "2026-09-28T00:00:00Z"
       },
       "inputModalities": {
         "value": [
@@ -61163,16 +61157,6 @@
         },
         "efforts": [],
         "continuation": "none"
-      },
-      "pricing": {
-        "value": {
-          "inputPerMTokUsd": 0.25,
-          "outputPerMTokUsd": 0.85
-        },
-        "source": "official-doc",
-        "sourceRef": "https://api.airforce/models/deepseek-v3/ (read 2026-09-27): \"priced at $0.25 per million input tokens and $0.85 per million output tokens. That is below the provider's $0.36 official input rate.\" — USD 0.25 input / 0.85 output per 1M tokens",
-        "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
       }
     },
     {
@@ -61181,7 +61165,7 @@
       "upstreamId": "google/gemini-2.5-flash",
       "displayName": "Gemini 2.5 Flash (Free)",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for inputModalities, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ.",
+      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for inputModalities, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ. cat34 review (2026-09-28): unpriced — api.airforce bills through plan credits (https://api.airforce/pricing (read 2026-09-28): \"Every paid plan splits credits into three buckets\"), and no USD-per-credit rate is published, so a per-model dollar figure is not a token price.",
       "endpoints": [
         "chat"
       ],
@@ -61246,16 +61230,6 @@
         },
         "efforts": [],
         "continuation": "none"
-      },
-      "pricing": {
-        "value": {
-          "inputPerMTokUsd": 0.4,
-          "outputPerMTokUsd": 2.5
-        },
-        "source": "official-doc",
-        "sourceRef": "https://api.airforce/models/gemini-2.5-flash/ (read 2026-09-27): \"priced at $0.40 per million input tokens and $2.50 per million output tokens. That is below the provider's $0.75 official input rate.\" — USD 0.4 input / 2.5 output per 1M tokens",
-        "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
       }
     },
     {
@@ -61264,7 +61238,7 @@
       "upstreamId": "moonshot/kimi-k2.6",
       "displayName": "Kimi K2.6 (Free)",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for pricing, reasoning (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ.",
+      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for pricing, reasoning (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ. cat34 review (2026-09-28): unpriced — api.airforce bills through plan credits (https://api.airforce/pricing (read 2026-09-28): \"Every paid plan splits credits into three buckets\"), and no USD-per-credit rate is published, so a per-model dollar figure is not a token price.",
       "endpoints": [
         "chat"
       ],
@@ -61326,16 +61300,6 @@
         },
         "efforts": [],
         "continuation": "none"
-      },
-      "pricing": {
-        "value": {
-          "inputPerMTokUsd": 0.85,
-          "outputPerMTokUsd": 3.7
-        },
-        "source": "official-doc",
-        "sourceRef": "https://api.airforce/models/kimi-k2.6/ (read 2026-09-27): \"It is priced at $0.85 per million input tokens and $3.70 per million output tokens.\" — USD 0.85 input / 3.7 output per 1M tokens",
-        "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
       }
     },
     {
@@ -61344,7 +61308,7 @@
       "upstreamId": "qwen/qwen3-32b",
       "displayName": "Qwen3 32B (Free)",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ.",
+      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ. cat34 review (2026-09-28): unpriced — api.airforce bills through plan credits (https://api.airforce/pricing (read 2026-09-28): \"Every paid plan splits credits into three buckets\"), and no USD-per-credit rate is published, so a per-model dollar figure is not a token price.",
       "endpoints": [
         "chat"
       ],
@@ -61406,16 +61370,6 @@
         },
         "efforts": [],
         "continuation": "none"
-      },
-      "pricing": {
-        "value": {
-          "inputPerMTokUsd": 0.17,
-          "outputPerMTokUsd": 0.67
-        },
-        "source": "official-doc",
-        "sourceRef": "https://api.airforce/models/qwen3-32b/ (read 2026-09-27): \"priced at $0.17 per million input tokens and $0.67 per million output tokens. That is below the provider's $0.30 official input rate.\" — USD 0.17 input / 0.67 output per 1M tokens",
-        "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
       }
     },
     {
@@ -63846,11 +63800,10 @@
         "value": {
           "inputPerMTokUsd": 0.6,
           "outputPerMTokUsd": 2.2,
-          "cacheReadPerMTokUsd": 0.11,
-          "cacheWritePerMTokUsd": 0.0083
+          "cacheReadPerMTokUsd": 0.11
         },
         "source": "official-doc",
-        "sourceRef": "https://docs.byteplus.com/docs/ModelArk/1099320 (read 2026-09-27): \"glm-4-7-251222 - 0.6 - 0.0083 0.11 - 2.2\" — USD 0.6 input / 2.2 output / 0.11 cached input per 1M tokens — still listed on the pricing page despite being [Retired] on the model list",
+        "sourceRef": "https://docs.byteplus.com/docs/ModelArk/1099320 (read 2026-09-27): \"glm-4-7-251222 - 0.6 - 0.0083 0.11 - 2.2\" — USD 0.6 input / 2.2 output / 0.11 cached input per 1M tokens — still listed on the pricing page despite being [Retired] on the model list — the page's other cache column is cache STORAGE (元/百万token/小时, per 1M tokens per HOUR), not a cache-write price, so no cache-write price is recorded (controller review, 2026-09-28)",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -64299,11 +64252,10 @@
         "value": {
           "inputPerMTokUsd": 0.1192,
           "outputPerMTokUsd": 0.298,
-          "cacheReadPerMTokUsd": 0.02384,
-          "cacheWritePerMTokUsd": 0.002533
+          "cacheReadPerMTokUsd": 0.02384
         },
         "source": "official-doc",
-        "sourceRef": "https://www.volcengine.com/docs/82379/2123228 (read 2026-09-27): \"输入长度 [0, 32] 且输出长度 [0, 0.2] 0.80 0.16 2.00 0.017\" — CNY 0.8 input / 2.0 output / 0.16 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: tiered by input length: [0,32k]+output[0,0.2k]=in 0.80/out 2.00; [0,32k]+output>0.2k=in0.80/out8.00; (32,128]=in1.20/out16.00; (128,256]=in2.40/out24.00 (all CNY/1M tokens); cacheWrite is CNY/1M tokens/hour (the smallest-context standard tier is stored) — reporting the smallest tier per instructions",
+        "sourceRef": "https://www.volcengine.com/docs/82379/2123228 (read 2026-09-27): \"输入长度 [0, 32] 且输出长度 [0, 0.2] 0.80 0.16 2.00 0.017\" — CNY 0.8 input / 2.0 output / 0.16 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: tiered by input length: [0,32k]+output[0,0.2k]=in 0.80/out 2.00; [0,32k]+output>0.2k=in0.80/out8.00; (32,128]=in1.20/out16.00; (128,256]=in2.40/out24.00 (all CNY/1M tokens); cacheWrite is CNY/1M tokens/hour (the smallest-context standard tier is stored) — reporting the smallest tier per instructions — the page's other cache column is cache STORAGE (元/百万token/小时, per 1M tokens per HOUR), not a cache-write price, so no cache-write price is recorded (controller review, 2026-09-28)",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -64390,11 +64342,10 @@
         "value": {
           "inputPerMTokUsd": 0.4768,
           "outputPerMTokUsd": 2.384,
-          "cacheReadPerMTokUsd": 0.09536,
-          "cacheWritePerMTokUsd": 0.002533
+          "cacheReadPerMTokUsd": 0.09536
         },
         "source": "official-doc",
-        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-2.0-code 输入长度 [0, 32] 3.2 - 0.017 0.64 - 16.0\" — CNY 3.2 input / 16.0 output / 0.64 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: doubao-seed-2.0-code, tiered by input length: [0,32k]=in3.2/out16.0; (32,128]=in4.8/out24.0; (128,256]=in9.6/out48.0 CNY/1M tokens (the smallest-context standard tier is stored) — pricing table uses the undated generic name 'doubao-seed-2.0-code'; this is the only 2.0-generation code model documented, so I map it to -260215",
+        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-2.0-code 输入长度 [0, 32] 3.2 - 0.017 0.64 - 16.0\" — CNY 3.2 input / 16.0 output / 0.64 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: doubao-seed-2.0-code, tiered by input length: [0,32k]=in3.2/out16.0; (32,128]=in4.8/out24.0; (128,256]=in9.6/out48.0 CNY/1M tokens (the smallest-context standard tier is stored) — pricing table uses the undated generic name 'doubao-seed-2.0-code'; this is the only 2.0-generation code model documented, so I map it to -260215 — the page's other cache column is cache STORAGE (元/百万token/小时, per 1M tokens per HOUR), not a cache-write price, so no cache-write price is recorded (controller review, 2026-09-28)",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -64481,11 +64432,10 @@
         "value": {
           "inputPerMTokUsd": 0.0894,
           "outputPerMTokUsd": 0.5364,
-          "cacheReadPerMTokUsd": 0.01788,
-          "cacheWritePerMTokUsd": 0.002533
+          "cacheReadPerMTokUsd": 0.01788
         },
         "source": "official-doc",
-        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-2.0-lite 输入长度 [0, 32] 0.6 9.0 0.017 0.12 1.8 3.6\" — CNY 0.6 input / 3.6 output / 0.12 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: doubao-seed-2.0-lite, tiered by input length: [0,32k]=in0.6(audio9.0)/out3.6; (32,128]=in0.9/out5.4; (128,256]=in1.8/out10.8 CNY/1M (the smallest-context standard tier is stored) — two dated lite variants exist (-260215 retiring and -260428 current); pricing table gives one undated 'doubao-seed-2.0-lite' row, applying to both",
+        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-2.0-lite 输入长度 [0, 32] 0.6 9.0 0.017 0.12 1.8 3.6\" — CNY 0.6 input / 3.6 output / 0.12 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: doubao-seed-2.0-lite, tiered by input length: [0,32k]=in0.6(audio9.0)/out3.6; (32,128]=in0.9/out5.4; (128,256]=in1.8/out10.8 CNY/1M (the smallest-context standard tier is stored) — two dated lite variants exist (-260215 retiring and -260428 current); pricing table gives one undated 'doubao-seed-2.0-lite' row, applying to both — the page's other cache column is cache STORAGE (元/百万token/小时, per 1M tokens per HOUR), not a cache-write price, so no cache-write price is recorded (controller review, 2026-09-28)",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -64572,11 +64522,10 @@
         "value": {
           "inputPerMTokUsd": 0.0298,
           "outputPerMTokUsd": 0.298,
-          "cacheReadPerMTokUsd": 0.00596,
-          "cacheWritePerMTokUsd": 0.002533
+          "cacheReadPerMTokUsd": 0.00596
         },
         "source": "official-doc",
-        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-2.0-mini 输入长度 [0, 32] 0.2 3.0 0.017 0.04 0.6 2.0\" — CNY 0.2 input / 2.0 output / 0.04 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: doubao-seed-2.0-mini, tiered by input length: [0,32k]=in0.2(audio3.0)/out2.0; (32,128]=in0.4/out4.0; (128,256]=in0.8/out8.0 CNY/1M (the smallest-context standard tier is stored)",
+        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-2.0-mini 输入长度 [0, 32] 0.2 3.0 0.017 0.04 0.6 2.0\" — CNY 0.2 input / 2.0 output / 0.04 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: doubao-seed-2.0-mini, tiered by input length: [0,32k]=in0.2(audio3.0)/out2.0; (32,128]=in0.4/out4.0; (128,256]=in0.8/out8.0 CNY/1M (the smallest-context standard tier is stored) — the page's other cache column is cache STORAGE (元/百万token/小时, per 1M tokens per HOUR), not a cache-write price, so no cache-write price is recorded (controller review, 2026-09-28)",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -64663,11 +64612,10 @@
         "value": {
           "inputPerMTokUsd": 0.4768,
           "outputPerMTokUsd": 2.384,
-          "cacheReadPerMTokUsd": 0.09536,
-          "cacheWritePerMTokUsd": 0.002533
+          "cacheReadPerMTokUsd": 0.09536
         },
         "source": "official-doc",
-        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-2.0-pro 输入长度 [0, 32] 3.2 - 0.017 0.64 - 16.0\" — CNY 3.2 input / 16.0 output / 0.64 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: doubao-seed-2.0-pro, tiered by input length: [0,32k]=in3.2/out16.0; (32,128]=in4.8/out24.0; (128,256]=in9.6/out48.0 CNY/1M (the smallest-context standard tier is stored)",
+        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-2.0-pro 输入长度 [0, 32] 3.2 - 0.017 0.64 - 16.0\" — CNY 3.2 input / 16.0 output / 0.64 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: doubao-seed-2.0-pro, tiered by input length: [0,32k]=in3.2/out16.0; (32,128]=in4.8/out24.0; (128,256]=in9.6/out48.0 CNY/1M (the smallest-context standard tier is stored) — the page's other cache column is cache STORAGE (元/百万token/小时, per 1M tokens per HOUR), not a cache-write price, so no cache-write price is recorded (controller review, 2026-09-28)",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -65149,7 +65097,7 @@
           "cacheReadPerMTokUsd": 0.2
         },
         "source": "official-doc",
-        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Input $1.5/1M (list ${struck}/1M), Output $6.0/1M, Cache Read $0.2/1M\" — USD 1.5 input / 6.0 output / 0.2 cached input per 1M tokens — freeaiapikey's models page shows a struck-through 'official' rate and its own lower rate; per the meta description ('Live per-token pricing at 80% off official rates') this is a standing rate, not a limited promo, so it is reported as freeaiapikey's price.",
+        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Input $1.5/1M (beside a struck-through list price whose figure the page's markup does not render), Output $6.0/1M, Cache Read $0.2/1M\" — USD 1.5 input / 6.0 output / 0.2 cached input per 1M tokens — freeaiapikey's models page shows a struck-through 'official' rate and its own lower rate; per the meta description ('Live per-token pricing at 80% off official rates') this is a standing rate, not a limited promo, so it is reported as freeaiapikey's price.",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -65160,16 +65108,16 @@
       "upstreamId": "anthropic/claude-opus-4.7",
       "displayName": "Claude Opus 4.7 (via FreeAIAPIKey)",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for contextWindow, maxOutputTokens, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ.",
+      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for contextWindow, maxOutputTokens, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ. cat34 review (2026-09-28): the \"Context 1000k\" on https://freeaiapikey.com/models is a page-template value, not a per-model statement, so the previous context evidence is restored.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
-        "value": 1000000,
-        "source": "official-doc",
-        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Context 1000k\" — Row's stored value is 128000; freeaiapikey's own models page states \"1000k\" (stated as \"1000k\") for this model's Context spec. (CORRECTS the upstream-extracted 128000, which carried no vendor statement: open-sse/config/providers/registry/freeaiapikey/index.ts#anthropic/claude-opus-4.7)",
-        "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/freeaiapikey/index.ts#anthropic/claude-opus-4.7",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
       },
       "inputModalities": {
         "value": [
@@ -65230,7 +65178,7 @@
           "cacheReadPerMTokUsd": 0.3
         },
         "source": "official-doc",
-        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Input $1.5/1M (list ${struck}/1M), Output $6.3/1M, Cache Read $0.3/1M\" — USD 1.5 input / 6.3 output / 0.3 cached input per 1M tokens — freeaiapikey's models page shows a struck-through 'official' rate and its own lower rate; per the meta description ('Live per-token pricing at 80% off official rates') this is a standing rate, not a limited promo, so it is reported as freeaiapikey's price.",
+        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Input $1.5/1M (beside a struck-through list price whose figure the page's markup does not render), Output $6.3/1M, Cache Read $0.3/1M\" — USD 1.5 input / 6.3 output / 0.3 cached input per 1M tokens — freeaiapikey's models page shows a struck-through 'official' rate and its own lower rate; per the meta description ('Live per-token pricing at 80% off official rates') this is a standing rate, not a limited promo, so it is reported as freeaiapikey's price.",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -65241,16 +65189,16 @@
       "upstreamId": "anthropic/claude-opus-4.8",
       "displayName": "Claude Opus 4.8 (via FreeAIAPIKey)",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for contextWindow, maxOutputTokens, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ.",
+      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for contextWindow, maxOutputTokens, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ. cat34 review (2026-09-28): the \"Context 1000k\" on https://freeaiapikey.com/models is a page-template value, not a per-model statement, so the previous context evidence is restored.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
-        "value": 1000000,
-        "source": "official-doc",
-        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Context 1000k\" — Row's stored value is 128000; freeaiapikey's own models page states \"1000k\" (stated as \"1000k\") for this model's Context spec. (CORRECTS the upstream-extracted 128000, which carried no vendor statement: open-sse/config/providers/registry/freeaiapikey/index.ts#anthropic/claude-opus-4.8)",
-        "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/freeaiapikey/index.ts#anthropic/claude-opus-4.8",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
       },
       "inputModalities": {
         "value": [
@@ -65311,7 +65259,7 @@
           "cacheReadPerMTokUsd": 0.3
         },
         "source": "official-doc",
-        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Input $1.5/1M (list ${struck}/1M), Output $6.5/1M, Cache Read $0.3/1M\" — USD 1.5 input / 6.5 output / 0.3 cached input per 1M tokens — freeaiapikey's models page shows a struck-through 'official' rate and its own lower rate; per the meta description ('Live per-token pricing at 80% off official rates') this is a standing rate, not a limited promo, so it is reported as freeaiapikey's price.",
+        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Input $1.5/1M (beside a struck-through list price whose figure the page's markup does not render), Output $6.5/1M, Cache Read $0.3/1M\" — USD 1.5 input / 6.5 output / 0.3 cached input per 1M tokens — freeaiapikey's models page shows a struck-through 'official' rate and its own lower rate; per the meta description ('Live per-token pricing at 80% off official rates') this is a standing rate, not a limited promo, so it is reported as freeaiapikey's price.",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -65322,16 +65270,16 @@
       "upstreamId": "anthropic/claude-opus-5",
       "displayName": "Claude Opus 5 (via FreeAIAPIKey)",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for contextWindow, maxOutputTokens, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ.",
+      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for contextWindow, maxOutputTokens, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ. cat34 review (2026-09-28): the \"Context 1000k\" on https://freeaiapikey.com/models is a page-template value, not a per-model statement, so the previous context evidence is restored.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
-        "value": 1000000,
-        "source": "official-doc",
-        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Context 1000k\" — Row's stored value is 128000; freeaiapikey's own models page states \"1000k\" (stated as \"1000k\") for this model's Context spec. (CORRECTS the upstream-extracted 128000, which carried no vendor statement: open-sse/config/providers/registry/freeaiapikey/index.ts#anthropic/claude-opus-5)",
-        "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/freeaiapikey/index.ts#anthropic/claude-opus-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
       },
       "inputModalities": {
         "value": [
@@ -65392,7 +65340,7 @@
           "cacheReadPerMTokUsd": 0.3
         },
         "source": "official-doc",
-        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Input $1.6/1M (list ${struck}/1M), Output $6.75/1M, Cache Read $0.3/1M\" — USD 1.6 input / 6.75 output / 0.3 cached input per 1M tokens — freeaiapikey's models page shows a struck-through 'official' rate and its own lower rate; per the meta description ('Live per-token pricing at 80% off official rates') this is a standing rate, not a limited promo, so it is reported as freeaiapikey's price.",
+        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Input $1.6/1M (beside a struck-through list price whose figure the page's markup does not render), Output $6.75/1M, Cache Read $0.3/1M\" — USD 1.6 input / 6.75 output / 0.3 cached input per 1M tokens — freeaiapikey's models page shows a struck-through 'official' rate and its own lower rate; per the meta description ('Live per-token pricing at 80% off official rates') this is a standing rate, not a limited promo, so it is reported as freeaiapikey's price.",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -65473,7 +65421,7 @@
           "cacheReadPerMTokUsd": 0.1
         },
         "source": "official-doc",
-        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Input $0.8/1M (list ${struck}/1M), Output $3.0/1M, Cache Read $0.1/1M\" — USD 0.8 input / 3.0 output / 0.1 cached input per 1M tokens — freeaiapikey's models page shows a struck-through 'official' rate and its own lower rate; per the meta description ('Live per-token pricing at 80% off official rates') this is a standing rate, not a limited promo, so it is reported as freeaiapikey's price.",
+        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Input $0.8/1M (beside a struck-through list price whose figure the page's markup does not render), Output $3.0/1M, Cache Read $0.1/1M\" — USD 0.8 input / 3.0 output / 0.1 cached input per 1M tokens — freeaiapikey's models page shows a struck-through 'official' rate and its own lower rate; per the meta description ('Live per-token pricing at 80% off official rates') this is a standing rate, not a limited promo, so it is reported as freeaiapikey's price.",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -65484,16 +65432,16 @@
       "upstreamId": "anthropic/claude-sonnet-5",
       "displayName": "Claude Sonnet 5 (via FreeAIAPIKey)",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for contextWindow, maxOutputTokens, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ.",
+      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for contextWindow, maxOutputTokens, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ. cat34 review (2026-09-28): the \"Context 1000k\" on https://freeaiapikey.com/models is a page-template value, not a per-model statement, so the previous context evidence is restored.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
-        "value": 1000000,
-        "source": "official-doc",
-        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Context 1000k\" — Row's stored value is 128000; freeaiapikey's own models page states \"1000k\" (stated as \"1000k\") for this model's Context spec. (CORRECTS the upstream-extracted 128000, which carried no vendor statement: open-sse/config/providers/registry/freeaiapikey/index.ts#anthropic/claude-sonnet-5)",
-        "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/freeaiapikey/index.ts#anthropic/claude-sonnet-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
       },
       "inputModalities": {
         "value": [
@@ -65554,7 +65502,7 @@
           "cacheReadPerMTokUsd": 0.15
         },
         "source": "official-doc",
-        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Input $0.9/1M (list ${struck}/1M), Output $3.5/1M, Cache Read $0.15/1M\" — USD 0.9 input / 3.5 output / 0.15 cached input per 1M tokens — freeaiapikey's models page shows a struck-through 'official' rate and its own lower rate; per the meta description ('Live per-token pricing at 80% off official rates') this is a standing rate, not a limited promo, so it is reported as freeaiapikey's price.",
+        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Input $0.9/1M (beside a struck-through list price whose figure the page's markup does not render), Output $3.5/1M, Cache Read $0.15/1M\" — USD 0.9 input / 3.5 output / 0.15 cached input per 1M tokens — freeaiapikey's models page shows a struck-through 'official' rate and its own lower rate; per the meta description ('Live per-token pricing at 80% off official rates') this is a standing rate, not a limited promo, so it is reported as freeaiapikey's price.",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -65565,16 +65513,16 @@
       "upstreamId": "openai/gpt-5.5",
       "displayName": "GPT-5.5 (via FreeAIAPIKey)",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for contextWindow, maxOutputTokens, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ.",
+      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for contextWindow, maxOutputTokens, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ. cat34 review (2026-09-28): the \"Context 1000k\" on https://freeaiapikey.com/models is a page-template value, not a per-model statement, so the previous context evidence is restored.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
-        "value": 1000000,
-        "source": "official-doc",
-        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Context 1000k\" — Row's stored value is 128000. freeaiapikey's own page states 1000k; OpenAI's own model page states 1,050,000 (see note) -- reporting freeaiapikey's own served value since it is the serving provider. (CORRECTS the upstream-extracted 128000, which carried no vendor statement: open-sse/config/providers/registry/freeaiapikey/index.ts#openai/gpt-5.5)",
-        "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/freeaiapikey/index.ts#openai/gpt-5.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
       },
       "inputModalities": {
         "value": [
@@ -65646,16 +65594,16 @@
       "upstreamId": "openai/gpt-5.6-sol",
       "displayName": "GPT-5.6 Sol (via FreeAIAPIKey)",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for contextWindow, maxOutputTokens, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ.",
+      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for contextWindow, maxOutputTokens, pricing, reasoning, toolCalling (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ. cat34 review (2026-09-28): the \"Context 1000k\" on https://freeaiapikey.com/models is a page-template value, not a per-model statement, so the previous context evidence is restored.",
       "endpoints": [
         "chat"
       ],
       "contextWindow": {
-        "value": 1000000,
-        "source": "official-doc",
-        "sourceRef": "https://freeaiapikey.com/models (read 2026-09-27): \"Context 1000k\" — Row's stored value is 128000. OpenAI's own page states 1,050,000 (see note); reporting freeaiapikey's served value 1000k since it is the serving provider. (CORRECTS the upstream-extracted 128000, which carried no vendor statement: open-sse/config/providers/registry/freeaiapikey/index.ts#openai/gpt-5.6-sol)",
-        "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/freeaiapikey/index.ts#openai/gpt-5.6-sol",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
       },
       "inputModalities": {
         "value": [
@@ -74428,7 +74376,7 @@
       "upstreamId": "step-1v",
       "displayName": "Step 1V",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for a lifecycle note (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ. status `deprecated`: https://platform.stepfun.com/docs/zh/guides/model-migration (read 2026-09-27): \"为持续优化模型能力与服务体验，以下模型已于 2026 年 07 月 08 日 正式下线并停止推理服务 ... step-1v-8k / step-1v-32k -> step-1o-turbo-vision\" — shutdown 2026-07-08 has passed",
+      "$comment": "cat34 (2026-09-27): promoted from the upstream layer to carry official evidence for a lifecycle note (each field's sourceRef names its page). Otherwise the upstream-extracted row verbatim (copied whole: the overlay replaces a row, it never merges one); only those fields differ. cat34 review (2026-09-28): NOT deprecated — StepFun's migration notice (https://platform.stepfun.com/docs/zh/guides/model-migration, read 2026-09-27) names `step-1v-8k` / `step-1v-32k` (offline 2026-07-08), not the bare `step-1v`, so the notice cannot be verified against this row's id; kept `candidate` with this note.",
       "endpoints": [
         "chat"
       ],
@@ -74465,7 +74413,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "deprecated"
+      "status": "candidate"
     },
     {
       "key": "tencent/hunyuan-functioncall",
@@ -74979,12 +74927,13 @@
       "pricing": {
         "value": {
           "inputPerMTokUsd": 3,
-          "outputPerMTokUsd": 15
+          "outputPerMTokUsd": 15,
+          "cacheReadPerMTokUsd": 0.3
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/model-pricing (read 2026-09-27): \"kimi-k3 | International | $3 | $15 | No free quota\" — USD 3 input / 15 output per 1M tokens; tiers: flat-rate; no free quota (the smallest-context standard tier is stored)",
+        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/model-pricing (read 2026-09-27): \"kimi-k3 | International | $3 | $15 | No free quota\" — USD 3 input / 15 output per 1M tokens; tiers: flat-rate; no free quota (the smallest-context standard tier is stored) — cached input $0.3: https://www.alibabacloud.com/help/en/model-studio/model-pricing (read 2026-09-28): \"explicit cache creation is billed at 125% of the standard input price, and cache hits at 10%\", and https://www.alibabacloud.com/help/en/model-studio/context-cache (read 2026-09-28) lists `kimi-k3` among the Kimi models that support it (10% of $3)",
         "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
+        "observedAt": "2026-09-28T00:00:00Z"
       }
     },
     {
@@ -84991,11 +84940,10 @@
         "value": {
           "inputPerMTokUsd": 0.894,
           "outputPerMTokUsd": 4.47,
-          "cacheReadPerMTokUsd": 0.1788,
-          "cacheWritePerMTokUsd": 0.002533
+          "cacheReadPerMTokUsd": 0.1788
         },
         "source": "official-doc",
-        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-2.1-pro 输入长度 [0, 1024] 6.00 - 0.017 1.20 - 30.00\" — CNY 6.0 input / 30.0 output / 1.2 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: doubao-seed-2.1-pro, tier [0,1024k]: in6.00/out30.00 CNY/1M (the smallest-context standard tier is stored)",
+        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-2.1-pro 输入长度 [0, 1024] 6.00 - 0.017 1.20 - 30.00\" — CNY 6.0 input / 30.0 output / 1.2 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: doubao-seed-2.1-pro, tier [0,1024k]: in6.00/out30.00 CNY/1M (the smallest-context standard tier is stored) — the page's other cache column is cache STORAGE (元/百万token/小时, per 1M tokens per HOUR), not a cache-write price, so no cache-write price is recorded (controller review, 2026-09-28) — the dated id `doubao-seed-2-1-pro-260628` is listed under the 往期模型 (previous models) section of https://www.volcengine.com/docs/82379/1330310; the price row quoted is the undated `doubao-seed-2.1-pro` entry, which covers it",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -85084,11 +85032,10 @@
         "value": {
           "inputPerMTokUsd": 0.894,
           "outputPerMTokUsd": 4.47,
-          "cacheReadPerMTokUsd": 0.1788,
-          "cacheWritePerMTokUsd": 0.002533
+          "cacheReadPerMTokUsd": 0.1788
         },
         "source": "official-doc",
-        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-2.1-pro 输入长度 [0, 1024] 6.00 - 0.017 1.20 - 30.00\" — CNY 6.0 input / 30.0 output / 1.2 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: same 'doubao-seed-2.1-pro' pricing row applies, tier [0,1024k] (the smallest-context standard tier is stored)",
+        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-2.1-pro 输入长度 [0, 1024] 6.00 - 0.017 1.20 - 30.00\" — CNY 6.0 input / 30.0 output / 1.2 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: same 'doubao-seed-2.1-pro' pricing row applies, tier [0,1024k] (the smallest-context standard tier is stored) — the page's other cache column is cache STORAGE (元/百万token/小时, per 1M tokens per HOUR), not a cache-write price, so no cache-write price is recorded (controller review, 2026-09-28)",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -85177,11 +85124,10 @@
         "value": {
           "inputPerMTokUsd": 0.447,
           "outputPerMTokUsd": 2.235,
-          "cacheReadPerMTokUsd": 0.0894,
-          "cacheWritePerMTokUsd": 0.002533
+          "cacheReadPerMTokUsd": 0.0894
         },
         "source": "official-doc",
-        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-2.1-turbo 输入长度 [0, 256] 3.00 - 0.017 0.60 - 15.00\" — CNY 3.0 input / 15.0 output / 0.6 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: doubao-seed-2.1-turbo, tier [0,256k]: in3.00/out15.00 CNY/1M (the smallest-context standard tier is stored)",
+        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-2.1-turbo 输入长度 [0, 256] 3.00 - 0.017 0.60 - 15.00\" — CNY 3.0 input / 15.0 output / 0.6 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: doubao-seed-2.1-turbo, tier [0,256k]: in3.00/out15.00 CNY/1M (the smallest-context standard tier is stored) — the page's other cache column is cache STORAGE (元/百万token/小时, per 1M tokens per HOUR), not a cache-write price, so no cache-write price is recorded (controller review, 2026-09-28)",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -85270,11 +85216,10 @@
         "value": {
           "inputPerMTokUsd": 0.894,
           "outputPerMTokUsd": 4.47,
-          "cacheReadPerMTokUsd": 0.1788,
-          "cacheWritePerMTokUsd": 0.002533
+          "cacheReadPerMTokUsd": 0.1788
         },
         "source": "official-doc",
-        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-evolving 输入长度 [0, 1024] 6.00 - 0.017 1.20 - 30.00\" — CNY 6.0 input / 30.0 output / 1.2 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: tier [0,1024k]: in6.00/out30.00 CNY/1M (the smallest-context standard tier is stored)",
+        "sourceRef": "https://www.volcengine.com/docs/82379/1099320 (read 2026-09-27): \"doubao-seed-evolving 输入长度 [0, 1024] 6.00 - 0.017 1.20 - 30.00\" — CNY 6.0 input / 30.0 output / 1.2 cached input per 1M tokens; USD = CNY × 0.1490 (CNY→USD reference rate for 2026-09-25, https://www.investing.com/currencies/cny-usd-historical-data); tiers: tier [0,1024k]: in6.00/out30.00 CNY/1M (the smallest-context standard tier is stored) — the page's other cache column is cache STORAGE (元/百万token/小时, per 1M tokens per HOUR), not a cache-write price, so no cache-write price is recorded (controller review, 2026-09-28)",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       }
@@ -88112,9 +88057,8 @@
       "upstreamId": "gpt-5.3-codex",
       "displayName": "GPT-5.3-Codex",
       "aliases": [],
-      "$comment": "cat34 (2026-09-27): a model the provider's own documentation lists as served today (https://developers.openai.com/api/docs/models/all); each field's sourceRef names its page. already active on OpenAI's own /models/all listing",
+      "$comment": "cat34 (2026-09-27): a model the provider's own documentation lists as served today (https://developers.openai.com/api/docs/models/all); each field's sourceRef names its page. already active on OpenAI's own /models/all listing cat34 review (2026-09-28): endpoints are `responses` only — https://developers.openai.com/api/docs/models/gpt-5.3-codex (read 2026-09-28) lists \"Chat Completions | v1/chat/completions | Not supported\" and \"Responses | v1/responses | Supported\".",
       "endpoints": [
-        "chat",
         "responses"
       ],
       "contextWindow": {
@@ -88664,14 +88608,14 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.348,
-          "outputPerMTokUsd": 0.696,
-          "cacheReadPerMTokUsd": 0.029
+          "inputPerMTokUsd": 0.9483,
+          "outputPerMTokUsd": 1.8966,
+          "cacheReadPerMTokUsd": 0.079025
         },
         "source": "official-doc",
-        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `deepseek/deepseek-v4-pro` (read 2026-09-27): OpenRouter's own current price, prompt 0.000000348 / completion 0.000000696 / input_cache_read 0.000000029 USD per token.",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `deepseek/deepseek-v4-pro` (read 2026-09-28): prompt 0.0000009483 / completion 0.0000018966 / input_cache_read 0.000000079025 USD per token — re-read at controller review: price drift since 2026-09-27",
         "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
+        "observedAt": "2026-09-28T00:00:00Z"
       }
     },
     {
@@ -88758,14 +88702,14 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.03483,
+          "inputPerMTokUsd": 0.02975,
           "outputPerMTokUsd": 0.6,
-          "cacheReadPerMTokUsd": 0.03135
+          "cacheReadPerMTokUsd": 0.02678
         },
         "source": "official-doc",
-        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `deepseek/deepseek-v4.1-flash` (read 2026-09-27): OpenRouter's own current price, prompt 0.00000003483 / completion 0.0000006 / input_cache_read 0.00000003135 USD per token.",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `deepseek/deepseek-v4.1-flash` (read 2026-09-28): prompt 0.00000002975 / completion 0.0000006 / input_cache_read 0.00000002678 USD per token — re-read at controller review: price drift since 2026-09-27",
         "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
+        "observedAt": "2026-09-28T00:00:00Z"
       }
     },
     {
@@ -90318,11 +90262,11 @@
         "observedAt": "2026-09-27T00:00:00Z"
       },
       "maxOutputTokens": {
-        "value": 128000,
+        "value": 943717,
         "source": "official-doc",
-        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `z-ai/glm-5.3-flash` (read 2026-09-27): top_provider.max_completion_tokens 128000",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `z-ai/glm-5.3-flash` (read 2026-09-28): top_provider.max_completion_tokens 943717 (the 2026-09-27 value 128000 was misread)",
         "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
+        "observedAt": "2026-09-28T00:00:00Z"
       },
       "inputModalities": {
         "value": [
@@ -90385,14 +90329,14 @@
       },
       "pricing": {
         "value": {
-          "inputPerMTokUsd": 0.045,
-          "outputPerMTokUsd": 0.14,
-          "cacheReadPerMTokUsd": 0.01
+          "inputPerMTokUsd": 0.15,
+          "outputPerMTokUsd": 0.5,
+          "cacheReadPerMTokUsd": 0.03
         },
         "source": "official-doc",
-        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `z-ai/glm-5.3-flash` (read 2026-09-27): OpenRouter's own current price, prompt 0.000000045 / completion 0.00000014 / input_cache_read 0.00000001 USD per token.",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `z-ai/glm-5.3-flash` (read 2026-09-28): prompt 0.00000015 / completion 0.0000005 / input_cache_read 0.00000003 USD per token — re-read at controller review: the 2026-09-27 values were misread (0.045/0.14/0.01, max output 128000)",
         "confidence": "declared",
-        "observedAt": "2026-09-27T00:00:00Z"
+        "observedAt": "2026-09-28T00:00:00Z"
       }
     },
     {
@@ -90846,6 +90790,17 @@
           "max"
         ],
         "continuation": "none"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 3,
+          "outputPerMTokUsd": 15,
+          "cacheReadPerMTokUsd": 0.45
+        },
+        "source": "official-doc",
+        "sourceRef": "https://api.synthetic.new/openai/v1/models — Synthetic's own unauthenticated model list, entry `hf:moonshotai/Kimi-K3` (read 2026-09-28): pricing prompt $0.000003 / completion $0.000015 / input_cache_reads $0.00000045 per token; https://synthetic.new/pricing (read 2026-09-28): \"Synthetic can use either subscription or usage-based pricing\" and \"All models are pay-per-token\" on the usage-based plan, so the per-token price applies to the usage-based path",
+        "confidence": "declared",
+        "observedAt": "2026-09-28T00:00:00Z"
       }
     },
     {
@@ -91200,12 +91155,13 @@
       },
       "inputModalities": {
         "value": [
-          "text"
+          "text",
+          "image"
         ],
-        "source": "winter-default",
-        "sourceRef": "WINTER DEFAULT: the source states no input modality beyond text for this model; text-only is the conservative reading",
-        "confidence": "unknown",
-        "observedAt": "2026-09-27T00:00:00Z"
+        "source": "official-doc",
+        "sourceRef": "https://docs.together.ai/docs/serverless-models (read 2026-09-28): Kimi K3 (`moonshotai/Kimi-K3`) is listed under Vision Models: \"Moonshot | Kimi K3 | moonshotai/Kimi-K3 | 1048576 | $3.00 | $15.00\"",
+        "confidence": "declared",
+        "observedAt": "2026-09-28T00:00:00Z"
       },
       "outputModalities": {
         "value": [
@@ -93347,7 +93303,7 @@
         "supported": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://developers.cloudflare.com/workers-ai/models/gpt-oss-120b/ (read 2026-09-27): Model Info: \"Context Window ↗ 128,000 tokens Function calling ↗ Yes Reasoning low medium (default) high Batch Yes Unit Pricing $0.35 per M input tokens, $0.75 per M output tokens\" — the request schema publishes no top-level `reasoning_effort` enum for this model, so no vocabulary is recorded",
+          "sourceRef": "https://developers.cloudflare.com/workers-ai/models/gpt-oss-120b/ (read 2026-09-27): Model Info: \"Context Window ↗ 128,000 tokens Function calling ↗ Yes Reasoning low medium (default) high Batch Yes Unit Pricing $0.35 per M input tokens, $0.75 per M output tokens\" — the request schema takes reasoning as a NESTED object, `reasoning: { effort, summary }` (schema ids `requests.reasoning.effort` / `requests.reasoning.summary`), not a top-level `reasoning_effort`, so this adapter's vocabulary stays empty",
           "confidence": "declared",
           "observedAt": "2026-09-27T00:00:00Z"
         },

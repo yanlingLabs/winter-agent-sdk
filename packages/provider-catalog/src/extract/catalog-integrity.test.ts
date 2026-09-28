@@ -174,12 +174,6 @@ describe("pricing (R6-H, R6-9)", () => {
       "anthropic/claude-sonnet-4.5",
       "anthropic/claude-sonnet-4.6",
       "anthropic/claude-sonnet-5",
-      "api-airforce/anthropic/claude-3.7-sonnet",
-      "api-airforce/deepseek/deepseek-v3",
-      "api-airforce/google/gemini-2.5-flash",
-      "api-airforce/moonshot/kimi-k2.6",
-      "api-airforce/qwen/qwen3-32b",
-      "api-airforce/x-ai/grok-3",
       "arcee-ai/trinity-large-thinking",
       "baidu/ernie-4.5-turbo-128k",
       "baidu/ernie-4.5-turbo-32k",
@@ -674,6 +668,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "stepfun/step-3.5-flash-2603",
       "stepfun/step-3.7-flash",
       "stepfun/step-5-preview",
+      "synthetic/hf:moonshotai/Kimi-K3",
       "tencent-tokenhub-anthropic/hunyuan-role-latest",
       "tencent-tokenhub-anthropic/hy-role",
       "tencent-tokenhub-anthropic/hy3",
@@ -1282,9 +1277,9 @@ describe("WS-13b §2: `defaultEndpoints.api` carries the API ROOT on both layers
   // one, and whether those rows sit where the runtime's user-endpoint path can actually reach them.
   test("the shipped per-tenant set is exactly the reviewed rows, and each ships a template and no endpoint", () => {
     const perTenant = catalog.providers.filter((p) => p.requiresUserEndpoint === true);
-    // cat34 added three: Databricks (workspace host), Snowflake Cortex (account host) and Cloudflare
-    // Workers AI (account id in the path), each from the vendor's own fetched documentation.
-    expect(perTenant.map((p) => p.id).sort()).toEqual(["azure-ai", "cloudflare-workers-ai", "databricks", "oci", "snowflake-cortex"]);
+    // cat34 added two: Snowflake Cortex (account host) and Cloudflare Workers AI (account id in the
+    // path), each from the vendor's own fetched documentation.
+    expect(perTenant.map((p) => p.id).sort()).toEqual(["azure-ai", "cloudflare-workers-ai", "oci", "snowflake-cortex"]);
     for (const row of perTenant) {
       // Restated on the SHIPPED document rather than left to the validator: a regeneration that
       // dropped the field would leave a row with a template and a live endpoint, which the validator

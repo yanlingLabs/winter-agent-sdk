@@ -8,34 +8,44 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 
 ### Provider catalog refresh (cat34)
 
-The catalog grows from 213 providers and 1003 models to 219 providers and 1293 models. Priced rows go
-from 309 to 680. Every new or changed field was re-read on 2026-09-27 on the serving provider's own
-page or public model list. A maker's page counts only as `inferred` evidence and is never a source for
-a price. CNY is converted at 0.1490 and EUR at 1.1460, the rates the catalog already cites.
+The catalog grows from 213 providers and 1003 models to 218 providers and 1293 models. Priced rows go
+from 309 to 675. Every new or changed field was re-read on 2026-09-27 (review fixes on 2026-09-28) on
+the serving provider's own page or public model list. A maker's page counts only as `inferred`
+evidence and is never a source for a price. CNY is converted at 0.1490 and EUR at 1.1460, the rates
+the catalog already cites. Providers that bill in credits or plans with no published USD rate stay
+unpriced.
 
 - **Filled fields on existing rows.** 188 overlay rows gained missing context windows, output caps,
   reasoning, prices, tool calling and input modalities. 213 upstream rows were promoted into the
-  overlay to carry those fields, and 4 price patches were added. Where the provider's own page
-  contradicted a weak upstream value, the provider's value replaced it. The exception is a
-  unit-convention variant (1000 vs 1024, 1M vs 1048576), which keeps the upstream value.
+  overlay to carry those fields. Where the provider's own page contradicted a weak upstream value,
+  the provider's value replaced it. The exception is a unit-convention variant (1000 vs 1024, 1M vs
+  1048576), which keeps the upstream value.
 - **Held back:** reasoning on `anthropic`/`console` Claude Haiku 4.5 and `google` Gemini 2.5
-  Flash/Flash-Lite (six rows whose only fill was reasoning). Declaring it would put each row in its own continuation domain, and the runtime's
-  fallback fixtures depend on these rows having none.
+  Flash/Flash-Lite (six rows whose only fill was reasoning). Declaring it would put each row in its
+  own continuation domain, and the runtime's fallback fixtures depend on these rows having none.
 - **New models on existing providers (213).** They cover DeepInfra's chat lineup (100 rows), the
   missing OpenRouter frontier rows, and gaps on Novita, Chutes, Together, NVIDIA, Alibaba, OpenAI,
   Wafer, Doubao, Fireworks and others. No embedding, image, audio or moderation rows were added.
-- **Retirements.** 54 rows whose provider-published shutdown date has passed are now `deprecated`.
-  Rows with a future or undated retirement keep `candidate` and gain a note. That includes
-  `groq/llama-3.3-70b-versatile`, which the `llama` family slot still names.
+- **Retirements.** 58 rows whose provider-published shutdown date has passed are now `deprecated`,
+  including the four Perplexity Sonar rows (supported until 2026-09-27) and
+  `groq/llama-3.3-70b-versatile` (shut down 2026-08-16). Rows with a future or undated retirement keep
+  `candidate` and gain a note.
+- **`llama` family.** It no longer points at Groq, whose Llama rows are both deprecated:
+  `vendorProviders` is `together`, `deepinfra`; the `3.3` slot names `llama-3.3-70b-instruct-turbo`,
+  and `scout` is served on DeepInfra.
+- **Dead providers blocked.** `yi` (HTTP 410 `model_service_closed`), `pioneer` (HTTP 410
+  `host_retired`, moved to api.fastino.ai, not re-admitted), `modal` (parked domain) and `hyperbolic`
+  (serverless API retired) are `risk.class: "blocked"` with the probe result on the row, so they have
+  no credential slot.
 - **New providers.**
   - Fixed base: `ovhcloud` (OVHcloud AI Endpoints), `crusoe` (Crusoe Managed Inference) and `tinfoil`
     (Tinfoil).
-  - Per-tenant (`requiresUserEndpoint`): `databricks` (no model rows), `snowflake-cortex` (unpriced,
-    billed in AI Credits) and `cloudflare-workers-ai` (priced).
-  - All six are `review-required`, with no live gate.
+  - Per-tenant (`requiresUserEndpoint`): `snowflake-cortex` (unpriced, billed in AI Credits) and
+    `cloudflare-workers-ai` (priced).
+  - All five are `review-required`, with no live gate.
 - **Test updates.**
   - The priced-key pin is regenerated.
-  - The per-tenant set pin names the three new rows.
+  - The per-tenant set pin names the two new rows.
   - The OpenRouter pass-through tests use an id that is still unseeded.
   - The xAI non-reasoning check reads the row's reasoning block.
   - The `codex-oauth` mirror test normalises each row's own model-page URL.

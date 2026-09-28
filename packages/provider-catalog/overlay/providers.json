@@ -4759,44 +4759,6 @@
       "scope": "llm"
     },
     {
-      "id": "databricks",
-      "displayName": "Databricks Foundation Model APIs",
-      "protocols": [
-        "openai-chat-completions"
-      ],
-      "$comment": "Databricks' OpenAI-compatible AI Gateway on the OPERATOR'S OWN workspace host. NO MODEL ROWS: the documented OpenAI-client route names models as `system.ai.<name>`, while the supported-models table names serving endpoints (`databricks-<name>`) for a different route, and no page this row read enumerates the ids the gateway accepts; availability is also per workspace/region. A host reaches models with `allowUnlisted`. Billing is per token in Databricks Units (DBU), whose USD rate depends on cloud, region and commitment, so no USD price is stated.",
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {},
-      "requiresUserEndpoint": true,
-      "endpointTemplate": "https://<workspace-host>/ai-gateway/mlflow/v1",
-      "modelDiscovery": "none",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": {
-        "project": "winter",
-        "commit": "",
-        "sourcePaths": []
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
-          "the endpoint is the OPERATOR'S OWN workspace host and is never reviewed by Winter — it is evaluated as a user endpoint",
-          "no model row: the gateway's accepted ids are not enumerated by any page this row read"
-        ]
-      },
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://docs.databricks.com/aws/en/machine-learning/model-serving/query-chat-models and https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis/ — Databricks documentation, retrieved 2026-09-27: \"To query foundation models outside of your workspace, you must use the OpenAI client directly. You also need your Databricks workspace instance\"; `OpenAI(api_key=\"dapi-your-databricks-token\", base_url=\"https://example.staging.cloud.databricks.com/ai-gateway/mlflow/v1\")`; \"The APIs are compatible with OpenAI\". The credential is the user's own Databricks personal access token.",
-        "tier": "fetched-document"
-      },
-      "scope": "llm"
-    },
-    {
       "id": "snowflake-cortex",
       "displayName": "Snowflake Cortex REST API (OpenAI dialect)",
       "protocols": [
@@ -4870,6 +4832,166 @@
         "tier": "fetched-document"
       },
       "scope": "llm"
+    },
+    {
+      "id": "yi",
+      "displayName": "Yi (01.AI)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.lingyiwanwu.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/yi/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "blocked",
+        "reasons": [
+          "dead endpoint: the API host answers HTTP 410 to `GET https://api.lingyiwanwu.com/v1/models` with `{\"error\":{\"code\":\"model_service_closed\",\"message\":\"Model service has been discontinued\"}}` (probed 2026-09-28)",
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://01.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.lingyiwanwu.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "cat34 review (2026-09-28): BLOCKED as a dead endpoint, following PROVENANCE.md's citation-liveness precedent (a citation or endpoint that resolves to nothing is a row with no evidence). This is the upstream-extracted row verbatim except `risk`."
+    },
+    {
+      "id": "pioneer",
+      "displayName": "Pioneer AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.pioneer.ai/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/pioneer/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "blocked",
+        "reasons": [
+          "dead endpoint: the API host answers HTTP 410 to `GET https://api.pioneer.ai/v1/models` with `code: \"host_retired\"` and `moved_to: \"https://api.fastino.ai/v1/models\"` (\"This API host was retired. Use https://api.fastino.ai\"; probed 2026-09-28)",
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://pioneer.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.pioneer.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "cat34 review (2026-09-28): BLOCKED as a dead endpoint, following PROVENANCE.md's citation-liveness precedent (a citation or endpoint that resolves to nothing is a row with no evidence). This is the upstream-extracted row verbatim except `risk`. The successor host api.fastino.ai answers (HTTP 200 on /v1/models, probed 2026-09-28) but is NOT re-admitted here: Fastino is a new admission that needs its own reviewed row."
+    },
+    {
+      "id": "modal",
+      "displayName": "Modal",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.modal.ai/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/modal/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "blocked",
+        "reasons": [
+          "dead endpoint: `https://api.modal.ai` fails TLS (`tlsv1 unrecognized name`) and `http://modal.ai` serves a 114-byte parked-domain page (probed 2026-09-28): modal.ai is not Modal's domain (Modal is modal.com), so this endpoint was never valid",
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://modal.com/docs — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.modal.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "cat34 review (2026-09-28): BLOCKED as a dead endpoint, following PROVENANCE.md's citation-liveness precedent (a citation or endpoint that resolves to nothing is a row with no evidence). This is the upstream-extracted row verbatim except `risk`."
+    },
+    {
+      "id": "hyperbolic",
+      "displayName": "Hyperbolic",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.hyperbolic.xyz/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/hyperbolic/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "blocked",
+        "reasons": [
+          "dead endpoint: https://hyperbolic.ai/docs/faq/inference-models (read 2026-09-28): \"The serverless inference API and the playground have been retired. The models that used to be listed are no longer available\"; `https://api.hyperbolic.xyz/v1/models` still answers 401 `Not authenticated` (probed 2026-09-28), which proves only that a gateway is up",
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://hyperbolic.xyz — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.hyperbolic.xyz/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "cat34 review (2026-09-28): BLOCKED as a dead endpoint, following PROVENANCE.md's citation-liveness precedent (a citation or endpoint that resolves to nothing is a row with no evidence). This is the upstream-extracted row verbatim except `risk`."
     }
   ]
 }

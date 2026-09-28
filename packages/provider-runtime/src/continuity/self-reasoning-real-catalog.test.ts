@@ -51,8 +51,16 @@ function realRegistry(): ProviderRegistry {
 function reasoningRowsWithoutDomain(adapterId: string): WinterModelDescriptor[] {
   const catalog = loadCatalog();
   const adapterOf = new Map(catalog.providers.map((p) => [p.id, p.adapterId]));
+  // A row whose PROVIDER is blocked never resolves (the registry refuses the provider), so it has no
+  // wire to probe -- the same exclusion as a blocked row.
+  const blockedProviders = new Set(catalog.providers.filter((p) => p.risk.class === "blocked").map((p) => p.id));
   return catalog.models.filter(
-    (m) => adapterOf.get(m.providerId) === adapterId && m.status !== "blocked" && m.reasoning?.supported.value === true && m.reasoning.continuation === "none",
+    (m) =>
+      adapterOf.get(m.providerId) === adapterId &&
+      m.status !== "blocked" &&
+      !blockedProviders.has(m.providerId) &&
+      m.reasoning?.supported.value === true &&
+      m.reasoning.continuation === "none",
   );
 }
 

@@ -94,10 +94,17 @@ describe("createRegistry — resolution", () => {
     // R6-16 puts the native-cloud families in at `experimental`, so the pin is "every non-blocked
     // row resolves" rather than "every row is candidate". `supported` stays unreachable: it requires
     // the behavioural corpus (WS-13 §13).
+    // A row of a BLOCKED PROVIDER refuses with the provider's own reason (the next test's second half);
+    // cat34 review blocked four dead providers that still carry their extracted model rows.
+    const blockedProviders = new Set(catalog.providers.filter((p) => p.risk.class === "blocked").map((p) => p.id));
     for (const model of catalog.models) {
       // `deprecated` (2026-09-25 refresh) is a vendor-retired row: listings and slots drop it, but the registry
       // still resolves it so a stored tag fails at the vendor rather than as an unknown key.
       expect([model.key, model.status]).toEqual([model.key, model.status === "experimental" || model.status === "deprecated" ? model.status : "candidate"]);
+      if (blockedProviders.has(model.providerId)) {
+        expect(failure(fullRegistry().resolve({ model: model.key })).code).toBe("blocked");
+        continue;
+      }
       expect(ok(fullRegistry().resolve({ model: model.key })).modelKey).toBe(model.key);
     }
   });

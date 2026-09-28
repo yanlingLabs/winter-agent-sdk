@@ -444,7 +444,8 @@
       "displayName": "Llama",
       "vendor": "Meta",
       "vendorProviders": [
-        "groq"
+        "together",
+        "deepinfra"
       ],
       "matchers": [
         {
@@ -456,7 +457,7 @@
         {
           "name": "scout",
           "canonicalModelId": "llama-4-scout-17b-16e-instruct",
-          "description": "the current open-weight Llama, fast on Groq.",
+          "description": "the current open-weight Llama, served on DeepInfra.",
           "reason": "First: recency.",
           "basis": "winter-curated",
           "citation": "spec:WS-13c §9",
@@ -464,8 +465,8 @@
         },
         {
           "name": "3.3",
-          "canonicalModelId": "llama-3.3-70b-versatile",
-          "description": "the proven 70B generalist.",
+          "canonicalModelId": "llama-3.3-70b-instruct-turbo",
+          "description": "the proven 70B generalist, served on Together and DeepInfra.",
           "reason": "Second: reliability.",
           "basis": "winter-curated",
           "citation": "spec:WS-13c §9",

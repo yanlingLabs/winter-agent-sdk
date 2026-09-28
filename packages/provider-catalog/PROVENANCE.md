@@ -8,7 +8,7 @@ The committed catalog is the merge of two layers, performed by `scripts/provider
 | Layer | Source | Owner | Present |
 | --- | --- | --- | --- |
 | upstream | `generated/upstream-layer.json`, extracted from the pinned OmniRoute tree by `scripts/provider-source-sync.ts` | the extractor | **yes** — 106 providers, 539 models |
-| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 131 providers, 1178 models |
+| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 134 providers, 1178 models |
 
 **The overlay always wins.** WS-13 §7: live discovery and upstream extraction never silently
 overwrite `official-doc`/`live-probe` overlay entries, so a conflicting upstream row is dropped in
@@ -123,11 +123,11 @@ and wants to refresh this document by name — not a second gate.
 
 <!-- BEGIN GENERATED: admission-tier census (bun run scripts/provenance-tiers.ts) -->
 
-Generated from `generated/catalog.json` (`v3.8.50+winter.1`, 219 provider rows). Do not edit by hand.
+Generated from `generated/catalog.json` (`v3.8.50+winter.1`, 218 provider rows). Do not edit by hand.
 
 | Tier | Rows | What it means |
 | --- | ---: | --- |
-| **fetched-document** | 92 | a vendor page this repository retrieved and read, on a recorded date |
+| **fetched-document** | 91 | a vendor page this repository retrieved and read, on a recorded date |
 | **pinned-upstream** | 101 | the vendor's own site as the pinned upstream product catalog records it, plus that id's own pinned entry — a real, dated reference, but NOT a page read here |
 | **spec-ruling** | 4 | a ruling in an approved spec (or a user ruling recorded in one) admits the PATH; the row's own details are carried from a reviewed ledger entry — `anthropic`, `azure-ai`, `console`, `oci` |
 | **local** | 12 | a local installation on the operator's own machine — there is no third party to be admitted by — `docker-model-runner`, `lemonade`, `llama-cpp`, `llamafile`, `lm-studio`, `mlx-gemma`, `mlx-qwen`, `ollama-local`, `oobabooga`, `triton`, `vllm`, `xinference` |
@@ -159,6 +159,13 @@ rather than dropped: `cerebras` cited a page that 301s to a chat product and now
 API docs, and `zai-anthropic` cited the mainland product site although the lane had fetched z.ai's
 own Claude-client doc. A citation is a row's entire evidence, so a citation that resolves to nothing
 is a row with no evidence.
+
+**cat34 review (2026-09-28) applied the same rule to four extracted rows whose ENDPOINT is dead**, each
+moved to `blocked` with the probe on the row: `yi` (HTTP 410 `model_service_closed`), `pioneer` (HTTP 410
+`host_retired`, `moved_to` api.fastino.ai — the successor is not re-admitted without its own review),
+`modal` (`api.modal.ai` fails TLS; modal.ai is a parked domain, never Modal's), and `hyperbolic` (its FAQ
+states the serverless inference API is retired). A blocked row has no credential slot and refuses at
+resolution.
 
 **What decision (a) asked for and why it could not be met as written.** The P6.5 plan asked lane X2
 to upgrade five `spec:WS-13 §1` citations (`deepseek`, `openrouter`, `azure-openai`, `bedrock`,
@@ -560,12 +567,13 @@ operator created; no document read here enumerates them, and seeding rows would 
 somebody else's tenant. A host reaches models with `allowUnlisted` — both rows are
 `liveCatalogAuthority: "unknown"`, which is the door R6-F opens.
 
-**cat34 (2026-09-27) added three per-tenant rows, from fetched vendor pages** (`tier:
-"fetched-document"`, still `review-required` with no live gate):
+**cat34 (2026-09-27) added two per-tenant rows, from fetched vendor pages** (`tier:
+"fetched-document"`, still `review-required` with no live gate). A third, `databricks`, was drafted and
+dropped at review: its documented OpenAI-client route names models `system.ai.<name>`, no page read
+enumerated them, and a per-tenant row with nothing to seed adds nothing `allowUnlisted` does not.
 
 | row | template | model rows |
 | --- | --- | --- |
-| `databricks` | `https://<workspace-host>/ai-gateway/mlflow/v1` | **none** — the documented OpenAI-client route names models `system.ai.<name>`, the supported-models table names serving endpoints (`databricks-<name>`) on a different route, and no page read enumerates the ids the gateway accepts |
 | `snowflake-cortex` | `https://<account-identifier>.snowflakecomputing.com/api/v2/cortex/v1` | the Cortex REST API's generally available models (✔ in its availability table), **unpriced**: billing is in AI Credits whose USD price depends on the contract and region |
 | `cloudflare-workers-ai` | `https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1` | every text-generation model on the pricing page whose model page is live, **priced** from Cloudflare's own USD-per-1M figures |
 
