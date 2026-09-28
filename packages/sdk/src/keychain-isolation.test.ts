@@ -8,7 +8,7 @@
 //    hands it an explicit, minimal `env`, so the credential reads as ABSENT, never the `io` failure the
 //    tripwire would produce;
 //  - the TRIPWIRE, live in the child: a CONTROL child with the redirect switched off reaches the real API
-//    and is refused and REPORTED -- on a `com.winter.test.*` service that holds no item, so even a broken
+//    and is refused and REPORTED -- on a `keychain-test-throwaway.*` service that holds no item, so even a broken
 //    guard could not raise a dialog there.
 import { describe, test, expect, afterAll } from "bun:test";
 import { fileURLToPath } from "node:url";
@@ -108,12 +108,15 @@ describe("a real runtime child never reaches the real Keychain under test", () =
 
   test("CONTROL: with the redirect switched off, the same child reaches the real API -- and the tripwire refuses and reports it (so the test above is not vacuous)", async () => {
     const fake = await startScenarioFake();
-    const service = `com.winter.test.keychain-isolation-control.${process.pid}`;
+    const service = `keychain-test-throwaway.keychain-isolation-control.${process.pid}`;
     try {
       writeFileSync(guardLog(), "");
       const seen: { env?: Record<string, string> } = {};
       // An env that NAMES the variable (empty = off) is left as written by `query()`. A throwaway service,
-      // so a guard that failed to load in the child could at worst miss a nonexistent item -- no dialog.
+      // so a guard that failed to load in the child could at worst miss a nonexistent item -- no CONSENT
+      // dialog. (It could still raise macOS's UNLOCK prompt if the login keychain happened to be locked:
+      // a lookup of any item asks for the keychain to be unlocked first. The tripwire, proven live by this
+      // very test, is what keeps the lookup from ever reaching the Keychain.)
       const { messages, thrown } = await runTurn(fake, { ...minimalEnv(), [TEST_KEYCHAIN_ENV]: "" }, { keychainService: service }, seen);
       expect(seen.env?.[TEST_KEYCHAIN_ENV]).toBe("");
       const reported = readFileSync(guardLog(), "utf8");

@@ -68,6 +68,22 @@ const MEMORY_SECRETS_BACKEND: SecretsBackend = {
 };
 
 /**
+ * ONE stderr line, the first time a process's default backend is the in-memory one -- so a redirect left
+ * on by accident outside a test run is visible rather than a mystery of vanished credentials. Never the
+ * value, never an account.
+ */
+let memoryBackendAnnounced = false;
+function announceMemoryBackend(): void {
+  if (memoryBackendAnnounced) return;
+  memoryBackendAnnounced = true;
+  try {
+    process.stderr.write(`winter: ${TEST_KEYCHAIN_ENV}=${TEST_KEYCHAIN_MEMORY} -- the Keychain is replaced by an in-memory store for this process (test runs only)\n`);
+  } catch {
+    /* no stderr (a detached context): the redirect itself is unaffected */
+  }
+}
+
+/**
  * The real backend, resolved LAZILY.
  *
  * Lazily because this module is imported by the selection path, which every session touches --
@@ -79,13 +95,20 @@ const MEMORY_SECRETS_BACKEND: SecretsBackend = {
 function defaultSecretsBackend(): SecretsBackend {
   // TEST-ONLY REDIRECT (`TEST_KEYCHAIN_ENV`, declared in the sdk's `options.ts`, which says why it exists
   // and why a compiled binary honours it too). Read at CALL time, like the global below, so the choice is
-  // the process's at the moment of use. Exactly `memory` selects the in-memory backend; any other
-  // non-empty value is refused typed -- a typo in a test harness must never fall through to the real
-  // Keychain. Unset or empty: the real backend, byte-identical to before the redirect existed.
+  // the process's at the moment of use. Exactly `memory` selects the in-memory backend. Unset or empty:
+  // the real backend, byte-identical to before the redirect existed.
+  //
+  // Any other non-empty value is REFUSED, and with `io`, never `unsupported`: the production store stack
+  // (`createProductionCredentialStore`'s composite) reads `unsupported` as "not my ref kind, ask the next
+  // member", and its last member answers `null` for a keychain ref -- so an `unsupported` here would turn
+  // a typo into a silent "no credential". `io` stops the composite and surfaces the variable's name.
   const redirect = process.env[TEST_KEYCHAIN_ENV];
   if (redirect !== undefined && redirect !== "") {
-    if (redirect === TEST_KEYCHAIN_MEMORY) return MEMORY_SECRETS_BACKEND;
-    throw new CredentialResolutionError("unsupported", `${TEST_KEYCHAIN_ENV} is set to an unrecognized value; the only accepted value is "${TEST_KEYCHAIN_MEMORY}" (test runs only) -- unset it to use the Keychain`);
+    if (redirect === TEST_KEYCHAIN_MEMORY) {
+      announceMemoryBackend();
+      return MEMORY_SECRETS_BACKEND;
+    }
+    throw new CredentialResolutionError("io", `${TEST_KEYCHAIN_ENV} is set to an unrecognized value; the only accepted value is "${TEST_KEYCHAIN_MEMORY}" (test runs only) -- unset it to use the Keychain`);
   }
   const secrets = (globalThis as { Bun?: { secrets?: SecretsBackend } }).Bun?.secrets;
   if (secrets === undefined) {

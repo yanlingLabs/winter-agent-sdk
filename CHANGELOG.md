@@ -13,16 +13,22 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   child was spawned by transport-equivalence on a real catalog model and probed `<vendor>:default` in its
   default Keychain store. Three layers now stop this:
   - **Redirect.** `WINTER_TEST_KEYCHAIN=memory` (`TEST_KEYCHAIN_ENV`, exported by the sdk) makes the
-    runtime's one default secrets backend a per-process in-memory store. It is test-only. Any other
-    non-empty value is refused with a typed error, never a fall-through, and unset behaves exactly as
-    before.
+    runtime's one default secrets backend a per-process in-memory store, and the process says so once on
+    stderr. It is test-only. Any other non-empty value is refused with a typed `io` error, which stops
+    the production store stack (an `unsupported` would have fallen through to a silent "no credential").
+    Unset behaves exactly as before.
   - **Propagation.** A new preload, `scripts/test-keychain-guard.ts`, runs first in every
     `bunfig.toml`. It sets the variable and carries it, with its own `--preload`, into every child a
-    test spawns. `query()` adds it to an explicit `Options.env` when the host process carries it,
-    which covers custom spawn hooks, compiled children and embedded Workers.
+    test spawns, and into every Worker (as a Worker `preload`, plus the variable in an explicit `env`).
+    `query()` adds it to an explicit `Options.env` when the host process carries it, which covers
+    custom spawn hooks and compiled children. The compiled-binary gates (`verify:*`) and `differential`,
+    which run outside `bun test`, set it through `scripts/test-keychain-env.ts` and hand it to every
+    child they spawn; a test pins that. Run `bun test` from the repo root or a package root -- that is
+    what loads the preloads.
   - **Tripwire.** The same preload replaces `Bun.secrets` in the test process and in every `bun` child
-    with a tripwire that fails the test on any access. The only exception is the opt-in size gate
-    (`WINTER_TEST_KEYCHAIN_SIZE_GATE=1`) on a `keychain-test-throwaway.*` service.
+    and Worker with a tripwire that fails the test on any access. The only exception is the opt-in size
+    gate (`WINTER_TEST_KEYCHAIN_SIZE_GATE=1`) on a `keychain-test-throwaway.*` service, and the service
+    it checks is the one it forwards (the caller's options are read once).
 
   The repo-wide grep tripwire now also catches `import { secrets } from "bun"`. A real-child test
   (`keychain-isolation.test.ts`) proves both the redirect and the child's tripwire.

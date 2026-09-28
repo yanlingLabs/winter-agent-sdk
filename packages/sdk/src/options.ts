@@ -88,8 +88,9 @@ export const DEFAULT_KEYCHAIN_SERVICE = WINTER_BRAND.keychainService;
  * TEST-ONLY. The environment variable that redirects every DEFAULT secrets backend (the runtime's
  * `provider/keychain-store.ts`, the one site that may reach the macOS Keychain) to a per-process
  * in-memory store. Exactly `TEST_KEYCHAIN_MEMORY` enables the redirect; unset or empty leaves the real
- * Keychain; any other value is REFUSED (a typed `unsupported` credential error), never a silent fall
- * through to the real store.
+ * Keychain; any other value is REFUSED (a typed `io` credential error, which stops the store stack),
+ * never a silent fall through to the real store or to "no credential". The first time the in-memory
+ * store engages, the process prints one stderr line saying so.
  *
  * WHY. A test that resolves a `{ kind: "keychain" }` ref in a process that was handed no store of its
  * own (a real `winter` child, an embedded Worker) reached the developer's REAL login Keychain -- service

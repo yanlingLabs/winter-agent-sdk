@@ -22,6 +22,9 @@ import { buildRuntime } from "./build-runtime.ts";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { encodeFrame, splitFrames, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { SCENARIO_FINAL_TEXT, SCENARIO_MODELS, SCENARIO_TOOL_NAME, startScenarioFake } from "@yanlinglabs/winter-agent-runtime";
+import { isolateKeychain, keychainIsolatedEnv } from "./test-keychain-env.ts";
+// Never the real Keychain: set before any session or child starts (see ./test-keychain-env.ts).
+isolateKeychain();
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
@@ -43,7 +46,7 @@ const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 async function runCompiledSession(binPath: string, config: Record<string, unknown>, winterHome: string): Promise<{ frames: WinterFrame[]; stderr: string; exitCode: number }> {
   const proc = Bun.spawn([binPath, "--run", "--config-json", JSON.stringify(config)], {
     cwd: REPO_ROOT,
-    env: { ...process.env, WINTER_HOME: winterHome },
+    env: keychainIsolatedEnv({ ...process.env, WINTER_HOME: winterHome }),
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -152,7 +155,7 @@ async function verifyCwdAutoloadIgnored(binPath: string): Promise<void> {
     writeFileSync(join(hostile, "preload.ts"), `require("node:fs").writeFileSync(${JSON.stringify(preloadMarker)}, "ran");\n`);
     writeFileSync(join(hostile, ".env"), `WINTER_TEST_PROVIDER=${envMarker}\n`);
     writeFileSync(join(hostile, "noop.ts"), "\n");
-    const baseEnv = { PATH: process.env["PATH"] ?? "", HOME: winterHome, WINTER_HOME: winterHome };
+    const baseEnv = keychainIsolatedEnv({ PATH: process.env["PATH"] ?? "", HOME: winterHome, WINTER_HOME: winterHome });
 
     console.log("verify:compiled — probing that the binary ignores its cwd's bunfig.toml and .env...");
     // Positive control (bunfig): bun itself honours the fixture.
@@ -212,7 +215,7 @@ if (import.meta.main) {
     console.log(`verify:compiled — running the transport-equivalence suite with WINTER_COMPILED_BIN=${binPath} ...`);
     const proc = Bun.spawn([process.execPath, "test", "packages/sdk/src/transport-equivalence.test.ts"], {
       cwd: REPO_ROOT,
-      env: { ...process.env, WINTER_COMPILED_BIN: binPath },
+      env: keychainIsolatedEnv({ ...process.env, WINTER_COMPILED_BIN: binPath }),
       stdout: "inherit",
       stderr: "inherit",
     });

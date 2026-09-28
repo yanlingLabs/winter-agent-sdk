@@ -25,6 +25,9 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { toSemver } from "./sync-version.ts";
+import { isolateKeychain, keychainIsolatedEnv } from "./test-keychain-env.ts";
+// Never the real Keychain: set before any session or child starts (see ./test-keychain-env.ts).
+isolateKeychain();
 
 export const OPT_IN_VAR = "WINTER_PACKAGES_TOKEN";
 export const SKIPPED_LINE =
@@ -134,7 +137,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 
     const runtime = runtimeLabel();
     const probeScript = `import(${JSON.stringify("@yanlinglabs/winter-conformance/trace")}).then((m) => { if (typeof m.normalizeTrace !== "function") throw new Error("normalizeTrace missing from the installed package"); console.log("import ok"); });`;
-    const run = Bun.spawnSync([process.execPath, "-e", probeScript], { cwd: probeDir, stdout: "pipe", stderr: "pipe" });
+    const run = Bun.spawnSync([process.execPath, "-e", probeScript], { cwd: probeDir, env: keychainIsolatedEnv(), stdout: "pipe", stderr: "pipe" });
     if (run.exitCode !== 0) {
       throw new Error(`import("@yanlinglabs/winter-conformance/trace") failed under ${runtime} (exit ${run.exitCode}):\n${decode(run.stdout)}${decode(run.stderr)}`);
     }
@@ -148,7 +151,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       throw new Error(`pnpm add ${runtimeSpec} failed (exit ${addRuntime.exitCode}):\n${decode(addRuntime.stdout)}${decode(addRuntime.stderr)}`);
     }
     const versionProbe = `import(${JSON.stringify(`${RUNTIME_PACKAGE}/version`)}).then((m) => { if (m.RUNTIME_VERSION !== ${JSON.stringify(version)}) throw new Error("RUNTIME_VERSION is " + m.RUNTIME_VERSION); console.log("import ok"); });`;
-    const runVersion = Bun.spawnSync([process.execPath, "-e", versionProbe], { cwd: probeDir, stdout: "pipe", stderr: "pipe" });
+    const runVersion = Bun.spawnSync([process.execPath, "-e", versionProbe], { cwd: probeDir, env: keychainIsolatedEnv(), stdout: "pipe", stderr: "pipe" });
     if (runVersion.exitCode !== 0) {
       throw new Error(`import("${RUNTIME_PACKAGE}/version") failed under ${runtime} (exit ${runVersion.exitCode}):\n${decode(runVersion.stdout)}${decode(runVersion.stderr)}`);
     }

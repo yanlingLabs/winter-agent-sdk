@@ -1,6 +1,10 @@
 // THE TEST SUITE'S KEYCHAIN GUARD -- a `bun test` preload, listed FIRST in every package's `bunfig.toml`
 // (and the root's), ahead of `test-network-guard.ts`.
 //
+// RUN `bun test` FROM THE REPO ROOT OR A PACKAGE ROOT. Bun reads the `bunfig.toml` of the directory it is
+// started in, and every one of those lists this preload; started anywhere else (a package's `src/`, a temp
+// directory) it loads NO preload at all, and neither this guard nor the network guard is in force.
+//
 // WHY. A run of the whole suite raised a macOS consent dialog: "bun wants to use your confidential
 // information stored in <Winter's default Keychain service>" (the sdk's `DEFAULT_KEYCHAIN_SERVICE`).
 // That is the user's REAL Winter credential store. The path:
@@ -11,8 +15,8 @@
 // for consent; the dialog also HUNG the child, and later real-child tests timed out behind it.
 //
 // WHAT IT DOES, three layers:
-//  1. THE REDIRECT. `WINTER_TEST_KEYCHAIN=memory` (the sdk's `TEST_KEYCHAIN_ENV`, spelled again below: a
-//     preload must not import a package) is set on this process. `provider/keychain-store.ts`'s
+//  1. THE REDIRECT. `WINTER_TEST_KEYCHAIN=memory` (the sdk's `TEST_KEYCHAIN_ENV`, spelled again in
+//     `./test-keychain-env.ts`: a preload must not import a package) is set on this process. `provider/keychain-store.ts`'s
 //     `defaultSecretsBackend()` -- the one site in the repository that may reach the Keychain, pinned by
 //     the repo-wide grep tripwire in `keychain-store.test.ts` -- then answers a per-process in-memory
 //     backend: every keychain ref reads as absent, every write stays in the process.
@@ -21,15 +25,17 @@
 //     none is handed `process.env` (a no-env spawn inherits Bun's STARTUP environment, measured by the
 //     network guard, so a variable set here would otherwise not reach it). A `bun` child running code also
 //     gets `--preload` of this guard, so layers 1 and 3 hold there even if its environment was built from
-//     scratch. `query()` itself carries the variable into an explicit `Options.env` (sdk `query.ts`) --
-//     that is what covers a host's own spawn hook, a compiled child, and an embedded Worker, whose
-//     `process.env` is the session's env -- none of which this preload can reach.
+//     scratch. Every WORKER this process constructs gets this guard as a Worker `preload`, and an explicit
+//     `env` gets the variable (see WORKERS below). `query()` itself carries the variable into an explicit
+//     `Options.env` (sdk `query.ts`) -- that is what covers a host's own spawn hook and a compiled child.
+//     Scripts that run OUTSIDE `bun test` (`verify-*`, `differential.ts`) set it themselves through
+//     `./test-keychain-env.ts`.
 //  3. THE TRIPWIRE. `Bun.secrets` is REPLACED (the property is writable, though not configurable -- measured
 //     on Bun 1.3.14) by an object whose every method records a violation and throws. So anything that
 //     reaches the real API anyway -- a path that bypasses the redirect, a new call site, a redirect bug --
 //     never talks to the Keychain from a test: the test that caused it FAILS in a global `afterEach`
-//     (children report through a log file, like the network guard's). A compiled child cannot preload
-//     this file; it is protected by layer 1 alone, which is the same code.
+//     (children and Workers report through a log file, like the network guard's). A compiled child cannot
+//     preload this file; it is protected by layer 1 alone, which is the same code.
 //
 // THE ONE HOLE: an opt-in gate that measures the real Keychain on a THROWAWAY service
 // (`mcp-auth/size-gate.test.ts`, `WINTER_TEST_KEYCHAIN_SIZE_GATE=1`) is forwarded to the real API, and only
@@ -44,10 +50,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import childProcess from "node:child_process";
 import { promisify } from "node:util";
+import { TEST_KEYCHAIN_ENV, TEST_KEYCHAIN_MEMORY } from "./test-keychain-env.ts";
 
-/** The sdk's `TEST_KEYCHAIN_ENV` / `TEST_KEYCHAIN_MEMORY` (parity pinned in `keychain-store.test.ts`). */
-export const TEST_KEYCHAIN_ENV = "WINTER_TEST_KEYCHAIN";
-export const TEST_KEYCHAIN_MEMORY = "memory";
+export { TEST_KEYCHAIN_ENV, TEST_KEYCHAIN_MEMORY };
 /** The opt-in of the real-Keychain measurement gates, and the only services they may touch. */
 export const REAL_KEYCHAIN_GATE_ENV = "WINTER_TEST_KEYCHAIN_SIZE_GATE";
 export const THROWAWAY_SERVICE_PREFIX = "keychain-test-throwaway.";
@@ -59,7 +64,9 @@ const PARENT_ENV = "WINTER_TEST_KEYCHAIN_GUARD_PARENT";
 /** Set by the child shim BEFORE it loads this file, so a child spawned with an empty environment still knows. */
 const CHILD_LOG_GLOBAL = "__winterTestKeychainGuardChildLog";
 const childLog = (globalThis as Record<string, unknown>)[CHILD_LOG_GLOBAL] as string | undefined;
-const isTestRunner = childLog === undefined && (process.env[PARENT_ENV] === undefined || process.env[PARENT_ENV] === String(process.pid));
+// A Worker shares the test process's pid, so the main-thread check is what tells it apart (the shim also
+// sets `childLog` there; this is the belt).
+const isTestRunner = Bun.isMainThread && childLog === undefined && (process.env[PARENT_ENV] === undefined || process.env[PARENT_ENV] === String(process.pid));
 
 const violations: string[] = [];
 
@@ -95,15 +102,26 @@ export function takeKeychainGuardViolations(): string[] {
   return violations.splice(0);
 }
 
+/**
+ * ONE read of the caller's options object: the service the tripwire CHECKS is the service it FORWARDS, so an
+ * accessor cannot answer a throwaway service to the check and a user's real one to the Keychain. The
+ * forwarded object is a plain copy whose `service` is the checked string.
+ */
+export function snapshotSecretsCall(options: unknown): { forward: Record<string, unknown>; service: string } {
+  const snapshot: Record<string, unknown> = typeof options === "object" && options !== null ? { ...(options as Record<string, unknown>) } : {};
+  const service = typeof snapshot.service === "string" ? snapshot.service : "";
+  return { forward: { ...snapshot, service }, service };
+}
+
 // Layer 3: the tripwire.
 const bun = Bun as unknown as { secrets?: SecretsApi; spawn: (...args: unknown[]) => unknown; spawnSync: (...args: unknown[]) => unknown };
 const realSecrets = Bun.secrets as SecretsApi | undefined;
 if (realSecrets !== undefined && (realSecrets as unknown as Record<symbol, unknown>)[KEYCHAIN_TRIPWIRE_MARKER] !== true) {
   const guarded = (method: "get" | "set" | "delete") =>
     function (options: { service?: unknown; name?: unknown }) {
-      const service = typeof options?.service === "string" ? options.service : "";
+      const { forward, service } = snapshotSecretsCall(options);
       if (process.env[REAL_KEYCHAIN_GATE_ENV] === "1" && service.startsWith(THROWAWAY_SERVICE_PREFIX)) {
-        return (realSecrets[method] as (o: unknown) => Promise<unknown>).call(realSecrets, options);
+        return (realSecrets[method] as (o: unknown) => Promise<unknown>).call(realSecrets, forward);
       }
       // The account NAME is not echoed: it can identify a user's item. The service is what matters here.
       const line = `Bun.secrets.${method} on service ${JSON.stringify(service)}`;
@@ -206,6 +224,25 @@ if (isTestRunner) {
       const others = tail.filter((_, i) => i !== at);
       return original(argv[0], argv.slice(1), options, ...others);
     };
+  }
+
+  // WORKERS. A preload does not run inside a Worker, so every Worker this process constructs gets the shim
+  // as a Worker `preload` (tripwire + redirect inside it), and an explicit `env` gets the variable added
+  // unless it names it already (the embedded host passes the session's env: `new Worker(entry, { env })`).
+  // A Worker with NO `env` is left alone -- measured on Bun 1.3.14, it sees this process's CURRENT
+  // environment (a variable set after startup included), not the startup one a no-env SPAWN inherits.
+  const RealWorker = globalThis.Worker;
+  if (RealWorker !== undefined) {
+    globalThis.Worker = new Proxy(RealWorker, {
+      construct(target, args: unknown[], newTarget) {
+        const [entry, raw] = args;
+        const options = typeof raw === "object" && raw !== null ? { ...(raw as Record<string, unknown>) } : {};
+        if (typeof options.env === "object" && options.env !== null) options.env = { [TEST_KEYCHAIN_ENV]: TEST_KEYCHAIN_MEMORY, ...(options.env as Record<string, unknown>), [LOG_ENV]: log };
+        const preload = options.preload;
+        options.preload = [shim, ...(Array.isArray(preload) ? preload : typeof preload === "string" ? [preload] : [])];
+        return Reflect.construct(target, [entry, options, ...args.slice(2)], newTarget);
+      },
+    });
   }
 
   const { afterEach } = await import("bun:test");
