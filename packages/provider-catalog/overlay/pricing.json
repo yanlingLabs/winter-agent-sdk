@@ -259,6 +259,27 @@
       "sourceRef": "https://wiki.agnes-ai.com/en/docs/pricing (read 2026-09-27): \"agnes-2.5-flash | Cached input $0.005/M | Input tokens $0.05/M | Output tokens $0.15/M (List price column)\" — USD 0.05 input / 0.15 output / 0.005 cached input per 1M tokens; tiers: Current promotional price is $0/M for cached input, input, and output (\"Cached input, input tokens, and output tokens are currently free for agnes-2.5-flash\"). (the smallest-context standard tier is stored)",
       "confidence": "declared",
       "observedAt": "2026-09-27T00:00:00Z"
+    },
+    "synthetic/hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4": {
+      "value": { "inputPerMTokUsd": 0.3, "outputPerMTokUsd": 1, "cacheReadPerMTokUsd": 0.06 },
+      "source": "official-doc",
+      "sourceRef": "https://api.synthetic.new/openai/v1/models — Synthetic's own unauthenticated model list, entry `hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4` (read 2026-09-28): pricing prompt $0.0000003 / completion $0.000001 / input_cache_reads $0.00000006 per token; https://synthetic.new/pricing (read 2026-09-28): \"Synthetic can use either subscription or usage-based pricing\" and \"All models are pay-per-token\" on the usage-based plan, so the per-token price applies to the usage-based path (controller ruling 2026-09-28)",
+      "confidence": "declared",
+      "observedAt": "2026-09-28T00:00:00Z"
+    },
+    "synthetic/hf:openai/gpt-oss-120b": {
+      "value": { "inputPerMTokUsd": 0.1, "outputPerMTokUsd": 0.1, "cacheReadPerMTokUsd": 0.02 },
+      "source": "official-doc",
+      "sourceRef": "https://api.synthetic.new/openai/v1/models — Synthetic's own unauthenticated model list, entry `hf:openai/gpt-oss-120b` (read 2026-09-28): pricing prompt $0.0000001 / completion $0.0000001 / input_cache_reads $0.00000002 per token; https://synthetic.new/pricing (read 2026-09-28): \"Synthetic can use either subscription or usage-based pricing\" and \"All models are pay-per-token\" on the usage-based plan, so the per-token price applies to the usage-based path (controller ruling 2026-09-28)",
+      "confidence": "declared",
+      "observedAt": "2026-09-28T00:00:00Z"
+    },
+    "synthetic/hf:zai-org/GLM-4.7-Flash": {
+      "value": { "inputPerMTokUsd": 0.1, "outputPerMTokUsd": 0.5, "cacheReadPerMTokUsd": 0.02 },
+      "source": "official-doc",
+      "sourceRef": "https://api.synthetic.new/openai/v1/models — Synthetic's own unauthenticated model list, entry `hf:zai-org/GLM-4.7-Flash` (read 2026-09-28): pricing prompt $0.0000001 / completion $0.0000005 / input_cache_reads $0.00000002 per token; https://synthetic.new/pricing (read 2026-09-28): \"Synthetic can use either subscription or usage-based pricing\" and \"All models are pay-per-token\" on the usage-based plan, so the per-token price applies to the usage-based path (controller ruling 2026-09-28)",
+      "confidence": "declared",
+      "observedAt": "2026-09-28T00:00:00Z"
     }
   }
 }

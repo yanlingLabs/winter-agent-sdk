@@ -90624,6 +90624,17 @@
           "xhigh"
         ],
         "continuation": "none"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.45,
+          "outputPerMTokUsd": 2.2,
+          "cacheReadPerMTokUsd": 0.09
+        },
+        "source": "official-doc",
+        "sourceRef": "https://api.synthetic.new/openai/v1/models — Synthetic's own unauthenticated model list, entry `hf:Qwen/Qwen3.8-27B` (read 2026-09-28): pricing prompt $0.00000045 / completion $0.0000022 / input_cache_reads $0.00000009 per token; https://synthetic.new/pricing (read 2026-09-28): \"Synthetic can use either subscription or usage-based pricing\" and \"All models are pay-per-token\" on the usage-based plan, so the per-token price applies to the usage-based path (controller ruling 2026-09-28)",
+        "confidence": "declared",
+        "observedAt": "2026-09-28T00:00:00Z"
       }
     },
     {
@@ -90708,6 +90719,17 @@
           "max"
         ],
         "continuation": "none"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.6,
+          "outputPerMTokUsd": 1.2,
+          "cacheReadPerMTokUsd": 0.03
+        },
+        "source": "official-doc",
+        "sourceRef": "https://api.synthetic.new/openai/v1/models — Synthetic's own unauthenticated model list, entry `hf:deepseek-ai/DeepSeek-V4.1-Flash` (read 2026-09-28): pricing prompt $0.0000006 / completion $0.0000012 / input_cache_reads $0.00000003 per token; https://synthetic.new/pricing (read 2026-09-28): \"Synthetic can use either subscription or usage-based pricing\" and \"All models are pay-per-token\" on the usage-based plan, so the per-token price applies to the usage-based path (controller ruling 2026-09-28)",
+        "confidence": "declared",
+        "observedAt": "2026-09-28T00:00:00Z"
       }
     },
     {
@@ -90883,6 +90905,17 @@
           "max"
         ],
         "continuation": "none"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.15,
+          "outputPerMTokUsd": 0.5,
+          "cacheReadPerMTokUsd": 0.04
+        },
+        "source": "official-doc",
+        "sourceRef": "https://api.synthetic.new/openai/v1/models — Synthetic's own unauthenticated model list, entry `hf:zai-org/GLM-5.3-Flash` (read 2026-09-28): pricing prompt $0.00000015 / completion $0.0000005 / input_cache_reads $0.00000004 per token; https://synthetic.new/pricing (read 2026-09-28): \"Synthetic can use either subscription or usage-based pricing\" and \"All models are pay-per-token\" on the usage-based plan, so the per-token price applies to the usage-based path (controller ruling 2026-09-28)",
+        "confidence": "declared",
+        "observedAt": "2026-09-28T00:00:00Z"
       }
     },
     {

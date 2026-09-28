@@ -9,7 +9,7 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 ### Provider catalog refresh (cat34)
 
 The catalog grows from 213 providers and 1003 models to 218 providers and 1293 models. Priced rows go
-from 309 to 675. Every new or changed field was re-read on 2026-09-27 (review fixes on 2026-09-28) on
+from 309 to 681. Every new or changed field was re-read on 2026-09-27 (review fixes on 2026-09-28) on
 the serving provider's own page or public model list. A maker's page counts only as `inferred`
 evidence and is never a source for a price. CNY is converted at 0.1490 and EUR at 1.1460, the rates
 the catalog already cites. Providers that bill in credits or plans with no published USD rate stay
@@ -43,6 +43,8 @@ unpriced.
   - Per-tenant (`requiresUserEndpoint`): `snowflake-cortex` (unpriced, billed in AI Credits) and
     `cloudflare-workers-ai` (priced).
   - All five are `review-required`, with no live gate.
+- **Synthetic priced.** Synthetic's usage-based plan bills every model per token, so the rows its
+  public model list names (7) carry that list's price; the 4 rows it does not name stay unpriced.
 - **Test updates.**
   - The priced-key pin is regenerated.
   - The per-tenant set pin names the two new rows.
