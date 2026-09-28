@@ -3,7 +3,7 @@ import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRe
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
 import type { AccountInfo, AgentInfo, CredentialResolveAnswer, CredentialResolveRequest, EffortLevel, ModelInfo, ModelFamilyListing, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, McpOAuthRefreshAnswer, McpOAuthRefreshRequest, RewindFilesResult } from "./protocol/config.ts";
-import { CREDENTIAL_RESOLVE_SUBTYPE, isWinterMcpServerInstance, MCP_OAUTH_REFRESH_SUBTYPE, type Options, type McpServerConfig } from "./options.ts";
+import { CREDENTIAL_RESOLVE_SUBTYPE, isWinterMcpServerInstance, MCP_OAUTH_REFRESH_SUBTYPE, TEST_KEYCHAIN_ENV, type Options, type McpServerConfig } from "./options.ts";
 import type {
   PermissionMode,
   CanUseTool,
@@ -891,7 +891,13 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     // REPLACES the child environment entirely (consumers spread ...process.env themselves if they
     // want to extend it); an OMITTED env means the child INHERITS the wrapper's own process.env —
     // never a silently empty environment (the prior `?? {}` produced exactly that bug).
-    env: options.env ?? (process.env as Record<string, string>),
+    //
+    // THE ONE EXCEPTION: the test-only Keychain redirect (`TEST_KEYCHAIN_ENV`, options.ts). When THIS
+    // process runs with it set, an explicit env is copied with it added, so a test (or a host's test
+    // suite) that hands `query()` a minimal environment can never start a runtime child -- or an
+    // embedded Worker, whose `process.env` IS this object -- that reaches the real Keychain. A process
+    // without it (every production host) passes `options.env` through untouched.
+    env: withTestKeychainRedirect(options.env) ?? (process.env as Record<string, string>),
     ...(options.abortController ? { signal: options.abortController.signal } : {}),
   };
   const proc: SpawnedRuntimeProcess = (options.spawnClaudeCodeProcess ?? defaultSpawn)(spawnOptions);
@@ -1562,4 +1568,15 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     },
   };
   return gen;
+}
+
+/**
+ * An explicit `Options.env`, plus the test-only Keychain redirect when THIS process carries it (see
+ * `TEST_KEYCHAIN_ENV`). `undefined` stays `undefined` (the child inherits `process.env`, which already has
+ * it); an env that already names the variable is left exactly as the caller wrote it.
+ */
+function withTestKeychainRedirect(env: Record<string, string> | undefined): Record<string, string> | undefined {
+  const redirect = process.env[TEST_KEYCHAIN_ENV];
+  if (env === undefined || redirect === undefined || redirect === "" || env[TEST_KEYCHAIN_ENV] !== undefined) return env;
+  return { ...env, [TEST_KEYCHAIN_ENV]: redirect };
 }

@@ -4,7 +4,7 @@
 // Keychain (`provider/keychain-store.ts`'s header and its repo-wide tripwire), and an ordinary `bun test`
 // keeps that rule: this file is skipped unless `WINTER_TEST_KEYCHAIN_SIZE_GATE=1`. When it does run, it
 // goes through `createKeychainRawStore` -- the one file allowed to name the backend -- on a THROWAWAY
-// service (`com.winter.test.ws25-size-gate.<pid>`, never a `com.winter.core*` service that holds a user's
+// service (`keychain-test-throwaway.ws25-size-gate.<pid>`, never a `com.winter.core*` service that holds a user's
 // real items), and deletes every item it wrote in `finally`.
 //
 // MEASURED (2026-09-27, macOS 26.6, bun 1.3): every size up to 4 MiB round-tripped byte-for-byte
@@ -17,8 +17,15 @@
 // never needs, and so never reads, a client secret.
 //
 // Run it: `WINTER_TEST_KEYCHAIN_SIZE_GATE=1 bun test packages/runtime/src/mcp-auth/size-gate.test.ts`
+//
+// THE TEST KEYCHAIN GUARD (`scripts/test-keychain-guard.ts`, every `bun test` preload) redirects every
+// default backend to memory and replaces the real API with a tripwire. This gate is the one thing that
+// must measure the REAL Keychain, so its body lifts the redirect (`TEST_KEYCHAIN_ENV`) for its own length,
+// and the tripwire forwards it -- only because `WINTER_TEST_KEYCHAIN_SIZE_GATE=1` is set AND the service is
+// under `keychain-test-throwaway.` (the guard's `THROWAWAY_SERVICE_PREFIX`). Without the lift it would
+// measure the in-memory map and pass saying nothing.
 import { expect, test } from "bun:test";
-import { createKeychainRawStore } from "../provider/keychain-store.ts";
+import { createKeychainRawStore, TEST_KEYCHAIN_ENV } from "../provider/keychain-store.ts";
 
 const ENABLED = process.env.WINTER_TEST_KEYCHAIN_SIZE_GATE === "1";
 const SIZES = [1024, 4096, 4097, 16 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024, 4 * 1024 * 1024];
@@ -28,8 +35,10 @@ const REQUIRED_BYTES = 64 * 1024;
 test.skipIf(!ENABLED)(
   "Bun.secrets round-trips every measured size intact on a throwaway service (spec §4.1)",
   async () => {
-    const service = `com.winter.test.ws25-size-gate.${process.pid}`;
+    const service = `keychain-test-throwaway.ws25-size-gate.${process.pid}`;
     expect(service.startsWith("com.winter.core")).toBe(false);
+    const redirect = process.env[TEST_KEYCHAIN_ENV];
+    delete process.env[TEST_KEYCHAIN_ENV];
     const store = createKeychainRawStore(service);
     const results: Array<{ bytes: number; outcome: "intact" | "mismatch" | "threw" }> = [];
     const written: string[] = [];
@@ -48,6 +57,7 @@ test.skipIf(!ENABLED)(
       }
     } finally {
       for (const account of written) await store.remove(account).catch(() => {});
+      if (redirect !== undefined) process.env[TEST_KEYCHAIN_ENV] = redirect;
     }
     console.log(`size gate: ${results.map((r) => `${r.bytes}=${r.outcome}`).join(" ")}`);
     const largestIntact = Math.max(0, ...results.filter((r) => r.outcome === "intact").map((r) => r.bytes));

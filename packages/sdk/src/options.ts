@@ -85,6 +85,28 @@ export const DEFAULT_PROVIDER_STALL_TIMEOUT_MS = 120000;
 export const DEFAULT_KEYCHAIN_SERVICE = WINTER_BRAND.keychainService;
 
 /**
+ * TEST-ONLY. The environment variable that redirects every DEFAULT secrets backend (the runtime's
+ * `provider/keychain-store.ts`, the one site that may reach the macOS Keychain) to a per-process
+ * in-memory store. Exactly `TEST_KEYCHAIN_MEMORY` enables the redirect; unset or empty leaves the real
+ * Keychain; any other value is REFUSED (a typed `unsupported` credential error), never a silent fall
+ * through to the real store.
+ *
+ * WHY. A test that resolves a `{ kind: "keychain" }` ref in a process that was handed no store of its
+ * own (a real `winter` child, an embedded Worker) reached the developer's REAL login Keychain -- service
+ * `DEFAULT_KEYCHAIN_SERVICE` by default -- and macOS raised a consent dialog, which also hung the child. Every
+ * `bun test` run sets this through `scripts/test-keychain-guard.ts` (each package's `bunfig.toml`), and
+ * `query()` carries it into the child's environment even when a host supplies an explicit `env`.
+ *
+ * Honoured by a compiled binary too, deliberately: the compiled legs of the test suite run the
+ * release-shaped artifact, and a build that ignored the variable would put exactly those legs back on
+ * the real Keychain. Left on by accident it fails CLOSED -- credentials read as absent, writes vanish
+ * with the process -- and it exposes nothing. Never set it outside a test run.
+ */
+export const TEST_KEYCHAIN_ENV = "WINTER_TEST_KEYCHAIN";
+/** The one value of `TEST_KEYCHAIN_ENV` that selects the in-memory backend. */
+export const TEST_KEYCHAIN_MEMORY = "memory";
+
+/**
  * WS-25 (MCP OAuth): the runtime -> host control subtype a session sends when a stored MCP sign-in needs
  * refreshing (`McpOAuthRefreshRequest` -> `McpOAuthRefreshAnswer`, protocol/config.ts). Spelled once:
  * `query.ts` registers the handler under it and the runtime sends it.
@@ -253,7 +275,7 @@ export interface Options {
   permissionMode?: PermissionMode;
   maxTurns?: number;
   cwd?: string;
-  env?: Record<string, string>;     // REPLACES the child env (WS-03 §5); flows into SpawnRuntimeOptions.env
+  env?: Record<string, string>;     // REPLACES the child env (WS-03 §5); flows into SpawnRuntimeOptions.env (plus TEST_KEYCHAIN_ENV when the host process itself carries it -- test runs only)
   pathToClaudeCodeExecutable?: string;   // WS-04 §8 resolution seam: explicit path wins over the platform package
   // WS-04 §8 seam; default is a real child (transport.ts's defaultSpawn). Sign-off 2 rider
   // (whole-branch review): when this hook IS supplied, executable resolution is skipped entirely

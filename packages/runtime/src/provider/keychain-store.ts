@@ -17,14 +17,20 @@
 // argument to `Extract<CredentialRef, {kind:"keychain"}>`), which is what makes "the SDK never
 // persists an inline value, never writes an env var, never writes a credentials file" unrepresentable
 // rather than merely documented.
+//
+// TEST RUNS (the Keychain-dialog incident): `defaultSecretsBackend()` honours `WINTER_TEST_KEYCHAIN=memory`
+// (`TEST_KEYCHAIN_ENV`) and hands back a per-process in-memory backend instead of the real one. Every
+// `bun test` run sets it (`scripts/test-keychain-guard.ts`), which also replaces the real API with a
+// tripwire in the test process and every `bun` child it spawns, so a path that reaches the real Keychain
+// anyway fails the test that caused it instead of raising a macOS consent dialog.
 import type { CredentialMaterial, CredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import { CredentialResolutionError, redactRef } from "@yanlinglabs/winter-provider-runtime";
 // `DEFAULT_KEYCHAIN_SERVICE` is DECLARED in the sdk's `options.ts` and imported here rather than
 // re-declared: this codebase polices one-declaration-per-value everywhere else, and a second copy of
 // a service NAME is the kind of drift that silently splits a user's credentials across two keychain
 // services. Re-exported so a caller reads it from the module it is working in.
-import { DEFAULT_KEYCHAIN_SERVICE, type CredentialRef } from "@yanlinglabs/winter-agent-sdk";
-export { DEFAULT_KEYCHAIN_SERVICE };
+import { DEFAULT_KEYCHAIN_SERVICE, TEST_KEYCHAIN_ENV, TEST_KEYCHAIN_MEMORY, type CredentialRef } from "@yanlinglabs/winter-agent-sdk";
+export { DEFAULT_KEYCHAIN_SERVICE, TEST_KEYCHAIN_ENV, TEST_KEYCHAIN_MEMORY };
 
 /**
  * The shape this store needs from a secrets backend.
@@ -41,6 +47,27 @@ export interface SecretsBackend {
 }
 
 /**
+ * The TEST-ONLY in-memory backend `TEST_KEYCHAIN_ENV=memory` selects: ONE map per process, shared by
+ * every store this module builds, so a `set` through one store is read back by another exactly as the
+ * Keychain would. It starts empty -- a keychain ref reads as ABSENT -- and dies with the process. Within
+ * one test process a write is visible to a later test that reads the same service/account; before the
+ * redirect such a write went to the developer's real Keychain, so that is not a new coupling.
+ */
+const memorySecrets = new Map<string, string>();
+const memoryKey = (service: string, name: string): string => `${service}\u0000${name}`;
+const MEMORY_SECRETS_BACKEND: SecretsBackend = {
+  async get({ service, name }) {
+    return memorySecrets.get(memoryKey(service, name)) ?? null;
+  },
+  async set({ service, name, value }) {
+    memorySecrets.set(memoryKey(service, name), value);
+  },
+  async delete({ service, name }) {
+    return memorySecrets.delete(memoryKey(service, name));
+  },
+};
+
+/**
  * The real backend, resolved LAZILY.
  *
  * Lazily because this module is imported by the selection path, which every session touches --
@@ -50,6 +77,16 @@ export interface SecretsBackend {
  * point of use rather than crashing at import.
  */
 function defaultSecretsBackend(): SecretsBackend {
+  // TEST-ONLY REDIRECT (`TEST_KEYCHAIN_ENV`, declared in the sdk's `options.ts`, which says why it exists
+  // and why a compiled binary honours it too). Read at CALL time, like the global below, so the choice is
+  // the process's at the moment of use. Exactly `memory` selects the in-memory backend; any other
+  // non-empty value is refused typed -- a typo in a test harness must never fall through to the real
+  // Keychain. Unset or empty: the real backend, byte-identical to before the redirect existed.
+  const redirect = process.env[TEST_KEYCHAIN_ENV];
+  if (redirect !== undefined && redirect !== "") {
+    if (redirect === TEST_KEYCHAIN_MEMORY) return MEMORY_SECRETS_BACKEND;
+    throw new CredentialResolutionError("unsupported", `${TEST_KEYCHAIN_ENV} is set to an unrecognized value; the only accepted value is "${TEST_KEYCHAIN_MEMORY}" (test runs only) -- unset it to use the Keychain`);
+  }
   const secrets = (globalThis as { Bun?: { secrets?: SecretsBackend } }).Bun?.secrets;
   if (secrets === undefined) {
     throw new CredentialResolutionError("unsupported", "the Keychain credential store requires Bun.secrets, which is unavailable in this runtime");

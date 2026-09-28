@@ -4,6 +4,29 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## Unreleased
+
+### Tests
+
+- The test suite can no longer reach the real macOS Keychain. A whole-suite run had raised a consent
+  dialog for `com.winter.core` (the user's installed Winter), and hung the runtime child behind it. The
+  child was spawned by transport-equivalence on a real catalog model and probed `<vendor>:default` in its
+  default Keychain store. Three layers now stop this:
+  - **Redirect.** `WINTER_TEST_KEYCHAIN=memory` (`TEST_KEYCHAIN_ENV`, exported by the sdk) makes the
+    runtime's one default secrets backend a per-process in-memory store. It is test-only. Any other
+    non-empty value is refused with a typed error, never a fall-through, and unset behaves exactly as
+    before.
+  - **Propagation.** A new preload, `scripts/test-keychain-guard.ts`, runs first in every
+    `bunfig.toml`. It sets the variable and carries it, with its own `--preload`, into every child a
+    test spawns. `query()` adds it to an explicit `Options.env` when the host process carries it,
+    which covers custom spawn hooks, compiled children and embedded Workers.
+  - **Tripwire.** The same preload replaces `Bun.secrets` in the test process and in every `bun` child
+    with a tripwire that fails the test on any access. The only exception is the opt-in size gate
+    (`WINTER_TEST_KEYCHAIN_SIZE_GATE=1`) on a `keychain-test-throwaway.*` service.
+
+  The repo-wide grep tripwire now also catches `import { secrets } from "bun"`. A real-child test
+  (`keychain-isolation.test.ts`) proves both the redirect and the child's tripwire.
+
 ## 0.0.33
 
 ### MCP (WS-27)
