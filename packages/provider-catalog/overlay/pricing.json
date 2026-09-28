@@ -238,6 +238,48 @@
       "sourceRef": "https://help.aliyun.com/en/model-studio/model-pricing — China (Beijing) lists qwen3.8-max at CNY 12 input / CNY 36 output per MTok. Converted using the ECB 2026-09-18 reference rates (EUR 1 = USD 1.1460; CNY 7.6755): https://www.ecb.europa.eu/stats/shared/pdf/eurofxref.pdf?57eae2dc36bcb4af234d5e0b7e1a28c3= (retrieved 2026-09-19).",
       "confidence": "inferred",
       "observedAt": "2026-09-19T00:00:00Z"
+    },
+    "bazaarlink/auto:free": {
+      "value": { "inputPerMTokUsd": 0, "outputPerMTokUsd": 0 },
+      "source": "official-doc",
+      "sourceRef": "https://bazaarlink.ai/api/v1/models — BazaarLink's own public model entry `auto:free` (read 2026-09-27): pricing.prompt 0 / pricing.completion 0 USD per token (= $0.0 / $0.0 per 1M); no cache rate published",
+      "confidence": "declared",
+      "observedAt": "2026-09-27T00:00:00Z"
+    },
+    "novita/meta-llama/llama-3.1-8b-instruct": {
+      "value": { "inputPerMTokUsd": 0.02, "outputPerMTokUsd": 0.05 },
+      "source": "official-doc",
+      "sourceRef": "https://api.novita.ai/openai/v1/models — Novita's own public model entry `meta-llama/llama-3.1-8b-instruct` (read 2026-09-27): pricing.prompt.origin_price_per_m_decimal 0.02, completion 0.05 USD per 1M tokens",
+      "confidence": "declared",
+      "observedAt": "2026-09-27T00:00:00Z"
+    },
+    "agnes/agnes-2.5-flash": {
+      "value": { "inputPerMTokUsd": 0.05, "outputPerMTokUsd": 0.15, "cacheReadPerMTokUsd": 0.005 },
+      "source": "official-doc",
+      "sourceRef": "https://wiki.agnes-ai.com/en/docs/pricing (read 2026-09-27): \"agnes-2.5-flash | Cached input $0.005/M | Input tokens $0.05/M | Output tokens $0.15/M (List price column)\" — USD 0.05 input / 0.15 output / 0.005 cached input per 1M tokens; tiers: Current promotional price is $0/M for cached input, input, and output (\"Cached input, input tokens, and output tokens are currently free for agnes-2.5-flash\"). (the smallest-context standard tier is stored)",
+      "confidence": "declared",
+      "observedAt": "2026-09-27T00:00:00Z"
+    },
+    "synthetic/hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4": {
+      "value": { "inputPerMTokUsd": 0.3, "outputPerMTokUsd": 1, "cacheReadPerMTokUsd": 0.06 },
+      "source": "official-doc",
+      "sourceRef": "https://api.synthetic.new/openai/v1/models — Synthetic's own unauthenticated model list, entry `hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4` (read 2026-09-28): pricing prompt $0.0000003 / completion $0.000001 / input_cache_reads $0.00000006 per token; https://synthetic.new/pricing (read 2026-09-28): \"Synthetic can use either subscription or usage-based pricing\" and \"All models are pay-per-token\" on the usage-based plan, so the per-token price applies to the usage-based path (controller ruling 2026-09-28)",
+      "confidence": "declared",
+      "observedAt": "2026-09-28T00:00:00Z"
+    },
+    "synthetic/hf:openai/gpt-oss-120b": {
+      "value": { "inputPerMTokUsd": 0.1, "outputPerMTokUsd": 0.1, "cacheReadPerMTokUsd": 0.02 },
+      "source": "official-doc",
+      "sourceRef": "https://api.synthetic.new/openai/v1/models — Synthetic's own unauthenticated model list, entry `hf:openai/gpt-oss-120b` (read 2026-09-28): pricing prompt $0.0000001 / completion $0.0000001 / input_cache_reads $0.00000002 per token; https://synthetic.new/pricing (read 2026-09-28): \"Synthetic can use either subscription or usage-based pricing\" and \"All models are pay-per-token\" on the usage-based plan, so the per-token price applies to the usage-based path (controller ruling 2026-09-28)",
+      "confidence": "declared",
+      "observedAt": "2026-09-28T00:00:00Z"
+    },
+    "synthetic/hf:zai-org/GLM-4.7-Flash": {
+      "value": { "inputPerMTokUsd": 0.1, "outputPerMTokUsd": 0.5, "cacheReadPerMTokUsd": 0.02 },
+      "source": "official-doc",
+      "sourceRef": "https://api.synthetic.new/openai/v1/models — Synthetic's own unauthenticated model list, entry `hf:zai-org/GLM-4.7-Flash` (read 2026-09-28): pricing prompt $0.0000001 / completion $0.0000005 / input_cache_reads $0.00000002 per token; https://synthetic.new/pricing (read 2026-09-28): \"Synthetic can use either subscription or usage-based pricing\" and \"All models are pay-per-token\" on the usage-based plan, so the per-token price applies to the usage-based path (controller ruling 2026-09-28)",
+      "confidence": "declared",
+      "observedAt": "2026-09-28T00:00:00Z"
     }
   }
 }

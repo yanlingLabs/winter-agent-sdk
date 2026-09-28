@@ -94,10 +94,17 @@ describe("createRegistry — resolution", () => {
     // R6-16 puts the native-cloud families in at `experimental`, so the pin is "every non-blocked
     // row resolves" rather than "every row is candidate". `supported` stays unreachable: it requires
     // the behavioural corpus (WS-13 §13).
+    // A row of a BLOCKED PROVIDER refuses with the provider's own reason (the next test's second half);
+    // cat34 review blocked four dead providers that still carry their extracted model rows.
+    const blockedProviders = new Set(catalog.providers.filter((p) => p.risk.class === "blocked").map((p) => p.id));
     for (const model of catalog.models) {
       // `deprecated` (2026-09-25 refresh) is a vendor-retired row: listings and slots drop it, but the registry
       // still resolves it so a stored tag fails at the vendor rather than as an unknown key.
       expect([model.key, model.status]).toEqual([model.key, model.status === "experimental" || model.status === "deprecated" ? model.status : "candidate"]);
+      if (blockedProviders.has(model.providerId)) {
+        expect(failure(fullRegistry().resolve({ model: model.key })).code).toBe("blocked");
+        continue;
+      }
       expect(ok(fullRegistry().resolve({ model: model.key })).modelKey).toBe(model.key);
     }
   });
@@ -185,9 +192,10 @@ describe("createRegistry — session-provider-first resolution (RULING R6-K)", (
     // provider it means, so passing the id through honours that statement rather than reinterpreting
     // it — reading the vendor prefix as a provider qualifier here would make the gateway unusable
     // for everything except its handful of seeded rows.
-    const resolved = ok(fullRegistry().resolve({ model: "anthropic/claude-opus-5", provider: { providerId: "openrouter", allowUnlisted: true } }));
+    // (cat34 seeded `anthropic/claude-opus-5` on OpenRouter, so the example is an id no catalog row names.)
+    const resolved = ok(fullRegistry().resolve({ model: "anthropic/claude-3-opus", provider: { providerId: "openrouter", allowUnlisted: true } }));
     expect(resolved.providerId).toBe("openrouter");
-    expect(resolved.providerModelId).toBe("anthropic/claude-opus-5");
+    expect(resolved.providerModelId).toBe("anthropic/claude-3-opus");
     expect(resolved.descriptor).toBeUndefined();
     // Same shape for a second vendor prefix, so nothing here is special-casing "anthropic".
     expect(ok(fullRegistry().resolve({ model: "mistralai/mixtral-8x22b", provider: { providerId: "openrouter", allowUnlisted: true } })).providerModelId).toBe("mistralai/mixtral-8x22b");
@@ -195,7 +203,7 @@ describe("createRegistry — session-provider-first resolution (RULING R6-K)", (
 
   test("the SAME id WITHOUT allowUnlisted is a provider-mismatch — the pass-through door is what opens it", () => {
     // Namespace miss, no pass-through door, and the qualified split then names another provider.
-    const err = failure(fullRegistry().resolve({ model: "anthropic/claude-opus-5", provider: { providerId: "openrouter" } }));
+    const err = failure(fullRegistry().resolve({ model: "anthropic/claude-3-opus", provider: { providerId: "openrouter" } }));
     expect(err.code).toBe("provider-mismatch");
     expect(err.message).toContain("openrouter");
   });

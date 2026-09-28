@@ -4648,6 +4648,350 @@
         "tier": "pinned-upstream"
       },
       "$comment": "2026-09-25 refresh: re-admitted on Cohere's fetched Compatibility API doc (tier fetched-document), whose documented base is `https://api.cohere.ai/compatibility/v1` (the extracted row used the api.cohere.com spelling of the same Cohere API). Cohere's native v2 Chat API is a different dialect and is not modelled. Command A+, A Reasoning and A Vision are documented as free up to rate limits, so they carry no per-token price. FIRST KEY ONLY (R-FW-3): the refresh fetched and read https://docs.cohere.com/v2/docs/compatibility-api — Cohere Compatibility API documentation, retrieved 2026-09-25: OpenAI-compatible Chat Completions at `https://api.cohere.ai/compatibility/v1` with a Cohere API key; per-token billing per https://cohere.com/pricing. — the tier stays `pinned-upstream` until a live-gate pass supplies the second key."
+    },
+    {
+      "id": "ovhcloud",
+      "displayName": "OVHcloud AI Endpoints",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "OVHcloud's serverless AI Endpoints (EU). One OpenAI-compatible router base serves every catalogued LLM; the public catalog JSON names each model's `model_base_url` as that router. Prices are EUR on the provider's own page and are converted at the catalog's one EUR rate.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://catalog.endpoints.ai.ovh.net/rest/v1/models_v2 and https://endpoints.ai.cloud.ovh.net/ — OVHcloud AI Endpoints, retrieved 2026-09-27: the public model catalog (HTTP 200, no key) gives `model_base_url: \"https://oai.endpoints.kepler.ai.cloud.ovh.net/v1\"` for every Text Generation model; the product page lists per-model prices as \"€ / Mtoken(input)\" and \"€ / Mtoken(output)\"; https://docs.ovhcloud.com/en/guides/public-cloud/ai-machine-learning/ai-endpoints-getting-started authenticates with the user's own AI Endpoints API key as a Bearer token.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "crusoe",
+      "displayName": "Crusoe Managed Inference",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Crusoe Cloud's serverless inference: an OpenAI-compatible endpoint at a fixed base, pay-as-you-go per 1M tokens in USD.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.inference.crusoecloud.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint."
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.crusoecloud.com/quickstart/getting-started-with-serverless-inference, https://docs.crusoecloud.com/serverless-inference/available-models and https://www.crusoe.ai/cloud/pricing — Crusoe documentation, retrieved 2026-09-27: `OpenAI(api_key=CRUSOE_API_KEY, base_url=\"https://api.inference.crusoecloud.com/v1\")`; \"You can use the OpenAI-API compatible endpoint at api.inference.crusoecloud.com to access the models below\"; \"All prices shown per 1 million tokens in USD.\"",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "tinfoil",
+      "displayName": "Tinfoil",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Tinfoil's confidential-computing inference (models run in attested enclaves). A plain OpenAI client reaches the API directly; connection-time attestation needs Tinfoil's own SDK or proxy, and without it the docs say traffic still gets audit-time verification through the attestation transparency log — this row is the plain-client path, so it makes no attestation claim. The model list is public.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://inference.tinfoil.sh/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "a plain OpenAI client skips Tinfoil's connection-time enclave attestation (the vendor's SDK/proxy performs it); this row does not claim attested transport"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://inference.tinfoil.sh/v1/models and https://docs.tinfoil.sh/introduction.md — Tinfoil, retrieved 2026-09-27: the model list is public (HTTP 200, no key) and names `/v1/chat/completions` per model with USD per-1M-token prices; \"OpenAI-compatible clients don't perform connection-time attestation themselves ... Without either, your traffic still benefits from audit-time verification through Tinfoil's attestation transparency log\"; https://docs.tinfoil.sh/guides/proxy-server.md authenticates with a `TINFOIL_API_KEY` Bearer key.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "snowflake-cortex",
+      "displayName": "Snowflake Cortex REST API (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Snowflake Cortex's REST inference API on the OPERATOR'S OWN account host. Model rows are the Cortex REST API's generally available models (✔ in the provider's model-availability table; public- and private-preview models are left out). Billing is per token in Snowflake AI Credits; the USD price per credit differs by on-demand/capacity contract and region, so no USD price is stated. The same base also serves an Anthropic Messages route for Claude models, not catalogued here.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {},
+      "requiresUserEndpoint": true,
+      "endpointTemplate": "https://<account-identifier>.snowflakecomputing.com/api/v2/cortex/v1",
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "the endpoint is the OPERATOR'S OWN account host and is never reviewed by Winter — it is evaluated as a user endpoint",
+          "per-token billing in Snowflake AI Credits: no USD price is catalogued"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-rest-api — Snowflake documentation, retrieved 2026-09-27: `baseURL: \"https://<account-identifier>.snowflakecomputing.com/api/v2/cortex/v1\"`; \"The Chat Completions API follows the OpenAI specification\"; `-H \"Authorization: Bearer <SNOWFLAKE_PAT>\"` with a Snowflake Programmatic Access Token (PAT); \"Tool calling is supported for OpenAI and Claude models only.\"",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "cloudflare-workers-ai",
+      "displayName": "Cloudflare Workers AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "Cloudflare Workers AI's OpenAI-compatible endpoint. The host is fixed but the path carries the OPERATOR'S OWN account id, so the row is per-tenant. The pricing page states each LLM's USD price per 1M tokens (derived by Cloudflare from its neuron rate).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {},
+      "requiresUserEndpoint": true,
+      "endpointTemplate": "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1",
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "Admitted on the vendor's own fetched documentation; this application has not run a live key gate against this endpoint.",
+          "the account id in the path is the OPERATOR'S OWN — the endpoint is evaluated as a user endpoint"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/ and https://developers.cloudflare.com/workers-ai/platform/pricing/ — Cloudflare documentation, retrieved 2026-09-27: `--url https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1/chat/completions --header \"Authorization: Bearer {api_token}\"`; per-model prices \"$… per M input tokens $… per M output tokens\". The credential is the user's own Cloudflare API token.",
+        "tier": "fetched-document"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "yi",
+      "displayName": "Yi (01.AI)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.lingyiwanwu.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/yi/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "blocked",
+        "reasons": [
+          "dead endpoint: the API host answers HTTP 410 to `GET https://api.lingyiwanwu.com/v1/models` with `{\"error\":{\"code\":\"model_service_closed\",\"message\":\"Model service has been discontinued\"}}` (probed 2026-09-28)",
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://01.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.lingyiwanwu.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "cat34 review (2026-09-28): BLOCKED as a dead endpoint, following PROVENANCE.md's citation-liveness precedent (a citation or endpoint that resolves to nothing is a row with no evidence). This is the upstream-extracted row verbatim except `risk`."
+    },
+    {
+      "id": "pioneer",
+      "displayName": "Pioneer AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.pioneer.ai/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/pioneer/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "blocked",
+        "reasons": [
+          "dead endpoint: the API host answers HTTP 410 to `GET https://api.pioneer.ai/v1/models` with `code: \"host_retired\"` and `moved_to: \"https://api.fastino.ai/v1/models\"` (\"This API host was retired. Use https://api.fastino.ai\"; probed 2026-09-28)",
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://pioneer.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.pioneer.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "cat34 review (2026-09-28): BLOCKED as a dead endpoint, following PROVENANCE.md's citation-liveness precedent (a citation or endpoint that resolves to nothing is a row with no evidence). This is the upstream-extracted row verbatim except `risk`. The successor host api.fastino.ai answers (HTTP 200 on /v1/models, probed 2026-09-28) but is NOT re-admitted here: Fastino is a new admission that needs its own reviewed row."
+    },
+    {
+      "id": "modal",
+      "displayName": "Modal",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.modal.ai/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/modal/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "blocked",
+        "reasons": [
+          "dead endpoint: `https://api.modal.ai` fails TLS (`tlsv1 unrecognized name`) and `http://modal.ai` serves a 114-byte parked-domain page (probed 2026-09-28): modal.ai is not Modal's domain (Modal is modal.com), so this endpoint was never valid",
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://modal.com/docs — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.modal.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "cat34 review (2026-09-28): BLOCKED as a dead endpoint, following PROVENANCE.md's citation-liveness precedent (a citation or endpoint that resolves to nothing is a row with no evidence). This is the upstream-extracted row verbatim except `risk`."
+    },
+    {
+      "id": "hyperbolic",
+      "displayName": "Hyperbolic",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.hyperbolic.xyz/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/hyperbolic/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "blocked",
+        "reasons": [
+          "dead endpoint: https://hyperbolic.ai/docs/faq/inference-models (read 2026-09-28): \"The serverless inference API and the playground have been retired. The models that used to be listed are no longer available\"; `https://api.hyperbolic.xyz/v1/models` still answers 401 `Not authenticated` (probed 2026-09-28), which proves only that a gateway is up",
+          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+        ]
+      },
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://hyperbolic.xyz — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.hyperbolic.xyz/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
+      },
+      "$comment": "cat34 review (2026-09-28): BLOCKED as a dead endpoint, following PROVENANCE.md's citation-liveness precedent (a citation or endpoint that resolves to nothing is a row with no evidence). This is the upstream-extracted row verbatim except `risk`."
     }
   ]
 }

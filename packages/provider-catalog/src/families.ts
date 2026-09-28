@@ -144,11 +144,23 @@ export function modelFamilyOf(catalog: WinterCatalog, providerId: string, modelK
  * Structurally typed rather than taking a `WinterModelDescriptor`, because the validator's caller
  * holds `unknown` JSON it has already shape-checked, not a narrowed row.
  */
-export function isSlotServableRow(row: { status: string; endpoints: readonly string[] }): boolean {
+export function isSlotServableRow(
+  row: { status: string; endpoints: readonly string[]; providerId?: string },
+  blockedProviderIds: ReadonlySet<string> = new Set(),
+): boolean {
+  // A row of a BLOCKED PROVIDER is as unservable as a blocked row: the registry refuses the provider
+  // before the row is reached (cat34 blocked four dead providers that still carry extracted rows).
+  if (row.providerId !== undefined && blockedProviderIds.has(row.providerId)) return false;
   return row.status !== "blocked" && row.status !== "deprecated" && (row.endpoints.includes("chat") || row.endpoints.includes("responses"));
+}
+
+/** The ids of every provider whose `risk.class` is `blocked` -- the second argument `isSlotServableRow` takes. */
+export function blockedProviderIdsOf(catalog: Pick<WinterCatalog, "providers">): Set<string> {
+  return new Set(catalog.providers.filter((p) => p.risk.class === "blocked").map((p) => p.id));
 }
 
 /** Candidate rows for a slot (WS-13c §4 step 1). The SAME predicate `validateCatalog` refuses a slot on. */
 export function rowsForCanonicalId(catalog: WinterCatalog, canonicalModelId: string): WinterModelDescriptor[] {
-  return catalog.models.filter((m) => m.canonicalModelId === canonicalModelId && isSlotServableRow(m));
+  const blocked = blockedProviderIdsOf(catalog);
+  return catalog.models.filter((m) => m.canonicalModelId === canonicalModelId && isSlotServableRow(m, blocked));
 }
