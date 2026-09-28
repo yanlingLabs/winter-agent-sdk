@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { query } from "./query.ts";
+import { TEST_KEYCHAIN_ENV, TEST_KEYCHAIN_MEMORY } from "./options.ts";
 import { resolveRuntimeExecutable, defaultSpawn, type SpawnedRuntimeProcess } from "./transport.ts";
 import { WinterSDKError, CLIConnectionError, ProcessError, ProtocolDecodeError, AbortError } from "./errors.ts";
 import { encodeFrame } from "./protocol/codec.ts";
@@ -376,7 +377,8 @@ test("Options.env omitted: the spawn hook receives the wrapper's own process.env
   expect(thrown).toBeInstanceOf(ProcessError);
 });
 
-test("Options.env supplied: the spawn hook receives EXACTLY that env — no PATH leak (replace, unchanged)", async () => {
+/** Runs one `query()` with an explicit env and answers the env its spawn hook received. */
+async function capturedExplicitEnv(env: Record<string, string>): Promise<Record<string, string> | undefined> {
   let capturedEnv: Record<string, string> | undefined;
   const proc = makeFakeProcess({ stdout: chunksIterable([initFrame(), systemFrame()]) });
   let thrown: unknown;
@@ -384,7 +386,7 @@ test("Options.env supplied: the spawn hook receives EXACTLY that env — no PATH
     for await (const _msg of query({
       prompt: "hi",
       options: {
-        env: { FOO: "1" },
+        env,
         spawnClaudeCodeProcess: (opts) => {
           capturedEnv = opts.env;
           return proc;
@@ -396,8 +398,29 @@ test("Options.env supplied: the spawn hook receives EXACTLY that env — no PATH
   } catch (e) {
     thrown = e;
   }
-  expect(capturedEnv).toEqual({ FOO: "1" });
   expect(thrown).toBeInstanceOf(ProcessError);
+  return capturedEnv;
+}
+
+test("Options.env supplied: the spawn hook receives EXACTLY that env — no PATH leak (replace, unchanged)", async () => {
+  // A production host: its process does NOT carry the test Keychain redirect (the test preload sets it
+  // on this one, so it is lifted for the length of this test).
+  const redirect = process.env[TEST_KEYCHAIN_ENV];
+  delete process.env[TEST_KEYCHAIN_ENV];
+  try {
+    expect(await capturedExplicitEnv({ FOO: "1" })).toEqual({ FOO: "1" });
+  } finally {
+    if (redirect !== undefined) process.env[TEST_KEYCHAIN_ENV] = redirect;
+  }
+});
+
+test("Options.env supplied while THIS process carries the test Keychain redirect: the child env carries it too (the one exception)", async () => {
+  // The Keychain-dialog incident: a test that hands `query()` a minimal env must never start a runtime
+  // child (or an embedded Worker) that reaches the real Keychain. The redirect is added, nothing else is.
+  expect(process.env[TEST_KEYCHAIN_ENV]).toBe(TEST_KEYCHAIN_MEMORY); // the test preload set it
+  expect(await capturedExplicitEnv({ FOO: "1" })).toEqual({ FOO: "1", [TEST_KEYCHAIN_ENV]: TEST_KEYCHAIN_MEMORY });
+  // An env that already names it is the caller's choice, left exactly as written.
+  expect(await capturedExplicitEnv({ FOO: "1", [TEST_KEYCHAIN_ENV]: "other" })).toEqual({ FOO: "1", [TEST_KEYCHAIN_ENV]: "other" });
 });
 
 // --- defaultSpawn: child-process "error" event must never crash the host (review Finding 1) ----

@@ -42,7 +42,7 @@ import { encodeFrame, splitFrames } from "./protocol/codec.ts";
 import type { WinterFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import type { RuntimeConfig } from "./protocol/config.ts";
 import type { CanUseTool, PermissionMode } from "./permissions/types.ts";
-import type { Options, WinterMcpServerInstance } from "./options.ts";
+import { TEST_KEYCHAIN_ENV, TEST_KEYCHAIN_MEMORY, type Options, type WinterMcpServerInstance } from "./options.ts";
 import type { ModelInfo } from "./protocol/config.ts";
 import { PROVIDER_STATE_FILE_SUFFIX } from "./store/session-store.ts";
 import { inMemoryProcess } from "@yanlinglabs/winter-agent-runtime/testing";
@@ -289,7 +289,13 @@ function spawnHook(
     // live checkout, and each leg snapshots its git state when its own session starts: a commit or a
     // file appearing between two legs' runs changed one leg's prompt and so its scripted `usage`, an
     // equivalence failure no transport caused. The "fixture hygiene" test pins it.
-    const env = { ...opts.env, WINTER_HOME: TEST_WINTER_HOME, WINTER_DISABLE_GIT_INSTRUCTIONS: "1", ...(testProviderName ? { WINTER_TEST_PROVIDER: testProviderName } : {}), ...(scenarioEnv ?? {}) };
+    //
+    // And the test Keychain redirect (`TEST_KEYCHAIN_ENV`, options.ts), LAST so no scenario env can drop
+    // it: the P6 scenarios name REAL catalog models, and a child/compiled leg handed no store of its own
+    // probes `<vendor>:default` in its default Keychain store. `query()` already carries it into an
+    // explicit env and the test preload sets it on this process; stating it here makes this hook correct
+    // on its own, and the compiled leg (a binary no preload reaches) depends on it.
+    const env = { ...opts.env, WINTER_HOME: TEST_WINTER_HOME, WINTER_DISABLE_GIT_INSTRUCTIONS: "1", ...(testProviderName ? { WINTER_TEST_PROVIDER: testProviderName } : {}), ...(scenarioEnv ?? {}), [TEST_KEYCHAIN_ENV]: TEST_KEYCHAIN_MEMORY };
     let proc: SpawnedRuntimeProcess;
     if (leg === "inMemory") {
       // The in-memory leg has no real child env to merge into — inMemoryProcess's own 4th `env`
@@ -2956,7 +2962,7 @@ describe("child leg: stderr plumbing", () => {
         args: [mainPath, ...opts.args],
         // WINTER_HOME included defensively (Task 8 HARD CONSTRAINT) even though this scenario's
         // child exits in main.ts's resolveProvider() throw, before a store is ever constructed.
-        env: { ...opts.env, WINTER_HOME: TEST_WINTER_HOME, WINTER_TEST_PROVIDER: "definitely-not-a-real-provider" },
+        env: { ...opts.env, WINTER_HOME: TEST_WINTER_HOME, WINTER_TEST_PROVIDER: "definitely-not-a-real-provider", [TEST_KEYCHAIN_ENV]: TEST_KEYCHAIN_MEMORY },
       });
       capture.proc = proc;
       return proc;

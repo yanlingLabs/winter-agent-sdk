@@ -6,6 +6,9 @@ import { query, encodeFrame, splitFrames, ResultError, type RuntimeConfig, type 
 import { inMemoryProcess } from "@yanlinglabs/winter-agent-runtime/testing";
 import { testProviderByName, scriptedProvider, registerTool, MCP_SDK_TEST_SERVER_NAME, MCP_SDK_TEST_TOOL_NAME, P5_FIXTURE_SKILL_NAME, SCENARIO_MODELS, SCENARIO_TOOL_NAME, startScenarioFake } from "@yanlinglabs/winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "@yanlinglabs/winter-conformance/trace";
+import { isolateKeychain } from "./test-keychain-env.ts";
+// Never the real Keychain: set before any session or child starts (see ./test-keychain-env.ts).
+isolateKeychain();
 
 // A pinned, synthetic cwd (never process.cwd()) so every recorded trace — and the committed golden
 // compared against it — is byte-identical across machines and CI runners, whose checkout paths

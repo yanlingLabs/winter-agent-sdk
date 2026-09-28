@@ -36,6 +36,9 @@ import { fakeWorkflowRunHost } from "../packages/runtime/src/workflows/seam.ts";
 import { fakeStructuredOutputSeam } from "../packages/runtime/src/structured/seam.ts";
 import { createContextAccountant } from "../packages/runtime/src/engine.ts";
 import type { ChildHandle, ChildResult } from "../packages/runtime/src/subagents/child-handle.ts";
+import { isolateKeychain } from "./test-keychain-env.ts";
+// Never the real Keychain: set before any session or child starts (see ./test-keychain-env.ts).
+isolateKeychain();
 
 // One `agent()` call, one `phase()`, one `log()`, and a return value derived from the agent's answer:
 // enough that a worker which merely STARTS cannot produce it by accident.

@@ -6,10 +6,15 @@
 // `packages/` for the API name. The controller proves the real darwin path once, locally, against a
 // throwaway service name it deletes in `finally` -- that is the only place it is ever touched.
 import { test, expect, describe } from "bun:test";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import { CredentialResolutionError } from "@yanlinglabs/winter-provider-runtime";
-import { createKeychainCredentialStore, createKeychainRawStore, keychainAccountName, DEFAULT_KEYCHAIN_SERVICE, type SecretsBackend } from "./keychain-store.ts";
+import { TEST_KEYCHAIN_ENV as SDK_TEST_KEYCHAIN_ENV, TEST_KEYCHAIN_MEMORY as SDK_TEST_KEYCHAIN_MEMORY } from "@yanlinglabs/winter-agent-sdk";
+import { createKeychainCredentialStore, createKeychainRawStore, createKeychainSecretReader, keychainAccountName, DEFAULT_KEYCHAIN_SERVICE, TEST_KEYCHAIN_ENV, TEST_KEYCHAIN_MEMORY, type SecretsBackend } from "./keychain-store.ts";
+import { createProductionCredentialStore } from "./session-provider.ts";
+import * as keychainGuard from "../../../../scripts/test-keychain-guard.ts";
 
 const SECRET = "sk-fixture-value-never-real";
 
@@ -177,6 +182,167 @@ describe("WS-25: the raw store (the default McpOAuthStore)", () => {
   });
 });
 
+describe("the test Keychain redirect (the Keychain-dialog incident) and the preload's tripwire", () => {
+  /** Runs `body` with the redirect env set to `value` (`undefined` = unset), restoring it afterwards. */
+  async function withRedirect<T>(value: string | undefined, body: () => Promise<T>): Promise<T> {
+    const saved = process.env[TEST_KEYCHAIN_ENV];
+    if (value === undefined) delete process.env[TEST_KEYCHAIN_ENV];
+    else process.env[TEST_KEYCHAIN_ENV] = value;
+    try {
+      return await body();
+    } finally {
+      if (saved === undefined) delete process.env[TEST_KEYCHAIN_ENV];
+      else process.env[TEST_KEYCHAIN_ENV] = saved;
+    }
+  }
+
+  test("one name, three spellings: the sdk's constant, the runtime's re-export and the preload's copy agree", () => {
+    expect(TEST_KEYCHAIN_ENV).toBe(SDK_TEST_KEYCHAIN_ENV);
+    expect(TEST_KEYCHAIN_MEMORY).toBe(SDK_TEST_KEYCHAIN_MEMORY);
+    expect(keychainGuard.TEST_KEYCHAIN_ENV).toBe(SDK_TEST_KEYCHAIN_ENV);
+    expect(keychainGuard.TEST_KEYCHAIN_MEMORY).toBe(SDK_TEST_KEYCHAIN_MEMORY);
+  });
+
+  test("the preload is active in this process: the redirect is set and the real API is the tripwire", () => {
+    expect(process.env[TEST_KEYCHAIN_ENV]).toBe(TEST_KEYCHAIN_MEMORY);
+    expect(keychainGuard.keychainTripwireInstalled()).toBe(true);
+  });
+
+  test("a DEFAULT store (nothing injected) on the user's real service reads ABSENT, round-trips in memory, and never reaches the real API", async () => {
+    // Exactly the incident's shape: no brand, no keychainService -> `com.winter.core`, `<vendor>:default`.
+    const store = createKeychainCredentialStore();
+    const ref = { kind: "keychain", account: keychainAccountName("anthropic", "default") } as const;
+    expect(await store.get(ref)).toBeNull();
+    const probeRef = { kind: "keychain", account: `keychain-redirect-probe:${process.pid}` } as const;
+    await store.set(probeRef, { kind: "api-key", key: SECRET });
+    // A SECOND store in the same process sees it: one map per process, like one Keychain per user.
+    expect(await createKeychainCredentialStore().get(probeRef)).toEqual({ kind: "api-key", key: SECRET });
+    expect(await createKeychainSecretReader()(probeRef)).toBe(JSON.stringify({ kind: "api-key", key: SECRET }));
+    await store.delete(probeRef);
+    expect(await store.get(probeRef)).toBeNull();
+    const raw = createKeychainRawStore(DEFAULT_KEYCHAIN_SERVICE);
+    expect(await raw.read("mcp-oauth:https://example.invalid/mcp")).toBeNull();
+    // Had any of that reached the real API, the tripwire would have recorded it.
+    expect(keychainGuard.takeKeychainGuardViolations()).toEqual([]);
+  });
+
+  test("any other value is REFUSED typed -- a typo never falls through to the real Keychain", async () => {
+    await withRedirect("memroy", async () => {
+      const err = (await createKeychainCredentialStore().get({ kind: "keychain", account: "anthropic:default" }).catch((e: unknown) => e)) as CredentialResolutionError;
+      expect(err).toBeInstanceOf(CredentialResolutionError);
+      expect(err.code).toBe("io");
+      expect(err.message).toContain(TEST_KEYCHAIN_ENV);
+    });
+    expect(keychainGuard.takeKeychainGuardViolations()).toEqual([]);
+  });
+
+  test("...and THROUGH the production store stack a typo stays a refusal: `io` stops the composite, where `unsupported` would have fallen through to the memory member's silent null", async () => {
+    // The stack a child without host credentials builds (`buildSessionProvider` -> this function). Its
+    // composite asks the NEXT member on `unsupported`, and the last member (`createMemoryCredentialStore`)
+    // answers a keychain ref with `null` -- the typo would have read as "no credential", silently.
+    const config = { sessionId: "keychain-typo", cwd: tmpdir() } as unknown as RuntimeConfig;
+    const production = createProductionCredentialStore(config, {}, tmpdir());
+    const ref = { kind: "keychain", account: "anthropic:default" } as const;
+    await withRedirect("memroy", async () => {
+      const err = (await production.get(ref).catch((e: unknown) => e)) as CredentialResolutionError;
+      expect(err).toBeInstanceOf(CredentialResolutionError);
+      expect(err.code).toBe("io");
+      expect(err.message).toContain(TEST_KEYCHAIN_ENV);
+    });
+    // The correctly spelled value answers ABSENT through the same stack.
+    expect(await production.get(ref)).toBeNull();
+    expect(keychainGuard.takeKeychainGuardViolations()).toEqual([]);
+  });
+
+  test("the tripwire reads the caller's options ONCE: the service it checks is the service it would forward", () => {
+    let reads = 0;
+    const tricky = {
+      name: "probe",
+      get service(): string {
+        reads += 1;
+        // A first read that says "throwaway" and a second that names a real service is the attack.
+        return reads === 1 ? `${keychainGuard.THROWAWAY_SERVICE_PREFIX}checked` : DEFAULT_KEYCHAIN_SERVICE;
+      },
+    };
+    const { forward, service } = keychainGuard.snapshotSecretsCall(tricky);
+    expect(reads).toBe(1);
+    expect(service).toBe(`${keychainGuard.THROWAWAY_SERVICE_PREFIX}checked`);
+    expect(forward.service).toBe(service);
+    expect(reads).toBe(1); // reading the forwarded copy never calls back into the caller's accessor
+    expect(Object.getOwnPropertyDescriptor(forward, "service")?.get).toBeUndefined();
+  });
+
+  test("the first engagement of the memory backend prints ONE stderr line per process -- never more, never a value", async () => {
+    // A fresh process (this one announced long ago). Spawned through the preload's wrapper, so it carries
+    // the redirect and the guard.
+    const code = [
+      `const { createKeychainCredentialStore } = await import(${JSON.stringify(join(import.meta.dir, "keychain-store.ts"))});`,
+      `const store = createKeychainCredentialStore();`,
+      `await store.set({ kind: "keychain", account: "announce:probe" }, { kind: "api-key", key: ${JSON.stringify(SECRET)} });`,
+      `await store.get({ kind: "keychain", account: "announce:probe" });`,
+      `await createKeychainCredentialStore().get({ kind: "keychain", account: "anthropic:default" });`,
+      `console.log("done");`,
+    ].join("\n");
+    const proc = Bun.spawn([process.execPath, "-e", code], { stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    expect(stdout.trim()).toBe("done");
+    const lines = stderr.split("\n").filter((l) => l.length > 0);
+    expect(lines).toEqual([`winter: ${TEST_KEYCHAIN_ENV}=${TEST_KEYCHAIN_MEMORY} -- the Keychain is replaced by an in-memory store for this process (test runs only)`]);
+    expect(stderr).not.toContain(SECRET);
+  });
+
+  test("a WORKER carries the redirect and the tripwire too -- with an explicit env and with none (the preload wraps the Worker constructor)", async () => {
+    // A preload does not run inside a Worker, and the embedded host builds one per session with the
+    // session's env (`embedded-host.ts`: `new Worker(entry, { env })`). The script provokes the tripwire only
+    // once it has proven it is installed, and on a throwaway service holding no item.
+    const dir = mkdtempSync(join(tmpdir(), "winter-keychain-worker-"));
+    const log = process.env.WINTER_TEST_KEYCHAIN_GUARD_LOG;
+    expect(log).toBeDefined();
+    try {
+      const entry = join(dir, "worker.ts");
+      writeFileSync(
+        entry,
+        [
+          `const api = (globalThis as any).Bun.secrets;`,
+          `const tripwire = api[Symbol.for("winter.test.keychainTripwire")] === true;`,
+          `let refused = false;`,
+          `if (tripwire) { try { await api.get({ service: ${JSON.stringify(`${keychainGuard.THROWAWAY_SERVICE_PREFIX}worker-selftest`)}, name: "probe" }); } catch { refused = true; } }`,
+          `postMessage({ redirect: process.env.${TEST_KEYCHAIN_ENV} ?? null, tripwire, refused });`,
+        ].join("\n"),
+      );
+      for (const options of [{ env: {} as Record<string, string> }, undefined]) {
+        writeFileSync(log!, "");
+        const worker = options === undefined ? new Worker(entry) : new Worker(entry, options as WorkerOptions);
+        const answer = await new Promise<{ redirect: string | null; tripwire: boolean; refused: boolean }>((resolve, reject) => {
+          worker.onmessage = (event) => resolve(event.data);
+          worker.onerror = (event) => reject(new Error(String((event as ErrorEvent).message)));
+        });
+        worker.terminate();
+        expect(answer).toEqual({ redirect: TEST_KEYCHAIN_MEMORY, tripwire: true, refused: true });
+        // The Worker's refused access was REPORTED to the test process's log (consumed here, so the
+        // preload's afterEach does not fail this test for the access it provoked).
+        expect(readFileSync(log!, "utf8")).toContain(`Bun.secrets.get on service ${JSON.stringify(`${keychainGuard.THROWAWAY_SERVICE_PREFIX}worker-selftest`)}`);
+        writeFileSync(log!, "");
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the tripwire is REAL: with the redirect lifted, the default backend IS the tripwire -- it throws and the access is recorded", async () => {
+    // Only ever provoked with the tripwire proven installed, and on a service that holds no item, so even
+    // a broken guard could not raise a consent dialog here.
+    expect(keychainGuard.keychainTripwireInstalled()).toBe(true);
+    const service = `keychain-test-throwaway.keychain-tripwire-selftest.${process.pid}`;
+    const err = await withRedirect(undefined, () => createKeychainRawStore(service).read("probe").catch((e: unknown) => e));
+    expect(err).toBeInstanceOf(CredentialResolutionError);
+    expect((err as CredentialResolutionError).code).toBe("io");
+    // Consumed here, so the preload's afterEach does not fail THIS test for the access it provoked.
+    expect(keychainGuard.takeKeychainGuardViolations()).toEqual([`Bun.secrets.get on service ${JSON.stringify(service)}`]);
+  });
+});
+
 describe("the REPO-WIDE Bun.secrets tripwire", () => {
   test("no `.ts` in the REPOSITORY reaches the secrets API except keychain-store.ts itself", () => {
     // Global Constraints call for a repo-wide grep pinning that no test ever calls it. Task 2's
@@ -197,7 +363,9 @@ describe("the REPO-WIDE Bun.secrets tripwire", () => {
     // scripts, and a repo-root `.ts` is equally capable of reaching the login keychain -- a sweep
     // that stops at `packages/` is a sweep with two whole directories of blind spot.
     const packagesRoot = join(import.meta.dir, "..", "..", "..", "..");
-    const allowed = join(import.meta.dir, "keychain-store.ts");
+    // TWO files may name it: this store, and the test preload that REPLACES it with a tripwire
+    // (`scripts/test-keychain-guard.ts`, which forwards only a throwaway-service measurement gate).
+    const allowed = new Set([join(import.meta.dir, "keychain-store.ts"), join(packagesRoot, "scripts", "test-keychain-guard.ts")]);
     const offenders: string[] = [];
 
     const walk = (dir: string): void => {
@@ -215,7 +383,7 @@ describe("the REPO-WIDE Bun.secrets tripwire", () => {
           continue;
         }
         if (!entry.endsWith(".ts")) continue;
-        if (full === allowed) continue;
+        if (allowed.has(full)) continue;
         if (reachesSecretsApi(readFileSync(full, "utf8"))) offenders.push(full);
       }
     };
@@ -228,7 +396,13 @@ describe("the REPO-WIDE Bun.secrets tripwire", () => {
     // A negative-only assertion passes just as happily when the scan is broken -- so the detector is
     // run against the file that genuinely does reach it, and against a synthetic call site.
     expect(reachesSecretsApi(readFileSync(join(import.meta.dir, "keychain-store.ts"), "utf8"))).toBe(true);
+    expect(reachesSecretsApi(readFileSync(join(import.meta.dir, "..", "..", "..", "..", "scripts", "test-keychain-guard.ts"), "utf8"))).toBe(true);
     expect(reachesSecretsApi("await Bun.secrets.get({ service: 's', name: 'n' });")).toBe(true);
+    // The named-import door (`import { secrets } from "bun"`), which the dotted pattern never saw.
+    expect(reachesSecretsApi('import { secrets } from "bun";\nawait secrets.get({ service: "s", name: "n" });')).toBe(true);
+    expect(reachesSecretsApi("import { spawn, secrets as s } from 'bun';")).toBe(true);
+    expect(reachesSecretsApi('const { secrets } = require("bun");')).toBe(true);
+    expect(reachesSecretsApi('import { spawn } from "bun";')).toBe(false);
     expect(reachesSecretsApi("const s = Bun?.secrets;")).toBe(true);
     expect(reachesSecretsApi('const s = Bun["sec" + "rets"];')).toBe(true); // the computed-key evasion
     // ...and NOT on prose or on a tripwire's own pattern string.
@@ -245,7 +419,15 @@ describe("the REPO-WIDE Bun.secrets tripwire", () => {
  * global defensively) and the indirect bracket lookup a plain substring search would miss.
  */
 function reachesSecretsApi(text: string): boolean {
-  const code = stripStringLiterals(stripComments(text));
+  const uncommented = stripComments(text);
+  // The MODULE door: a named import or a destructured/dotted require of `secrets` from the `bun` module
+  // reaches the same object. Checked on text whose literals are blanked EXCEPT a bare "bun" specifier, so
+  // a tripwire's own pattern strings (like the ones in this file) never count.
+  const withSpecifiers = stripStringLiterals(uncommented, (literal) => literal.slice(1, -1) === "bun");
+  if (/\bimport\s*(?:type\s+)?\{[^}]*\bsecrets\b[^}]*\}\s*from\s*["']bun["']/.test(withSpecifiers)) return true;
+  if (/\{[^}]*\bsecrets\b[^}]*\}\s*=\s*(?:await\s+import|require)\s*\(\s*["']bun["']\s*\)/.test(withSpecifiers)) return true;
+  if (/(?:require|import)\s*\(\s*["']bun["']\s*\)\s*\)?\s*\??\.\s*secrets\b/.test(withSpecifiers)) return true;
+  const code = stripStringLiterals(uncommented);
   // The bracket form is checked WITHOUT its key, because the key was inside a literal and has just
   // been blanked. That makes the check "any dynamic property access on the Bun global", which is
   // broader than it strictly needs to be -- and deliberately so: `Bun[someName]` is precisely the
@@ -266,6 +448,6 @@ function stripComments(text: string): string {
 }
 
 /** Blanks the CONTENTS of every string/template literal, keeping the quotes so nothing else shifts. */
-function stripStringLiterals(text: string): string {
-  return text.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, (m) => m[0]! + m[0]!);
+function stripStringLiterals(text: string, keep: (literal: string) => boolean = () => false): string {
+  return text.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g, (m) => (keep(m) ? m : m[0]! + m[0]!));
 }

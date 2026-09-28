@@ -52,6 +52,9 @@ import { buildRuntime } from "./build-runtime.ts";
 import { encodeFrame, splitFrames, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 // The runtime's own 2026-07-28 fixture (a dev dependency of that package, resolved from its file).
 import { withModernHttpFixture } from "../packages/runtime/src/mcp/test-fixtures.ts";
+import { isolateKeychain, keychainIsolatedEnv } from "./test-keychain-env.ts";
+// Never the real Keychain: set before any session or child starts (see ./test-keychain-env.ts).
+isolateKeychain();
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PING_FIXTURE = fileURLToPath(new URL("../packages/runtime/src/mcp/transports/__fixtures__/ping-server.mjs", import.meta.url));
@@ -174,7 +177,7 @@ async function runLeg(binPath: string, leg: Leg, modernUrl?: string): Promise<vo
       cwd: REPO_ROOT,
       // WS-25: a remote server now connects through the session's MCP sign-in store; the test seam keeps
       // the http legs off the real Keychain (an empty temp file: no sign-in, so nothing changes on the wire).
-      env: { ...process.env, WINTER_HOME: winterHome, WINTER_TEST_MCP_OAUTH_STORE_FILE: join(winterHome, "mcp-oauth-store.json") },
+      env: keychainIsolatedEnv({ ...process.env, WINTER_HOME: winterHome, WINTER_TEST_MCP_OAUTH_STORE_FILE: join(winterHome, "mcp-oauth-store.json") }),
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",

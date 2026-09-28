@@ -59,6 +59,12 @@ bun test                         # the whole suite; run it alone
 bun run build:packages           # the compiled emit every published tarball ships
 ```
 
+Run `bun test` from the repository root or from a package's own directory, never from anywhere else:
+Bun reads the `bunfig.toml` of the directory it starts in, and those are what preload the two test
+guards -- no test reaches a non-loopback host (`scripts/test-network-guard.ts`) or the real macOS
+Keychain (`scripts/test-keychain-guard.ts`). The compiled-binary gates (`bun run verify:*`) and
+`differential` run outside `bun test` and keep off the Keychain through `scripts/test-keychain-env.ts`.
+
 In-repo, Bun resolves each package's `bun` export condition and runs the TypeScript **source**
 directly — which is why the monorepo needs no build to develop against itself. The `default`
 condition (`dist/`) is what a published consumer resolves, and `publishConfig.exports` drops the

@@ -13,7 +13,7 @@ export { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_
 // `CredentialRef` in particular — it is declared ONCE, here in the dependency-free sdk, and
 // re-exported by @yanlinglabs/winter-provider-runtime, so a lane importing it from either package
 // gets the identical type rather than two structurally-similar twins that can drift.
-export { DEFAULT_PROVIDER_STALL_TIMEOUT_MS, DEFAULT_KEYCHAIN_SERVICE, MCP_OAUTH_REFRESH_SUBTYPE, CREDENTIAL_RESOLVE_SUBTYPE } from "./options.ts";
+export { DEFAULT_PROVIDER_STALL_TIMEOUT_MS, DEFAULT_KEYCHAIN_SERVICE, TEST_KEYCHAIN_ENV, TEST_KEYCHAIN_MEMORY, MCP_OAUTH_REFRESH_SUBTYPE, CREDENTIAL_RESOLVE_SUBTYPE } from "./options.ts";
 export { WEB_TOOLS_DEFAULTS, resolveWebToolsConfig } from "./options.ts";
 export type { ResolvedWebToolsConfig } from "./options.ts";
 export type { WebToolsConfig, WebSearchConfig, WebFetchConfig, WebPrivateAddressPolicy, AutoMemoryConfig } from "./protocol/config.ts";

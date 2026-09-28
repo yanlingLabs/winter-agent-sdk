@@ -52,6 +52,9 @@ import { startFixtureAs, type FixtureAs } from "../packages/runtime/src/mcp-auth
 import { createTestFileMcpOAuthStore, readTokenRecord, readClientRecord, toSessionMcpTokenRecord, writeTokenRecord } from "../packages/runtime/src/mcp-auth/store.ts";
 import { mcpOAuthClientAccount, mcpOAuthTokenAccount } from "../packages/runtime/src/mcp-auth/account.ts";
 import { refreshMcpOAuthToken } from "../packages/runtime/src/mcp-auth/refresh.ts";
+import { isolateKeychain, keychainIsolatedEnv } from "./test-keychain-env.ts";
+// Never the real Keychain: set before any session or child starts (see ./test-keychain-env.ts).
+isolateKeychain();
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const LOGIN_ENTRY = fileURLToPath(new URL("./verify-mcp-oauth-login-entry.ts", import.meta.url));
@@ -126,7 +129,7 @@ function compileLoginEntry(out: string): void {
 }
 
 async function legLogin(loginBin: string, fx: FixtureAs, storeFile: string): Promise<void> {
-  const proc = Bun.spawn([loginBin, "--server", fx.mcpUrl, "--store", storeFile], { stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn([loginBin, "--server", fx.mcpUrl, "--store", storeFile], { env: keychainIsolatedEnv(), stdout: "pipe", stderr: "pipe" });
   let done: unknown;
   await readLines(proc.stdout, async (line) => {
     const msg = JSON.parse(line) as { authUrl?: string; issuerOrigin?: string; done?: unknown };
@@ -184,7 +187,7 @@ async function legSession(winterBin: string, fx: FixtureAs, storeFile: string, l
     };
     const proc = Bun.spawn([winterBin, "--run", "--config-json", JSON.stringify(config)], {
       cwd: REPO_ROOT,
-      env: { ...process.env, WINTER_HOME: winterHome, WINTER_TEST_MCP_OAUTH_STORE_FILE: storeFile, ...(alwaysLoadLeg ? { MCP_CONNECT_TIMEOUT_MS: String(ALWAYS_LOAD_CONNECT_DEADLINE_MS) } : {}) },
+      env: keychainIsolatedEnv({ ...process.env, WINTER_HOME: winterHome, WINTER_TEST_MCP_OAUTH_STORE_FILE: storeFile, ...(alwaysLoadLeg ? { MCP_CONNECT_TIMEOUT_MS: String(ALWAYS_LOAD_CONNECT_DEADLINE_MS) } : {}) }),
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",

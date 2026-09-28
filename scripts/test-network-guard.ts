@@ -36,10 +36,11 @@
 // them; this brings a 1.3 run in line.) `exec`/`execSync` -- a SHELL child, e.g. a test shelling out to `curl`
 // or `npm` -- are wrapped as well: their `(command, options?, callback?)` shape does not fit the argv doors'.
 // A `bun` started from inside such a shell string gets the proxy but not `--preload` (the string is never
-// rewritten); a named ESM import of `node:child_process` is a separate binding the wrappers cannot reach, and
-// relies on the two properties above instead. What still escapes: a child handed an environment built
-// WITHOUT these variables (an explicit minimal env is its author's choice), and non-HTTP traffic from a
-// non-`bun` child.
+// rewritten). A named ESM import of `node:child_process` (`import { spawn } from ...`, as `transport.ts`'s
+// `defaultSpawn` does) IS reached by the wrappers -- measured on Bun 1.3.14 for a module loaded after this
+// preload, which is every test module and everything it imports. What still escapes: a child handed an
+// environment built WITHOUT these variables (an explicit minimal env is its author's choice), and non-HTTP
+// traffic from a non-`bun` child.
 //
 // THE ONE HOLE (release CI fix): the release gates that exist to reach the public npm registry open it for
 // the length of one call with `withNpmRegistryAccess` (`./test-network-registry.ts`, which says why the
