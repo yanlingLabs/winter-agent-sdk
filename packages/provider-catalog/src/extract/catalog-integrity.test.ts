@@ -1690,6 +1690,38 @@ describe("WS-13c: model families and slots", () => {
     expect(slots).toBeGreaterThanOrEqual(30);
   });
 
+  test("no slot candidate sits on a BLOCKED provider (cat34 review: the qwen `small` slot listed pioneer's dead row)", () => {
+    const blocked = new Set(catalog.providers.filter((p) => p.risk.class === "blocked").map((p) => p.id));
+    // The discriminating case: `pioneer` is blocked (its host answers 410) but still carries an extracted
+    // `Qwen/Qwen3.6-27B` row with the slot's canonical id and a live status.
+    expect(blocked.has("pioneer")).toBe(true);
+    const pioneerRow = catalog.models.find((m) => m.key === "pioneer/Qwen/Qwen3.6-27B")!;
+    expect(pioneerRow.canonicalModelId).toBe("qwen3.6-27b");
+    expect(pioneerRow.status).not.toBe("blocked");
+    const small = catalog.families.find((f) => f.id === "qwen")!.slots.find((s) => s.name === "small")!;
+    const rows = rowsForCanonicalId(catalog, small.canonicalModelId);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.map((m) => m.key)).not.toContain("pioneer/Qwen/Qwen3.6-27B");
+    for (const family of catalog.families) {
+      for (const slot of family.slots) {
+        for (const row of rowsForCanonicalId(catalog, slot.canonicalModelId)) {
+          expect([`${family.id}/${slot.name}`, row.key, blocked.has(row.providerId)]).toEqual([`${family.id}/${slot.name}`, row.key, false]);
+        }
+      }
+    }
+  });
+
+  test("the validator agrees: a slot served ONLY by a blocked provider's row is `slot-model-missing`", () => {
+    const small = catalog.families.find((f) => f.id === "qwen")!.slots.find((s) => s.name === "small")!;
+    const served = new Set(rowsForCanonicalId(catalog, small.canonicalModelId).map((m) => m.key));
+    // Drop every live server of the slot, leaving pioneer's (blocked-provider) row as the only one.
+    const onlyBlocked = { ...catalog, models: catalog.models.filter((m) => !served.has(m.key)) };
+    expect(onlyBlocked.models.some((m) => m.key === "pioneer/Qwen/Qwen3.6-27B")).toBe(true);
+    const result = validateCatalog(JSON.parse(JSON.stringify(onlyBlocked)));
+    const errors = result.ok ? [] : result.errors;
+    expect(errors.some((e) => e.code === "slot-model-missing" && e.message.includes(JSON.stringify(small.canonicalModelId)))).toBe(true);
+  });
+
   test("the normaliser reproduces these LIVE rows, including the one that needs an overlay override", () => {
     const canonicalOf = (key: string): string => catalog.models.find((m) => m.key === key)!.canonicalModelId;
     const familyOf = (key: string): string => catalog.models.find((m) => m.key === key)!.modelFamily;

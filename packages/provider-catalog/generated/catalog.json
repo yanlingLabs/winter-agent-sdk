@@ -13939,7 +13939,7 @@
           "cacheReadPerMTokUsd": 0.3
         },
         "source": "official-doc",
-        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/model-pricing (read 2026-09-27): \"kimi-k3 | International | $3 | $15 | No free quota\" — USD 3 input / 15 output per 1M tokens; tiers: flat-rate; no free quota (the smallest-context standard tier is stored) — cached input $0.3: https://www.alibabacloud.com/help/en/model-studio/model-pricing (read 2026-09-28): \"explicit cache creation is billed at 125% of the standard input price, and cache hits at 10%\", and https://www.alibabacloud.com/help/en/model-studio/context-cache (read 2026-09-28) lists `kimi-k3` among the Kimi models that support it (10% of $3)",
+        "sourceRef": "https://www.alibabacloud.com/help/en/model-studio/model-pricing (read 2026-09-27): \"kimi-k3 | International | $3 | $15 | No free quota\" — USD 3 input / 15 output per 1M tokens; tiers: flat-rate; no free quota (the smallest-context standard tier is stored) — cached input: https://www.alibabacloud.com/help/en/model-studio/kimi-k3 (read 2026-09-28): \"Singapore Scope: International Billing Item Price (USD) Unit Input 3 Per 1M tokens Output 15 Per 1M tokens Input(Implicit Cache) 0.3 Per 1M tokens\"",
         "confidence": "declared",
         "observedAt": "2026-09-28T00:00:00Z"
       },
@@ -97072,7 +97072,7 @@
           "video"
         ],
         "source": "official-doc",
-        "sourceRef": "MAKER page for the model this row serves (the serving provider's own pages state nothing for it): https://platform.kimi.ai/docs/guide/use-kimi-vision-model — Moonshot lists kimi-k3 as understanding images and video. The row's earlier citation (https://cloud.tencent.com/document/product/1823/130060, (read 2026-09-28)) says \"可用模型暂不支持图片、视频等多模态能力\" only for the Hy Token Plan's models, not for the general plan's kimi-k3",
+        "sourceRef": "https://cloud.tencent.com/document/product/1823/130051 (read 2026-09-28): Tencent TokenHub model list, row \"Kimi K3 | kimi-k3 | 深度思考、结构化输出、Function Calling、Cache 缓存、图片、视频理解 | 1M | 1M | 1M\". That table is TokenHub's model catalog and does not say which plans it covers, so for this Token Plan row the reading is `inferred`. The Token Plan page (https://cloud.tencent.com/document/product/1823/130060) lists kimi-k3 in the general plan; its \"可用模型暂不支持图片、视频等多模态能力\" applies to the Hy Token Plan's models only",
         "confidence": "inferred",
         "observedAt": "2026-09-28T00:00:00Z"
       },

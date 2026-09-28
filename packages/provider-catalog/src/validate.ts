@@ -937,6 +937,13 @@ export function validateCatalog(json: unknown): CatalogValidationResult {
    */
   const serversByCanonicalId = new Map<string, Set<string>>();
   if (Array.isArray(models) && Array.isArray(families)) {
+    // A blocked PROVIDER's rows serve no slot either (the same exclusion `rowsForCanonicalId` applies).
+    const blockedProviderIds = new Set<string>();
+    if (Array.isArray(providers)) {
+      for (const p of providers) {
+        if (isRecord(p) && typeof p["id"] === "string" && isRecord(p["risk"]) && p["risk"]["class"] === "blocked") blockedProviderIds.add(p["id"]);
+      }
+    }
     for (const row of models) {
       if (!isRecord(row)) continue;
       const canonical = row["canonicalModelId"];
@@ -945,7 +952,11 @@ export function validateCatalog(json: unknown): CatalogValidationResult {
       // The row is raw JSON here; a malformed `status`/`endpoints` is already reported by
       // `checkModel`, and a row whose shape cannot be read is not one that can serve a slot.
       const endpoints = Array.isArray(row["endpoints"]) ? row["endpoints"].filter((e): e is string => typeof e === "string") : [];
-      if (typeof row["status"] !== "string" || !isSlotServableRow({ status: row["status"], endpoints })) continue;
+      if (
+        typeof row["status"] !== "string" ||
+        !isSlotServableRow({ status: row["status"], endpoints, ...(typeof providerId === "string" ? { providerId } : {}) }, blockedProviderIds)
+      )
+        continue;
       const set = serversByCanonicalId.get(canonical) ?? new Set<string>();
       if (typeof providerId === "string" && providerId.length > 0) set.add(providerId);
       serversByCanonicalId.set(canonical, set);
@@ -974,7 +985,7 @@ export function validateCatalog(json: unknown): CatalogValidationResult {
         if (servers === undefined) {
           errs.add(
             `families[${i}].slots[${s}].canonicalModelId`,
-            `${JSON.stringify(canonical)} is on NO model row that could serve it (every row is missing, blocked, deprecated, or serves neither \`chat\` nor \`responses\`) — WS-13c §1: a slot never names a model the catalog does not ship`,
+            `${JSON.stringify(canonical)} is on NO model row that could serve it (every row is missing, blocked (or on a blocked provider), deprecated, or serves neither \`chat\` nor \`responses\`) — WS-13c §1: a slot never names a model the catalog does not ship`,
             "slot-model-missing",
           );
           continue;

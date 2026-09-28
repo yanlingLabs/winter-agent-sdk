@@ -40,6 +40,7 @@ export {
   canonicalModelIdOf,
   familyIdOf,
   familyOfModelKey,
+  blockedProviderIdsOf,
   isSlotServableRow,
   modelFamilyOf,
   resolveSlotName,
