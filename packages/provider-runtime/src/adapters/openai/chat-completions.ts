@@ -42,6 +42,7 @@ import {
   resolveAuth,
   resolveEndpoint,
   resolveReasoning,
+  toolResultFollowUpBlocks,
   toolResultText,
   validateViaModels,
   type AuthStyle,
@@ -169,7 +170,14 @@ export function mapChatMessages(messages: readonly ProviderMessageLike[], replay
       // It used to be DROPPED here -- the loop above renders only the results. It becomes a
       // FOLLOW-ON `user` message after every `tool` reply, which is the one position this surface
       // accepts: nothing may sit between an assistant's `tool_calls` and its `tool` replies.
-      const trailing = blocks.filter((b) => b.type !== "tool_result");
+      //
+      // Code-mode images: a `tool` message's content is text only on this surface -- the API's
+      // `ChatCompletionToolMessageParam.content` is a string or an array of TEXT parts, with no image
+      // part ("string or array of ChatCompletionContentPartText",
+      // https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create) -- so a result's
+      // images ride the same follow-on `user` message, each result's set captioned with its call id, and
+      // the result's own text says the image follows (`toolResultText`). Never dropped.
+      const trailing = [...toolResultFollowUpBlocks(blocks), ...blocks.filter((b) => b.type !== "tool_result")];
       if (trailing.length > 0) out.push({ role: "user", content: userContentParts(trailing).content });
       continue;
     }
@@ -231,7 +239,8 @@ export function mapChatMessages(messages: readonly ProviderMessageLike[], replay
         out.push({ role: "tool", tool_call_id: block.tool_use_id, content: prefixToolResult(resultPrefix, toolResultText(block.content)) });
         resultPrefix = undefined;
       }
-      const rest = blocks.filter((b) => b.type !== "tool_result");
+      // Code-mode images: the results' images first (see the tool-role branch above), then the rest.
+      const rest = [...toolResultFollowUpBlocks(results), ...blocks.filter((b) => b.type !== "tool_result")];
       // Trailing non-result content follows the tool messages, so nothing is inserted between a call
       // and its reply. The annotation already rode the first result.
       if (rest.length > 0) out.push({ role: "user", content: userContentParts(rest).content });

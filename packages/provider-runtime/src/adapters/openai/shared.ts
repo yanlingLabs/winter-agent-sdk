@@ -38,6 +38,7 @@
 
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { hostHeaders } from "../privileged-headers.ts";
+import { containsImage } from "../content-blocks.ts";
 import { winterIdentityHeaders, winterUserAgent, type IdentityHeaderLookup } from "../../identity.ts";
 import { applyPrivilegedHeaders, connectionEndpointOptions, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
@@ -516,6 +517,14 @@ export function assertWithinLimits(req: TurnRequest, descriptor: WinterModelDesc
       throw capabilityRefusal(`model "${descriptor.key}" lists "${parameter}" among its unsupported parameters, and this request would send it — rejected before the request (WS-13 §8.2)`);
     }
   }
+  // Vision (code-mode images): the gate the Anthropic and Google adapters already had, for every
+  // OpenAI-family surface (Responses, chat completions, Codex, Azure, the local runners, xAI OAuth).
+  // Recursive through tool results, which is where an image Read lands. In a Winter session the history
+  // renderer has already turned each image into a note for a model like this, and the Read tool refuses
+  // to produce one; this is the backstop for a caller that drives the adapter directly.
+  if (!descriptor.inputModalities.value.includes("image") && req.messages.some((m) => containsImage(m.content))) {
+    throw capabilityRefusal(`model "${descriptor.key}" does not advertise image input, so an image block is refused before the request rather than sent and rejected upstream`);
+  }
 }
 
 /** The three-state tool capability plus the reasoning facts the bridge reads off an adapter. */
@@ -555,13 +564,52 @@ export function asBlocks(content: ProviderMessageLike["content"]): ContentBlockL
   return typeof content === "string" ? [{ type: "text", text: content }] : content;
 }
 
-/** Flattens a `tool_result.content` (which R6-3 widened to `string | ContentBlockLike[]`) into the plain text every OpenAI surface carries. */
+/**
+ * What a tool result's text says in place of each image it carries, on a surface whose tool result cannot
+ * hold one (code-mode images). The image itself rides the user message right after the tool results
+ * (`toolResultFollowUpParts`), so the model reads both: the result says where the image went, and the
+ * follow-up names the call it came from.
+ */
+export const TOOL_RESULT_IMAGE_FOLLOWS = "[image: attached in the user message after the tool results]";
+
+/**
+ * Flattens a `tool_result.content` (which R6-3 widened to `string | ContentBlockLike[]`) into the plain
+ * text an OpenAI-family tool result carries. An image becomes `TOOL_RESULT_IMAGE_FOLLOWS` -- never a
+ * silent `[image]` -- because every caller that flattens a result with an image also sends that image
+ * right after the results (`toolResultFollowUpParts`).
+ */
 export function toolResultText(content: string | ContentBlockLike[]): string {
   if (typeof content === "string") return content;
   return content
-    .map((block) => (block.type === "text" ? block.text : block.type === "image" ? "[image]" : ""))
+    .map((block) => (block.type === "text" ? block.text : block.type === "image" ? TOOL_RESULT_IMAGE_FOLLOWS : ""))
     .filter((s) => s.length > 0)
     .join("\n");
+}
+
+/** The images a tool result carries at its own top level, in order (the engine never nests a result). */
+export function toolResultImages(content: string | ContentBlockLike[]): Array<Extract<ContentBlockLike, { type: "image" }>> {
+  return typeof content === "string" ? [] : content.filter((b): b is Extract<ContentBlockLike, { type: "image" }> => b.type === "image");
+}
+
+/** The short text that ties follow-up images to the tool call that returned them. */
+export function toolResultImageCaption(toolUseId: string, count: number): string {
+  return count === 1 ? `The image returned by tool call ${toolUseId}:` : `The ${count} images returned by tool call ${toolUseId}:`;
+}
+
+/**
+ * The follow-up user content for a set of tool results whose surface cannot carry an image in a result:
+ * per result that has images, a caption naming its call, then its images, as `text` / `image` blocks for
+ * the caller to render in its own dialect. Empty when no result has an image.
+ */
+export function toolResultFollowUpBlocks(results: readonly ContentBlockLike[]): ContentBlockLike[] {
+  const out: ContentBlockLike[] = [];
+  for (const block of results) {
+    if (block.type !== "tool_result") continue;
+    const images = toolResultImages(block.content);
+    if (images.length === 0) continue;
+    out.push({ type: "text", text: toolResultImageCaption(block.tool_use_id, images.length) }, ...images);
+  }
+  return out;
 }
 
 /**

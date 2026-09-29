@@ -183,7 +183,9 @@ export type TestProviderName =
   // BY NAME (`WINTER_TEST_PROVIDER`), so an in-process closure cannot serve the child/compiled legs
   // at all. One definition per scenario, consumed by both `transport-equivalence.test.ts` and
   // `scripts/differential.ts`, so the two can never drift.
-  | "p5compact" | "p5structured" | "p5structuredfail" | "p5skill" | "p5checkpoint" | "p5workflow";
+  | "p5compact" | "p5structured" | "p5structuredfail" | "p5skill" | "p5checkpoint" | "p5workflow"
+  // Code-mode images: one real `Read` of the image named by WINTER_TEST_READ_IMAGE, then text.
+  | "readimage";
 
 const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   "boom",
@@ -219,6 +221,8 @@ const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   "p5skill",
   "p5checkpoint",
   "p5workflow",
+  // Code-mode images: the child-process frame-size fixture (sdk/src/read-image-frame.test.ts).
+  "readimage",
 ]);
 
 export function isTestProviderName(v: string): v is TestProviderName {
@@ -267,6 +271,15 @@ function rawTestProviderByName(name: TestProviderName): Provider {
     // One tool_use round, then text — deterministic and dependency-free (paired with the engine's
     // always-on stubExecutor). Built fresh per call: scriptedProvider's queue is consumed as it's
     // used, so a fresh instance per process/test keeps repeated selection from sharing state.
+    // Code-mode images: one REAL `Read` of the file WINTER_TEST_READ_IMAGE names (read in the process
+    // the provider runs in -- the spawned child, on the child leg), then text. What it proves lives on
+    // the wire between the child and the host: an image Read's tool-round frame must fit the host SDK's
+    // line buffer however large the image is.
+    case "readimage":
+      return scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "test-read-image", name: "Read", input: { file_path: process.env["WINTER_TEST_READ_IMAGE"] ?? "" } }] },
+        { kind: "text", text: "image read done" },
+      ]);
     case "tooluse":
       return scriptedProvider([
         { kind: "tool_use", calls: [{ id: "test-call-1", name: "test_tool", input: { probe: true } }] },

@@ -314,6 +314,7 @@ import {
   // header in registry.ts.
   resolveSessionCapabilities,
   type RegistryToolExecutorDeps,
+  type ToolResultBlock,
   type McpToolDefinition,
   type DeferralActivation,
   type LoadedToolSet,
@@ -997,6 +998,18 @@ export function isProviderTurnError(err: unknown): err is ProviderTurnError {
  */
 export const DEFAULT_MAX_PROVIDER_MESSAGE_BYTES = 4 * 1024 * 1024;
 
+/** Code-mode images: the largest image base64 the per-message cap leaves uncounted (see `assertMessagesWithinCap`). */
+const MAX_UNCOUNTED_IMAGE_BASE64 = 10 * 1024 * 1024;
+
+/** `content` with every image block's base64 (within `MAX_UNCOUNTED_IMAGE_BASE64`) emptied, for the per-message byte measure only. */
+function withBoundedImagesUncounted(content: ContentBlock[]): ContentBlock[] {
+  return content.map((block): ContentBlock => {
+    if (block.type === "image" && block.source.data.length <= MAX_UNCOUNTED_IMAGE_BASE64) return { type: "image", source: { ...block.source, data: "" } };
+    if (block.type === "tool_result" && Array.isArray(block.content)) return { ...block, content: withBoundedImagesUncounted(block.content) };
+    return block;
+  });
+}
+
 /**
  * Per-generation token accounting (R5-3). `inputTokens`/`outputTokens` are required because a
  * provider that reports usage at all always knows both; the cache counters are optional because not
@@ -1098,6 +1111,38 @@ const REASONING_STATE_KINDS: ReadonlySet<string> = new Set(["native-state", "rea
 export function contentForHost(content: ContentBlock[]): ContentBlock[] {
   if (!content.some((block) => block.type === "thinking" || block.type === "redacted_thinking")) return content;
   return content.map((block) => (block.type === "thinking" ? { type: "thinking", thinking: block.thinking, signature: "" } : block.type === "redacted_thinking" ? { type: "redacted_thinking", data: "" } : block));
+}
+
+/**
+ * Code-mode images: a tool round's results as the HOST sees them on the `user` frame -- every image block
+ * (top level or inside a `tool_result`) keeps its shape and `media_type` and loses its bytes: `data`
+ * becomes `""`. The bytes exist for one reader, the provider on the next request, and they reach it from
+ * the engine's history and the session transcript. The frame is one NDJSON line on the child's stdout, and
+ * the host SDK bounds an unterminated line at `maxBufferSize` (1 MiB by default, `sdk/src/query.ts`): an
+ * image Read's base64 (up to ~5.2 MB) would end the session with a `ProtocolDecodeError`. A host that
+ * renders "[image]" keeps working, and the transcript (which the host can read) holds the real bytes.
+ * Everything else is returned by identity.
+ */
+export function toolResultsForHost(content: ContentBlock[]): ContentBlock[] {
+  const blank = (blocks: ContentBlock[]): ContentBlock[] | undefined => {
+    let changed = false;
+    const out = blocks.map((block): ContentBlock => {
+      if (block.type === "image") {
+        changed = true;
+        return { type: "image", source: { type: "base64", media_type: block.source.media_type, data: "" } };
+      }
+      if (block.type === "tool_result" && Array.isArray(block.content)) {
+        const inner = blank(block.content);
+        if (inner !== undefined) {
+          changed = true;
+          return { ...block, content: inner };
+        }
+      }
+      return block;
+    });
+    return changed ? out : undefined;
+  };
+  return blank(content) ?? content;
 }
 
 /**
@@ -1281,7 +1326,9 @@ export interface ToolExecutor {
    * previously impossible because the interrupt was a raced Promise with no channel into the tool.
    */
   // `explicitApproval` rides through to `ToolExecutionContext.permission`; see its own JSDoc.
-  execute(call: { id: string; name: string; input: unknown }, opts?: { signal?: AbortSignal; explicitApproval?: "prompt" | "rule" }): Promise<{ output: string; isError?: boolean }>;
+  // `blocks` (code-mode images): when present, the model-facing content of the call's `tool_result` --
+  // text and image blocks, claude's own shape -- in place of `output`, which stays the text rendering.
+  execute(call: { id: string; name: string; input: unknown }, opts?: { signal?: AbortSignal; explicitApproval?: "prompt" | "rule" }): Promise<{ output: string; blocks?: ToolResultBlock[]; isError?: boolean }>;
 }
 
 // Ruling P1-B: the minimal, data-shaped interface the engine needs to record a session (blocks/text
@@ -4308,6 +4355,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const deps: RegistryToolExecutorDeps = {
       sessionId: config.sessionId,
       home: permissionHome,
+      // Code-mode images: the LIVE model's catalog row decides, per call, whether Read may hand it an
+      // image (a `set_model` to a text-only row turns the next image Read into a text refusal).
+      modelReadsImages: () => currentModelDescription()?.readsImages !== false,
       // I1: the RESOLVED winter root, so `tools/impl/agent.ts` finds the user agent tier where the
       // skills index and the command resolver already look, and any tool naming Winter's own storage
       // uses one address.
@@ -8304,14 +8354,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * `ProviderTurnError` so it lands on R6-F's result shape -- a caller sees "the provider request was
    * refused", which is what happened, rather than a generic execution error.
    *
-   * Measured on the SERIALIZED message, because that is what actually goes on the wire: a message
-   * whose `content` is a 4 MiB base64 image block is over the cap however short its text is.
+   * Measured on the SERIALIZED message, because that is what actually goes on the wire -- with one
+   * exception (code-mode images): an image block's base64 is not counted while it is within
+   * `MAX_UNCOUNTED_IMAGE_BASE64` (10 MiB, the largest image any provider takes -- the Claude API's own
+   * per-image limit). Such an image is bounded where it is made (the Read tool refuses anything over
+   * 3.75 MiB raw) and by the provider's own request limit; counting it here refused a legitimate image
+   * Read -- a 3.5 MB screenshot is ~4.7 MB of base64 -- on that request AND on every later one, since
+   * the image stays in the history. An image over that bound still counts in full.
    */
   const assertMessagesWithinCap = (msgs: readonly ProviderMessage[]): void => {
     const cap = maxProviderMessageBytes ?? DEFAULT_MAX_PROVIDER_MESSAGE_BYTES;
     for (let i = 0; i < msgs.length; i++) {
       const message = msgs[i]!;
-      const bytes = Buffer.byteLength(typeof message.content === "string" ? message.content : JSON.stringify(message.content), "utf8");
+      const bytes = Buffer.byteLength(typeof message.content === "string" ? message.content : JSON.stringify(withBoundedImagesUncounted(message.content)), "utf8");
       if (bytes > cap) {
         // The message's own CONTENT is never quoted here -- an error message is a log line and a
         // frame, and this one is about a message that may hold anything.
@@ -9834,10 +9889,20 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           }
           // Spawn-surface parity (R-S4): an executor's `isError` rides the block as claude's own
           // `is_error: true` -- on the wire, into history, into persistence and into every adapter.
+          // Code-mode images: a result that carries blocks (an image Read) is written as claude's own
+          // content ARRAY; every other result keeps its plain string, byte-identical to before.
+          const resultBlocksOfCall = raced.value.blocks;
           resultBlocks.push({
             type: "tool_result",
             tool_use_id: call.id,
-            content: forkDefinitionsText.length > 0 ? `${raced.value.output}${forkDefinitionsText}` : raced.value.output,
+            content:
+              resultBlocksOfCall !== undefined
+                ? forkDefinitionsText.length > 0
+                  ? [...resultBlocksOfCall, { type: "text", text: forkDefinitionsText.trimStart() }]
+                  : [...resultBlocksOfCall]
+                : forkDefinitionsText.length > 0
+                  ? `${raced.value.output}${forkDefinitionsText}`
+                  : raced.value.output,
             ...(raced.value.isError === true ? { is_error: true } : {}),
             ...(loadedTools.length > 0 ? { loadedTools } : {}),
             ...(loadedToolDefinitions.length > 0 ? { loadedToolDefinitions } : {}),
@@ -9984,7 +10049,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // WS-23: `loadedTools` is history/transcript bookkeeping for the wire's `tool_reference` blocks; a
       // host already hears about the load through the streaming `tool_reference` frame, so the
       // host-visible frame stays exactly as it was before the field existed.
-      output.write({ type: "data", message: { type: "user", message: { content: resultBlocks.map((b) => (b.type === "tool_result" && b.loadedTools !== undefined ? withoutLoadedTools(b) : b)) } } });
+      // Code-mode images: the host's copy carries every image block with its `data` emptied
+      // (`toolResultsForHost`) -- see that function for why the bytes stay out of the frame.
+      output.write({ type: "data", message: { type: "user", message: { content: toolResultsForHost(resultBlocks.map((b) => (b.type === "tool_result" && b.loadedTools !== undefined ? withoutLoadedTools(b) : b))) } } });
       messages.push({ role: "tool", content: resultBlocks });
       await recordUser(resultBlocks);
       // WS-23: this round's hook context, right AFTER its tool results -- the request builder folds a

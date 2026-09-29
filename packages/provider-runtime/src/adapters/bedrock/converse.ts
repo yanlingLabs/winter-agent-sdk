@@ -67,6 +67,7 @@ import { createEventStreamDecoder, jsonPayload, messageType, stringHeader, type 
 import { BEDROCK_SERVICE, signRequest } from "./sigv4.ts";
 import { winterIdentityHeaders, winterUserAgent, type IdentityHeaderLookup } from "../../identity.ts";
 import { WINTER_IDENTITY_HEADERS } from "../privileged-headers.ts";
+import { containsImage } from "../content-blocks.ts";
 
 export const BEDROCK_ADAPTER_ID = "winter.bedrock-converse";
 export const BEDROCK_ADAPTER_VERSION = "1";
@@ -323,12 +324,29 @@ function refuse(message: string): ProviderRequestError {
 
 type BedrockBlock = Record<string, unknown>;
 
-function toolResultContent(content: string | ContentBlockLike[]): BedrockBlock[] {
+/**
+ * Code-mode images: whether THIS model takes an image inside a `toolResult`. The API reference is explicit
+ * that it is model-dependent: `ToolResultContentBlock.image` -- "This field is only supported by Amazon
+ * Nova and Anthropic Claude 3 and 4 models"
+ * (https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultContentBlock.html). A
+ * positive match only -- the model id (or an inference profile / ARN naming it: `us.anthropic.…`,
+ * `…:inference-profile/global.amazon.nova-…`) must name an Anthropic or Nova model; anything else,
+ * including an id this cannot classify, takes the follow-up shape (`mapContent`), which every
+ * image-capable Converse model accepts.
+ */
+export function bedrockToolResultTakesImages(modelId: string): boolean {
+  return /(^|[./:])anthropic\.|(^|[./:])amazon\.nova/.test(modelId.toLowerCase());
+}
+
+/** What a `toolResult` says in place of an image that rides after the tool results instead. */
+const TOOL_RESULT_IMAGE_FOLLOWS = "[image: attached after the tool results]";
+
+function toolResultContent(content: string | ContentBlockLike[], imagesInResult: boolean): BedrockBlock[] {
   if (typeof content === "string") return content.length > 0 ? [{ text: content }] : [{ text: "(no output)" }];
   const out: BedrockBlock[] = [];
   for (const block of content) {
     if (block.type === "text" && block.text.length > 0) out.push({ text: block.text });
-    else if (block.type === "image") out.push(imageBlock(block));
+    else if (block.type === "image") out.push(imagesInResult ? imageBlock(block) : { text: TOOL_RESULT_IMAGE_FOLLOWS });
   }
   // `ToolResultBlock.content` is REQUIRED and Bedrock rejects an empty array, so a result that
   // mapped to nothing gets an explicit marker rather than a 400 the caller cannot diagnose.
@@ -348,8 +366,10 @@ function imageBlock(block: Extract<ContentBlockLike, { type: "image" }>): Bedroc
 }
 
 /** One Winter message's content -> Bedrock content blocks. Throws a typed refusal for anything Bedrock cannot represent. */
-function mapContent(message: ProviderMessageLike): BedrockBlock[] {
+function mapContent(message: ProviderMessageLike, imagesInResult: boolean): BedrockBlock[] {
   const out: BedrockBlock[] = [];
+  /** Code-mode images for a model that takes none in a `toolResult`: they follow this message's tool results, each set captioned with its call id. */
+  const followUp: BedrockBlock[] = [];
 
   // NATIVE STATE FIRST. Bedrock wants an assistant turn's `reasoningContent` blocks ahead of the
   // text they preceded, and the items are replayed EXACTLY as the provider minted them — that is
@@ -379,7 +399,14 @@ function mapContent(message: ProviderMessageLike): BedrockBlock[] {
           // Both spellings are an error on the wire: `is_error` (a real executor error, R-S4) and the
           // engine's synthetic `error` marker (a thrown/abandoned call), which this mapper used to drop.
           const isError = (block as { is_error?: unknown }).is_error === true || (block as { error?: unknown }).error === true;
-          out.push({ toolResult: { toolUseId: block.tool_use_id, content: toolResultContent(block.content), status: isError ? "error" : "success" } });
+          out.push({ toolResult: { toolUseId: block.tool_use_id, content: toolResultContent(block.content, imagesInResult), status: isError ? "error" : "success" } });
+          if (!imagesInResult && Array.isArray(block.content)) {
+            const images = block.content.filter((b): b is Extract<ContentBlockLike, { type: "image" }> => b.type === "image");
+            if (images.length > 0) {
+              followUp.push({ text: images.length === 1 ? `The image returned by tool call ${block.tool_use_id}:` : `The ${images.length} images returned by tool call ${block.tool_use_id}:` });
+              for (const image of images) followUp.push(imageBlock(image));
+            }
+          }
           break;
         }
         case "image":
@@ -412,6 +439,11 @@ function mapContent(message: ProviderMessageLike): BedrockBlock[] {
   // Winter-authored note into `reasoningContent` would dress it as model reasoning — R6-8 again.
   if (message.decoration !== undefined && message.decoration.text.length > 0) out.push({ text: message.decoration.text });
 
+  // After every `toolResult` of the message: a user turn may carry ordinary blocks after its results.
+  if (followUp.length > 0) {
+    const lastResult = out.map((b) => "toolResult" in b).lastIndexOf(true);
+    out.splice(lastResult + 1, 0, ...followUp);
+  }
   return out;
 }
 
@@ -424,11 +456,12 @@ function mapContent(message: ProviderMessageLike): BedrockBlock[] {
  * merged by concatenating their content, which is lossless — the alternative, sending them as-is, is
  * a `ValidationException` naming nothing the caller can act on.
  */
-export function toBedrockMessages(messages: readonly ProviderMessageLike[]): Array<{ role: "user" | "assistant"; content: BedrockBlock[] }> {
+export function toBedrockMessages(messages: readonly ProviderMessageLike[], modelId = ""): Array<{ role: "user" | "assistant"; content: BedrockBlock[] }> {
   const out: Array<{ role: "user" | "assistant"; content: BedrockBlock[] }> = [];
+  const imagesInResult = bedrockToolResultTakesImages(modelId);
   for (const message of messages) {
     const role: "user" | "assistant" = message.role === "assistant" ? "assistant" : "user";
-    const content = mapContent(message);
+    const content = mapContent(message, imagesInResult);
     // A message that mapped to nothing at all is dropped: sending an empty `content` array is a
     // `ValidationException`, and an empty message conveys nothing that merging would preserve.
     if (content.length === 0) continue;
@@ -509,6 +542,13 @@ export function buildConverseBody(req: TurnRequest, descriptor: WinterModelDescr
     if (key === "system" && req.system !== undefined && req.system.length > 0) throw listed("a system prompt");
   }
 
+  // Vision (code-mode images): the gate the Anthropic and Google adapters already had. Recursive through
+  // tool results, where an image Read lands; in a Winter session the history renderer has already turned
+  // each image into a note for a model like this, so this is the backstop for a direct caller.
+  if (descriptor !== undefined && !descriptor.inputModalities.value.includes("image") && req.messages.some((m) => containsImage(m.content))) {
+    throw refuse(`model "${descriptor.key}" does not advertise image input, so an image block is refused before the request rather than sent and rejected upstream`);
+  }
+
   const thinking = thinkingFields(req.thinking, descriptor, req.model);
   const additional: BedrockBlock = {
     ...(thinking !== undefined ? { thinking } : {}),
@@ -517,7 +557,7 @@ export function buildConverseBody(req: TurnRequest, descriptor: WinterModelDescr
   const toolChoice = toolChoiceOf(req.toolChoice);
 
   return {
-    messages: toBedrockMessages(req.messages),
+    messages: toBedrockMessages(req.messages, req.model),
     ...(req.system !== undefined && req.system.length > 0 ? { system: [{ text: req.system }] } : {}),
     ...(req.maxOutputTokens !== undefined ? { inferenceConfig: { maxTokens: req.maxOutputTokens } } : {}),
     ...(tools.length > 0

@@ -54,6 +54,8 @@ import {
   resolveReasoning,
   decorationText,
   prefixToolResult,
+  toolResultImageCaption,
+  toolResultImages,
   toolResultText,
   validateViaModels,
   type OpenAiAdapterOptions,
@@ -125,6 +127,7 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
     else out.push(update);
   };
   const search = opts.clientToolSearch === true ? toolSearchIndex(opts.tools) : undefined;
+  const imageOutputs = opts.toolResultImages ?? "follow-up";
   // The ToolSearch calls seen so far, so their results become `tool_search_output` items.
   const searchCalls = new Set<string>();
   // Review I-2: each loaded tool's namespace AS THE HISTORY RECORDED IT (a search result's stored
@@ -171,6 +174,8 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
     // one that is dropped.
     const decoration = decorationText(message);
     const carriesToolResults = blocks.some((block) => block.type === "tool_result");
+    /** Code-mode images: the parts of the follow-up user message a "follow-up" surface sends after this message's outputs. */
+    const followUpImages: unknown[] = [];
     if (decoration !== undefined && !carriesToolResults) contentParts.push({ type: partType, text: decoration });
     let resultPrefix = carriesToolResults ? decoration : undefined;
     for (const block of blocks) {
@@ -234,7 +239,35 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
             resultPrefix = undefined;
             break;
           }
-          out.push({ type: "function_call_output", call_id: block.tool_use_id, output: prefixToolResult(resultPrefix, toolResultText(block.content)) });
+          {
+            // Code-mode images. Two shapes, by surface:
+            //   "array": OpenAI's own Responses API takes `output` as "string or array of
+            //   ResponseInputTextContent or ResponseInputImageContent or ResponseInputFileContent" -- "An array
+            //   of content outputs (text, image, file) for the function tool call"
+            //   (https://developers.openai.com/api/reference/resources/responses/methods/create) -- and the
+            //   Codex backend takes the same array (codex-rs sends `FunctionCallOutputContentItem::InputImage`
+            //   items itself, github.com/openai/codex/pull/10567). The image rides INSIDE its result.
+            //   "follow-up" (every other Responses-shaped surface -- xAI, Azure, the local runners -- none of
+            //   which documents the array): the result says the image follows, and the image rides the
+            //   buffered user message flushed after this message's outputs, captioned with the call id.
+            // A result with no image is the plain string either way, byte-identical to before.
+            const images = toolResultImages(block.content);
+            if (images.length > 0 && imageOutputs === "array") {
+              const parts: unknown[] = [];
+              if (resultPrefix !== undefined) parts.push({ type: "input_text", text: resultPrefix });
+              for (const inner of block.content as ContentBlockLike[]) {
+                if (inner.type === "text" && inner.text.length > 0) parts.push({ type: "input_text", text: inner.text });
+                else if (inner.type === "image") parts.push({ type: "input_image", image_url: imageDataUrl(inner) });
+              }
+              out.push({ type: "function_call_output", call_id: block.tool_use_id, output: parts });
+            } else {
+              out.push({ type: "function_call_output", call_id: block.tool_use_id, output: prefixToolResult(resultPrefix, toolResultText(block.content)) });
+              if (images.length > 0) {
+                followUpImages.push({ type: partType, text: toolResultImageCaption(block.tool_use_id, images.length) });
+                for (const image of images) followUpImages.push({ type: "input_image", image_url: imageDataUrl(image) });
+              }
+            }
+          }
           // The FIRST result carries it; a message with several results annotates the set once.
           resultPrefix = undefined;
           break;
@@ -246,6 +279,9 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
           break;
       }
     }
+    // Code-mode images ("follow-up" surfaces): the results' images lead the trailing user message, after
+    // EVERY output of this message -- never between a `function_call` and its output.
+    if (followUpImages.length > 0) contentParts.unshift(...followUpImages);
     if (contentParts.length > 0) out.push({ type: "message", role: wireRole, content: contentParts });
     if (layout !== undefined) out.push(...interleaveWithLayout(vendorItems, out.splice(ownStart), layout));
     // "after-user": the waiting update lands right after the user message it was placed before --
@@ -281,6 +317,19 @@ export interface ResponsesInputOptions {
   clientToolSearch?: boolean;
   /** The request's tools -- where the ToolSearch name, the namespaces and the loaded definitions come from. */
   tools?: TurnRequest["tools"];
+  /**
+   * Code-mode images: how a tool result's images reach the model. `"array"` -- inside the
+   * `function_call_output` as `input_image` items (documented for OpenAI's own API and used by the Codex
+   * backend's own client); `"follow-up"` (the default, for a surface that does not document the array) --
+   * the output says the image follows and a user message after the outputs carries it. See
+   * `toolResultImagesFor`.
+   */
+  toolResultImages?: "array" | "follow-up";
+}
+
+/** The providers whose Responses surface documents an image inside `function_call_output.output` (see `ResponsesInputOptions.toolResultImages`). */
+export function toolResultImagesFor(providerId: string): "array" | "follow-up" {
+  return providerId === "openai" || providerId === "codex-oauth" ? "array" : "follow-up";
 }
 
 /**
@@ -491,6 +540,7 @@ export function buildResponsesBody(
     ...(req.system !== undefined && req.system.length > 0 ? { instructions: req.system } : {}),
     input: mapResponsesInput(req.messages, {
       ...(opts.configurationUpdatePlacement !== undefined ? { configurationUpdatePlacement: opts.configurationUpdatePlacement } : {}),
+      ...(opts.toolResultImages !== undefined ? { toolResultImages: opts.toolResultImages } : {}),
       ...(clientToolSearch ? { clientToolSearch: true, tools: req.tools } : {}),
     }),
     ...(sendToolFields
@@ -1295,7 +1345,7 @@ export async function* responsesTurn(
       identity: identityFor(options, ctx),
       userSupplied: ctx.connection.headers,
     });
-    plan = { model: req.model, url: urlFor(endpoint.baseUrl), headers, endpoint, ctx, options, body: JSON.stringify(buildResponsesBody(req, reasoning, descriptor)), streamTools: responsesStreamTools(req, descriptor) };
+    plan = { model: req.model, url: urlFor(endpoint.baseUrl), headers, endpoint, ctx, options, body: JSON.stringify(buildResponsesBody(req, reasoning, descriptor, { toolResultImages: toolResultImagesFor(ctx.connection.providerId) })), streamTools: responsesStreamTools(req, descriptor) };
   } catch (err) {
     yield errorEvent(err);
     return;

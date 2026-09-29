@@ -196,8 +196,25 @@ export interface ToolDescriptor {
 // without touching dispatch (forbidden -- "wrap, do not rewrite").
 export interface ToolResultPayload {
   output: string;
+  /**
+   * Code-mode images: what the MODEL is shown for this call, when it is more than text. Present only on
+   * a result that carries an image (the Read tool on an image file or a notebook with plot output);
+   * the engine then writes these blocks as the `tool_result`'s content array -- claude's own shape --
+   * in place of `output`. `output` stays a short TEXT rendering of the same result, and it is what every
+   * text-only consumer reads: the PostToolUse hook's `tool_response`, a log line, a flattening. Kept
+   * separate so no text channel ever carries base64 (a hook payload rides the same capped stdout line
+   * a frame does).
+   */
+  blocks?: ToolResultBlock[];
   isError?: boolean;
 }
+
+/**
+ * One block of a multimodal tool result (see `ToolResultPayload.blocks`). Structurally the engine's own
+ * `text` and `image` ContentBlock variants, so the engine carries them into history, the transcript and
+ * every provider adapter unchanged.
+ */
+export type ToolResultBlock = { type: "text"; text: string } | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
 
 // --- Per-call permission facts ----------------------------------------------------------------------
 //
@@ -271,6 +288,13 @@ export interface ToolExecutionContext {
    * ABSENT READS AS `WINTER_BRAND`, which is byte-identical to the behaviour before this field.
    */
   brand?: BrandProfile;
+  /**
+   * Code-mode images: whether the model the session is on RIGHT NOW accepts image input (its catalog
+   * row's `inputModalities` lists "image"). The Read tool answers an image file with a short text
+   * refusal instead of image blocks when this is `false`. Absent reads as "yes" -- a scripted double or
+   * a row with no modality facts, the same default `ModelDescription.readsImages` has.
+   */
+  modelReadsImages?: boolean;
   sessionId: string;
   readState: SessionReadState;
   // Phase 3 Task 2 (WS-06 §3.5): narrowed from Task 1's placeholder `unknown` now that the real,
@@ -1487,6 +1511,8 @@ export interface EngineToolCall {
 }
 export interface EngineToolResult {
   output: string;
+  /** See `ToolResultPayload.blocks`: when present, the model-facing content of the `tool_result`. */
+  blocks?: ToolResultBlock[];
   /**
    * Spawn-surface parity (R-S4, research gap 6): the executor's own `isError`, carried to the engine
    * so the model-facing `tool_result` block says `is_error: true` -- claude's shape for every tool
@@ -1522,12 +1548,14 @@ function notYetExecutableResult(name: string): ToolResultPayload {
 // above already writes complete, human/model-legible text into `output` itself, so folding never
 // needs to invent additional prefixing here.
 function foldResult(result: ToolResultPayload): EngineToolResult {
-  return { output: result.output, ...(result.isError === true ? { isError: true } : {}) };
+  return { output: result.output, ...(result.blocks !== undefined ? { blocks: result.blocks } : {}), ...(result.isError === true ? { isError: true } : {}) };
 }
 
 export interface RegistryToolExecutorDeps {
   sessionId: string;
   home: string;
+  /** Code-mode images: read per call, so a `set_model` since the last call is seen -- see `ToolExecutionContext.modelReadsImages`. */
+  modelReadsImages?: () => boolean;
   /** Phase 5 fix wave, I1: the resolved winter root -- see `ToolExecutionContext.winterHome`. */
   winterHome?: string;
   /** WS-21 fix round 1, item 4: the shared store home -- see `ToolExecutionContext.storeHome`. */
@@ -1642,6 +1670,7 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         // SV-5 fix round 3 (I-4): forwarded so the Workflow tool's project/user tiers are source-gated.
         ...(deps.settingSources !== undefined ? { settingSources: deps.settingSources } : {}),
         ...(deps.brand !== undefined ? { brand: deps.brand } : {}),
+        ...(deps.modelReadsImages !== undefined ? { modelReadsImages: deps.modelReadsImages() } : {}),
         sessionId: deps.sessionId,
         readState: deps.readState,
         emitFrame: deps.emitFrame,

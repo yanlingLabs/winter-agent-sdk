@@ -22,6 +22,7 @@ import {
   rowToModel,
   snapNumericEffort,
   toolResultText,
+  TOOL_RESULT_IMAGE_FOLLOWS,
 } from "./shared.ts";
 import { descriptor, testContext } from "./testing.ts";
 import type { ProviderEvent, TurnRequest } from "../../types.ts";
@@ -236,14 +237,14 @@ describe("endpoint selection", () => {
 });
 
 describe("small mappings", () => {
-  test("a blocks-valued tool_result flattens to the plain text every OpenAI surface carries", () => {
+  test("a blocks-valued tool_result flattens to text that says where each image went (never a bare `[image]`)", () => {
     expect(
       toolResultText([
         { type: "text", text: "line one" },
         { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } },
         { type: "text", text: "line two" },
       ]),
-    ).toBe("line one\n[image]\nline two");
+    ).toBe(`line one\n${TOOL_RESULT_IMAGE_FOLLOWS}\nline two`);
   });
 
   test("a `/v1/models` row keeps only what it actually carried", () => {

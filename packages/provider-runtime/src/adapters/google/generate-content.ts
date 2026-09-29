@@ -236,6 +236,31 @@ function toFunctionResponsePayload(content: string | ContentBlockLike[]): Record
   return { output: text, ...(imageCount > 0 ? { imageCount } : {}) };
 }
 
+/** The image types Gemini reads: "PNG, JPEG, WEBP, HEIC, HEIF" (https://ai.google.dev/gemini-api/docs/image-understanding). No GIF. */
+const GEMINI_IMAGE_TYPES: ReadonlySet<string> = new Set(["image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"]);
+/** The image types a Gemini 3 `functionResponse` may nest: PNG, JPEG and WebP (the multimodal function responses section). */
+const GEMINI_FUNCTION_RESPONSE_IMAGE_TYPES: ReadonlySet<string> = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+/**
+ * One image as a Gemini part -- or, for a type Gemini does not read (a GIF), a text note in its place that
+ * says what was there and how to get it read, never a request the endpoint rejects on every later turn
+ * (the image stays in the history) and never a silent drop.
+ */
+function geminiImagePart(image: Extract<ContentBlockLike, { type: "image" }>, accepted: ReadonlySet<string>): WirePart {
+  if (accepted.has(image.source.media_type)) return { inlineData: { mimeType: image.source.media_type, data: image.source.data } };
+  return { text: `[an ${image.source.media_type} image was here; Gemini does not read that type here (it takes ${[...accepted].join(", ")}), so convert it to PNG and read it again to see it]` };
+}
+
+/**
+ * Code-mode images: whether this model nests a tool result's images inside its `functionResponse` --
+ * Gemini 3 and later ("available for Gemini 3 series models"). Read off the provider-local model id; an
+ * id this cannot classify takes the older follow-up shape.
+ */
+export function geminiTakesFunctionResponseParts(model: string): boolean {
+  const major = /(?:^|\/)gemini-(\d+)/.exec(model.toLowerCase())?.[1];
+  return major !== undefined && Number(major) >= 3;
+}
+
 /**
  * One merged wire entry, kept as BUCKETS until it is assembled.
  *
@@ -247,8 +272,10 @@ function toFunctionResponsePayload(content: string | ContentBlockLike[]): Record
  */
 interface GoogleEntryBuckets {
   role: "user" | "model";
-  /** `functionResponse` parts, each immediately followed by the sibling `inlineData` parts its Struct could not carry. */
+  /** `functionResponse` parts (on Gemini 3+, each carrying its images as nested `parts`). */
   results: WirePart[];
+  /** Code-mode images before Gemini 3: each result's images, captioned with its function, AFTER every response of the entry. */
+  followUps: WirePart[];
   /** Winter-authored decoration text, in message order. */
   decorations: WirePart[];
   rest: WirePart[];
@@ -268,7 +295,7 @@ interface SerializeResult {
  * exactly and keeps a two-tool-message history from producing the consecutive same-role entries the
  * endpoint rejects.
  */
-export function toContents(messages: ProviderMessageLike[]): SerializeResult {
+export function toContents(messages: ProviderMessageLike[], opts: { functionResponseParts?: boolean } = {}): SerializeResult {
   // INCREMENTAL, not a pre-pass over the whole history, and the difference is a live bug rather than
   // a style choice. This family's `functionCall` carries no id, so Winter mints one -- and a
   // per-stream counter re-mints the same first id on every turn. A flat pre-pass map is therefore
@@ -299,7 +326,7 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
     // `user` entries: the shape this file's own header says the endpoint rejects. The trailing
     // non-empty filter could not save it, because by then the split had already happened.
     const previous = entries[entries.length - 1];
-    const entry: GoogleEntryBuckets = previous !== undefined && previous.role === role ? previous : { role, results: [], decorations: [], rest: [] };
+    const entry: GoogleEntryBuckets = previous !== undefined && previous.role === role ? previous : { role, results: [], followUps: [], decorations: [], rest: [] };
 
     // A Winter-authored annotation rides PLAINLY (R6-3 / R6-8), and its text goes on the wire
     // VERBATIM. `decoration.text` is already the FINISHED, DELIMITED string Lane C produced -- the
@@ -332,7 +359,7 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
           break;
         }
         case "image":
-          entry.rest.push({ inlineData: { mimeType: block.source.media_type, data: block.source.data } });
+          entry.rest.push(geminiImagePart(block, GEMINI_IMAGE_TYPES));
           break;
         case "tool_use": {
           names.set(block.id, block.name);
@@ -352,11 +379,22 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
               `a tool_result for "${block.tool_use_id}" has no matching tool_use in this history, so the functionResponse has no name to carry; Winter refuses the turn rather than dropping the result`,
             );
           }
-          // The response and the images its Struct could not carry go into the SAME bucket, adjacent
-          // and in order: hoisting the response while leaving its images behind would separate them.
-          entry.results.push({ functionResponse: { name, response: toFunctionResponsePayload(block.content) } });
-          for (const image of collectImages(block.content)) {
-            entry.results.push({ inlineData: { mimeType: image.source.media_type, data: image.source.data } });
+          // Code-mode images. Gemini 3 and later take a result's images INSIDE its `functionResponse`, as
+          // nested `parts` each holding `inlineData` ("include it as one or more parts nested within the
+          // functionResponse part", "available for Gemini 3 series models", PNG/JPEG/WebP --
+          // https://ai.google.dev/gemini-api/docs/generate-content/function-calling, "Multimodal function
+          // responses"). Earlier models have no such field: the images follow EVERY response of the entry
+          // as ordinary `inlineData` parts (the field a user image rides), each set captioned with the
+          // function it came from. `imageCount` on the response says how many belong to it either way.
+          const images = collectImages(block.content);
+          if (images.length > 0 && opts.functionResponseParts === true) {
+            entry.results.push({ functionResponse: { name, response: toFunctionResponsePayload(block.content), parts: images.map((image) => geminiImagePart(image, GEMINI_FUNCTION_RESPONSE_IMAGE_TYPES)) } });
+          } else {
+            entry.results.push({ functionResponse: { name, response: toFunctionResponsePayload(block.content) } });
+            if (images.length > 0) {
+              entry.followUps.push({ text: images.length === 1 ? `The image returned by the ${name} call:` : `The ${images.length} images returned by the ${name} call:` });
+              for (const image of images) entry.followUps.push(geminiImagePart(image, GEMINI_IMAGE_TYPES));
+            }
           }
           break;
         }
@@ -376,13 +414,13 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
     // Pushed only now, and only if this message actually contributed something. A message that
     // produced nothing leaves the chain exactly as it found it, so the next same-role message still
     // merges with the previous one.
-    if (entry !== previous && entry.results.length + entry.decorations.length + entry.rest.length > 0) entries.push(entry);
+    if (entry !== previous && entry.results.length + entry.followUps.length + entry.decorations.length + entry.rest.length > 0) entries.push(entry);
   }
 
   // ASSEMBLED PER ENTRY, after every message that merges into it has been filed: the tool responses
-  // first, then the decorations in message order, then ordinary content.
+  // first, then the images that follow them, then the decorations in message order, then ordinary content.
   const contents = entries
-    .map((entry) => ({ role: entry.role, parts: [...entry.results, ...entry.decorations, ...entry.rest] }))
+    .map((entry) => ({ role: entry.role, parts: [...entry.results, ...entry.followUps, ...entry.decorations, ...entry.rest] }))
     .filter((entry) => entry.parts.length > 0);
 
   return { contents, droppedForeignReasoning };
@@ -520,7 +558,7 @@ function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | 
     throw capabilityRefusal(`thinking budget ${budget} does not fit inside maxOutputTokens ${declaredMax}; the budget must be strictly smaller`);
   }
 
-  const { contents, droppedForeignReasoning } = toContents(req.messages);
+  const { contents, droppedForeignReasoning } = toContents(req.messages, { functionResponseParts: geminiTakesFunctionResponseParts(req.model) });
   // ONE EVENT PER DROPPED BLOCK, so the COUNT is the number of events rather than a number wedged
   // into a field named `bytes`. `ProviderContext.log`'s shape is frozen (`{kind, providerId, model?,
   // bytes?}`) and has no count field; misusing the byte field would put a block count into whatever

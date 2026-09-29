@@ -4,6 +4,43 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## Unreleased
+
+### The model can see images it reads
+
+- **The Read tool now shows the model an image.** Reading a PNG, JPEG, GIF or WebP file used to hand
+  the model the file's base64 as text, which it cannot see. It now returns a real image block, and
+  every provider adapter delivers it as an image:
+  - **Inside the tool result** on the Anthropic Messages API, OpenAI's own Responses API, the Codex
+    (ChatGPT sign-in) backend, Gemini 3 and later (nested in the function response), and Bedrock's
+    Claude and Nova models.
+  - **In a message right after the tool results**, captioned with the call it came from, where the tool
+    result cannot hold an image: chat completions (DeepSeek-class providers, OpenRouter, the local
+    runners, xAI sign-in), the xAI, Azure and local Responses surfaces, Gemini before 3, and other
+    Bedrock models. The tool result says the image follows.
+- **Models that cannot read images get a short text instead.** On a model whose catalog row does not
+  list image input, Read answers `The selected model doesn't support images: <path>`. The OpenAI-family
+  and Bedrock adapters now also refuse an image for such a model before sending, as the Anthropic and
+  Google adapters already did.
+- **Limits are checked before the image enters the conversation.** An image over 3.75 MiB (5 MiB once
+  base64-encoded, the smallest per-image limit among the providers) or over 8000 px on a side is refused
+  with a text saying how to shrink it. BMP, TIFF and HEIC files, which no provider accepts as images, are
+  refused with a text saying how to convert them. The file's bytes decide its type, not its extension.
+  Gemini does not read GIFs, so a GIF sent to Gemini becomes a short note saying so.
+- **Resumed sessions keep their images.** The transcript stores an image result the way claude's does
+  (a base64 image block inside the tool result), so a resumed session sends it again.
+- **The host's copy of an image result leaves out the bytes.** The tool-round message a host receives
+  keeps the image block and its media type with an empty `data` field. The full image would not fit the
+  host's 1 MiB line limit and would end the session. The transcript still holds the real bytes.
+- **An image no longer trips the 4 MiB per-message limit.** Image data within 10 MiB no longer counts
+  toward that limit. Before, a single 3.5 MB screenshot pushed the message over it and failed every later
+  request.
+- **Notebook plots are images too.** A notebook's `image/png` outputs reach the model as images between
+  its text cells.
+- **PDFs return honest metadata.** A PDF read now reports its size and page count and says its content
+  is not shown, instead of sending its bytes as base64 text.
+- **Other tools are unchanged.** A text tool result is still a plain string on every surface.
+
 ## 0.0.35
 
 - Claude Sonnet 5.5 (`claude-sonnet-5-5`) is in the catalog for the Anthropic API key, the Console

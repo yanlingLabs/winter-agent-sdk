@@ -11,7 +11,7 @@ import { join } from "node:path";
 import "./read.ts";
 import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createSessionReadState } from "../read-state.ts";
-import { countPdfPages, type ReadBlock, type ReadBlocksEnvelope } from "./read.ts";
+import { MODEL_DOES_NOT_SUPPORT_IMAGES, READ_IMAGE_MAX_BYTES, countPdfPages, parseWebpDimensions, sniffImageType } from "./read.ts";
 
 function makeCtx(cwd: string): ToolExecutionContext {
   return {
@@ -41,8 +41,13 @@ async function runRead(input: unknown, ctx: ToolExecutionContext): Promise<ToolR
   return tool.executor.execute(input, ctx);
 }
 
-function envelope(result: ToolResultPayload): ReadBlocksEnvelope {
-  return JSON.parse(result.output) as ReadBlocksEnvelope;
+/** The one image block an image Read returns (claude's own `tool_result` image shape). */
+function soleImage(result: ToolResultPayload): { media_type: string; data: string } {
+  expect(result.blocks).toHaveLength(1);
+  const block = result.blocks![0]!;
+  if (block.type !== "image") throw new Error(`expected an image block, got ${block.type}`);
+  expect(block.source.type).toBe("base64");
+  return { media_type: block.source.media_type, data: block.source.data };
 }
 
 // --- Fixture builders for the hand-rolled image parsers ---------------------------------------------
@@ -72,6 +77,18 @@ function makeBmp(width: number, height: number): Buffer {
   buf.write("BM", 0, "ascii");
   buf.writeInt32LE(width, 18);
   buf.writeInt32LE(height, 22);
+  return buf;
+}
+
+function makeWebp(width: number, height: number): Buffer {
+  const buf = Buffer.alloc(30);
+  buf.write("RIFF", 0, "ascii");
+  buf.writeUInt32LE(22, 4);
+  buf.write("WEBP", 8, "ascii");
+  buf.write("VP8X", 12, "ascii");
+  buf.writeUInt32LE(10, 16);
+  buf.writeUIntLE(width - 1, 24, 3);
+  buf.writeUIntLE(height - 1, 27, 3);
   return buf;
 }
 
@@ -241,92 +258,99 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
   });
 
   describe("images", () => {
-    test("a PNG renders as a typed image block with parsed dimensions and records complete:true", async () => {
+    test("a PNG comes back as a real image block (not text), with a text rendering in `output`, and records complete:true", async () => {
       const p = join(dir, "pic.png");
       writeFileSync(p, makePng(64, 48));
       const ctx = makeCtx(dir);
       const result = await runRead({ file_path: p }, ctx);
       expect(result.isError).toBeUndefined();
-      const env = envelope(result);
-      expect(env.winterReadBlocks).toHaveLength(1);
-      const block = env.winterReadBlocks[0] as Extract<ReadBlock, { type: "image" }>;
-      expect(block.type).toBe("image");
-      expect(block.media_type).toBe("image/png");
-      expect(block.width).toBe(64);
-      expect(block.height).toBe(48);
-      expect(typeof block.data).toBe("string");
-      expect(Buffer.from(block.data!, "base64").equals(makePng(64, 48))).toBe(true);
+      const image = soleImage(result);
+      expect(image.media_type).toBe("image/png");
+      expect(Buffer.from(image.data, "base64").equals(makePng(64, 48))).toBe(true);
+      // `output` is the text channel (hooks, logs): it names the file and never carries base64.
+      expect(result.output).toBe(`[image: ${p} (image/png, ${makePng(64, 48).length} bytes, 64x48)]`);
+      expect(result.output).not.toContain(image.data);
+      expect(result.output).not.toContain("winterReadBlocks");
       expect(ctx.readState.lookup(p)?.complete).toBe(true);
     });
 
-    // I6 (fix wave, P3 close-out): the interim size guard -- when the winterReadBlocks envelope
-    // would exceed MAX_RESULT_CHARS, the block loses `data` but keeps `note`/`bytes`/`width`/
-    // `height`. A 1 MB image (well under IMAGE_MAX_BYTES=5MB, so the READ itself succeeds) base64s
-    // to ~1.37 MB of JSON text, comfortably over the 100k-char cap.
-    test("an oversized envelope (1MB image) omits `data`, adds `note`, keeps bytes/width/height", async () => {
+    test("a 1 MB image is attached whole -- there is no envelope size guard any more", async () => {
       const p = join(dir, "big.png");
       const oneMbPng = Buffer.concat([makePng(64, 48), Buffer.alloc(1_000_000)]);
       writeFileSync(p, oneMbPng);
-      const ctx = makeCtx(dir);
-      const result = await runRead({ file_path: p }, ctx);
+      const result = await runRead({ file_path: p }, makeCtx(dir));
       expect(result.isError).toBeUndefined();
-      const env = envelope(result);
-      expect(env.winterReadBlocks).toHaveLength(1);
-      const block = env.winterReadBlocks[0] as Extract<ReadBlock, { type: "image" }>;
-      expect(block.type).toBe("image");
-      expect(block.data).toBeUndefined();
-      expect(typeof block.note).toBe("string");
-      expect(block.bytes).toBe(oneMbPng.length);
-      expect(block.width).toBe(64);
-      expect(block.height).toBe(48);
+      expect(Buffer.from(soleImage(result).data, "base64").length).toBe(oneMbPng.length);
     });
 
-    test("a GIF's dimensions parse correctly", async () => {
-      const p = join(dir, "pic.gif");
-      writeFileSync(p, makeGif(10, 20));
-      const result = await runRead({ file_path: p }, makeCtx(dir));
-      const block = envelope(result).winterReadBlocks[0] as Extract<ReadBlock, { type: "image" }>;
-      expect(block.media_type).toBe("image/gif");
-      expect(block.width).toBe(10);
-      expect(block.height).toBe(20);
+    test("GIF, JPEG and WebP each ride with the media type their BYTES say", async () => {
+      const cases: Array<[string, Buffer, string, string]> = [
+        ["pic.gif", makeGif(10, 20), "image/gif", "10x20"],
+        ["pic.jpg", makeJpeg(800, 600), "image/jpeg", "800x600"],
+        ["pic.jpeg", makeJpeg(8, 6), "image/jpeg", "8x6"],
+        ["pic.webp", makeWebp(300, 200), "image/webp", "300x200"],
+      ];
+      for (const [name, bytes, type, dims] of cases) {
+        const p = join(dir, name);
+        writeFileSync(p, bytes);
+        const result = await runRead({ file_path: p }, makeCtx(dir));
+        expect(result.isError).toBeUndefined();
+        expect(soleImage(result).media_type).toBe(type);
+        expect(result.output).toContain(dims);
+      }
     });
 
-    test("a BMP's dimensions parse correctly", async () => {
-      const p = join(dir, "pic.bmp");
-      writeFileSync(p, makeBmp(33, 77));
-      const result = await runRead({ file_path: p }, makeCtx(dir));
-      const block = envelope(result).winterReadBlocks[0] as Extract<ReadBlock, { type: "image" }>;
-      expect(block.media_type).toBe("image/bmp");
-      expect(block.width).toBe(33);
-      expect(block.height).toBe(77);
+    test("a misnamed image is sent as what it IS (a JPEG saved as .png is image/jpeg)", async () => {
+      const p = join(dir, "actually-jpeg.png");
+      writeFileSync(p, makeJpeg(4, 4));
+      expect(soleImage(await runRead({ file_path: p }, makeCtx(dir))).media_type).toBe("image/jpeg");
     });
 
-    test("a JPEG's dimensions parse correctly via the SOF0 marker walk", async () => {
-      const p = join(dir, "pic.jpg");
-      writeFileSync(p, makeJpeg(800, 600));
-      const result = await runRead({ file_path: p }, makeCtx(dir));
-      const block = envelope(result).winterReadBlocks[0] as Extract<ReadBlock, { type: "image" }>;
-      expect(block.media_type).toBe("image/jpeg");
-      expect(block.width).toBe(800);
-      expect(block.height).toBe(600);
+    test("BMP, TIFF and HEIC are refused with a text saying how to convert -- no provider takes them as images", async () => {
+      const tiff = Buffer.from([0x49, 0x49, 0x2a, 0x00, 0, 0, 0, 0]);
+      const heic = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypheic", "ascii"), Buffer.alloc(16)]);
+      for (const [name, bytes, format] of [["pic.bmp", makeBmp(33, 77), "BMP"], ["pic.tiff", tiff, "TIFF"], ["pic.heic", heic, "HEIC"]] as const) {
+        const p = join(dir, name);
+        writeFileSync(p, bytes);
+        const result = await runRead({ file_path: p }, makeCtx(dir));
+        expect(result.isError).toBe(true);
+        expect(result.blocks).toBeUndefined();
+        expect(result.output).toContain(`is a ${format} image`);
+        expect(result.output).toContain("PNG, JPEG, GIF and WebP");
+        expect(result.output).toContain("sips -s format png");
+      }
     });
 
-    test("webp gets mime-by-extension with dimensions intentionally omitted", async () => {
-      const p = join(dir, "pic.webp");
+    test("an image-named file with no image data is refused, never sent as garbage", async () => {
+      const p = join(dir, "junk.webp");
       writeFileSync(p, Buffer.from([0, 1, 2, 3, 4]));
       const result = await runRead({ file_path: p }, makeCtx(dir));
-      const block = envelope(result).winterReadBlocks[0] as Extract<ReadBlock, { type: "image" }>;
-      expect(block.media_type).toBe("image/webp");
-      expect(block.width).toBeUndefined();
-      expect(block.height).toBeUndefined();
+      expect(result.isError).toBe(true);
+      expect(result.blocks).toBeUndefined();
+      expect(result.output).toContain("does not contain PNG, JPEG, GIF or WebP image data");
     });
 
-    test("an oversized image errors instead of attaching", async () => {
-      const p = join(dir, "huge.png");
-      writeFileSync(p, Buffer.alloc(6 * 1024 * 1024));
+    test("an image over READ_IMAGE_MAX_BYTES (3.75 MiB, base64 5 MiB) is refused; one exactly at it is attached", async () => {
+      expect(READ_IMAGE_MAX_BYTES).toBe(3_932_160);
+      expect(Buffer.alloc(READ_IMAGE_MAX_BYTES).toString("base64").length).toBe(5 * 1024 * 1024);
+      const over = join(dir, "huge.png");
+      writeFileSync(over, Buffer.concat([makePng(10, 10), Buffer.alloc(READ_IMAGE_MAX_BYTES)]));
+      const refused = await runRead({ file_path: over }, makeCtx(dir));
+      expect(refused.isError).toBe(true);
+      expect(refused.blocks).toBeUndefined();
+      expect(refused.output).toContain(`over the ${READ_IMAGE_MAX_BYTES}-byte limit`);
+      const at = join(dir, "at-cap.png");
+      const atBytes = Buffer.concat([makePng(10, 10), Buffer.alloc(READ_IMAGE_MAX_BYTES - makePng(10, 10).length)]);
+      writeFileSync(at, atBytes);
+      expect(Buffer.from(soleImage(await runRead({ file_path: at }, makeCtx(dir))).data, "base64").length).toBe(READ_IMAGE_MAX_BYTES);
+    });
+
+    test("an image wider or taller than 8000 px is refused", async () => {
+      const p = join(dir, "wide.png");
+      writeFileSync(p, makePng(8001, 10));
       const result = await runRead({ file_path: p }, makeCtx(dir));
       expect(result.isError).toBe(true);
-      expect(result.output).toContain("exceeding");
+      expect(result.output).toContain("8001x10 px, over the 8000 px limit");
     });
 
     test("a stray offset on an image read still records complete:false (no per-type carve-out)", async () => {
@@ -337,36 +361,75 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       expect(result.isError).toBeUndefined();
       expect(ctx.readState.lookup(p)?.complete).toBe(false);
     });
+
+    test("THE GATE: on a model that reads no images, an image Read is a short text refusal naming the path -- never base64", async () => {
+      const p = join(dir, "gated.png");
+      writeFileSync(p, makePng(64, 48));
+      const ctx = { ...makeCtx(dir), modelReadsImages: false };
+      const result = await runRead({ file_path: p }, ctx);
+      expect(result.isError).toBe(true);
+      expect(result.blocks).toBeUndefined();
+      expect(result.output).toBe(`${MODEL_DOES_NOT_SUPPORT_IMAGES}: ${p}`);
+      expect(MODEL_DOES_NOT_SUPPORT_IMAGES).toBe("The selected model doesn't support images");
+      expect(result.output).not.toContain(makePng(64, 48).toString("base64"));
+      // An explicit `true` (and an absent value, above) delivers the image.
+      expect(soleImage(await runRead({ file_path: p }, { ...makeCtx(dir), modelReadsImages: true })).media_type).toBe("image/png");
+    });
+
+    test("sniffImageType and parseWebpDimensions read the magic numbers, not the name", () => {
+      expect(sniffImageType(makePng(1, 1))).toBe("image/png");
+      expect(sniffImageType(makeJpeg(1, 1))).toBe("image/jpeg");
+      expect(sniffImageType(makeGif(1, 1))).toBe("image/gif");
+      expect(sniffImageType(makeWebp(1, 1))).toBe("image/webp");
+      expect(sniffImageType(makeBmp(1, 1))).toBe("image/bmp");
+      expect(sniffImageType(Buffer.from("hello world!"))).toBeUndefined();
+      expect(parseWebpDimensions(makeWebp(1920, 1080))).toEqual({ width: 1920, height: 1080 });
+    });
   });
 
   describe("notebooks", () => {
-    test("renders cells as text blocks", async () => {
+    test("a notebook with no image output is plain text (no blocks)", async () => {
       const p = join(dir, "nb.ipynb");
       const nb = { cells: [{ cell_type: "markdown", source: ["# Title"] }, { cell_type: "code", source: "print(1)", outputs: [{ output_type: "stream", text: "1\n" }] }] };
       writeFileSync(p, JSON.stringify(nb));
       const ctx = makeCtx(dir);
       const result = await runRead({ file_path: p }, ctx);
-      const env = envelope(result);
-      const allText = env.winterReadBlocks.map((b) => (b.type === "text" ? b.text : "")).join("\n");
-      expect(allText).toContain("# Title");
-      expect(allText).toContain("print(1)");
-      expect(allText).toContain("1");
+      expect(result.blocks).toBeUndefined();
+      expect(result.output).toContain("# Title");
+      expect(result.output).toContain("print(1)");
+      expect(result.output).toContain("1");
       expect(ctx.readState.lookup(p)?.complete).toBe(true);
     });
 
-    test("an image/png output splits into its own typed image block", async () => {
+    test("an image/png output becomes a real image block between the text blocks", async () => {
       const p = join(dir, "nb-img.ipynb");
-      const pngB64 = makePng(5, 5).toString("base64");
+      const png = makePng(5, 5);
       const nb = {
-        cells: [{ cell_type: "code", source: "plot()", outputs: [{ output_type: "display_data", data: { "image/png": pngB64 } }] }],
+        cells: [
+          { cell_type: "code", source: "plot()", outputs: [{ output_type: "display_data", data: { "image/png": png.toString("base64") } }] },
+          { cell_type: "markdown", source: "after" },
+        ],
       };
       writeFileSync(p, JSON.stringify(nb));
       const result = await runRead({ file_path: p }, makeCtx(dir));
-      const env = envelope(result);
-      const imageBlocks = env.winterReadBlocks.filter((b): b is Extract<ReadBlock, { type: "image" }> => b.type === "image");
-      expect(imageBlocks).toHaveLength(1);
-      expect(imageBlocks[0]?.media_type).toBe("image/png");
-      expect(imageBlocks[0]?.width).toBe(5);
+      expect(result.blocks?.map((b) => b.type)).toEqual(["text", "image", "text"]);
+      const image = result.blocks![1]!;
+      if (image.type !== "image") throw new Error("expected image");
+      expect(image.source.media_type).toBe("image/png");
+      expect(Buffer.from(image.source.data, "base64").equals(png)).toBe(true);
+      expect(result.output).toContain("[image: image/png]");
+      expect(result.output).not.toContain(png.toString("base64"));
+    });
+
+    test("on a model that reads no images, a plot output becomes a note -- the notebook's text still reads", async () => {
+      const p = join(dir, "nb-gated.ipynb");
+      const nb = { cells: [{ cell_type: "code", source: "plot()", outputs: [{ output_type: "display_data", data: { "image/png": makePng(5, 5).toString("base64") } }] }] };
+      writeFileSync(p, JSON.stringify(nb));
+      const result = await runRead({ file_path: p }, { ...makeCtx(dir), modelReadsImages: false });
+      expect(result.isError).toBeUndefined();
+      expect(result.blocks).toBeUndefined();
+      expect(result.output).toContain("plot()");
+      expect(result.output).toContain(`[image output omitted: ${MODEL_DOES_NOT_SUPPORT_IMAGES}]`);
     });
 
     test("a stray offset on a notebook read still records complete:false (no per-type carve-out)", async () => {
@@ -388,16 +451,17 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
   });
 
   describe("PDFs", () => {
-    test("a small PDF (<=10 pages) with no `pages` embeds full data and records complete:true", async () => {
+    test("a PDF read is honest METADATA TEXT -- never the raw bytes as base64 -- and records complete:true", async () => {
       const p = join(dir, "small.pdf");
-      writeFileSync(p, makePdfBytes({ pageCount: 3 }));
+      const bytes = makePdfBytes({ pageCount: 3 });
+      writeFileSync(p, bytes);
       const ctx = makeCtx(dir);
       const result = await runRead({ file_path: p }, ctx);
       expect(result.isError).toBeUndefined();
-      const block = envelope(result).winterReadBlocks[0] as Extract<ReadBlock, { type: "pdf" }>;
-      expect(block.type).toBe("pdf");
-      expect(block.totalPages).toBe(3);
-      expect(typeof block.data).toBe("string");
+      expect(result.blocks).toBeUndefined();
+      expect(result.output).toContain(`[PDF: ${p} (${bytes.length} bytes, 3 pages)]`);
+      expect(result.output).toContain("content is not shown here");
+      expect(result.output).not.toContain(bytes.toString("base64"));
       expect(ctx.readState.lookup(p)?.complete).toBe(true);
     });
 
@@ -411,40 +475,14 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       expect(countPdfPages(bytes)).toBeUndefined();
     });
 
-    test("an oversized PDF (page count known, over budget) with no `pages` errors, naming the real total", async () => {
-      const p = join(dir, "big.pdf");
-      writeFileSync(p, makePdfBytes({ pageCount: 15 }));
-      const result = await runRead({ file_path: p }, makeCtx(dir));
-      expect(result.isError).toBe(true);
-      expect(result.output).toContain("15 pages");
-      expect(result.output).toContain("pages");
-    });
-
-    test("the same oversized PDF with a valid `pages` range returns a metadata-only block (no `data`), complete:false", async () => {
+    test("a valid `pages` range is named in the metadata and records complete:false", async () => {
       const p = join(dir, "big2.pdf");
       writeFileSync(p, makePdfBytes({ pageCount: 15 }));
       const ctx = makeCtx(dir);
-      const result = await runRead({ file_path: p, pages: "1-5" }, ctx);
+      const result = await runRead({ file_path: p, pages: "10-15" }, ctx);
       expect(result.isError).toBeUndefined();
-      const block = envelope(result).winterReadBlocks[0] as Extract<ReadBlock, { type: "pdf" }>;
-      expect(block.requestedPages).toEqual({ start: 1, end: 5 });
-      expect(block.data).toBeUndefined();
-      expect(block.note).toContain("too large to attach in full");
+      expect(result.output).toContain("15 pages; pages 10-15 requested");
       expect(ctx.readState.lookup(p)?.complete).toBe(false);
-    });
-
-    // Fix round 1 (MINOR): this test's title previously said "errors" while its body asserts the
-    // opposite (a legal range) -- corrected to describe what it actually proves: a `pages` range
-    // whose END lands EXACTLY on the real total is a legal boundary case, not an off-by-one error,
-    // distinguishing it from the very next test ("naming an out-of-range page errors"), which pushes
-    // one page past that same boundary.
-    test("`pages` reaching exactly the last page is legal (boundary case, not an off-by-one error)", async () => {
-      const p = join(dir, "big3.pdf");
-      writeFileSync(p, makePdfBytes({ pageCount: 15 }));
-      const result = await runRead({ file_path: p, pages: "10-15" }, makeCtx(dir));
-      expect(result.isError).toBeUndefined(); // 10-15 is within 15 total AND within the 20-span cap
-      const block = envelope(result).winterReadBlocks[0] as Extract<ReadBlock, { type: "pdf" }>;
-      expect(block.requestedPages).toEqual({ start: 10, end: 15 });
     });
 
     test("`pages` naming an out-of-range page errors, naming the real total", async () => {
@@ -472,16 +510,12 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       expect(result.output).toContain("invalid pages");
     });
 
-    test("unknown page count, small file, no `pages`: falls back to the byte-size budget and embeds data", async () => {
+    test("unknown page count says so", async () => {
       const p = join(dir, "unknown-small.pdf");
       writeFileSync(p, Buffer.from("%PDF-1.4\n" + "A".repeat(1000), "latin1"));
-      const ctx = makeCtx(dir);
-      const result = await runRead({ file_path: p }, ctx);
+      const result = await runRead({ file_path: p }, makeCtx(dir));
       expect(result.isError).toBeUndefined();
-      const block = envelope(result).winterReadBlocks[0] as Extract<ReadBlock, { type: "pdf" }>;
-      expect(block.totalPages).toBeUndefined();
-      expect(typeof block.data).toBe("string");
-      expect(ctx.readState.lookup(p)?.complete).toBe(true);
+      expect(result.output).toContain("page count unknown");
     });
 
     test("a stray offset on a whole-document PDF read still records complete:false (no per-type carve-out)", async () => {
@@ -491,14 +525,6 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       const result = await runRead({ file_path: p, offset: 1 }, ctx);
       expect(result.isError).toBeUndefined();
       expect(ctx.readState.lookup(p)?.complete).toBe(false);
-    });
-
-    test("unknown page count, large file, no `pages`: errors naming the byte size", async () => {
-      const p = join(dir, "unknown-large.pdf");
-      writeFileSync(p, Buffer.from("%PDF-1.4\n" + "A".repeat(2_100_000), "latin1"));
-      const result = await runRead({ file_path: p }, makeCtx(dir));
-      expect(result.isError).toBe(true);
-      expect(result.output).toContain("bytes");
     });
   });
 
