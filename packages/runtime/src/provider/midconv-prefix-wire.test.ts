@@ -1,7 +1,7 @@
 // WS-23 (midconv) item 5: the headline property ON THE WIRE, per vendor. The real engine drives the real
 // catalog-resolved provider (bridge, history renderer, adapter) against a loopback endpoint, and every
 // assertion reads the request bodies the endpoint received:
-//   - Anthropic (claude-opus-5-5): a late MCP tool, then its removal, then an effort change;
+//   - Anthropic (claude-opus-5-5, claude-sonnet-5-5): a late MCP tool, then its removal, then an effort change;
 //   - OpenAI (gpt-6-astra): an effort change, then a ToolSearch load.
 // For each: every earlier request is a byte prefix of the next (Anthropic's one rolling `cache_control`
 // set aside), and `tools` -- the head of the cached prefix -- never changes inside the epoch.
@@ -87,69 +87,73 @@ const strip = (value: unknown): string =>
 const isErrorResult = (frames: WinterFrame[]): boolean[] => frames.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").map((f) => (f as { message: { is_error: boolean } }).message.is_error);
 
 describe("the cached prefix on the wire through mid-session changes (WS-23 midconv item 5)", () => {
-  test("Anthropic (claude-opus-5-5): a late MCP tool, then its removal, then an effort change -- `tools`, system, output_config and betas never move; each request prefixes the next", async () => {
-    const SERVER = "wsmidlate";
-    const model = "anthropic/claude-opus-5-5";
-    const fake = await startAnthropicFake(() => ({ blocks: [{ type: "text", text: "ok" }], stopReason: "end_turn" }));
-    cleanups.push(() => fake.close());
-    cleanups.push(() => unregisterMcpServerTools(SERVER));
-    const cwd = mkdtempSync(join(tmpdir(), "winter-midconv-wire-cwd-"));
-    cleanups.push(() => rmSync(cwd, { recursive: true, force: true }));
-    const frames = await drive({
-      config: {
-        sessionId: "midconv-wire-anthropic",
-        cwd,
-        model,
-        effort: "high",
-        persistSession: false,
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
-        toolSearchEnabled: true,
-        capabilities: ["winter.mcp"],
-        provider: { providerId: "anthropic", authRef: { kind: "inline", value: "fixture" }, connection: { baseUrl: fake.url, local: true } },
-      } as RuntimeConfig,
-      catalog: fakeAnthropicCatalog(fake.url, [model]),
-      family: "anthropic",
-      servers: [SERVER],
-      steps: [
-        { user: "one" },
-        {
-          act: () => {
-            registerMcpServerTools(SERVER, [{ name: "lookup", description: "Look something up.", inputSchema: { type: "object", properties: { q: { type: "string" } } } }], { deferredDefault: false });
-            replaceExecutor(`mcp__${SERVER}__lookup`, { async execute() { return { output: "found" }; } });
+  // 2026-09-29: Claude Sonnet 5.5 documents the same three mechanisms as Opus 5.5 (per-message effort,
+  // mid-conversation system messages, tool changes by reference and by value), so the same session on its
+  // COMPILED catalog row must put the same bytes on the wire.
+  for (const model of ["anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5"]) {
+    test(`Anthropic (${model.slice("anthropic/".length)}): a late MCP tool, then its removal, then an effort change -- \`tools\`, system, output_config and betas never move; each request prefixes the next`, async () => {
+      const SERVER = "wsmidlate";
+      const fake = await startAnthropicFake(() => ({ blocks: [{ type: "text", text: "ok" }], stopReason: "end_turn" }));
+      cleanups.push(() => fake.close());
+      cleanups.push(() => unregisterMcpServerTools(SERVER));
+      const cwd = mkdtempSync(join(tmpdir(), "winter-midconv-wire-cwd-"));
+      cleanups.push(() => rmSync(cwd, { recursive: true, force: true }));
+      const frames = await drive({
+        config: {
+          sessionId: `midconv-wire-${model.replace("/", "-")}`,
+          cwd,
+          model,
+          effort: "high",
+          persistSession: false,
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+          toolSearchEnabled: true,
+          capabilities: ["winter.mcp"],
+          provider: { providerId: "anthropic", authRef: { kind: "inline", value: "fixture" }, connection: { baseUrl: fake.url, local: true } },
+        } as RuntimeConfig,
+        catalog: fakeAnthropicCatalog(fake.url, [model]),
+        family: "anthropic",
+        servers: [SERVER],
+        steps: [
+          { user: "one" },
+          {
+            act: () => {
+              registerMcpServerTools(SERVER, [{ name: "lookup", description: "Look something up.", inputSchema: { type: "object", properties: { q: { type: "string" } } } }], { deferredDefault: false });
+              replaceExecutor(`mcp__${SERVER}__lookup`, { async execute() { return { output: "found" }; } });
+            },
           },
-        },
-        { user: "two" },
-        { act: () => unregisterMcpServerTools(SERVER) },
-        { user: "three" },
-        { control: "set_effort", payload: { effort: "low" } },
-        { user: "four" },
-      ],
+          { user: "two" },
+          { act: () => unregisterMcpServerTools(SERVER) },
+          { user: "three" },
+          { control: "set_effort", payload: { effort: "low" } },
+          { user: "four" },
+        ],
+      });
+      expect(isErrorResult(frames)).toEqual([false, false, false, false]);
+      const reqs = fake.requests.filter((r) => r.path === "/v1/messages");
+      expect(reqs).toHaveLength(4);
+      const [first] = reqs;
+      for (const r of reqs) {
+        expect(JSON.stringify(r.body["tools"])).toBe(JSON.stringify(first!.body["tools"]));
+        expect(JSON.stringify(r.body["system"])).toBe(JSON.stringify(first!.body["system"]));
+        expect(r.body["output_config"]).toEqual({ effort: "high" });
+        expect(r.headers["anthropic-beta"]).toBe(first!.headers["anthropic-beta"]);
+      }
+      expect(first!.headers["anthropic-beta"]!.split(",")).toContain("inline-tools-2026-09-15");
+      expect((first!.body["tools"] as Block[]).some((t) => String(t["name"]).includes(SERVER))).toBe(false);
+      const wire = reqs.map((r) => r.body["messages"] as Block[]);
+      // Review I-1: no system message EVER carries a breakpoint (one there moves off on the next request,
+      // and the entry it wrote is never read) -- so the system messages are compared WITH their bytes.
+      for (const messages of wire) for (const m of messages) if (m["role"] === "system") expect(JSON.stringify(m)).not.toContain("cache_control");
+      // Only the rolling breakpoint on a user/assistant block moves, by design.
+      for (let i = 0; i + 1 < wire.length; i++) expect(strip(wire[i + 1]!.slice(0, wire[i]!.length))).toBe(strip(wire[i]));
+      // The three changes, each where it belongs -- compared byte for byte (no breakpoint to set aside).
+      const systems = wire[3]!.filter((m) => m["role"] === "system").map((m) => JSON.stringify(m));
+      expect(systems).toContain(JSON.stringify({ role: "system", content: [{ type: "tool_addition", tool: { type: "tool_definition", definition: { name: `mcp__${SERVER}__lookup`, description: "Look something up.", input_schema: { type: "object", properties: { q: { type: "string" } } } } } }] }));
+      expect(systems).toContain(JSON.stringify({ role: "system", content: [{ type: "tool_removal", tool: { type: "tool_reference", name: `mcp__${SERVER}__lookup` } }] }));
+      expect(systems).toContain(JSON.stringify({ role: "system", content: [], output_config: { effort: "low" } }));
     });
-    expect(isErrorResult(frames)).toEqual([false, false, false, false]);
-    const reqs = fake.requests.filter((r) => r.path === "/v1/messages");
-    expect(reqs).toHaveLength(4);
-    const [first] = reqs;
-    for (const r of reqs) {
-      expect(JSON.stringify(r.body["tools"])).toBe(JSON.stringify(first!.body["tools"]));
-      expect(JSON.stringify(r.body["system"])).toBe(JSON.stringify(first!.body["system"]));
-      expect(r.body["output_config"]).toEqual({ effort: "high" });
-      expect(r.headers["anthropic-beta"]).toBe(first!.headers["anthropic-beta"]);
-    }
-    expect(first!.headers["anthropic-beta"]!.split(",")).toContain("inline-tools-2026-09-15");
-    expect((first!.body["tools"] as Block[]).some((t) => String(t["name"]).includes(SERVER))).toBe(false);
-    const wire = reqs.map((r) => r.body["messages"] as Block[]);
-    // Review I-1: no system message EVER carries a breakpoint (one there moves off on the next request,
-    // and the entry it wrote is never read) -- so the system messages are compared WITH their bytes.
-    for (const messages of wire) for (const m of messages) if (m["role"] === "system") expect(JSON.stringify(m)).not.toContain("cache_control");
-    // Only the rolling breakpoint on a user/assistant block moves, by design.
-    for (let i = 0; i + 1 < wire.length; i++) expect(strip(wire[i + 1]!.slice(0, wire[i]!.length))).toBe(strip(wire[i]));
-    // The three changes, each where it belongs -- compared byte for byte (no breakpoint to set aside).
-    const systems = wire[3]!.filter((m) => m["role"] === "system").map((m) => JSON.stringify(m));
-    expect(systems).toContain(JSON.stringify({ role: "system", content: [{ type: "tool_addition", tool: { type: "tool_definition", definition: { name: `mcp__${SERVER}__lookup`, description: "Look something up.", input_schema: { type: "object", properties: { q: { type: "string" } } } } } }] }));
-    expect(systems).toContain(JSON.stringify({ role: "system", content: [{ type: "tool_removal", tool: { type: "tool_reference", name: `mcp__${SERVER}__lookup` } }] }));
-    expect(systems).toContain(JSON.stringify({ role: "system", content: [], output_config: { effort: "low" } }));
-  });
+  }
 
   test("RULING (fix round 1), Anthropic: a late DEFERRED MCP tool is declared `defer_loading` at the END of `tools` and not announced -- no change message, messages still prefix", async () => {
     const SERVER = "wsmidlatedeferred";

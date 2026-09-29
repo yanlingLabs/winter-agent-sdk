@@ -184,6 +184,19 @@ describe("T8 production wiring: the guards it carries", () => {
       // Sonnet 5: effort via output_config, but neither per-message effort nor tool search -- only the
       // WS-24 live-probe evidence that it takes a call to a tool absent from `tools`.
       expect(wiring.engineOptions.describeModel("anthropic/claude-sonnet-5")?.wire).toEqual({ undeclaredToolCalls: true });
+      // Sonnet 5.5 (2026-09-29): Opus 5.5's wire features -- per-message effort, tool search, mid-conversation
+      // system messages and inline tool changes -- on both first-party providers, with its own default
+      // effort (`high`). No `undeclaredToolCalls`: that is live-probe evidence only, and no probe has run on it.
+      for (const providerId of ["anthropic", "console"]) {
+        expect(wiring.engineOptions.describeModel(`${providerId}/claude-sonnet-5-5`)).toEqual({
+          displayName: "Claude Sonnet 5.5",
+          efforts: ["low", "medium", "high", "xhigh", "max"],
+          defaultEffort: "high",
+          wire: { perMessageEffort: true, deferredToolLoading: true, midConversationSystem: true, toolChanges: "inline" },
+          contextWindow: 1_000_000,
+          maxOutputTokens: 128_000,
+        });
+      }
       // A provider-local id resolves UNDER ITS PROVIDER (E4): this row's id is also `console`'s, so
       // without a provider it would be ambiguous and name neither (`describe-model-provider.test.ts`).
       expect(wiring.engineOptions.describeModel(row.upstreamId, row.providerId)?.displayName).toBe(row.displayName);
@@ -1693,8 +1706,10 @@ describe("WS-13c: the wiring's model-family surface", () => {
   });
 
   test("preferredProviders reorders the non-vendor tail, live from settings", async () => {
-    // 2026-09-25 catalog refresh: exercised on `sonnet`, not `opus` -- the `opus` slot now names Opus 5.5,
-    // which only the two vendor rows serve yet, so it has no non-vendor tail to reorder.
+    // 2026-09-25 catalog refresh: exercised on `sonnet`, not `opus` -- the `opus` slot then named Opus 5.5,
+    // which only the two vendor rows served, so it had no non-vendor tail to reorder.
+    // 2026-09-29: back on `opus` -- the `sonnet` slot now names Sonnet 5.5, whose only non-vendor row is
+    // OpenRouter's (nothing to reorder), while Opus 5.5 is now served by DeepInfra and OpenRouter.
     // Asserted RELATIVELY rather than against a hardcoded provider id: which aggregator the
     // admission-tier tie-break picks is catalog data another task may repoint, but "a preferred
     // provider outranks whatever the tier order would have chosen" is the rule.
@@ -1704,7 +1719,7 @@ describe("WS-13c: the wiring's model-family surface", () => {
     const unpreferred = await buildProductionWiring({ config: localSession("s-slots-unpreferred"), env: {}, winterHome: home, provider: hermetic });
     let byTier: string | undefined;
     try {
-      const r = unpreferred.engineOptions.resolveSlot!("sonnet", undefined);
+      const r = unpreferred.engineOptions.resolveSlot!("opus", undefined);
       byTier = r.ok ? r.providerId : undefined;
       expect(byTier).toBeDefined();
       expect(byTier).not.toBe("anthropic"); // the vendor row is disabled
@@ -1713,12 +1728,12 @@ describe("WS-13c: the wiring's model-family surface", () => {
       unpreferred.dispose();
     }
     // Any OTHER provider that serves the same canonical model, promoted by preference alone.
-    const other = ["kie", "blackbox", "freeaiapikey"].find((p) => p !== byTier)!;
+    const other = ["deepinfra", "openrouter"].find((p) => p !== byTier)!;
     expect(other).not.toBe(byTier);
     writeSettings(join(home), { providers: { anthropic: { enabled: false }, console: { enabled: false } }, preferredProviders: [other] });
     const preferred = await buildProductionWiring({ config: localSession("s-slots-preferred"), env: {}, winterHome: home, provider: hermetic });
     try {
-      expect(preferred.engineOptions.resolveSlot!("sonnet", undefined)).toMatchObject({ ok: true, providerId: other });
+      expect(preferred.engineOptions.resolveSlot!("opus", undefined)).toMatchObject({ ok: true, providerId: other });
     } finally {
       preferred.dispose();
     }

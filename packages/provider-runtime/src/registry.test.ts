@@ -72,7 +72,7 @@ describe("createRegistry — resolution", () => {
   });
 
   test("resolves an ALIAS, qualified and bare", () => {
-    expect(ok(fullRegistry().resolve({ model: "anthropic/sonnet" })).modelKey).toBe("anthropic/claude-sonnet-5");
+    expect(ok(fullRegistry().resolve({ model: "anthropic/sonnet" })).modelKey).toBe("anthropic/claude-sonnet-5-5");
     expect(ok(fullRegistry().resolve({ model: "haiku", provider: { providerId: "anthropic" } })).modelKey).toBe("anthropic/claude-haiku-4-5-20251001");
   });
 
@@ -288,7 +288,7 @@ describe("listModelInfo — pinned ModelInfo rows (R6-I, capture (J))", () => {
     expect(byValue.get("anthropic/claude-sonnet-5")?.resolvedModel).toBe("claude-sonnet-5");
     // Capture (J): every pinned row is an ALIAS row — `value` the alias, `resolvedModel` the
     // canonical wire id — which is how a host matches a persisted explicit id against its alias.
-    expect(byValue.get("sonnet")?.resolvedModel).toBe("claude-sonnet-5");
+    expect(byValue.get("sonnet")?.resolvedModel).toBe("claude-sonnet-5-5");
     expect(byValue.get("haiku")?.resolvedModel).toBe("claude-haiku-4-5-20251001");
   });
 
