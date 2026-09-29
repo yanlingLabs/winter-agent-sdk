@@ -83,6 +83,18 @@ describe("the seed is fully replaced", () => {
     // and a picked `opus` name the same model.
     expect(byAlias[0]!.key).toBe("anthropic/claude-opus-5-5");
   });
+
+  test("the pinned alias `sonnet` resolves to the current Sonnet, Claude Sonnet 5.5, on both first-party providers", () => {
+    // 2026-09-29: the alias follows the `sonnet` slot from Sonnet 5 to Sonnet 5.5, the way `opus` sits on
+    // Opus 5.5 rather than Opus 5 -- a typed `sonnet` and a picked `sonnet` name the same model.
+    for (const providerId of ["anthropic", "console"]) {
+      const byAlias = catalog.models.filter((m) => m.providerId === providerId && m.aliases.includes("sonnet"));
+      expect(byAlias.map((m) => m.key)).toEqual([`${providerId}/claude-sonnet-5-5`]);
+    }
+    const slot = catalog.families.find((f) => f.id === "claude")!.slots.find((s) => s.name === "sonnet")!;
+    expect(slot.canonicalModelId).toBe("claude-sonnet-5.5");
+    expect(catalog.models.find((m) => m.key === "anthropic/claude-sonnet-5-5")!.canonicalModelId).toBe(slot.canonicalModelId);
+  });
 });
 
 describe("pricing (R6-H, R6-9)", () => {
@@ -174,6 +186,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "anthropic/claude-sonnet-4.5",
       "anthropic/claude-sonnet-4.6",
       "anthropic/claude-sonnet-5",
+      "anthropic/claude-sonnet-5-5",
       "arcee-ai/trinity-large-thinking",
       "baidu/ernie-4.5-turbo-128k",
       "baidu/ernie-4.5-turbo-32k",
@@ -272,6 +285,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "console/claude-sonnet-4.5",
       "console/claude-sonnet-4.6",
       "console/claude-sonnet-5",
+      "console/claude-sonnet-5-5",
       "crusoe/deepseek-ai/DeepSeek-V4-Flash",
       "crusoe/deepseek-ai/DeepSeek-V4-Pro",
       "crusoe/google/gemma-4-31b-it",
@@ -583,6 +597,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "openrouter/anthropic/claude-opus-5",
       "openrouter/anthropic/claude-opus-5.5",
       "openrouter/anthropic/claude-sonnet-5",
+      "openrouter/anthropic/claude-sonnet-5.5",
       "openrouter/deepseek/deepseek-v4-pro",
       "openrouter/deepseek/deepseek-v4.1-flash",
       "openrouter/google/gemini-3.5-flash",

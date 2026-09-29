@@ -4,6 +4,13 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## Unreleased
+
+- Claude Sonnet 5.5 (`claude-sonnet-5-5`) is in the catalog for the Anthropic API key, the Console
+  sign-in and OpenRouter. The `sonnet` alias and slot now point to it instead of Sonnet 5. Like Opus
+  5.5, it can change effort, receive system messages and add or remove tools mid-conversation without
+  losing the prompt cache.
+
 ## 0.0.34
 
 ### Provider catalog refresh (cat34)

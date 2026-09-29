@@ -37,11 +37,11 @@
         },
         {
           "name": "sonnet",
-          "canonicalModelId": "claude-sonnet-5",
+          "canonicalModelId": "claude-sonnet-5.5",
           "description": "fast, capable everyday coding; the default worker.",
           "reason": "Third: the balance of speed, capability and price.",
           "basis": "winter-curated",
-          "citation": "spec:WS-13c §9",
+          "citation": "spec:WS-13c §9; 2026-09-29: repointed from `claude-sonnet-5` to Claude Sonnet 5.5, the current Sonnet (https://platform.claude.com/docs/en/about-claude/models/overview lists Claude Sonnet 5.5 in the current lineup and Claude Sonnet 5 under legacy models)",
           "status": "candidate"
         },
         {
