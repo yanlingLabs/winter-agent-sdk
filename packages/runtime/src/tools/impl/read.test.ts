@@ -5,13 +5,14 @@
 // this `bun test` invocation -- exactly the scenario registry.test.ts's own "Fix round 1" comment
 // anticipated (its own not-yet-executable assertions deliberately use throwaway names, never "Read").
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import "./read.ts";
 import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createSessionReadState } from "../read-state.ts";
-import { MODEL_DOES_NOT_SUPPORT_IMAGES, READ_IMAGE_MAX_BYTES, countPdfPages, parseWebpDimensions, sniffImageType } from "./read.ts";
+import { MODEL_DOES_NOT_SUPPORT_IMAGES, READ_IMAGE_MAX_BYTES, countPdfPages, parsePngDimensions, parseWebpDimensions, sniffImageType } from "./read.ts";
+import { realPng } from "../image-test-fixtures.ts";
 
 function makeCtx(cwd: string): ToolExecutionContext {
   return {
@@ -306,7 +307,7 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       expect(soleImage(await runRead({ file_path: p }, makeCtx(dir))).media_type).toBe("image/jpeg");
     });
 
-    test("BMP, TIFF and HEIC are refused with a text saying how to convert -- no provider takes them as images", async () => {
+    test("a BMP, TIFF or HEIC that cannot be decoded is refused with a text saying to convert it -- never sent as something no provider takes", async () => {
       const tiff = Buffer.from([0x49, 0x49, 0x2a, 0x00, 0, 0, 0, 0]);
       const heic = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypheic", "ascii"), Buffer.alloc(16)]);
       for (const [name, bytes, format] of [["pic.bmp", makeBmp(33, 77), "BMP"], ["pic.tiff", tiff, "TIFF"], ["pic.heic", heic, "HEIC"]] as const) {
@@ -317,7 +318,7 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
         expect(result.blocks).toBeUndefined();
         expect(result.output).toContain(`is a ${format} image`);
         expect(result.output).toContain("PNG, JPEG, GIF and WebP");
-        expect(result.output).toContain("sips -s format png");
+        expect(result.output).toContain("convert it to PNG first");
       }
     });
 
@@ -327,10 +328,10 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       const result = await runRead({ file_path: p }, makeCtx(dir));
       expect(result.isError).toBe(true);
       expect(result.blocks).toBeUndefined();
-      expect(result.output).toContain("does not contain PNG, JPEG, GIF or WebP image data");
+      expect(result.output).toContain("does not contain PNG, JPEG, GIF, WebP, BMP, TIFF or HEIC image data");
     });
 
-    test("an image over READ_IMAGE_MAX_BYTES (3.75 MiB, base64 5 MiB) is refused; one exactly at it is attached", async () => {
+    test("an image over READ_IMAGE_MAX_BYTES (3.75 MiB, base64 5 MiB) that cannot be decoded -- so cannot be shrunk -- is refused; one exactly at it is attached", async () => {
       expect(READ_IMAGE_MAX_BYTES).toBe(3_932_160);
       expect(Buffer.alloc(READ_IMAGE_MAX_BYTES).toString("base64").length).toBe(5 * 1024 * 1024);
       const over = join(dir, "huge.png");
@@ -339,18 +340,37 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       expect(refused.isError).toBe(true);
       expect(refused.blocks).toBeUndefined();
       expect(refused.output).toContain(`over the ${READ_IMAGE_MAX_BYTES}-byte limit`);
+      expect(refused.output).toContain("could not be made smaller");
       const at = join(dir, "at-cap.png");
       const atBytes = Buffer.concat([makePng(10, 10), Buffer.alloc(READ_IMAGE_MAX_BYTES - makePng(10, 10).length)]);
       writeFileSync(at, atBytes);
       expect(Buffer.from(soleImage(await runRead({ file_path: at }, makeCtx(dir))).data, "base64").length).toBe(READ_IMAGE_MAX_BYTES);
     });
 
-    test("an image wider or taller than 8000 px is refused", async () => {
+    test("an image over 8000 px that cannot be decoded -- so cannot be shrunk -- is refused", async () => {
       const p = join(dir, "wide.png");
       writeFileSync(p, makePng(8001, 10));
       const result = await runRead({ file_path: p }, makeCtx(dir));
       expect(result.isError).toBe(true);
       expect(result.output).toContain("8001x10 px, over the 8000 px limit");
+      expect(result.output).toContain("could not be made smaller");
+    });
+
+    test.skipIf(!existsSync("/usr/bin/sips"))("a REAL 3024x1964 PNG is shrunk to 1568 px on the long edge, on a copy -- the user's file is untouched", async () => {
+      const p = join(dir, "screenshot.png");
+      const original = realPng(3024, 1964);
+      writeFileSync(p, original);
+      const ctx = makeCtx(dir);
+      const result = await runRead({ file_path: p }, ctx);
+      expect(result.isError).toBeUndefined();
+      const image = soleImage(result);
+      expect(image.media_type).toBe("image/png");
+      const sent = Buffer.from(image.data, "base64");
+      expect(parsePngDimensions(sent)).toEqual({ width: 1568, height: 1018 });
+      expect(result.output).toContain(`[image: ${p} (image/png, ${sent.length} bytes, 1568x1018, resized from 3024x1964)]`);
+      expect(readFileSync(p).equals(original)).toBe(true);
+      // The working copies are gone.
+      expect(existsSync(join(dir, ".tmp", "image-prep")) ? readdirSync(join(dir, ".tmp", "image-prep")) : []).toEqual([]);
     });
 
     test("a stray offset on an image read still records complete:false (no per-type carve-out)", async () => {
@@ -417,7 +437,7 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       if (image.type !== "image") throw new Error("expected image");
       expect(image.source.media_type).toBe("image/png");
       expect(Buffer.from(image.source.data, "base64").equals(png)).toBe(true);
-      expect(result.output).toContain("[image: image/png]");
+      expect(result.output).toContain("[image: image/png, ");
       expect(result.output).not.toContain(png.toString("base64"));
     });
 
@@ -429,7 +449,7 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       expect(result.isError).toBeUndefined();
       expect(result.blocks).toBeUndefined();
       expect(result.output).toContain("plot()");
-      expect(result.output).toContain(`[image output omitted: ${MODEL_DOES_NOT_SUPPORT_IMAGES}]`);
+      expect(result.output).toContain(`[image omitted: ${MODEL_DOES_NOT_SUPPORT_IMAGES}]`);
     });
 
     test("a stray offset on a notebook read still records complete:false (no per-type carve-out)", async () => {

@@ -1,10 +1,12 @@
 import { describe, test, expect } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { realPng } from "../tools/image-test-fixtures.ts";
+import { parsePngDimensions } from "../tools/image-prep.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
-import { getRegisteredTool } from "../tools/registry.ts";
+import { getRegisteredTool, type ToolResultPayload } from "../tools/registry.ts";
 import { createElicitationAsker } from "./elicitation.ts";
 import { createInMemoryDiscoveryCache, createMcpLifecycle, resolveMcpServerSources, type McpServerSource, type ResolvedMcpServerEntry } from "./lifecycle.ts";
 import type { McpEnvConfig } from "./env.ts";
@@ -360,6 +362,60 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     } finally {
       await lifecycle.dispose();
       await server.close();
+    }
+  });
+
+  // Code-mode images: an MCP `image` content item reaches the model as an IMAGE block (never base64
+  // text), through the same preparation as an image Read (tools/image-prep.ts).
+  async function callImageTool(content: unknown[], ctx: Record<string, unknown>): Promise<ToolResultPayload> {
+    const server = createFixtureMcpServer({
+      tools: [{ name: "shot", inputSchema: { type: "object", properties: {} }, handler: () => ({ content }) as never }],
+    });
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "img", origin: "explicit", config: { type: "sdk", name: "img" } }];
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { img: server } });
+    try {
+      await lifecycle.start();
+      return await getRegisteredTool("mcp__img__shot")!.executor!.execute({}, ctx as never);
+    } finally {
+      await lifecycle.dispose();
+      await server.close();
+    }
+  }
+
+  test("code-mode images: an MCP image item becomes an image block beside the text items (not base64 text)", async () => {
+    const png = realPng(64, 48);
+    const result = await callImageTool([{ type: "text", text: "here it is" }, { type: "image", data: png.toString("base64"), mimeType: "image/png" }], { tempDir: "/nonexistent/never-used" });
+    expect(result.blocks).toEqual([
+      { type: "text", text: "here it is" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: png.toString("base64") } },
+    ]);
+    expect(result.output).toBe(`here it is\n[image: image/png, ${png.length} bytes, 64x48]`);
+    expect(result.output).not.toContain(png.toString("base64"));
+  });
+
+  test("code-mode images: the media type comes from the bytes, not the item's mimeType", async () => {
+    const png = realPng(8, 8);
+    const result = await callImageTool([{ type: "image", data: png.toString("base64"), mimeType: "image/jpeg" }], {});
+    expect(result.blocks?.[0]).toMatchObject({ type: "image", source: { media_type: "image/png" } });
+  });
+
+  test("code-mode images: on a model that reads no images, the image item is the refusal note -- no image block, no base64", async () => {
+    const png = realPng(64, 48);
+    const result = await callImageTool([{ type: "text", text: "here it is" }, { type: "image", data: png.toString("base64"), mimeType: "image/png" }], { modelReadsImages: false });
+    expect(result.blocks).toBeUndefined();
+    expect(result.output).toBe("here it is\n[image omitted: The selected model doesn't support images]");
+  });
+
+  test.skipIf(!existsSync("/usr/bin/sips"))("code-mode images: a large MCP image is shrunk to 1568 px exactly like an image Read", async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), "winter-lifecycle-img-"));
+    try {
+      const result = await callImageTool([{ type: "image", data: realPng(3024, 1964).toString("base64"), mimeType: "image/png" }], { tempDir: sessionDir });
+      const block = result.blocks?.[0];
+      if (block?.type !== "image") throw new Error("expected an image block");
+      expect(parsePngDimensions(Buffer.from(block.source.data, "base64"))).toEqual({ width: 1568, height: 1018 });
+      expect(result.output).toContain("1568x1018, resized from 3024x1964");
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
     }
   });
 

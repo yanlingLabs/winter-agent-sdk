@@ -22,12 +22,26 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   list image input, Read answers `The selected model doesn't support images: <path>`. The OpenAI-family
   and Bedrock adapters now also refuse an image for such a model before sending, as the Anthropic and
   Google adapters already did.
-- **Limits are checked before the image enters the conversation.** An image over 3.75 MiB (5 MiB once
-  base64-encoded, the smallest per-image limit among the providers) or over 8000 px on a side is refused
-  with a text saying how to shrink it. BMP, TIFF and HEIC files, which no provider accepts as images, are
-  refused with a text saying how to convert them. The file's bytes decide its type, not its extension.
-  Gemini does not read GIFs, so a GIF sent to Gemini becomes a short note saying so (and on Gemini 3 it
-  is never nested in the function response).
+- **Large images are shrunk before the model sees them.** An image whose long edge is over 1568 px is
+  scaled down to 1568 px, keeping its shape. That is the size above which Claude downsizes an image
+  anyway, and it keeps a session with several screenshots under the providers' per-request limits. The
+  resize uses macOS's `sips` on a copy in the session's temp folder; the user's file is never changed.
+  The text of the result says when an image was resized (for example "resized from 3024x1964").
+  - PNG stays PNG and JPEG stays JPEG (quality 85). A GIF or WebP that has to be rewritten becomes PNG
+    (a GIF's first frame): `sips` cannot write WebP, and Gemini does not read GIF.
+  - BMP and TIFF, which no provider accepts, are converted to PNG, and HEIC photos to JPEG.
+  - An image still over 3.75 MiB (5 MiB once base64-encoded, the smallest per-image limit among the
+    providers) is re-encoded as JPEG at quality 85, 70, 55 and then 40. If it is still too big, it is
+    refused with a text saying so; nothing is truncated.
+  - Without `sips`, an image already within the limits (3.75 MiB, 8000 px a side) is sent unresized, and
+    anything else is refused with a text saying why. Files that are not a readable image are refused.
+  - The file's bytes decide its type, not its extension. Gemini does not read GIFs, so a GIF sent to
+    Gemini unchanged becomes a short note saying so (and on Gemini 3 it is never nested in the function
+    response).
+- **MCP tools that return images now show them to the model.** An MCP `image` content item used to reach
+  the model as base64 text. It is now an image block beside the result's text, prepared exactly like an
+  image Read: the same size rules, the same resizing, and on a model without image input the same
+  `The selected model doesn't support images` note in its place.
 - **Resumed sessions keep their images.** The transcript stores an image result the way claude's does
   (a base64 image block inside the tool result), so a resumed session sends it again.
 - **The host's copy of an image result leaves out the bytes.** The tool-round message a host receives
@@ -37,9 +51,12 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   that measure. Counted, a single 3.5 MB screenshot would push its message over the limit, and every
   later request in the session would fail.
 - **Notebook plots are images too.** A notebook's `image/png` outputs reach the model as images between
-  its text cells.
+  its text cells, prepared like any other image.
 - **PDFs return honest metadata.** A PDF read now reports its size and page count and says its content
   is not shown, instead of sending its bytes as base64 text.
+- **Read's description says what it does.** It now tells the model that images are shown to it when the
+  model supports images, that large ones are shrunk, and that a PDF returns only its metadata. The
+  changed description changes the cached prompt prefix once, on upgrade.
 - **Other tools are unchanged.** A text tool result is still a plain string on every surface.
 
 ## 0.0.35

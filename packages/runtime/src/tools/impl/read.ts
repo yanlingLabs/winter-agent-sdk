@@ -4,7 +4,7 @@
 //
 // *** RESULT SHAPE (code-mode images, 2026-09-29) ***
 // WS-06 §3.1 pins Read's INPUT shape verbatim (`{file_path, offset?, limit?, pages?}`) and describes the
-// RESULT in prose ("text with line windowing; images/notebooks/PDFs render as type-specific blocks").
+// RESULT in prose (the descriptor, descriptors/read.ts, now says what the result below is).
 //   1. A text read returns bare text in `output`, exactly as before.
 //   2. An IMAGE read returns real content blocks in `ToolResultPayload.blocks` (registry.ts): one
 //      `{type:"image", source:{type:"base64", media_type, data}}` block, claude's own Read shape. The
@@ -12,7 +12,10 @@
 //      provider adapter (each adapter carries a tool-result image natively where its API allows it and
 //      otherwise right after the tool results -- provider-runtime). `output` holds a one-line text
 //      rendering for hooks and logs. The interim `{winterReadBlocks}` JSON envelope this file used to
-//      put in `output` (which reached the model as base64 TEXT) is gone.
+//      put in `output` (which reached the model as base64 TEXT) is gone. The image is made ready by
+//      tools/image-prep.ts (shared with MCP image results): shrunk to 1568 px on its long edge, BMP/TIFF/
+//      HEIC converted, re-encoded as JPEG when still over the byte limit -- all with macOS's `sips` on
+//      copies in the session temp dir, never the user's file.
 //   3. A model whose catalog row reads no images gets a short text refusal instead
 //      (`MODEL_DOES_NOT_SUPPORT_IMAGES` + the path), never base64 (`ctx.modelReadsImages`).
 //   4. Notebooks render as text blocks with their `image/png` outputs as image blocks (plain text when
@@ -37,11 +40,10 @@
 //   - PDF_RANGE_MAX_PAGES=20, NB_OUTPUT_CAP=4000 (per-notebook-output-block character cap, mirrors
 //     Norma's own fs-read.ts precedent): invented, documented thresholds. READ_IMAGE_MAX_BYTES and
 //     READ_IMAGE_MAX_DIMENSION are the providers' own documented limits (see their comments).
-//   - Dimension parsing is hand-rolled (no library, per R3-5) for PNG/GIF/BMP/JPEG/WebP.
-//   - No `sips`/ImageMagick/etc. shell-out (unlike Norma's fs-read.ts): spawning a subprocess for
-//     conversion or downscaling makes tests nondeterministic/host-dependent. So BMP/TIFF/HEIC -- which
-//     no provider accepts as an image -- and an over-size image are REFUSED with a text that says how
-//     to convert or shrink it, never sent as something the provider would reject.
+//   - Dimension parsing is hand-rolled (no library, per R3-5) for PNG/GIF/BMP/JPEG/WebP; `sips` answers
+//     for the rest. Resizing and conversion shell out to `/usr/bin/sips` (argv, no shell) -- the runtime
+//     ships for darwin-arm64 only. Without it, an image already within every limit is sent as it is and
+//     anything else is refused with a text that says why; nothing is sent that a provider would reject.
 //
 // ctx.permissions.probeReadAccess is deliberately UNUSED here: the standing P2 evaluator gates the
 // call before this executor ever runs (task-4 brief: "your executor does NOT re-evaluate
@@ -62,6 +64,28 @@ import { basename, extname, resolve } from "node:path";
 // from a test file is safe -- ES modules evaluate a given module's body exactly once.
 import "../descriptors/index.ts";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultBlock, type ToolResultPayload } from "../registry.ts";
+import {
+  IMAGE_MAX_INPUT_BYTES,
+  MODEL_DOES_NOT_SUPPORT_IMAGES,
+  describePreparedImage,
+  prepareImageForModel,
+  resultBlocksForModel,
+  type PreparedImage,
+  type RawResultPart,
+} from "../image-prep.ts";
+// Re-exported: the image facts live in tools/image-prep.ts (shared with MCP image results).
+export {
+  IMAGE_MAX_LONG_EDGE,
+  MODEL_DOES_NOT_SUPPORT_IMAGES,
+  READ_IMAGE_MAX_BYTES,
+  READ_IMAGE_MAX_DIMENSION,
+  parseBmpDimensions,
+  parseGifDimensions,
+  parseJpegDimensions,
+  parsePngDimensions,
+  parseWebpDimensions,
+  sniffImageType,
+} from "../image-prep.ts";
 import { emptyPathSet, type ExtractedPaths } from "../paths-seam.ts";
 
 // --- Input (WS-06 §3.1, verbatim) -----------------------------------------------------------------
@@ -94,16 +118,9 @@ function parseInput(raw: unknown): ReadInput {
 
 // --- Multimodal results (see RESULT SHAPE above) --------------------------------------------------------
 
-type ImageBlock = Extract<ToolResultBlock, { type: "image" }>;
-
-/**
- * The exact refusal a model with no image input gets (the host's composer shows the same words). Exported
- * so a host or a test matches it rather than retyping it.
- */
-export const MODEL_DOES_NOT_SUPPORT_IMAGES = "The selected model doesn't support images";
-
-function imageBlockOf(bytes: Buffer, mediaType: string): ImageBlock {
-  return { type: "image", source: { type: "base64", media_type: mediaType, data: bytes.toString("base64") } };
+/** The model-facing block for a prepared image. */
+function imageBlockOf(image: PreparedImage): ToolResultBlock {
+  return { type: "image", source: { type: "base64", media_type: image.mediaType, data: image.bytes.toString("base64") } };
 }
 
 // --- Plain text (line windowing) --------------------------------------------------------------------
@@ -193,168 +210,27 @@ const IMAGE_MIME: Record<string, string> = {
   ".heic": "image/heic",
 };
 
-/** The image types every provider adapter can carry (Anthropic, Bedrock, Gemini and OpenAI all accept exactly these four). */
-const DELIVERABLE_IMAGE_TYPES: ReadonlySet<string> = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-
-/**
- * The largest image Read hands a model, in raw bytes: 3.75 MiB, whose base64 is exactly 5 MiB.
- *
- * The strictest per-image limit among the providers Winter drives: "5 MB (base64-encoded) on Amazon
- * Bedrock and Google Cloud" for Claude (https://platform.claude.com/docs/en/build-with-claude/vision,
- * "Request limits"; the Claude API itself takes 10 MB). An image over a provider's limit stays in the
- * conversation and fails EVERY later request, so the cap lives here, before the image enters history,
- * not in an adapter. A host that stages images for Read (code-mode image input) must cap them at this
- * same number, or a staged image would be refused.
- */
-export const READ_IMAGE_MAX_BYTES = 3_932_160;
-
-/** The largest width or height any provider accepts: "The maximum dimensions per image are 8000x8000 px" (same page). */
-export const READ_IMAGE_MAX_DIMENSION = 8000;
-
-/** What the bytes actually are, from their magic numbers -- never trusting the extension. `undefined` when none matches. */
-export function sniffImageType(buf: Uint8Array): string | undefined {
-  if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 && buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a) return "image/png";
-  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
-  if (buf.length >= 6 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38 && (buf[4] === 0x37 || buf[4] === 0x39) && buf[5] === 0x61) return "image/gif";
-  if (buf.length >= 12 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return "image/webp";
-  if (buf.length >= 2 && buf[0] === 0x42 && buf[1] === 0x4d) return "image/bmp";
-  if (buf.length >= 4 && ((buf[0] === 0x49 && buf[1] === 0x49 && buf[2] === 0x2a && buf[3] === 0x00) || (buf[0] === 0x4d && buf[1] === 0x4d && buf[2] === 0x00 && buf[3] === 0x2a))) return "image/tiff";
-  if (buf.length >= 12 && buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70) {
-    const brand = String.fromCharCode(buf[8]!, buf[9]!, buf[10]!, buf[11]!);
-    if (["heic", "heix", "hevc", "hevx", "heim", "heis", "mif1", "msf1"].includes(brand)) return "image/heic";
-  }
-  return undefined;
-}
-
-function u16be(buf: Uint8Array, o: number): number {
-  return (buf[o]! << 8) | buf[o + 1]!;
-}
-function u32be(buf: Uint8Array, o: number): number {
-  return ((buf[o]! << 24) | (buf[o + 1]! << 16) | (buf[o + 2]! << 8) | buf[o + 3]!) >>> 0;
-}
-function u16le(buf: Uint8Array, o: number): number {
-  return buf[o]! | (buf[o + 1]! << 8);
-}
-function i32le(buf: Uint8Array, o: number): number {
-  return buf[o]! | (buf[o + 1]! << 8) | (buf[o + 2]! << 16) | (buf[o + 3]! << 24);
-}
-
-export function parsePngDimensions(buf: Uint8Array): { width: number; height: number } | undefined {
-  if (buf.length < 24) return undefined;
-  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-  for (let i = 0; i < 8; i++) if (buf[i] !== sig[i]) return undefined;
-  if (buf[12] !== 0x49 || buf[13] !== 0x48 || buf[14] !== 0x44 || buf[15] !== 0x52) return undefined; // "IHDR"
-  return { width: u32be(buf, 16), height: u32be(buf, 20) };
-}
-
-export function parseGifDimensions(buf: Uint8Array): { width: number; height: number } | undefined {
-  if (buf.length < 10) return undefined;
-  if (buf[0] !== 0x47 || buf[1] !== 0x49 || buf[2] !== 0x46) return undefined; // "GIF"
-  return { width: u16le(buf, 6), height: u16le(buf, 8) };
-}
-
-export function parseBmpDimensions(buf: Uint8Array): { width: number; height: number } | undefined {
-  if (buf.length < 26) return undefined;
-  if (buf[0] !== 0x42 || buf[1] !== 0x4d) return undefined; // "BM"
-  return { width: i32le(buf, 18), height: Math.abs(i32le(buf, 22)) };
-}
-
-const JPEG_SOF_MARKERS = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
-
-export function parseJpegDimensions(buf: Uint8Array): { width: number; height: number } | undefined {
-  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return undefined; // SOI
-  let pos = 2;
-  while (pos + 3 < buf.length) {
-    if (buf[pos] !== 0xff) {
-      pos++;
-      continue;
-    }
-    let markerPos = pos + 1;
-    while (buf[markerPos] === 0xff && markerPos + 1 < buf.length) markerPos++; // skip 0xFF fill bytes
-    const marker = buf[markerPos]!;
-    if (marker === 0xd9 || marker === 0xda) return undefined; // EOI / SOS reached, no SOF seen
-    if (marker >= 0xd0 && marker <= 0xd7) {
-      pos = markerPos + 1; // RST markers carry no length field
-      continue;
-    }
-    const lenPos = markerPos + 1;
-    if (lenPos + 1 >= buf.length) return undefined;
-    const segLen = u16be(buf, lenPos);
-    if (JPEG_SOF_MARKERS.has(marker)) {
-      if (lenPos + 7 > buf.length) return undefined;
-      return { height: u16be(buf, lenPos + 3), width: u16be(buf, lenPos + 5) };
-    }
-    pos = lenPos + segLen; // segLen counts its own 2 bytes -- next marker starts right after
-  }
-  return undefined;
-}
-
-/** WebP's canvas size from its VP8 (lossy), VP8L (lossless) or VP8X (extended) header. */
-export function parseWebpDimensions(buf: Uint8Array): { width: number; height: number } | undefined {
-  if (buf.length < 30 || sniffImageType(buf) !== "image/webp") return undefined;
-  const chunk = String.fromCharCode(buf[12]!, buf[13]!, buf[14]!, buf[15]!);
-  if (chunk === "VP8 ") {
-    if (buf[23] !== 0x9d || buf[24] !== 0x01 || buf[25] !== 0x2a) return undefined; // key-frame start code
-    return { width: u16le(buf, 26) & 0x3fff, height: u16le(buf, 28) & 0x3fff };
-  }
-  if (chunk === "VP8L") {
-    if (buf[20] !== 0x2f) return undefined; // lossless signature
-    const bits = (buf[21]! | (buf[22]! << 8) | (buf[23]! << 16) | (buf[24]! << 24)) >>> 0;
-    return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
-  }
-  if (chunk === "VP8X") {
-    return { width: 1 + (buf[24]! | (buf[25]! << 8) | (buf[26]! << 16)), height: 1 + (buf[27]! | (buf[28]! << 8) | (buf[29]! << 16)) };
-  }
-  return undefined;
-}
-
-function parseImageDimensions(mediaType: string, bytes: Uint8Array): { width: number; height: number } | undefined {
-  if (mediaType === "image/png") return parsePngDimensions(bytes);
-  if (mediaType === "image/gif") return parseGifDimensions(bytes);
-  if (mediaType === "image/bmp") return parseBmpDimensions(bytes);
-  if (mediaType === "image/jpeg") return parseJpegDimensions(bytes);
-  if (mediaType === "image/webp") return parseWebpDimensions(bytes);
-  return undefined;
-}
-
-const FORMAT_NAMES: Record<string, string> = { "image/bmp": "BMP", "image/tiff": "TIFF", "image/heic": "HEIC" };
-
 function imageRefusal(text: string): ToolResultPayload {
   return { output: text, isError: true };
 }
 
-function readImage(target: string, st: Stats, usedWindow: boolean, ctx: ToolExecutionContext): ToolResultPayload {
+async function readImage(target: string, st: Stats, usedWindow: boolean, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
   // The gate comes first: a text-only model gets the same answer whatever the file holds.
   if (ctx.modelReadsImages === false) return imageRefusal(`${MODEL_DOES_NOT_SUPPORT_IMAGES}: ${target}`);
-  if (st.size > READ_IMAGE_MAX_BYTES) {
-    return imageRefusal(
-      `Error: image ${target} is ${st.size} bytes, over the ${READ_IMAGE_MAX_BYTES}-byte limit for showing an image to the model. Make a smaller copy first (for example on macOS: sips -Z 2000 "${target}" --out <smaller.png>) and read that.`,
-    );
+  if (st.size > IMAGE_MAX_INPUT_BYTES) {
+    return imageRefusal(`Error: image ${target} cannot be shown to the model: it is ${st.size} bytes, over the ${IMAGE_MAX_INPUT_BYTES}-byte limit for an image to prepare. Make a smaller copy first (for example on macOS: sips -Z 1568 "${target}" --out <smaller.png>) and read that.`);
   }
-  const bytes = readFileSync(target);
-  const mediaType = sniffImageType(bytes);
-  if (mediaType === undefined) {
-    return imageRefusal(`Error: ${target} does not contain PNG, JPEG, GIF or WebP image data, so it cannot be shown to the model.`);
-  }
-  if (!DELIVERABLE_IMAGE_TYPES.has(mediaType)) {
-    return imageRefusal(
-      `Error: ${target} is a ${FORMAT_NAMES[mediaType] ?? mediaType} image, which models cannot read; they accept PNG, JPEG, GIF and WebP. Convert it first (for example on macOS: sips -s format png "${target}" --out <converted.png>) and read the converted file.`,
-    );
-  }
-  const dims = parseImageDimensions(mediaType, bytes);
-  if (dims !== undefined && (dims.width > READ_IMAGE_MAX_DIMENSION || dims.height > READ_IMAGE_MAX_DIMENSION)) {
-    return imageRefusal(
-      `Error: image ${target} is ${dims.width}x${dims.height} px, over the ${READ_IMAGE_MAX_DIMENSION} px limit on either side. Make a smaller copy first (for example on macOS: sips -Z 2000 "${target}" --out <smaller.png>) and read that.`,
-    );
-  }
+  // Shrunk, converted or re-encoded as needed -- on a COPY in the session temp dir, never the user's
+  // file (tools/image-prep.ts, shared with MCP image results).
+  const prepared = await prepareImageForModel(readFileSync(target), { tempDir: () => ctx.tempDir });
+  if (!prepared.ok) return imageRefusal(`Error: image ${target} cannot be shown to the model: ${prepared.reason}.`);
   // A whole image is always attached in full -- there is no partial-image concept -- but the
   // brief's own rule is literal and carve-out-free ("a windowed/offset/limit/pages read records
   // complete: false"): a caller that passed offset/limit/pages on an image read (nonsensical, but
   // not rejected -- WS-06 doesn't scope those fields per file type) must not be told it was a
   // trustworthy whole-file read either. Same reasoning applies to notebooks and PDFs below.
   ctx.readState.recordRead(target, { complete: !usedWindow, mtimeMs: st.mtimeMs });
-  const size = dims !== undefined ? `, ${dims.width}x${dims.height}` : "";
-  return { output: `[image: ${target} (${mediaType}, ${bytes.length} bytes${size})]`, blocks: [imageBlockOf(bytes, mediaType)] };
+  return { output: `[image: ${target} (${describePreparedImage(prepared)})]`, blocks: [imageBlockOf(prepared)] };
 }
 
 // --- Notebooks (.ipynb) ------------------------------------------------------------------------------
@@ -386,17 +262,16 @@ function nbCap(s: string): string {
   return s.length <= NB_OUTPUT_CAP ? s : s.slice(0, NB_OUTPUT_CAP) + `\n[output truncated at ${NB_OUTPUT_CAP} chars]`;
 }
 
-// Renders one notebook into text and image blocks: text is grouped per run of consecutive non-image
+// Renders one notebook into text and image parts: text is grouped per run of consecutive non-image
 // output; a `display_data`/`execute_result` cell carrying an `image/png` output splits the run
-// into its own image block (so a notebook mixing prose and plot output produces exactly the
-// interleaved text/image blocks a real multi-part tool_result carries). An image the model cannot be
-// shown -- a text-only model, a plot over the per-image limits, or plots past the per-read total of
-// `READ_IMAGE_MAX_BYTES` -- becomes a one-line text note in its place, never dropped and never base64
-// text. Returns `undefined` on
+// into its own image part (so a notebook mixing prose and plot output produces exactly the
+// interleaved text/image blocks a real multi-part tool_result carries). `notebookResult` makes the
+// images model-ready through the shared `resultBlocksForModel` (image-prep.ts): shrunk like any image
+// Read, and a note in place of any the model cannot be shown. Returns `undefined` on
 // malformed JSON / no `cells` array -- the caller falls through to the plain-text path, matching
 // Norma's own fs-read.ts precedent (a malformed notebook is just read as text, offset/limit and
 // all, not force-fitted into notebook rendering).
-function renderNotebookBlocks(raw: string, readsImages: boolean): ToolResultBlock[] | undefined {
+function renderNotebookParts(raw: string): RawResultPart[] | undefined {
   let nb: NbNotebook;
   try {
     nb = JSON.parse(raw);
@@ -405,8 +280,7 @@ function renderNotebookBlocks(raw: string, readsImages: boolean): ToolResultBloc
   }
   if (!Array.isArray(nb.cells)) return undefined;
 
-  const blocks: ToolResultBlock[] = [];
-  let imageBytesLeft = READ_IMAGE_MAX_BYTES;
+  const blocks: RawResultPart[] = [];
   let pending: string[] = [];
   const flush = () => {
     if (pending.length > 0) {
@@ -437,19 +311,8 @@ function renderNotebookBlocks(raw: string, readsImages: boolean): ToolResultBloc
           const rawPng = data["image/png"];
           const png = typeof rawPng === "string" || Array.isArray(rawPng) ? nbText(rawPng as string | string[]) : undefined;
           if (png !== undefined) {
-            const bytes = Buffer.from(png, "base64");
-            const dims = parsePngDimensions(bytes);
-            if (!readsImages) {
-              pending.push(`[image output omitted: ${MODEL_DOES_NOT_SUPPORT_IMAGES}]`);
-            } else if (sniffImageType(bytes) !== "image/png") {
-              pending.push("[image output omitted: its image/png data is not a PNG image]");
-            } else if (bytes.length > imageBytesLeft || (dims !== undefined && (dims.width > READ_IMAGE_MAX_DIMENSION || dims.height > READ_IMAGE_MAX_DIMENSION))) {
-              pending.push(`[image output omitted: over the per-read image limit (${READ_IMAGE_MAX_BYTES} bytes in total, ${READ_IMAGE_MAX_DIMENSION} px per side)]`);
-            } else {
-              flush();
-              imageBytesLeft -= bytes.length;
-              blocks.push(imageBlockOf(bytes, "image/png"));
-            }
+            flush();
+            blocks.push({ type: "image", bytes: Buffer.from(png, "base64") });
           } else {
             const text = data["text/plain"];
             if (typeof text === "string" || Array.isArray(text)) pending.push(nbCap(nbText(text as string | string[])));
@@ -466,9 +329,9 @@ function renderNotebookBlocks(raw: string, readsImages: boolean): ToolResultBloc
 }
 
 /** A rendered notebook as a result: plain text when it holds no image, else the blocks plus a text rendering. */
-function notebookResult(blocks: ToolResultBlock[]): ToolResultPayload {
-  const text = blocks.map((b) => (b.type === "text" ? b.text : `[image: ${b.source.media_type}]`)).join("\n");
-  return blocks.some((b) => b.type === "image") ? { output: text, blocks } : { output: text };
+async function notebookResult(parts: RawResultPart[], ctx: ToolExecutionContext): Promise<ToolResultPayload> {
+  const result = await resultBlocksForModel(parts, { readsImages: ctx.modelReadsImages !== false, tempDir: () => ctx.tempDir });
+  return result.hasImage ? { output: result.text, blocks: result.blocks } : { output: result.text };
 }
 
 // --- PDFs ----------------------------------------------------------------------------------------
@@ -559,14 +422,14 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
   const ext = extname(target).toLowerCase();
 
   try {
-    if (IMAGE_EXTS.has(ext)) return readImage(target, st, usedWindow, ctx);
+    if (IMAGE_EXTS.has(ext)) return await readImage(target, st, usedWindow, ctx);
     if (ext === ".pdf") return readPdf(target, st, input.pages, usedWindow, ctx);
     if (ext === ".ipynb") {
-      const rendered = renderNotebookBlocks(readFileSync(target, "utf8"), ctx.modelReadsImages !== false);
+      const rendered = renderNotebookParts(readFileSync(target, "utf8"));
       if (rendered !== undefined) {
         // Same literal, carve-out-free rule as images/PDFs above -- see readImage's own comment.
         ctx.readState.recordRead(target, { complete: !usedWindow, mtimeMs: st.mtimeMs });
-        return notebookResult(rendered);
+        return await notebookResult(rendered, ctx);
       }
       // malformed JSON / no `cells` array -- fall through to plain text below.
     }

@@ -16,7 +16,7 @@ stub({
     required: ["file_path"],
   },
   description:
-    "Reads a file with line windowing; images/notebooks/PDFs render as type-specific blocks. Oversized whole-file reads return a PARTIAL view continuable with offset/limit; an explicitly bounded range that still cannot fit errors. Reading a directory is an error.",
+    "Reads a file with line windowing. An image file (PNG, JPEG, GIF or WebP; BMP, TIFF and HEIC are converted) is shown to you as an image when the selected model supports images, shrunk to at most 1568 px on its long edge; a notebook renders its cells, with plot outputs as images; a PDF returns only its metadata (size and page count), not its text. Oversized whole-file reads return a PARTIAL view continuable with offset/limit; an explicitly bounded range that still cannot fit errors. Reading a directory is an error.",
   exposure: "eager",
   permissionClass: "read",
   availability: ALWAYS_AVAILABLE,
