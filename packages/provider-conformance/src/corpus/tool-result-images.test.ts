@@ -268,6 +268,15 @@ describe("Google GenerateContent", () => {
     ]);
   });
 
+  test("Gemini 3: a GIF is never nested (a nested part holds inline data only) -- it follows as a note", async () => {
+    const body = await wireBody((fake) => testGoogleAdapter().streamTurn(req(imageReadHistory("image/gif", GIF_B64), "gemini-3-pro-preview"), googleContext(fake.url)));
+    const parts = (body["contents"] as Array<{ parts: Array<Record<string, unknown>> }>).at(-1)!.parts;
+    expect(parts[0]).toEqual({ functionResponse: { name: "Read", response: { output: "", imageCount: 1 } } });
+    expect(parts[1]).toEqual({ text: "The image returned by the Read call:" });
+    expect(parts[2]!["text"]).toContain("an image/gif image was here");
+    expect(JSON.stringify(parts)).not.toContain(GIF_B64);
+  });
+
   test("a GIF, which Gemini does not read, becomes a note that says so -- never a request Gemini rejects, never a silent drop", async () => {
     const body = await wireBody((fake) => testGoogleAdapter().streamTurn(req(imageReadHistory("image/gif", GIF_B64), GOOGLE_MODELS.main), googleContext(fake.url)));
     const parts = (body["contents"] as Array<{ parts: Array<Record<string, unknown>> }>).at(-1)!.parts;

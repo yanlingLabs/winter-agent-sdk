@@ -386,15 +386,15 @@ export function toContents(messages: ProviderMessageLike[], opts: { functionResp
           // responses"). Earlier models have no such field: the images follow EVERY response of the entry
           // as ordinary `inlineData` parts (the field a user image rides), each set captioned with the
           // function it came from. `imageCount` on the response says how many belong to it either way.
+          // A nested part holds inline data only, so a type the nested form does not take (a GIF) is
+          // never nested: it goes the follow-up way, where `geminiImagePart` can make it a text note.
           const images = collectImages(block.content);
-          if (images.length > 0 && opts.functionResponseParts === true) {
-            entry.results.push({ functionResponse: { name, response: toFunctionResponsePayload(block.content), parts: images.map((image) => geminiImagePart(image, GEMINI_FUNCTION_RESPONSE_IMAGE_TYPES)) } });
-          } else {
-            entry.results.push({ functionResponse: { name, response: toFunctionResponsePayload(block.content) } });
-            if (images.length > 0) {
-              entry.followUps.push({ text: images.length === 1 ? `The image returned by the ${name} call:` : `The ${images.length} images returned by the ${name} call:` });
-              for (const image of images) entry.followUps.push(geminiImagePart(image, GEMINI_IMAGE_TYPES));
-            }
+          const nested = opts.functionResponseParts === true ? images.filter((image) => GEMINI_FUNCTION_RESPONSE_IMAGE_TYPES.has(image.source.media_type)) : [];
+          const following = images.filter((image) => !nested.includes(image));
+          entry.results.push({ functionResponse: { name, response: toFunctionResponsePayload(block.content), ...(nested.length > 0 ? { parts: nested.map((image) => ({ inlineData: { mimeType: image.source.media_type, data: image.source.data } })) } : {}) } });
+          if (following.length > 0) {
+            entry.followUps.push({ text: following.length === 1 ? `The image returned by the ${name} call:` : `The ${following.length} images returned by the ${name} call:` });
+            for (const image of following) entry.followUps.push(geminiImagePart(image, GEMINI_IMAGE_TYPES));
           }
           break;
         }

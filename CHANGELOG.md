@@ -26,15 +26,16 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   base64-encoded, the smallest per-image limit among the providers) or over 8000 px on a side is refused
   with a text saying how to shrink it. BMP, TIFF and HEIC files, which no provider accepts as images, are
   refused with a text saying how to convert them. The file's bytes decide its type, not its extension.
-  Gemini does not read GIFs, so a GIF sent to Gemini becomes a short note saying so.
+  Gemini does not read GIFs, so a GIF sent to Gemini becomes a short note saying so (and on Gemini 3 it
+  is never nested in the function response).
 - **Resumed sessions keep their images.** The transcript stores an image result the way claude's does
   (a base64 image block inside the tool result), so a resumed session sends it again.
 - **The host's copy of an image result leaves out the bytes.** The tool-round message a host receives
   keeps the image block and its media type with an empty `data` field. The full image would not fit the
   host's 1 MiB line limit and would end the session. The transcript still holds the real bytes.
-- **An image no longer trips the 4 MiB per-message limit.** Image data within 10 MiB no longer counts
-  toward that limit. Before, a single 3.5 MB screenshot pushed the message over it and failed every later
-  request.
+- **Images do not count toward the 4 MiB per-message limit.** Image data within 10 MiB is left out of
+  that measure. Counted, a single 3.5 MB screenshot would push its message over the limit, and every
+  later request in the session would fail.
 - **Notebook plots are images too.** A notebook's `image/png` outputs reach the model as images between
   its text cells.
 - **PDFs return honest metadata.** A PDF read now reports its size and page count and says its content
