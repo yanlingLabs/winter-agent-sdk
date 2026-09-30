@@ -429,7 +429,7 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
           // Review r1, I-6: an overflow the stream reported before producing anything is not a committed
           // turn -- nothing reached the host, nothing ran -- so the engine may compact and retry it, as it
           // does for the same refusal on a 400.
-          throw providerErrorToTurnError(event.error, committed && !(event.error.contextOverflow === true && ordered.length === 0));
+          throw providerErrorToTurnError(event.error, committed && !((event.error.contextOverflow === true || event.error.imageOverflow === true) && ordered.length === 0));
       }
     }
   } catch (err) {
@@ -631,6 +631,8 @@ function providerErrorToTurnError(error: ProviderError, committed = false): Prov
     // WS-23: the adapter's own context-overflow verdict, carried as a flag -- the engine's reactive
     // compaction reads it, never the (capped, redacted) message text.
     ...(error.contextOverflow === true ? { contextOverflow: true } : {}),
+    // Code-mode images: the adapter's verdict that the request was refused for its IMAGES.
+    ...(error.imageOverflow === true ? { imageOverflow: true } : {}),
   });
 }
 
@@ -655,7 +657,16 @@ export function toProviderTurnError(err: unknown, committed = false): ProviderTu
   // verdict too. `normalizeThrown` never quotes a body -- the bounded `message` above is what travels.
   const normalized = normalizeThrown(err);
   const status = typeof err === "object" && err !== null && typeof (err as { status?: unknown }).status === "number" ? (err as { status: number }).status : normalized.status;
-  return new ProviderTurnError(`provider request failed: ${message}`, { ...(status !== undefined ? { status } : {}), code: normalized.code, retryable: normalized.retryable, committed });
+  // The overflow verdicts ride a THROWN typed error too (an adapter that throws its `ProviderRequestError`
+  // rather than yielding an `error` event -- Bedrock's refusals), so the engine's recovery reaches them.
+  return new ProviderTurnError(`provider request failed: ${message}`, {
+    ...(status !== undefined ? { status } : {}),
+    code: normalized.code,
+    retryable: normalized.retryable,
+    committed,
+    ...(normalized.contextOverflow === true ? { contextOverflow: true as const } : {}),
+    ...(normalized.imageOverflow === true ? { imageOverflow: true as const } : {}),
+  });
 }
 
 /**

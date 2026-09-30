@@ -16,7 +16,8 @@ import type { SessionStoreEntry, WinterFrame } from "@yanlinglabs/winter-agent-s
 import { assistantEntry, userEntry, type SessionCtx } from "../../store/dialect.ts";
 import { rebuildProviderMessages, toDialectEntries } from "../../store/resume.ts";
 import { createInMemoryChannel } from "../../protocol/channel.ts";
-import { runEngine, type ContentBlock, type EngineOptions, type ModelDescription, type ProviderMessage, type ProviderRequest } from "../../engine.ts";
+import { ProviderTurnError, runEngine, type ContentBlock, type EngineOptions, type ModelDescription, type ProviderMessage, type ProviderRequest } from "../../engine.ts";
+import { IMAGE_BUDGET_NOTE } from "@yanlinglabs/winter-provider-runtime";
 import { toWireMessages } from "../../../../provider-runtime/src/adapters/anthropic/messages.ts";
 import { MODEL_DOES_NOT_SUPPORT_IMAGES } from "./read.ts";
 
@@ -168,5 +169,68 @@ describe("an image Read through the engine (code-mode images)", () => {
     const { requests, frames } = await run({ readPath: path });
     expect(toolResultIn(requests[1]!.messages).content).toBe("hello text");
     expect(toolRoundFrame(frames).content).toEqual([{ type: "tool_result", tool_use_id: "toolu_read_1", content: "hello text" }]);
+  });
+});
+
+// --- Code-mode images: a provider's refusal for the request's IMAGES --------------------------------------
+
+async function runWithProvider(generate: (req: ProviderRequest) => Promise<unknown>, initialMessages: ProviderMessage[]): Promise<WinterFrame[]> {
+  const { host, runtime } = createInMemoryChannel();
+  const done = runEngine({
+    config: { sessionId: "s-image-refusal", cwd: dir, model: "anthropic/claude-sonnet-5-5" },
+    input: runtime.input,
+    output: runtime.output,
+    provider: { generate: generate as never },
+    providerIdentity: { providerId: "anthropic", modelKey: "anthropic/claude-sonnet-5-5", family: "anthropic" },
+    describeModel: () => ({}),
+    initialMessages,
+  } as EngineOptions);
+  const frames: WinterFrame[] = [];
+  const reader = (async () => {
+    for await (const f of host.input) frames.push(f);
+  })();
+  host.output.write({ type: "user", text: "and now?" });
+  for (let n = 0; n < 2000 && !frames.some((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result"); n++) await new Promise((r) => setTimeout(r, 2));
+  host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+  await done;
+  await reader;
+  return frames;
+}
+
+const imageHistory = (): ProviderMessage[] => [0, 1, 2].flatMap((i): ProviderMessage[] => [
+  { role: "user", content: [{ type: "text", text: `shot ${i}` }, { type: "image", source: { type: "base64", media_type: "image/png", data: `IMG${i}` } }] },
+  { role: "assistant", content: `seen ${i}` },
+]);
+
+function imagesIn(req: ProviderRequest): string[] {
+  const out: string[] = [];
+  for (const m of req.messages) if (typeof m.content !== "string") for (const b of m.content) if (b.type === "image") out.push(b.source.data);
+  return out;
+}
+
+describe("a refusal for the request's IMAGES", () => {
+  test("gets ONE retry that keeps only the newest image, every earlier one a note -- and that shape sticks", async () => {
+    const requests: ProviderRequest[] = [];
+    const frames = await runWithProvider(async (req) => {
+      requests.push({ ...req, messages: structuredClone(req.messages) });
+      if (imagesIn(req).length > 1) throw new ProviderTurnError("provider request failed (bad_request): HTTP 400 — too many images", { status: 400, code: "bad_request", retryable: false, imageOverflow: true });
+      return { kind: "text", text: "fine" };
+    }, imageHistory());
+    expect(requests.map(imagesIn)).toEqual([["IMG0", "IMG1", "IMG2"], ["IMG2"]]);
+    expect(JSON.stringify(requests[1]!.messages)).toContain(IMAGE_BUDGET_NOTE);
+    const result = frames.find((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result") as unknown as { message: { subtype: string; result?: string } };
+    expect(result.message.subtype).toBe("success");
+  });
+
+  test("a SECOND refusal is not retried again: the provider's own error is what the turn ends with", async () => {
+    let calls = 0;
+    const frames = await runWithProvider(async () => {
+      calls++;
+      throw new ProviderTurnError("provider request failed (bad_request): HTTP 400 — too many images", { status: 400, code: "bad_request", retryable: false, imageOverflow: true });
+    }, imageHistory());
+    expect(calls).toBe(2);
+    const result = frames.find((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result") as unknown as { message: { is_error: boolean; result?: string } };
+    expect(result.message.is_error).toBe(true);
+    expect(result.message.result).toContain("too many images");
   });
 });

@@ -58,10 +58,10 @@ describe("withinImageBudget", () => {
     expect(kept(withinImageBudget(history(11), budget))[0]).toBe("IMG4");
   });
 
-  test("over the BYTES: the oldest go until the rest fits", () => {
+  test("over the BYTES: the oldest go, rounded up to a whole step, and never the newest", () => {
+    // 6 images of 100 bytes, 350 allowed: 3 must go, rounded up to a step of 4 (a quarter of 100, at most 4).
     const out = withinImageBudget(history(6, 100), { maxImages: 100, maxBytes: 350 });
-    expect(kept(out)).toEqual(["IMG3", "IMG4", "IMG5"]);
-    expect(kept(out).length * 100).toBeLessThanOrEqual(350);
+    expect(kept(out)).toEqual(["IMG4", "IMG5"]);
   });
 
   test("deterministic: the same history always gives the same request (a resumed session drops what the live one did)", () => {
@@ -77,25 +77,91 @@ describe("withinImageBudget", () => {
 });
 
 describe("imageBudgetFor: the documented per-request limits", () => {
-  test("per provider family", () => {
-    expect(imageBudgetFor({ family: "anthropic", providerId: "anthropic", contextWindow: 200_000 })).toEqual({ maxImages: 100, maxBytes: 24 * 1024 * 1024 });
-    expect(imageBudgetFor({ family: "anthropic", providerId: "anthropic", contextWindow: 1_000_000 })).toEqual({ maxImages: 600, maxBytes: 24 * 1024 * 1024 });
-    expect(imageBudgetFor({ family: "bedrock", providerId: "bedrock" })).toEqual({ maxImages: 20, maxBytes: 14 * 1024 * 1024 });
-    expect(imageBudgetFor({ family: "google", providerId: "google" }).maxBytes).toBe(14 * 1024 * 1024);
-    expect(imageBudgetFor({ family: "openai", providerId: "mistral" })).toEqual({ maxImages: 8, maxBytes: 20 * 1024 * 1024 });
-    expect(imageBudgetFor({ family: "openai", providerId: "openai" })).toEqual({ maxImages: 1500, maxBytes: 256 * 1024 * 1024 });
-    expect(imageBudgetFor({ family: "openai", providerId: "deepseek" })).toEqual({ maxImages: 20, maxBytes: 20 * 1024 * 1024 });
+  test("per provider", () => {
+    const MiB = 1024 * 1024;
+    expect(imageBudgetFor({ family: "anthropic", providerId: "anthropic", contextWindow: 200_000 })).toEqual({ maxImages: 100, maxBytes: 24 * MiB });
+    expect(imageBudgetFor({ family: "anthropic", providerId: "console", contextWindow: 1_000_000 })).toEqual({ maxImages: 600, maxBytes: 24 * MiB });
+    // A Claude row whose window is unknown gets the SAFE count.
+    expect(imageBudgetFor({ family: "anthropic", providerId: "anthropic" })).toEqual({ maxImages: 100, maxBytes: 24 * MiB });
+    // Anthropic-DIALECT third parties publish none of Claude's limits.
+    for (const providerId of ["deepseek-anthropic", "kimi-coding", "minimax-anthropic", "zai-anthropic"]) {
+      expect(imageBudgetFor({ family: "anthropic", providerId, contextWindow: 1_000_000 })).toEqual({ maxImages: 20, maxBytes: 20 * MiB });
+    }
+    expect(imageBudgetFor({ family: "bedrock", providerId: "bedrock" })).toEqual({ maxImages: 20, maxBytes: 14 * MiB });
+    expect(imageBudgetFor({ family: "google", providerId: "google" }).maxBytes).toBe(14 * MiB);
+    expect(imageBudgetFor({ family: "openai", providerId: "mistral" })).toEqual({ maxImages: 8, maxBytes: 20 * MiB });
+    expect(imageBudgetFor({ family: "openai", providerId: "codestral" })).toEqual({ maxImages: 8, maxBytes: 20 * MiB });
+    expect(imageBudgetFor({ family: "openai", providerId: "openai" })).toEqual({ maxImages: 1500, maxBytes: 256 * MiB });
+    expect(imageBudgetFor({ family: "openai", providerId: "azure-openai" })).toEqual({ maxImages: 50, maxBytes: 20 * MiB });
+    for (const providerId of ["codex-oauth", "deepseek", "xai", "ollama-local"]) expect(imageBudgetFor({ family: "openai", providerId })).toEqual({ maxImages: 20, maxBytes: 20 * MiB });
   });
 });
 
-describe("an oversized request is an OVERFLOW the engine recovers from (not an ordinary 400)", () => {
-  test("413, Anthropic's request_too_large and the image-count refusals set contextOverflow", () => {
-    const headers = new Headers();
-    expect(normalizeHttpError(413, headers, "Request Entity Too Large").contextOverflow).toBe(true);
-    expect(normalizeHttpError(413, headers, JSON.stringify({ type: "error", error: { type: "request_too_large", message: "Request exceeds the maximum allowed number of bytes." } })).contextOverflow).toBe(true);
-    expect(normalizeHttpError(400, headers, JSON.stringify({ error: { message: "Too many images in request. Max is 8." } })).contextOverflow).toBe(true);
-    expect(normalizeHttpError(400, headers, JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "messages.3.content.0.image.source.base64.data: At least one of the image dimensions exceed max allowed size for many-image requests: 2000 pixels" } })).contextOverflow).toBe(true);
-    // An unrelated 400 stays an ordinary bad request.
-    expect(normalizeHttpError(400, headers, JSON.stringify({ error: { message: "Invalid value for temperature" } })).contextOverflow).toBeUndefined();
+describe("the review's probes: a growing history never loses the newest image, and a dropped image never comes back", () => {
+  const MiB = 1024 * 1024;
+  const cases: Array<{ name: string; budget: { maxImages: number; maxBytes: number }; imageBytes: number }> = [
+    { name: "Gemini: 14 MiB of 5 MiB images (byte-limited)", budget: imageBudgetFor({ family: "google", providerId: "google" }), imageBytes: 5 * MiB },
+    { name: "Claude: 24 MiB of 3 MiB images (byte-limited)", budget: imageBudgetFor({ family: "anthropic", providerId: "anthropic", contextWindow: 200_000 }), imageBytes: 3 * MiB },
+    { name: "Mistral: 8 small images (count-limited)", budget: imageBudgetFor({ family: "openai", providerId: "mistral" }), imageBytes: 1_000 },
+    { name: "Claude 200k: 100 small images (count-limited)", budget: imageBudgetFor({ family: "anthropic", providerId: "anthropic", contextWindow: 200_000 }), imageBytes: 1_000 },
+  ];
+  for (const { name, budget, imageBytes } of cases) {
+    test(name, () => {
+      let previousDrop = 0;
+      for (let n = 1; n <= 130; n++) {
+        const out = withinImageBudget(history(n, imageBytes), budget);
+        const left = kept(out);
+        const drop = n - left.length;
+        // The newest image fits on its own, so it is ALWAYS still there.
+        expect(left.at(-1)).toBe(`IMG${n - 1}`);
+        expect(left.length).toBeGreaterThanOrEqual(1);
+        // What is kept fits.
+        expect(left.length).toBeLessThanOrEqual(budget.maxImages);
+        expect(left.length * imageBytes).toBeLessThanOrEqual(budget.maxBytes);
+        // Monotonic: never fewer dropped than with a shorter history -- nothing comes back.
+        expect(drop).toBeGreaterThanOrEqual(previousDrop);
+        previousDrop = drop;
+      }
+    });
+  }
+
+  test("an image too big for the budget on its own is dropped too (nothing can make it fit)", () => {
+    const out = withinImageBudget(history(2, 100), { maxImages: 10, maxBytes: 50 });
+    expect(kept(out)).toEqual([]);
+  });
+});
+
+describe("refusals the engine can recover from, classified off the PARSED message only", () => {
+  const headers = new Headers();
+  const anthropic = (status: number, type: string, message: string) => normalizeHttpError(status, headers, JSON.stringify({ type: "error", error: { type, message } }));
+
+  test("image refusals set imageOverflow (not contextOverflow): too many images, the many-image dimension limit, Azure's image count", () => {
+    const manyImage = anthropic(400, "invalid_request_error", "messages.3.content.0.image.source.base64.data: At least one of the image dimensions exceed max allowed size for many-image requests: 2000 pixels");
+    expect(manyImage.imageOverflow).toBe(true);
+    expect(manyImage.contextOverflow).toBeUndefined();
+    expect(normalizeHttpError(400, headers, JSON.stringify({ error: { message: "Too many images in request. Max is 8." } })).imageOverflow).toBe(true);
+    expect(normalizeHttpError(400, headers, JSON.stringify({ error: { message: "Exceeded maximum number of images (50) allowed in a request." } })).imageOverflow).toBe(true);
+  });
+
+  test("a 413 is an overflow only when the provider says the request is too large -- never a bare 413", () => {
+    expect(anthropic(413, "request_too_large", "Request exceeds the maximum allowed number of bytes.").contextOverflow).toBe(true);
+    expect(normalizeHttpError(413, headers, JSON.stringify({ message: "Request payload is too large" })).contextOverflow).toBe(true);
+    expect(normalizeHttpError(413, headers, "Request Entity Too Large").contextOverflow).toBeUndefined();
+    expect(normalizeHttpError(413, headers, "").contextOverflow).toBeUndefined();
+  });
+
+  test("the RAW body never trips a classifier: a phrase outside the message (an echoed field) is ignored", () => {
+    const echoed = JSON.stringify({ error: { message: "Invalid value for temperature" }, request: { note: "too many images; maximum context length is 5" } });
+    const result = normalizeHttpError(400, headers, echoed);
+    expect(result.imageOverflow).toBeUndefined();
+    expect(result.contextOverflow).toBeUndefined();
+    // A count phrasing WITHOUT the word image is not an image refusal.
+    expect(normalizeHttpError(400, headers, JSON.stringify({ error: { message: "maximum number of tools exceeded" } })).imageOverflow).toBeUndefined();
+  });
+
+  test("an unrelated 400 stays an ordinary bad request", () => {
+    const result = normalizeHttpError(400, headers, JSON.stringify({ error: { message: "Invalid value for temperature" } }));
+    expect(result.contextOverflow).toBeUndefined();
+    expect(result.imageOverflow).toBeUndefined();
   });
 });

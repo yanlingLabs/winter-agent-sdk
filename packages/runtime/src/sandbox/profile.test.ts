@@ -300,6 +300,9 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "(deny network*)",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/Users/x/.winter/file-history\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/Users/x/custom-root/file-history\"))",
+    // Code-mode images: the runtime's image working directory, write-denied like file-history/ above.
+    "(deny file-write* file-write-unlink file-write-create (subpath \"/Users/x/.winter/image-prep\"))",
+    "(deny file-write* file-write-unlink file-write-create (subpath \"/Users/x/custom-root/image-prep\"))",
     // fix round 17 (R.3 I-2): the home self-grant floor on winterHome (no storeHome in this input)
     "(deny file-write* file-write-unlink file-write-create (literal \"/Users/x/custom-root/settings.json\"))",
     "(deny file-write* file-write-unlink file-write-create (literal \"/Users/x/custom-root/settings.local.json\"))",

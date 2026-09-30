@@ -266,7 +266,9 @@ export function normalizeHttpError(status: number, headers: Headers, body: strin
   // WS-23 (reasoning-state): a prompt that does not fit the model's window is a CONTEXT OVERFLOW, the
   // one refusal the engine can recover from by compacting -- on every surface, not only Anthropic's
   // (whose adapter recognises its own "prompt is too long" envelope).
-  if (isContextOverflowRefusal(status, providerCode, flat?.message ?? body)) return { code: "bad_request", message, status, retryable: false, contextOverflow: true, ...extra };
+  const parsedMessage = parseProviderErrorMessage(body);
+  if (isImageRefusal(status, parsedMessage)) return { code: "bad_request", message, status, retryable: false, imageOverflow: true, ...extra };
+  if (isContextOverflowRefusal(status, providerCode, parsedMessage)) return { code: "bad_request", message, status, retryable: false, contextOverflow: true, ...extra };
   if (status >= 400) return { code: "bad_request", message, status, retryable: status === 409, ...extra };
   // A non-error status reaching here is a caller bug, not a provider condition; it is still typed
   // rather than thrown, so one mis-wired call site cannot take a stream down.
@@ -274,29 +276,64 @@ export function normalizeHttpError(status: number, headers: Headers, body: strin
 }
 
 /**
- * WS-23 (reasoning-state): the OpenAI-family context-overflow refusals, read off the FULL body before the
- * snippet cap.
+ * The provider's own error MESSAGE, parsed out of the body -- never the raw body, whose other fields
+ * (a request id, an echoed parameter, a model name) must not be able to trip a classifier. The shapes:
+ * `{error: {message}}` (OpenAI, Anthropic, Gemini), `{message}` / `{Message}` (Bedrock), and xAI's flat
+ * `{error: "<message>"}`. `undefined` when the body is none of these.
+ */
+export function parseProviderErrorMessage(body: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  const record = parsed as { error?: unknown; message?: unknown; Message?: unknown };
+  if (typeof record.error === "string" && record.error.length > 0) return record.error;
+  if (record.error !== null && typeof record.error === "object") {
+    const message = (record.error as { message?: unknown }).message;
+    if (typeof message === "string" && message.length > 0) return message;
+  }
+  for (const candidate of [record.message, record.Message]) if (typeof candidate === "string" && candidate.length > 0) return candidate;
+  return undefined;
+}
+
+/**
+ * WS-23 (reasoning-state): the context-overflow refusals, read off the PARSED message (never the raw body).
  *   - OpenAI (Responses and Chat Completions): HTTP 400 with the structured code `context_length_exceeded`
  *     (https://platform.openai.com/docs/guides/error-codes; the Responses message is "Your input exceeds
  *     the context window of this model", the Chat Completions one "This model's maximum context length is
  *     N tokens ...").
  *   - xAI: HTTP 400 in its flat dialect, `"This model's maximum prompt length is N but the request contains
  *     M tokens."` -- no structured code, so the documented leading phrase is the discriminator.
- * 413 ("payload too large") and the image-count refusals count too (see the body). Anything else stays an
- * ordinary `bad_request`: a false positive would compact a conversation over an unrelated error.
+ *   - A request too LARGE (code-mode images: a history of screenshots): HTTP 413 ONLY when the provider
+ *     says so -- Anthropic's documented `request_too_large` error type
+ *     (https://platform.claude.com/docs/en/api/errors), or a message saying the request/prompt is too large
+ *     or exceeds a maximum. A bare 413 (a proxy's empty page) is not assumed to be one.
+ * Anything else stays an ordinary `bad_request`: a false positive would compact a conversation over an
+ * unrelated error.
  */
-function isContextOverflowRefusal(status: number, providerCode: string | undefined, message: string): boolean {
+function isContextOverflowRefusal(status: number, providerCode: string | undefined, message: string | undefined): boolean {
   if (status !== 400 && status !== 413) return false;
   if (providerCode === "context_length_exceeded") return true;
-  // Code-mode images: a request too LARGE, or carrying too many images, is the same kind of refusal -- the
-  // conversation outgrew what one request may hold, and it will refuse every later request the same way
-  // unless the history shrinks. The engine's recovery (reactive compaction, which leaves images out of the
-  // summary) is what shrinks it. 413 is "payload too large" on every surface (Anthropic's documented
-  // `request_too_large`, https://platform.claude.com/docs/en/api/errors); the 400 phrasings are the
-  // image-count and many-image refusals ("many-image requests", "too many images", "maximum of N images").
-  if (status === 413 || providerCode === "request_too_large") return true;
-  if (/too many images|many-image requests|maximum (number of |of )?\d* ?images|images? per request|request (payload |size |body )?(is )?too large|payload too large/i.test(message)) return true;
+  if (status === 413 && providerCode === "request_too_large") return true;
+  if (message === undefined) return false;
+  if (status === 413 && /(request|payload|prompt|body).{0,40}(too large|exceeds)|exceeds the maximum/i.test(message)) return true;
   return /maximum (prompt|context) length is \d+/i.test(message) || /exceeds the context window/i.test(message);
+}
+
+/**
+ * Code-mode images: a refusal for the request's IMAGES -- too many in one request, or one past a
+ * many-image size limit -- read off the PARSED message, and only a phrasing that names images: Anthropic's
+ * "many-image requests" dimension refusal (https://platform.claude.com/docs/en/build-with-claude/vision,
+ * "Request limits"), "too many images", "maximum (number of) images", "images per request", Azure's
+ * "Exceeded maximum number of images". The engine answers it with one retry that keeps only the newest
+ * image (`ProviderError.imageOverflow`), not with compaction.
+ */
+function isImageRefusal(status: number, message: string | undefined): boolean {
+  if ((status !== 400 && status !== 413) || message === undefined) return false;
+  return /too many images|many-image requests|maximum (number of )?images|number of images|images? per request/i.test(message);
 }
 
 /** True for anything already shaped as a normalized `ProviderError`. */

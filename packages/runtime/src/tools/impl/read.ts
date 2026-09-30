@@ -68,6 +68,7 @@ import {
   IMAGE_MAX_INPUT_BYTES,
   MODEL_DOES_NOT_SUPPORT_IMAGES,
   describePreparedImage,
+  imagePrepWorkRoot,
   prepareImageForModel,
   resultBlocksForModel,
   type PreparedImage,
@@ -222,7 +223,7 @@ async function readImage(target: string, st: Stats, usedWindow: boolean, ctx: To
   }
   // Shrunk, converted or re-encoded as needed -- on a COPY in the session temp dir, never the user's
   // file (tools/image-prep.ts, shared with MCP image results).
-  const prepared = await prepareImageForModel(readFileSync(target), { tempDir: () => ctx.tempDir, ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}) });
+  const prepared = await prepareImageForModel(readFileSync(target), { workRoot: () => imagePrepWorkRoot(ctx), ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}) });
   if (!prepared.ok) return imageRefusal(`Error: image ${target} cannot be shown to the model: ${prepared.reason}.`);
   // A whole image is always attached in full -- there is no partial-image concept -- but the
   // brief's own rule is literal and carve-out-free ("a windowed/offset/limit/pages read records
@@ -330,7 +331,7 @@ function renderNotebookParts(raw: string): RawResultPart[] | undefined {
 
 /** A rendered notebook as a result: plain text when it holds no image, else the blocks plus a text rendering. */
 async function notebookResult(parts: RawResultPart[], ctx: ToolExecutionContext): Promise<ToolResultPayload> {
-  const result = await resultBlocksForModel(parts, { readsImages: ctx.modelReadsImages !== false, tempDir: () => ctx.tempDir, ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}) });
+  const result = await resultBlocksForModel(parts, { readsImages: ctx.modelReadsImages !== false, workRoot: () => imagePrepWorkRoot(ctx), ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}) });
   return result.hasImage ? { output: result.text, blocks: result.blocks } : { output: result.text };
 }
 

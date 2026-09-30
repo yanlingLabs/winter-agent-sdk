@@ -369,6 +369,41 @@ describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", (
     });
   });
 
+  // Code-mode images: the runtime's image working directory (`<home>/image-prep`, tools/image-prep.ts)
+  // must be unplantable from a sandboxed shell -- `sips` writes its output there and the runtime reads it
+  // back, so a planted symlink there would be followed. Positive control: the SAME tree is a writable
+  // root (cwd IS the winter home), so a sibling writes fine.
+  describe("the runtime's image-prep directory is write-denied (code-mode images)", () => {
+    t("a sandboxed shell can neither create a file nor plant a symlink under <winter home>/image-prep, even with cwd = the winter home", async () => {
+      const winterHome = proj();
+      const prep = join(winterHome, "image-prep");
+      mkdirSync(prep, { recursive: true });
+      const victim = join(proj(), "victim.txt");
+      const planted = join(prep, "prep-XXXX");
+      const file = await runWithWinterHome(`echo x > ${join(prep, "out.png")}`, winterHome, winterHome);
+      expect(file.exitCode).not.toBe(0);
+      expect(existsSync(join(prep, "out.png"))).toBe(false);
+      const link = await runWithWinterHome(`ln -s ${victim} ${planted}`, winterHome, winterHome);
+      expect(link.exitCode).not.toBe(0);
+      expect(existsSync(planted)).toBe(false);
+      // Nor can the directory itself be replaced (removed, then re-created as a link).
+      const swap = await runWithWinterHome(`rmdir ${prep} ; ln -s ${victim} ${prep}`, winterHome, winterHome);
+      expect(swap.exitCode).not.toBe(0);
+      expect(existsSync(prep)).toBe(true);
+      const allowed = await runWithWinterHome(`echo ok > ${join(winterHome, "sibling.txt")}`, winterHome, winterHome);
+      expect(allowed.exitCode).toBe(0);
+    });
+
+    t("the same under the OS-home anchor (<home>/.winter/image-prep)", async () => {
+      const home = proj();
+      const prep = join(home, ".winter", "image-prep");
+      mkdirSync(prep, { recursive: true });
+      const denied = await run(`echo x > ${join(prep, "out.png")}`, home, undefined, home);
+      expect(denied.exitCode).not.toBe(0);
+      expect(existsSync(join(prep, "out.png"))).toBe(false);
+    });
+  });
+
   // T8 rider 25 (SECURITY): the checkpoint backup store must be unwritable from a sandboxed shell.
   // The positive control is what makes this mean something -- the SAME home is a writable root here
   // (cwd IS home), so a sibling under `.winter` writes fine and only `file-history/` is fenced off.

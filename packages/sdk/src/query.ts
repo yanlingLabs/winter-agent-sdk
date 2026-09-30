@@ -927,6 +927,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // away would otherwise leak a live `winter` until this process exits. SIGTERM, then SIGKILL after the
   // same grace the read loop uses. Idempotent with the read loop's own kill (a second kill is a no-op).
   let killRequested = false;
+  let spawnKillEscalation: ReturnType<typeof setTimeout> | undefined;
   const killForAbort = (): void => {
     if (killRequested) return;
     killRequested = true;
@@ -935,20 +936,27 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     } catch {
       /* already gone */
     }
-    const escalate = setTimeout(() => {
+    spawnKillEscalation = setTimeout(() => {
       try {
         proc.kill("SIGKILL");
       } catch {
         /* already gone */
       }
     }, KILL_GRACE_MS);
-    escalate.unref?.();
-    void proc.exited.then(() => clearTimeout(escalate));
+    spawnKillEscalation.unref?.();
+    // Settled either way (a custom spawn hook's `exited` may REJECT): never an unhandled rejection.
+    const clear = (): void => clearTimeout(spawnKillEscalation);
+    proc.exited.then(clear, clear);
   };
+  // The listener is removed once the child has exited, or once the Query has FINISHED (iterate()'s
+  // `finally` calls this): a later abort must not SIGTERM/SIGKILL a child that is shutting down gracefully
+  // after a completed exchange.
+  let removeSpawnAbortListener = (): void => {};
   if (options.abortController !== undefined && options.abortController.signal.aborted !== true) {
     const signal = options.abortController.signal;
     signal.addEventListener("abort", killForAbort, { once: true });
-    void proc.exited.then(() => signal.removeEventListener("abort", killForAbort));
+    removeSpawnAbortListener = () => signal.removeEventListener("abort", killForAbort);
+    proc.exited.then(removeSpawnAbortListener, removeSpawnAbortListener);
   }
 
   // Task 2 (WS-04 §3.1, direction inversion): HOST-originated control requests (interrupt,
@@ -1363,7 +1371,10 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       // settle.
       generatorTerminated = true;
       options.abortController?.signal.removeEventListener("abort", onAbort);
+      removeSpawnAbortListener();
       if (killTimer) clearTimeout(killTimer);
+      // The spawn-time kill's SIGKILL escalation is cancelled here too, exactly like the read loop's own.
+      if (spawnKillEscalation) clearTimeout(spawnKillEscalation);
       // Ruling P2-B (wrapper side): stdin closes HERE — at this generator's own teardown — for
       // every prompt shape alike, reached only via return (sawTerminal), throw (every error path
       // above), or an external `.return()`/`.throw()` (a consumer walking away early via `break`/

@@ -154,11 +154,14 @@ function mergeChatAssistant(previous: ChatAssistantWire, text: string, toolCalls
  * message too -- nothing `user`-role follows a tool reply.
  *
  * A provider-id rule, not a catalog trait: the catalog has no per-provider wire-dialect field for this
- * surface today, and Mistral is the one chat provider with evidence of the refusal.
+ * surface today, and Mistral's API (`mistral`, `codestral`) is the one chat surface with evidence of the
+ * refusal.
  */
 export type ChatToolResultImages = "follow-up" | "tool-message";
 
-const TOOL_MESSAGE_IMAGE_PROVIDERS: ReadonlySet<string> = new Set(["mistral"]);
+// Every catalog provider served by Mistral's own API: `mistral` (api.mistral.ai) and `codestral`
+// (codestral.mistral.ai) -- the only two whose endpoint is Mistral's.
+const TOOL_MESSAGE_IMAGE_PROVIDERS: ReadonlySet<string> = new Set(["mistral", "codestral"]);
 
 /** The tool-result image shape for a provider (see `ChatToolResultImages`). */
 export function chatToolResultImagesFor(providerId: string): ChatToolResultImages {

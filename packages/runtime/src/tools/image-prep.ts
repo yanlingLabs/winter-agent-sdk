@@ -7,14 +7,16 @@
 // `impl/*` executor module registers tools at load (`impl-isolation.test.ts`).
 //
 // Resizing uses macOS's own `/usr/bin/sips` -- the runtime ships for darwin-arm64 only -- spawned as an
-// argv (never a shell), reading and writing COPIES in the session temp dir, never the user's file. With
+// argv (never a shell), reading and writing COPIES in a fresh directory under `<home>/image-prep`, which
+// the Bash sandbox cannot write (never the session temp dir, which it can), and never the user's file. With
 // no `sips` (another platform, a failed run) an image that is already within every limit is sent as it
 // is, and anything else is refused with a text that says why.
 import { execFile } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ToolResultBlock } from "./registry.ts";
+import { IMAGE_PREP_DIRNAME } from "../sandbox/profile.ts";
 
 /**
  * The exact refusal a model with no image input gets (the host's composer shows the same words). Exported
@@ -144,6 +146,7 @@ export function parseTiffDimensions(buf: Uint8Array): { width: number; height: n
   if (!le && !(buf[0] === 0x4d && buf[1] === 0x4d)) return undefined;
   const u16 = (o: number): number => (le ? buf[o]! | (buf[o + 1]! << 8) : (buf[o]! << 8) | buf[o + 1]!);
   const u32 = (o: number): number => (le ? (buf[o]! | (buf[o + 1]! << 8) | (buf[o + 2]! << 16) | (buf[o + 3]! << 24)) >>> 0 : ((buf[o]! << 24) | (buf[o + 1]! << 16) | (buf[o + 2]! << 8) | buf[o + 3]!) >>> 0);
+  if (u16(2) !== 42) return undefined; // the TIFF magic number (BigTIFF's 43 is not read here)
   const ifd = u32(4);
   if (ifd + 2 > buf.length) return undefined;
   const count = u16(ifd);
@@ -155,26 +158,48 @@ export function parseTiffDimensions(buf: Uint8Array): { width: number; height: n
     const tag = u16(entry);
     const type = u16(entry + 2);
     const value = type === 3 ? u16(entry + 8) : type === 4 ? u32(entry + 8) : undefined;
-    if (tag === 256) width = value;
-    if (tag === 257) height = value;
+    // The FIRST of each tag wins, as libtiff reads a directory: a later duplicate cannot shrink the size.
+    if (tag === 256 && width === undefined) width = value;
+    if (tag === 257 && height === undefined) height = value;
   }
   return width !== undefined && height !== undefined ? { width, height } : undefined;
 }
 
 /**
  * A HEIC's size from its `ispe` (image spatial extents) boxes: the LARGEST one, since a grid image carries
- * a small `ispe` per tile and one for the whole picture. A scan, not a box walk -- it only has to be an
- * upper bound for the pixel check, and an undecodable file never reaches a decoder anyway.
+ * a small `ispe` per tile and one for the whole picture. A scan for well-formed `ispe` boxes (size 20,
+ * version/flags 0), not a full box walk; `sips -g`'s answer is taken too and the larger wins.
  */
 export function parseHeicDimensions(buf: Uint8Array): { width: number; height: number } | undefined {
   let best: { width: number; height: number } | undefined;
-  for (let i = 0; i + 16 <= buf.length; i++) {
+  for (let i = 4; i + 16 <= buf.length; i++) {
     if (buf[i] !== 0x69 || buf[i + 1] !== 0x73 || buf[i + 2] !== 0x70 || buf[i + 3] !== 0x65) continue; // "ispe"
+    // A REAL `ispe` box, not the four bytes happening to occur in compressed data: its size field (just
+    // before the type) is 20, and its version and flags (just after) are zero.
+    if (u32be(buf, i - 4) !== 20 || u32be(buf, i + 4) !== 0) continue;
     const width = u32be(buf, i + 8);
     const height = u32be(buf, i + 12);
     if (best === undefined || width * height > best.width * best.height) best = { width, height };
   }
   return best;
+}
+
+/**
+ * A GIF's size for the PIXEL CHECK: the larger of its logical screen and every frame's own descriptor --
+ * a tiny logical screen can front a frame that declares 60000x60000 px, and the decoder allocates for the
+ * frame.
+ */
+export function parseGifExtent(buf: Uint8Array): { width: number; height: number } | undefined {
+  const screen = parseGifDimensions(buf);
+  if (screen === undefined) return undefined;
+  const frames = gifFrameSizes(buf);
+  let width = screen.width;
+  let height = screen.height;
+  for (const f of frames ?? []) {
+    width = Math.max(width, f.width);
+    height = Math.max(height, f.height);
+  }
+  return { width, height };
 }
 
 export function parseImageDimensions(mediaType: string, bytes: Uint8Array): { width: number; height: number } | undefined {
@@ -254,11 +279,13 @@ export type ImagePreparation = PreparedImage | { ok: false; reason: string };
 
 export interface PrepareImageOptions {
   /**
-   * Where the working copies go -- the session's own temp dir (a subfolder is made under it). A getter,
-   * read only when `sips` actually runs: the session temp root is created lazily (D18), and an image
-   * that needs no work must not materialize it.
+   * The runtime-owned directory the per-call working directory is made in: `<winter or store home>/
+   * image-prep` (`imagePrepWorkRoot`), which the Bash sandbox's seatbelt profile write-denies
+   * (sandbox/profile.ts, `IMAGE_PREP_DIRNAME`) -- NEVER the session temp dir, which a sandboxed shell can
+   * write (a link planted there would make `sips` write through it). A getter, read only when `sips`
+   * actually runs. `undefined`: no private place to work, so nothing is converted or resized.
    */
-  tempDir: () => string;
+  workRoot: () => string | undefined;
   /** Test seam: the `sips` binary (a missing path simulates a platform without it). Default `/usr/bin/sips`. */
   sipsPath?: string;
   /** Test seam: the byte limit. Default `READ_IMAGE_MAX_BYTES`. */
@@ -293,11 +320,46 @@ async function sipsDimensions(sips: string, path: string, signal: AbortSignal | 
 }
 
 /**
+ * Reads `path` only if it is a regular file, and never through a link: `O_NOFOLLOW` refuses a symlink at
+ * open time, and the type is checked on the OPENED descriptor, so nothing can be swapped in between the
+ * check and the read. `undefined` for anything else (a link, a directory, a missing file).
+ */
+export function readRegularFileNoFollow(path: string): Buffer | undefined {
+  let fd: number;
+  try {
+    fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  } catch {
+    return undefined;
+  }
+  try {
+    if (!fstatSync(fd).isFile()) return undefined;
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Where image work happens for a session: `<store home or winter home>/image-prep`, falling back to the
+ * brand's home folder under the OS home -- the same three anchors the seatbelt profile write-denies
+ * `image-prep` under. `undefined` when none is known.
+ */
+export function imagePrepWorkRoot(ctx: { storeHome?: string; winterHome?: string; home?: string; brand?: { homeDirName: string } }): string | undefined {
+  const anchor = ctx.storeHome ?? ctx.winterHome ?? (ctx.home !== undefined && ctx.brand !== undefined ? join(ctx.home, ctx.brand.homeDirName) : undefined);
+  return anchor !== undefined ? join(anchor, IMAGE_PREP_DIRNAME) : undefined;
+}
+
+/**
  * How many frames a GIF holds (image descriptors), walking its block structure; `undefined` when the
  * structure cannot be walked. OpenAI takes only a "non-animated GIF"
  * (https://developers.openai.com/api/docs/guides/images-vision) and Claude reads only the first frame.
  */
 export function gifFrameCount(buf: Uint8Array): number | undefined {
+  return gifFrameSizes(buf)?.length;
+}
+
+/** Every frame's own size (its image descriptor), in order; `undefined` when the structure cannot be walked. */
+export function gifFrameSizes(buf: Uint8Array): Array<{ width: number; height: number }> | undefined {
   if (buf.length < 13 || buf[0] !== 0x47 || buf[1] !== 0x49 || buf[2] !== 0x46) return undefined;
   let pos = 13;
   const packed = buf[10]!;
@@ -311,7 +373,7 @@ export function gifFrameCount(buf: Uint8Array): number | undefined {
     }
     return false;
   };
-  let frames = 0;
+  const frames: Array<{ width: number; height: number }> = [];
   while (pos < buf.length) {
     const introducer = buf[pos]!;
     if (introducer === 0x3b) return frames; // trailer
@@ -319,8 +381,8 @@ export function gifFrameCount(buf: Uint8Array): number | undefined {
       pos += 2; // introducer + label
       if (!skipSubBlocks()) return undefined;
     } else if (introducer === 0x2c) {
-      frames++;
       if (pos + 10 > buf.length) return undefined;
+      frames.push({ width: buf[pos + 5]! | (buf[pos + 6]! << 8), height: buf[pos + 7]! | (buf[pos + 8]! << 8) });
       const local = buf[pos + 9]!;
       pos += 10;
       if (local & 0x80) pos += 3 * (1 << ((local & 0x07) + 1)); // local colour table
@@ -349,9 +411,9 @@ export function gifFrameCount(buf: Uint8Array): number | undefined {
  * - Without `sips`, or when it fails: the image as it is if it is already a deliverable type within the
  *   byte limit and `READ_IMAGE_MAX_DIMENSION` (and, for a GIF, a single frame), else a refusal naming the
  *   reason.
- * - `sips` works in a FRESH private directory per call (`mkdtemp`), writes its input with `wx`, and its
- *   output is read only if it is a regular file -- so nothing planted under the session temp dir (which
- *   the sandboxed shell can write) is followed.
+ * - `sips` works in a FRESH private directory per call (`mkdtemp`) under `imagePrepWorkRoot` -- a tree
+ *   the Bash sandbox is denied writing to, so no link can be planted where `sips` writes -- its input is
+ *   written with `wx`, and its output is read through `readRegularFileNoFollow` (no link, no swap).
  */
 export async function prepareImageForModel(source: Buffer, opts: PrepareImageOptions): Promise<ImagePreparation> {
   const maxBytes = opts.maxBytes ?? READ_IMAGE_MAX_BYTES;
@@ -361,13 +423,15 @@ export async function prepareImageForModel(source: Buffer, opts: PrepareImageOpt
   if (source.length > IMAGE_MAX_INPUT_BYTES) return { ok: false, reason: `it is ${source.length} bytes, over the ${IMAGE_MAX_INPUT_BYTES}-byte limit for an image to prepare` };
 
   let dims = parseImageDimensions(mediaType, source);
+  // The size the PIXEL check uses: for a GIF the largest frame, not only the logical screen.
+  const declared = mediaType === "image/gif" ? parseGifExtent(source) : dims;
   const tooManyPixels = (d: { width: number; height: number } | undefined): boolean => d !== undefined && d.width * d.height > IMAGE_MAX_PIXELS;
   const pixelRefusal = (d: { width: number; height: number }): ImagePreparation => ({
     ok: false,
     reason: `it declares ${d.width}x${d.height} px (${Math.round((d.width * d.height) / 1_000_000)} megapixels), over the ${IMAGE_MAX_PIXELS / 1_000_000}-megapixel limit for an image to prepare`,
   });
   // A decompression bomb is refused on its HEADER, before any decoder sees it.
-  if (tooManyPixels(dims)) return pixelRefusal(dims!);
+  if (tooManyPixels(declared)) return pixelRefusal(declared!);
 
   const frames = mediaType === "image/gif" ? gifFrameCount(source) : undefined;
   const animated = frames !== undefined && frames > 1;
@@ -399,13 +463,18 @@ export async function prepareImageForModel(source: Buffer, opts: PrepareImageOpt
   try {
     // A FRESH private directory per call: nothing a sandboxed shell planted under the session temp dir
     // (a symlink named like ours) is ever followed.
-    const root = opts.tempDir();
+    const root = opts.workRoot();
+    if (root === undefined) return unavailable("there is no private working directory to prepare it in");
     mkdirSync(root, { recursive: true, mode: 0o700 });
-    work = mkdtempSync(join(root, "image-prep-"));
+    work = mkdtempSync(join(root, "prep-"));
     const input = join(work, `in.${EXTENSIONS[mediaType] ?? "img"}`);
     writeFileSync(input, source, { mode: 0o600, flag: "wx" });
-    if (dims === undefined) {
-      dims = await sipsDimensions(sips, input, opts.signal);
+    // TIFF and HEIC always reach the decoder (no provider takes them), and a header parse of theirs is
+    // best-effort, so `sips -g` is asked too and the LARGER answer on each side is the authority. Any
+    // other type asks only when its own header gave no size.
+    if (dims === undefined || mediaType === "image/tiff" || mediaType === "image/heic") {
+      const reported = await sipsDimensions(sips, input, opts.signal);
+      if (reported !== undefined) dims = dims === undefined ? reported : { width: Math.max(dims.width, reported.width), height: Math.max(dims.height, reported.height) };
       if (tooManyPixels(dims)) return pixelRefusal(dims!);
       // A size nobody can read is never handed to a decoder (it could declare anything).
       if (dims === undefined) return unavailable("its pixel size could not be read, so it was not decoded");
@@ -420,10 +489,7 @@ export async function prepareImageForModel(source: Buffer, opts: PrepareImageOpt
       const args = ["-s", "format", format, ...(quality !== undefined ? ["-s", "formatOptions", String(quality)] : []), ...(resize ? ["-Z", String(IMAGE_MAX_LONG_EDGE)] : []), input, "--out", out];
       const run = await runSips(sips, args, opts.signal);
       if (!run.ok) return undefined;
-      // Read only a regular file sips just wrote -- never through a link.
-      const st = lstatSync(out, { throwIfNoEntry: false });
-      if (st === undefined || !st.isFile()) return undefined;
-      return readFileSync(out);
+      return readRegularFileNoFollow(out);
     };
 
     let quality: number | undefined = target === "jpeg" ? JPEG_QUALITY_STEPS[0] : undefined;

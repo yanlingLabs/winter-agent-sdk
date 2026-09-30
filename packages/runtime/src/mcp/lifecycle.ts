@@ -25,7 +25,7 @@
 // this file would ever try to connect to it.
 import type { McpServerConfigForProcessTransport } from "@yanlinglabs/winter-agent-sdk";
 import { registerMcpServerTools, unregisterMcpServerTools, replaceExecutor, type McpToolDefinition, type ToolExecutionContext, type ToolResultPayload } from "../tools/registry.ts";
-import { resultBlocksForModel, type RawResultPart } from "../tools/image-prep.ts";
+import { imagePrepWorkRoot, resultBlocksForModel, type RawResultPart } from "../tools/image-prep.ts";
 import { WINTER_SERVER_NAME } from "./winter-server.ts";
 import type { McpServerState, McpServerStateKind, McpServerStateSource } from "./state.ts";
 import type { McpControlSeam } from "./control-seam.ts";
@@ -502,23 +502,34 @@ function isMcpImageItem(block: unknown): block is { type: "image"; data: string;
  */
 async function mcpResultWithImages(content: readonly unknown[], isError: boolean, ctx: ToolExecutionContext, serverName: string, toolName: string): Promise<ToolResultPayload> {
   let textLeft = MCP_IMAGE_RESULT_TEXT_CHARS;
+  let noted = false;
+  const note = `[text truncated at ${MCP_IMAGE_RESULT_TEXT_CHARS} characters; mcp tool "${toolName}" on server "${serverName}"]`;
   const parts: RawResultPart[] = [];
   for (const block of content) {
     if (isMcpImageItem(block)) {
       parts.push({ type: "image", bytes: Buffer.from(block.data, "base64") });
       continue;
     }
-    if (textLeft <= 0) continue;
     const text = contentToText([block]);
+    if (textLeft <= 0) {
+      // The budget is spent (possibly EXACTLY, by the items before): a later non-empty item is dropped,
+      // and the note says so once.
+      if (text.length > 0 && !noted) {
+        parts.push({ type: "text", text: note });
+        noted = true;
+      }
+      continue;
+    }
     if (text.length <= textLeft) {
       parts.push({ type: "text", text });
       textLeft -= text.length;
     } else {
-      parts.push({ type: "text", text: `${text.slice(0, textLeft)}\n[text truncated at ${MCP_IMAGE_RESULT_TEXT_CHARS} characters; mcp tool "${toolName}" on server "${serverName}"]` });
+      parts.push({ type: "text", text: `${text.slice(0, textLeft)}\n${note}` });
       textLeft = 0;
+      noted = true;
     }
   }
-  const result = await resultBlocksForModel(parts, { readsImages: ctx.modelReadsImages !== false, tempDir: () => ctx.tempDir, ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}) });
+  const result = await resultBlocksForModel(parts, { readsImages: ctx.modelReadsImages !== false, workRoot: () => imagePrepWorkRoot(ctx), ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}) });
   return { output: result.text, ...(result.hasImage ? { blocks: result.blocks } : {}), ...(isError ? { isError: true as const } : {}) };
 }
 

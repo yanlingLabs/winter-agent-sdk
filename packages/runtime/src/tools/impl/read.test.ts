@@ -23,6 +23,8 @@ function makeCtx(cwd: string): ToolExecutionContext {
     emitFrame: () => {},
     permissions: { probeReadAccess: () => "silent" },
     tempDir: join(cwd, ".tmp"),
+    // Code-mode images: where image work happens (tools/image-prep.ts), never the session temp dir.
+    winterHome: join(cwd, ".winter-home"),
     sandboxSettings: {},
     session: {
       setCwd() {},
@@ -369,8 +371,9 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       expect(parsePngDimensions(sent)).toEqual({ width: 1568, height: 1018 });
       expect(result.output).toContain(`[image: ${p} (image/png, ${sent.length} bytes, 1568x1018, resized from 3024x1964)]`);
       expect(readFileSync(p).equals(original)).toBe(true);
-      // The working copies are gone.
-      expect(existsSync(join(dir, ".tmp", "image-prep")) ? readdirSync(join(dir, ".tmp", "image-prep")) : []).toEqual([]);
+      // The working copies are gone, and the session temp dir (which a sandboxed shell can write) was never used.
+      expect(readdirSync(join(dir, ".winter-home", "image-prep"))).toEqual([]);
+      expect(existsSync(join(dir, ".tmp"))).toBe(false);
     });
 
     test("a stray offset on an image read still records complete:false (no per-type carve-out)", async () => {

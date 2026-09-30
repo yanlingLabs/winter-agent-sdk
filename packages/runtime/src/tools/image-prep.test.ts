@@ -11,6 +11,11 @@ import {
   IMAGE_MAX_LONG_EDGE,
   IMAGE_MAX_PIXELS,
   gifFrameCount,
+  gifFrameSizes,
+  parseHeicDimensions,
+  parseTiffDimensions,
+  imagePrepWorkRoot,
+  readRegularFileNoFollow,
   MODEL_DOES_NOT_SUPPORT_IMAGES,
   READ_IMAGE_MAX_BYTES,
   describePreparedImage,
@@ -59,7 +64,7 @@ function dimsOf(image: PreparedImage): { width: number; height: number } | undef
 describe("an image that needs no work", () => {
   test("is sent as it is, and sips is never run (the session temp dir is never asked for)", async () => {
     const png = realPng(800, 600);
-    const image = ok(await prepareImageForModel(png, { tempDir }));
+    const image = ok(await prepareImageForModel(png, { workRoot: tempDir }));
     expect(image.bytes.equals(png)).toBe(true);
     expect(image.resized).toBe(false);
     expect(describePreparedImage(image)).toBe(`image/png, ${png.length} bytes, 800x600`);
@@ -69,7 +74,7 @@ describe("an image that needs no work", () => {
 
 describe.skipIf(!HAS_SIPS)("resizing with the real sips", () => {
   test("a 3024x1964 PNG becomes a 1568x1018 PNG, and the text says so", async () => {
-    const image = ok(await prepareImageForModel(realPng(3024, 1964), { tempDir }));
+    const image = ok(await prepareImageForModel(realPng(3024, 1964), { workRoot: tempDir }));
     expect(image.mediaType).toBe("image/png");
     expect(dimsOf(image)).toEqual({ width: 1568, height: 1018 });
     expect(image.resized).toBe(true);
@@ -80,14 +85,14 @@ describe.skipIf(!HAS_SIPS)("resizing with the real sips", () => {
   });
 
   test("a portrait image is limited on its long edge (height)", async () => {
-    const image = ok(await prepareImageForModel(realPng(1000, 4000), { tempDir }));
+    const image = ok(await prepareImageForModel(realPng(1000, 4000), { workRoot: tempDir }));
     expect(dimsOf(image)).toEqual({ width: 392, height: IMAGE_MAX_LONG_EDGE });
   });
 
   test("a JPEG stays JPEG (quality 85)", async () => {
     const jpeg = convert(realPng(2400, 1600), "jpeg", "jpg");
     expect(sniffImageType(jpeg)).toBe("image/jpeg");
-    const image = ok(await prepareImageForModel(jpeg, { tempDir }));
+    const image = ok(await prepareImageForModel(jpeg, { workRoot: tempDir }));
     expect(image.mediaType).toBe("image/jpeg");
     expect(dimsOf(image)).toEqual({ width: 1568, height: 1045 });
     expect(describePreparedImage(image)).toContain("resized from 2400x1600, JPEG quality 85");
@@ -95,7 +100,7 @@ describe.skipIf(!HAS_SIPS)("resizing with the real sips", () => {
 
   test("a GIF that must be resized becomes a PNG (first frame; Gemini reads no GIF)", async () => {
     const gif = convert(realPng(2000, 500), "gif", "gif");
-    const image = ok(await prepareImageForModel(gif, { tempDir }));
+    const image = ok(await prepareImageForModel(gif, { workRoot: tempDir }));
     expect(image.mediaType).toBe("image/png");
     expect(dimsOf(image)).toEqual({ width: 1568, height: 392 });
     expect(describePreparedImage(image)).toContain("resized from 2000x500, converted from GIF");
@@ -109,7 +114,7 @@ describe.skipIf(!HAS_SIPS)("resizing with the real sips", () => {
       ["heic", "heic", "image/jpeg", "HEIC"],
     ] as const) {
       const source = convert(small, format, ext);
-      const image = ok(await prepareImageForModel(source, { tempDir }));
+      const image = ok(await prepareImageForModel(source, { workRoot: tempDir }));
       expect(image.mediaType).toBe(expected);
       expect(image.resized).toBe(false);
       expect(dimsOf(image)).toEqual({ width: 300, height: 200 });
@@ -119,7 +124,7 @@ describe.skipIf(!HAS_SIPS)("resizing with the real sips", () => {
 
   test("still over the byte limit after resizing: re-encoded as JPEG, stepping quality down", async () => {
     // Random pixels do not compress: at 1568x1568 the PNG is ~7.4 MB, over READ_IMAGE_MAX_BYTES.
-    const image = ok(await prepareImageForModel(realPng(2000, 2000, { noise: true }), { tempDir }));
+    const image = ok(await prepareImageForModel(realPng(2000, 2000, { noise: true }), { workRoot: tempDir }));
     expect(image.mediaType).toBe("image/jpeg");
     expect(image.bytes.length).toBeLessThanOrEqual(READ_IMAGE_MAX_BYTES);
     expect(dimsOf(image)).toEqual({ width: 1568, height: 1568 });
@@ -127,7 +132,7 @@ describe.skipIf(!HAS_SIPS)("resizing with the real sips", () => {
   });
 
   test("still too big at the lowest JPEG quality: refused with a clear text, never truncated", async () => {
-    const result = await prepareImageForModel(realPng(600, 600, { noise: true }), { tempDir, maxBytes: 2000 });
+    const result = await prepareImageForModel(realPng(600, 600, { noise: true }), { workRoot: tempDir, maxBytes: 2000 });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/^even re-encoded as JPEG at quality 40 it is \d+ bytes, over the 2000-byte limit/);
   });
@@ -136,13 +141,13 @@ describe.skipIf(!HAS_SIPS)("resizing with the real sips", () => {
     const userFile = join(dir, "user.png");
     const png = realPng(3000, 3000);
     writeFileSync(userFile, png);
-    ok(await prepareImageForModel(readFileSync(userFile), { tempDir }));
+    ok(await prepareImageForModel(readFileSync(userFile), { workRoot: tempDir }));
     expect(readFileSync(userFile).equals(png)).toBe(true);
   });
 });
 
 describe("without sips (another platform, or a failed run)", () => {
-  const noSips = { tempDir, sipsPath: join("/nonexistent", "sips") };
+  const noSips = { workRoot: tempDir, sipsPath: join("/nonexistent", "sips") };
 
   test("an image already within every limit is sent unresized", async () => {
     const png = realPng(3024, 1964);
@@ -160,14 +165,14 @@ describe("without sips (another platform, or a failed run)", () => {
   });
 
   test("bytes that are no image at all are refused before anything runs", async () => {
-    expect(await prepareImageForModel(Buffer.from("not an image"), { tempDir })).toEqual({ ok: false, reason: "it does not contain PNG, JPEG, GIF, WebP, BMP, TIFF or HEIC image data" });
+    expect(await prepareImageForModel(Buffer.from("not an image"), { workRoot: tempDir })).toEqual({ ok: false, reason: "it does not contain PNG, JPEG, GIF, WebP, BMP, TIFF or HEIC image data" });
   });
 });
 
 describe("resultBlocksForModel: a mixed text/image result", () => {
   test("text stays text, images become blocks in order, and the text rendering names each image", async () => {
     const png = realPng(40, 30);
-    const result = await resultBlocksForModel([{ type: "text", text: "before" }, { type: "image", bytes: png }, { type: "text", text: "after" }], { tempDir, readsImages: true });
+    const result = await resultBlocksForModel([{ type: "text", text: "before" }, { type: "image", bytes: png }, { type: "text", text: "after" }], { workRoot: tempDir, readsImages: true });
     expect(result.hasImage).toBe(true);
     expect(result.blocks).toEqual([
       { type: "text", text: "before" },
@@ -178,14 +183,14 @@ describe("resultBlocksForModel: a mixed text/image result", () => {
   });
 
   test("the text-only gate: every image becomes the refusal note, no image block", async () => {
-    const result = await resultBlocksForModel([{ type: "image", bytes: realPng(40, 30) }], { tempDir, readsImages: false });
+    const result = await resultBlocksForModel([{ type: "image", bytes: realPng(40, 30) }], { workRoot: tempDir, readsImages: false });
     expect(result.hasImage).toBe(false);
     expect(result.blocks).toEqual([{ type: "text", text: `[image omitted: ${MODEL_DOES_NOT_SUPPORT_IMAGES}]` }]);
   });
 
   test("images past the result's byte total become a note in place", async () => {
     const png = realPng(40, 30);
-    const result = await resultBlocksForModel([{ type: "image", bytes: png }, { type: "image", bytes: png }], { tempDir, readsImages: true, maxBytes: png.length + 10 });
+    const result = await resultBlocksForModel([{ type: "image", bytes: png }, { type: "image", bytes: png }], { workRoot: tempDir, readsImages: true, maxBytes: png.length + 10 });
     expect(result.blocks.map((b) => b.type)).toEqual(["image", "text"]);
     expect(result.text).toContain(`[image omitted: the images in this one result are over ${png.length + 10} bytes in total]`);
   });
@@ -246,7 +251,7 @@ function gif(frames: number): Buffer {
 describe("decompression bombs are refused on the header, before anything decodes them", () => {
   test("a PNG, TIFF and HEIC declaring 40000x40000 px (1600 MP) are refused without running sips", async () => {
     for (const bomb of [pngHeader(40_000, 40_000), tiffHeader(40_000, 40_000), heicHeader(40_000, 40_000)]) {
-      const result = await prepareImageForModel(bomb, { tempDir });
+      const result = await prepareImageForModel(bomb, { workRoot: tempDir });
       expect(result).toEqual({ ok: false, reason: `it declares 40000x40000 px (1600 megapixels), over the ${IMAGE_MAX_PIXELS / 1_000_000}-megapixel limit for an image to prepare` });
     }
     // The session temp dir -- where sips would work -- was never even asked for.
@@ -254,15 +259,68 @@ describe("decompression bombs are refused on the header, before anything decodes
   });
 
   test("a header just under the limit is not a bomb (it goes on to be resized or refused normally)", async () => {
-    const result = await prepareImageForModel(pngHeader(10_000, 9_999), { tempDir, sipsPath: "/nonexistent/sips" });
+    const result = await prepareImageForModel(pngHeader(10_000, 9_999), { workRoot: tempDir, sipsPath: "/nonexistent/sips" });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).not.toContain("megapixel");
   });
 
   test.skipIf(!HAS_SIPS)("a TIFF/HEIC whose size cannot be read at all is never decoded", async () => {
     const unreadable = Buffer.concat([Buffer.from([0x49, 0x49, 0x2a, 0x00]), Buffer.alloc(64)]);
-    const result = await prepareImageForModel(unreadable, { tempDir });
+    const result = await prepareImageForModel(unreadable, { workRoot: tempDir });
     expect(result).toEqual({ ok: false, reason: expect.stringContaining("its pixel size could not be read, so it was not decoded") });
+  });
+});
+
+describe("the pixel check reads every size a decoder would use (second review)", () => {
+  test("a GIF whose tiny logical screen fronts a 60000x60000 frame is refused on the FRAME's size", async () => {
+    const header = Buffer.concat([Buffer.from("GIF89a", "ascii"), Buffer.from([1, 0, 1, 0, 0, 0, 0])]);
+    const descriptor = Buffer.from([0x2c, 0, 0, 0, 0, 0x60, 0xea, 0x60, 0xea, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b]); // 60000x60000 frame
+    const bomb = Buffer.concat([header, descriptor]);
+    expect(gifFrameSizes(bomb)).toEqual([{ width: 60_000, height: 60_000 }]);
+    expect(await prepareImageForModel(bomb, { workRoot: tempDir })).toEqual({ ok: false, reason: expect.stringContaining("declares 60000x60000 px") });
+    expect(tempReads).toBe(0);
+  });
+
+  test("TIFF: the magic number must be 42, and the FIRST width/height tag wins (libtiff's reading)", () => {
+    expect(parseTiffDimensions(tiffHeader(300, 200))).toEqual({ width: 300, height: 200 });
+    const wrongMagic = tiffHeader(300, 200);
+    wrongMagic.writeUInt16LE(43, 2);
+    expect(parseTiffDimensions(wrongMagic)).toBeUndefined();
+    // A second, smaller ImageWidth after the first cannot shrink the size the check sees.
+    const dup = Buffer.alloc(8 + 2 + 3 * 12 + 4);
+    dup.write("II", 0, "ascii");
+    dup.writeUInt16LE(42, 2);
+    dup.writeUInt32LE(8, 4);
+    dup.writeUInt16LE(3, 8);
+    const entry = (i: number, tag: number, value: number) => {
+      const o = 10 + i * 12;
+      dup.writeUInt16LE(tag, o);
+      dup.writeUInt16LE(4, o + 2);
+      dup.writeUInt32LE(1, o + 4);
+      dup.writeUInt32LE(value, o + 8);
+    };
+    entry(0, 256, 40_000);
+    entry(1, 256, 10);
+    entry(2, 257, 40_000);
+    expect(parseTiffDimensions(dup)).toEqual({ width: 40_000, height: 40_000 });
+  });
+
+  test("HEIC: only a well-formed `ispe` box counts -- the four letters inside compressed data do not", () => {
+    expect(parseHeicDimensions(heicHeader(4032, 3024))).toEqual({ width: 4032, height: 3024 });
+    const noise = Buffer.alloc(64, 7);
+    noise.write("ispe", 20, "ascii"); // no size-20 field before it, no zero version/flags after it
+    noise.writeUInt32BE(90_000, 28);
+    noise.writeUInt32BE(90_000, 32);
+    const fake = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypheic", "ascii"), Buffer.alloc(12), noise]);
+    expect(parseHeicDimensions(fake)).toBeUndefined();
+  });
+
+  test("TIFF/HEIC: `sips -g`'s answer counts too, and the LARGER one is the authority", async () => {
+    // A stand-in `sips` that reports 40000x40000 for any file (a header parse would say 300x200).
+    const fakeSips = join(dir, "fake-sips");
+    writeFileSync(fakeSips, "#!/bin/sh\necho '  pixelWidth: 40000'\necho '  pixelHeight: 40000'\n", { mode: 0o755 });
+    const result = await prepareImageForModel(tiffHeader(300, 200), { workRoot: tempDir, sipsPath: fakeSips });
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining("declares 40000x40000 px") });
   });
 });
 
@@ -270,7 +328,7 @@ describe.skipIf(!HAS_SIPS)("an interrupt stops sips", () => {
   test("with the turn's signal aborted, sips does not run and the refusal says the turn was interrupted", async () => {
     const controller = new AbortController();
     controller.abort();
-    const result = await prepareImageForModel(realPng(2000, 2000, { noise: true }), { tempDir, signal: controller.signal, maxBytes: 1_000_000 });
+    const result = await prepareImageForModel(realPng(2000, 2000, { noise: true }), { workRoot: tempDir, signal: controller.signal, maxBytes: 1_000_000 });
     expect(result).toEqual({ ok: false, reason: expect.stringContaining("the turn was interrupted") });
   });
 
@@ -279,10 +337,10 @@ describe.skipIf(!HAS_SIPS)("an interrupt stops sips", () => {
     // 4000x4000 random pixels: a ~48 MB PNG sips needs a while to decode, scale and re-encode.
     const source = realPng(4000, 4000, { noise: true });
     const uninterrupted = Date.now();
-    ok(await prepareImageForModel(source, { tempDir }));
+    ok(await prepareImageForModel(source, { workRoot: tempDir }));
     const fullRunMs = Date.now() - uninterrupted;
     const started = Date.now();
-    const pending = prepareImageForModel(source, { tempDir, signal: controller.signal });
+    const pending = prepareImageForModel(source, { workRoot: tempDir, signal: controller.signal });
     setTimeout(() => controller.abort(), 50);
     const result = await pending;
     expect(result).toEqual({ ok: false, reason: expect.stringContaining("the turn was interrupted") });
@@ -290,18 +348,38 @@ describe.skipIf(!HAS_SIPS)("an interrupt stops sips", () => {
   }, 30_000);
 });
 
-describe.skipIf(!HAS_SIPS)("a planted link in the session temp dir is never followed", () => {
-  test("links named like the working directory (old and new spellings) are left untouched, and the image is still prepared", async () => {
-    const victim = join(dir, "victim");
-    mkdirSync(victim);
-    mkdirSync(join(dir, "session-tmp"), { recursive: true });
-    symlinkSync(victim, join(dir, "session-tmp", "image-prep"));
-    symlinkSync(victim, join(dir, "session-tmp", "image-prep-AAAAAA"));
-    const image = ok(await prepareImageForModel(realPng(3000, 2000), { tempDir }));
+describe("links are never followed", () => {
+  test("readRegularFileNoFollow reads a regular file and refuses a symlink -- to a file or to a directory", () => {
+    const real = join(dir, "real.png");
+    writeFileSync(real, realPng(4, 4));
+    expect(readRegularFileNoFollow(real)?.equals(realPng(4, 4))).toBe(true);
+    const toFile = join(dir, "out-png.png");
+    symlinkSync(real, toFile);
+    expect(readRegularFileNoFollow(toFile)).toBeUndefined();
+    const toDir = join(dir, "out-dir.png");
+    symlinkSync(dir, toDir);
+    expect(readRegularFileNoFollow(toDir)).toBeUndefined();
+    expect(readRegularFileNoFollow(join(dir, "missing.png"))).toBeUndefined();
+  });
+
+  test.skipIf(!HAS_SIPS)("the work happens in a fresh directory under the given root, which is left empty afterwards", async () => {
+    const image = ok(await prepareImageForModel(realPng(3000, 2000), { workRoot: tempDir }));
     expect(dimsOf(image)).toEqual({ width: 1568, height: 1045 });
-    expect(readdirSync(victim)).toEqual([]);
-    // Only the two planted links remain: the call's own fresh directory is gone.
-    expect(readdirSync(join(dir, "session-tmp")).sort()).toEqual(["image-prep", "image-prep-AAAAAA"]);
+    expect(readdirSync(join(dir, "session-tmp"))).toEqual([]);
+  });
+
+  test("imagePrepWorkRoot: the store home, else the winter home, else the brand folder under the OS home -- never the session temp dir", () => {
+    expect(imagePrepWorkRoot({ storeHome: "/s", winterHome: "/w", home: "/h", brand: { homeDirName: ".x" } })).toBe("/s/image-prep");
+    expect(imagePrepWorkRoot({ winterHome: "/w", home: "/h", brand: { homeDirName: ".x" } })).toBe("/w/image-prep");
+    expect(imagePrepWorkRoot({ home: "/h", brand: { homeDirName: ".x" } })).toBe("/h/.x/image-prep");
+    expect(imagePrepWorkRoot({})).toBeUndefined();
+  });
+
+  test("with no private working directory, nothing is converted: an image within the limits goes as it is, anything else is refused", async () => {
+    const png = realPng(3024, 1964);
+    expect(ok(await prepareImageForModel(png, { workRoot: () => undefined })).bytes.equals(png)).toBe(true);
+    const bmp = Buffer.concat([Buffer.from("BM", "ascii"), Buffer.alloc(40)]);
+    expect(await prepareImageForModel(bmp, { workRoot: () => undefined })).toEqual({ ok: false, reason: expect.stringContaining("there is no private working directory") });
   });
 });
 
@@ -314,7 +392,7 @@ describe("GIFs", () => {
 
   test.skipIf(!HAS_SIPS)("EVERY GIF becomes a PNG of its first frame (OpenAI takes no animated GIF, Gemini no GIF at all)", async () => {
     for (const frames of [1, 2]) {
-      const image = ok(await prepareImageForModel(gif(frames), { tempDir }));
+      const image = ok(await prepareImageForModel(gif(frames), { workRoot: tempDir }));
       expect(image.mediaType).toBe("image/png");
       expect(dimsOf(image)).toEqual({ width: 1, height: 1 });
       expect(describePreparedImage(image)).toContain("converted from GIF");
@@ -322,9 +400,9 @@ describe("GIFs", () => {
   });
 
   test("without sips: a still GIF within the limits goes as it is; an animated one is refused", async () => {
-    const still = ok(await prepareImageForModel(gif(1), { tempDir, sipsPath: "/nonexistent/sips" }));
+    const still = ok(await prepareImageForModel(gif(1), { workRoot: tempDir, sipsPath: "/nonexistent/sips" }));
     expect(still.mediaType).toBe("image/gif");
-    const animated = await prepareImageForModel(gif(2), { tempDir, sipsPath: "/nonexistent/sips" });
+    const animated = await prepareImageForModel(gif(2), { workRoot: tempDir, sipsPath: "/nonexistent/sips" });
     expect(animated).toEqual({ ok: false, reason: expect.stringContaining("it is an animated GIF (2 frames)") });
   });
 });

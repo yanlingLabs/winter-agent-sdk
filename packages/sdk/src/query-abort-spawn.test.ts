@@ -13,6 +13,8 @@ import { query } from "./query.ts";
 import { AbortError } from "./errors.ts";
 import { defaultSpawn, type SpawnRuntimeOptions, type SpawnedRuntimeProcess } from "./transport.ts";
 import { TEST_KEYCHAIN_ENV, TEST_KEYCHAIN_MEMORY } from "./options.ts";
+import { encodeFrame } from "./protocol/codec.ts";
+import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 
 const mainPath = fileURLToPath(new URL("../../runtime/src/main.ts", import.meta.url));
 const home = mkdtempSync(join(tmpdir(), "winter-query-abort-home-"));
@@ -103,4 +105,72 @@ describe("query() with an abort before the first read", () => {
     expect(exit).not.toBe("still running");
     expect(isAlive(pid)).toBe(false);
   }, 30_000);
+});
+
+// --- second review: a rejecting `exited`, and an abort AFTER the Query finished ---------------------------
+
+const initFrame = () =>
+  encodeFrame({ type: "init", protocolVersion: PROTOCOL_VERSION as `${number}.${number}`, sessionId: "s", cwd: "/x", model: "winter-test/echo", permissionMode: "default", tools: [] });
+const successFrame = () => encodeFrame({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: "ok" } });
+
+function fakeProc(opts: { stdout: string[]; exited: Promise<{ code: number | null; signal: string | null }>; kills: string[] }): SpawnedRuntimeProcess {
+  return {
+    stdin: { write() {}, end() {} },
+    stdout: (async function* () {
+      for (const chunk of opts.stdout) yield chunk;
+    })(),
+    kill: (signal?: string) => void opts.kills.push(signal ?? "SIGTERM"),
+    exited: opts.exited,
+    pid: 4242,
+  };
+}
+
+describe("query() spawn-time abort handling, second review", () => {
+  test("a custom spawn hook whose `exited` REJECTS never becomes an unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => void unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const controller = new AbortController();
+      const exited = Promise.reject(new Error("the hook's process handle failed"));
+      exited.catch(() => {}); // the test's own reference is handled; query()'s must be too
+      query({ prompt: "hi", options: { abortController: controller, spawnClaudeCodeProcess: () => fakeProc({ stdout: [], exited, kills: [] }) } });
+      controller.abort(); // exercises the kill path's own `exited` handler as well
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  test("once the Query has FINISHED, a later abort does not kill a child that is shutting down gracefully", async () => {
+    const kills: string[] = [];
+    let resolveExit!: (v: { code: number | null; signal: string | null }) => void;
+    const exited = new Promise<{ code: number | null; signal: string | null }>((resolve) => (resolveExit = resolve));
+    const controller = new AbortController();
+    const messages: string[] = [];
+    for await (const message of query({ prompt: "hi", options: { abortController: controller, spawnClaudeCodeProcess: () => fakeProc({ stdout: [initFrame(), successFrame()], exited, kills }) } })) {
+      messages.push(message.type);
+    }
+    expect(messages).toContain("result");
+    controller.abort(); // after the exchange completed; the child has not exited yet
+    await new Promise((resolve) => setTimeout(resolve, 150)); // past the SIGKILL grace
+    expect(kills).toEqual([]);
+    resolveExit({ code: 0, signal: null });
+  });
+
+  test("an abort BEFORE the first read still kills at once, then the SIGKILL is cancelled when the Query finishes", async () => {
+    const kills: string[] = [];
+    const controller = new AbortController();
+    const q = query({ prompt: "hi", options: { abortController: controller, spawnClaudeCodeProcess: () => fakeProc({ stdout: [], exited: new Promise(() => {}), kills }) } });
+    controller.abort();
+    expect(kills).toEqual(["SIGTERM"]);
+    await expect((async () => {
+      for await (const _message of q) {
+        /* nothing */
+      }
+    })()).rejects.toBeInstanceOf(AbortError);
+    await new Promise((resolve) => setTimeout(resolve, 150)); // past the grace: the escalation was cancelled by the finish
+    expect(kills).toEqual(["SIGTERM"]);
+  });
 });

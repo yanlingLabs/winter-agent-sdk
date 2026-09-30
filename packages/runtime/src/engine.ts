@@ -87,7 +87,7 @@ import { getDefaultMessagingRuntime, UnattributableSenderError, classifyDelivery
 import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, SystemPromptBlock, ToolChangeSet, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 // P6 fix wave (Ruling E-2): the two PURE continuity functions the switch point calls. Value imports
 // from the provider-runtime barrel, one direction (runtime -> provider-runtime), same as every adapter.
-import { DECORATION_CHAR_BUDGET, ESTIMATE_CHARS_PER_TOKEN, ESTIMATE_MARGIN, WinterProviderResolutionError, classifySwitch, isServerToolBlockType, estimateTextTokens, estimateTokensFromChars, estimateValueTokens, fitBudgetTokens, fitVerdict, isWinterBookkeepingItem, reasoningBlockItems, separateReasoningBlocks, type FitVerdict } from "@yanlinglabs/winter-provider-runtime";
+import { DECORATION_CHAR_BUDGET, ESTIMATE_CHARS_PER_TOKEN, ESTIMATE_MARGIN, WinterProviderResolutionError, classifySwitch, isServerToolBlockType, estimateTextTokens, estimateTokensFromChars, estimateValueTokens, fitBudgetTokens, fitVerdict, isWinterBookkeepingItem, reasoningBlockItems, separateReasoningBlocks, withinImageBudget, type FitVerdict } from "@yanlinglabs/winter-provider-runtime";
 export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
@@ -959,7 +959,13 @@ export class ProviderTurnError extends Error {
    * the engine answers it with one reactive compaction and one retry. `undefined` for any other failure.
    */
   readonly contextOverflow: true | undefined;
-  constructor(message: string, opts: { status?: number; providerCode?: string; code?: string; retryable?: boolean; committed?: boolean; contextOverflow?: true; cause?: unknown } = {}) {
+  /**
+   * Code-mode images: the provider refused the request for its IMAGES (too many, or past a many-image
+   * size limit). The engine answers it with ONE retry that sends every image but the newest as a note
+   * (`imagesOnlyNewest`), sticky for the rest of the run. `undefined` for any other failure.
+   */
+  readonly imageOverflow: true | undefined;
+  constructor(message: string, opts: { status?: number; providerCode?: string; code?: string; retryable?: boolean; committed?: boolean; contextOverflow?: true; imageOverflow?: true; cause?: unknown } = {}) {
     super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined);
     this.name = "ProviderTurnError";
     if (opts.status !== undefined) Object.assign(this, { status: opts.status });
@@ -968,6 +974,7 @@ export class ProviderTurnError extends Error {
     this.retryable = opts.retryable;
     this.committed = opts.committed;
     this.contextOverflow = opts.contextOverflow;
+    this.imageOverflow = opts.imageOverflow;
   }
 }
 
@@ -7637,6 +7644,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   /** WS-23: whether opted-in reminders ride as mid-conversation `system` messages on the LIVE model. */
   const systemRemindersOnWire = (): boolean => currentModelDescription()?.wire?.midConversationSystem === true;
 
+  /**
+   * Code-mode images: set once a provider refused a request for its IMAGES (`ProviderTurnError.
+   * imageOverflow`). From then on every request of this run sends only the NEWEST image, every earlier one
+   * as a note (`withinImageBudget` with a one-image budget -- deterministic, so the prefix is stable from
+   * request to request). Compaction would not help: the recent turns it keeps are where the screenshots
+   * are. Sticky for the run: without it every later request would be refused the same way first.
+   */
+  let imagesOnlyNewest = false;
+
   /** WS-23: the LIVE model's catalog description (its effort vocabulary and wire features), or `undefined` for a scripted double. */
   const currentModelDescription = (): ModelDescription | undefined => {
     const key = currentProviderIdentity?.modelKey ?? currentModel;
@@ -9021,7 +9037,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         sentToolChanges = toolPlan.optIn === true || (toolPlan.toolChanges?.render.size ?? 0) > 0;
         sentNativeToolSearch = toolSpecs.some((t) => t.toolSearch === true);
         sentAllowedTools = toolPlan.allowedTools !== undefined;
-        const outboundMessages = requestMessages(context, effortPlan.markers, toolPlan.toolChanges);
+        const outboundMessages = imagesOnlyNewest
+          ? withinImageBudget(requestMessages(context, effortPlan.markers, toolPlan.toolChanges), { maxImages: 1, maxBytes: Number.MAX_SAFE_INTEGER })
+          : requestMessages(context, effortPlan.markers, toolPlan.toolChanges);
         sentToolChangeMessage = outboundMessages.some((m) => m.toolChanges !== undefined);
         generationEffort = effortPlan.stamp;
         // Fix round 1 (I1): every per-message request carries the leading marker, so the beta rides
@@ -9158,6 +9176,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // WS-23: a context-overflow REFUSAL (the 400, before any output) -- reactive compaction and one
         // retry, ahead of the fallback check: another model with the same window would overflow on the
         // same prompt, so this is never a reason to swap models.
+        // Code-mode images: a refusal for the request's IMAGES gets ONE retry with only the newest image
+        // (see `imagesOnlyNewest`); a second refusal falls through and surfaces the provider's own error.
+        if (isProviderTurnError(err) && err.imageOverflow === true && err.committed !== true && !imagesOnlyNewest) {
+          imagesOnlyNewest = true;
+          continue roundLoop;
+        }
         if (isProviderTurnError(err) && err.contextOverflow === true && err.committed !== true) {
           const recovery = await recoverFromContextOverflow();
           if (recovery.retry) continue roundLoop;

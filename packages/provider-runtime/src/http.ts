@@ -46,6 +46,8 @@ export class ProviderRequestError extends Error implements ProviderError {
   // `normalizeHttpError` survives into the error the fold converts (it used to be dropped here, and only
   // the Anthropic adapter, which re-assigns it by hand, ever delivered one).
   declare readonly contextOverflow?: true;
+  /** Code-mode images: carried like `contextOverflow` (see `ProviderError.imageOverflow`). */
+  declare readonly imageOverflow?: true;
   constructor(fields: ProviderError) {
     super(fields.message);
     this.name = "ProviderRequestError";
@@ -56,6 +58,7 @@ export class ProviderRequestError extends Error implements ProviderError {
       ...(fields.providerCode !== undefined ? { providerCode: fields.providerCode } : {}),
       ...(fields.retryAfterMs !== undefined ? { retryAfterMs: fields.retryAfterMs } : {}),
       ...(fields.contextOverflow === true ? { contextOverflow: true } : {}),
+      ...(fields.imageOverflow === true ? { imageOverflow: true } : {}),
     });
   }
 }

@@ -10,8 +10,7 @@
 // THE CACHE TRADE-OFF. Turning an old image into a note changes the prompt at that point, so the cached
 // prefix is lost from there on for that request. Dropping exactly "as many as needed" would move that
 // point on EVERY turn once a session is over budget (each new image pushes one more old one out). The
-// drop count is therefore rounded UP to a whole STEP of images (a quarter of the count budget, 1..10, and at
-// most a quarter of the images present): the
+// drop count is therefore rounded UP to a whole STEP of images (a quarter of the count budget, 1..4): the
 // prefix changes once per step's worth of new images, and the requests in between are byte-stable. It is
 // a pure function of the messages and the budget -- no state -- so a resumed session drops exactly what
 // the live one did.
@@ -32,11 +31,14 @@ const MiB = 1024 * 1024;
  * The budget for a request target. Each number is the provider's documented limit, or a margin under it
  * where the documented limit also covers the request's text:
  *
- * - `anthropic` (the Claude API, the Console, and Anthropic-compatible endpoints): "100 per request on the
- *   API, for models with a 200k-token context window", "600 per request on the API, for all other models",
- *   and a 32 MB request limit for standard endpoints
- *   (https://platform.claude.com/docs/en/build-with-claude/vision, "Request limits"). 24 MiB of image
- *   data leaves 8 MB for everything else.
+ * - Claude on Anthropic's own API (`anthropic`, `console`): "100 per request on the API, for models with a
+ *   200k-token context window", "600 per request on the API, for all other models", and a 32 MB request
+ *   limit for standard endpoints (https://platform.claude.com/docs/en/build-with-claude/vision, "Request
+ *   limits"). 24 MiB of image data leaves 8 MB for everything else. A row whose context window is not
+ *   known gets the safe 100.
+ * - Other Anthropic-dialect endpoints (DeepSeek, Kimi, MiniMax, Z.ai and the rest of the
+ *   `*-anthropic` providers): they speak the Messages API but publish none of Claude's limits, so the
+ *   conservative default below, not Claude's.
  * - `bedrock`: "You can include up to 20 images" per Converse message, each at most 3.75 MB
  *   (https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Message.html), and Claude's
  *   request limit on Bedrock is below the API's 32 MB (same vision page). 20 images and 14 MiB, applied
@@ -44,35 +46,45 @@ const MiB = 1024 * 1024;
  * - `google` (Gemini, Vertex): "Inline image data limits your total request size (text prompts, system
  *   instructions, and inline bytes) to 20MB" (https://ai.google.dev/gemini-api/docs/image-understanding).
  *   14 MiB of image data; no count limit of ours (the bytes bind first).
- * - `mistral`: "The maximum number images per request via API is 8" (Mistral's vision FAQ,
- *   https://docs.mistral.ai/capabilities/vision/). 8 images, and the default 20 MiB.
- * - OpenAI's own surfaces (`openai`, `codex-oauth`, `azure-openai`): "Up to 512 MB total payload per
- *   request", "Up to 1,500 images per request"
- *   (https://developers.openai.com/api/docs/guides/images-vision). 1,500 images and 256 MiB.
- * - Anything else (the OpenAI-compatible providers, xAI, the local runners): no published limit we rely
- *   on, so a conservative 20 images and 20 MiB.
+ * - `mistral` and `codestral` (Mistral's API): "The maximum number images per request via API is 8"
+ *   (Mistral's vision FAQ, https://docs.mistral.ai/capabilities/vision/). 8 images, and the default 20 MiB.
+ * - `openai` (OpenAI's own API): "Up to 512 MB total payload per request", "Up to 1,500 images per
+ *   request" (https://developers.openai.com/api/docs/guides/images-vision). 1,500 images and 256 MiB.
+ * - `azure-openai`: "Maximum number of images per request" is 50 for the vision models
+ *   (https://learn.microsoft.com/en-us/azure/foundry/openai/quotas-limits); no published byte figure, so
+ *   the default 20 MiB.
+ * - Anything else -- `codex-oauth` (the ChatGPT backend publishes no limits), xAI, the OpenAI-compatible
+ *   providers, the local runners: no published limit we rely on, so a conservative 20 images and 20 MiB.
  */
 export function imageBudgetFor(target: { family: string; providerId?: string; contextWindow?: number }): ImageBudget {
   const provider = target.providerId ?? "";
-  if (provider === "mistral") return { maxImages: 8, maxBytes: 20 * MiB };
-  if (target.family === "anthropic") return { maxImages: target.contextWindow !== undefined && target.contextWindow <= 200_000 ? 100 : 600, maxBytes: 24 * MiB };
+  const conservative: ImageBudget = { maxImages: 20, maxBytes: 20 * MiB };
+  if (provider === "mistral" || provider === "codestral") return { maxImages: 8, maxBytes: 20 * MiB };
+  if (provider === "anthropic" || provider === "console") return { maxImages: target.contextWindow !== undefined && target.contextWindow > 200_000 ? 600 : 100, maxBytes: 24 * MiB };
+  if (target.family === "anthropic") return conservative;
   if (target.family === "bedrock") return { maxImages: 20, maxBytes: 14 * MiB };
   if (target.family === "google") return { maxImages: Number.MAX_SAFE_INTEGER, maxBytes: 14 * MiB };
-  if (provider === "openai" || provider === "codex-oauth" || provider === "azure-openai") return { maxImages: 1500, maxBytes: 256 * MiB };
-  return { maxImages: 20, maxBytes: 20 * MiB };
+  if (provider === "openai") return { maxImages: 1500, maxBytes: 256 * MiB };
+  if (provider === "azure-openai") return { maxImages: 50, maxBytes: 20 * MiB };
+  return conservative;
 }
 
 /**
- * How many images a drop is rounded up to (see the header's cache trade-off): a quarter of the count
- * budget, at most 10, and never more than a quarter of the images actually present -- so a request that
- * is over on BYTES with only a handful of images keeps most of them.
+ * How many images a drop is rounded up to (see the header's cache trade-off). Derived from the BUDGET
+ * only -- never from how many images happen to be present, which made the drop jump and even SHRINK as a
+ * history grew (dropped images came back, and the prefix moved every turn). A quarter of the count
+ * budget, between 1 and 4: small enough that a byte-limited budget of large images still keeps most of
+ * what fits, large enough that the prefix moves once per few new images rather than every turn.
  */
-function dropStep(budget: ImageBudget, present: number): number {
-  return Math.max(1, Math.floor(Math.min(budget.maxImages, 40, present) / 4));
+function dropStep(budget: ImageBudget): number {
+  return Math.max(1, Math.min(4, Math.floor(budget.maxImages / 4)));
 }
 
+/** How deep images are looked for inside nested tool results -- ONE limit for counting and for rewriting. */
+const MAX_IMAGE_DEPTH = 8;
+
 function visitImages(content: string | ContentBlockLike[], visit: (image: Extract<ContentBlockLike, { type: "image" }>) => void, depth = 0): void {
-  if (typeof content === "string" || depth > 8) return;
+  if (typeof content === "string" || depth > MAX_IMAGE_DEPTH) return;
   for (const block of content) {
     if (block.type === "image") visit(block);
     else if (block.type === "tool_result") visitImages(block.content, visit, depth + 1);
@@ -82,6 +94,12 @@ function visitImages(content: string | ContentBlockLike[], visit: (image: Extrac
 /**
  * `messages` with the OLDEST images turned into `IMAGE_BUDGET_NOTE` until what is left fits `budget`,
  * the drop rounded up to a whole step. Returned by identity when everything fits.
+ *
+ * Two guarantees, both pinned by tests over a sweep of history lengths:
+ * - MONOTONIC: as a history grows (images appended), the number dropped never decreases -- an image
+ *   left out never comes back, so the prefix up to the last drop point is stable.
+ * - THE NEWEST STAYS: when the newest image fits the budget on its own, it is never dropped (the image
+ *   the model just read is the one it needs).
  */
 export function withinImageBudget<M extends ProviderMessageLike>(messages: readonly M[], budget: ImageBudget): M[] {
   const sizes: number[] = [];
@@ -95,14 +113,15 @@ export function withinImageBudget<M extends ProviderMessageLike>(messages: reado
     total -= sizes[drop]!;
     drop++;
   }
-  const step = dropStep(budget, sizes.length);
-  drop = Math.min(sizes.length, Math.ceil(drop / step) * step);
+  drop = Math.ceil(drop / dropStep(budget)) * dropStep(budget);
+  const newestFitsAlone = budget.maxImages >= 1 && sizes[sizes.length - 1]! <= budget.maxBytes;
+  drop = Math.min(drop, newestFitsAlone ? sizes.length - 1 : sizes.length);
 
   let seen = 0;
   const mapBlocks = (blocks: ContentBlockLike[], depth: number): ContentBlockLike[] =>
     blocks.map((block): ContentBlockLike => {
       if (block.type === "image") return seen++ < drop ? { type: "text", text: IMAGE_BUDGET_NOTE } : block;
-      if (block.type === "tool_result" && Array.isArray(block.content) && depth <= 8) return { ...block, content: mapBlocks(block.content, depth + 1) };
+      if (block.type === "tool_result" && Array.isArray(block.content) && depth < MAX_IMAGE_DEPTH) return { ...block, content: mapBlocks(block.content, depth + 1) };
       return block;
     });
   return messages.map((message) => {

@@ -40,20 +40,30 @@ corresponds to one `chore(release): vX.Y.Z` commit.
     sent as it is and an animated one is refused. A GIF that reaches Gemini another way becomes a short
     note (and on Gemini 3 it is never nested in the function response).
   - An image that declares more than 100 megapixels is refused from its header before anything decodes
-    it, so a tiny file claiming 40000x40000 px cannot make `sips` use gigabytes of memory. A TIFF or
-    HEIC whose size cannot be read is not decoded at all.
-  - Interrupting the turn stops a running `sips`. Each resize works in a new private folder, so a link
-    planted in the session's temp folder is never followed.
+    it, so a tiny file claiming 40000x40000 px cannot make `sips` use gigabytes of memory. A GIF is
+    checked on its largest frame, a TIFF or HEIC on the larger of its header and what `sips` reports, and
+    one whose size cannot be read is not decoded at all.
+  - Interrupting the turn stops a running `sips`. Resizing happens in a new folder under the runtime's
+    own `image-prep` directory, which the shell sandbox is not allowed to write, and the result is read
+    without following links. Nothing a sandboxed command plants can redirect it.
 - **Mistral gets images inside the tool result.** Mistral refuses a user message right after a tool
   message, so the follow-up message other chat-completions providers get would fail every later request.
   Mistral's tool messages accept image chunks, so the image goes there, and any other text of the same
-  turn joins the last tool message.
+  turn joins the last tool message. This applies to both providers on Mistral's API, `mistral` and
+  `codestral`.
 - **A request never carries more images than its provider accepts.** Each provider limits a request by
-  size, and some by image count: Claude 32 MB and 100 or 600 images, Gemini 20 MB, Bedrock 20 images a
-  message, Mistral 8 images, OpenAI 512 MB and 1,500 images. Before a request is sent, the oldest images
-  beyond that budget become a short note. They are dropped a few at a time, so most turns keep the
-  cached prompt. A request that is still refused as too large (HTTP 413) or as carrying too many images
-  now triggers the same recovery as a context overflow: the conversation is compacted and retried once.
+  size, and some by image count: Claude's own API 32 MB and 100 or 600 images, Gemini 20 MB, Bedrock 20
+  images a message, Mistral 8 images, Azure OpenAI 50 images, OpenAI 512 MB and 1,500 images. Providers
+  that publish no limit, including other services that speak Claude's API, get 20 images and 20 MB.
+  Before a request is sent, the oldest images beyond that budget become a short note. They are dropped a
+  few at a time, so most turns keep the cached prompt. An image that was dropped never comes back, and
+  the newest image is always kept when it fits on its own.
+- **A request refused for its images is retried once with only the newest image.** A refusal that says
+  there are too many images, or that one is too large for a request with many images, is retried with
+  every earlier image turned into a note, and later requests keep doing that. If the retry is refused
+  too, the provider's own error is shown. A request refused as too large (HTTP 413, when the provider
+  says the request is too large) is treated like a context overflow: the conversation is compacted and
+  retried once. Only the provider's error message is read for this, never the rest of the response.
 - **Tool results split across messages are kept together.** A resumed claude transcript stores each
   result of a parallel batch as its own entry. Every adapter now sends the batch's images after all of
   its results, never between two of them.
@@ -85,6 +95,8 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   Reading the returned query throws the same `AbortError` as an abort right after the start.
 - An abort that lands after the start but before anything reads the query now stops the runtime
   process at once. Before, it kept running until the query was read, or until the host exited.
+- Once a query has finished, a later abort no longer signals the runtime process while it shuts down.
+- A custom spawn hook whose process handle fails no longer causes an unhandled promise rejection.
 
 ## 0.0.35
 

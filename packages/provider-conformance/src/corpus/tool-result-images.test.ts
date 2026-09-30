@@ -523,6 +523,16 @@ for (const [shape, history] of Object.entries(SHAPES)) {
   });
 }
 
+describe("Codestral (Mistral\'s own API at codestral.mistral.ai) gets the Mistral shape too", () => {
+  test("the image rides inside the tool message; no user message follows", async () => {
+    const body = await wireBody((fake) =>
+      createChatCompletionsAdapter({ retry: FAST_RETRY, descriptors: openAiDescriptors("codestral") }).streamTurn(req(imageReadHistory(), "codestral-latest"), testContext({ providerId: "codestral", baseUrl: fake.url, local: true })),
+    );
+    const messages = body["messages"] as Array<Record<string, unknown>>;
+    expect(messages.at(-1)).toEqual({ role: "tool", tool_call_id: CALL_ID, content: [{ type: "image_url", image_url: { url: DATA_URL } }] });
+  });
+});
+
 describe("Mistral: trailing content of a tool turn is folded into the last tool message, never a user message after it", () => {
   test("a hook's text after the results joins the last tool message as a text chunk", async () => {
     const history: ProviderMessageLike[] = [

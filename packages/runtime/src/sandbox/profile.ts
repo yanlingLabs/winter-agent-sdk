@@ -320,6 +320,9 @@ function buildReadDenyWritePermitBlock(writableRoots: readonly string[]): string
  * deliberately NOT touched here: it already names `file-write-unlink` explicitly (never `create`, by
  * claude's own design -- see that function's own header), so it was never in the affected set.
  */
+/** The runtime's image working directory under the winter/store home (tools/image-prep.ts) -- write-denied to the shell. */
+export const IMAGE_PREP_DIRNAME = "image-prep";
+
 const WRITE_OPS_SURVIVING_READ_DENY_REPERMIT = "file-write* file-write-unlink file-write-create";
 
 /**
@@ -968,6 +971,22 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // dirname (`checkpoint/file-history.ts`'s `CHECKPOINT_BACKUPS_DIRNAME`) is a separate constant,
   // owned by lane L1b, which renames it to match -- until both land the two are momentarily out of
   // step; see this fix round's report.
+  // Code-mode images: the runtime's own image working directory, `<root>/image-prep/` (tools/image-prep.ts's
+  // `IMAGE_PREP_DIRNAME`). The runtime writes a copy of an image there and runs `sips` on it, reading the
+  // result back; a sandboxed shell that could plant a link there (a symlink named like `sips`'s output)
+  // would make `sips` write through it. So the whole tree is off-limits to the shell -- the same subpath
+  // deny, anchors and precedence as `file-history/` below -- and the runtime never works under the
+  // session temp dir, which the shell CAN write.
+  const denyImagePrepDirRule = [
+    input.home ? `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (subpath "${sbplString(canon(join(input.home, brand.homeDirName, IMAGE_PREP_DIRNAME)))}"))` : "",
+    durableRoot && canon(durableRoot) !== canon(join(input.home ?? "", brand.homeDirName)) ? `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (subpath "${sbplString(canon(join(durableRoot, IMAGE_PREP_DIRNAME)))}"))` : "",
+    input.winterHome && canon(input.winterHome) !== canon(join(input.home ?? "", brand.homeDirName)) && canon(input.winterHome) !== (durableRoot ? canon(durableRoot) : "")
+      ? `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (subpath "${sbplString(canon(join(input.winterHome, IMAGE_PREP_DIRNAME)))}"))`
+      : "",
+  ]
+    .filter((r) => r.length > 0)
+    .join("\n");
+
   const denyBackupsDirRule = [
     input.home ? `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (subpath "${sbplString(canon(join(input.home, brand.homeDirName, "file-history")))}"))` : "",
     // I1: same reasoning as the run deny above -- the store the sink actually writes to is the
@@ -1038,6 +1057,7 @@ ${denyReadKeepInPlaceBlock}
 ${allowDarwinTempFiles}
 ${network}
 ${denyBackupsDirRule}
+${denyImagePrepDirRule}
 ${denyHomeSelfGrantRules}
 ${denyRulesFileRules}
 ${denyRulesFileRegex}

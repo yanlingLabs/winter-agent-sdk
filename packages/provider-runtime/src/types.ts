@@ -403,6 +403,13 @@ export interface ProviderError {
    * `false`, when the failure is anything else.
    */
   contextOverflow?: true;
+  /**
+   * Code-mode images: the request was REFUSED for its IMAGES -- too many in one request, or one past a
+   * per-image or many-image limit (`normalizeHttpError`'s image phrasings). Compaction does not fix that
+   * (the recent turns keep their screenshots); the engine's one retry sends every image but the newest as
+   * a note instead. Absent, never `false`, when the failure is anything else.
+   */
+  imageOverflow?: true;
 }
 
 /**
