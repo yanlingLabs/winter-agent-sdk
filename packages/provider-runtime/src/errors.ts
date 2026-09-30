@@ -282,12 +282,20 @@ export function normalizeHttpError(status: number, headers: Headers, body: strin
  *     N tokens ...").
  *   - xAI: HTTP 400 in its flat dialect, `"This model's maximum prompt length is N but the request contains
  *     M tokens."` -- no structured code, so the documented leading phrase is the discriminator.
- * 413 is included for a gateway that sends the same refusal as "payload too large". Anything else stays an
+ * 413 ("payload too large") and the image-count refusals count too (see the body). Anything else stays an
  * ordinary `bad_request`: a false positive would compact a conversation over an unrelated error.
  */
 function isContextOverflowRefusal(status: number, providerCode: string | undefined, message: string): boolean {
   if (status !== 400 && status !== 413) return false;
   if (providerCode === "context_length_exceeded") return true;
+  // Code-mode images: a request too LARGE, or carrying too many images, is the same kind of refusal -- the
+  // conversation outgrew what one request may hold, and it will refuse every later request the same way
+  // unless the history shrinks. The engine's recovery (reactive compaction, which leaves images out of the
+  // summary) is what shrinks it. 413 is "payload too large" on every surface (Anthropic's documented
+  // `request_too_large`, https://platform.claude.com/docs/en/api/errors); the 400 phrasings are the
+  // image-count and many-image refusals ("many-image requests", "too many images", "maximum of N images").
+  if (status === 413 || providerCode === "request_too_large") return true;
+  if (/too many images|many-image requests|maximum (number of |of )?\d* ?images|images? per request|request (payload |size |body )?(is )?too large|payload too large/i.test(message)) return true;
   return /maximum (prompt|context) length is \d+/i.test(message) || /exceeds the context window/i.test(message);
 }
 

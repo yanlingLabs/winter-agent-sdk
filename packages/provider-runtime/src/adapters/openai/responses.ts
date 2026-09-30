@@ -134,7 +134,11 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
   // definitions), built as the input is walked -- a call renders with the namespace its load gave it,
   // never with whatever the live tool list says now.
   const namespaceOf = new Map<string, string>();
-  for (const message of messages) {
+  // Code-mode images: trailing user content of a tool-result message whose NEXT message also carries tool
+  // results (claude writes a parallel batch's results as one entry each, so a resumed history splits
+  // them) waits for the end of the run, so no `message` item lands between two outputs of one batch.
+  let carried: unknown[] = [];
+  for (const [messageIndex, message] of messages.entries()) {
     // WS-23 (midconv): a tool-change message is an `additional_tools` developer item -- the tools
     // "become available only after that item appears in the input", so it is replayed right here.
     if (message.role === "system" && message.toolChanges !== undefined) {
@@ -282,7 +286,12 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
     // Code-mode images ("follow-up" surfaces): the results' images lead the trailing user message, after
     // EVERY output of this message -- never between a `function_call` and its output.
     if (followUpImages.length > 0) contentParts.unshift(...followUpImages);
-    if (contentParts.length > 0) out.push({ type: "message", role: wireRole, content: contentParts });
+    if (carried.length > 0) {
+      contentParts.unshift(...carried);
+      carried = [];
+    }
+    if (carriesToolResults && contentParts.length > 0 && carriesToolResultsAt(messages, messageIndex + 1)) carried = [...contentParts];
+    else if (contentParts.length > 0) out.push({ type: "message", role: wireRole, content: contentParts });
     if (layout !== undefined) out.push(...interleaveWithLayout(vendorItems, out.splice(ownStart), layout));
     // "after-user": the waiting update lands right after the user message it was placed before --
     // Codex's position (the tail of `input`, behind the prompt). Only a HUMAN message counts, never a
@@ -293,6 +302,7 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[], opts
     }
   }
   if (pendingUpdate !== undefined) pushUpdate(pendingUpdate);
+  if (carried.length > 0) out.push({ type: "message", role: "user", content: carried });
   return out;
 }
 
@@ -325,6 +335,12 @@ export interface ResponsesInputOptions {
    * `toolResultImagesFor`.
    */
   toolResultImages?: "array" | "follow-up";
+}
+
+/** Whether `messages[index]` exists and carries a tool result (the next message of a split tool-result run). */
+export function carriesToolResultsAt(messages: readonly ProviderMessageLike[], index: number): boolean {
+  const next = messages[index];
+  return next !== undefined && next.role !== "assistant" && next.role !== "system" && typeof next.content !== "string" && next.content.some((b) => b.type === "tool_result");
 }
 
 /** The providers whose Responses surface documents an image inside `function_call_output.output` (see `ResponsesInputOptions.toolResultImages`). */

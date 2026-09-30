@@ -11,7 +11,7 @@
 // no `sips` (another platform, a failed run) an image that is already within every limit is sent as it
 // is, and anything else is refused with a text that says why.
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ToolResultBlock } from "./registry.ts";
@@ -137,12 +137,54 @@ export function parseWebpDimensions(buf: Uint8Array): { width: number; height: n
   return undefined;
 }
 
+/** A TIFF's first image size, from its first IFD's ImageWidth (256) / ImageLength (257) tags (SHORT or LONG). */
+export function parseTiffDimensions(buf: Uint8Array): { width: number; height: number } | undefined {
+  if (buf.length < 8) return undefined;
+  const le = buf[0] === 0x49 && buf[1] === 0x49;
+  if (!le && !(buf[0] === 0x4d && buf[1] === 0x4d)) return undefined;
+  const u16 = (o: number): number => (le ? buf[o]! | (buf[o + 1]! << 8) : (buf[o]! << 8) | buf[o + 1]!);
+  const u32 = (o: number): number => (le ? (buf[o]! | (buf[o + 1]! << 8) | (buf[o + 2]! << 16) | (buf[o + 3]! << 24)) >>> 0 : ((buf[o]! << 24) | (buf[o + 1]! << 16) | (buf[o + 2]! << 8) | buf[o + 3]!) >>> 0);
+  const ifd = u32(4);
+  if (ifd + 2 > buf.length) return undefined;
+  const count = u16(ifd);
+  let width: number | undefined;
+  let height: number | undefined;
+  for (let i = 0; i < count; i++) {
+    const entry = ifd + 2 + i * 12;
+    if (entry + 12 > buf.length) return undefined;
+    const tag = u16(entry);
+    const type = u16(entry + 2);
+    const value = type === 3 ? u16(entry + 8) : type === 4 ? u32(entry + 8) : undefined;
+    if (tag === 256) width = value;
+    if (tag === 257) height = value;
+  }
+  return width !== undefined && height !== undefined ? { width, height } : undefined;
+}
+
+/**
+ * A HEIC's size from its `ispe` (image spatial extents) boxes: the LARGEST one, since a grid image carries
+ * a small `ispe` per tile and one for the whole picture. A scan, not a box walk -- it only has to be an
+ * upper bound for the pixel check, and an undecodable file never reaches a decoder anyway.
+ */
+export function parseHeicDimensions(buf: Uint8Array): { width: number; height: number } | undefined {
+  let best: { width: number; height: number } | undefined;
+  for (let i = 0; i + 16 <= buf.length; i++) {
+    if (buf[i] !== 0x69 || buf[i + 1] !== 0x73 || buf[i + 2] !== 0x70 || buf[i + 3] !== 0x65) continue; // "ispe"
+    const width = u32be(buf, i + 8);
+    const height = u32be(buf, i + 12);
+    if (best === undefined || width * height > best.width * best.height) best = { width, height };
+  }
+  return best;
+}
+
 export function parseImageDimensions(mediaType: string, bytes: Uint8Array): { width: number; height: number } | undefined {
   if (mediaType === "image/png") return parsePngDimensions(bytes);
   if (mediaType === "image/gif") return parseGifDimensions(bytes);
   if (mediaType === "image/bmp") return parseBmpDimensions(bytes);
   if (mediaType === "image/jpeg") return parseJpegDimensions(bytes);
   if (mediaType === "image/webp") return parseWebpDimensions(bytes);
+  if (mediaType === "image/tiff") return parseTiffDimensions(bytes);
+  if (mediaType === "image/heic") return parseHeicDimensions(bytes);
   return undefined;
 }
 
@@ -159,6 +201,13 @@ export const IMAGE_MAX_LONG_EDGE = 1568;
 
 /** The largest file Read or an MCP result may hand the resizer at all (a guard against absurd inputs, not a provider limit). */
 export const IMAGE_MAX_INPUT_BYTES = 64 * 1024 * 1024;
+
+/**
+ * The most pixels an image may DECLARE before anything decodes it: 100 megapixels. A few-kilobyte PNG can
+ * declare 40000x40000 px, and decoding that (sips does, to resize it) takes gigabytes; a declared size is
+ * all a header costs. 100 MP is above any camera or screenshot in ordinary use (a 12K frame is ~80 MP).
+ */
+export const IMAGE_MAX_PIXELS = 100_000_000;
 
 /** The JPEG qualities tried, in order, when an image is still over `READ_IMAGE_MAX_BYTES` after resizing. */
 const JPEG_QUALITY_STEPS = [85, 70, 55, 40] as const;
@@ -214,6 +263,8 @@ export interface PrepareImageOptions {
   sipsPath?: string;
   /** Test seam: the byte limit. Default `READ_IMAGE_MAX_BYTES`. */
   maxBytes?: number;
+  /** The turn's abort: an interrupt kills a running `sips`. */
+  signal?: AbortSignal;
 }
 
 /** A short, model-facing description of what happened, e.g. `image/png, 25856 bytes, 1568x1018, resized from 3024x1964`. */
@@ -226,19 +277,60 @@ export function describePreparedImage(image: PreparedImage): string {
   return `${image.mediaType}, ${image.bytes.length} bytes${size}${notes.length > 0 ? `, ${notes.join(", ")}` : ""}`;
 }
 
-function runSips(sips: string, args: string[]): Promise<{ ok: boolean; stdout: string }> {
+function runSips(sips: string, args: string[], signal: AbortSignal | undefined): Promise<{ ok: boolean; stdout: string }> {
   return new Promise((resolve) => {
-    execFile(sips, args, { timeout: SIPS_TIMEOUT_MS, maxBuffer: 1024 * 1024 }, (err, stdout) => resolve({ ok: err === null, stdout: String(stdout ?? "") }));
+    execFile(sips, args, { timeout: SIPS_TIMEOUT_MS, maxBuffer: 1024 * 1024, ...(signal !== undefined ? { signal } : {}) }, (err, stdout) => resolve({ ok: err === null, stdout: String(stdout ?? "") }));
   });
 }
 
-/** `sips -g pixelWidth -g pixelHeight` for a format this file cannot parse (TIFF, HEIC, an odd WebP). */
-async function sipsDimensions(sips: string, path: string): Promise<{ width: number; height: number } | undefined> {
-  const out = await runSips(sips, ["-g", "pixelWidth", "-g", "pixelHeight", path]);
+/** `sips -g pixelWidth -g pixelHeight` (a header read) for a format this file cannot parse (TIFF, HEIC, an odd WebP). */
+async function sipsDimensions(sips: string, path: string, signal: AbortSignal | undefined): Promise<{ width: number; height: number } | undefined> {
+  const out = await runSips(sips, ["-g", "pixelWidth", "-g", "pixelHeight", path], signal);
   if (!out.ok) return undefined;
   const width = /pixelWidth:\s*(\d+)/.exec(out.stdout)?.[1];
   const height = /pixelHeight:\s*(\d+)/.exec(out.stdout)?.[1];
   return width !== undefined && height !== undefined ? { width: Number(width), height: Number(height) } : undefined;
+}
+
+/**
+ * How many frames a GIF holds (image descriptors), walking its block structure; `undefined` when the
+ * structure cannot be walked. OpenAI takes only a "non-animated GIF"
+ * (https://developers.openai.com/api/docs/guides/images-vision) and Claude reads only the first frame.
+ */
+export function gifFrameCount(buf: Uint8Array): number | undefined {
+  if (buf.length < 13 || buf[0] !== 0x47 || buf[1] !== 0x49 || buf[2] !== 0x46) return undefined;
+  let pos = 13;
+  const packed = buf[10]!;
+  if (packed & 0x80) pos += 3 * (1 << ((packed & 0x07) + 1)); // global colour table
+  const skipSubBlocks = (): boolean => {
+    while (pos < buf.length) {
+      const size = buf[pos]!;
+      pos += 1;
+      if (size === 0) return true;
+      pos += size;
+    }
+    return false;
+  };
+  let frames = 0;
+  while (pos < buf.length) {
+    const introducer = buf[pos]!;
+    if (introducer === 0x3b) return frames; // trailer
+    if (introducer === 0x21) {
+      pos += 2; // introducer + label
+      if (!skipSubBlocks()) return undefined;
+    } else if (introducer === 0x2c) {
+      frames++;
+      if (pos + 10 > buf.length) return undefined;
+      const local = buf[pos + 9]!;
+      pos += 10;
+      if (local & 0x80) pos += 3 * (1 << ((local & 0x07) + 1)); // local colour table
+      pos += 1; // LZW minimum code size
+      if (!skipSubBlocks()) return undefined;
+    } else {
+      return undefined;
+    }
+  }
+  return frames;
 }
 
 /**
@@ -247,13 +339,19 @@ async function sipsDimensions(sips: string, path: string): Promise<{ width: numb
  * - The type is SNIFFED from the bytes; something that is none of PNG/JPEG/GIF/WebP/BMP/TIFF/HEIC is refused.
  * - An image whose long edge is over `IMAGE_MAX_LONG_EDGE` is scaled down to it (aspect kept).
  * - The format is kept where a provider takes it: PNG stays PNG and JPEG stays JPEG (quality 85 when
- *   re-encoded). `sips` cannot WRITE WebP, and Gemini does not read GIF, so a WebP or GIF that has to be
- *   rewritten becomes PNG (a GIF's first frame). BMP and TIFF, which no provider takes, become PNG; HEIC
- *   (a camera photo) becomes JPEG. A WebP or GIF that needs no rewrite is sent as it is.
+ *   re-encoded). `sips` cannot WRITE WebP, so a WebP that has to be rewritten becomes PNG. EVERY GIF
+ *   becomes PNG (its first frame): Gemini reads no GIF, OpenAI no animated one, Claude only the first
+ *   frame. BMP and TIFF, which no provider takes, become PNG; HEIC (a camera photo) becomes JPEG. A WebP
+ *   that needs no rewrite is sent as it is.
+ * - An image DECLARING more than `IMAGE_MAX_PIXELS` is refused before anything decodes it.
  * - Still over `READ_IMAGE_MAX_BYTES`? Re-encoded as JPEG at quality 85, 70, 55, then 40; still over,
  *   refused. Never truncated.
  * - Without `sips`, or when it fails: the image as it is if it is already a deliverable type within the
- *   byte limit and `READ_IMAGE_MAX_DIMENSION`, else a refusal naming the reason.
+ *   byte limit and `READ_IMAGE_MAX_DIMENSION` (and, for a GIF, a single frame), else a refusal naming the
+ *   reason.
+ * - `sips` works in a FRESH private directory per call (`mkdtemp`), writes its input with `wx`, and its
+ *   output is read only if it is a regular file -- so nothing planted under the session temp dir (which
+ *   the sandboxed shell can write) is followed.
  */
 export async function prepareImageForModel(source: Buffer, opts: PrepareImageOptions): Promise<ImagePreparation> {
   const maxBytes = opts.maxBytes ?? READ_IMAGE_MAX_BYTES;
@@ -263,7 +361,17 @@ export async function prepareImageForModel(source: Buffer, opts: PrepareImageOpt
   if (source.length > IMAGE_MAX_INPUT_BYTES) return { ok: false, reason: `it is ${source.length} bytes, over the ${IMAGE_MAX_INPUT_BYTES}-byte limit for an image to prepare` };
 
   let dims = parseImageDimensions(mediaType, source);
-  const deliverable = DELIVERABLE_IMAGE_TYPES.has(mediaType);
+  const tooManyPixels = (d: { width: number; height: number } | undefined): boolean => d !== undefined && d.width * d.height > IMAGE_MAX_PIXELS;
+  const pixelRefusal = (d: { width: number; height: number }): ImagePreparation => ({
+    ok: false,
+    reason: `it declares ${d.width}x${d.height} px (${Math.round((d.width * d.height) / 1_000_000)} megapixels), over the ${IMAGE_MAX_PIXELS / 1_000_000}-megapixel limit for an image to prepare`,
+  });
+  // A decompression bomb is refused on its HEADER, before any decoder sees it.
+  if (tooManyPixels(dims)) return pixelRefusal(dims!);
+
+  const frames = mediaType === "image/gif" ? gifFrameCount(source) : undefined;
+  const animated = frames !== undefined && frames > 1;
+  const deliverable = DELIVERABLE_IMAGE_TYPES.has(mediaType) && !animated;
   const asIs = (): ImagePreparation => ({
     ok: true,
     mediaType,
@@ -275,64 +383,68 @@ export async function prepareImageForModel(source: Buffer, opts: PrepareImageOpt
   const withinLimitsAsIs = (): boolean => deliverable && source.length <= maxBytes && (dims === undefined || (dims.width <= READ_IMAGE_MAX_DIMENSION && dims.height <= READ_IMAGE_MAX_DIMENSION));
   const tooLong = (d: { width: number; height: number } | undefined): boolean => d !== undefined && Math.max(d.width, d.height) > IMAGE_MAX_LONG_EDGE;
 
-  // Nothing to do: the common case costs no process.
-  if (deliverable && source.length <= maxBytes && dims !== undefined && !tooLong(dims)) return asIs();
+  // Nothing to do: the common case costs no process. A GIF always goes through sips when it can (below).
+  if (deliverable && mediaType !== "image/gif" && source.length <= maxBytes && dims !== undefined && !tooLong(dims)) return asIs();
 
-  const sipsAvailable = existsSync(sips);
   const unavailable = (why: string): ImagePreparation => {
     if (withinLimitsAsIs()) return asIs();
+    if (animated) return { ok: false, reason: `it is an animated GIF (${frames} frames), which not every model reads, and it could not be converted to a still image (${why}); convert it to PNG first` };
     if (!deliverable) return { ok: false, reason: `it is a ${FORMAT_NAMES[mediaType] ?? mediaType} image, which models cannot read (they take PNG, JPEG, GIF and WebP), and it could not be converted (${why}); convert it to PNG first` };
     if (source.length > maxBytes) return { ok: false, reason: `it is ${source.length} bytes, over the ${maxBytes}-byte limit for showing an image to the model, and it could not be made smaller (${why}); make a smaller copy first` };
     return { ok: false, reason: `it is ${dims!.width}x${dims!.height} px, over the ${READ_IMAGE_MAX_DIMENSION} px limit on either side, and it could not be made smaller (${why}); make a smaller copy first` };
   };
-  if (!sipsAvailable) return unavailable(`${sips} is not available`);
+  if (!existsSync(sips)) return unavailable(`${sips} is not available`);
 
-  const work = join(opts.tempDir(), "image-prep");
-  const id = randomUUID();
-  const input = join(work, `${id}-in.${EXTENSIONS[mediaType] ?? "img"}`);
-  const made: string[] = [];
+  let work: string | undefined;
   try {
-    mkdirSync(work, { recursive: true, mode: 0o700 });
-    writeFileSync(input, source, { mode: 0o600 });
-    made.push(input);
-    if (dims === undefined) dims = await sipsDimensions(sips, input);
+    // A FRESH private directory per call: nothing a sandboxed shell planted under the session temp dir
+    // (a symlink named like ours) is ever followed.
+    const root = opts.tempDir();
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    work = mkdtempSync(join(root, "image-prep-"));
+    const input = join(work, `in.${EXTENSIONS[mediaType] ?? "img"}`);
+    writeFileSync(input, source, { mode: 0o600, flag: "wx" });
+    if (dims === undefined) {
+      dims = await sipsDimensions(sips, input, opts.signal);
+      if (tooManyPixels(dims)) return pixelRefusal(dims!);
+      // A size nobody can read is never handed to a decoder (it could declare anything).
+      if (dims === undefined) return unavailable("its pixel size could not be read, so it was not decoded");
+    }
 
     const resize = tooLong(dims);
     // The format written: kept where a provider takes it and sips can write it (see the doc comment).
     const target: "png" | "jpeg" = mediaType === "image/jpeg" || mediaType === "image/heic" ? "jpeg" : "png";
-    const encode = async (format: "png" | "jpeg", quality: number | undefined, from: string): Promise<Buffer | undefined> => {
-      const out = join(work, `${id}-${format}${quality ?? ""}.${format === "jpeg" ? "jpg" : "png"}`);
-      made.push(out);
-      const args = ["-s", "format", format, ...(quality !== undefined ? ["-s", "formatOptions", String(quality)] : []), ...(resize ? ["-Z", String(IMAGE_MAX_LONG_EDGE)] : []), from, "--out", out];
-      const run = await runSips(sips, args);
-      if (!run.ok || !existsSync(out)) return undefined;
+    const dir = work;
+    const encode = async (format: "png" | "jpeg", quality: number | undefined): Promise<Buffer | undefined> => {
+      const out = join(dir, `out-${format}${quality ?? ""}.${format === "jpeg" ? "jpg" : "png"}`);
+      const args = ["-s", "format", format, ...(quality !== undefined ? ["-s", "formatOptions", String(quality)] : []), ...(resize ? ["-Z", String(IMAGE_MAX_LONG_EDGE)] : []), input, "--out", out];
+      const run = await runSips(sips, args, opts.signal);
+      if (!run.ok) return undefined;
+      // Read only a regular file sips just wrote -- never through a link.
+      const st = lstatSync(out, { throwIfNoEntry: false });
+      if (st === undefined || !st.isFile()) return undefined;
       return readFileSync(out);
     };
 
     let quality: number | undefined = target === "jpeg" ? JPEG_QUALITY_STEPS[0] : undefined;
-    let bytes: Buffer | undefined;
     let outType = target === "jpeg" ? "image/jpeg" : "image/png";
-    // Rewrite only when something needs it: a resize, a conversion, or too many bytes.
-    if (resize || !deliverable || source.length > maxBytes) {
-      bytes = await encode(target, quality, input);
-      if (bytes === undefined) return unavailable("sips could not process it");
-      if (bytes.length > maxBytes) {
-        for (const step of JPEG_QUALITY_STEPS) {
-          if (target === "jpeg" && step === JPEG_QUALITY_STEPS[0]) continue; // already tried just above
-          const jpeg = await encode("jpeg", step, input);
-          if (jpeg === undefined) return unavailable("sips could not process it");
-          bytes = jpeg;
-          quality = step;
-          outType = "image/jpeg";
-          if (jpeg.length <= maxBytes) break;
-        }
-        if (bytes.length > maxBytes) {
-          return { ok: false, reason: `even re-encoded as JPEG at quality ${JPEG_QUALITY_STEPS[JPEG_QUALITY_STEPS.length - 1]} it is ${bytes.length} bytes, over the ${maxBytes}-byte limit for showing an image to the model` };
-        }
+    // Rewrite only when something needs it: a resize, a conversion (every GIF), or too many bytes.
+    if (!(resize || !deliverable || mediaType === "image/gif" || source.length > maxBytes)) return asIs();
+    let bytes = await encode(target, quality);
+    if (bytes === undefined) return unavailable(opts.signal?.aborted === true ? "the turn was interrupted" : "sips could not process it");
+    if (bytes.length > maxBytes) {
+      for (const step of JPEG_QUALITY_STEPS) {
+        if (target === "jpeg" && step === JPEG_QUALITY_STEPS[0]) continue; // already tried just above
+        const jpeg = await encode("jpeg", step);
+        if (jpeg === undefined) return unavailable(opts.signal?.aborted === true ? "the turn was interrupted" : "sips could not process it");
+        bytes = jpeg;
+        quality = step;
+        outType = "image/jpeg";
+        if (jpeg.length <= maxBytes) break;
       }
-    } else {
-      // A deliverable type within the byte limit whose size sips reported as fine.
-      return asIs();
+      if (bytes.length > maxBytes) {
+        return { ok: false, reason: `even re-encoded as JPEG at quality ${JPEG_QUALITY_STEPS[JPEG_QUALITY_STEPS.length - 1]} it is ${bytes.length} bytes, over the ${maxBytes}-byte limit for showing an image to the model` };
+      }
     }
     const finalType = sniffImageType(bytes) ?? outType;
     const finalDims = parseImageDimensions(finalType, bytes);
@@ -348,7 +460,7 @@ export async function prepareImageForModel(source: Buffer, opts: PrepareImageOpt
   } catch (err) {
     return unavailable(err instanceof Error ? err.message : String(err));
   } finally {
-    for (const path of made) rmSync(path, { force: true });
+    if (work !== undefined) rmSync(work, { recursive: true, force: true });
   }
 }
 

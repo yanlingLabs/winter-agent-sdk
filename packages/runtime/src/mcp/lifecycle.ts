@@ -491,22 +491,39 @@ function isMcpImageItem(block: unknown): block is { type: "image"; data: string;
 /**
  * Code-mode images: an MCP result carrying image items, as model-facing blocks. Text items stay text (a
  * non-text, non-image item keeps `contentToText`'s JSON rendering); each image goes through the shared
- * `resultBlocksForModel`, so the text-only gate, the resize and the byte limits are Read's own. The
- * text part is NOT spilled to a file the way an oversized text-only result is (`capMcpOutput`): the
- * images are the point, and the envelope is text-only by design -- an over-long text part is cut to the
- * same budget instead, and says so.
+ * `resultBlocksForModel`, so the text-only gate, the resize and the byte limits are Read's own.
+ *
+ * THE TEXT IS BOUNDED BEFORE ANYTHING IS BUILT FROM IT, so the model-facing blocks and `output` (the
+ * PostToolUse hook's `tool_response`, which rides a control frame on the child's stdout -- a line the host
+ * bounds at 1 MiB) are cut identically, whether or not the model reads images: all text items together
+ * get `MCP_IMAGE_RESULT_TEXT_CHARS`, and the first item past it is cut with a note naming the tool. The
+ * `capMcpOutput` spill-to-file is not used here: its envelope is a text-only result, and the images are
+ * the point of this one.
  */
 async function mcpResultWithImages(content: readonly unknown[], isError: boolean, ctx: ToolExecutionContext, serverName: string, toolName: string): Promise<ToolResultPayload> {
-  const parts: RawResultPart[] = content.map((block) =>
-    isMcpImageItem(block) ? { type: "image" as const, bytes: Buffer.from(block.data, "base64") } : { type: "text" as const, text: contentToText([block]) },
-  );
-  const result = await resultBlocksForModel(parts, { readsImages: ctx.modelReadsImages !== false, tempDir: () => ctx.tempDir });
-  const blocks = result.blocks.map((b) => (b.type === "text" && b.text.length > MCP_IMAGE_RESULT_TEXT_CHARS ? { type: "text" as const, text: `${b.text.slice(0, MCP_IMAGE_RESULT_TEXT_CHARS)}\n[text truncated at ${MCP_IMAGE_RESULT_TEXT_CHARS} characters; mcp tool "${toolName}" on server "${serverName}"]` } : b));
-  return { output: result.text, ...(result.hasImage ? { blocks } : {}), ...(isError ? { isError: true as const } : {}) };
+  let textLeft = MCP_IMAGE_RESULT_TEXT_CHARS;
+  const parts: RawResultPart[] = [];
+  for (const block of content) {
+    if (isMcpImageItem(block)) {
+      parts.push({ type: "image", bytes: Buffer.from(block.data, "base64") });
+      continue;
+    }
+    if (textLeft <= 0) continue;
+    const text = contentToText([block]);
+    if (text.length <= textLeft) {
+      parts.push({ type: "text", text });
+      textLeft -= text.length;
+    } else {
+      parts.push({ type: "text", text: `${text.slice(0, textLeft)}\n[text truncated at ${MCP_IMAGE_RESULT_TEXT_CHARS} characters; mcp tool "${toolName}" on server "${serverName}"]` });
+      textLeft = 0;
+    }
+  }
+  const result = await resultBlocksForModel(parts, { readsImages: ctx.modelReadsImages !== false, tempDir: () => ctx.tempDir, ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}) });
+  return { output: result.text, ...(result.hasImage ? { blocks: result.blocks } : {}), ...(isError ? { isError: true as const } : {}) };
 }
 
 /** The text budget of an MCP result that carries images (≈ the default `MAX_MCP_OUTPUT_TOKENS` of 25000 at 4 characters a token). */
-const MCP_IMAGE_RESULT_TEXT_CHARS = 100_000;
+export const MCP_IMAGE_RESULT_TEXT_CHARS = 100_000;
 
 function toolInfoToDefinition(tool: McpToolInfo): McpToolDefinition {
   return {

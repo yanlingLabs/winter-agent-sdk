@@ -344,3 +344,203 @@ describe("no adapter sends an image to a text-only model (refused before the wir
   });
 });
 
+
+// --- Several calls in one round, only some with images; the same results split across messages -------------
+//
+// A round of three calls -- Read (image), Bash (text), Read (image). Engine history puts the round's
+// results on ONE tool message; a history resumed from a claude transcript has ONE MESSAGE PER RESULT.
+// Both shapes must reach every surface identically, with nothing placed between two results of the batch.
+
+const PNG2_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR4nGP4z8DAwMDAxMDAAAAeAgMB0bEk+gAAAABJRU5ErkJggg==";
+const DATA_URL2 = `data:image/png;base64,${PNG2_B64}`;
+const img = (data: string) => ({ type: "image" as const, source: { type: "base64" as const, media_type: "image/png", data } });
+
+function batchCall(): ProviderMessageLike {
+  return {
+    role: "assistant",
+    content: [
+      { type: "tool_use", id: "call_a", name: "Read", input: { file_path: "/tmp/a.png" } },
+      { type: "tool_use", id: "call_b", name: "Bash", input: { command: "ls" } },
+      { type: "tool_use", id: "call_c", name: "Read", input: { file_path: "/tmp/c.png" } },
+    ],
+  };
+}
+const RESULT_A = { type: "tool_result" as const, tool_use_id: "call_a", content: [img(PNG_B64)] };
+const RESULT_B = { type: "tool_result" as const, tool_use_id: "call_b", content: "a.png c.png" };
+const RESULT_C = { type: "tool_result" as const, tool_use_id: "call_c", content: [img(PNG2_B64)] };
+
+const SHAPES: Record<"one message" | "split across messages", ProviderMessageLike[]> = {
+  "one message": [{ role: "user", content: "look at both" }, batchCall(), { role: "tool", content: [RESULT_A, RESULT_B, RESULT_C] }],
+  "split across messages": [
+    { role: "user", content: "look at both" },
+    batchCall(),
+    { role: "tool", content: [RESULT_A] },
+    { role: "tool", content: [RESULT_B] },
+    { role: "tool", content: [RESULT_C] },
+  ],
+};
+
+const FOLLOWS = "[image: attached in the user message after the tool results]";
+
+for (const [shape, history] of Object.entries(SHAPES)) {
+  describe(`a round with images on only some results (${shape})`, () => {
+    test("Anthropic: each image inside its own tool_result; the text result untouched", async () => {
+      const body = await wireBody((fake) => testAnthropicAdapter().streamTurn(req(history, ANTHROPIC_MODELS.main), anthropicContext(fake.url)));
+      const last = (body["messages"] as Array<{ role: string; content: Array<Record<string, unknown>> }>).at(-1)!;
+      expect(last.role).toBe("user");
+      expect(last.content).toEqual([
+        { type: "tool_result", tool_use_id: "call_a", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: PNG_B64 } }] },
+        { type: "tool_result", tool_use_id: "call_b", content: "a.png c.png" },
+        { type: "tool_result", tool_use_id: "call_c", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: PNG2_B64 } }] },
+      ]);
+    });
+
+    test("OpenAI Responses and Codex: array outputs for the image results, a string for the text one, nothing after", async () => {
+      const openai = await wireBody((fake) =>
+        createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: openAiDescriptors("openai") }).streamTurn(req(history), testContext({ providerId: "openai", baseUrl: fake.url, local: true })),
+      );
+      const ref: Extract<CredentialRef, { kind: "keychain" }> = { kind: "keychain", account: "codex-oauth:acct" };
+      const codex = await wireBody((fake) =>
+        createCodexOauthAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined }).streamTurn(req(history, "gpt-5.6-sol"), {
+          ...testContext({ providerId: "codex-oauth" }),
+          credentials: createMemoryCredentialStore([[ref, { kind: "oauth", accessToken: "test-token-codex", accountId: "acct", expiresAt: Date.now() + 3_600_000 }]]),
+          authRef: ref,
+        }),
+      );
+      for (const body of [openai, codex]) {
+        const input = body["input"] as Array<Record<string, unknown>>;
+        const outputs = input.filter((i) => i["type"] === "function_call_output");
+        expect(outputs).toEqual([
+          { type: "function_call_output", call_id: "call_a", output: [{ type: "input_image", image_url: DATA_URL }] },
+          { type: "function_call_output", call_id: "call_b", output: "a.png c.png" },
+          { type: "function_call_output", call_id: "call_c", output: [{ type: "input_image", image_url: DATA_URL2 }] },
+        ]);
+        expect(input.at(-1)).toEqual(outputs.at(-1));
+      }
+    });
+
+    test("Responses follow-up (xAI): all outputs first, then ONE user message with each image under its call's caption", async () => {
+      const body = await wireBody((fake) =>
+        createResponsesAdapter({ retry: FAST_RETRY, descriptors: openAiDescriptors("xai") }).streamTurn(req(history), testContext({ providerId: "xai", baseUrl: fake.url, local: true })),
+      );
+      const input = body["input"] as Array<Record<string, unknown>>;
+      const firstOutput = input.findIndex((i) => i["type"] === "function_call_output");
+      expect(input.slice(firstOutput)).toEqual([
+        { type: "function_call_output", call_id: "call_a", output: FOLLOWS },
+        { type: "function_call_output", call_id: "call_b", output: "a.png c.png" },
+        { type: "function_call_output", call_id: "call_c", output: FOLLOWS },
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: "The image returned by tool call call_a:" },
+            { type: "input_image", image_url: DATA_URL },
+            { type: "input_text", text: "The image returned by tool call call_c:" },
+            { type: "input_image", image_url: DATA_URL2 },
+          ],
+        },
+      ]);
+    });
+
+    test("chat completions follow-up: all tool messages first, then ONE user message -- never a user message between two tool replies", async () => {
+      const body = await wireBody((fake) =>
+        createChatCompletionsAdapter({ retry: FAST_RETRY, descriptors: openAiDescriptors("openrouter") }).streamTurn(req(history), testContext({ providerId: "openrouter", baseUrl: fake.url, local: true })),
+      );
+      const messages = body["messages"] as Array<Record<string, unknown>>;
+      const firstTool = messages.findIndex((m) => m["role"] === "tool");
+      expect(messages.slice(firstTool)).toEqual([
+        { role: "tool", tool_call_id: "call_a", content: FOLLOWS },
+        { role: "tool", tool_call_id: "call_b", content: "a.png c.png" },
+        { role: "tool", tool_call_id: "call_c", content: FOLLOWS },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "The image returned by tool call call_a:" },
+            { type: "image_url", image_url: { url: DATA_URL } },
+            { type: "text", text: "The image returned by tool call call_c:" },
+            { type: "image_url", image_url: { url: DATA_URL2 } },
+          ],
+        },
+      ]);
+    });
+
+    test("Mistral: each image rides INSIDE its tool message as an image_url chunk; nothing user-role follows a tool reply", async () => {
+      const body = await wireBody((fake) =>
+        createChatCompletionsAdapter({ retry: FAST_RETRY, descriptors: openAiDescriptors("mistral") }).streamTurn(req(history, "mistral-medium-3-5"), testContext({ providerId: "mistral", baseUrl: fake.url, local: true })),
+      );
+      const messages = body["messages"] as Array<Record<string, unknown>>;
+      const firstTool = messages.findIndex((m) => m["role"] === "tool");
+      expect(messages.slice(firstTool)).toEqual([
+        { role: "tool", tool_call_id: "call_a", content: [{ type: "image_url", image_url: { url: DATA_URL } }] },
+        { role: "tool", tool_call_id: "call_b", content: "a.png c.png" },
+        { role: "tool", tool_call_id: "call_c", content: [{ type: "image_url", image_url: { url: DATA_URL2 } }] },
+      ]);
+    });
+
+    test("Gemini before 3: all responses, then each result's images under its caption; Gemini 3: nested in each response", async () => {
+      const old = await wireBody((fake) => testGoogleAdapter().streamTurn(req(history, GOOGLE_MODELS.main), googleContext(fake.url)));
+      expect((old["contents"] as Array<{ parts: unknown[] }>).at(-1)!.parts).toEqual([
+        { functionResponse: { name: "Read", response: { output: "", imageCount: 1 } } },
+        { functionResponse: { name: "Bash", response: { output: "a.png c.png" } } },
+        { functionResponse: { name: "Read", response: { output: "", imageCount: 1 } } },
+        { text: "The image returned by the Read call:" },
+        { inlineData: { mimeType: "image/png", data: PNG_B64 } },
+        { text: "The image returned by the Read call:" },
+        { inlineData: { mimeType: "image/png", data: PNG2_B64 } },
+      ]);
+      const three = await wireBody((fake) => testGoogleAdapter().streamTurn(req(history, "gemini-3-pro-preview"), googleContext(fake.url)));
+      expect((three["contents"] as Array<{ parts: unknown[] }>).at(-1)!.parts).toEqual([
+        { functionResponse: { name: "Read", response: { output: "", imageCount: 1 }, parts: [{ inlineData: { mimeType: "image/png", data: PNG_B64 } }] } },
+        { functionResponse: { name: "Bash", response: { output: "a.png c.png" } } },
+        { functionResponse: { name: "Read", response: { output: "", imageCount: 1 }, parts: [{ inlineData: { mimeType: "image/png", data: PNG2_B64 } }] } },
+      ]);
+    });
+
+    test("Bedrock: Claude takes each image in its toolResult; another model gets every toolResult first, then the captioned images", async () => {
+      const claude = await wireBody((fake) => {
+        const harness = createBedrockHarness(fake, { retry: { maxRetries: 0 } });
+        return harness.adapter.streamTurn(req(history, "us.anthropic.claude-sonnet-4-5-20250929-v1:0"), harness.ctx);
+      });
+      expect((claude["messages"] as Array<{ content: unknown[] }>).at(-1)!.content).toEqual([
+        { toolResult: { toolUseId: "call_a", content: [{ image: { format: "png", source: { bytes: PNG_B64 } } }], status: "success" } },
+        { toolResult: { toolUseId: "call_b", content: [{ text: "a.png c.png" }], status: "success" } },
+        { toolResult: { toolUseId: "call_c", content: [{ image: { format: "png", source: { bytes: PNG2_B64 } } }], status: "success" } },
+      ]);
+      const other = await wireBody((fake) => {
+        const harness = createBedrockHarness(fake, { retry: { maxRetries: 0 } });
+        return harness.adapter.streamTurn(req(history, "meta.llama3-2-90b-instruct-v1:0"), harness.ctx);
+      });
+      expect((other["messages"] as Array<{ content: unknown[] }>).at(-1)!.content).toEqual([
+        { toolResult: { toolUseId: "call_a", content: [{ text: "[image: attached after the tool results]" }], status: "success" } },
+        { toolResult: { toolUseId: "call_b", content: [{ text: "a.png c.png" }], status: "success" } },
+        { toolResult: { toolUseId: "call_c", content: [{ text: "[image: attached after the tool results]" }], status: "success" } },
+        { text: "The image returned by tool call call_a:" },
+        { image: { format: "png", source: { bytes: PNG_B64 } } },
+        { text: "The image returned by tool call call_c:" },
+        { image: { format: "png", source: { bytes: PNG2_B64 } } },
+      ]);
+    });
+  });
+}
+
+describe("Mistral: trailing content of a tool turn is folded into the last tool message, never a user message after it", () => {
+  test("a hook's text after the results joins the last tool message as a text chunk", async () => {
+    const history: ProviderMessageLike[] = [
+      { role: "user", content: "look" },
+      { role: "assistant", content: [{ type: "tool_use", id: CALL_ID, name: "Read", input: {} }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: CALL_ID, content: [img(PNG_B64)] }, { type: "text", text: "<system-reminder>hook note</system-reminder>" }] },
+    ];
+    const body = await wireBody((fake) =>
+      createChatCompletionsAdapter({ retry: FAST_RETRY, descriptors: openAiDescriptors("mistral") }).streamTurn(req(history, "mistral-large-latest"), testContext({ providerId: "mistral", baseUrl: fake.url, local: true })),
+    );
+    const messages = body["messages"] as Array<Record<string, unknown>>;
+    expect(messages.at(-1)).toEqual({
+      role: "tool",
+      tool_call_id: CALL_ID,
+      content: [
+        { type: "image_url", image_url: { url: DATA_URL } },
+        { type: "text", text: "<system-reminder>hook note</system-reminder>" },
+      ],
+    });
+  });
+});

@@ -25,7 +25,7 @@
 //      carrying the provider's status and structured code -- never a raw body, never credential
 //      material, never opaque state.
 import type { ProviderAdapter, ProviderContext, ProviderError, ProviderEvent, ProviderMessageLike, ResolvedModel, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
-import { normalizeThrown, shouldRequestSummary, stripOpaque } from "@yanlinglabs/winter-provider-runtime";
+import { imageBudgetFor, normalizeThrown, shouldRequestSummary, stripOpaque, withinImageBudget } from "@yanlinglabs/winter-provider-runtime";
 import type { WireContentBlock, WireStreamEvent } from "@yanlinglabs/winter-agent-sdk";
 import {
   ProviderTurnError,
@@ -172,13 +172,22 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
     ...(Array.isArray(resolved.descriptor?.inputModalities?.value) ? { readsImages: resolved.descriptor.inputModalities.value.includes("image") } : {}),
   };
 
+  const imageBudget = imageBudgetFor({
+    family: adapter.family as string,
+    providerId: resolved.providerId,
+    ...(typeof resolved.descriptor?.contextWindow?.value === "number" ? { contextWindow: resolved.descriptor.contextWindow.value } : {}),
+  });
+
   return {
     async generate(input: ProviderRequest): Promise<FoldedProviderTurn> {
       // The chain is the RENDERER's input. The engine's own messages already carry their annotations
       // for everything THIS run produced; `opts.chain` is what supplies the RESUMED half (T10's
       // wiring passes the sidecar-derived chain, see `AdapterProviderOptions.chain`). Absent -> the
       // empty map T3 shipped, which is what a non-persistent session genuinely has.
-      const rendered = renderer.render(input.messages, opts.chain?.() ?? new Map(), target);
+      // Code-mode images: the OLDEST images past the target's per-request image budget become a note
+      // (provider-runtime continuity/image-budget.ts) -- after the renderer, so it counts only the images
+      // that really reach this target.
+      const rendered = withinImageBudget(renderer.render(input.messages, opts.chain?.() ?? new Map(), target) as ProviderMessageLike[], imageBudget);
       const request: TurnRequest = {
         // THE PROVIDER-LOCAL ID, never the catalog KEY.
         //

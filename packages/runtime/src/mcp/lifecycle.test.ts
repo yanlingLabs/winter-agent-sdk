@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { getRegisteredTool, type ToolResultPayload } from "../tools/registry.ts";
 import { createElicitationAsker } from "./elicitation.ts";
-import { createInMemoryDiscoveryCache, createMcpLifecycle, resolveMcpServerSources, type McpServerSource, type ResolvedMcpServerEntry } from "./lifecycle.ts";
+import { MCP_IMAGE_RESULT_TEXT_CHARS, createInMemoryDiscoveryCache, createMcpLifecycle, resolveMcpServerSources, type McpServerSource, type ResolvedMcpServerEntry } from "./lifecycle.ts";
 import type { McpEnvConfig } from "./env.ts";
 import type { InProcessMcpServer } from "./transports/sdk.ts";
 import { createFixtureMcpServer, defaultFixtureSpec, stdioFixtureCommand, withModernHttpFixture, type FixtureServerSpec } from "./test-fixtures.ts";
@@ -404,6 +404,26 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     const result = await callImageTool([{ type: "text", text: "here it is" }, { type: "image", data: png.toString("base64"), mimeType: "image/png" }], { modelReadsImages: false });
     expect(result.blocks).toBeUndefined();
     expect(result.output).toBe("here it is\n[image omitted: The selected model doesn't support images]");
+  });
+
+  test("code-mode images: an image result's TEXT is bounded like any MCP text -- blocks and `output` alike, on either kind of model", async () => {
+    const png = realPng(8, 8);
+    const huge = "y".repeat(MCP_IMAGE_RESULT_TEXT_CHARS * 2);
+    const content = [{ type: "text", text: huge }, { type: "text", text: "never reached" }, { type: "image", data: png.toString("base64"), mimeType: "image/png" }];
+    const note = `[text truncated at ${MCP_IMAGE_RESULT_TEXT_CHARS} characters; mcp tool "shot" on server "img"]`;
+    // An image model: the text block and the text rendering are cut at the same point.
+    const withImages = await callImageTool(content, {});
+    const textBlock = withImages.blocks?.[0];
+    if (textBlock?.type !== "text") throw new Error("expected a text block first");
+    expect(textBlock.text).toBe(`${"y".repeat(MCP_IMAGE_RESULT_TEXT_CHARS)}\n${note}`);
+    expect(withImages.output.length).toBeLessThan(MCP_IMAGE_RESULT_TEXT_CHARS + 500);
+    expect(withImages.output).not.toContain("never reached");
+    // A text-only model: no blocks, and `output` -- the PostToolUse tool_response -- is just as bounded.
+    const textOnly = await callImageTool(content, { modelReadsImages: false });
+    expect(textOnly.blocks).toBeUndefined();
+    expect(textOnly.output.length).toBeLessThan(MCP_IMAGE_RESULT_TEXT_CHARS + 500);
+    expect(textOnly.output).toContain(note);
+    expect(textOnly.output).toContain("[image omitted: The selected model doesn't support images]");
   });
 
   test.skipIf(!existsSync("/usr/bin/sips"))("code-mode images: a large MCP image is shrunk to 1568 px exactly like an image Read", async () => {

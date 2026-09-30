@@ -469,6 +469,14 @@ export function toBedrockMessages(messages: readonly ProviderMessageLike[], mode
     if (last !== undefined && last.role === role) last.content.push(...content);
     else out.push({ role, content });
   }
+  // Code-mode images: a user turn's `toolResult` blocks go FIRST, the rest after them, in order. Merging
+  // split tool-result messages (a resumed claude transcript writes one entry per result) would otherwise
+  // leave one result's follow-up images between two `toolResult`s of the same batch -- and Claude, on
+  // Bedrock as on its own API, wants a turn's tool results at the start of it.
+  for (const message of out) {
+    if (message.role !== "user" || !message.content.some((b) => "toolResult" in b)) continue;
+    message.content = [...message.content.filter((b) => "toolResult" in b), ...message.content.filter((b) => !("toolResult" in b))];
+  }
   return out;
 }
 
