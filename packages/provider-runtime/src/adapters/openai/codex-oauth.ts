@@ -31,7 +31,7 @@ import { CODEX, CODEX_MODELS, codexCredentialAccount } from "./codex-config.ts";
 import { refreshTokens, runLoginFlow, type OAuthTokens } from "./pkce.ts";
 import { refreshOauthMaterial } from "../oauth/refresh.ts";
 import { QuotaManager, quotaEvent } from "./quota.ts";
-import { assertConfigurationUpdates, assertResponsesToolFeatures, buildResponsesBody, privilegedHeaders, responsesStreamTools, streamResponsesTurn, type ResponsesTurnPlan } from "./responses.ts";
+import { assertConfigurationUpdates, assertResponsesToolFeatures, buildResponsesBody, privilegedHeaders, responsesStreamTools, streamResponsesTurn, toolResultImagesFor, type ResponsesTurnPlan } from "./responses.ts";
 import { identityFor } from "./shared.ts";
 import { activeWinterIdentity } from "../../identity.ts";
 import {
@@ -210,7 +210,9 @@ async function* codexTurn(req: TurnRequest, ctx: ProviderContext, options: Codex
       options,
       // The codex backend REQUIRES the tool trio even with no tools (a live 400 otherwise, `responses.ts`
       // header) — the one surface `buildResponsesBody` does not omit it for.
-      body: JSON.stringify(buildResponsesBody(req, reasoning, descriptor, { requireToolFields: true })),
+      // Code-mode images: the Codex backend takes a tool result's image inside `function_call_output`
+      // (`toolResultImagesFor`).
+      body: JSON.stringify(buildResponsesBody(req, reasoning, descriptor, { requireToolFields: true, toolResultImages: toolResultImagesFor("codex-oauth") })),
       streamTools: responsesStreamTools(req, descriptor),
       queue,
       beforeAttempt: async () => {

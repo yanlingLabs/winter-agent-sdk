@@ -4,6 +4,109 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## Unreleased
+
+### The model can see images it reads
+
+- **The Read tool now shows the model an image.** Reading a PNG, JPEG, GIF or WebP file used to hand
+  the model the file's base64 as text, which it cannot see. It now returns a real image block, and
+  every provider adapter delivers it as an image:
+  - **Inside the tool result** on the Anthropic Messages API, OpenAI's own Responses API, the Codex
+    (ChatGPT sign-in) backend, Gemini 3 and later (nested in the function response), and Bedrock's
+    Claude and Nova models.
+  - **In a message right after the tool results**, captioned with the call it came from, where the tool
+    result cannot hold an image: chat completions (DeepSeek-class providers, OpenRouter, the local
+    runners, xAI sign-in), the xAI, Azure and local Responses surfaces, Gemini before 3, and other
+    Bedrock models. The tool result says the image follows.
+- **Models that cannot read images get a short text instead.** On a model whose catalog row does not
+  list image input, Read answers `The selected model doesn't support images: <path>`. The OpenAI-family
+  and Bedrock adapters now also refuse an image for such a model before sending, as the Anthropic and
+  Google adapters already did.
+- **Large images are shrunk before the model sees them.** An image whose long edge is over 1568 px is
+  scaled down to 1568 px, keeping its shape. That is the size above which Claude downsizes an image
+  anyway, and it keeps a session with several screenshots under the providers' per-request limits. The
+  resize uses macOS's `sips` on a copy in the session's temp folder; the user's file is never changed.
+  The text of the result says when an image was resized (for example "resized from 3024x1964").
+  - PNG stays PNG and JPEG stays JPEG (quality 85). A GIF or WebP that has to be rewritten becomes PNG
+    (a GIF's first frame): `sips` cannot write WebP, and Gemini does not read GIF.
+  - BMP and TIFF, which no provider accepts, are converted to PNG, and HEIC photos to JPEG.
+  - An image still over 3.75 MiB (5 MiB once base64-encoded, the smallest per-image limit among the
+    providers) is re-encoded as JPEG at quality 85, 70, 55 and then 40. If it is still too big, it is
+    refused with a text saying so; nothing is truncated.
+  - Without `sips`, an image already within the limits (3.75 MiB, 8000 px a side) is sent unresized, and
+    anything else is refused with a text saying why. Files that are not a readable image are refused.
+  - The file's bytes decide its type, not its extension. Every GIF becomes a PNG of its first frame,
+    because OpenAI takes no animated GIF and Gemini takes no GIF at all. Without `sips`, a still GIF is
+    sent as it is and an animated one is refused. A GIF that reaches Gemini another way becomes a short
+    note (and on Gemini 3 it is never nested in the function response).
+  - An image that declares more than 100 megapixels is refused from its header before anything decodes
+    it, so a tiny file claiming 40000x40000 px cannot make `sips` use gigabytes of memory. A GIF is
+    checked on its largest frame, a TIFF or HEIC on the larger of its header and what `sips` reports, and
+    one whose size cannot be read is not decoded at all.
+  - Interrupting the turn stops a running `sips`. Resizing happens in a new folder under the runtime's
+    own `image-prep` directory, which the shell sandbox is not allowed to write, and the result is read
+    without following links. Nothing a sandboxed command plants can redirect it. When a session is given
+    no winter or store home, images are not resized at all rather than worked on somewhere else.
+- **Monitor's sandbox now protects the store home like Bash's does.** Monitor built its sandbox settings
+  separately and never passed the store home, so with the store home apart from the winter home (the
+  daemon's usual setup) a Monitor command could write to the store's `file-history` and `image-prep`
+  folders and rename the store home. Bash and Monitor now share one builder.
+- **Mistral gets images inside the tool result.** Mistral refuses a user message right after a tool
+  message, so the follow-up message other chat-completions providers get would fail every later request.
+  Mistral's tool messages accept image chunks, so the image goes there, and any other text of the same
+  turn joins the last tool message. This applies to both providers on Mistral's API, `mistral` and
+  `codestral`.
+- **A request never carries more images than its provider accepts.** Each provider limits a request by
+  size, and some by image count: Claude's own API 32 MB and 100 or 600 images, Gemini 20 MB, Bedrock 20
+  images a message, Mistral 8 images, Azure OpenAI 50 images, OpenAI 512 MB and 1,500 images. Providers
+  that publish no limit, including other services that speak Claude's API, get 20 images and 20 MB.
+  Before a request is sent, the oldest images beyond that budget become a short note. They are dropped a
+  few at a time, so most turns keep the cached prompt. An image that was dropped never comes back, and
+  the newest image is always kept when it fits on its own.
+- **A request refused for its images is retried once with only the newest image.** A refusal that says
+  there are too many images, or that one is too large for a request with many images, is retried with
+  every earlier image turned into a note, and later requests keep doing that until the model changes. If
+  the request had only one image, or the retry is refused too, the provider's own error is shown. A request refused as too large (HTTP 413, when the provider
+  says the request is too large) is treated like a context overflow: the conversation is compacted and
+  retried once. Only the provider's error message is read for this, never the rest of the response.
+  Context overflows are now also recognised in the wording Gemini, Bedrock, Claude, Mistral, Kimi and
+  llama.cpp use, and in error bodies shaped as an array, `detail` or `errors`.
+- **Tool results split across messages are kept together.** A resumed claude transcript stores each
+  result of a parallel batch as its own entry. Every adapter now sends the batch's images after all of
+  its results, never between two of them.
+- **MCP tools that return images now show them to the model.** An MCP `image` content item used to reach
+  the model as base64 text. It is now an image block beside the result's text, prepared exactly like an
+  image Read: the same size rules, the same resizing, and on a model without image input the same
+  `The selected model doesn't support images` note in its place. The text of such a result is limited
+  to 100,000 characters, both what the model sees and what the PostToolUse hook receives.
+- **Resumed sessions keep their images.** The transcript stores an image result the way claude's does
+  (a base64 image block inside the tool result), so a resumed session sends it again.
+- **The host's copy of an image result leaves out the bytes.** The tool-round message a host receives
+  keeps the image block and its media type with an empty `data` field. The full image would not fit the
+  host's 1 MiB line limit and would end the session. The transcript still holds the real bytes.
+- **Images do not count toward the 4 MiB per-message limit.** Image data within 10 MiB is left out of
+  that measure. Counted, a single 3.5 MB screenshot would push its message over the limit, and every
+  later request in the session would fail.
+- **Notebook plots are images too.** A notebook's `image/png` outputs reach the model as images between
+  its text cells, prepared like any other image.
+- **PDFs return honest metadata.** A PDF read now reports its size and page count and says its content
+  is not shown, instead of sending its bytes as base64 text.
+- **Read's description says what it does.** It now tells the model that images are shown to it when the
+  model supports images, that large ones are shrunk, and that a PDF returns only its metadata. The
+  changed description changes the cached prompt prefix once, on upgrade.
+- **Other tools are unchanged.** A text tool result is still a plain string on every surface.
+
+### Aborting a query before reading it
+
+- `query()` with an `AbortController` that is already aborted no longer starts a runtime process.
+  Reading the returned query throws the same `AbortError` as an abort right after the start.
+- An abort that lands after the start but before anything reads the query now stops the runtime
+  process at once. Before, it kept running until the query was read, or until the host exited.
+- Once a query has finished, a later abort no longer signals the runtime process while it shuts down.
+  After an abort, a runtime process that ignores SIGTERM still gets SIGKILL after the grace period,
+  even if the query has already finished.
+- A custom spawn hook whose process handle fails no longer causes an unhandled promise rejection.
+
 ## 0.0.35
 
 - Claude Sonnet 5.5 (`claude-sonnet-5-5`) is in the catalog for the Anthropic API key, the Console

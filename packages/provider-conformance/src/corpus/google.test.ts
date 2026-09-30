@@ -160,16 +160,19 @@ describe("Google GenerateContent: images nested inside a tool_result (I2/I3)", (
     });
   });
 
-  test("a NESTED image rides as a SIBLING `inlineData` part, never silently filtered out", async () => {
-    // `functionResponse.response` is a Struct -- JSON, with no field that carries binary -- so the
-    // image cannot travel inside the response. It goes beside it, on the same `user` entry, in the
-    // same `inline_data` field a user-supplied image rides; `imageCount` is what associates the two.
+  test("a NESTED image rides as a SIBLING `inlineData` part (before Gemini 3), captioned, never silently filtered out", async () => {
+    // `functionResponse.response` is a Struct -- JSON, with no field that carries binary -- so on a
+    // model before Gemini 3 the image cannot travel inside the response. It follows the entry's
+    // responses, on the same `user` entry, in the same `inline_data` field a user-supplied image rides,
+    // after a caption naming the call; `imageCount` associates the two as well. (Gemini 3 nests it in
+    // the response's own `parts` -- tool-result-images.test.ts.)
     const adapter = testGoogleAdapter();
     await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
       await foldTurn(adapter, history(GOOGLE_MODELS.main), googleContext(fake.url));
       const contents = geminiContents(fake.requests[0]!);
       expect(contents[1]?.parts).toEqual([
         { functionResponse: { name: "Read", response: { output: "page 1", imageCount: 1 } } },
+        { text: "The image returned by the Read call:" },
         { inlineData: { mimeType: "image/png", data: "aGVsbG8=" } },
       ]);
     });

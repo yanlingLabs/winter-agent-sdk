@@ -355,6 +355,7 @@ describe("connectMonitorWs (real local server)", () => {
 
   function startServer(handlers: { message?: (ws: ServerWebSocket<undefined>, msg: string | Buffer) => void; open?: (ws: ServerWebSocket<undefined>) => void }): number {
     server = Bun.serve({
+      hostname: "127.0.0.1",
       port: 0,
       fetch(req, srv) {
         if (srv.upgrade(req)) return;
@@ -527,6 +528,7 @@ describe("connectMonitorWs (real local server)", () => {
   test("RULING P3-I: an explicit hostHeader is sent as the WS upgrade request's own Host header (virtual-hosting preservation)", async () => {
     const captured: { host: string | null } = { host: null };
     server = Bun.serve({
+      hostname: "127.0.0.1",
       port: 0,
       fetch(req, srv) {
         captured.host = req.headers.get("host");
@@ -549,6 +551,7 @@ describe("connectMonitorWs (real local server)", () => {
   test("RULING P3-I: omitting hostHeader (every pre-existing call site) behaves exactly as before -- the server sees the connection's own literal host", async () => {
     const captured: { host: string | null } = { host: null };
     server = Bun.serve({
+      hostname: "127.0.0.1",
       port: 0,
       fetch(req, srv) {
         captured.host = req.headers.get("host");

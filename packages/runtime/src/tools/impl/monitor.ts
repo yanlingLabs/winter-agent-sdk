@@ -26,7 +26,8 @@ import { runCommand, resolveExecutionPath, isSandboxAvailable, SandboxUnavailabl
 import { SandboxConfigError, resolveNetworkPosture, type SandboxBrand } from "../../sandbox/profile.ts";
 import { startTracking, updateTask, getTask, listRunningTasks, toBackgroundTasksChangedEntry, killedTaskSummary, resolveBackgroundOutcome, killOrphanedSpawn } from "./background-task-runtime.ts";
 import { createMonitorEventRelay } from "../../subagents/notification-queue.ts";
-import { splitDenyPathsByGlobShape, globDenyEntriesOf, type GlobDenyEntry } from "../../permissions/file-rules.ts";
+import { type GlobDenyEntry } from "../../permissions/file-rules.ts";
+import { sandboxRunInputs } from "../sandbox-run-inputs.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Input validation
@@ -122,55 +123,6 @@ function monitorCommandSummary(description: string, status: "completed" | "faile
   return producedOutput ? `Monitor "${description}" stream ended` : `Monitor "${description}" ended without producing output (exit ${exitCode ?? 0})`;
 }
 
-function computeMonitorWritableRoots(ctx: ToolExecutionContext): string[] {
-  // C1 (fix wave, P3 close-out): `filesystem.allowWrite` unioned in too, mirroring bash.ts's own
-  // identical fix to `computeWritableRoots` (WS-12 §12 Q5: additive, never a replacement).
-  return [ctx.tempDir, ...ctx.session.getBoundedRoots(), ...(ctx.outDir !== undefined ? [ctx.outDir] : []), ...(ctx.sandboxSettings.filesystem?.allowWrite ?? [])];
-}
-function buildMonitorChildEnv(ctx: ToolExecutionContext): NodeJS.ProcessEnv {
-  return { ...process.env, TMPDIR: ctx.tempDir, ...(ctx.outDir !== undefined ? { OUTDIR: ctx.outDir } : {}) };
-}
-
-// C1 (fix wave, P3 close-out): the SAME missing-deny-paths gap bash.ts's own `computeDenyPaths` (see
-// that file's header for the full rationale) closes, for Monitor's command half -- Monitor's own
-// header already says "Command half uses the Bash permission family" / "reuses the exact same
-// sandbox mechanism Bash does"; the two files intentionally duplicate this small, identical
-// three-line shape rather than one importing the other (this file's own header: "a small, deliberate
-// duplication rather than a cross-tool-file import").
-interface MonitorDenyPaths {
-  denyWritePaths?: string[];
-  denyReadPaths?: string[];
-  denyWriteRegexes?: string[];
-  denyReadRegexes?: string[];
-  denyWriteGlobFixedPrefixes?: string[];
-  denyReadGlobFixedPrefixes?: string[];
-  denyReadGlobEntries?: GlobDenyEntry[];
-}
-// Fix round 11: mirrors bash.ts's own `computeDenyPaths` -- see that function's own header. The
-// glob-conversion itself (`splitDenyPathsByGlobShape`) is the ONE shared primitive both files call,
-// per file-rules.ts's own header on that function; the small "forward these onto RunCommandOptions"
-// glue stays independently written in each file, matching this file's own pre-existing duplication
-// convention (a cross-tool-file import between bash.ts/monitor.ts specifically, not a shared
-// lower-level permissions primitive both already depend on).
-// Fix round 12: also forwards `globFixedPrefixes`, feeding the ancestor-rename-bypass fix.
-// Fix round 13: also forwards `denyReadGlobEntries` (globDenyEntriesOf, read-only), feeding the
-// read-deny-keep-in-place fix.
-function computeMonitorDenyPaths(ctx: ToolExecutionContext): MonitorDenyPaths {
-  const fs = ctx.sandboxSettings.filesystem;
-  const write = splitDenyPathsByGlobShape(fs?.denyWrite ?? []);
-  const read = splitDenyPathsByGlobShape(fs?.denyRead ?? []);
-  const readGlobEntries = globDenyEntriesOf(fs?.denyRead ?? []);
-  return {
-    ...(write.paths.length > 0 ? { denyWritePaths: write.paths } : {}),
-    ...(read.paths.length > 0 ? { denyReadPaths: read.paths } : {}),
-    ...(write.regexes.length > 0 ? { denyWriteRegexes: write.regexes } : {}),
-    ...(read.regexes.length > 0 ? { denyReadRegexes: read.regexes } : {}),
-    ...(write.globFixedPrefixes.length > 0 ? { denyWriteGlobFixedPrefixes: write.globFixedPrefixes } : {}),
-    ...(read.globFixedPrefixes.length > 0 ? { denyReadGlobFixedPrefixes: read.globFixedPrefixes } : {}),
-    ...(readGlobEntries.length > 0 ? { denyReadGlobEntries: readGlobEntries } : {}),
-  };
-}
-
 // C1 (fix wave, P3 close-out): mirrors bash.ts's own `buildRunCommandOptions` -- factored out so a
 // test can assert on the OPTIONS `runMonitorCommand` would build without needing to intercept
 // `RunCommandResult.profile`.
@@ -192,6 +144,8 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
   home: string;
   /** Phase 5 fix wave, I1: the resolved winter root, distinct from the OS home above. */
   winterHome?: string;
+  /** WS-21 fix round 1, item 4: the shared store home -- see `ToolExecutionContext.storeHome`. */
+  storeHome?: string;
   /** P7a (D19): the session's brand -- the dot-dir names the seatbelt fences. */
   brand?: SandboxBrand;
   /** Fix round 16, item 2: `sandbox.filesystem.allowGitConfig` -- see `SandboxFilesystemSettings.allowGitConfig`'s own header. */
@@ -211,15 +165,10 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
   signal?: AbortSignal;
 } {
   return {
-    cwd: ctx.cwd,
-    env: buildMonitorChildEnv(ctx),
-    settings: ctx.sandboxSettings,
-    writableRoots: computeMonitorWritableRoots(ctx),
-    ...computeMonitorDenyPaths(ctx),
-    home: ctx.home,
-    ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
-    ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
-    ...(ctx.sandboxSettings.filesystem?.allowGitConfig !== undefined ? { allowGitConfigWrites: ctx.sandboxSettings.filesystem.allowGitConfig } : {}),
+    // Every session-derived sandbox input from the ONE shared builder Bash uses too (tools/sandbox-run-
+    // inputs.ts). Monitor's own copy never passed `storeHome`, so under run homes its profile left the
+    // store home's file-history/ and image-prep/ writable and unfenced (third review).
+    ...sandboxRunInputs(ctx),
     ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
   };
 }

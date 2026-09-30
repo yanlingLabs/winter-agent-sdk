@@ -6,6 +6,7 @@
 // never let reach a frame.
 import { test, expect, describe } from "bun:test";
 import type { ProviderAdapter, ProviderContext, ProviderEvent, ResolvedModel, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
+import { IMAGE_BUDGET_NOTE } from "@yanlinglabs/winter-provider-runtime";
 import type { WireStreamEvent } from "@yanlinglabs/winter-agent-sdk";
 import { adapterAsProvider, createIdentityHistoryRenderer, foldProviderStream, ProviderTurnError, stampNativeState } from "./bridge.ts";
 import type { ProviderMessage, ProviderStreamSink } from "../engine.ts";
@@ -802,5 +803,22 @@ describe("stampNativeState's floor for a domain-less row", () => {
     const turn = { kind: "text" as const, text: "x", nativeState: { family: "", continuationDomain: "", items: ["opaque"] } };
     expect(stampNativeState(turn, { providerId: "xai", modelKey: "xai/grok-4.5", family: "openai" }).nativeState).toEqual({ family: "openai", continuationDomain: "xai/grok-4.5", items: ["opaque"] });
     expect(stampNativeState(turn, { providerId: "openai", modelKey: "openai/gpt-6-sol", family: "openai", continuationDomain: "openai/gpt-6-sol" }).nativeState!.continuationDomain).toBe("openai/gpt-6-sol");
+  });
+});
+
+describe("code-mode images: the per-request image budget is applied before the adapter", () => {
+  test("a Mistral request (8 images per request) carries at most 8; the oldest become the budget note", async () => {
+    let seen: TurnRequest | undefined;
+    const adapter = scriptedAdapter((req) => {
+      seen = req;
+      return scripted([{ type: "text_delta", text: "ok" }, { type: "done", stopReason: "end_turn" }]);
+    });
+    const resolved: ResolvedModel = { ...resolvedFor(adapter), providerId: "mistral", modelKey: "mistral/pixtral" };
+    const img = (i: number) => ({ type: "image" as const, source: { type: "base64" as const, media_type: "image/png", data: `IMG${i}` } });
+    const messages: ProviderMessage[] = [{ role: "user", content: Array.from({ length: 10 }, (_, i) => img(i)) }];
+    await adapterAsProvider(resolved, fakeCtx(), { adapter }).generate({ messages }).catch(() => undefined);
+    const content = seen!.messages[0]!.content as Array<{ type: string; source?: { data: string }; text?: string }>;
+    expect(content.filter((b) => b.type === "image").map((b) => b.source!.data)).toEqual(["IMG2", "IMG3", "IMG4", "IMG5", "IMG6", "IMG7", "IMG8", "IMG9"]);
+    expect(content.slice(0, 2).map((b) => b.text)).toEqual([IMAGE_BUDGET_NOTE, IMAGE_BUDGET_NOTE]);
   });
 });

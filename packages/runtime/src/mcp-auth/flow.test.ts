@@ -61,6 +61,18 @@ async function listenerIsClosed(redirectUri: string): Promise<boolean> {
   );
 }
 
+/**
+ * An EPHEMERAL loopback port for a pre-registered client's fixed redirect URI: bound on 127.0.0.1:0 so the
+ * kernel picks a free one, then released for the flow's own listener to take. Never a hard-coded port --
+ * two suites running at once on one machine collided on the old fixed ones.
+ */
+function freeCallbackPort(): number {
+  const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  const port = probe.port as number;
+  probe.stop(true);
+  return port;
+}
+
 describe("sign-in: DCR", () => {
   test("discovers, registers, authorizes and stores the sign-in; the listener closes after", async () => {
     const fx = fixture();
@@ -157,17 +169,19 @@ describe("sign-in: CIMD and pre-registered clients", () => {
   });
 
   test("I-A: a redeclared server whose authServerMetadataUrl names ANOTHER authorization server never gets the secret", async () => {
-    const legit = fixture({ preregistered: [{ clientId: "gh-app", clientSecret: "pre-secret-value", redirectUris: ["http://127.0.0.1:47000/callback"] }] });
-    const attacker = fixture({ preregistered: [{ clientId: "gh-app", redirectUris: ["http://127.0.0.1:47001/callback"] }] });
+    const legitPort = freeCallbackPort();
+    const attackerPort = freeCallbackPort();
+    const legit = fixture({ preregistered: [{ clientId: "gh-app", clientSecret: "pre-secret-value", redirectUris: [`http://127.0.0.1:${legitPort}/callback`] }] });
+    const attacker = fixture({ preregistered: [{ clientId: "gh-app", redirectUris: [`http://127.0.0.1:${attackerPort}/callback`] }] });
     const attackerMetadata = `${attacker.origin}/.well-known/oauth-authorization-server`;
-    const attack = { clientId: "gh-app", clientSecretRef: { kind: "keychain" as const }, authServerMetadataUrl: attackerMetadata, callbackPort: 47001 };
+    const attack = { clientId: "gh-app", clientSecretRef: { kind: "keychain" as const }, authServerMetadataUrl: attackerMetadata, callbackPort: attackerPort };
     // (a) the user bound the secret up front (the host's door passes the issuer when the user knows it)
     const bound = createMemoryMcpOAuthStore({ [mcpOAuthClientSecretAccount(legit.mcpUrl)]: encodeMcpOAuthClientSecretItem("pre-secret-value", legit.issuer) });
     const errA = await startMcpOAuthLogin({ serverUrl: legit.mcpUrl, store: bound, oauth: attack }).catch((e: unknown) => e);
     expect((errA as { code?: string }).code).toBe("client_secret_issuer_mismatch");
     // (b) an unbound secret whose server already has a pre-registered registration with the legit issuer
     const tofu = createMemoryMcpOAuthStore({ [mcpOAuthClientSecretAccount(legit.mcpUrl)]: "pre-secret-value" });
-    const login = await startMcpOAuthLogin({ serverUrl: legit.mcpUrl, store: tofu, oauth: { clientId: "gh-app", clientSecretRef: { kind: "keychain" }, callbackPort: 47000 } });
+    const login = await startMcpOAuthLogin({ serverUrl: legit.mcpUrl, store: tofu, oauth: { clientId: "gh-app", clientSecretRef: { kind: "keychain" }, callbackPort: legitPort } });
     await legit.approve(login.authUrl);
     expect(await login.done).toEqual({ ok: true });
     await tofu.write(mcpOAuthClientSecretAccount(legit.mcpUrl), "pre-secret-value"); // even with the stamp undone
@@ -235,7 +249,9 @@ describe("sign-in: CIMD and pre-registered clients", () => {
   });
 
   test("fix round 3: a configured metadata document claiming ANOTHER host's issuer is refused -- the secret (bound or stamped) goes nowhere", async () => {
-    const legit = fixture({ preregistered: [{ clientId: "gh-app", clientSecret: "pre-secret-value", redirectUris: ["http://127.0.0.1:47010/callback"] }] });
+    const legitPort = freeCallbackPort();
+    const attackPort = freeCallbackPort();
+    const legit = fixture({ preregistered: [{ clientId: "gh-app", clientSecret: "pre-secret-value", redirectUris: [`http://127.0.0.1:${legitPort}/callback`] }] });
     const evilHits: string[] = [];
     const evil: ReturnType<typeof Bun.serve> = Bun.serve({
       hostname: "127.0.0.1",
@@ -252,14 +268,14 @@ describe("sign-in: CIMD and pre-registered clients", () => {
       },
     });
     try {
-      const attack = { clientId: "gh-app", clientSecretRef: { kind: "keychain" as const }, authServerMetadataUrl: `http://127.0.0.1:${evil.port}/.well-known/oauth-authorization-server`, callbackPort: 47011 };
+      const attack = { clientId: "gh-app", clientSecretRef: { kind: "keychain" as const }, authServerMetadataUrl: `http://127.0.0.1:${evil.port}/.well-known/oauth-authorization-server`, callbackPort: attackPort };
       // (a) the secret was bound to the legit issuer up front
       const bound = createMemoryMcpOAuthStore({ [mcpOAuthClientSecretAccount(legit.mcpUrl)]: encodeMcpOAuthClientSecretItem("pre-secret-value", legit.issuer) });
       const errA = await startMcpOAuthLogin({ serverUrl: legit.mcpUrl, store: bound, oauth: attack }).catch((e: unknown) => e);
       expect((errA as { code?: string }).code).toBe("metadata_issuer_mismatch");
       // (b) stamped by a legitimate first sign-in (TOFU)
       const tofu = createMemoryMcpOAuthStore({ [mcpOAuthClientSecretAccount(legit.mcpUrl)]: "pre-secret-value" });
-      const first = await startMcpOAuthLogin({ serverUrl: legit.mcpUrl, store: tofu, oauth: { clientId: "gh-app", clientSecretRef: { kind: "keychain" }, callbackPort: 47010 } });
+      const first = await startMcpOAuthLogin({ serverUrl: legit.mcpUrl, store: tofu, oauth: { clientId: "gh-app", clientSecretRef: { kind: "keychain" }, callbackPort: legitPort } });
       await legit.approve(first.authUrl);
       expect(await first.done).toEqual({ ok: true });
       const errB = await startMcpOAuthLogin({ serverUrl: legit.mcpUrl, store: tofu, oauth: attack }).catch((e: unknown) => e);

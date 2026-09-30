@@ -11,7 +11,7 @@ import { runEngine, type Provider } from "../engine.ts";
 describe("WS-24: the first-turn MCP wait does not hold control requests", () => {
   test("behind a HUNG explicit server, mcp_status answers at once while the first turn still waits out the deadline", async () => {
     // An MCP endpoint that accepts the connection and never answers: the connect can only end at its deadline.
-    const hung = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
+    const hung = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Promise<Response>(() => {}) });
     try {
       const WAIT_MS = 3000;
       const started = Date.now();

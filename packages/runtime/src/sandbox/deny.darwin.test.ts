@@ -17,6 +17,9 @@ import { randomUUID } from "node:crypto";
 import { createServer, type AddressInfo } from "node:net";
 import { spawnSync } from "node:child_process";
 import { runCommand } from "./spawn.ts";
+import { buildRunCommandOptions } from "../tools/impl/bash.ts";
+import { buildMonitorRunCommandOptions } from "../tools/impl/monitor.ts";
+import type { ToolExecutionContext } from "../tools/registry.ts";
 import { buildWorkflowWorkerSeatbeltProfile } from "./profile.ts";
 import { splitDenyPathsByGlobShape } from "../permissions/file-rules.ts";
 
@@ -366,6 +369,115 @@ describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", (
       expect(allowed.exitCode).toBe(0);
       expect(existsSync(sibling)).toBe(true);
       void cwd;
+    });
+  });
+
+  // Code-mode images: the runtime's image working directory (`<home>/image-prep`, tools/image-prep.ts)
+  // must be unplantable from a sandboxed shell -- `sips` writes its output there and the runtime reads it
+  // back, so a planted symlink there would be followed. Positive control: the SAME tree is a writable
+  // root (cwd IS the winter home), so a sibling writes fine.
+  describe("the runtime's image-prep directory is write-denied (code-mode images)", () => {
+    t("a sandboxed shell can neither create a file nor plant a symlink under <winter home>/image-prep, even with cwd = the winter home", async () => {
+      const winterHome = proj();
+      const prep = join(winterHome, "image-prep");
+      mkdirSync(prep, { recursive: true });
+      const victim = join(proj(), "victim.txt");
+      const planted = join(prep, "prep-XXXX");
+      const file = await runWithWinterHome(`echo x > ${join(prep, "out.png")}`, winterHome, winterHome);
+      expect(file.exitCode).not.toBe(0);
+      expect(existsSync(join(prep, "out.png"))).toBe(false);
+      const link = await runWithWinterHome(`ln -s ${victim} ${planted}`, winterHome, winterHome);
+      expect(link.exitCode).not.toBe(0);
+      expect(existsSync(planted)).toBe(false);
+      // Nor can the directory itself be replaced (removed, then re-created as a link).
+      const swap = await runWithWinterHome(`rmdir ${prep} ; ln -s ${victim} ${prep}`, winterHome, winterHome);
+      expect(swap.exitCode).not.toBe(0);
+      expect(existsSync(prep)).toBe(true);
+      const allowed = await runWithWinterHome(`echo ok > ${join(winterHome, "sibling.txt")}`, winterHome, winterHome);
+      expect(allowed.exitCode).toBe(0);
+    });
+
+    t("the same under the OS-home anchor (<home>/.winter/image-prep)", async () => {
+      const home = proj();
+      const prep = join(home, ".winter", "image-prep");
+      mkdirSync(prep, { recursive: true });
+      const denied = await run(`echo x > ${join(prep, "out.png")}`, home, undefined, home);
+      expect(denied.exitCode).not.toBe(0);
+      expect(existsSync(join(prep, "out.png"))).toBe(false);
+    });
+  });
+
+  // Third review (HIGH): Monitor's option builder never passed `storeHome`, so under run homes (store
+  // home != winter home -- the daemon's normal setup) a Monitor-sandboxed command could plant a link in
+  // `<store>/image-prep` and rename the store home. Both tools now build their inputs through ONE builder
+  // (tools/sandbox-run-inputs.ts); this drives BOTH tools' real builders into `runCommand`, with a cwd
+  // that COVERS the store home (so only the denies stand between the shell and it).
+  describe("every shell-running tool's builder carries the store home (Bash and Monitor, run homes)", () => {
+    function ctxFor(cwd: string, winterHome: string, storeHome: string): ToolExecutionContext {
+      return {
+        cwd,
+        home: proj(),
+        winterHome,
+        storeHome,
+        sessionId: "s-run-homes",
+        tempDir: join(cwd, ".tmp"),
+        sandboxSettings: {},
+        readState: undefined as never,
+        emitFrame: () => {},
+        permissions: { probeReadAccess: () => "silent" },
+        session: {
+          setCwd() {},
+          addBoundedRoot() {},
+          removeBoundedRoot() {},
+          setPermissionMode() {},
+          getBoundedRoots: () => [cwd],
+          getPermissionMode: () => "default",
+          getSessionRoot: () => cwd,
+          setSessionRoot() {},
+        },
+      } as unknown as ToolExecutionContext;
+    }
+
+    const builders: Array<[string, (ctx: ToolExecutionContext) => Omit<Parameters<typeof runCommand>[0], "command" | "timeoutMs">]> = [
+      ["Bash", (ctx) => { const { signal: _s, ...o } = buildRunCommandOptions({ command: "true" } as never, ctx); return o; }],
+      ["Monitor", (ctx) => { const { signal: _s, ...o } = buildMonitorRunCommandOptions(ctx); return o; }],
+    ];
+
+    for (const [tool, build] of builders) {
+      t(`${tool}: no link planted in <store>/image-prep, no write to <store>/file-history, no rename of the store home -- while a sibling in the store still writes`, async () => {
+        const cwd = proj(); // covers both homes below
+        const winterHome = join(cwd, "run-folder");
+        const storeHome = join(cwd, "store");
+        const prep = join(storeHome, "image-prep", "prep-abc");
+        mkdirSync(prep, { recursive: true });
+        mkdirSync(join(storeHome, "file-history"), { recursive: true });
+        mkdirSync(winterHome, { recursive: true });
+        const victim = join(proj(), "victim.txt");
+        writeFileSync(victim, "untouched");
+        const opts = build(ctxFor(cwd, winterHome, storeHome));
+        expect(opts.storeHome).toBe(storeHome);
+        const exec = (command: string) => runCommand({ ...opts, command, timeoutMs: 8000 });
+
+        const link = await exec(`ln -s ${victim} ${join(prep, "out-png.png")}`);
+        expect(link.exitCode).not.toBe(0);
+        expect(existsSync(join(prep, "out-png.png"))).toBe(false);
+        const history = await exec(`echo x > ${join(storeHome, "file-history", "index.jsonl")}`);
+        expect(history.exitCode).not.toBe(0);
+        const rename = await exec(`mv ${storeHome} ${storeHome}-moved`);
+        expect(rename.exitCode).not.toBe(0);
+        expect(existsSync(storeHome)).toBe(true);
+        const sibling = await exec(`echo ok > ${join(storeHome, "sibling.txt")}`);
+        expect(sibling.exitCode).toBe(0);
+        expect(readFileSync(victim, "utf8")).toBe("untouched");
+      });
+    }
+
+    test("the two builders produce the SAME session-derived inputs (one builder, not two copies)", () => {
+      const cwd = proj();
+      const ctx = ctxFor(cwd, join(cwd, "w"), join(cwd, "s"));
+      const { signal: _a, dangerouslyDisableSandbox: _d, ...bash } = buildRunCommandOptions({ command: "true" } as never, ctx) as Record<string, unknown>;
+      const { signal: _b, ...monitor } = buildMonitorRunCommandOptions(ctx) as Record<string, unknown>;
+      expect(monitor).toEqual(bash);
     });
   });
 

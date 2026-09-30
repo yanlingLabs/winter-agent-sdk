@@ -1,4 +1,5 @@
 # WS-23: every test run refuses a non-loopback connection -- see scripts/test-network-guard.ts.
 # Every test run keeps off the REAL Keychain (in-memory redirect + a Bun.secrets tripwire) -- see scripts/test-keychain-guard.ts.
+# Every test run gets a temp WINTER_HOME when none is set, so nothing writes under the real one -- see scripts/test-home-guard.ts.
 [test]
-preload = ["../../scripts/test-keychain-guard.ts", "../../scripts/test-network-guard.ts"]
+preload = ["../../scripts/test-keychain-guard.ts", "../../scripts/test-network-guard.ts", "../../scripts/test-home-guard.ts"]

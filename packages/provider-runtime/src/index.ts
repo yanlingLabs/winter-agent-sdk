@@ -176,8 +176,12 @@ export {
   DOCUMENT_PAGE_TOKENS,
   fitBudgetTokens,
   fitVerdict,
+  IMAGE_BUDGET_NOTE,
+  imageBudgetFor,
+  withinImageBudget,
 } from "./continuity/index.ts";
 export type {
+  ImageBudget,
   Decoration,
   DecorationDoor,
   DecorationInput,

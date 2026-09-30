@@ -25,7 +25,7 @@
 //      carrying the provider's status and structured code -- never a raw body, never credential
 //      material, never opaque state.
 import type { ProviderAdapter, ProviderContext, ProviderError, ProviderEvent, ProviderMessageLike, ResolvedModel, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
-import { normalizeThrown, shouldRequestSummary, stripOpaque } from "@yanlinglabs/winter-provider-runtime";
+import { imageBudgetFor, normalizeThrown, shouldRequestSummary, stripOpaque, withinImageBudget } from "@yanlinglabs/winter-provider-runtime";
 import type { WireContentBlock, WireStreamEvent } from "@yanlinglabs/winter-agent-sdk";
 import {
   ProviderTurnError,
@@ -172,13 +172,22 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
     ...(Array.isArray(resolved.descriptor?.inputModalities?.value) ? { readsImages: resolved.descriptor.inputModalities.value.includes("image") } : {}),
   };
 
+  const imageBudget = imageBudgetFor({
+    family: adapter.family as string,
+    providerId: resolved.providerId,
+    ...(typeof resolved.descriptor?.contextWindow?.value === "number" ? { contextWindow: resolved.descriptor.contextWindow.value } : {}),
+  });
+
   return {
     async generate(input: ProviderRequest): Promise<FoldedProviderTurn> {
       // The chain is the RENDERER's input. The engine's own messages already carry their annotations
       // for everything THIS run produced; `opts.chain` is what supplies the RESUMED half (T10's
       // wiring passes the sidecar-derived chain, see `AdapterProviderOptions.chain`). Absent -> the
       // empty map T3 shipped, which is what a non-persistent session genuinely has.
-      const rendered = renderer.render(input.messages, opts.chain?.() ?? new Map(), target);
+      // Code-mode images: the OLDEST images past the target's per-request image budget become a note
+      // (provider-runtime continuity/image-budget.ts) -- after the renderer, so it counts only the images
+      // that really reach this target.
+      const rendered = withinImageBudget(renderer.render(input.messages, opts.chain?.() ?? new Map(), target) as ProviderMessageLike[], imageBudget);
       const request: TurnRequest = {
         // THE PROVIDER-LOCAL ID, never the catalog KEY.
         //
@@ -420,7 +429,7 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
           // Review r1, I-6: an overflow the stream reported before producing anything is not a committed
           // turn -- nothing reached the host, nothing ran -- so the engine may compact and retry it, as it
           // does for the same refusal on a 400.
-          throw providerErrorToTurnError(event.error, committed && !(event.error.contextOverflow === true && ordered.length === 0));
+          throw providerErrorToTurnError(event.error, committed && !((event.error.contextOverflow === true || event.error.imageOverflow === true) && ordered.length === 0));
       }
     }
   } catch (err) {
@@ -622,6 +631,8 @@ function providerErrorToTurnError(error: ProviderError, committed = false): Prov
     // WS-23: the adapter's own context-overflow verdict, carried as a flag -- the engine's reactive
     // compaction reads it, never the (capped, redacted) message text.
     ...(error.contextOverflow === true ? { contextOverflow: true } : {}),
+    // Code-mode images: the adapter's verdict that the request was refused for its IMAGES.
+    ...(error.imageOverflow === true ? { imageOverflow: true } : {}),
   });
 }
 
@@ -646,7 +657,16 @@ export function toProviderTurnError(err: unknown, committed = false): ProviderTu
   // verdict too. `normalizeThrown` never quotes a body -- the bounded `message` above is what travels.
   const normalized = normalizeThrown(err);
   const status = typeof err === "object" && err !== null && typeof (err as { status?: unknown }).status === "number" ? (err as { status: number }).status : normalized.status;
-  return new ProviderTurnError(`provider request failed: ${message}`, { ...(status !== undefined ? { status } : {}), code: normalized.code, retryable: normalized.retryable, committed });
+  // The overflow verdicts ride a THROWN typed error too (an adapter that throws its `ProviderRequestError`
+  // rather than yielding an `error` event -- Bedrock's refusals), so the engine's recovery reaches them.
+  return new ProviderTurnError(`provider request failed: ${message}`, {
+    ...(status !== undefined ? { status } : {}),
+    code: normalized.code,
+    retryable: normalized.retryable,
+    committed,
+    ...(normalized.contextOverflow === true ? { contextOverflow: true as const } : {}),
+    ...(normalized.imageOverflow === true ? { imageOverflow: true as const } : {}),
+  });
 }
 
 /**

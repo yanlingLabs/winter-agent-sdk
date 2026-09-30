@@ -1,15 +1,21 @@
 import { describe, test, expect } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { realPng } from "../tools/image-test-fixtures.ts";
+import { parsePngDimensions } from "../tools/image-prep.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
-import { getRegisteredTool } from "../tools/registry.ts";
+import { getRegisteredTool, type ToolResultPayload } from "../tools/registry.ts";
 import { createElicitationAsker } from "./elicitation.ts";
-import { createInMemoryDiscoveryCache, createMcpLifecycle, resolveMcpServerSources, type McpServerSource, type ResolvedMcpServerEntry } from "./lifecycle.ts";
+import { MCP_IMAGE_RESULT_TEXT_CHARS, createInMemoryDiscoveryCache, createMcpLifecycle, resolveMcpServerSources, type McpServerSource, type ResolvedMcpServerEntry } from "./lifecycle.ts";
 import type { McpEnvConfig } from "./env.ts";
 import type { InProcessMcpServer } from "./transports/sdk.ts";
-import { createFixtureMcpServer, defaultFixtureSpec, stdioFixtureCommand, withModernHttpFixture, type FixtureServerSpec } from "./test-fixtures.ts";
+import { createFixtureMcpServer, defaultFixtureSpec, pingFixtureCommand, stdioFixtureCommand, withModernHttpFixture, type FixtureServerSpec } from "./test-fixtures.ts";
+
+/** The connect bound for the real-stdio tests (see their header): a ceiling for a loaded machine. */
+const REAL_STDIO_CONNECT_MS = 15_000;
+const REAL_STDIO_TEST_MS = 30_000;
 
 const NO_ELICIT = createElicitationAsker(undefined);
 
@@ -363,6 +369,89 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     }
   });
 
+  // Code-mode images: an MCP `image` content item reaches the model as an IMAGE block (never base64
+  // text), through the same preparation as an image Read (tools/image-prep.ts).
+  async function callImageTool(content: unknown[], ctx: Record<string, unknown>): Promise<ToolResultPayload> {
+    const server = createFixtureMcpServer({
+      tools: [{ name: "shot", inputSchema: { type: "object", properties: {} }, handler: () => ({ content }) as never }],
+    });
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "img", origin: "explicit", config: { type: "sdk", name: "img" } }];
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { img: server } });
+    try {
+      await lifecycle.start();
+      return await getRegisteredTool("mcp__img__shot")!.executor!.execute({}, ctx as never);
+    } finally {
+      await lifecycle.dispose();
+      await server.close();
+    }
+  }
+
+  test("code-mode images: an MCP image item becomes an image block beside the text items (not base64 text)", async () => {
+    const png = realPng(64, 48);
+    const result = await callImageTool([{ type: "text", text: "here it is" }, { type: "image", data: png.toString("base64"), mimeType: "image/png" }], { tempDir: "/nonexistent/never-used" });
+    expect(result.blocks).toEqual([
+      { type: "text", text: "here it is" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: png.toString("base64") } },
+    ]);
+    expect(result.output).toBe(`here it is\n[image: image/png, ${png.length} bytes, 64x48]`);
+    expect(result.output).not.toContain(png.toString("base64"));
+  });
+
+  test("code-mode images: the media type comes from the bytes, not the item's mimeType", async () => {
+    const png = realPng(8, 8);
+    const result = await callImageTool([{ type: "image", data: png.toString("base64"), mimeType: "image/jpeg" }], {});
+    expect(result.blocks?.[0]).toMatchObject({ type: "image", source: { media_type: "image/png" } });
+  });
+
+  test("code-mode images: on a model that reads no images, the image item is the refusal note -- no image block, no base64", async () => {
+    const png = realPng(64, 48);
+    const result = await callImageTool([{ type: "text", text: "here it is" }, { type: "image", data: png.toString("base64"), mimeType: "image/png" }], { modelReadsImages: false });
+    expect(result.blocks).toBeUndefined();
+    expect(result.output).toBe("here it is\n[image omitted: The selected model doesn't support images]");
+  });
+
+  test("code-mode images: an image result's TEXT is bounded like any MCP text -- blocks and `output` alike, on either kind of model", async () => {
+    const png = realPng(8, 8);
+    const huge = "y".repeat(MCP_IMAGE_RESULT_TEXT_CHARS * 2);
+    const content = [{ type: "text", text: huge }, { type: "text", text: "never reached" }, { type: "image", data: png.toString("base64"), mimeType: "image/png" }];
+    const note = `[text truncated at ${MCP_IMAGE_RESULT_TEXT_CHARS} characters; mcp tool "shot" on server "img"]`;
+    // An image model: the text block and the text rendering are cut at the same point.
+    const withImages = await callImageTool(content, {});
+    const textBlock = withImages.blocks?.[0];
+    if (textBlock?.type !== "text") throw new Error("expected a text block first");
+    expect(textBlock.text).toBe(`${"y".repeat(MCP_IMAGE_RESULT_TEXT_CHARS)}\n${note}`);
+    expect(withImages.output.length).toBeLessThan(MCP_IMAGE_RESULT_TEXT_CHARS + 500);
+    expect(withImages.output).not.toContain("never reached");
+    // A text-only model: no blocks, and `output` -- the PostToolUse tool_response -- is just as bounded.
+    const textOnly = await callImageTool(content, { modelReadsImages: false });
+    expect(textOnly.blocks).toBeUndefined();
+    expect(textOnly.output.length).toBeLessThan(MCP_IMAGE_RESULT_TEXT_CHARS + 500);
+    expect(textOnly.output).toContain(note);
+    expect(textOnly.output).toContain("[image omitted: The selected model doesn't support images]");
+  });
+
+  test("code-mode images: text that EXACTLY fills the budget, then more text -- the note still says the rest was dropped", async () => {
+    const png = realPng(8, 8);
+    const exact = "z".repeat(MCP_IMAGE_RESULT_TEXT_CHARS);
+    const result = await callImageTool([{ type: "text", text: exact }, { type: "image", data: png.toString("base64"), mimeType: "image/png" }, { type: "text", text: "dropped" }], {});
+    expect(result.output).not.toContain("dropped");
+    expect(result.output).toContain(`[text truncated at ${MCP_IMAGE_RESULT_TEXT_CHARS} characters; mcp tool "shot" on server "img"]`);
+    expect(JSON.stringify(result.blocks)).toContain("text truncated at");
+  });
+
+  test.skipIf(!existsSync("/usr/bin/sips"))("code-mode images: a large MCP image is shrunk to 1568 px exactly like an image Read", async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), "winter-lifecycle-img-"));
+    try {
+      const result = await callImageTool([{ type: "image", data: realPng(3024, 1964).toString("base64"), mimeType: "image/png" }], { tempDir: join(sessionDir, "tmp"), winterHome: sessionDir });
+      const block = result.blocks?.[0];
+      if (block?.type !== "image") throw new Error("expected an image block");
+      expect(parsePngDimensions(Buffer.from(block.source.data, "base64"))).toEqual({ width: 1568, height: 1018 });
+      expect(result.output).toContain("1568x1018, resized from 3024x1964");
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
   test("an isError tool result flows through as ToolResultPayload.isError", async () => {
     const server = createFixtureMcpServer(defaultFixtureSpec());
     const resolved: ResolvedMcpServerEntry[] = [{ name: "fix", origin: "explicit", config: { type: "sdk", name: "fix" } }];
@@ -426,44 +515,51 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     }
   });
 
+  // THE THREE REAL-STDIO TESTS BELOW spawn an actual MCP server process and measure ORDER (did start()
+  // wait for it or not), never speed. Their connect time is a process start plus a module load, and that
+  // scales with machine load: the bun-run TypeScript fixture takes ~0.4 s idle and passed 3 s on a loaded
+  // machine, failing the old 3 s bound although the behaviour under test was right. So they use the
+  // plain-`.mjs` ping fixture under node (no transpile, no SDK import -- the lightest real stdio server
+  // this suite has), and the connect bound is REAL_STDIO_CONNECT_MS: a ceiling for a loaded machine, not a
+  // property of the code (a genuine hang still fails, at that bound).
   test("alwaysLoad on a REAL (stdio) transport: start() actually waits for it to finish connecting", async () => {
-    const { command, args } = stdioFixtureCommand();
+    const { command, args } = pingFixtureCommand({ label: "eager" });
     const resolved: ResolvedMcpServerEntry[] = [{ name: "stdio-eager", origin: "explicit", config: { command, args, env: {}, alwaysLoad: true } }];
-    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 3000, timeoutMs: 3000 }), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ connectTimeoutMs: REAL_STDIO_CONNECT_MS, timeoutMs: REAL_STDIO_CONNECT_MS }), elicitationAsk: NO_ELICIT });
     try {
       await lifecycle.start();
       // start() resolved -- by alwaysLoad's own contract, the server must already be connected, not
       // merely pending.
       expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("connected");
-      expect(getRegisteredTool("mcp__stdio-eager__echo")).toBeDefined();
+      expect(getRegisteredTool("mcp__stdio-eager__gate_ping")).toBeDefined();
     } finally {
       await lifecycle.dispose();
     }
-  });
+  }, REAL_STDIO_TEST_MS);
 
   test("without alwaysLoad, start() returns immediately (nonblocking default) even though the server is still pending", async () => {
-    const { command, args } = stdioFixtureCommand();
+    const { command, args } = pingFixtureCommand({ label: "lazy" });
     const resolved: ResolvedMcpServerEntry[] = [{ name: "lazy", origin: "explicit", config: { command, args, env: {} } }];
-    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 3000, timeoutMs: 3000 }), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ connectTimeoutMs: REAL_STDIO_CONNECT_MS, timeoutMs: REAL_STDIO_CONNECT_MS }), elicitationAsk: NO_ELICIT });
     try {
       const started = Date.now();
       await lifecycle.start();
       expect(Date.now() - started).toBeLessThan(200); // did not wait for the real connection
       // ...but the connection completes shortly after, in the background.
-      await lifecycle.stateSource.waitForPending(undefined, 3000);
+      await lifecycle.stateSource.waitForPending(undefined, REAL_STDIO_CONNECT_MS);
       expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("connected");
     } finally {
       await lifecycle.dispose();
     }
-  });
+  }, REAL_STDIO_TEST_MS);
 
   test("MCP_CONNECTION_NONBLOCKING=0 (connectionNonblocking: false): start() waits for the WHOLE batch, bounded by connectTimeoutMs", async () => {
-    const { command, args } = stdioFixtureCommand();
+    const { command, args } = pingFixtureCommand({ label: "batched" });
     const resolved: ResolvedMcpServerEntry[] = [{ name: "batched", origin: "explicit", config: { command, args, env: {} } }];
     const lifecycle = createMcpLifecycle({
       cwd: process.cwd(),
       servers: resolved,
-      envConfig: fastEnv({ connectionNonblocking: false, connectTimeoutMs: 3000, timeoutMs: 3000 }),
+      envConfig: fastEnv({ connectionNonblocking: false, connectTimeoutMs: REAL_STDIO_CONNECT_MS, timeoutMs: REAL_STDIO_CONNECT_MS }),
       elicitationAsk: NO_ELICIT,
     });
     try {
@@ -472,7 +568,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     } finally {
       await lifecycle.dispose();
     }
-  });
+  }, REAL_STDIO_TEST_MS);
 
   test("RULING P4-C: an 'sdk'-typed config.mcpServers entry is fed as 'connected' immediately, using its wire-provided tool list -- never registered/executed by this file", async () => {
     const resolved: ResolvedMcpServerEntry[] = [
@@ -511,17 +607,19 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     cache.set("stdio-not-cached", [{ name: "shouldNeverAppear", inputSchema: {} }]);
     const { command, args } = stdioFixtureCommand();
     const resolved: ResolvedMcpServerEntry[] = [{ name: "stdio-not-cached", origin: "explicit", config: { command, args, env: {} } }];
-    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ discoveryCache: true, connectTimeoutMs: 3000, timeoutMs: 3000 }), elicitationAsk: NO_ELICIT, discoveryCache: cache });
+    // The TypeScript fixture (this test needs its three tools), so the same load-sized bound as the
+    // real-stdio tests above: a process start plus a module load, which a loaded machine slows down.
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ discoveryCache: true, connectTimeoutMs: REAL_STDIO_CONNECT_MS, timeoutMs: REAL_STDIO_CONNECT_MS }), elicitationAsk: NO_ELICIT, discoveryCache: cache });
     try {
       await lifecycle.start();
-      await lifecycle.stateSource.waitForPending(undefined, 3000);
+      await lifecycle.stateSource.waitForPending(undefined, REAL_STDIO_CONNECT_MS);
       const snap = lifecycle.stateSource.snapshot()[0]!;
       expect(snap.state).toBe("connected"); // a REAL connection, never "cached"
       expect(snap.toolNames.sort()).toEqual(["boom", "echo", "env_dump"]);
     } finally {
       await lifecycle.dispose();
     }
-  });
+  }, REAL_STDIO_TEST_MS);
 
   test("a cached server's first live call failing re-classifies to failed and withdraws its tools (WS-09 §2.1)", async () => {
     const cache = createInMemoryDiscoveryCache();
@@ -1042,10 +1140,10 @@ describe("WS-23: type 'sdk' only from the host, versionNegotiation validated, li
       { name: "live", origin: "explicit", config: { ...stdioFixtureCommand(), env: {} } },
       { name: "dead", origin: "explicit", config: { command: "/no/such/binary-ws23-version" } },
     ];
-    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ timeoutMs: 5000 }), elicitationAsk: NO_ELICIT });
+    const lifecycle = createMcpLifecycle({ cwd: process.cwd(), servers: resolved, envConfig: fastEnv({ timeoutMs: REAL_STDIO_CONNECT_MS }), elicitationAsk: NO_ELICIT });
     try {
       await lifecycle.start();
-      await lifecycle.stateSource.waitForPending(undefined, 5000);
+      await lifecycle.stateSource.waitForPending(undefined, REAL_STDIO_CONNECT_MS);
       const byName = Object.fromEntries(lifecycle.stateSource.snapshot().map((s) => [s.name, s]));
       expect(byName["live"]).toMatchObject({ state: "connected", protocolVersion: "2025-11-25" });
       expect(byName["dead"]!.state).toBe("failed");
@@ -1054,7 +1152,7 @@ describe("WS-23: type 'sdk' only from the host, versionNegotiation validated, li
       await lifecycle.dispose();
     }
     expect(lifecycle.stateSource.snapshot().every((s) => s.protocolVersion === undefined)).toBe(true);
-  }, 15_000);
+  }, REAL_STDIO_TEST_MS);
 });
 
 // --- WS-23 fix round 1 (review I3 + a test gap): overlapping refreshes, and a change parked while connecting ---

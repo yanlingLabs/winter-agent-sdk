@@ -25,6 +25,7 @@
 // this file would ever try to connect to it.
 import type { McpServerConfigForProcessTransport } from "@yanlinglabs/winter-agent-sdk";
 import { registerMcpServerTools, unregisterMcpServerTools, replaceExecutor, type McpToolDefinition, type ToolExecutionContext, type ToolResultPayload } from "../tools/registry.ts";
+import { imagePrepWorkRoot, resultBlocksForModel, type RawResultPart } from "../tools/image-prep.ts";
 import { WINTER_SERVER_NAME } from "./winter-server.ts";
 import type { McpServerState, McpServerStateKind, McpServerStateSource } from "./state.ts";
 import type { McpControlSeam } from "./control-seam.ts";
@@ -482,6 +483,59 @@ function contentToText(content: readonly unknown[]): string {
   return parts.join("\n");
 }
 
+/** An MCP `image` content item (`{type:"image", data: <base64>, mimeType}`, the MCP spec's ImageContent). */
+function isMcpImageItem(block: unknown): block is { type: "image"; data: string; mimeType?: string } {
+  return typeof block === "object" && block !== null && (block as { type?: unknown }).type === "image" && typeof (block as { data?: unknown }).data === "string";
+}
+
+/**
+ * Code-mode images: an MCP result carrying image items, as model-facing blocks. Text items stay text (a
+ * non-text, non-image item keeps `contentToText`'s JSON rendering); each image goes through the shared
+ * `resultBlocksForModel`, so the text-only gate, the resize and the byte limits are Read's own.
+ *
+ * THE TEXT IS BOUNDED BEFORE ANYTHING IS BUILT FROM IT, so the model-facing blocks and `output` (the
+ * PostToolUse hook's `tool_response`, which rides a control frame on the child's stdout -- a line the host
+ * bounds at 1 MiB) are cut identically, whether or not the model reads images: all text items together
+ * get `MCP_IMAGE_RESULT_TEXT_CHARS`, and the first item past it is cut with a note naming the tool. The
+ * `capMcpOutput` spill-to-file is not used here: its envelope is a text-only result, and the images are
+ * the point of this one.
+ */
+async function mcpResultWithImages(content: readonly unknown[], isError: boolean, ctx: ToolExecutionContext, serverName: string, toolName: string): Promise<ToolResultPayload> {
+  let textLeft = MCP_IMAGE_RESULT_TEXT_CHARS;
+  let noted = false;
+  const note = `[text truncated at ${MCP_IMAGE_RESULT_TEXT_CHARS} characters; mcp tool "${toolName}" on server "${serverName}"]`;
+  const parts: RawResultPart[] = [];
+  for (const block of content) {
+    if (isMcpImageItem(block)) {
+      parts.push({ type: "image", bytes: Buffer.from(block.data, "base64") });
+      continue;
+    }
+    const text = contentToText([block]);
+    if (textLeft <= 0) {
+      // The budget is spent (possibly EXACTLY, by the items before): a later non-empty item is dropped,
+      // and the note says so once.
+      if (text.length > 0 && !noted) {
+        parts.push({ type: "text", text: note });
+        noted = true;
+      }
+      continue;
+    }
+    if (text.length <= textLeft) {
+      parts.push({ type: "text", text });
+      textLeft -= text.length;
+    } else {
+      parts.push({ type: "text", text: `${text.slice(0, textLeft)}\n${note}` });
+      textLeft = 0;
+      noted = true;
+    }
+  }
+  const result = await resultBlocksForModel(parts, { readsImages: ctx.modelReadsImages !== false, workRoot: () => imagePrepWorkRoot(ctx), ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}) });
+  return { output: result.text, ...(result.hasImage ? { blocks: result.blocks } : {}), ...(isError ? { isError: true as const } : {}) };
+}
+
+/** The text budget of an MCP result that carries images (≈ the default `MAX_MCP_OUTPUT_TOKENS` of 25000 at 4 characters a token). */
+export const MCP_IMAGE_RESULT_TEXT_CHARS = 100_000;
+
 function toolInfoToDefinition(tool: McpToolInfo): McpToolDefinition {
   return {
     name: tool.name,
@@ -793,6 +847,11 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
             // never materializes a session temp directory -- and it is the CALLING SESSION's root,
             // never the process-global background-task root a nested child re-points mid-session
             // (whole-branch review M3(a)).
+            // Code-mode images: an MCP `image` content item reaches the model as an IMAGE block through
+            // `ToolResultPayload.blocks`, made ready exactly like an image Read (tools/image-prep.ts:
+            // sniffed, shrunk to 1568 px, the byte limit, the text-only gate). A result with no image
+            // item takes the text path below, byte-identical to before.
+            if (result.content.some(isMcpImageItem)) return await mcpResultWithImages(result.content, result.isError === true, ctx, slot.name, toolName);
             const capped = capMcpOutput(contentToText(result.content), deps.envConfig.maxOutputTokens, {
               sessionDir: () => ctx.tempDir,
               serverName: slot.name,

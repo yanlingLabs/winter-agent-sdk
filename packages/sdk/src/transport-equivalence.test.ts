@@ -90,6 +90,9 @@ import type { MessagingIdleNoticePayload } from "./protocol/messaging.ts";
 // observable effect on the wire trace (task-8 report), and every assertion in this file compares
 // wire frames only, never transcript file contents. Removed at the end of the run.
 const TEST_WINTER_HOME = mkdtempSync(join(tmpdir(), "winter-transport-equivalence-"));
+
+/** The time zone THIS process's clock resolves (`UTC` under a plain `bun test`, or whatever `TZ=` names) -- handed to every spawned leg (see `spawnHook`). */
+const TEST_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 afterAll(() => {
   rmSync(TEST_WINTER_HOME, { recursive: true, force: true });
 });
@@ -295,7 +298,15 @@ function spawnHook(
     // probes `<vendor>:default` in its default Keychain store. `query()` already carries it into an
     // explicit env and the test preload sets it on this process; stating it here makes this hook correct
     // on its own, and the compiled leg (a binary no preload reaches) depends on it.
-    const env = { ...opts.env, WINTER_HOME: TEST_WINTER_HOME, WINTER_DISABLE_GIT_INSTRUCTIONS: "1", ...(testProviderName ? { WINTER_TEST_PROVIDER: testProviderName } : {}), ...(scenarioEnv ?? {}), [TEST_KEYCHAIN_ENV]: TEST_KEYCHAIN_MEMORY };
+    //
+    // And the time zone (`TZ`), for every leg: the session prompt states "Today's date is …" from the
+    // PROCESS's local date (`localDateString`, context/attachments.ts -- one rule for every leg, so
+    // production is consistent). But `bun test` runs THIS process in UTC without setting `TZ`, so the
+    // in-memory leg's date was UTC's while a spawned child, with no `TZ` either, took the machine's own
+    // zone: in the hours between the two midnights the legs stated different dates and every scenario
+    // whose prompt reaches the echo double failed. The child is handed the zone this process actually
+    // resolved, so both legs read the same calendar whatever the machine or a `TZ=` override says.
+    const env = { ...opts.env, WINTER_HOME: TEST_WINTER_HOME, WINTER_DISABLE_GIT_INSTRUCTIONS: "1", TZ: TEST_TIME_ZONE, ...(testProviderName ? { WINTER_TEST_PROVIDER: testProviderName } : {}), ...(scenarioEnv ?? {}), [TEST_KEYCHAIN_ENV]: TEST_KEYCHAIN_MEMORY };
     let proc: SpawnedRuntimeProcess;
     if (leg === "inMemory") {
       // The in-memory leg has no real child env to merge into — inMemoryProcess's own 4th `env`
@@ -2939,6 +2950,21 @@ describe("fixture hygiene", () => {
     expect(systems.length).toBeGreaterThan(0);
     for (const system of systems) expect(system ?? "").not.toContain("gitStatus: ");
   });
+
+  test("every leg states the SAME date -- this process's own local date -- whatever the zone (the child is handed `TZ`)", async () => {
+    // The echo double replies with the prompt it was sent, which carries the "Today's date is …" context.
+    const statedDate = (run: ScenarioResult): string | undefined => {
+      const result = run.trace.find((e) => e.kind === "result")?.payload as { result?: string } | undefined;
+      return /Today's date is (\d{4}-\d{2}-\d{2})\./.exec(result?.result ?? "")?.[1];
+    };
+    const now = new Date();
+    const expected = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    for (const leg of LEG_NAMES) {
+      const run = await traceViaQuery(leg, { prompt: "hi" });
+      expect(run.thrown).toBeUndefined();
+      expect({ leg, date: statedDate(run) }).toEqual({ leg, date: expected });
+    }
+  });
 });
 
 describe("transport equivalence: inMemoryProcess vs the real winter child (main.ts, dev leg)", () => {
@@ -2993,7 +3019,7 @@ describe("child leg: stderr plumbing", () => {
   });
 });
 
-describe("Finding 7 (T2, tracked — observe only, no fix): abort BEFORE query() runs still spawns eagerly", () => {
+describe("Finding 7 (T2), FIXED: an abort BEFORE query() runs spawns nothing, on every leg", () => {
   for (const leg of LEG_NAMES) {
     test(`${leg} leg`, async () => {
       const controller = new AbortController();
@@ -3014,9 +3040,11 @@ describe("Finding 7 (T2, tracked — observe only, no fix): abort BEFORE query()
         thrown = e;
       }
       if (capture.proc) await capture.proc.exited;
-      // OBSERVED, not fixed: query() spawns the process even though the AbortSignal was already
-      // aborted before query() was ever called (see this task's report for the full note).
-      expect(invoked).toBe(true);
+      // Fixed (the host lane found callers that never read an aborted Query leaking live children): an
+      // already-aborted signal spawns NOTHING, and reading still throws the AbortError an abort right
+      // after a spawn gives (query-abort-spawn.test.ts covers the abort-before-first-read kill).
+      expect(invoked).toBe(false);
+      expect(capture.proc).toBeUndefined();
       expect(thrown).toBeInstanceOf(AbortError);
     });
   }

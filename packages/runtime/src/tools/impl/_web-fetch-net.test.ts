@@ -23,9 +23,14 @@ function baseOpts(overrides: Partial<WebFetchNetOptions> = {}): WebFetchNetOptio
   return { blockedDomains: [], privateAddressPolicy: "allow", userAgent: "winter-test/0.0.0", ...overrides };
 }
 
+// The test server binds 127.0.0.1 -- the address every request below connects to -- never the default
+// wildcard. On a wildcard bind the kernel may hand out a port another process already holds on
+// 127.0.0.1 (a specific address and the wildcard do not conflict), and then 127.0.0.1:<port> reaches
+// THAT process, not this server: the flake this pins shut (a foreign `node` answered "not found").
 beforeEach(() => {
   calls = [];
   server = Bun.serve({
+    hostname: "127.0.0.1",
     port: 0,
     async fetch(req) {
       const url = new URL(req.url);
@@ -715,7 +720,7 @@ describe("performWebFetch -- B2: streaming decompression is capped by OUTPUT byt
     const big = Buffer.alloc(50 * 1024 * 1024, 0);
     const gz = gzipSync(big);
     expect(gz.byteLength).toBeLessThan(100_000); // confirms this really is a bomb, not just a big body
-    const bombServer = Bun.serve({ port: 0, fetch: () => new Response(gz, { headers: { "content-encoding": "gzip", "content-type": "text/plain" } }) });
+    const bombServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(gz, { headers: { "content-encoding": "gzip", "content-type": "text/plain" } }) });
     try {
       const t0 = Date.now();
       const outcome = await performWebFetch(`https://127.0.0.1:${bombServer.port}/`, "p", baseOpts(), testDepsFor(bombServer.port!));
@@ -730,7 +735,7 @@ describe("performWebFetch -- B2: streaming decompression is capped by OUTPUT byt
     const big = Buffer.alloc(50 * 1024 * 1024, 0);
     const br = brotliCompressSync(big);
     expect(br.byteLength).toBeLessThan(100_000);
-    const bombServer = Bun.serve({ port: 0, fetch: () => new Response(br, { headers: { "content-encoding": "br", "content-type": "text/plain" } }) });
+    const bombServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(br, { headers: { "content-encoding": "br", "content-type": "text/plain" } }) });
     try {
       const t0 = Date.now();
       const outcome = await performWebFetch(`https://127.0.0.1:${bombServer.port}/`, "p", baseOpts(), testDepsFor(bombServer.port!));
@@ -744,7 +749,7 @@ describe("performWebFetch -- B2: streaming decompression is capped by OUTPUT byt
   test("an ordinary small gzip response still decodes correctly (the cap does not break real compression)", async () => {
     const text = "<p>hello gzip world</p>".repeat(50);
     const gz = gzipSync(Buffer.from(text));
-    const okServer = Bun.serve({ port: 0, fetch: () => new Response(gz, { headers: { "content-encoding": "gzip", "content-type": "text/html" } }) });
+    const okServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(gz, { headers: { "content-encoding": "gzip", "content-type": "text/html" } }) });
     try {
       const outcome = await performWebFetch(`https://127.0.0.1:${okServer.port}/`, "p", baseOpts(), testDepsFor(okServer.port!));
       expect(outcome.kind).toBe("success");
@@ -771,7 +776,7 @@ describe("performWebFetch -- N3: COMPRESSED input is capped independently of dec
     for (let i = 0; i < blockCount; i++) body.set([0, 0, 0, 0xff, 0xff], header.length + i * 5);
     expect(body.byteLength).toBeGreaterThan(2 * 1024 * 1024);
 
-    const zeroServer = Bun.serve({ port: 0, fetch: () => new Response(body, { headers: { "content-encoding": "gzip", "content-type": "text/plain" } }) });
+    const zeroServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(body, { headers: { "content-encoding": "gzip", "content-type": "text/plain" } }) });
     try {
       const t0 = Date.now();
       const outcome = await performWebFetch(`https://127.0.0.1:${zeroServer.port}/`, "p", baseOpts(), testDepsFor(zeroServer.port!));
@@ -784,7 +789,7 @@ describe("performWebFetch -- N3: COMPRESSED input is capped independently of dec
   });
 
   test("an unrecognised Content-Encoding is refused outright, before any body bytes are treated as text", async () => {
-    const zstdServer = Bun.serve({ port: 0, fetch: () => new Response(Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 1, 2, 3]), { headers: { "content-encoding": "zstd", "content-type": "text/plain" } }) });
+    const zstdServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 1, 2, 3]), { headers: { "content-encoding": "zstd", "content-type": "text/plain" } }) });
     try {
       const outcome = await performWebFetch(`https://127.0.0.1:${zstdServer.port}/`, "p", baseOpts(), testDepsFor(zstdServer.port!));
       expect(outcome.kind).toBe("network-error");
@@ -798,7 +803,7 @@ describe("performWebFetch -- N3: COMPRESSED input is capped independently of dec
     const text = "hello multi-encoded world".repeat(20);
     const first = gzipSync(Buffer.from(text)); // applied FIRST when encoding
     const both = brotliCompressSync(first); // applied SECOND -- so the header reads "gzip, br"
-    const multiServer = Bun.serve({ port: 0, fetch: () => new Response(both, { headers: { "content-encoding": "gzip, br", "content-type": "text/plain" } }) });
+    const multiServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(both, { headers: { "content-encoding": "gzip, br", "content-type": "text/plain" } }) });
     try {
       const outcome = await performWebFetch(`https://127.0.0.1:${multiServer.port}/`, "p", baseOpts(), testDepsFor(multiServer.port!));
       expect(outcome.kind).toBe("success");
@@ -937,5 +942,36 @@ describe("performWebFetch -- N4: a CONNECT-phase failure advances to the next re
     const outcome = await performWebFetch("https://first-candidate-answers.test/404", "p", baseOpts(), deps);
     expect(outcome).toMatchObject({ kind: "http-error", status: 404 });
     expect(secondCandidateTried).toBe(false);
+  });
+});
+
+describe("fixture hygiene: why every loopback test server binds 127.0.0.1", () => {
+  test("a WILDCARD bind can share a port another socket holds on 127.0.0.1 -- and 127.0.0.1 then reaches the OTHER one; a 127.0.0.1 bind is refused instead", async () => {
+    const { createServer } = await import("node:net");
+    const foreign = createServer((socket) => socket.end("HTTP/1.1 404 Not Found\r\ncontent-length: 9\r\nconnection: close\r\n\r\nnot found"));
+    await new Promise<void>((resolve) => foreign.listen(0, "127.0.0.1", resolve));
+    const taken = (foreign.address() as { port: number }).port;
+    try {
+      // The hazard (BSD/macOS semantics -- Linux refuses this bind): the wildcard bind succeeds, and a
+      // request to 127.0.0.1 is answered by the foreign socket, not by the server the test started.
+      let wildcard: ReturnType<typeof Bun.serve> | undefined;
+      try {
+        wildcard = Bun.serve({ port: taken, fetch: () => new Response("ours") });
+      } catch {
+        wildcard = undefined; // this platform refuses the overlap outright -- no hazard to show
+      }
+      if (wildcard !== undefined) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${taken}/ok`);
+          expect(await res.text()).toBe("not found");
+        } finally {
+          wildcard.stop(true);
+        }
+      }
+      // The guard every server in these files now uses: the same bind on 127.0.0.1 is refused outright.
+      expect(() => Bun.serve({ hostname: "127.0.0.1", port: taken, fetch: () => new Response("ours") })).toThrow();
+    } finally {
+      await new Promise<void>((resolve) => foreign.close(() => resolve()));
+    }
   });
 });

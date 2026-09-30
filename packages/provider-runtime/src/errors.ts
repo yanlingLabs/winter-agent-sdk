@@ -266,7 +266,9 @@ export function normalizeHttpError(status: number, headers: Headers, body: strin
   // WS-23 (reasoning-state): a prompt that does not fit the model's window is a CONTEXT OVERFLOW, the
   // one refusal the engine can recover from by compacting -- on every surface, not only Anthropic's
   // (whose adapter recognises its own "prompt is too long" envelope).
-  if (isContextOverflowRefusal(status, providerCode, flat?.message ?? body)) return { code: "bad_request", message, status, retryable: false, contextOverflow: true, ...extra };
+  const parsedMessage = parseProviderErrorMessage(body);
+  if (isImageRefusal(status, parsedMessage)) return { code: "bad_request", message, status, retryable: false, imageOverflow: true, ...extra };
+  if (isContextOverflowRefusal(status, providerCode, parsedMessage)) return { code: "bad_request", message, status, retryable: false, contextOverflow: true, ...extra };
   if (status >= 400) return { code: "bad_request", message, status, retryable: status === 409, ...extra };
   // A non-error status reaching here is a caller bug, not a provider condition; it is still typed
   // rather than thrown, so one mis-wired call site cannot take a stream down.
@@ -274,21 +276,105 @@ export function normalizeHttpError(status: number, headers: Headers, body: strin
 }
 
 /**
- * WS-23 (reasoning-state): the OpenAI-family context-overflow refusals, read off the FULL body before the
- * snippet cap.
+ * The provider's own error MESSAGE, parsed out of the body -- never the raw body, whose other fields
+ * (a request id, an echoed parameter, a model name) must not be able to trip a classifier. The shapes:
+ * `{error: {message}}` (OpenAI, Anthropic, Gemini), `{message}` / `{Message}` (Bedrock), and xAI's flat
+ * `{error: "<message>"}`. `undefined` when the body is none of these.
+ */
+export function parseProviderErrorMessage(body: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body) as unknown;
+  } catch {
+    return undefined;
+  }
+  return messageOf(parsed, 0);
+}
+
+/** The message in one parsed error body (see `parseProviderErrorMessage`); `depth` bounds the array/nesting walk. */
+function messageOf(parsed: unknown, depth: number): string | undefined {
+  if (depth > 3 || parsed === null || typeof parsed !== "object") return undefined;
+  // A JSON ARRAY body (Gemini answers some errors as `[{"error": {...}}]`): its first element.
+  if (Array.isArray(parsed)) return messageOf(parsed[0], depth + 1);
+  const record = parsed as { error?: unknown; message?: unknown; Message?: unknown; detail?: unknown; errors?: unknown };
+  if (typeof record.error === "string" && record.error.length > 0) return record.error;
+  if (record.error !== null && typeof record.error === "object") {
+    const message = (record.error as { message?: unknown }).message;
+    if (typeof message === "string" && message.length > 0) return message;
+  }
+  for (const candidate of [record.message, record.Message]) if (typeof candidate === "string" && candidate.length > 0) return candidate;
+  // FastAPI-style servers (vLLM, many local runners): `{"detail": "<message>"}` or `{"detail": {"message": …}}`.
+  if (typeof record.detail === "string" && record.detail.length > 0) return record.detail;
+  if (record.detail !== null && typeof record.detail === "object") {
+    const detailMessage = messageOf(record.detail, depth + 1);
+    if (detailMessage !== undefined) return detailMessage;
+  }
+  // `{"errors": [{"message": …}]}` (GraphQL-style gateways).
+  if (Array.isArray(record.errors)) return messageOf(record.errors[0], depth + 1);
+  return undefined;
+}
+
+/**
+ * WS-23 (reasoning-state): the context-overflow refusals, read off the PARSED message (never the raw body).
  *   - OpenAI (Responses and Chat Completions): HTTP 400 with the structured code `context_length_exceeded`
  *     (https://platform.openai.com/docs/guides/error-codes; the Responses message is "Your input exceeds
  *     the context window of this model", the Chat Completions one "This model's maximum context length is
  *     N tokens ...").
  *   - xAI: HTTP 400 in its flat dialect, `"This model's maximum prompt length is N but the request contains
  *     M tokens."` -- no structured code, so the documented leading phrase is the discriminator.
- * 413 is included for a gateway that sends the same refusal as "payload too large". Anything else stays an
- * ordinary `bad_request`: a false positive would compact a conversation over an unrelated error.
+ *   - A request too LARGE (code-mode images: a history of screenshots): HTTP 413 ONLY when the provider
+ *     says so -- Anthropic's documented `request_too_large` error type
+ *     (https://platform.claude.com/docs/en/api/errors), or a message saying the request/prompt is too large
+ *     or exceeds a maximum. A bare 413 (a proxy's empty page) is not assumed to be one.
+ * Anything else stays an ordinary `bad_request`: a false positive would compact a conversation over an
+ * unrelated error.
  */
-function isContextOverflowRefusal(status: number, providerCode: string | undefined, message: string): boolean {
+function isContextOverflowRefusal(status: number, providerCode: string | undefined, message: string | undefined): boolean {
   if (status !== 400 && status !== 413) return false;
   if (providerCode === "context_length_exceeded") return true;
-  return /maximum (prompt|context) length is \d+/i.test(message) || /exceeds the context window/i.test(message);
+  if (status === 413 && providerCode === "request_too_large") return true;
+  // llama.cpp's server types its refusal (`exceed_context_size_error`).
+  if (providerCode === "exceed_context_size_error") return true;
+  if (message === undefined) return false;
+  if (status === 413 && /(request|payload|prompt|body).{0,40}(too large|exceeds)|exceeds the maximum/i.test(message)) return true;
+  return CONTEXT_OVERFLOW_PHRASES.some((phrase) => phrase.test(message));
+}
+
+/**
+ * The context-overflow phrasings, each the vendor's own words (quoted from the error it returns):
+ *   - OpenAI chat: "This model's maximum context length is N tokens"; xAI: "This model's maximum prompt
+ *     length is N"; OpenAI Responses: "Your input exceeds the context window of this model".
+ *   - Gemini: "The input token count (461428) exceeds the maximum number of tokens allowed (131072)."
+ *   - Bedrock: "Input is too long for requested model." (a ValidationException).
+ *   - Claude (Anthropic's API, and Claude on Bedrock): "prompt is too long: 250000 tokens > 200000 maximum".
+ *   - Mistral (and vLLM behind it): "Prompt contains 65000 tokens and 0 draft tokens, too large for model
+ *     with 32768 maximum context length".
+ *   - Kimi (Moonshot): "Your request exceeded model token limit: 262144".
+ *   - llama.cpp server: "request (33056 tokens) exceeds the available context size (32768 tokens), try
+ *     increasing it" (type `exceed_context_size_error`, matched above too).
+ */
+const CONTEXT_OVERFLOW_PHRASES: readonly RegExp[] = [
+  /maximum (prompt|context) length is \d+/i,
+  /exceeds the context window/i,
+  /input token count.{0,24}exceeds the maximum number of tokens allowed/i,
+  /input is too long for requested model/i,
+  /prompt is too long: \d+ tokens > \d+ maximum/i,
+  /too large for model with \d+ maximum context length/i,
+  /exceeded model token limit/i,
+  /exceeds the available context size/i,
+];
+
+/**
+ * Code-mode images: a refusal for the request's IMAGES -- too many in one request, or one past a
+ * many-image size limit -- read off the PARSED message, and only a phrasing that names images: Anthropic's
+ * "many-image requests" dimension refusal (https://platform.claude.com/docs/en/build-with-claude/vision,
+ * "Request limits"), "too many images", "maximum (number of) images", "images per request", Azure's
+ * "Exceeded maximum number of images". The engine answers it with one retry that keeps only the newest
+ * image (`ProviderError.imageOverflow`), not with compaction.
+ */
+function isImageRefusal(status: number, message: string | undefined): boolean {
+  if ((status !== 400 && status !== 413) || message === undefined) return false;
+  return /too many images|many-image requests|maximum (number of )?images|number of images|images? per request/i.test(message);
 }
 
 /** True for anything already shaped as a normalized `ProviderError`. */
