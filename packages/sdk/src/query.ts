@@ -648,6 +648,21 @@ function isModelFamilyListing(payload: unknown): payload is ModelFamilyListing {
   return typeof payload === "object" && payload !== null && Array.isArray((payload as { families?: unknown }).families);
 }
 
+/**
+ * The handle `query()` uses in place of a spawn when its signal is ALREADY aborted: no process, an empty
+ * stdout, writes and kills that do nothing, and an `exited` that has already settled -- so the read loop
+ * takes exactly the path an abort right after a real spawn takes (`AbortError`).
+ */
+function abortedBeforeSpawn(): SpawnedRuntimeProcess {
+  return {
+    stdin: { write() {}, end() {} },
+    stdout: (async function* (): AsyncGenerator<string> {})(),
+    kill() {},
+    exited: Promise.resolve({ code: null, signal: "SIGTERM" }),
+    pid: null,
+  };
+}
+
 export function query(args: { prompt: string | AsyncIterable<string>; options: Options }): Query {
   const { prompt, options } = args;
 
@@ -900,8 +915,41 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     env: withTestKeychainRedirect(options.env) ?? (process.env as Record<string, string>),
     ...(options.abortController ? { signal: options.abortController.signal } : {}),
   };
-  const proc: SpawnedRuntimeProcess = (options.spawnClaudeCodeProcess ?? defaultSpawn)(spawnOptions);
+  // An ALREADY-ABORTED signal spawns nothing: a caller that aborted before asking (and may never read
+  // the Query) must not be left with a live runtime child. The Query still behaves exactly as if the
+  // abort had landed right after a spawn -- reading it throws `AbortError` -- through an inert stand-in
+  // handle whose process is already gone.
+  const proc: SpawnedRuntimeProcess = options.abortController?.signal.aborted === true ? abortedBeforeSpawn() : (options.spawnClaudeCodeProcess ?? defaultSpawn)(spawnOptions);
   const maxBufferSize = options.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
+
+  // An abort BEFORE the first read kills the child now, not when (if ever) the Query is first read: the
+  // read loop's own abort handling only exists once iteration starts, and a caller that aborts and walks
+  // away would otherwise leak a live `winter` until this process exits. SIGTERM, then SIGKILL after the
+  // same grace the read loop uses. Idempotent with the read loop's own kill (a second kill is a no-op).
+  let killRequested = false;
+  const killForAbort = (): void => {
+    if (killRequested) return;
+    killRequested = true;
+    try {
+      proc.kill();
+    } catch {
+      /* already gone */
+    }
+    const escalate = setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }, KILL_GRACE_MS);
+    escalate.unref?.();
+    void proc.exited.then(() => clearTimeout(escalate));
+  };
+  if (options.abortController !== undefined && options.abortController.signal.aborted !== true) {
+    const signal = options.abortController.signal;
+    signal.addEventListener("abort", killForAbort, { once: true });
+    void proc.exited.then(() => signal.removeEventListener("abort", killForAbort));
+  }
 
   // Task 2 (WS-04 §3.1, direction inversion): HOST-originated control requests (interrupt,
   // setPermissionMode today; setModel/taskStop/mcp_*/rewindFiles in later tasks) awaiting the
@@ -1117,6 +1165,9 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     const onAbort = () => {
       if (aborted) return;
       aborted = true;
+      // The spawn-time listener may already have killed it (an abort before the first read).
+      if (killRequested) return;
+      killRequested = true;
       proc.kill();
       killTimer = setTimeout(() => proc.kill("SIGKILL"), KILL_GRACE_MS);
       killTimer.unref?.();

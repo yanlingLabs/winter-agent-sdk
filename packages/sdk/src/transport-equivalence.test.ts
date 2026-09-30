@@ -3019,7 +3019,7 @@ describe("child leg: stderr plumbing", () => {
   });
 });
 
-describe("Finding 7 (T2, tracked — observe only, no fix): abort BEFORE query() runs still spawns eagerly", () => {
+describe("Finding 7 (T2), FIXED: an abort BEFORE query() runs spawns nothing, on every leg", () => {
   for (const leg of LEG_NAMES) {
     test(`${leg} leg`, async () => {
       const controller = new AbortController();
@@ -3040,9 +3040,11 @@ describe("Finding 7 (T2, tracked — observe only, no fix): abort BEFORE query()
         thrown = e;
       }
       if (capture.proc) await capture.proc.exited;
-      // OBSERVED, not fixed: query() spawns the process even though the AbortSignal was already
-      // aborted before query() was ever called (see this task's report for the full note).
-      expect(invoked).toBe(true);
+      // Fixed (the host lane found callers that never read an aborted Query leaking live children): an
+      // already-aborted signal spawns NOTHING, and reading still throws the AbortError an abort right
+      // after a spawn gives (query-abort-spawn.test.ts covers the abort-before-first-read kill).
+      expect(invoked).toBe(false);
+      expect(capture.proc).toBeUndefined();
       expect(thrown).toBeInstanceOf(AbortError);
     });
   }

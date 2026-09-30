@@ -309,11 +309,14 @@ test("abort with a real backlog: 2+ pre-queued frames are all yielded before the
     exited: Promise.resolve({ code: null, signal: "SIGTERM" }),
   });
   const controller = new AbortController();
-  controller.abort();
   const seen: string[] = [];
   let thrown: unknown;
+  // Aborted after the spawn but before iteration starts (an ALREADY-aborted signal spawns nothing at
+  // all -- query-abort-spawn.test.ts -- so the backlog race needs a spawned process to exist).
+  const q = query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc, abortController: controller } });
+  controller.abort();
   try {
-    for await (const msg of query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc, abortController: controller } })) {
+    for await (const msg of q) {
       seen.push(msg.type);
     }
   } catch (e) {

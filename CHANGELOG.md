@@ -35,13 +35,33 @@ corresponds to one `chore(release): vX.Y.Z` commit.
     refused with a text saying so; nothing is truncated.
   - Without `sips`, an image already within the limits (3.75 MiB, 8000 px a side) is sent unresized, and
     anything else is refused with a text saying why. Files that are not a readable image are refused.
-  - The file's bytes decide its type, not its extension. Gemini does not read GIFs, so a GIF sent to
-    Gemini unchanged becomes a short note saying so (and on Gemini 3 it is never nested in the function
-    response).
+  - The file's bytes decide its type, not its extension. Every GIF becomes a PNG of its first frame,
+    because OpenAI takes no animated GIF and Gemini takes no GIF at all. Without `sips`, a still GIF is
+    sent as it is and an animated one is refused. A GIF that reaches Gemini another way becomes a short
+    note (and on Gemini 3 it is never nested in the function response).
+  - An image that declares more than 100 megapixels is refused from its header before anything decodes
+    it, so a tiny file claiming 40000x40000 px cannot make `sips` use gigabytes of memory. A TIFF or
+    HEIC whose size cannot be read is not decoded at all.
+  - Interrupting the turn stops a running `sips`. Each resize works in a new private folder, so a link
+    planted in the session's temp folder is never followed.
+- **Mistral gets images inside the tool result.** Mistral refuses a user message right after a tool
+  message, so the follow-up message other chat-completions providers get would fail every later request.
+  Mistral's tool messages accept image chunks, so the image goes there, and any other text of the same
+  turn joins the last tool message.
+- **A request never carries more images than its provider accepts.** Each provider limits a request by
+  size, and some by image count: Claude 32 MB and 100 or 600 images, Gemini 20 MB, Bedrock 20 images a
+  message, Mistral 8 images, OpenAI 512 MB and 1,500 images. Before a request is sent, the oldest images
+  beyond that budget become a short note. They are dropped a few at a time, so most turns keep the
+  cached prompt. A request that is still refused as too large (HTTP 413) or as carrying too many images
+  now triggers the same recovery as a context overflow: the conversation is compacted and retried once.
+- **Tool results split across messages are kept together.** A resumed claude transcript stores each
+  result of a parallel batch as its own entry. Every adapter now sends the batch's images after all of
+  its results, never between two of them.
 - **MCP tools that return images now show them to the model.** An MCP `image` content item used to reach
   the model as base64 text. It is now an image block beside the result's text, prepared exactly like an
   image Read: the same size rules, the same resizing, and on a model without image input the same
-  `The selected model doesn't support images` note in its place.
+  `The selected model doesn't support images` note in its place. The text of such a result is limited
+  to 100,000 characters, both what the model sees and what the PostToolUse hook receives.
 - **Resumed sessions keep their images.** The transcript stores an image result the way claude's does
   (a base64 image block inside the tool result), so a resumed session sends it again.
 - **The host's copy of an image result leaves out the bytes.** The tool-round message a host receives
@@ -58,6 +78,13 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   model supports images, that large ones are shrunk, and that a PDF returns only its metadata. The
   changed description changes the cached prompt prefix once, on upgrade.
 - **Other tools are unchanged.** A text tool result is still a plain string on every surface.
+
+### Aborting a query before reading it
+
+- `query()` with an `AbortController` that is already aborted no longer starts a runtime process.
+  Reading the returned query throws the same `AbortError` as an abort right after the start.
+- An abort that lands after the start but before anything reads the query now stops the runtime
+  process at once. Before, it kept running until the query was read, or until the host exited.
 
 ## 0.0.35
 
