@@ -98,9 +98,14 @@ function loopbackFetchImpl(): NonNullable<NonNullable<WebFetchExecutorDeps["net"
   };
 }
 
+// The test server binds 127.0.0.1 -- the address every request below connects to -- never the default
+// wildcard. On a wildcard bind the kernel may hand out a port another process already holds on
+// 127.0.0.1 (a specific address and the wildcard do not conflict), and then 127.0.0.1:<port> reaches
+// THAT process, not this server: the flake this pins shut (a foreign `node` answered "not found").
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "webfetch-exec-"));
   server = Bun.serve({
+    hostname: "127.0.0.1",
     port: 0,
     async fetch(req) {
       const url = new URL(req.url);
