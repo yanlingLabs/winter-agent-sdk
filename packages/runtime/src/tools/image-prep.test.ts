@@ -391,7 +391,11 @@ describe("links are never followed", () => {
     const png = realPng(3024, 1964);
     expect(ok(await prepareImageForModel(png, { workRoot: () => undefined })).bytes.equals(png)).toBe(true);
     const bmp = Buffer.concat([Buffer.from("BM", "ascii"), Buffer.alloc(40)]);
-    expect(await prepareImageForModel(bmp, { workRoot: () => undefined })).toEqual({ ok: false, reason: expect.stringContaining("there is no private working directory") });
+    const refused = await prepareImageForModel(bmp, { workRoot: () => undefined });
+    expect(refused).toEqual({ ok: false, reason: expect.stringContaining("could not be converted") });
+    // WHICH reason depends on the platform: `sips` is checked first, so where it exists (macOS) the refusal
+    // names the missing working directory; where it does not (the Linux CI runner) it names `sips`.
+    expect(refused).toEqual({ ok: false, reason: expect.stringContaining(HAS_SIPS ? "there is no private working directory" : "/usr/bin/sips is not available") });
   });
 });
 

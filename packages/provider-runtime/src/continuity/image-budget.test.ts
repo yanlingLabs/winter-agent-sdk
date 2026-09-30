@@ -99,9 +99,14 @@ describe("imageBudgetFor: the documented per-request limits", () => {
 
 describe("the review's probes: a growing history never loses the newest image, and a dropped image never comes back", () => {
   const MiB = 1024 * 1024;
+  // The byte-limited cases run at a 1 : 1 MiB SCALE -- 5-byte images against a 14-byte budget behave exactly
+  // like 5 MiB images against 14 MiB (the budget only compares lengths). Building real 5 MiB fixture strings
+  // for every history length up to 130 cost the TEST seconds (CI hit its 5 s timeout); the function itself
+  // is measured at real size in the test below.
+  const scaled = (budget: { maxImages: number; maxBytes: number }) => ({ ...budget, maxBytes: budget.maxBytes / MiB });
   const cases: Array<{ name: string; budget: { maxImages: number; maxBytes: number }; imageBytes: number }> = [
-    { name: "Gemini: 14 MiB of 5 MiB images (byte-limited)", budget: imageBudgetFor({ family: "google", providerId: "google" }), imageBytes: 5 * MiB },
-    { name: "Claude: 24 MiB of 3 MiB images (byte-limited)", budget: imageBudgetFor({ family: "anthropic", providerId: "anthropic", contextWindow: 200_000 }), imageBytes: 3 * MiB },
+    { name: "Gemini: 14 MiB of 5 MiB images (byte-limited, at 1:1 MiB scale)", budget: scaled(imageBudgetFor({ family: "google", providerId: "google" })), imageBytes: 5 },
+    { name: "Claude: 24 MiB of 3 MiB images (byte-limited, at 1:1 MiB scale)", budget: scaled(imageBudgetFor({ family: "anthropic", providerId: "anthropic", contextWindow: 200_000 })), imageBytes: 3 },
     { name: "Mistral: 8 small images (count-limited)", budget: imageBudgetFor({ family: "openai", providerId: "mistral" }), imageBytes: 1_000 },
     { name: "Claude 200k: 100 small images (count-limited)", budget: imageBudgetFor({ family: "anthropic", providerId: "anthropic", contextWindow: 200_000 }), imageBytes: 1_000 },
   ];
@@ -124,6 +129,21 @@ describe("the review's probes: a growing history never loses the newest image, a
       }
     });
   }
+
+  test("at REAL size the budget is cheap: 130 requests of up to 130 images of 5 MiB each take a few milliseconds", () => {
+    // One shared 5 MiB string (strings are immutable, so sharing it costs nothing): what is measured is the
+    // budget's own work per request -- a length sum and a rewrite of the dropped blocks, never a copy of
+    // any image's data.
+    const data = "A".repeat(5 * MiB);
+    const messages: ProviderMessageLike[] = Array.from({ length: 130 }, (_, i) => ({ role: "user", content: [{ type: "text", text: `shot ${i}` }, { type: "image", source: { type: "base64", media_type: "image/png", data } }] }));
+    const budget = imageBudgetFor({ family: "google", providerId: "google" });
+    const started = performance.now();
+    for (let n = 1; n <= 130; n++) {
+      const out = withinImageBudget(messages.slice(0, n), budget);
+      expect(out.length).toBe(n);
+    }
+    expect(performance.now() - started).toBeLessThan(500);
+  });
 
   test("an image too big for the budget on its own is dropped too (nothing can make it fit)", () => {
     const out = withinImageBudget(history(2, 100), { maxImages: 10, maxBytes: 50 });
