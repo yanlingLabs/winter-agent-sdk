@@ -25,7 +25,8 @@ import "../descriptors/bash.ts";
 import { replaceExecutor, type ToolExecutor, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createBackgroundTask } from "../background-tasks.ts";
 import { splitCompound, extractRedirectTargets, leadingWord, dequoteShellWord } from "../../permissions/grammar.ts";
-import { splitDenyPathsByGlobShape, globDenyEntriesOf, type GlobDenyEntry } from "../../permissions/file-rules.ts";
+import { type GlobDenyEntry } from "../../permissions/file-rules.ts";
+import { buildSandboxChildEnv, computeDenyPaths as sharedComputeDenyPaths, computeWritableRoots as sharedComputeWritableRoots, sandboxRunInputs } from "../sandbox-run-inputs.ts";
 import { emptyPathSet, type ExtractedPaths } from "../paths-seam.ts";
 import {
   runCommand,
@@ -115,25 +116,8 @@ const FAILURE_EXCERPT_CHARS = 2_000;
 // Writable roots (Task 8, "Settings threading" MUST) -- see this file's own header.
 // ---------------------------------------------------------------------------------------------
 function computeWritableRoots(ctx: ToolExecutionContext): string[] {
-  // `ctx.session.getBoundedRoots()` already includes `ctx.cwd` itself (evaluator.ts's own
-  // boundedRoots()) -- redundant with buildSeatbeltProfile's own separate, always-writable `cwd`
-  // field, but harmless: SBPL allow rules are idempotent, and de-duplicating here would need a
-  // canonicalize-then-Set pass for a purely cosmetic win (a shorter generated profile), not a
-  // correctness one. `ctx.outDir` is appended only when the session actually configured one (WS-12
-  // §5.3's OUTDIR extension) -- an unconfigured session sees byte-identical writableRoots to before
-  // this task, i.e. exactly [ctx.tempDir].
-  //
-  // C1 (fix wave, P3 close-out): `ctx.sandboxSettings.filesystem?.allowWrite` is now unioned in too
-  // (WS-12 §12 Q5: additive to session roots, never a REPLACEMENT of them) -- T8's "Settings
-  // threading" MUST threaded `ctx.sandboxSettings` onto the context but never actually read
-  // `.filesystem` anywhere; this is that missing read. An unconfigured session (no
-  // `filesystem.allowWrite`) sees byte-identical output to before this fix.
-  return [
-    ctx.tempDir,
-    ...ctx.session.getBoundedRoots(),
-    ...(ctx.outDir !== undefined ? [ctx.outDir] : []),
-    ...(ctx.sandboxSettings.filesystem?.allowWrite ?? []),
-  ];
+  // Code-mode images (third review): ONE builder for every shell-running tool -- tools/sandbox-run-inputs.ts.
+  return sharedComputeWritableRoots(ctx);
 }
 
 // C1 (fix wave, P3 close-out): the OTHER missing half of the same gap -- `filesystem.denyWrite`/
@@ -165,19 +149,7 @@ interface DenyPaths {
 // `regexes`/`globFixedPrefixes` arrays above cannot answer this) -- read-side only, claude's own `fR`
 // is a read-deny-specific concern.
 function computeDenyPaths(ctx: ToolExecutionContext): DenyPaths {
-  const fs = ctx.sandboxSettings.filesystem;
-  const write = splitDenyPathsByGlobShape(fs?.denyWrite ?? []);
-  const read = splitDenyPathsByGlobShape(fs?.denyRead ?? []);
-  const readGlobEntries = globDenyEntriesOf(fs?.denyRead ?? []);
-  return {
-    ...(write.paths.length > 0 ? { denyWritePaths: write.paths } : {}),
-    ...(read.paths.length > 0 ? { denyReadPaths: read.paths } : {}),
-    ...(write.regexes.length > 0 ? { denyWriteRegexes: write.regexes } : {}),
-    ...(read.regexes.length > 0 ? { denyReadRegexes: read.regexes } : {}),
-    ...(write.globFixedPrefixes.length > 0 ? { denyWriteGlobFixedPrefixes: write.globFixedPrefixes } : {}),
-    ...(read.globFixedPrefixes.length > 0 ? { denyReadGlobFixedPrefixes: read.globFixedPrefixes } : {}),
-    ...(readGlobEntries.length > 0 ? { denyReadGlobEntries: readGlobEntries } : {}),
-  };
+  return sharedComputeDenyPaths(ctx);
 }
 
 // C1 (fix wave, P3 close-out): the common `runCommand` OPTIONS both `runForeground` and
@@ -233,16 +205,8 @@ function buildRunCommandOptions(
   signal?: AbortSignal;
 } {
   return {
-    cwd: ctx.cwd,
-    env: buildChildEnv(ctx),
-    settings: ctx.sandboxSettings,
-    writableRoots: computeWritableRoots(ctx),
-    ...computeDenyPaths(ctx),
-    home: ctx.home,
-    ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
-    ...(ctx.storeHome !== undefined ? { storeHome: ctx.storeHome } : {}),
-    ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
-    ...(ctx.sandboxSettings.filesystem?.allowGitConfig !== undefined ? { allowGitConfigWrites: ctx.sandboxSettings.filesystem.allowGitConfig } : {}),
+    // Every session-derived sandbox input from the ONE shared builder (Monitor uses the same one).
+    ...sandboxRunInputs(ctx),
     ...(input.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: input.dangerouslyDisableSandbox } : {}),
     ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
   };
@@ -273,7 +237,7 @@ function computeCwdCarryAllowedRoots(ctx: ToolExecutionContext): string[] {
 // `OUTDIR` when the session configured one. A session with no `ctx.outDir` gets a child env
 // byte-identical to before this task.
 function buildChildEnv(ctx: ToolExecutionContext): NodeJS.ProcessEnv {
-  return { ...process.env, TMPDIR: ctx.tempDir, ...(ctx.outDir !== undefined ? { OUTDIR: ctx.outDir } : {}) };
+  return buildSandboxChildEnv(ctx);
 }
 
 // ---------------------------------------------------------------------------------------------

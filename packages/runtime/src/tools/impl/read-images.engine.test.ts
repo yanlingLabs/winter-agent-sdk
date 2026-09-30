@@ -234,3 +234,55 @@ describe("a refusal for the request's IMAGES", () => {
     expect(result.message.result).toContain("too many images");
   });
 });
+
+describe("the image-refusal retry, third review", () => {
+  test("a request with ONE image (or none) is not retried: there is nothing to leave out, the provider's error stands", async () => {
+    let calls = 0;
+    const frames = await runWithProvider(async () => {
+      calls++;
+      throw new ProviderTurnError("provider request failed (bad_request): HTTP 400 — too many images", { status: 400, code: "bad_request", retryable: false, imageOverflow: true });
+    }, imageHistory().slice(0, 2)); // a single image in the history
+    expect(calls).toBe(1);
+    const result = frames.find((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result") as unknown as { message: { is_error: boolean } };
+    expect(result.message.is_error).toBe(true);
+  });
+
+  test("a model switch resets it: the new model gets the full image set again", async () => {
+    const counts: number[] = [];
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      config: { sessionId: "s-image-refusal-switch", cwd: dir, model: "model-a" },
+      input: runtime.input,
+      output: runtime.output,
+      provider: {
+        async generate(req: ProviderRequest) {
+          const n = imagesIn(req).length;
+          counts.push(n);
+          if (n > 1) throw new ProviderTurnError("provider request failed (bad_request): HTTP 400 — too many images", { status: 400, code: "bad_request", retryable: false, imageOverflow: true });
+          return { kind: "text", text: "fine" };
+        },
+      } as never,
+      initialMessages: imageHistory(),
+    } as EngineOptions);
+    const frames: WinterFrame[] = [];
+    const reader = (async () => {
+      for await (const f of host.input) frames.push(f);
+    })();
+    const results = (): number => frames.filter((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result").length;
+    const waitFor = async (check: () => boolean): Promise<void> => {
+      for (let n = 0; n < 2000 && !check(); n++) await new Promise((r) => setTimeout(r, 2));
+    };
+    host.output.write({ type: "user", text: "first" });
+    await waitFor(() => results() >= 1);
+    host.output.write({ type: "control_request", requestId: "switch", subtype: "set_model", payload: { model: "model-b" } });
+    await waitFor(() => frames.some((f) => f.type === "control_response" && (f as { requestId: string }).requestId === "switch"));
+    host.output.write({ type: "user", text: "second" });
+    await waitFor(() => results() >= 2);
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    await done;
+    await reader;
+    // Turn 1: refused with 3, retried with the newest only. After the switch, turn 2 starts with ALL of
+    // them again (the new model gets its own chance), is refused, and is retried with the newest only.
+    expect(counts).toEqual([3, 1, 3, 1]);
+  });
+});

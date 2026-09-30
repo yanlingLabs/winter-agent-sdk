@@ -159,18 +159,47 @@ describe("query() spawn-time abort handling, second review", () => {
     resolveExit({ code: 0, signal: null });
   });
 
-  test("an abort BEFORE the first read still kills at once, then the SIGKILL is cancelled when the Query finishes", async () => {
-    const kills: string[] = [];
+  /**
+   * A real child that SURVIVES SIGTERM, so only the SIGKILL escalation can end it -- its TERM handler
+   * closes its stdout instead of exiting, so the Query sees end-of-stream and FINISHES while the child is
+   * still alive: exactly the case where a `finally` that cancelled the escalation left the child running.
+   */
+  function stubbornChild(spawned: SpawnedRuntimeProcess[]): (opts: SpawnRuntimeOptions) => SpawnedRuntimeProcess {
+    return (opts) => {
+      const proc = defaultSpawn({ ...opts, command: "/bin/sh", args: ["-c", 'trap "exec 1>&-" TERM; while :; do sleep 0.05; done'] });
+      spawned.push(proc);
+      return proc;
+    };
+  }
+
+  test("an abort BEFORE the first read: a child that ignores SIGTERM is still SIGKILLed after the grace, even though the Query already finished", async () => {
+    const spawned: SpawnedRuntimeProcess[] = [];
     const controller = new AbortController();
-    const q = query({ prompt: "hi", options: { abortController: controller, spawnClaudeCodeProcess: () => fakeProc({ stdout: [], exited: new Promise(() => {}), kills }) } });
+    const q = query({ prompt: "hi", options: { abortController: controller, spawnClaudeCodeProcess: stubbornChild(spawned) } });
+    await new Promise((resolve) => setTimeout(resolve, 100)); // the trap is installed
     controller.abort();
-    expect(kills).toEqual(["SIGTERM"]);
     await expect((async () => {
       for await (const _message of q) {
         /* nothing */
       }
     })()).rejects.toBeInstanceOf(AbortError);
-    await new Promise((resolve) => setTimeout(resolve, 150)); // past the grace: the escalation was cancelled by the finish
-    expect(kills).toEqual(["SIGTERM"]);
+    const exit = await Promise.race([spawned[0]!.exited, new Promise<"still running">((resolve) => setTimeout(() => resolve("still running"), 3_000))]);
+    expect(exit).toEqual({ code: null, signal: "SIGKILL" });
+  });
+
+  test("an abort DURING a read: the read loop's own SIGKILL escalation is not cancelled by the Query ending", async () => {
+    const spawned: SpawnedRuntimeProcess[] = [];
+    const controller = new AbortController();
+    const q = query({ prompt: "hi", options: { abortController: controller, spawnClaudeCodeProcess: stubbornChild(spawned) } });
+    const reading = (async () => {
+      for await (const _message of q) {
+        /* nothing */
+      }
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    controller.abort();
+    await expect(reading).rejects.toBeInstanceOf(AbortError);
+    const exit = await Promise.race([spawned[0]!.exited, new Promise<"still running">((resolve) => setTimeout(() => resolve("still running"), 3_000))]);
+    expect(exit).toEqual({ code: null, signal: "SIGKILL" });
   });
 });

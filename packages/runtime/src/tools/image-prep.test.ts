@@ -12,6 +12,7 @@ import {
   IMAGE_MAX_PIXELS,
   gifFrameCount,
   gifFrameSizes,
+  parseGifExtent,
   parseHeicDimensions,
   parseTiffDimensions,
   imagePrepWorkRoot,
@@ -279,6 +280,15 @@ describe("the pixel check reads every size a decoder would use (second review)",
     expect(gifFrameSizes(bomb)).toEqual([{ width: 60_000, height: 60_000 }]);
     expect(await prepareImageForModel(bomb, { workRoot: tempDir })).toEqual({ ok: false, reason: expect.stringContaining("declares 60000x60000 px") });
     expect(tempReads).toBe(0);
+  });
+
+  test("a TRUNCATED GIF whose huge frame comes before the cut is still refused on that frame (fail closed on what was seen)", async () => {
+    const header = Buffer.concat([Buffer.from("GIF89a", "ascii"), Buffer.from([1, 0, 1, 0, 0, 0, 0])]);
+    // A 60000x60000 frame whose data sub-block claims 200 bytes and then the file simply ends.
+    const truncated = Buffer.concat([header, Buffer.from([0x2c, 0, 0, 0, 0, 0x60, 0xea, 0x60, 0xea, 0x00, 0x02, 200, 1, 2, 3])]);
+    expect(gifFrameSizes(truncated)).toBeUndefined(); // the walk never reached the trailer...
+    expect(parseGifExtent(truncated)).toEqual({ width: 60_000, height: 60_000 }); // ...but the frame it saw counts
+    expect(await prepareImageForModel(truncated, { workRoot: tempDir })).toEqual({ ok: false, reason: expect.stringContaining("declares 60000x60000 px") });
   });
 
   test("TIFF: the magic number must be 42, and the FIRST width/height tag wins (libtiff's reading)", () => {

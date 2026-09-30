@@ -45,7 +45,12 @@ corresponds to one `chore(release): vX.Y.Z` commit.
     one whose size cannot be read is not decoded at all.
   - Interrupting the turn stops a running `sips`. Resizing happens in a new folder under the runtime's
     own `image-prep` directory, which the shell sandbox is not allowed to write, and the result is read
-    without following links. Nothing a sandboxed command plants can redirect it.
+    without following links. Nothing a sandboxed command plants can redirect it. When a session is given
+    no winter or store home, images are not resized at all rather than worked on somewhere else.
+- **Monitor's sandbox now protects the store home like Bash's does.** Monitor built its sandbox settings
+  separately and never passed the store home, so with the store home apart from the winter home (the
+  daemon's usual setup) a Monitor command could write to the store's `file-history` and `image-prep`
+  folders and rename the store home. Bash and Monitor now share one builder.
 - **Mistral gets images inside the tool result.** Mistral refuses a user message right after a tool
   message, so the follow-up message other chat-completions providers get would fail every later request.
   Mistral's tool messages accept image chunks, so the image goes there, and any other text of the same
@@ -60,10 +65,12 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   the newest image is always kept when it fits on its own.
 - **A request refused for its images is retried once with only the newest image.** A refusal that says
   there are too many images, or that one is too large for a request with many images, is retried with
-  every earlier image turned into a note, and later requests keep doing that. If the retry is refused
-  too, the provider's own error is shown. A request refused as too large (HTTP 413, when the provider
+  every earlier image turned into a note, and later requests keep doing that until the model changes. If
+  the request had only one image, or the retry is refused too, the provider's own error is shown. A request refused as too large (HTTP 413, when the provider
   says the request is too large) is treated like a context overflow: the conversation is compacted and
   retried once. Only the provider's error message is read for this, never the rest of the response.
+  Context overflows are now also recognised in the wording Gemini, Bedrock, Claude, Mistral, Kimi and
+  llama.cpp use, and in error bodies shaped as an array, `detail` or `errors`.
 - **Tool results split across messages are kept together.** A resumed claude transcript stores each
   result of a parallel batch as its own entry. Every adapter now sends the batch's images after all of
   its results, never between two of them.
@@ -96,6 +103,8 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 - An abort that lands after the start but before anything reads the query now stops the runtime
   process at once. Before, it kept running until the query was read, or until the host exited.
 - Once a query has finished, a later abort no longer signals the runtime process while it shuts down.
+  After an abort, a runtime process that ignores SIGTERM still gets SIGKILL after the grace period,
+  even if the query has already finished.
 - A custom spawn hook whose process handle fails no longer causes an unhandled promise rejection.
 
 ## 0.0.35

@@ -192,10 +192,11 @@ export function parseHeicDimensions(buf: Uint8Array): { width: number; height: n
 export function parseGifExtent(buf: Uint8Array): { width: number; height: number } | undefined {
   const screen = parseGifDimensions(buf);
   if (screen === undefined) return undefined;
-  const frames = gifFrameSizes(buf);
+  // The frames seen even when the walk stops early (a truncated file): fail CLOSED on the largest.
+  const frames = walkGif(buf)?.frames ?? [];
   let width = screen.width;
   let height = screen.height;
-  for (const f of frames ?? []) {
+  for (const f of frames) {
     width = Math.max(width, f.width);
     height = Math.max(height, f.height);
   }
@@ -362,11 +363,22 @@ export function imagePrepWorkRoot(ctx: { storeHome?: string; winterHome?: string
  * (https://developers.openai.com/api/docs/guides/images-vision) and Claude reads only the first frame.
  */
 export function gifFrameCount(buf: Uint8Array): number | undefined {
-  return gifFrameSizes(buf)?.length;
+  // The frames SEEN, even in a truncated file: two seen already make it animated.
+  return walkGif(buf)?.frames.length;
 }
 
-/** Every frame's own size (its image descriptor), in order; `undefined` when the structure cannot be walked. */
+/** Every frame's own size (its image descriptor), in order; `undefined` when the structure cannot be walked to its end. */
 export function gifFrameSizes(buf: Uint8Array): Array<{ width: number; height: number }> | undefined {
+  const walk = walkGif(buf);
+  return walk !== undefined && walk.complete ? walk.frames : undefined;
+}
+
+/**
+ * Walks a GIF's block structure, collecting each frame's size. `complete: false` when the walk stopped
+ * early (a truncated or malformed file) -- the frames seen UP TO THAT POINT are still returned, so the
+ * pixel check can fail closed on the largest one rather than lose them. `undefined` for a non-GIF.
+ */
+function walkGif(buf: Uint8Array): { frames: Array<{ width: number; height: number }>; complete: boolean } | undefined {
   if (buf.length < 13 || buf[0] !== 0x47 || buf[1] !== 0x49 || buf[2] !== 0x46) return undefined;
   let pos = 13;
   const packed = buf[10]!;
@@ -383,23 +395,23 @@ export function gifFrameSizes(buf: Uint8Array): Array<{ width: number; height: n
   const frames: Array<{ width: number; height: number }> = [];
   while (pos < buf.length) {
     const introducer = buf[pos]!;
-    if (introducer === 0x3b) return frames; // trailer
+    if (introducer === 0x3b) return { frames, complete: true }; // trailer
     if (introducer === 0x21) {
       pos += 2; // introducer + label
-      if (!skipSubBlocks()) return undefined;
+      if (!skipSubBlocks()) return { frames, complete: false };
     } else if (introducer === 0x2c) {
-      if (pos + 10 > buf.length) return undefined;
+      if (pos + 10 > buf.length) return { frames, complete: false };
       frames.push({ width: buf[pos + 5]! | (buf[pos + 6]! << 8), height: buf[pos + 7]! | (buf[pos + 8]! << 8) });
       const local = buf[pos + 9]!;
       pos += 10;
       if (local & 0x80) pos += 3 * (1 << ((local & 0x07) + 1)); // local colour table
       pos += 1; // LZW minimum code size
-      if (!skipSubBlocks()) return undefined;
+      if (!skipSubBlocks()) return { frames, complete: false };
     } else {
-      return undefined;
+      return { frames, complete: false };
     }
   }
-  return frames;
+  return { frames, complete: false }; // ran out of bytes before the trailer
 }
 
 /**

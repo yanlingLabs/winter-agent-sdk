@@ -288,14 +288,29 @@ export function parseProviderErrorMessage(body: string): string | undefined {
   } catch {
     return undefined;
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-  const record = parsed as { error?: unknown; message?: unknown; Message?: unknown };
+  return messageOf(parsed, 0);
+}
+
+/** The message in one parsed error body (see `parseProviderErrorMessage`); `depth` bounds the array/nesting walk. */
+function messageOf(parsed: unknown, depth: number): string | undefined {
+  if (depth > 3 || parsed === null || typeof parsed !== "object") return undefined;
+  // A JSON ARRAY body (Gemini answers some errors as `[{"error": {...}}]`): its first element.
+  if (Array.isArray(parsed)) return messageOf(parsed[0], depth + 1);
+  const record = parsed as { error?: unknown; message?: unknown; Message?: unknown; detail?: unknown; errors?: unknown };
   if (typeof record.error === "string" && record.error.length > 0) return record.error;
   if (record.error !== null && typeof record.error === "object") {
     const message = (record.error as { message?: unknown }).message;
     if (typeof message === "string" && message.length > 0) return message;
   }
   for (const candidate of [record.message, record.Message]) if (typeof candidate === "string" && candidate.length > 0) return candidate;
+  // FastAPI-style servers (vLLM, many local runners): `{"detail": "<message>"}` or `{"detail": {"message": …}}`.
+  if (typeof record.detail === "string" && record.detail.length > 0) return record.detail;
+  if (record.detail !== null && typeof record.detail === "object") {
+    const detailMessage = messageOf(record.detail, depth + 1);
+    if (detailMessage !== undefined) return detailMessage;
+  }
+  // `{"errors": [{"message": …}]}` (GraphQL-style gateways).
+  if (Array.isArray(record.errors)) return messageOf(record.errors[0], depth + 1);
   return undefined;
 }
 
@@ -318,10 +333,36 @@ function isContextOverflowRefusal(status: number, providerCode: string | undefin
   if (status !== 400 && status !== 413) return false;
   if (providerCode === "context_length_exceeded") return true;
   if (status === 413 && providerCode === "request_too_large") return true;
+  // llama.cpp's server types its refusal (`exceed_context_size_error`).
+  if (providerCode === "exceed_context_size_error") return true;
   if (message === undefined) return false;
   if (status === 413 && /(request|payload|prompt|body).{0,40}(too large|exceeds)|exceeds the maximum/i.test(message)) return true;
-  return /maximum (prompt|context) length is \d+/i.test(message) || /exceeds the context window/i.test(message);
+  return CONTEXT_OVERFLOW_PHRASES.some((phrase) => phrase.test(message));
 }
+
+/**
+ * The context-overflow phrasings, each the vendor's own words (quoted from the error it returns):
+ *   - OpenAI chat: "This model's maximum context length is N tokens"; xAI: "This model's maximum prompt
+ *     length is N"; OpenAI Responses: "Your input exceeds the context window of this model".
+ *   - Gemini: "The input token count (461428) exceeds the maximum number of tokens allowed (131072)."
+ *   - Bedrock: "Input is too long for requested model." (a ValidationException).
+ *   - Claude (Anthropic's API, and Claude on Bedrock): "prompt is too long: 250000 tokens > 200000 maximum".
+ *   - Mistral (and vLLM behind it): "Prompt contains 65000 tokens and 0 draft tokens, too large for model
+ *     with 32768 maximum context length".
+ *   - Kimi (Moonshot): "Your request exceeded model token limit: 262144".
+ *   - llama.cpp server: "request (33056 tokens) exceeds the available context size (32768 tokens), try
+ *     increasing it" (type `exceed_context_size_error`, matched above too).
+ */
+const CONTEXT_OVERFLOW_PHRASES: readonly RegExp[] = [
+  /maximum (prompt|context) length is \d+/i,
+  /exceeds the context window/i,
+  /input token count.{0,24}exceeds the maximum number of tokens allowed/i,
+  /input is too long for requested model/i,
+  /prompt is too long: \d+ tokens > \d+ maximum/i,
+  /too large for model with \d+ maximum context length/i,
+  /exceeded model token limit/i,
+  /exceeds the available context size/i,
+];
 
 /**
  * Code-mode images: a refusal for the request's IMAGES -- too many in one request, or one past a

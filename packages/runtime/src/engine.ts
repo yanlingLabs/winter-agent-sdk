@@ -1120,6 +1120,20 @@ export function contentForHost(content: ContentBlock[]): ContentBlock[] {
   return content.map((block) => (block.type === "thinking" ? { type: "thinking", thinking: block.thinking, signature: "" } : block.type === "redacted_thinking" ? { type: "redacted_thinking", data: "" } : block));
 }
 
+/** Code-mode images: how many image blocks a request carries, nested tool results included. */
+function countRequestImages(messages: readonly ProviderMessage[]): number {
+  let count = 0;
+  const visit = (blocks: readonly ContentBlock[], depth: number): void => {
+    if (depth > 8) return;
+    for (const block of blocks) {
+      if (block.type === "image") count++;
+      else if (block.type === "tool_result" && Array.isArray(block.content)) visit(block.content, depth + 1);
+    }
+  };
+  for (const message of messages) if (typeof message.content !== "string") visit(message.content, 0);
+  return count;
+}
+
 /**
  * Code-mode images: a tool round's results as the HOST sees them on the `user` frame -- every image block
  * (top level or inside a `tool_result`) keeps its shape and `media_type` and loses its bytes: `data`
@@ -3242,6 +3256,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // (user decision: the source pays). `source()` answers `undefined` when that model is out of reach
   // (a resume onto another provider; the daemon compacts on the source before such a switch instead).
   let pendingFitCheck: { from: string | undefined; source: () => Provider | undefined } | undefined;
+  /**
+   * Code-mode images: set once a provider refused a request for its IMAGES (`ProviderTurnError.
+   * imageOverflow`). From then on every request of this run sends only the NEWEST image, every earlier one
+   * as a note (`withinImageBudget` with a one-image budget -- deterministic, so the prefix is stable from
+   * request to request). Compaction would not help: the recent turns it keeps are where the screenshots
+   * are. Sticky for the run: without it every later request would be refused the same way first.
+   */
+  let imagesOnlyNewest = false;
+  /** How many images the last main request carried -- a refusal for images is retried only when it had more than one. */
+  let lastRequestImageCount = 0;
   // WS-23 (midconv): the tool epoch's session state (context/tool-epoch.ts; `planToolsForRequest`).
   // A refused tool change is sticky, like the refused per-message effort: every later request rebuilds
   // `tools` (claude 2.1.282's own one-time fallback). So is a refused OpenAI client `tool_search` (or a
@@ -6975,6 +6999,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         },
       };
       resourceContextLimit();
+      imagesOnlyNewest = false; // code-mode images: a new model gets its own chance at the full image set
       if (resolveModelSwitch !== undefined && currentProviderIdentity !== undefined) {
         const compared = resolveModelSwitch(currentProviderIdentity.modelKey, { providerId: persisted.providerId, modelKey: persisted.modelKey, family: "" });
         if (!("refused" in compared) && compared.from !== undefined) {
@@ -7644,14 +7669,6 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   /** WS-23: whether opted-in reminders ride as mid-conversation `system` messages on the LIVE model. */
   const systemRemindersOnWire = (): boolean => currentModelDescription()?.wire?.midConversationSystem === true;
 
-  /**
-   * Code-mode images: set once a provider refused a request for its IMAGES (`ProviderTurnError.
-   * imageOverflow`). From then on every request of this run sends only the NEWEST image, every earlier one
-   * as a note (`withinImageBudget` with a one-image budget -- deterministic, so the prefix is stable from
-   * request to request). Compaction would not help: the recent turns it keeps are where the screenshots
-   * are. Sticky for the run: without it every later request would be refused the same way first.
-   */
-  let imagesOnlyNewest = false;
 
   /** WS-23: the LIVE model's catalog description (its effort vocabulary and wire features), or `undefined` for a scripted double. */
   const currentModelDescription = (): ModelDescription | undefined => {
@@ -8505,6 +8522,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       pendingFitCheck = { from, source: () => sameProvider };
       currentModel = next;
       resourceContextLimit();
+      imagesOnlyNewest = false; // code-mode images: a new model gets its own chance at the full image set
       store?.recordProviderSwitch?.({ from: from ?? "", to: next, reason });
       output.write({
         type: "data",
@@ -8550,6 +8568,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     stampIdentity();
     // WS-23 (decision 5): the accountant's window is the new model's.
     resourceContextLimit();
+    imagesOnlyNewest = false; // code-mode images: a new model gets its own chance at the full image set
     store?.recordProviderSwitch?.({ from, to: resolution.identity.modelKey, reason });
     output.write({
       type: "data",
@@ -8650,6 +8669,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     currentModel = restored.model;
     stampIdentity();
     resourceContextLimit();
+    imagesOnlyNewest = false; // code-mode images: a new model gets its own chance at the full image set
     const to = restored.identity?.modelKey ?? restored.model;
     store?.recordProviderSwitch?.({ from, to, reason: "fallback" });
     output.write({
@@ -9040,6 +9060,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         const outboundMessages = imagesOnlyNewest
           ? withinImageBudget(requestMessages(context, effortPlan.markers, toolPlan.toolChanges), { maxImages: 1, maxBytes: Number.MAX_SAFE_INTEGER })
           : requestMessages(context, effortPlan.markers, toolPlan.toolChanges);
+        lastRequestImageCount = countRequestImages(outboundMessages);
         sentToolChangeMessage = outboundMessages.some((m) => m.toolChanges !== undefined);
         generationEffort = effortPlan.stamp;
         // Fix round 1 (I1): every per-message request carries the leading marker, so the beta rides
@@ -9178,7 +9199,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // same prompt, so this is never a reason to swap models.
         // Code-mode images: a refusal for the request's IMAGES gets ONE retry with only the newest image
         // (see `imagesOnlyNewest`); a second refusal falls through and surfaces the provider's own error.
-        if (isProviderTurnError(err) && err.imageOverflow === true && err.committed !== true && !imagesOnlyNewest) {
+        // A request that carried ONE image (or none) has nothing to leave out: no retry, the error stands.
+        if (isProviderTurnError(err) && err.imageOverflow === true && err.committed !== true && !imagesOnlyNewest && lastRequestImageCount > 1) {
           imagesOnlyNewest = true;
           continue roundLoop;
         }

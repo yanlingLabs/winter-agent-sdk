@@ -159,6 +159,25 @@ describe("refusals the engine can recover from, classified off the PARSED messag
     expect(normalizeHttpError(400, headers, JSON.stringify({ error: { message: "maximum number of tools exceeded" } })).imageOverflow).toBeUndefined();
   });
 
+  test("the context-overflow phrasings every vendor actually sends -- one each", () => {
+    const cases: Array<[string, number, string]> = [
+      ["Gemini", 400, JSON.stringify({ error: { code: 400, message: "The input token count (461428) exceeds the maximum number of tokens allowed (131072).", status: "INVALID_ARGUMENT" } })],
+      ["Bedrock", 400, JSON.stringify({ message: "Input is too long for requested model." })],
+      ["Claude (API / Bedrock)", 400, JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "prompt is too long: 250000 tokens > 200000 maximum" } })],
+      ["Mistral", 400, JSON.stringify({ object: "error", message: "Prompt contains 65000 tokens and 0 draft tokens, too large for model with 32768 maximum context length", type: "invalid_request_error" })],
+      ["Kimi", 400, JSON.stringify({ error: { message: "Invalid request: Your request exceeded model token limit: 262144", type: "invalid_request_error" } })],
+      ["llama.cpp", 400, JSON.stringify({ error: { code: 400, message: "request (33056 tokens) exceeds the available context size (32768 tokens), try increasing it", type: "exceed_context_size_error", n_prompt_tokens: 33056, n_ctx: 32768 } })],
+    ];
+    for (const [vendor, status, body] of cases) expect({ vendor, overflow: normalizeHttpError(status, headers, body).contextOverflow }).toEqual({ vendor, overflow: true });
+  });
+
+  test("the message is found in every body shape: a JSON array, `detail`, `errors[0].message`", () => {
+    expect(normalizeHttpError(400, headers, JSON.stringify([{ error: { code: 400, message: "The input token count (2551556) exceeds the maximum number of tokens allowed (1048576).", status: "INVALID_ARGUMENT" } }])).contextOverflow).toBe(true);
+    expect(normalizeHttpError(400, headers, JSON.stringify({ detail: "This model's maximum context length is 8192 tokens." })).contextOverflow).toBe(true);
+    expect(normalizeHttpError(400, headers, JSON.stringify({ detail: { message: "Too many images in request" } })).imageOverflow).toBe(true);
+    expect(normalizeHttpError(400, headers, JSON.stringify({ errors: [{ message: "Too many images: maximum number of images is 8" }] })).imageOverflow).toBe(true);
+  });
+
   test("an unrelated 400 stays an ordinary bad request", () => {
     const result = normalizeHttpError(400, headers, JSON.stringify({ error: { message: "Invalid value for temperature" } }));
     expect(result.contextOverflow).toBeUndefined();

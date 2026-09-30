@@ -1179,6 +1179,11 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       proc.kill();
       killTimer = setTimeout(() => proc.kill("SIGKILL"), KILL_GRACE_MS);
       killTimer.unref?.();
+      // Cleared by the child's exit, never by this generator's end: a child that ignores SIGTERM must
+      // still get the SIGKILL after the grace (the timer is unref'd, so it never holds the process open).
+      const timer = killTimer;
+      const clear = (): void => clearTimeout(timer);
+      proc.exited.then(clear, clear);
     };
     options.abortController?.signal.addEventListener("abort", onAbort);
 
@@ -1372,9 +1377,11 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       generatorTerminated = true;
       options.abortController?.signal.removeEventListener("abort", onAbort);
       removeSpawnAbortListener();
-      if (killTimer) clearTimeout(killTimer);
-      // The spawn-time kill's SIGKILL escalation is cancelled here too, exactly like the read loop's own.
-      if (spawnKillEscalation) clearTimeout(spawnKillEscalation);
+      // A requested kill's SIGKILL escalation is NOT cancelled here (third review): the query ending
+      // after an abort says nothing about whether the child actually exited, and one that ignores SIGTERM
+      // must still be killed. Both escalation timers clear themselves when the child exits.
+      void killTimer;
+      void spawnKillEscalation;
       // Ruling P2-B (wrapper side): stdin closes HERE — at this generator's own teardown — for
       // every prompt shape alike, reached only via return (sawTerminal), throw (every error path
       // above), or an external `.return()`/`.throw()` (a consumer walking away early via `break`/
