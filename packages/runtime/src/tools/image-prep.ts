@@ -340,12 +340,19 @@ export function readRegularFileNoFollow(path: string): Buffer | undefined {
 }
 
 /**
- * Where image work happens for a session: `<store home or winter home>/image-prep`, falling back to the
- * brand's home folder under the OS home -- the same three anchors the seatbelt profile write-denies
- * `image-prep` under. `undefined` when none is known.
+ * Where image work happens for a session: `<store home or winter home>/image-prep` -- the two anchors the
+ * seatbelt profile write-denies `image-prep` under, both handed to a session EXPLICITLY by its host. With
+ * neither, `undefined`: nothing is resized or converted (an image already within every limit is still
+ * sent as it is). There is deliberately NO fallback, and here is why each candidate is unsafe:
+ *   - `~/<homeDirName>`: a guess at the user's real winter home, which a process given no home must not
+ *     write into (and which a test would reach);
+ *   - the session temp dir, the cwd, the outputs dir and any `allowWrite` entry: sandbox-WRITABLE roots,
+ *     where a sandboxed command could plant a link;
+ *   - `$TMPDIR` (the per-user temp dir): its DIRECT children are sandbox-writable (the profile's mktemp
+ *     allowance), so a folder made there could be renamed away and replaced by a link mid-run.
  */
-export function imagePrepWorkRoot(ctx: { storeHome?: string; winterHome?: string; home?: string; brand?: { homeDirName: string } }): string | undefined {
-  const anchor = ctx.storeHome ?? ctx.winterHome ?? (ctx.home !== undefined && ctx.brand !== undefined ? join(ctx.home, ctx.brand.homeDirName) : undefined);
+export function imagePrepWorkRoot(ctx: { storeHome?: string; winterHome?: string }): string | undefined {
+  const anchor = ctx.storeHome ?? ctx.winterHome;
   return anchor !== undefined ? join(anchor, IMAGE_PREP_DIRNAME) : undefined;
 }
 

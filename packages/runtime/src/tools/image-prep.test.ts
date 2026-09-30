@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   IMAGE_MAX_LONG_EDGE,
@@ -368,10 +368,12 @@ describe("links are never followed", () => {
     expect(readdirSync(join(dir, "session-tmp"))).toEqual([]);
   });
 
-  test("imagePrepWorkRoot: the store home, else the winter home, else the brand folder under the OS home -- never the session temp dir", () => {
-    expect(imagePrepWorkRoot({ storeHome: "/s", winterHome: "/w", home: "/h", brand: { homeDirName: ".x" } })).toBe("/s/image-prep");
-    expect(imagePrepWorkRoot({ winterHome: "/w", home: "/h", brand: { homeDirName: ".x" } })).toBe("/w/image-prep");
-    expect(imagePrepWorkRoot({ home: "/h", brand: { homeDirName: ".x" } })).toBe("/h/.x/image-prep");
+  test("imagePrepWorkRoot: the store home, else the winter home -- and NOTHING else: never a guess under the OS home, never the session temp dir", () => {
+    expect(imagePrepWorkRoot({ storeHome: "/s", winterHome: "/w" })).toBe("/s/image-prep");
+    expect(imagePrepWorkRoot({ winterHome: "/w" })).toBe("/w/image-prep");
+    // A context with only the OS home, a brand and a temp dir (what a bare ToolExecutionContext carries):
+    // no working directory at all, so nothing can ever land under the real ~/.winter.
+    expect(imagePrepWorkRoot({ home: homedir(), brand: { homeDirName: ".winter" }, tempDir: "/tmp/x" } as never)).toBeUndefined();
     expect(imagePrepWorkRoot({})).toBeUndefined();
   });
 
@@ -404,5 +406,18 @@ describe("GIFs", () => {
     expect(still.mediaType).toBe("image/gif");
     const animated = await prepareImageForModel(gif(2), { workRoot: tempDir, sipsPath: "/nonexistent/sips" });
     expect(animated).toEqual({ ok: false, reason: expect.stringContaining("it is an animated GIF (2 frames)") });
+  });
+});
+
+describe("no test can reach the real winter home (test-home-guard.ts)", () => {
+  test("the preload gave this run a temp WINTER_HOME, and the default winter home resolves there -- never under the real ~/.winter", async () => {
+    const { resolveWinterHome } = await import("@yanlinglabs/winter-agent-sdk");
+    const home = process.env["WINTER_HOME"];
+    expect(home).toBeDefined();
+    const real = join(homedir(), ".winter");
+    expect(home!.startsWith(real)).toBe(false);
+    expect(resolveWinterHome().startsWith(real)).toBe(false);
+    // And the image working directory, anchored on whatever a session is handed, stays with it.
+    expect(imagePrepWorkRoot({ winterHome: resolveWinterHome() })!.startsWith(real)).toBe(false);
   });
 });

@@ -49,8 +49,13 @@ describe("resolveWinterHome", () => {
   // the REAL process.env, so it assumes WINTER_HOME is unset in whatever environment runs this
   // suite — true for every CI runner and dev machine this repo's own tooling controls, but not a
   // guarantee this test itself can enforce.
-  test("the zero-arg branch falls through to the real process.env (flake-aware — assumes WINTER_HOME is unset here, matching resolveTempBase's identical precedent)", () => {
-    expect(resolveWinterHome().endsWith("/.winter/sdk")).toBe(true);
+  test("the zero-arg branch falls through to the real process.env", () => {
+    // Under the test preload (scripts/test-home-guard.ts) the real env carries a TEMP winter home, so the
+    // zero-arg call must return exactly it -- which proves it reads process.env, and that no test resolves
+    // the real one. Without the preload (a bare run), the default applies.
+    const fromEnv = process.env["WINTER_HOME"];
+    if (fromEnv !== undefined && fromEnv !== "") expect(resolveWinterHome()).toBe(fromEnv);
+    else expect(resolveWinterHome().endsWith("/.winter/sdk")).toBe(true);
   });
 
   // --- P7a spine, Step 3 (D19): the same function under a REUSER's brand ---------------------------

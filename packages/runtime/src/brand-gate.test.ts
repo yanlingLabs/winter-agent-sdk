@@ -858,6 +858,7 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/runtime/src/mcp/winter-server.ts:23": "WINTER_SERVER_NAME -- the DEFAULT for both MCP doors' `reservedServerName` (I-2's fix), and the rename's `from` side (line moved by WS-23, which deleted the unused server factory above it)",
   "packages/runtime/src/context/winter-code-preset.ts:48": "WINTER_CODE_PRESET_VERSION -- an ATTRIBUTION of who authored the preset, not a name a reuser renames",
   // --- scripts: this repository's own harness ------------------------------------------------------
+  "scripts/test-home-guard.ts:20": "the test preload of Winter's OWN suites: it keeps them off the real Winter home, and a reuser's product has its own test setup",
   "scripts/verify-provider-live.ts:786": "the live gate is Winter's own harness and runs under no brand but Winter's",
 };
 
