@@ -422,6 +422,10 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
     // Host-only (`ToolResultPayload.siteIcons`): the page actually read, and the icon it declares.
     let pageUrl: string;
     let iconUrl: string | undefined;
+    // Whether every address this page came from is PUBLIC, from verdicts the call already reached (no
+    // extra lookup): icons are reported only then -- a host fetching `<page>/favicon.ico` for a name that
+    // resolves into the user's own network would be the poke the address policy exists to prevent.
+    let addressPublic: boolean;
 
     const cached = cache.get(ctx.sessionId, inputUrlString);
     if (cached !== undefined) {
@@ -437,6 +441,7 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
       // WebFetch's own 60 s fetch timeout entirely, since a hit never reaches the fetch loop at all).
       const addressVerdict = await raceAgainstAbort(classifyHostname(stripIpv6Brackets(originalUrl.hostname), resolveHost), ctx.signal);
       if (addressVerdict === "aborted") return { output: "WebFetch was interrupted.", isError: true };
+      addressPublic = addressVerdict.class !== "private";
       if (addressVerdict.class === "private") {
         const refusal = privateAddressRefusal(originalUrl.hostname, policy, addressVerdict.reason);
         if (refusal !== undefined) return refusal;
@@ -453,6 +458,7 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
         if (isDomainBlocked(cachedHost, blockedDomains)) return { output: `${brand} is unable to fetch from ${cachedHost}`, isError: true };
         const finalVerdict = await raceAgainstAbort(classifyHostname(stripIpv6Brackets(cachedHost), resolveHost), ctx.signal);
         if (finalVerdict === "aborted") return { output: "WebFetch was interrupted.", isError: true };
+        addressPublic &&= finalVerdict.class !== "private";
         if (finalVerdict.class === "private") {
           const refusal = privateAddressRefusal(cachedHost, policy, finalVerdict.reason);
           if (refusal !== undefined) return refusal;
@@ -532,6 +538,10 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
       }
       contentType = outcome.contentType;
       pageUrl = outcome.finalUrl;
+      // Under an effective `deny` or `ask` the fetch loop refused every private hop, so a success proves
+      // every address was public. Only `allow` (a setting, or an explicit approval) admits a private one,
+      // and nothing here knows which it was -- so no icons rather than a second resolution.
+      addressPublic = policy !== "allow";
 
       // Binary responses are never cached (deliberate deviation, see the report): the "saved to"
       // note names an ephemeral temp path that may not outlive the session incarnation that made it,
@@ -540,15 +550,9 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
       cache.set(ctx.sessionId, inputUrlString, entry);
     }
 
-    // Host-only site icons are reported only for a page on a PUBLIC address: a host fetching
-    // `https://<page>/favicon.ico` for a name that resolves into the user's own network (a private
-    // target the user approved, or one whose lookup failed) would be the poke into that network the
-    // address policy exists to prevent, and the host's own lexical check cannot see a resolution.
-    if (iconUrl !== undefined) {
-      const pageHost = webFetchHostnameOfCached(pageUrl);
-      const verdict = pageHost === undefined ? "aborted" : await raceAgainstAbort(classifyHostname(stripIpv6Brackets(pageHost), resolveHost), ctx.signal);
-      if (verdict === "aborted" || verdict.class === "private") iconUrl = undefined;
-    }
+    // Host-only site icons are reported only for a page on a PUBLIC address (`addressPublic`, above):
+    // the host's own lexical check cannot see a resolution.
+    if (!addressPublic) iconUrl = undefined;
 
     // The preapproved verbatim passthrough: skip the digest model entirely.
     if (preapproved && contentType.toLowerCase().includes("text/markdown") && content.length < 100_000) {

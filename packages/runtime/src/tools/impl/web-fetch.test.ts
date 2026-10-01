@@ -686,8 +686,7 @@ describe("preapproved hosts", () => {
     registerWebSessionRuntime(ctx.sessionId, runtime);
     const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() }, resolveHost: async () => ["93.184.216.34"] });
     const result = await runFetch(executor, { url: "https://bun.sh/markdown-doc", prompt: "irrelevant" }, ctx);
-    // The page's host-only icon rides beside it (bun.sh declares none in a markdown doc: its origin's).
-    expect(result).toEqual({ output: "# Real Docs\n\nSome real markdown.", siteIcons: [{ url: "https://bun.sh/markdown-doc", iconUrl: "https://bun.sh/favicon.ico" }] });
+    expect(result).toEqual({ output: "# Real Docs\n\nSome real markdown." });
     expect(provider.requests).toHaveLength(0);
   });
 });
@@ -951,7 +950,7 @@ describe("site icons (host-only ToolResultPayload.siteIcons)", () => {
   test("an HTML page reports its own declared icon, resolved against the page -- and never in the model's output", async () => {
     const provider = recordingProvider([{ kind: "text", text: "digested" }]);
     const ctx = makeCtx({ sessionId: "s-icons-html" });
-    registerWebSessionRuntime(ctx.sessionId, fakeRuntime(provider));
+    registerWebSessionRuntime(ctx.sessionId, fakeRuntime(provider, { fetch: { privateAddressPolicy: "deny" } }));
     const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl(), ...publicHost }, ...publicHost });
     const result = await runFetch(executor, { url: "https://docs.example.com/icon-page", prompt: "summarise" }, ctx);
     expect(result).toEqual({ output: "digested", siteIcons: [{ url: "https://docs.example.com/icon-page", iconUrl: "https://docs.example.com/touch.png?v=2&x=1" }] });
@@ -966,10 +965,24 @@ describe("site icons (host-only ToolResultPayload.siteIcons)", () => {
   test("a page declaring no icon reports its origin's /favicon.ico", async () => {
     const provider = recordingProvider([{ kind: "text", text: "digested" }]);
     const ctx = makeCtx({ sessionId: "s-icons-plain" });
-    registerWebSessionRuntime(ctx.sessionId, fakeRuntime(provider));
+    registerWebSessionRuntime(ctx.sessionId, fakeRuntime(provider, { fetch: { privateAddressPolicy: "deny" } }));
     const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl(), ...publicHost }, ...publicHost });
     const result = await runFetch(executor, { url: "https://plain.example.com/html", prompt: "summarise" }, ctx);
     expect(result.siteIcons).toEqual([{ url: "https://plain.example.com/html", iconUrl: "https://plain.example.com/favicon.ico" }]);
+  });
+
+  test("under an effective `allow` (a private hop could have been admitted) nothing is reported, and nothing extra is resolved", async () => {
+    const provider = recordingProvider([{ kind: "text", text: "digested" }]);
+    const ctx = makeCtx({ sessionId: "s-icons-allow" });
+    registerWebSessionRuntime(ctx.sessionId, fakeRuntime(provider, { fetch: { privateAddressPolicy: "allow" } }));
+    let lookups = 0;
+    const counting = { resolveHost: async () => (lookups++, ["93.184.216.34"]) };
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl(), ...counting }, ...counting });
+    const result = await runFetch(executor, { url: "https://docs.example.com/icon-page", prompt: "p" }, ctx);
+    expect(result).toEqual({ output: "digested" });
+    const before = lookups;
+    await runFetch(executor, { url: "https://docs.example.com/icon-page", prompt: "again" }, ctx); // a cache hit
+    expect(lookups - before).toBeLessThanOrEqual(1); // the hit's own existing re-check, nothing for the icon
   });
 
   test("a plain-http page reports none", async () => {
