@@ -18,7 +18,13 @@ stub({
     },
     required: ["query"],
   },
-  description: "Fetches full schema definitions for deferred tools so they can be called.",
+  // claude's own head sentence and location hint (`ToolSearchTool/prompt.ts`), with the deferred names
+  // announced the way claude's pre-delta build announces them: an `<available-deferred-tools>` block the
+  // engine prepends to each request while any tool is deferred (engine.ts's `deferredToolsListing`).
+  description:
+    "Fetches full schema definitions for deferred tools so they can be called.\n\n" +
+    "Deferred tools appear by name in <available-deferred-tools> messages. Until fetched, only the name is known — there is no parameter schema, so the tool cannot be invoked. " +
+    'Query forms: "select:Read,Edit,Grep" fetches these exact tools by name; "notebook jupyter" is a keyword search over the deferred tools.',
   exposure: "eager",
   permissionClass: "read",
   // Phase 4 Task 8 (rider 4): the activation gate Lane B's own report flagged as missing ("no

@@ -292,6 +292,7 @@ import {
   registerMcpServerTools,
   unregisterMcpServerTools,
   mcpSpellingOf,
+  registeredNameForMcpSpelling,
   TOOL_SEARCH_TOOL_NAME,
   DEFERRED_BUILTINS_CAPABILITY,
   // Phase 4 Task 3 (RULING P4-A): the single "Tool Search on" activation authority + the
@@ -7713,8 +7714,29 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // the index-0 context prepended, attachments reordered and consecutive user-role turns merged,
   // exactly as claude 0.3.250 lays out its requests. SDK 0.0.16 retires P5-F's re-anchoring: nothing
   // is attached to the last user message any more, so a mid-turn compaction has nothing to strand.
-  const requestMessages = (context: SessionContext, effort?: EffortMarkerPlan, toolChanges?: ToolChangeRendering): ProviderMessage[] =>
-    buildRequestMessages(messages, context.userContextText, { systemReminders: systemRemindersOnWire(), ...(effort !== undefined ? { effort } : {}), ...(toolChanges !== undefined ? { toolChanges } : {}) });
+  const requestMessages = (context: SessionContext, effort?: EffortMarkerPlan, toolChanges?: ToolChangeRendering): ProviderMessage[] => {
+    const listing = deferredToolsListing();
+    const userContext = listing === undefined ? context.userContextText : [context.userContextText, listing].filter((p): p is string => p !== undefined && p.length > 0).join("\n\n");
+    return buildRequestMessages(messages, userContext, { systemReminders: systemRemindersOnWire(), ...(effort !== undefined ? { effort } : {}), ...(toolChanges !== undefined ? { toolChanges } : {}) });
+  };
+  /**
+   * The names of this request's DEFERRED tools, announced to the model (claude's pre-delta
+   * `<available-deferred-tools>` block, `services/api/claude.ts`): without it a model has no way to know a
+   * deferred tool exists -- its schema is not in `tools` (or rides `defer_loading`, which the model does
+   * not see either) -- so it could only find one by guessing a keyword for `ToolSearch`. Request-time only,
+   * folded into the index-0 context: never in the history, the transcript or a frame. `undefined` when
+   * nothing is deferred (deferral inactive, or an empty pool), so every session without Tool Search is
+   * byte-identical to before. A standing-server twin of an offered native (`suppressAliasedDuplicates`'
+   * deferred alias) is not listed: the model already has that tool under its native name. A fork keeps
+   * its parent's frozen layout and adds nothing.
+   */
+  const deferredToolsListing = (): string | undefined => {
+    if (exactRequestLayout !== undefined) return undefined;
+    const eagerNames = new Set(advertisedPartition.eager.map((d) => d.canonicalName));
+    const twins = new Set(Object.entries(suppressionAliasTable).filter(([source]) => eagerNames.has(source)).map(([, target]) => target));
+    const names = [...new Set(advertisedPartition.deferred.filter((d) => !twins.has(d.canonicalName)).map((d) => d.advertisedName))].sort();
+    return names.length === 0 ? undefined : `<available-deferred-tools>\n${names.join("\n")}\n</available-deferred-tools>`;
+  };
   /** WS-23: whether opted-in reminders ride as mid-conversation `system` messages on the LIVE model. */
   const systemRemindersOnWire = (): boolean => currentModelDescription()?.wire?.midConversationSystem === true;
 
@@ -9495,7 +9517,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // finish it (splitting a large write if it has to). Counted as a round like any other, so
       // `maxTurns` still bounds a model that keeps overrunning.
       const truncatedByOutputLimit = turn.stopReason === "max_tokens";
-      for (const call of turn.calls) {
+      for (const emitted of turn.calls) {
+        // A PLAIN-NAMED in-process tool (`McpSdkServerConfig.toolNames`) still answers to its old
+        // `mcp__<server>__<tool>` spelling when the MODEL uses it -- a resumed history written before the
+        // rename teaches the model that spelling. The call runs as the registered tool (one identity:
+        // hooks, `canUseTool`, denials and the executor all see the plain name); the history keeps the
+        // `tool_use` exactly as the model wrote it. Not an alias redirect (P4-E): the old spelling names
+        // no registered tool at all, so there is nothing else it could mean.
+        const call = getRegisteredTool(emitted.name) === undefined && emitted.name.startsWith("mcp__") ? { ...emitted, name: registeredNameForMcpSpelling(emitted.name) } : emitted;
         // WS-23: once a hook has stopped the turn, the round's remaining calls are not run -- each
         // still gets its tool_result (Ruling P1-G/P1-H's pairing invariant), saying why.
         const stoppedBy = currentTurnStop();

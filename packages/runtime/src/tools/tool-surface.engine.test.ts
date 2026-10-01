@@ -23,6 +23,7 @@ interface Driven {
   frames: WinterFrame[];
   sdkCalls: Array<{ server?: string; tool?: string; arguments?: unknown }>;
   hookPayloads: Array<Record<string, unknown>>;
+  permissionPayloads: Array<Record<string, unknown>>;
   error?: unknown;
 }
 
@@ -33,6 +34,7 @@ async function drive(over: Partial<RuntimeConfig>, script: ProviderTurn[], extra
   const frames: WinterFrame[] = [];
   const sdkCalls: Driven["sdkCalls"] = [];
   const hookPayloads: Driven["hookPayloads"] = [];
+  const permissionPayloads: Driven["permissionPayloads"] = [];
   const { host, runtime } = createInMemoryChannel();
   const config: RuntimeConfig = { sessionId: `tool-surface-${++seq}`, cwd: "/tmp/x", model: "winter-test/echo", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, ...over };
   let error: unknown;
@@ -64,6 +66,9 @@ async function drive(over: Partial<RuntimeConfig>, script: ProviderTurn[], extra
       } else if (cf.subtype === "hook") {
         hookPayloads.push(cf.payload as Record<string, unknown>);
         host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: {} });
+      } else if (cf.subtype === "permission") {
+        permissionPayloads.push(cf.payload as Record<string, unknown>);
+        host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { behavior: "allow" } });
       }
     }
   })();
@@ -71,7 +76,7 @@ async function drive(over: Partial<RuntimeConfig>, script: ProviderTurn[], extra
   // A run that THREW at startup never ends its output stream (a real host sees the child exit); the
   // frames written before the throw are all there is.
   await (error === undefined ? reader : Promise.race([reader, new Promise((r) => setTimeout(r, 50))]));
-  return { requests, frames, sdkCalls, hookPayloads, ...(error !== undefined ? { error } : {}) };
+  return { requests, frames, sdkCalls, hookPayloads, permissionPayloads, ...(error !== undefined ? { error } : {}) };
 }
 
 const names = (req: ProviderRequest | undefined): string[] => (req?.tools ?? []).map((t) => t.name);
@@ -160,6 +165,35 @@ describe("plain-named in-process tools (`toolNames`)", () => {
     expect(pre[0]?.["mcpToolName"]).toBe("browser");
   });
 
+  test("the OLD spelling still governs as an ALLOW rule: in default mode the plain-named call runs with no prompt (a saved rule keeps working)", async () => {
+    const script: ProviderTurn[] = [{ kind: "tool_use", calls: [{ id: "c1", name: "SpawnSession", input: {} }] }, { kind: "text", text: "ok" }];
+    const prompted = await drive({ mcpServers: plainServer(), permissionMode: "default", allowDangerouslySkipPermissions: false }, script);
+    // Without a rule, an MCP call in default mode asks — the baseline the rule below must change.
+    expect(prompted.permissionPayloads.length).toBe(1);
+    expect(prompted.permissionPayloads[0]!["toolName"] ?? prompted.permissionPayloads[0]!["tool_name"]).toBe("SpawnSession");
+    const allowed = await drive({ mcpServers: plainServer(), permissionMode: "default", allowDangerouslySkipPermissions: false, allowedTools: [`mcp__${BROWSER_SERVER}__spawn`] }, script);
+    expect(allowed.permissionPayloads).toEqual([]);
+    expect(allowed.sdkCalls).toEqual([{ server: BROWSER_SERVER, tool: "spawn", arguments: {} }]);
+  });
+
+  test("the OLD spelling still governs as an ASK rule: the plain-named call prompts even under bypassPermissions", async () => {
+    const script: ProviderTurn[] = [{ kind: "tool_use", calls: [{ id: "c1", name: "SpawnSession", input: {} }] }, { kind: "text", text: "ok" }];
+    const bypass = await drive({ mcpServers: plainServer() }, script);
+    expect(bypass.permissionPayloads).toEqual([]);
+    const asked = await drive({ mcpServers: plainServer(), permissions: { ask: [`mcp__${BROWSER_SERVER}__spawn`] } }, script);
+    expect(asked.permissionPayloads.length).toBe(1);
+    // The host answered allow, so it ran.
+    expect(asked.sdkCalls).toEqual([{ server: BROWSER_SERVER, tool: "spawn", arguments: {} }]);
+  });
+
+  test("a MODEL call under the OLD spelling (a resumed history taught it) runs as the plain-named tool", async () => {
+    const d = await drive({ mcpServers: plainServer() }, [{ kind: "tool_use", calls: [{ id: "c1", name: `mcp__${BROWSER_SERVER}__spawn`, input: { a: 1 } }] }, { kind: "text", text: "ok" }]);
+    expect(d.sdkCalls).toEqual([{ server: BROWSER_SERVER, tool: "spawn", arguments: { a: 1 } }]);
+    expect(toolResult(d.frames, "c1")?.["content"]).toBe("spawn ran");
+    // The history keeps the tool_use exactly as the model wrote it.
+    expect(toolUseNames(d.frames)).toEqual([`mcp__${BROWSER_SERVER}__spawn`]);
+  });
+
   test("a plain name that collides with a built-in, or that is not a plain tool name, refuses the session at startup -- nothing is shadowed", async () => {
     const clash = await drive({ mcpServers: plainServer({ toolNames: { browser: "Bash" } }) }, []);
     expect(String(clash.error ?? JSON.stringify(messages(clash.frames)))).toContain("Bash");
@@ -180,6 +214,27 @@ describe("plain-named in-process tools (`toolNames`)", () => {
     expect(initTools(d.frames)).not.toContain("Browser");
     expect(names(d.requests[1])).toContain("Browser");
     expect(d.sdkCalls).toEqual([{ server: BROWSER_SERVER, tool: "browser", arguments: {} }]);
+  });
+
+  test("the model is TOLD the deferred names: an <available-deferred-tools> block rides each request (never the history)", async () => {
+    const d = await drive({ mcpServers: plainServer(), toolSearchEnabled: true, deferTools: ["CronList"] }, [
+      { kind: "tool_use", calls: [{ id: "c1", name: "ToolSearch", input: { query: "select:Browser" } }] },
+      { kind: "text", text: "ok" },
+    ]);
+    const firstUser = (req: ProviderRequest | undefined): string => {
+      const m = req?.messages.find((x) => x.role === "user");
+      if (m === undefined) return "";
+      return typeof m.content === "string" ? m.content : m.content.map((b) => (b.type === "text" ? b.text : "")).join("\n");
+    };
+    expect(firstUser(d.requests[0])).toContain("<available-deferred-tools>\nBrowser\nCronList\n</available-deferred-tools>");
+    // The standing server's twins of offered natives are not listed (the model has those tools already).
+    expect(firstUser(d.requests[0])).not.toContain("mcp__winter__send_message");
+    expect(firstUser(d.requests[1])).toContain("<available-deferred-tools>");
+    // ToolSearch's own description says where to look.
+    expect(d.requests[0]!.tools!.find((t) => t.name === "ToolSearch")?.description).toContain("<available-deferred-tools>");
+    // …and nothing is announced while deferral is off.
+    const off = await drive({ mcpServers: plainServer() }, []);
+    expect(JSON.stringify(off.requests[0]!.messages)).not.toContain("available-deferred-tools");
   });
 });
 
