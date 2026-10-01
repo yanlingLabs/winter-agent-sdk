@@ -16,6 +16,7 @@ import { createInMemoryChannel } from "../protocol/channel.ts";
 import { runEngine, type EngineOptions, type ProviderRequest, type ProviderTurn } from "../engine.ts";
 import { getRegisteredTool, replaceExecutor } from "./registry.ts";
 import { createSearchExecutor, EXA_ANSWER_URL } from "./impl/search.ts";
+import { testProviderByName } from "../provider/mock.ts";
 
 interface Driven {
   requests: ProviderRequest[];
@@ -244,6 +245,35 @@ describe("`tools` (claude's own option): the built-in set", () => {
     } finally {
       replaceExecutor("Search", createSearchExecutor());
     }
+  });
+});
+
+describe("`winter-test/calls`: a host's end-to-end double, scripted from the prompt", () => {
+  test("makes the CALL lines in order, one per round, then reports every result", async () => {
+    const requests: ProviderRequest[] = [];
+    const frames: WinterFrame[] = [];
+    const { host, runtime } = createInMemoryChannel();
+    const provider = testProviderByName("calls");
+    const done = runEngine({
+      config: { sessionId: `tool-surface-calls-${++seq}`, cwd: "/tmp/x", model: "winter-test/echo", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, mcpServers: plainServer(), toolSearchEnabled: true },
+      input: runtime.input,
+      output: runtime.output,
+      provider: { async generate(req) { requests.push(req); return provider.generate(req); } },
+    } as EngineOptions);
+    host.output.write({ type: "user", text: 'please\nCALL ToolSearch {"query":"select:Browser"}\nCALL Browser {"url":"https://a.example/"}' });
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    for await (const f of host.input) {
+      frames.push(f);
+      if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "sdk_mcp_call") {
+        host.output.write({ type: "control_response", requestId: (f as ControlRequestFrame).requestId, ok: true, payload: { content: [{ type: "text", text: "browsed" }] } });
+      }
+    }
+    await done;
+    expect(requests).toHaveLength(3);
+    const answer = messages(frames).filter((m) => m["type"] === "assistant").at(-1) as { message: { content: Array<{ type: string; text?: string }> } };
+    const reported = JSON.parse(answer.message.content.find((b) => b.type === "text")!.text!) as Array<{ name: string; isError: boolean; content: string }>;
+    expect(reported.map((r) => r.name)).toEqual(["ToolSearch", "Browser"]);
+    expect(reported[1]).toEqual({ name: "Browser", isError: false, content: "browsed" });
   });
 });
 

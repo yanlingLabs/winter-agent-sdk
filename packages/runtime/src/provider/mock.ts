@@ -185,7 +185,9 @@ export type TestProviderName =
   // `scripts/differential.ts`, so the two can never drift.
   | "p5compact" | "p5structured" | "p5structuredfail" | "p5skill" | "p5checkpoint" | "p5workflow"
   // Code-mode images: one real `Read` of the image named by WINTER_TEST_READ_IMAGE, then text.
-  | "readimage";
+  | "readimage"
+  // A HOST's own end-to-end double: the tool calls are written in the user's message (see the case).
+  | "calls";
 
 const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   "boom",
@@ -223,7 +225,57 @@ const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   "p5workflow",
   // Code-mode images: the child-process frame-size fixture (sdk/src/read-image-frame.test.ts).
   "readimage",
+  // The prompt-driven tool-call double (see the "calls" case) -- for a host's own end-to-end tests.
+  "calls",
 ]);
+
+/** One `CALL <ToolName> <json input>` line of a `winter-test/calls` prompt. */
+const CALL_LINE = /^CALL\s+(\S+)(?:\s+(.*))?$/;
+
+/**
+ * `winter-test/calls`: the calls to make are written in the conversation's LATEST plain-text user
+ * message, one `CALL <ToolName> <json input>` line each (input `{}` when omitted). The double makes them
+ * in order, ONE PER ROUND -- so a call that depends on an earlier one (a `ToolSearch` load, then the
+ * loaded tool) sees it -- and then answers with the JSON of every result it got back, in order:
+ * `[{name, isError, content}]`. A pure function of the messages (no queue), so any number of turns, any
+ * transport, and a parent and a child sharing one instance all work. For a HOST's end-to-end tests: it
+ * reaches a tool exactly as a model would, by the name the model is shown.
+ */
+function promptedCallsProvider(): Provider {
+  return {
+    async generate({ messages }) {
+      // The latest user message that carries a script -- never a runtime-injected bookkeeping entry
+      // (a deferred-tools reminder, a tool-change epoch) that happens to sit later.
+      let at = -1;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i]!;
+        if (m.role === "user" && userMessageText(m).split("\n").some((line) => CALL_LINE.test(line.trim()))) {
+          at = i;
+          break;
+        }
+      }
+      if (at < 0) return { kind: "text", text: "[]" };
+      const script = userMessageText(messages[at])
+        .split("\n")
+        .map((line) => CALL_LINE.exec(line.trim()))
+        .filter((m): m is RegExpExecArray => m !== null)
+        .map((m) => ({ name: m[1]!, input: m[2] !== undefined && m[2].trim() !== "" ? (JSON.parse(m[2]) as unknown) : {} }));
+      const after = messages.slice(at + 1);
+      const made = after.filter((m) => m.role === "assistant" && Array.isArray(m.content) && m.content.some((b) => b.type === "tool_use")).length;
+      if (made < script.length) {
+        const next = script[made]!;
+        return { kind: "tool_use", calls: [{ id: `calls-${at + 1}-${made + 1}`, name: next.name, input: next.input }] };
+      }
+      const results = after.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b): b is Extract<typeof b, { type: "tool_result" }> => b.type === "tool_result");
+      const named = new Map(after.flatMap((m) => (m.role === "assistant" && Array.isArray(m.content) ? m.content : [])).flatMap((b) => (b.type === "tool_use" ? [[b.id, b.name] as const] : [])));
+      const text = (content: unknown): string => (typeof content === "string" ? content : Array.isArray(content) ? content.map((b) => (b !== null && typeof b === "object" && typeof (b as { text?: unknown }).text === "string" ? (b as { text: string }).text : "")).join("\n") : String(content));
+      return {
+        kind: "text",
+        text: JSON.stringify(results.map((r) => ({ name: named.get(r.tool_use_id) ?? null, isError: r.is_error === true || (r as { error?: unknown }).error === true, content: text(r.content) }))),
+      };
+    },
+  };
+}
 
 export function isTestProviderName(v: string): v is TestProviderName {
   return TEST_PROVIDER_NAMES.has(v);
@@ -550,6 +602,8 @@ function rawTestProviderByName(name: TestProviderName): Provider {
     // by this file, on every leg alike (in-memory/child/compiled all run the identical engine.ts
     // registration code from the identical wire config) -- see transport-equivalence.test.ts's own
     // "MCP SDK tool round" scenario, the one consumer.
+    case "calls":
+      return promptedCallsProvider();
     case "mcpsdk":
       return scriptedProvider([
         { kind: "tool_use", calls: [{ id: "mcpsdk-call-1", name: MCP_SDK_TEST_TOOL_NAME, input: { x: 1 } }] },
