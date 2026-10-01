@@ -29,6 +29,7 @@ import { fakeAnthropicCatalog, startAnthropicFake, type AnthropicFake, type Fake
 import "../tools/impl/index.ts";
 import { isSandboxAvailable } from "../sandbox/spawn.ts";
 import { BASH_CANONICAL_NAME, bashDescriptionFor } from "../tools/descriptors/bash.ts";
+import { currentMonthYear } from "../tools/descriptors/web-search.ts";
 
 const MODEL = "anthropic/claude-opus-5-5";
 const GOLDEN_PATH = join(import.meta.dir, "reasoning-blocks-wire.golden.json");
@@ -177,6 +178,10 @@ function readGolden(): Golden {
  * of the line, and the whole line on macOS, is the golden's own.
  */
 function forThisHost(line: string): string {
+  // `WebSearch`'s description names the CURRENT month (`currentMonthYear`), and the golden's recorded tool
+  // epoch names the month it was captured in: the transcript is put back in THIS month, or every resume after
+  // a month boundary would announce `WebSearch` as a changed tool (a calendar failure, not a wire change).
+  line = line.replace(/The current month is [A-Z][a-z]+ \d{4}/g, `The current month is ${currentMonthYear()}`);
   if (isSandboxAvailable() || line.trim() === "") return line;
   const entry = JSON.parse(line) as { type?: string; attachment?: { type?: string; tools?: Array<{ name?: string; description?: string }> } };
   if (entry.type !== "attachment" || entry.attachment?.type !== "tool_epoch" || entry.attachment.tools === undefined) return line;
