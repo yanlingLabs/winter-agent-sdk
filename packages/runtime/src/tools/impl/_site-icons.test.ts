@@ -26,6 +26,16 @@ describe("pageIconUrl -- the icon a fetched page declares", () => {
     expect(pageIconUrl('<link rel="icon" href="/i.png">', "https://printer.local/")).toBeUndefined();
     expect(pageIconUrl('<link rel="icon" href="/i.png">', "https://intranet/")).toBeUndefined();
   });
+
+  test("names that conventionally stay on the user's own network are refused; only the suffix counts", () => {
+    for (const host of ["nas.lan", "router.home", "box.home.arpa", "wiki.corp", "hr.intranet", "x.private", "a.localhost", "db.internal", "printer.local"]) {
+      expect(siteIconHttpsUrl(`https://${host}/favicon.ico`)).toBeUndefined();
+      expect(pageIconUrl("", `https://${host}/page`)).toBeUndefined();
+    }
+    for (const host of ["lan.example.com", "myhome.com", "corp.example.org", "private.example.net"]) {
+      expect(siteIconHttpsUrl(`https://${host}/favicon.ico`)).toBe(`https://${host}/favicon.ico`);
+    }
+  });
 });
 
 describe("siteIconHttpsUrl / collectSiteIcons -- the bounds the host relies on", () => {

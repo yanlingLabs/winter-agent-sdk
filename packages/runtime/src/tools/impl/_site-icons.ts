@@ -35,16 +35,20 @@ export function siteIconHttpsUrl(value: unknown): string | undefined {
   return href.length <= SITE_ICON_URL_MAX_LENGTH && /^https:\/\/[!-~]+$/.test(href) ? href : undefined;
 }
 
+/** Name suffixes that conventionally stay on the user's own network (mDNS, home routers, corporate
+ *  split-horizon DNS). Kept in step with Winter's dispatch pill (`plumePrivateNameSuffixes`). */
+const PRIVATE_NAME_SUFFIX = /\.(?:localhost|local|internal|lan|home|home\.arpa|corp|intranet|private)$/;
+
 /**
  * A dotted DNS name a host could fetch an icon from: never an IP literal (v4, or a bracketed v6),
- * never `localhost` or a `.local` / `.internal` / `.localhost` name, never a single label. A lexical
+ * never `localhost` or a name under `PRIVATE_NAME_SUFFIX`, never a single label. A lexical
  * check only -- the host that fetches the icon applies its own policy (Winter's pill re-checks every
  * url, redirects included).
  */
 function isPublicName(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/\.$/, "");
   if (host.length === 0 || host.length > 253 || host.startsWith("[") || !host.includes(".")) return false;
-  if (host === "localhost" || /\.(?:localhost|local|internal)$/.test(host)) return false;
+  if (host === "localhost" || PRIVATE_NAME_SUFFIX.test(host)) return false;
   const labels = host.split(".");
   return /[a-z]/.test(labels[labels.length - 1]!) && labels.every((l) => l.length > 0 && l.length <= 63);
 }
