@@ -216,25 +216,23 @@ describe("plain-named in-process tools (`toolNames`)", () => {
     expect(d.sdkCalls).toEqual([{ server: BROWSER_SERVER, tool: "browser", arguments: {} }]);
   });
 
-  test("the model is TOLD the deferred names: an <available-deferred-tools> block rides each request (never the history)", async () => {
+  test("the model is TOLD the deferred names: a persisted deferred_tools_delta attachment (claude's), once, in the history", async () => {
     const d = await drive({ mcpServers: plainServer(), toolSearchEnabled: true, deferTools: ["CronList"] }, [
       { kind: "tool_use", calls: [{ id: "c1", name: "ToolSearch", input: { query: "select:Browser" } }] },
       { kind: "text", text: "ok" },
     ]);
-    const firstUser = (req: ProviderRequest | undefined): string => {
-      const m = req?.messages.find((x) => x.role === "user");
-      if (m === undefined) return "";
-      return typeof m.content === "string" ? m.content : m.content.map((b) => (b.type === "text" ? b.text : "")).join("\n");
-    };
-    expect(firstUser(d.requests[0])).toContain("<available-deferred-tools>\nBrowser\nCronList\n</available-deferred-tools>");
+    const text = (req: ProviderRequest | undefined): string => JSON.stringify(req?.messages ?? []);
+    const announcement = "The following deferred tools are now available via ToolSearch:\\nBrowser\\nCronList";
+    expect(text(d.requests[0])).toContain(announcement);
     // The standing server's twins of offered natives are not listed (the model has those tools already).
-    expect(firstUser(d.requests[0])).not.toContain("mcp__winter__send_message");
-    expect(firstUser(d.requests[1])).toContain("<available-deferred-tools>");
+    expect(text(d.requests[0])).not.toContain("mcp__winter__send_message");
+    // It stays in the history (the next request re-sends it at the same place) and is NOT repeated.
+    expect(text(d.requests[1]).split("now available via ToolSearch").length - 1).toBe(1);
     // ToolSearch's own description says where to look.
-    expect(d.requests[0]!.tools!.find((t) => t.name === "ToolSearch")?.description).toContain("<available-deferred-tools>");
+    expect(d.requests[0]!.tools!.find((t) => t.name === "ToolSearch")?.description).toContain("Deferred tools appear by name in <system-reminder> messages");
     // …and nothing is announced while deferral is off.
     const off = await drive({ mcpServers: plainServer() }, []);
-    expect(JSON.stringify(off.requests[0]!.messages)).not.toContain("available-deferred-tools");
+    expect(JSON.stringify(off.requests[0]!.messages)).not.toContain("deferred tools");
   });
 });
 

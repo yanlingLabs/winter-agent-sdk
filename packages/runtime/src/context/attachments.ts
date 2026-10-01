@@ -88,6 +88,26 @@ export interface PlanModeAttachment extends AttachmentPayload {
   hostPlanBody?: string;
 }
 
+/**
+ * claude's `deferred_tools_delta`: the DEFERRED tools (loaded through `ToolSearch` on first use) the
+ * history has not yet announced, and the ones it announced that are gone. Without it a model cannot know
+ * a deferred tool exists -- its schema is not in `tools` (or rides `defer_loading`, which the model does
+ * not see) -- so it could only find one by guessing a keyword. Persisted like every attachment, so the
+ * announcement is a stable, cacheable part of the history and a pool change costs one appended entry,
+ * never a moved prefix (claude's reason for the delta form over its older per-request
+ * `<available-deferred-tools>` prepend).
+ */
+export interface DeferredToolsDeltaAttachment extends AttachmentPayload {
+  type: "deferred_tools_delta";
+  addedNames: string[];
+  addedLines: string[];
+  removedNames: string[];
+}
+
+/** claude's own two headers for `deferred_tools_delta` (`utils/messages.ts`), verbatim. */
+export const DEFERRED_TOOLS_ADDED_HEADER = "The following deferred tools are now available via ToolSearch:";
+export const DEFERRED_TOOLS_REMOVED_HEADER = "The following deferred tools are no longer available (their MCP server disconnected). Do not search for them — ToolSearch will return no match:";
+
 export const AGENT_LISTING_INITIAL_HEADER = "Available agent types for the Agent tool:";
 export const AGENT_LISTING_ADDED_HEADER = "New agent types are now available for the Agent tool:";
 export const AGENT_LISTING_REMOVED_HEADER = "The following agent types are no longer available:";
@@ -178,6 +198,43 @@ registerAttachmentRenderer("agent_listing_delta", (a) => {
   // `<system-reminder>` tag inside one is neutralised -- it cannot close this wrapper early.
   return neutralizeReminderTags(sections.join("\n\n"));
 });
+
+registerAttachmentRenderer("deferred_tools_delta", (a) => {
+  const addedLines = stringArray(a["addedLines"]);
+  const removedNames = stringArray(a["removedNames"]);
+  const parts: string[] = [];
+  if (addedLines.length > 0) parts.push(`${DEFERRED_TOOLS_ADDED_HEADER}\n${addedLines.join("\n")}`);
+  if (removedNames.length > 0) parts.push(`${DEFERRED_TOOLS_REMOVED_HEADER}\n${removedNames.join("\n")}`);
+  // Tool names may come from a connected MCP server: a literal `<system-reminder>` in one is neutralised.
+  return parts.length === 0 ? undefined : neutralizeReminderTags(parts.join("\n\n"));
+});
+
+/**
+ * claude's fold for `deferred_tools_delta`: the deferred tool names the history has announced and not
+ * since withdrawn. A delta's `addedNames` count only when it carries `addedLines` (as the agent fold).
+ */
+export function announcedDeferredTools(messages: readonly ProviderMessage[]): Set<string> {
+  const announced = new Set<string>();
+  for (const a of attachmentsIn(messages)) {
+    if (a.type !== "deferred_tools_delta") continue;
+    if (Array.isArray(a["addedLines"])) for (const name of stringArray(a["addedNames"])) announced.add(name);
+    for (const name of stringArray(a["removedNames"])) announced.delete(name);
+  }
+  return announced;
+}
+
+/**
+ * The `deferred_tools_delta` this history needs now (`available` = the session's deferred tool names, as
+ * the model would call them), or `undefined` when the history already announced exactly that set.
+ */
+export function computeDeferredToolsDelta(available: readonly string[], history: readonly ProviderMessage[]): DeferredToolsDeltaAttachment | undefined {
+  const announced = announcedDeferredTools(history);
+  const now = new Set(available);
+  const added = [...now].filter((name) => !announced.has(name)).sort();
+  const removed = [...announced].filter((name) => !now.has(name)).sort();
+  if (added.length === 0 && removed.length === 0) return undefined;
+  return { type: "deferred_tools_delta", addedNames: added, addedLines: added, removedNames: removed };
+}
 
 registerAttachmentRenderer("skill_listing", (a) => {
   const content = typeof a["content"] === "string" ? a["content"] : "";

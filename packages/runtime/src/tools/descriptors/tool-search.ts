@@ -18,12 +18,12 @@ stub({
     },
     required: ["query"],
   },
-  // claude's own head sentence and location hint (`ToolSearchTool/prompt.ts`), with the deferred names
-  // announced the way claude's pre-delta build announces them: an `<available-deferred-tools>` block the
-  // engine prepends to each request while any tool is deferred (engine.ts's `deferredToolsListing`).
+  // claude's own head sentence and location hint (`ToolSearchTool/prompt.ts`, its delta variant): the
+  // engine announces the deferred names in `deferred_tools_delta` system-reminder attachments
+  // (context/attachments.ts; engine.ts's `scanAttachments`).
   description:
     "Fetches full schema definitions for deferred tools so they can be called.\n\n" +
-    "Deferred tools appear by name in <available-deferred-tools> messages. Until fetched, only the name is known — there is no parameter schema, so the tool cannot be invoked. " +
+    "Deferred tools appear by name in <system-reminder> messages. Until fetched, only the name is known — there is no parameter schema, so the tool cannot be invoked. " +
     'Query forms: "select:Read,Edit,Grep" fetches these exact tools by name; "notebook jupyter" is a keyword search over the deferred tools.',
   exposure: "eager",
   permissionClass: "read",

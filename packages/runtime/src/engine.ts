@@ -205,6 +205,7 @@ import { agentInputSchemaFor, renderAgentToolDescription, AGENT_TOOL_GATE_DEFAUL
 import type { AgentListingEntry } from "./context/agent-listing.ts";
 import {
   attachmentMessage,
+  computeDeferredToolsDelta,
   dateChangeAnnounced,
   lastPlanModeState,
   localDateString,
@@ -7714,28 +7715,20 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // the index-0 context prepended, attachments reordered and consecutive user-role turns merged,
   // exactly as claude 0.3.250 lays out its requests. SDK 0.0.16 retires P5-F's re-anchoring: nothing
   // is attached to the last user message any more, so a mid-turn compaction has nothing to strand.
-  const requestMessages = (context: SessionContext, effort?: EffortMarkerPlan, toolChanges?: ToolChangeRendering): ProviderMessage[] => {
-    const listing = deferredToolsListing();
-    const userContext = listing === undefined ? context.userContextText : [context.userContextText, listing].filter((p): p is string => p !== undefined && p.length > 0).join("\n\n");
-    return buildRequestMessages(messages, userContext, { systemReminders: systemRemindersOnWire(), ...(effort !== undefined ? { effort } : {}), ...(toolChanges !== undefined ? { toolChanges } : {}) });
-  };
+  const requestMessages = (context: SessionContext, effort?: EffortMarkerPlan, toolChanges?: ToolChangeRendering): ProviderMessage[] =>
+    buildRequestMessages(messages, context.userContextText, { systemReminders: systemRemindersOnWire(), ...(effort !== undefined ? { effort } : {}), ...(toolChanges !== undefined ? { toolChanges } : {}) });
   /**
-   * The names of this request's DEFERRED tools, announced to the model (claude's pre-delta
-   * `<available-deferred-tools>` block, `services/api/claude.ts`): without it a model has no way to know a
-   * deferred tool exists -- its schema is not in `tools` (or rides `defer_loading`, which the model does
-   * not see either) -- so it could only find one by guessing a keyword for `ToolSearch`. Request-time only,
-   * folded into the index-0 context: never in the history, the transcript or a frame. `undefined` when
-   * nothing is deferred (deferral inactive, or an empty pool), so every session without Tool Search is
-   * byte-identical to before. A standing-server twin of an offered native (`suppressAliasedDuplicates`'
-   * deferred alias) is not listed: the model already has that tool under its native name. A fork keeps
-   * its parent's frozen layout and adds nothing.
+   * The DEFERRED tools to announce to the model, by the name it calls them (`deferred_tools_delta`,
+   * `scanAttachments`). Empty when nothing is deferred (deferral inactive, or an empty pool), so a session
+   * without Tool Search announces nothing. A standing-server twin of an offered native
+   * (`suppressAliasedDuplicates`' deferred alias) is not listed: the model already has that tool under its
+   * native name. Read off the LIVE partition (a server that connected since the last scan is included).
    */
-  const deferredToolsListing = (): string | undefined => {
-    if (exactRequestLayout !== undefined) return undefined;
+  const deferredToolNamesToAnnounce = (): string[] => {
+    refreshAdvertisedPartition();
     const eagerNames = new Set(advertisedPartition.eager.map((d) => d.canonicalName));
     const twins = new Set(Object.entries(suppressionAliasTable).filter(([source]) => eagerNames.has(source)).map(([, target]) => target));
-    const names = [...new Set(advertisedPartition.deferred.filter((d) => !twins.has(d.canonicalName)).map((d) => d.advertisedName))].sort();
-    return names.length === 0 ? undefined : `<available-deferred-tools>\n${names.join("\n")}\n</available-deferred-tools>`;
+    return [...new Set(advertisedPartition.deferred.filter((d) => !twins.has(d.canonicalName)).map((d) => d.advertisedName))];
   };
   /** WS-23: whether opted-in reminders ride as mid-conversation `system` messages on the LIVE model. */
   const systemRemindersOnWire = (): boolean => currentModelDescription()?.wire?.midConversationSystem === true;
@@ -7964,6 +7957,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         const needsAuth = mcpNeedsAuthAttachment(effectiveMcpStateSource.snapshot(), messages, sessionBrand);
         if (needsAuth !== undefined) produced.push(needsAuth);
       }
+    }
+    // claude's `deferred_tools_delta`: the deferred tools the model has not been told about yet (and the
+    // ones it was told about that are gone). NOT gated on an assembler like the authored listings above:
+    // a deferred tool nobody announced is unreachable, so this is the deferral's own half, not prose. A
+    // fork in exact mode keeps its parent's frozen state, as above.
+    if (exactRequestLayout === undefined) {
+      const deferredDelta = computeDeferredToolsDelta(deferredToolNamesToAnnounce(), messages);
+      if (deferredDelta !== undefined) produced.push(deferredDelta);
     }
     // SDK 0.0.16 Lane N: the MID-TURN delivery. After a tool round the engine drains the
     // `next`-priority notifications addressed to ITS OWN agent id and appends them to the tool
