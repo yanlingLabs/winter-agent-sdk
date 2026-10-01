@@ -4,7 +4,10 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
-## 0.0.37
+## 0.0.38
+
+0.0.37 was tagged but never published: its release run failed on a calendar-dated golden test (fixed in
+c14d3c70). 0.0.38 is that release.
 
 ### A host shapes the tool surface
 
