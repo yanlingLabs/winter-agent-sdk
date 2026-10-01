@@ -31,6 +31,14 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   active, loaded through `ToolSearch` on first use. A built-in otherwise never defers. `ToolSearch`
   itself is never deferred, and an MCP tool's `alwaysLoad` still wins. `ToolSearch` is now offered when
   there is a deferred built-in, even in a session with no MCP server.
+- **The model is told which tools are deferred.** Before, a deferred tool's name reached the model
+  nowhere, so it could only find one by guessing a keyword for `ToolSearch`. The runtime now writes
+  claude's `deferred_tools_delta` attachment ("The following deferred tools are now available via
+  ToolSearch: …") into the history, once per change of the pool, as claude does. A change costs one
+  appended entry and never moves the cached prefix. `ToolSearch`'s description says where to look.
+  The standing server's alias twins of offered tools are not listed.
+- **An old spelling still runs.** A model call under a renamed tool's `mcp__<server>__<tool>` spelling,
+  for example from a resumed history, runs as the renamed tool.
 - **`Search`, Exa's answer mode, as a built-in.** One call returns a written answer and the pages it
   came from. It was the Winter daemon's own tool (`mcp__winter__research__Search`) and is ported as it
   was:
