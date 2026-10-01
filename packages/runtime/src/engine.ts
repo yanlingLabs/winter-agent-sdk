@@ -291,6 +291,9 @@ import {
   getRegisteredTool,
   registerMcpServerTools,
   unregisterMcpServerTools,
+  mcpSpellingOf,
+  TOOL_SEARCH_TOOL_NAME,
+  DEFERRED_BUILTINS_CAPABILITY,
   // Phase 4 Task 3 (RULING P4-A): the single "Tool Search on" activation authority + the
   // eager/deferred/hidden partition wired on top of buildAdvertisedSet's own output.
   isDeferralActive,
@@ -352,7 +355,8 @@ import { aliasExclusionReasons, aliasPermissionIdentities, effectiveAliasTable, 
 import { registerToolSearchSessionRuntime } from "./toolsearch/search.ts";
 // The web tools' session seam (see that module's header for why it is a keyed registry and not the
 // advisor's per-run `replaceExecutor`). Type-only in the other direction, so there is no value cycle.
-import { digestModelResolves, inheritedWebSessionFacts, registerWebSessionRuntime, searchBackendUsable, webSessionRuntimeFor, type WebSessionRuntime } from "./web/session-runtime.ts";
+import { digestModelResolves, inheritedWebSessionFacts, registerWebSessionRuntime, searchAnswerUsable, searchBackendUsable, webSessionRuntimeFor, type WebSessionRuntime } from "./web/session-runtime.ts";
+import { SEARCH_ANSWER_CAPABILITY, SEARCH_CANONICAL_NAME } from "./tools/descriptors/search.ts";
 // The model-id half of the lean-prompt rule (`sessionLeanModel`).
 import { claudeModelTakesFullPrompt } from "./provider/lean-prompt.ts";
 import { isFirstPartyAnthropic } from "./provider/first-party.ts";
@@ -4801,11 +4805,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // INACTIVE resolveDeferral collapses `deferred: true` to "eager" anyway -- so a default
         // session's advertised set is byte-identical either way; this only becomes observable once
         // activation is genuinely on, which is exactly when WS-09 §8 says these tools should defer.
-        registerMcpServerTools(serverName, toolDefs, { deferredDefault: true });
+        // `toolNames` (Winter extension): the host's PLAIN names for some of its own tools -- each is
+        // registered under that name (the model, hooks and `canUseTool` all see it) while the call
+        // still reaches the host as `sdk_mcp_call {server, tool}` with the server's own tool name.
+        const toolNames = serverCfg.toolNames;
+        registerMcpServerTools(serverName, toolDefs, { deferredDefault: true, ...(toolNames !== undefined ? { toolNames } : {}) });
         sdkMcpServerNames.push(serverName);
         const perServerTimeoutMs = serverCfg.timeout;
         for (const tool of toolDefs) {
-          const canonicalName = `mcp__${serverName}__${tool.name}`;
+          const canonicalName = toolNames !== undefined && Object.hasOwn(toolNames, tool.name) ? toolNames[tool.name]! : `mcp__${serverName}__${tool.name}`;
           replaceExecutor(canonicalName, {
             async execute(input: unknown) {
               const timeoutMs = perServerTimeoutMs ?? mcpEnvConfig.toolTimeoutMs ?? 120_000;
@@ -5011,12 +5019,24 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // var (or its own "unset" default) governs. This closes T2's own report Concern 8 (two
   // independent, un-reconciled "is Tool Search on" signals) by making the wire boolean ONE INPUT
   // INTO the single activation resolution, never a second, independently-consulted gate.
-  const enableToolSearch: DeferralActivation["enableToolSearch"] =
-    config.toolSearchEnabled === true ? "true" : config.toolSearchEnabled === false ? "false" : mcpEnvConfig.enableToolSearch;
+  // claude's own rule (`isToolSearchToolAvailable`): a session whose `tools` list leaves `ToolSearch` out
+  // has no search tool, so nothing may be deferred behind one -- folded in HERE, into the one activation
+  // value, so the advertised partition, the ToolSearch-vs-WaitForMcpServers gate and the load-first
+  // boundary cannot disagree about it.
+  const toolSearchExcludedByTools = config.tools !== undefined && !config.tools.includes(TOOL_SEARCH_TOOL_NAME);
+  const enableToolSearch: DeferralActivation["enableToolSearch"] = toolSearchExcludedByTools
+    ? "false"
+    : config.toolSearchEnabled === true
+      ? "true"
+      : config.toolSearchEnabled === false
+        ? "false"
+        : mcpEnvConfig.enableToolSearch;
   const deferralActivation: DeferralActivation = {
     enableToolSearch,
     providerSupportsToolSearch: providerSupportsToolSearch ?? true,
     deferrableContextShare: deferrableContextShare ?? 0,
+    // The host's `deferTools` (a built-in's only way to defer) -- see `DeferralActivation.deferTools`.
+    ...(config.deferTools !== undefined ? { deferTools: config.deferTools } : {}),
   };
   // The SAME activation value derives BOTH readings from here on -- resolveDeferral's own per-
   // descriptor verdicts (via partitionAdvertisedTools, below) and this session-wide boolean can
@@ -5363,10 +5383,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const WEB_DERIVED_CAPABILITIES: ReadonlyArray<{ token: string; probeTool: string; fact: () => boolean }> = [
     { token: "winter.search-backend", probeTool: "WebSearch", fact: () => searchBackendUsable(webSessionRuntime) },
     { token: "winter.fetch-extractor", probeTool: "WebFetch", fact: () => digestModelResolves(webSessionRuntime) },
+    // `Search` (Exa answer mode): keyed only -- `/answer` has no anonymous tier (`searchAnswerUsable`).
+    { token: SEARCH_ANSWER_CAPABILITY, probeTool: SEARCH_CANONICAL_NAME, fact: () => searchAnswerUsable(webSessionRuntime) },
   ];
   const resolveLiveSessionCapabilities = (): string[] => {
     const base = resolveSessionCapabilities(config.capabilities, { hasMcpServers: sessionHasMcp() });
     const derived = reviewerResolves() ? [ADVISOR_CAPABILITY] : [];
+    // A host-deferred built-in (`deferTools`) is something for ToolSearch to load even in a session with
+    // no MCP server (ToolSearch's `requiresAnyCapability`).
+    if ((config.deferTools?.length ?? 0) > 0) derived.push(DEFERRED_BUILTINS_CAPABILITY);
     for (const cap of WEB_DERIVED_CAPABILITIES) {
       if (getRegisteredTool(cap.probeTool)?.executor !== undefined && cap.fact()) derived.push(cap.token);
     }
@@ -5426,6 +5451,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     mode: policyStateStore.getState().mode,
     platform: process.platform,
     ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
+    // claude's `tools` (the built-in set) -- read by every partition built from this object: the
+    // advertised one, the alias-exclusion recheck and the dispatch availability check.
+    ...(config.tools !== undefined ? { tools: config.tools } : {}),
     capabilities: sessionCapabilities,
     toolSearchEnabled: toolSearchEnabledDerived,
     ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
@@ -5623,6 +5651,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       return visibleServerToolFilter();
     },
     ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
+    // The same built-in set `init.tools` is filtered to: ToolSearch must never find a tool it withheld.
+    ...(config.tools !== undefined ? { tools: config.tools } : {}),
     ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
     ...(config.familyMetadata !== undefined ? { familyMetadata: config.familyMetadata } : {}),
     // Fix wave, follow-up (1) / RULING P4-E amended: the HOST's own alias table, so ToolSearch's
@@ -8355,14 +8385,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const cached = effectiveMcpStateSource?.snapshot().some((server) => server.name === identity.name && server.state === "cached") === true;
     return cached ? { name: identity.name, configName: identity.configName } : identity;
   };
-  /** WS-24: `mcp__<declared>[__tool]` for a call to a renamed own server (`EngineOptions.mcpServerRenames`), else `undefined`. */
+  /**
+   * The ONE extra identity a call carries beside the name it was made under, or `undefined`:
+   *  - WS-24: `mcp__<declared>[__tool]` for a call to a renamed own server (`EngineOptions.mcpServerRenames`);
+   *  - a PLAIN-NAMED in-process tool (`McpSdkServerConfig.toolNames`): its `mcp__<server>__<tool>` spelling
+   *    (`ToolDescriptor.mcpName`), so a rule, a bare deny or a hook matcher written against the MCP name
+   *    still governs it -- strictest-of, at every reader of this function.
+   */
   const declaredMcpIdentity = (toolName: string): string | undefined => {
-    if (mcpServerRenames === undefined) return undefined;
-    for (const [actual, declared] of Object.entries(mcpServerRenames)) {
-      if (toolName === `mcp__${actual}`) return `mcp__${declared}`;
-      if (toolName.startsWith(`mcp__${actual}__`)) return `mcp__${declared}__${toolName.slice(`mcp__${actual}__`.length)}`;
+    const spelled = mcpSpellingOf(toolName) ?? toolName;
+    if (mcpServerRenames !== undefined) {
+      for (const [actual, declared] of Object.entries(mcpServerRenames)) {
+        if (spelled === `mcp__${actual}`) return `mcp__${declared}`;
+        if (spelled.startsWith(`mcp__${actual}__`)) return `mcp__${declared}__${spelled.slice(`mcp__${actual}__`.length)}`;
+      }
     }
-    return undefined;
+    return spelled !== toolName ? spelled : undefined;
   };
   /**
    * WS-24 (fix round 3): the tool name a post-tool hook (PostToolUse / PostToolUseFailure) is matched

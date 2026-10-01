@@ -133,6 +133,17 @@ export function searchBackendUsable(runtime: Pick<WebSessionRuntime, "web">): bo
 }
 
 /**
+ * `winter.search-answer`'s session fact (the `Search` built-in): the backend is not switched off AND a
+ * key is NAMED (`web.search.authRef`) and there is a resolver to read it through. `/answer` has no
+ * anonymous tier, so a session without a key must never be offered a tool whose every call fails --
+ * whether the named key actually HOLDS material is only knowable asynchronously, and a missing one is a
+ * typed, actionable result at the first call.
+ */
+export function searchAnswerUsable(runtime: Pick<WebSessionRuntime, "web" | "resolveToolSecret">): boolean {
+  return runtime.web.search.enabled && runtime.web.search.authRef !== undefined && runtime.resolveToolSecret !== undefined;
+}
+
+/**
  * `winter.fetch-extractor`'s session fact: a digest model resolves.
  *
  * With no `digestModel` stated the digest runs on the session's own model, which resolves by

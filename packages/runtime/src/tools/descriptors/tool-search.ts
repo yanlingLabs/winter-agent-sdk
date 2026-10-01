@@ -2,6 +2,7 @@
 // obligation here is `searchHint` population per descriptor (left to each descriptor file itself --
 // none set at T1 since no deferred-exposure tool exists yet to search for) plus this descriptor.
 import { stub } from "./_shared.ts";
+import { DEFERRED_BUILTINS_CAPABILITY } from "../registry.ts";
 
 stub({
   canonicalName: "ToolSearch",
@@ -27,12 +28,13 @@ stub({
   // §8.1's `false` row), so the deferred pool is empty by construction and every query can only ever
   // return nothing. The complement of WaitForMcpServers' own WS-09 §8.4 gate -- exactly one of the
   // two is advertised in any session.
-  availability: { requiresToolSearchEnabled: true },
-  // I4 (fix wave, P3 close-out): gated on "winter.mcp" -- this descriptor has no `impl/*.ts`
-  // executor anywhere in the codebase yet (owned by P4/WS-09), so advertising it unconditionally
-  // handed a real model a schema for a tool that always answers "registered but not yet
-  // executable" (registry.ts). Mirrors the WebSearch/LSP precedent -- a capability token, not
-  // `executor !== undefined` (which would also silently hide a test-registered executorless tool).
-  capabilityRequirements: ["winter.mcp"],
+  //
+  // I4 (fix wave, P3 close-out) gated it on "winter.mcp" alone, because MCP tools were then the only
+  // thing that could ever defer. A host's `deferTools` can now defer a BUILT-IN in a session with no MCP
+  // server at all, and a deferred tool with no search tool to load it is unreachable -- so either token
+  // suffices: `winter.mcp` (a session with MCP servers, unchanged) or `winter.deferred-builtins` (the
+  // engine derives it when the host's `deferTools` names anything).
+  availability: { requiresToolSearchEnabled: true, requiresAnyCapability: ["winter.mcp", DEFERRED_BUILTINS_CAPABILITY] },
+  capabilityRequirements: [],
   disposition: "implement-now",
 });

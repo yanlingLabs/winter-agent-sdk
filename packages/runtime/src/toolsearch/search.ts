@@ -49,6 +49,8 @@ export interface ToolSearchDeps {
   platform?: NodeJS.Platform;
   capabilities?: readonly string[];
   disallowedTools?: readonly string[];
+  /** The host's `tools` (`RuntimeConfig.tools`): the built-in set, filtered exactly as `init.tools` is. */
+  tools?: readonly string[];
   insideSubagent?: boolean;
   familyMetadata?: { taskNative?: boolean };
   // Absent = no MCP servers/state tracked at all for this run (every session before Lane A's real
@@ -103,6 +105,7 @@ function exposureQuery(deps: ToolSearchDeps) {
     ...(deps.platform !== undefined ? { platform: deps.platform } : {}),
     ...(deps.capabilities !== undefined ? { capabilities: deps.capabilities } : {}),
     ...(deps.disallowedTools !== undefined ? { disallowedTools: deps.disallowedTools } : {}),
+    ...(deps.tools !== undefined ? { tools: deps.tools } : {}),
     ...(deps.insideSubagent !== undefined ? { insideSubagent: deps.insideSubagent } : {}),
     ...(deps.familyMetadata !== undefined ? { familyMetadata: deps.familyMetadata } : {}),
     ...(deps.toolAliases !== undefined ? { toolAliases: deps.toolAliases } : {}),

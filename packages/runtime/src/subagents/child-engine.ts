@@ -701,7 +701,15 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // ALLOWED tool's own capabilityRequirements: the parent necessarily already held these tokens
     // (it advertised these exact tools to its own model), so granting the identical set to the child
     // never widens anything beyond what the parent itself already had.
-    const capabilities = [...new Set(effectiveTools.flatMap((name) => getRegisteredTool(name)?.descriptor.capabilityRequirements ?? []))];
+    // A descriptor's any-of tokens (`availability.requiresAnyCapability` -- ToolSearch's) count too: the
+    // child's allowlist above is what bounds its surface, so granting every token one of its tools can be
+    // gated on never widens it.
+    const capabilities = [
+      ...new Set(effectiveTools.flatMap((name) => {
+        const descriptor = getRegisteredTool(name)?.descriptor;
+        return [...(descriptor?.capabilityRequirements ?? []), ...(descriptor?.availability.requiresAnyCapability ?? [])];
+      })),
+    ];
 
     // WS-10 §2: "tools must include Skill if skills is used" -- validation only (skills has no
     // runtime anywhere in this codebase yet). Surfaced in the eventual spawn notice text, never a
@@ -1449,6 +1457,10 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       ...(req.fork === true && inherit.effectiveEffort !== undefined && typeof inherit.effectiveEffort !== "number" ? { effort: inherit.effectiveEffort } : {}),
       ...(req.fork === true && inherit.effectiveThinking !== undefined ? { thinking: inherit.effectiveThinking } : {}),
       disallowedTools,
+      // The child's resolved pool as claude's `tools` list too: `disallowedTools` above already hides
+      // every name outside it, and this is what lets an OPT-IN built-in its parent was offered (`Search`)
+      // be offered to the child as well -- an opt-in tool needs the list to name it.
+      tools: [...effectiveTools],
       capabilities,
       // SDK 0.0.16 Lane P (R3b §4): see the `allowedAgentTypes` const's own header above.
       ...(allowedAgentTypes !== undefined ? { allowedAgentTypes } : {}),

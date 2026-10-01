@@ -334,6 +334,37 @@ test("Phase 4 Task 2: unset strictMcpConfig/toolAliases/agents/forwardSubagentTe
   }
 });
 
+// The tool-surface options: claude's `tools` (an array verbatim; the `claude_code` preset IS the default
+// set, so it is omitted), Winter's `deferTools`, and an in-process server's `toolNames` (plain data, so it
+// rides the wire beside the server's tool list).
+test("tools/deferTools/toolNames serialize into --config-json; the claude_code preset is omitted", async () => {
+  const capture = captureConfigJson();
+  const instance = { listTools: () => [{ name: "browser", inputSchema: { type: "object" } }], callTool: async () => ({ content: [] }) };
+  for await (const _msg of query({
+    prompt: "ping",
+    options: {
+      tools: ["Read", "ToolSearch"],
+      deferTools: ["CronList"],
+      mcpServers: { host__browser: { type: "sdk", name: "host__browser", instance, toolNames: { browser: "Browser" } } },
+      spawnClaudeCodeProcess: capture.hook,
+    },
+  })) {
+    /* drain */
+  }
+  expect(capture.get()).toMatchObject({
+    tools: ["Read", "ToolSearch"],
+    deferTools: ["CronList"],
+    mcpServers: { host__browser: { type: "sdk", name: "host__browser", tools: [{ name: "browser", inputSchema: { type: "object" } }], toolNames: { browser: "Browser" } } },
+  });
+
+  const preset = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { tools: { type: "preset", preset: "claude_code" }, spawnClaudeCodeProcess: preset.hook } })) {
+    /* drain */
+  }
+  expect(preset.get()).not.toHaveProperty("tools");
+  expect(preset.get()).not.toHaveProperty("deferTools");
+});
+
 // WS-23: the remote servers name a RESERVED, never-resolving host (`.invalid`, RFC 2606). They used to name
 // `example.com`, and the in-process runtime really connected to it -- the test network guard caught it.
 test("Phase 4 Task 2: mcpServers' stdio/http/sse variants pass through --config-json completely unchanged", async () => {

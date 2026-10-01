@@ -46,7 +46,7 @@ import type { HookEvent, HookPermissionDecision, McpServerIdentity, PermissionUp
 import { MATCHER_SUBJECT_FIELD, type HookRegistry, type SourcedHookEntry } from "./registry.ts";
 import { reduceHookOutcomes, type HookComposite, type HookOutcome, type HookOutcomeEntry } from "./reducer.ts";
 import { capHookText } from "./bounds.ts";
-import { getRegisteredTool, mcpServerOwningTool } from "../tools/registry.ts";
+import { getRegisteredTool, mcpServerOwningTool, mcpSpellingOf, registeredNameForMcpSpelling } from "../tools/registry.ts";
 import type { AsyncHookQueue } from "./async-hooks.ts";
 
 // --- HookInvoker — the T10 swap point (WS-08 §10, verbatim request shape) -------------------------
@@ -122,11 +122,16 @@ export interface McpToolProvenanceInfo {
 }
 
 export function mcpToolProvenance(toolName: string): McpToolProvenanceInfo | undefined {
-  const server = mcpServerOwningTool(toolName);
+  // A PLAIN-NAMED in-process tool (`McpSdkServerConfig.toolNames`) is registered under its plain name and
+  // keeps its MCP spelling on the descriptor; a hook may also run under that spelling (the strictest-of
+  // identity picked it). Either way the provenance is read off the MCP spelling.
+  const registered = registeredNameForMcpSpelling(toolName);
+  const server = mcpServerOwningTool(registered);
   if (server === undefined) return undefined;
+  const spelled = mcpSpellingOf(registered) ?? registered;
   const prefix = `mcp__${server}__`;
-  if (!toolName.startsWith(prefix) || toolName.length === prefix.length) return undefined;
-  return { server, tool: toolName.slice(prefix.length) };
+  if (!spelled.startsWith(prefix) || spelled.length === prefix.length) return undefined;
+  return { server, tool: spelled.slice(prefix.length) };
 }
 
 // --- WS-27: the exact server identity ------------------------------------------------------------

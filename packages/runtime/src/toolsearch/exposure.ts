@@ -33,6 +33,8 @@ export interface ExposureQuery {
   platform?: NodeJS.Platform;
   capabilities?: readonly string[];
   disallowedTools?: readonly string[];
+  /** The host's `tools` (claude's option, `RuntimeConfig.tools`): the built-in set -- the same filter `init.tools` applies. */
+  tools?: readonly string[];
   insideSubagent?: boolean;
   familyMetadata?: { taskNative?: boolean };
   // The HOST's own `Options.toolAliases` (RULING P4-E amended). Optional: the Winter-branch DEFAULT
@@ -76,6 +78,7 @@ export function computeExposurePartition(query: ExposureQuery): DeferredCandidat
     ...(query.platform !== undefined ? { platform: query.platform } : {}),
     ...(query.capabilities !== undefined ? { capabilities: query.capabilities } : {}),
     ...(query.disallowedTools !== undefined ? { disallowedTools: query.disallowedTools } : {}),
+    ...(query.tools !== undefined ? { tools: query.tools } : {}),
     ...(query.insideSubagent !== undefined ? { insideSubagent: query.insideSubagent } : {}),
     ...(query.familyMetadata !== undefined ? { familyMetadata: query.familyMetadata } : {}),
   };

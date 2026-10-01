@@ -322,6 +322,9 @@ function toWireMcpServers(servers: Record<string, McpServerConfig> | undefined):
             name: cfg.name,
             ...(cfg.timeout !== undefined ? { timeout: cfg.timeout } : {}),
             ...(isWinterMcpServerInstance(cfg.instance) ? { tools: cfg.instance.listTools() } : {}),
+            // Winter extension: the host's plain names for some of this server's tools (see
+            // `McpSdkServerConfig.toolNames`) -- plain data, so it rides `--config-json` verbatim.
+            ...(cfg.toolNames !== undefined ? { toolNames: { ...cfg.toolNames } } : {}),
           }
         : cfg;
   }
@@ -805,6 +808,10 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.toolSearchEnabled !== undefined ? { toolSearchEnabled: options.toolSearchEnabled } : {}),
     ...(options.insideSubagent !== undefined ? { insideSubagent: options.insideSubagent } : {}),
     ...(options.familyMetadata !== undefined ? { familyMetadata: options.familyMetadata } : {}),
+    // claude's `tools`: an array rides the wire verbatim; the `claude_code` preset IS the default set,
+    // so it serializes as absent (one meaning, one spelling, on every transport).
+    ...(Array.isArray(options.tools) ? { tools: [...options.tools] } : {}),
+    ...(options.deferTools !== undefined ? { deferTools: [...options.deferTools] } : {}),
     // Task 6 (WS-07 §6.4): same pure-passthrough convention as every field above.
     ...(options.allowDangerouslySkipPermissions !== undefined ? { allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions } : {}),
     // Task 10 (WS-08 §1/§2/§9): the hooks structure-only wire shape (functions stripped -- see

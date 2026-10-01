@@ -132,7 +132,19 @@ export interface AvailabilityPredicate {
   // literal (not a boolean) so a descriptor can only ever assert this one direction, matching how
   // every other field above is a plain gate rather than an arbitrary predicate.
   insideSubagent?: false;
+  // An OPT-IN built-in: advertised only when the host's `tools` list (`RuntimeConfig.tools`, claude's own
+  // option) names it -- claude's own pattern for a tool no default session carries (its SDK opts into
+  // `SendUserMessage` through `--tools` the same way). Absent `tools` (every default session, every
+  // pinned golden) never advertises one, so the default surface stays claude's.
+  optIn?: true;
+  // At least ONE of these capability tokens must be present (where `capabilityRequirements` needs all).
+  // `ToolSearch`'s gate: MCP servers (`winter.mcp`) or a host-deferred built-in
+  // (`DEFERRED_BUILTINS_CAPABILITY`) -- either is something to search for.
+  requiresAnyCapability?: readonly string[];
 }
+
+/** Derived by the engine when the host's `deferTools` names anything: a built-in may then be deferred. */
+export const DEFERRED_BUILTINS_CAPABILITY = "winter.deferred-builtins";
 
 // See this file's header "Deviation note."
 export type ToolDisposition = "implement-now" | "implement-later" | "correctly-absent" | "winter-backed-equivalent" | "winter-backed-later";
@@ -184,6 +196,13 @@ export interface ToolDescriptor {
   // ("a fixed literal ... so a descriptor can only ever assert this one direction") -- room for a
   // future second forced-interaction reason without a breaking boolean-to-string migration.
   interaction?: "required";
+  // A PLAIN-NAMED in-process MCP tool (`McpSdkServerConfig.toolNames`): the `mcp__<server>__<tool>`
+  // spelling it would otherwise have carried. `canonicalName`/`advertisedName` are the plain name -- the
+  // ONE identity the model, the transcript, hooks and `canUseTool` see -- and this spelling stays an
+  // EQUIVALENT identity: a bare deny naming it hides the tool (`isDescriptorBareDenied`), and a rule or a
+  // hook matcher naming it governs the call (the engine's strictest-of identity resolution). Absent on
+  // every other descriptor.
+  mcpName?: string;
 }
 
 // --- Per-tool execution seams (task-1 brief's Interfaces block, verbatim) --------------------------
@@ -784,8 +803,11 @@ export function onRegistryChange(cb: () => void): () => void {
   };
 }
 
-function buildMcpToolDescriptor(server: string, tool: McpToolDefinition, opts: { alwaysLoad?: boolean; deferredDefault: boolean | readonly PermissionMode[] }): ToolDescriptor {
-  const canonicalName = `mcp__${server}__${tool.name}`;
+function buildMcpToolDescriptor(server: string, tool: McpToolDefinition, opts: { alwaysLoad?: boolean; deferredDefault: boolean | readonly PermissionMode[] }, plainName?: string): ToolDescriptor {
+  const mcpSpelling = `mcp__${server}__${tool.name}`;
+  // A plain-named tool (`McpServerToolNames`) is registered UNDER its plain name -- that is its identity --
+  // and keeps its MCP spelling as `mcpName`, the equivalent identity rules and matchers may still name.
+  const canonicalName = plainName ?? mcpSpelling;
   // WS-09 §6 verbatim: the literal `anthropic/` key, checked for an EXACT `=== true` (any other
   // value, or the key's absence, leaves `interaction` unset -- never a truthy-coercion).
   const requiresInteraction = tool._meta?.["anthropic/requiresUserInteraction"] === true;
@@ -834,7 +856,35 @@ function buildMcpToolDescriptor(server: string, tool: McpToolDefinition, opts: {
     deferred: opts.deferredDefault,
     ...(tool._meta !== undefined ? { _meta: tool._meta } : {}),
     ...(requiresInteraction ? { interaction: "required" as const } : {}),
+    ...(plainName !== undefined ? { mcpName: mcpSpelling } : {}),
   };
+}
+
+/**
+ * A HOST'S PLAIN NAMES for some of one in-process server's tools (`McpSdkServerConfig.toolNames`):
+ * `{ <tool as the server lists it>: <plain name> }`. See that field's doc for the contract.
+ */
+export type McpServerToolNames = Readonly<Record<string, string>>;
+
+/** The search tool's name (descriptors/tool-search.ts): never deferred, and its absence from `tools` switches deferral off. */
+export const TOOL_SEARCH_TOOL_NAME = "ToolSearch";
+
+/** What a plain name must look like: an ordinary tool name, never an `mcp__` one. */
+const PLAIN_TOOL_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+
+/** The `mcp__<server>__<tool>` spelling a plain-named MCP tool keeps as its equivalent identity, or `undefined`. */
+export function mcpSpellingOf(name: string): string | undefined {
+  return registry.get(name)?.descriptor.mcpName;
+}
+
+/**
+ * The registry name of `mcp__<server>__<tool>`: its plain name when the host renamed it, else the name itself.
+ * The inverse of `mcpSpellingOf`, for a reader handed the MCP spelling (a permission rule, a hook matcher).
+ */
+export function registeredNameForMcpSpelling(name: string): string {
+  if (registry.has(name)) return name;
+  for (const [registered, entry] of registry) if (entry.descriptor.mcpName === name) return registered;
+  return name;
 }
 
 // Fix round 1, RULING P4-B (MAJOR item 2): the standing server's own name is RESERVED as a live-MCP server identity,
@@ -1007,7 +1057,7 @@ function dedupeSameBatch(server: string, tools: readonly McpToolDefinition[]): r
 export function registerMcpServerTools(
   server: string,
   incomingTools: readonly McpToolDefinition[],
-  opts: { alwaysLoad?: boolean; deferredDefault: boolean | readonly PermissionMode[] },
+  opts: { alwaysLoad?: boolean; deferredDefault: boolean | readonly PermissionMode[]; toolNames?: McpServerToolNames },
 ): void {
   if (RESERVED_MCP_SERVER_NAMES.has(server)) {
     throw new Error(
@@ -1021,7 +1071,12 @@ export function registerMcpServerTools(
   // and the commit loop all see the identical, single-occurrence batch (a second occurrence surviving
   // into the commit loop is precisely what made this last-write-wins).
   const tools = dedupeSameBatch(server, incomingTools);
-  const newNames = new Set(tools.map((t) => `mcp__${server}__${t.name}`));
+  // The name each tool is registered under: the host's plain name when it gave one (`toolNames`), else
+  // `mcp__<server>__<tool>`. Checked BEFORE anything is mutated, with the rest of the batch (below).
+  const plainNameFor = (tool: McpToolDefinition): string | undefined =>
+    opts.toolNames !== undefined && Object.hasOwn(opts.toolNames, tool.name) ? opts.toolNames[tool.name] : undefined;
+  const registeredName = (tool: McpToolDefinition): string => plainNameFor(tool) ?? `mcp__${server}__${tool.name}`;
+  const newNames = new Set(tools.map(registeredName));
   const previouslyOwned = mcpServerOwnedNames.get(server);
 
   // Fix round 1, NIT item 4: symmetric with unregisterMcpServerTools's own silent no-op below -- a
@@ -1042,8 +1097,23 @@ export function registerMcpServerTools(
   // registry forever. Validating the whole batch first means a throw here leaves registry/
   // mcpToolOwner/mcpServerOwnedNames byte-identical to their pre-call state -- nothing is ever
   // half-applied (registry.test.ts pins this exact scenario).
+  const plainNamesSeen = new Set<string>();
   for (const tool of tools) {
-    const canonicalName = `mcp__${server}__${tool.name}`;
+    const plain = plainNameFor(tool);
+    if (plain !== undefined) {
+      // A plain name is the HOST's (only an in-process server carries `toolNames`), but it is still
+      // checked: it must read as an ordinary tool name -- never `mcp__…`, which would make it look like
+      // another server's tool -- and two tools of one server must not share it. A collision with any
+      // OTHER registration (a built-in, another server's tool) is refused just below, as for any name.
+      if (typeof plain !== "string" || !PLAIN_TOOL_NAME.test(plain) || plain.startsWith("mcp__")) {
+        throw new Error(`registerMcpServerTools: server "${server}" names its tool "${tool.name}" ${JSON.stringify(plain)} -- a plain tool name must match ${String(PLAIN_TOOL_NAME)} and must not start with "mcp__"`);
+      }
+      if (plainNamesSeen.has(plain)) {
+        throw new Error(`registerMcpServerTools: server "${server}" gives two of its tools the same plain name "${plain}"`);
+      }
+      plainNamesSeen.add(plain);
+    }
+    const canonicalName = registeredName(tool);
     const existingOwner = mcpToolOwner.get(canonicalName);
     if (registry.has(canonicalName) && existingOwner === undefined) {
       throw new Error(
@@ -1079,9 +1149,9 @@ export function registerMcpServerTools(
 
   const nowOwned = new Set<string>();
   for (const tool of tools) {
-    const canonicalName = `mcp__${server}__${tool.name}`;
+    const canonicalName = registeredName(tool);
     const existingEntry = registry.get(canonicalName); // present only on a same-server replace (validated above)
-    const descriptor = buildMcpToolDescriptor(server, tool, opts);
+    const descriptor = buildMcpToolDescriptor(server, tool, opts, plainNameFor(tool));
     registry.set(canonicalName, existingEntry ? { ...existingEntry, descriptor } : { descriptor });
     mcpToolOwner.set(canonicalName, server);
     nowOwned.add(canonicalName);
@@ -1215,6 +1285,14 @@ export interface DeferralActivation {
   // (resolveDeferral immediately below). A unit mismatch here is exactly the class of producer/
   // consumer drift R4-2 exists to catch, so it is pinned in this doc comment, not left implicit.
   deferrableContextShare: number;
+  /**
+   * The host's `deferTools` (`RuntimeConfig.deferTools`): names that START DEFERRED while deferral is
+   * active -- the one way a BUILT-IN defers (claude's own per-tool `shouldDefer`, chosen by the host here).
+   * `ToolSearch` is never deferred whatever this says, and an MCP tool's `alwaysLoad` still wins. Lives
+   * on the activation because every reader of `resolveDeferral` (the partition, the load-first boundary,
+   * ToolSearch's pool) already takes it, so none of them can disagree about it.
+   */
+  deferTools?: readonly string[];
 }
 
 // RULING P4-A (Phase 4 Task 3): "is Tool Search genuinely active in this session at all" as its OWN
@@ -1258,15 +1336,21 @@ export function resolveDeferral(descriptor: ToolDescriptor, mode: PermissionMode
   // separately re-deriving mode-visibility itself.
   const modes = descriptor.availability.modes;
   if (modes !== undefined && !modes.includes(mode)) return "hidden";
-  // WS-09 §8: "Core built-ins... remain loaded up front... never deferred through the public
-  // surface" -- an unconditional override, checked before alwaysLoad/deferred so a builtin can never
-  // be mis-marked deferred by a future descriptor edit.
-  if (descriptor.source === "builtin") return "eager";
+  // The search tool itself is never deferred: the model needs it to load everything else (claude's own
+  // `isDeferredTool` rule, checked ahead of the host's `deferTools`).
+  if (descriptor.canonicalName === TOOL_SEARCH_TOOL_NAME) return "eager";
   // WS-09 §2 table: "alwaysLoad: true forces the server's complete tools eager (never deferred)".
   if (descriptor.alwaysLoad === true) return "eager";
+  // The HOST's `deferTools`: the one way a built-in defers (below), and a no-op for an MCP tool that
+  // already does.
+  const hostDeferred = activation.deferTools?.includes(descriptor.canonicalName) === true;
+  // WS-09 §8: "Core built-ins... remain loaded up front... never deferred through the public
+  // surface" -- unless the HOST named it in `deferTools`: no descriptor edit can defer a built-in, only
+  // a session's own configuration can, and claude itself defers several of its built-ins (`shouldDefer`).
+  if (descriptor.source === "builtin" && !hostDeferred) return "eager";
 
   const declared = descriptor.deferred;
-  const eligible = declared === true ? true : Array.isArray(declared) ? declared.includes(mode) : false;
+  const eligible = hostDeferred || (declared === true ? true : Array.isArray(declared) ? declared.includes(mode) : false);
   if (!eligible) return "eager";
 
   return isDeferralActive(activation) ? "deferred" : "eager";
@@ -1336,8 +1420,9 @@ export interface AdvertisedSetInputs {
   familyMetadata?: { taskNative?: boolean };
   toolSearchEnabled?: boolean;
   insideSubagent?: boolean;
-  // §1.5 "requested tool config": an explicit allowlist of canonical names to advertise. Absent =
-  // no restriction on this axis (every other gate still applies).
+  // §1.5 "requested tool config" -- claude's own `tools` option (`RuntimeConfig.tools`): the BUILT-IN
+  // names to advertise. Built-ins only (`isRequestedTool`); absent = claude's default set (every
+  // built-in but the opt-in ones), with every other gate still applying.
   tools?: readonly string[];
   // Recorded on this input shape for documentation/completeness ONLY -- §1.3 pins allowedTools as
   // PRE-APPROVAL, never a visibility allowlist ("an eager tool may still require approval; a
@@ -1371,6 +1456,7 @@ function isAvailable(descriptor: ToolDescriptor, cfg: AdvertisedSetInputs): bool
   if (a.requiresToolSearchEnabled === true && cfg.toolSearchEnabled !== true) return false;
   if (a.hiddenWhenFamilyTaskNative === true && cfg.familyMetadata?.taskNative === true) return false;
   if (a.insideSubagent === false && cfg.insideSubagent === true) return false;
+  if (a.requiresAnyCapability !== undefined && !a.requiresAnyCapability.some((c) => cfg.capabilities?.includes(c) === true)) return false;
   if (!descriptor.capabilityRequirements.every((c) => cfg.capabilities?.includes(c) === true)) return false;
   return true;
 }
@@ -1490,14 +1576,36 @@ export function isBareDenied(canonicalName: string, disallowedTools: readonly st
 // entry (the deliberately-never-advertised-yet-registered kind, if a future lane ever adds one) is
 // excluded the same way.
 export function buildAdvertisedSet(cfg: AdvertisedSetInputs): ToolDescriptor[] {
-  const requested = cfg.tools;
   return listRegisteredTools()
     .map((t) => t.descriptor)
     .filter((d) => d.disposition !== "correctly-absent")
     .filter((d) => d.exposure !== "hidden")
-    .filter((d) => requested === undefined || requested.includes(d.canonicalName))
+    .filter((d) => isRequestedTool(d, cfg.tools))
     .filter((d) => isAvailable(d, cfg))
-    .filter((d) => !isBareDenied(d.canonicalName, cfg.disallowedTools));
+    .filter((d) => !isDescriptorBareDenied(d, cfg.disallowedTools));
+}
+
+/**
+ * `cfg.tools` (claude's own `tools` option -- `RuntimeConfig.tools`): it names the BUILT-IN set, so it
+ * filters built-ins only. An MCP server's tools (a plain-named in-process one included), the standing
+ * server's twins and host-generated tools are never named there and never removed by it -- the twins
+ * follow their native spelling through the alias pass instead (`hideAliasExcludedTwins`: a native the
+ * list leaves out is not advertised, so its twin is hidden). An OPT-IN built-in (`availability.optIn`)
+ * needs the list to name it; absent, the list is claude's default set, which carries none.
+ */
+export function isRequestedTool(descriptor: ToolDescriptor, tools: readonly string[] | undefined): boolean {
+  if (descriptor.source !== "builtin") return true;
+  if (tools === undefined) return descriptor.availability.optIn !== true;
+  return tools.includes(descriptor.canonicalName);
+}
+
+/**
+ * A bare deny on the descriptor's own name OR on the `mcp__<server>__<tool>` spelling a plain-named
+ * in-process tool keeps (`ToolDescriptor.mcpName`): either spelling hides it, from advertisement and the
+ * ToolSearch pool alike (both read `buildAdvertisedSet`).
+ */
+export function isDescriptorBareDenied(descriptor: ToolDescriptor, disallowedTools: readonly string[] | undefined): boolean {
+  return isBareDenied(descriptor.canonicalName, disallowedTools) || (descriptor.mcpName !== undefined && isBareDenied(descriptor.mcpName, disallowedTools));
 }
 
 // --- The engine-facing adapter: wraps the registry behind engine.ts's PRE-EXISTING ToolExecutor -----
