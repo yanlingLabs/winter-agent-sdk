@@ -131,6 +131,18 @@ describe("Search: the dangerous-domain floor on cited urls", () => {
     const out = await run("s-floor2", { query: "q" }, fakeFetch(() => json({ answer: "A", citations: [{ url: "https://evil.example/" }, { url: "https://a.evil.example/" }] })));
     expect(out.output).toBe("A\n\n[unsourced — every source was withheld by the dangerous-domain list; say so if you repeat this]\n\n[2 sources withheld — matched the dangerous-domain list]");
   });
+
+  test("a host's LIVE floor rides the input's `blocked_domains` (a PreToolUse hook's addition): it adds to the spawn-time list, and is never sent to Exa", async () => {
+    wire("s-floor-live", { web: { search: { authRef: REF }, blockedDomains: ["evil.example"] } });
+    const seen: Seen[] = [];
+    const out = await run(
+      "s-floor-live",
+      { query: "q", blocked_domains: ["later.example", 7, ""] },
+      fakeFetch(() => json({ answer: "A", citations: [{ title: "ok", url: "https://good.example.com/" }, { url: "https://www.later.example/x" }, { url: "https://evil.example/" }] }), seen),
+    );
+    expect(out.output).toBe("A\n\nSources:\n1. ok\n   https://good.example.com/\n\n[2 sources withheld — matched the dangerous-domain list]");
+    expect(seen.map((s) => s.init.body)).toEqual([JSON.stringify({ query: "q" })]);
+  });
 });
 
 describe("Search: site icons (host-only)", () => {

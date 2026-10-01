@@ -149,7 +149,15 @@ All three report the icon of each site they name to the HOST only, as `winter_si
   reaches the host as `sdk_mcp_call` with the server's own tool name, and the tool still defers like an
   MCP tool. The `mcp__<server>__<tool>` spelling stays an equivalent identity for permission rules,
   `disallowedTools` and hook matchers; when one of those names it, the call is evaluated under that
-  spelling, as for an alias. A plain name that collides with another tool refuses the session.
+  spelling, as for an alias. A plain name that collides with another tool refuses the session. The old
+  spelling also selects the tool in a model call, `ToolSearch`'s `select:` and an agent definition's
+  `tools`.
+- **`Options.legacyToolNames`** — `{ <old name>: <current tool name> }` for a host's own renamed tool:
+  the old name keeps working in calls, `select:`, agent definitions, rules, `disallowedTools` and hook
+  matchers.
+- **`Options.reservedMcpServerNames`** — server names only the host's own `type: "sdk"` servers may
+  take; any other server under one (settings, project, plugin, explicit non-sdk, `mcp_set_servers`) is
+  refused, and an agent definition's inline server is renamed.
 
 - **`Options.web`** — `search.enabled`, `search.authRef` (the backend key, used only once the
   anonymous tier is exhausted), `search.maxSearchesPerCall` / `search.anonymousMaxSearchesPerCall`,

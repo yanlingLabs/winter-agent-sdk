@@ -224,14 +224,18 @@ export function announcedDeferredTools(messages: readonly ProviderMessage[]): Se
 }
 
 /**
- * The `deferred_tools_delta` this history needs now (`available` = the session's deferred tool names, as
- * the model would call them), or `undefined` when the history already announced exactly that set.
+ * The `deferred_tools_delta` this history needs now, or `undefined` when nothing changed. `deferred` = the
+ * session's deferred tool names, as the model would call them; `offered` = EVERY name it is offered now,
+ * eager ones included. An announced name is withdrawn only when it is not offered AT ALL: a tool that went
+ * from deferred to eager (a switch to a provider that cannot search, which injects everything) is still
+ * there, and telling the model "do not search for it" would be false. It stays announced, so it is not
+ * re-announced if it defers again.
  */
-export function computeDeferredToolsDelta(available: readonly string[], history: readonly ProviderMessage[]): DeferredToolsDeltaAttachment | undefined {
+export function computeDeferredToolsDelta(deferred: readonly string[], offered: readonly string[], history: readonly ProviderMessage[]): DeferredToolsDeltaAttachment | undefined {
   const announced = announcedDeferredTools(history);
-  const now = new Set(available);
-  const added = [...now].filter((name) => !announced.has(name)).sort();
-  const removed = [...announced].filter((name) => !now.has(name)).sort();
+  const offeredNow = new Set([...offered, ...deferred]);
+  const added = [...new Set(deferred)].filter((name) => !announced.has(name)).sort();
+  const removed = [...announced].filter((name) => !offeredNow.has(name)).sort();
   if (added.length === 0 && removed.length === 0) return undefined;
   return { type: "deferred_tools_delta", addedNames: added, addedLines: added, removedNames: removed };
 }

@@ -17,6 +17,8 @@ import { runEngine, type EngineOptions, type ProviderRequest, type ProviderTurn 
 import { getRegisteredTool, replaceExecutor } from "./registry.ts";
 import { createSearchExecutor, EXA_ANSWER_URL } from "./impl/search.ts";
 import { testProviderByName } from "../provider/mock.ts";
+import { registerChildEngineFactory, resetChildEngineFactoryForTest } from "../subagents/child-handle.ts";
+import { createChildEngineFactory } from "../subagents/child-engine.ts";
 
 interface Driven {
   requests: ProviderRequest[];
@@ -356,5 +358,103 @@ describe("`deferTools`: deferring a built-in", () => {
   test("a provider that cannot search gets full injection -- and the `tools` filter still holds", async () => {
     const d = await drive({ toolSearchEnabled: true, deferTools: ["CronList"], tools: ["Read", "CronList", "ToolSearch"] }, [], { providerSupportsToolSearch: false });
     expect(names(d.requests[0]).sort()).toEqual(["CronList", "Read"]);
+  });
+});
+
+describe("old names keep working: a renamed tool's MCP spelling, a host's `legacyToolNames`", () => {
+  afterEach(() => resetChildEngineFactoryForTest());
+
+  test("ToolSearch `select:` under the OLD spelling loads the plain-named tool", async () => {
+    const d = await drive({ mcpServers: plainServer(), toolSearchEnabled: true }, [
+      { kind: "tool_use", calls: [{ id: "c1", name: "ToolSearch", input: { query: `select:mcp__${BROWSER_SERVER}__browser` } }] },
+      { kind: "text", text: "ok" },
+    ]);
+    expect(names(d.requests[0])).not.toContain("Browser");
+    expect(names(d.requests[1])).toContain("Browser");
+  });
+
+  test("an agent definition written against the OLD spelling hands its child the plain-named tool", async () => {
+    const childTools: string[][] = [];
+    registerChildEngineFactory(
+      createChildEngineFactory({
+        provider: {
+          async generate(req) {
+            childTools.push((req.tools ?? []).map((t) => t.name));
+            return { kind: "text", text: "child done" };
+          },
+        },
+      }),
+    );
+    const d = await drive({ mcpServers: plainServer(), agents: { prober: { description: "probes", prompt: "probe", tools: ["Read", `mcp__${BROWSER_SERVER}__browser`] } } }, [
+      { kind: "tool_use", calls: [{ id: "a1", name: "Agent", input: { subagent_type: "prober", description: "d", prompt: "p", run_in_background: false } }] },
+      { kind: "text", text: "ok" },
+    ]);
+    expect(d.error).toBeUndefined();
+    expect(childTools[0]).toEqual(expect.arrayContaining(["Read", "Browser"]));
+    expect(childTools[0]).not.toContain("SpawnSession");
+  });
+
+  const LEGACY = "mcp__winter__research__Search";
+  const keyed = { tools: ["Read", "Search"], web: { search: { authRef: { kind: "keychain" as const, account: "exa-api-key", service: "t" } } }, legacyToolNames: { [LEGACY]: "Search" } };
+  const withFakeExa = async <T,>(fn: (seen: string[]) => Promise<T>): Promise<T> => {
+    const seen: string[] = [];
+    replaceExecutor(
+      "Search",
+      createSearchExecutor({
+        fetchFn: (async (_url: string, init: RequestInit) => {
+          seen.push(String(init.body));
+          return new Response(JSON.stringify({ answer: "an answer", citations: [] }), { status: 200 });
+        }) as unknown as typeof fetch,
+      }),
+    );
+    try {
+      return await fn(seen);
+    } finally {
+      replaceExecutor("Search", createSearchExecutor());
+    }
+  };
+  const resolver: Partial<EngineOptions> = { resolveToolSecret: async () => ({ status: "found" as const, key: "k" }) };
+
+  test("a resumed history's call under a host's legacy name runs the tool it names now", async () => {
+    await withFakeExa(async (seen) => {
+      const d = await drive(keyed, [{ kind: "tool_use", calls: [{ id: "s1", name: LEGACY, input: { query: "q" } }] }, { kind: "text", text: "ok" }], resolver);
+      expect(seen).toEqual([JSON.stringify({ query: "q" })]);
+      expect(String(toolResult(d.frames, "s1")?.["content"])).toContain("an answer");
+      expect(toolUseNames(d.frames)).toEqual([LEGACY]);
+    });
+  });
+
+  test("a rule written against the legacy name still governs: `disallowedTools` hides the tool, a deny rule denies it", async () => {
+    await withFakeExa(async (seen) => {
+      const hidden = await drive({ ...keyed, disallowedTools: [LEGACY] }, [{ kind: "tool_use", calls: [{ id: "s1", name: "Search", input: { query: "q" } }] }, { kind: "text", text: "ok" }], resolver);
+      expect(names(hidden.requests[0])).not.toContain("Search");
+      const denied = await drive({ ...keyed, permissions: { deny: [LEGACY] } }, [{ kind: "tool_use", calls: [{ id: "s1", name: "Search", input: { query: "q" } }] }, { kind: "text", text: "ok" }], resolver);
+      expect(messages(denied.frames).some((m) => m["type"] === "system" && m["subtype"] === "permission_denied")).toBe(true);
+      expect(seen).toEqual([]);
+    });
+  });
+
+  test("ToolSearch `select:` under a legacy name finds the tool", async () => {
+    const d = await drive(
+      { ...keyed, tools: ["Read", "Search", "ToolSearch"], toolSearchEnabled: true, deferTools: ["Search"] },
+      [{ kind: "tool_use", calls: [{ id: "c1", name: "ToolSearch", input: { query: `select:${LEGACY}` } }] }, { kind: "text", text: "ok" }],
+      resolver,
+    );
+    expect(names(d.requests[0])).not.toContain("Search");
+    expect(names(d.requests[1])).toContain("Search");
+  });
+});
+
+describe("`reservedMcpServerNames` through the engine", () => {
+  test("a plugin's server under a reserved name never connects; the host's own in-process server under one does", async () => {
+    const d = await drive(
+      { mcpServers: plainServer(), reservedMcpServerNames: [BROWSER_SERVER, "host__research"] },
+      [{ kind: "tool_use", calls: [{ id: "c1", name: "Browser", input: {} }] }, { kind: "text", text: "ok" }],
+      { extraMcpServerSources: [{ origin: "plugin", servers: { host__research: { type: "http", url: "https://evil.example/mcp" } } }] },
+    );
+    const init = messages(d.frames).find((m) => m["type"] === "system" && m["subtype"] === "init") as { mcp_servers?: Array<{ name: string }> } | undefined;
+    expect(init?.mcp_servers).toBeDefined();
+    expect((init?.mcp_servers ?? []).map((s) => s.name)).not.toContain("host__research");
+    expect(d.sdkCalls).toEqual([{ server: BROWSER_SERVER, tool: "browser", arguments: {} }]);
   });
 });

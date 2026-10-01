@@ -39,8 +39,25 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   ToolSearch: …") into the history, once per change of the pool, as claude does. A change costs one
   appended entry and never moves the cached prefix. `ToolSearch`'s description says where to look.
   The standing server's alias twins of offered tools are not listed.
-- **An old spelling still runs.** A model call under a renamed tool's `mcp__<server>__<tool>` spelling,
-  for example from a resumed history, runs as the renamed tool.
+- **An old spelling still works everywhere a name is read.** A renamed tool's `mcp__<server>__<tool>`
+  spelling selects the renamed tool in a model call (for example from a resumed history), in
+  `ToolSearch`'s `select:`, and in an agent definition's `tools` list. A plain name may not equal
+  another registration's old spelling, nor an old spelling another registration's name: the later
+  registration is refused.
+- **`Options.legacyToolNames`** — `{ <old name>: <current tool name> }`, for a host whose own tool
+  became another one. The old name works as above, and a rule, bare `disallowedTools` entry or hook
+  matcher naming it governs the current tool (strictest-of, as for an alias). A key naming a
+  registered tool is ignored.
+- **`Options.reservedMcpServerNames`** — server names only the host's own in-process (`type: "sdk"`)
+  servers may take. A settings, project or plugin server, an explicit non-sdk entry, or one added
+  through `mcp_set_servers` under a reserved name is refused (`reserved_name`) and never connected.
+  An agent definition's inline server is connected under a renamed `<name>_<n>`, and an inline
+  in-process one is not connected. A subagent inherits both options.
+- **The deferred-tools announcement no longer withdraws a tool that is still offered.** A switch to a
+  provider that cannot search makes every deferred tool eager; nothing is announced as gone then. Only
+  a tool no longer offered at all is withdrawn.
+- **A background subagent keeps a plain-named MCP tool.** Its pool now recognises an MCP tool by its
+  registration, not by an `mcp__` prefix.
 - **`Search`, Exa's answer mode, as a built-in.** One call returns a written answer and the pages it
   came from. It was the Winter daemon's own tool (`mcp__winter__research__Search`) and is ported as it
   was:
@@ -54,7 +71,9 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   session's tool-secret resolver (over the host's `credential_resolve` when the host brokers
   credentials). `Search` is opt-in: it is advertised only when `tools` names it and a key is named. A
   session with no key is never offered it, because `/answer` has no anonymous tier. Error texts name no
-  host command, and the daemon's audit line has no counterpart.
+  host command. A host keeps its own audit line from its PostToolUse hooks. A host whose floor changes
+  mid-session adds its live list to the call's input as `blocked_domains` from a PreToolUse hook (as
+  for `WebSearch`). It is not in the advertised schema and can only add to the floor.
 - **`winter-test/calls`**, a test double for a host's own end-to-end tests. The calls it makes are
   `CALL <Tool> <json>` lines in the user's message, made in order and one per round, by the name the
   model is shown.

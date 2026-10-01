@@ -337,7 +337,7 @@ test("Phase 4 Task 2: unset strictMcpConfig/toolAliases/agents/forwardSubagentTe
 // The tool-surface options: claude's `tools` (an array verbatim; the `claude_code` preset IS the default
 // set, so it is omitted), Winter's `deferTools`, and an in-process server's `toolNames` (plain data, so it
 // rides the wire beside the server's tool list).
-test("tools/deferTools/toolNames serialize into --config-json; the claude_code preset is omitted", async () => {
+test("tools/deferTools/toolNames/legacyToolNames/reservedMcpServerNames serialize into --config-json; the claude_code preset is omitted", async () => {
   const capture = captureConfigJson();
   const instance = { listTools: () => [{ name: "browser", inputSchema: { type: "object" } }], callTool: async () => ({ content: [] }) };
   for await (const _msg of query({
@@ -345,6 +345,8 @@ test("tools/deferTools/toolNames serialize into --config-json; the claude_code p
     options: {
       tools: ["Read", "ToolSearch"],
       deferTools: ["CronList"],
+      legacyToolNames: { mcp__host__Search: "Search" },
+      reservedMcpServerNames: ["host__browser", "host__research"],
       mcpServers: { host__browser: { type: "sdk", name: "host__browser", instance, toolNames: { browser: "Browser" } } },
       spawnClaudeCodeProcess: capture.hook,
     },
@@ -354,6 +356,8 @@ test("tools/deferTools/toolNames serialize into --config-json; the claude_code p
   expect(capture.get()).toMatchObject({
     tools: ["Read", "ToolSearch"],
     deferTools: ["CronList"],
+    legacyToolNames: { mcp__host__Search: "Search" },
+    reservedMcpServerNames: ["host__browser", "host__research"],
     mcpServers: { host__browser: { type: "sdk", name: "host__browser", tools: [{ name: "browser", inputSchema: { type: "object" } }], toolNames: { browser: "Browser" } } },
   });
 

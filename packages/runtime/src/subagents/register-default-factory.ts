@@ -170,6 +170,9 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       // The host's auto-memory and web options travel the same way -- see the deps' own note.
       ...(config.autoMemory !== undefined ? { parentAutoMemory: config.autoMemory } : {}),
       ...(config.web !== undefined ? { parentWeb: config.web } : {}),
+      // The host's reserved server names and old tool names hold for every descendant too.
+      ...(config.reservedMcpServerNames !== undefined ? { parentReservedMcpServerNames: config.reservedMcpServerNames } : {}),
+      ...(config.legacyToolNames !== undefined ? { parentLegacyToolNames: config.legacyToolNames } : {}),
       // Phase 5 Task 8: see this interface's own fields for why each is a real gap.
       ...(opts.systemPromptAssembler !== undefined ? { systemPromptAssembler: opts.systemPromptAssembler } : {}),
       ...(opts.skillRuntime !== undefined ? { skillRuntime: opts.skillRuntime } : {}),

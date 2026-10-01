@@ -197,9 +197,14 @@ export { validateServerConfig };
  */
 export function resolveMcpServerSources(
   sources: readonly McpServerSource[],
-  opts: { strictMcpConfig?: boolean; trustedWorkspace: boolean; reservedServerName?: string },
+  opts: { strictMcpConfig?: boolean; trustedWorkspace: boolean; reservedServerName?: string; hostReservedServerNames?: readonly string[] },
 ): ResolveMcpServerSourcesResult {
   const reservedServerName = opts.reservedServerName ?? WINTER_SERVER_NAME;
+  // `RuntimeConfig.reservedMcpServerNames`: names the HOST keeps for its own in-process servers. Only
+  // the host itself (origin `explicit`) may use one, and only for a `type: "sdk"` server -- a settings,
+  // project or plugin file naming one is refused, as is an explicit non-sdk entry, so a tool spelled
+  // `mcp__<reserved>__<tool>` is only ever the host's own.
+  const hostReserved = new Set(opts.hostReservedServerNames ?? []);
   const resolved: ResolvedMcpServerEntry[] = [];
   const shadowed: ShadowedMcpServerEntry[] = [];
   const rejected: RejectedMcpServerEntry[] = [];
@@ -236,6 +241,10 @@ export function resolveMcpServerSources(
 
         if (name === reservedServerName) {
           rejected.push({ name, origin, code: "reserved_name", reason: `"${reservedServerName}" is a reserved server identity (RULING P4-B, the standing Winter server) -- no source may configure a live MCP server under this name` });
+          continue;
+        }
+        if (hostReserved.has(name) && (origin !== "explicit" || (raw as { type?: unknown } | null)?.type !== "sdk")) {
+          rejected.push({ name, origin, code: "reserved_name", reason: `"${name}" is a server name this session's host reserves for its own in-process server -- no ${origin} source may configure a server under this name` });
           continue;
         }
         const validated = validateServerConfig(raw);
@@ -661,6 +670,8 @@ export interface McpLifecycleDeps {
    * `addAndConnect` guard is the second door onto the same rule. Defaults to `WINTER_SERVER_NAME`.
    */
   reservedServerName?: string;
+  /** `RuntimeConfig.reservedMcpServerNames`, for the control seam's live `mcp_set_servers` guard: a non-sdk server is refused under any of them. */
+  hostReservedServerNames?: readonly string[];
   /** WS-23: the session cwd every stdio server of this lifecycle is spawned in (see `ConnectMcpServerOptions.cwd`). */
   cwd?: string;
   /**
@@ -1315,7 +1326,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
 
   return {
     stateSource,
-    controlSeam: createMcpControlSeam(internals, { ...(deps.reservedServerName !== undefined ? { reservedServerName: deps.reservedServerName } : {}) }),
+    controlSeam: createMcpControlSeam(internals, { ...(deps.reservedServerName !== undefined ? { reservedServerName: deps.reservedServerName } : {}), ...(deps.hostReservedServerNames !== undefined ? { hostReservedServerNames: deps.hostReservedServerNames } : {}) }),
     start,
     launch,
     dispose,

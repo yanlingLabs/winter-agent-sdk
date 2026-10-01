@@ -1115,6 +1115,19 @@ export function registerMcpServerTools(
     }
     const canonicalName = registeredName(tool);
     const existingOwner = mcpToolOwner.get(canonicalName);
+    // A name must not equal the OLD spelling another registration's renamed tool keeps (`mcpName`) --
+    // nor may a renamed tool's old spelling equal another registration's name: either way one spelling
+    // would mean two tools, and a rule written against it could govern the wrong one.
+    const spelling = plain !== undefined ? `mcp__${server}__${tool.name}` : undefined;
+    for (const [name, entry] of registry) {
+      const foreign = mcpToolOwner.get(name) !== server;
+      if (foreign && entry.descriptor.mcpName !== undefined && (entry.descriptor.mcpName === canonicalName || entry.descriptor.mcpName === spelling)) {
+        throw new Error(`registerMcpServerTools: "${canonicalName}" collides with the old spelling "${entry.descriptor.mcpName}" that "${name}" keeps -- refusing to register a second tool under it`);
+      }
+      if (foreign && spelling !== undefined && name === spelling) {
+        throw new Error(`registerMcpServerTools: the old spelling "${spelling}" of server "${server}"'s renamed tool "${plain}" is already a registered tool -- refusing to register a second tool under it`);
+      }
+    }
     if (registry.has(canonicalName) && existingOwner === undefined) {
       throw new Error(
         `registerMcpServerTools: "${canonicalName}" is already registered by a non-live-MCP mechanism ` +

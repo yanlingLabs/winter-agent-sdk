@@ -589,6 +589,27 @@ export interface RuntimeConfig {
    * Inert while deferral is inactive (full injection).
    */
   deferTools?: string[];
+  /**
+   * Winter extension: a tool's OLD names -- `{ <old name>: <current tool name> }` -- for a host whose
+   * own tool became another one (a host's in-process `mcp__<server>__Search` became the `Search`
+   * built-in). The old name keeps working everywhere a name is read: a model call under it (a resumed
+   * history taught it) runs the current tool, `ToolSearch`'s `select:` finds it, an agent definition's
+   * `tools` list keeps it, a rule, bare `disallowedTools` entry or hook matcher naming it governs the
+   * current tool (strictest-of, as for an alias). A plain-named in-process tool's own
+   * `mcp__<server>__<tool>` spelling needs no entry here: it is resolved the same way by itself. A key
+   * that names a registered tool is ignored (the live tool wins).
+   */
+  legacyToolNames?: Record<string, string>;
+  /**
+   * Winter extension: MCP server NAMES no server may take in this session except the host's own
+   * in-process (`type: "sdk"`) servers in `mcpServers` -- whatever its origin: a settings scope, a plugin's
+   * `.mcp.json`, an explicit non-sdk entry, the live `mcp_set_servers` door (each refused typed
+   * `reserved_name` and never connected), and an agent definition's inline server (connected under a
+   * renamed `<name>_<n>`, as for any clash; an inline in-process one under a reserved name is not
+   * connected). For a host whose own tools are classified by their server (trust keyed on
+   * `mcp__<server>__*`), so no foreign server can wear that spelling.
+   */
+  reservedMcpServerNames?: string[];
   // Phase 4 Task 2 (WS-09 item (a)/(c)/(d)): pure passthrough, same conditional-spread convention as
   // every field above -- query.ts never interprets these. Lane A (Task 4)/Lane C (Task 6)/[WS-14]
   // (toolAliases' official-branch redirection)/T3 (engine wiring, forwardSubagentText's forwarding

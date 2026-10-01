@@ -12,8 +12,13 @@
 //     not hand it). The daemon read its Keychain directly.
 //   * ERROR TEXT NAMES NO HOST COMMAND. The daemon's said `winter credentials set exa`; a runtime cannot
 //     know its host's CLI, so the remediation is stated generically ("replace the configured key").
-//   * NO AUDIT LINE. The daemon wrote `{kind,tool,query,outcome}` to its own audit log; that log is the
-//     daemon's, and nothing here has an equivalent. The outcome vocabulary survives as the result text.
+//   * NO AUDIT LINE OF ITS OWN. The daemon wrote `{kind,tool,query,outcome}` to its own audit log; that
+//     log is the host's, so a host that keeps one writes it from its PostToolUse/PostToolUseFailure hooks
+//     (the query is the input, the outcome the result text -- this file's sentences are stable for that).
+//   * THE LIVE FLOOR. The daemon read its dangerous-domain list per call; the runtime's copy is the
+//     session's spawn-time `web.blockedDomains`, so a host whose list changes mid-session adds it to the
+//     call's input as `blocked_domains` from a PreToolUse hook (as it does for `WebSearch`). Not in the
+//     advertised schema -- the model is never offered it -- and it can only ever add to the floor.
 //   * SITE ICONS travel as `ToolResultPayload.siteIcons` (host-only, never in the output): each surviving
 //     citation's Exa `favicon`, the same channel `WebSearch` uses. The daemon recorded them for a hook to
 //     pair with the call id.
@@ -167,7 +172,12 @@ export function createSearchExecutor(deps: SearchExecutorDeps = {}): ToolExecuto
 
     // The dangerous-domain floor on the CITED urls: a link the model is shown is a link it will try. Never
     // a SILENT drop -- the withheld count is always stated.
-    const floor = runtime.web.blockedDomains;
+    // `blocked_domains` on the INPUT (not in the advertised schema): a host's PreToolUse hook adds its
+    // LIVE floor there, as it does for `WebSearch` -- the session's `web.blockedDomains` is the list as it
+    // stood at spawn, and a host whose floor changes mid-session (Winter's per-project additions) must not
+    // wait for the next incarnation. It can only ever ADD to the floor, never lift a spawn-time entry.
+    const hostFloor = Array.isArray(record["blocked_domains"]) ? (record["blocked_domains"] as unknown[]).filter((d): d is string => typeof d === "string" && d.trim().length > 0).slice(0, 1000) : [];
+    const floor = hostFloor.length > 0 ? [...runtime.web.blockedDomains, ...hostFloor] : runtime.web.blockedDomains;
     const rawCitations = (data.citations ?? []).slice(0, SEARCH_MAX_CITATIONS);
     let withheld = 0;
     const citations = rawCitations.filter((c) => {

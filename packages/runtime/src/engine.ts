@@ -2452,6 +2452,49 @@ function toolOutputReplacement(value: unknown): string | ContentBlock[] {
   }
 }
 
+/**
+ * `RuntimeConfig.legacyToolNames`: a host's OLD tool names. Every config-level rule list
+ * (`allowedTools`, `disallowedTools`, `permissions.allow`/`ask`/`deny`) that names an old one gets the same
+ * rule for the current name beside it, so a bare deny on the old name also HIDES the current tool and a
+ * scoped rule binds it -- one rewrite at the door, read by every consumer of these lists. (Rules from a
+ * settings file are reached through the call's extra identity instead -- `declaredMcpIdentity`.)
+ */
+function withLegacyToolNameRules(opts: EngineOptions): EngineOptions {
+  const legacy = opts.config.legacyToolNames;
+  if (legacy === undefined || Object.keys(legacy).length === 0) return opts;
+  const expand = (rules: readonly string[] | undefined): string[] | undefined => {
+    if (rules === undefined) return undefined;
+    const out = [...rules];
+    for (const raw of rules) {
+      const head = /^([^(]+)(.*)$/s.exec(raw.trim());
+      if (head === null) continue;
+      const target = Object.hasOwn(legacy, head[1]!) ? legacy[head[1]!] : undefined;
+      if (typeof target === "string" && target.length > 0) out.push(`${target}${head[2]}`);
+    }
+    return [...new Set(out)];
+  };
+  const config = opts.config;
+  const permissions = config.permissions;
+  return {
+    ...opts,
+    config: {
+      ...config,
+      ...(config.allowedTools !== undefined ? { allowedTools: expand(config.allowedTools)! } : {}),
+      ...(config.disallowedTools !== undefined ? { disallowedTools: expand(config.disallowedTools)! } : {}),
+      ...(permissions !== undefined
+        ? {
+            permissions: {
+              ...permissions,
+              ...(permissions.allow !== undefined ? { allow: expand(permissions.allow)! } : {}),
+              ...(permissions.ask !== undefined ? { ask: expand(permissions.ask)! } : {}),
+              ...(permissions.deny !== undefined ? { deny: expand(permissions.deny)! } : {}),
+            },
+          }
+        : {}),
+    },
+  };
+}
+
 export async function runEngine(opts: EngineOptions): Promise<number> {
   const facetDisposers: Array<() => void> = [];
   // Review r2 finding 9 (whole-branch): `runEngineBody`'s own background-shell sweep
@@ -2466,7 +2509,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // id/agentId" from `opts.config` alone.
   let sweepBackgroundShellTasksOnExit: (() => void) | undefined;
   try {
-    return await runEngineBody(opts, facetDisposers, (fn) => {
+    return await runEngineBody(withLegacyToolNameRules(opts), facetDisposers, (fn) => {
       sweepBackgroundShellTasksOnExit = fn;
     });
   } finally {
@@ -2567,6 +2610,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     resolveToolSecret: resolveToolSecretRoute,
     onPricedGeneration,
   } = opts;
+
+  /**
+   * THE one resolver from a name a model, a definition or a `select:` may still use to the tool it means
+   * now: a host's `legacyToolNames` entry, else a plain-named in-process tool's `mcp__<server>__<tool>`
+   * spelling (`registeredNameForMcpSpelling`), else the name itself. A registered name always wins (a live
+   * tool is never shadowed by an old name).
+   */
+  const legacyToolNames = config.legacyToolNames ?? {};
+  const currentToolName = (name: string): string => {
+    if (getRegisteredTool(name) !== undefined) return name;
+    const legacy = Object.hasOwn(legacyToolNames, name) ? legacyToolNames[name] : undefined;
+    if (typeof legacy === "string" && getRegisteredTool(legacy) !== undefined) return legacy;
+    return name.startsWith("mcp__") ? registeredNameForMcpSpelling(name) : name;
+  };
+  /** The inverse for identity: the host's old name for a current tool, when it gave one. */
+  const legacyNameOf = (name: string): string | undefined => Object.entries(legacyToolNames).find(([old, current]) => current === name && getRegisteredTool(old) === undefined)?.[0];
 
   // Review r2 finding 9 (whole-branch): registered BEFORE anything else in this function body can
   // throw (even the permission startup validation two lines down) -- `config.sessionId`/`agentId`
@@ -4303,7 +4362,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // "*" against the pool would hand those agents an EMPTY pool.
       tools:
         req.definition?.tools !== undefined && !req.definition.tools.includes("*")
-          ? req.definition.tools.filter((name) => currentAdvertisedCanonicalNames.includes(name))
+          ? // A definition written before a rename names the tool's OLD spelling (`currentToolName`).
+            [...new Set(req.definition.tools.map(currentToolName))].filter((name) => currentAdvertisedCanonicalNames.includes(name))
           : [...currentAdvertisedCanonicalNames],
       // WS-13c §3/§4 (P6.6): a SLOT NAME (`AgentInput.model`) becomes the catalog key that serves it,
       // and the slot it named rides along on `slot`. Everything else -- a full key, a canonical id,
@@ -4733,7 +4793,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             if (def === undefined) return undefined;
             const denyEntry = findAgentDenyRule(evalCtx.policy.rules, agentType, denyOpts);
             if (denyEntry !== undefined) return agentTypeDeniedMessage(agentType, denyEntry);
-            if (isBuiltinAllToolsDenied(def, currentAdvertisedCanonicalNames)) {
+            if (isBuiltinAllToolsDenied({ ...(def.tools !== undefined ? { tools: def.tools.map(currentToolName) } : {}) }, currentAdvertisedCanonicalNames)) {
               return `Agent type '${agentType}' is unavailable because every tool it may use is denied by the current permission settings.`;
             }
             return undefined;
@@ -4914,6 +4974,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // `tools/registry.ts`'s per-session reservation must read ONE name, or a branded session both
       // spawns a child for a server it will refuse to register and refuses a name nothing occupies.
       reservedServerName: sessionBrand.mcpServerName,
+      ...(config.reservedMcpServerNames !== undefined ? { hostReservedServerNames: config.reservedMcpServerNames } : {}),
     });
     // `rejected`/`shadowed` are deliberately NOT surfaced on the wire: no frame shape exists for
     // "this server declaration lost" (WS-09 §1.2's "the losing declaration is reported" needs a
@@ -4927,6 +4988,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // ...and the same name onto the control seam's own `addAndConnect` guard (the live
       // `mcp_set_servers` door), which bypasses `resolveMcpServerSources` entirely.
       reservedServerName: sessionBrand.mcpServerName,
+      ...(config.reservedMcpServerNames !== undefined ? { hostReservedServerNames: config.reservedMcpServerNames } : {}),
       // WS-23: stdio servers start in the SESSION cwd, stated -- a spawned child used to inherit it
       // implicitly; an embedded session's Worker has only the host daemon's cwd to inherit.
       cwd: config.cwd,
@@ -5133,7 +5195,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return availableAgentNames(defs, {
       isDenied: (agentType) => findAgentDenyRule(evalCtx.policy.rules, agentType, denyOpts) !== undefined,
       ...(config.allowedAgentTypes !== undefined ? { allowedAgentTypes: config.allowedAgentTypes } : {}),
-      isAllToolsDenied: (def) => isBuiltinAllToolsDenied(def, currentAdvertisedCanonicalNames),
+      isAllToolsDenied: (def) => isBuiltinAllToolsDenied({ ...(def.tools !== undefined ? { tools: def.tools.map(currentToolName) } : {}) }, currentAdvertisedCanonicalNames),
     });
   }
 
@@ -5655,6 +5717,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
     // The same built-in set `init.tools` is filtered to: ToolSearch must never find a tool it withheld.
     ...(config.tools !== undefined ? { tools: config.tools } : {}),
+    // `select:` an old name -> the tool it means now (the same resolver the dispatch loop uses).
+    resolveName: currentToolName,
     ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
     ...(config.familyMetadata !== undefined ? { familyMetadata: config.familyMetadata } : {}),
     // Fix wave, follow-up (1) / RULING P4-E amended: the HOST's own alias table, so ToolSearch's
@@ -7963,7 +8027,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // a deferred tool nobody announced is unreachable, so this is the deferral's own half, not prose. A
     // fork in exact mode keeps its parent's frozen state, as above.
     if (exactRequestLayout === undefined) {
-      const deferredDelta = computeDeferredToolsDelta(deferredToolNamesToAnnounce(), messages);
+      const deferredNow = deferredToolNamesToAnnounce();
+      const offeredNow = [...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => d.advertisedName);
+      const deferredDelta = computeDeferredToolsDelta(deferredNow, offeredNow, messages);
       if (deferredDelta !== undefined) produced.push(deferredDelta);
     }
     // SDK 0.0.16 Lane N: the MID-TURN delivery. After a tool round the engine drains the
@@ -8416,6 +8482,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    *    still governs it -- strictest-of, at every reader of this function.
    */
   const declaredMcpIdentity = (toolName: string): string | undefined => {
+    // A host's own OLD name for this tool (`legacyToolNames`) is its extra identity, like an MCP spelling.
+    const legacy = legacyNameOf(toolName);
+    if (legacy !== undefined) return legacy;
     const spelled = mcpSpellingOf(toolName) ?? toolName;
     if (mcpServerRenames !== undefined) {
       for (const [actual, declared] of Object.entries(mcpServerRenames)) {
@@ -9525,7 +9594,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // hooks, `canUseTool`, denials and the executor all see the plain name); the history keeps the
         // `tool_use` exactly as the model wrote it. Not an alias redirect (P4-E): the old spelling names
         // no registered tool at all, so there is nothing else it could mean.
-        const call = getRegisteredTool(emitted.name) === undefined && emitted.name.startsWith("mcp__") ? { ...emitted, name: registeredNameForMcpSpelling(emitted.name) } : emitted;
+        // A host's `legacyToolNames` entry (an old daemon tool that became a built-in) resolves the same way.
+        const resolvedName = currentToolName(emitted.name);
+        const call = resolvedName !== emitted.name ? { ...emitted, name: resolvedName } : emitted;
         // WS-23: once a hook has stopped the turn, the round's remaining calls are not run -- each
         // still gets its tool_result (Ruling P1-G/P1-H's pairing invariant), saying why.
         const stoppedBy = currentTurnStop();

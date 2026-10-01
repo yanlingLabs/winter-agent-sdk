@@ -23,7 +23,8 @@ import { WINTER_SERVER_NAME } from "./winter-server.ts";
 // `servers` win regardless of its PRIOR origin -- re-tagged "dynamic" from that point on).
 const REPLACE_ELIGIBLE_ORIGINS: ReadonlySet<McpConfigSourceOrigin> = new Set<McpConfigSourceOrigin>(["explicit", "dynamic"]);
 
-export function createMcpControlSeam(internals: McpLifecycleInternals, opts: { reservedServerName?: string } = {}): McpControlSeam {
+export function createMcpControlSeam(internals: McpLifecycleInternals, opts: { reservedServerName?: string; hostReservedServerNames?: readonly string[] } = {}): McpControlSeam {
+  const hostReserved = new Set(opts.hostReservedServerNames ?? []);
   // P7a fix wave (item 5, I-2): the SESSION brand's standing-server name, threaded from
   // `createMcpLifecycle`. `WINTER_SERVER_NAME` is computed from `WINTER_BRAND` at module load, so
   // this door and the registry's per-session reservation disagreed under any rebrand -- see
@@ -69,6 +70,10 @@ export function createMcpControlSeam(internals: McpLifecycleInternals, opts: { r
         // this path: never partially applied, never a thrown seam.
         if (name === reservedServerName) {
           errors[name] = `"${reservedServerName}" is a reserved server identity (RULING P4-B, the standing Winter server) -- no source may configure a live MCP server under this name`;
+          continue;
+        }
+        if (hostReserved.has(name) && (raw as { type?: unknown } | null)?.type !== "sdk") {
+          errors[name] = `"${name}" is a server name this session's host reserves for its own in-process server -- only an in-process (type "sdk") server may be configured under it`;
           continue;
         }
         const result = validateServerConfig(raw);

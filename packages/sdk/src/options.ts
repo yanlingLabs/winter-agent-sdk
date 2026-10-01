@@ -429,6 +429,10 @@ export interface Options {
    * defers. See `RuntimeConfig.deferTools`.
    */
   deferTools?: string[];
+  /** DISCLOSED WINTER option: a tool's old names, `{ <old>: <current> }`. See `RuntimeConfig.legacyToolNames`. */
+  legacyToolNames?: Record<string, string>;
+  /** DISCLOSED WINTER option: MCP server names only the host's own in-process servers may use. See `RuntimeConfig.reservedMcpServerNames`. */
+  reservedMcpServerNames?: string[];
 
   // Task 6 (WS-07 §6.4): explicit, top-level, and named to be impossible to set by accident — the
   // ONLY thing that lets a session SELECT bypassPermissions (at startup, or via a later

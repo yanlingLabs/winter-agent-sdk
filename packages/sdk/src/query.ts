@@ -812,6 +812,8 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     // so it serializes as absent (one meaning, one spelling, on every transport).
     ...(Array.isArray(options.tools) ? { tools: [...options.tools] } : {}),
     ...(options.deferTools !== undefined ? { deferTools: [...options.deferTools] } : {}),
+    ...(options.legacyToolNames !== undefined ? { legacyToolNames: { ...options.legacyToolNames } } : {}),
+    ...(options.reservedMcpServerNames !== undefined ? { reservedMcpServerNames: [...options.reservedMcpServerNames] } : {}),
     // Task 6 (WS-07 §6.4): same pure-passthrough convention as every field above.
     ...(options.allowDangerouslySkipPermissions !== undefined ? { allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions } : {}),
     // Task 10 (WS-08 §1/§2/§9): the hooks structure-only wire shape (functions stripped -- see
