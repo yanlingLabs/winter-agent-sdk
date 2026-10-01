@@ -47,6 +47,7 @@ import { connectMcpServer, McpConnectError, type ConnectedMcpClient, type McpToo
 import { createElicitationAsker } from "../../mcp/elicitation.ts";
 import type { ToolSecretResult } from "../../provider/tool-secret.ts";
 import type { WebSessionRuntime } from "../../web/session-runtime.ts";
+import { siteIconHttpsUrl } from "./_site-icons.ts";
 import { backendExcludableDomains, isDomainBlocked, mergeDomainLists, normalizeDomain } from "./_domains.ts";
 
 // --- named constants ------------------------------------------------------------------------------
@@ -85,6 +86,8 @@ export interface ExaSearchHit {
   /** The result's highlight text, capped at `EXA_HIGHLIGHTS_MAX_CHARACTERS`. Empty when the backend sent none. */
   highlight: string;
   publishedDate?: string;
+  /** The result's `favicon` when the backend sent one (Exa's /search reference: "The URL of the favicon for the search result's domain"), https only. Never model-visible: `WebSearch` hands it to the HOST as `ToolResultPayload.siteIcons`. Absent from the basic text form and, as measured 2026-09-18, from the advanced JSON form too -- read when present. */
+  favicon?: string;
 }
 
 export interface ExaSearchParams {
@@ -331,7 +334,8 @@ function hitFromRecord(record: Record<string, unknown>): ExaSearchHit | undefine
   // Highlights are what was asked for; `summary` and the (capped) page `text` are what is left when the backend sent none.
   const highlight = highlightFrom(record["highlights"]) || highlightFrom(record["summary"]) || highlightFrom(record["text"]);
   const published = typeof record["publishedDate"] === "string" && record["publishedDate"].length > 0 ? record["publishedDate"] : undefined;
-  return { title, url, highlight: capText(highlight.trim(), EXA_HIGHLIGHTS_MAX_CHARACTERS), ...(published !== undefined ? { publishedDate: published } : {}) };
+  const favicon = siteIconHttpsUrl(record["favicon"]);
+  return { title, url, highlight: capText(highlight.trim(), EXA_HIGHLIGHTS_MAX_CHARACTERS), ...(published !== undefined ? { publishedDate: published } : {}), ...(favicon !== undefined ? { favicon } : {}) };
 }
 
 const FIELD_LINE = /^(Title|URL|Published(?: Date)?|Author|Highlights|Text|Summary|Content):[ \t]*(.*)$/i;

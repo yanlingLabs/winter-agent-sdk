@@ -5,7 +5,7 @@
 // second copy of this algorithm) -- see this file's own "Session runtime registry" section for why
 // that split exists and what it still needs from engine.ts.
 import type { PermissionMode } from "@yanlinglabs/winter-agent-sdk";
-import type { DeferralActivation, ToolDescriptor } from "../tools/registry.ts";
+import { registeredNameForMcpSpelling, type DeferralActivation, type ToolDescriptor } from "../tools/registry.ts";
 import type { McpServerStateSource } from "../mcp/state.ts";
 import { computeExposurePartition } from "./exposure.ts";
 import { rankCandidates, type RankableCandidate } from "./ranking.ts";
@@ -49,6 +49,10 @@ export interface ToolSearchDeps {
   platform?: NodeJS.Platform;
   capabilities?: readonly string[];
   disallowedTools?: readonly string[];
+  /** The host's `tools` (`RuntimeConfig.tools`): the built-in set, filtered exactly as `init.tools` is. */
+  tools?: readonly string[];
+  /** The engine's `currentToolName`: an old name (a renamed tool's MCP spelling, a host `legacyToolNames` entry) to the tool it means now. Default: the MCP-spelling half alone. */
+  resolveName?: (name: string) => string;
   insideSubagent?: boolean;
   familyMetadata?: { taskNative?: boolean };
   // Absent = no MCP servers/state tracked at all for this run (every session before Lane A's real
@@ -103,6 +107,7 @@ function exposureQuery(deps: ToolSearchDeps) {
     ...(deps.platform !== undefined ? { platform: deps.platform } : {}),
     ...(deps.capabilities !== undefined ? { capabilities: deps.capabilities } : {}),
     ...(deps.disallowedTools !== undefined ? { disallowedTools: deps.disallowedTools } : {}),
+    ...(deps.tools !== undefined ? { tools: deps.tools } : {}),
     ...(deps.insideSubagent !== undefined ? { insideSubagent: deps.insideSubagent } : {}),
     ...(deps.familyMetadata !== undefined ? { familyMetadata: deps.familyMetadata } : {}),
     ...(deps.toolAliases !== undefined ? { toolAliases: deps.toolAliases } : {}),
@@ -161,7 +166,12 @@ export async function executeToolSearch(input: unknown, deps: ToolSearchDeps): P
   const query = rec.query;
   const maxResults = typeof rec.max_results === "number" && Number.isFinite(rec.max_results) && rec.max_results > 0 ? Math.floor(rec.max_results) : DEFAULT_MAX_RESULTS;
   const pendingWaitMs = deps.pendingWaitMs ?? DEFAULT_PENDING_WAIT_MS;
-  const selectNames = parseSelect(query);
+  // A name the model still knows under an OLD spelling (a plain-named tool's `mcp__<server>__<tool>`, a host
+  // `legacyToolNames` entry) selects the tool it means now. Deduped AFTER resolution: `select:Browser,
+  // mcp__<server>__browser` names one tool, and it is one match.
+  const resolveName = deps.resolveName ?? registeredNameForMcpSpelling;
+  const parsedSelect = parseSelect(query);
+  const selectNames = parsedSelect === undefined ? undefined : [...new Set(parsedSelect.map(resolveName))];
 
   let attempt = runAttempt(query, selectNames, maxResults, deps);
   // "Incomplete": select mode found fewer names than requested; keyword mode found nothing at all.

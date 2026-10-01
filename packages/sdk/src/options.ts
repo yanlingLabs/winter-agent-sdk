@@ -413,6 +413,26 @@ export interface Options {
   // Registry.ts's own `AvailabilityPredicate.hiddenWhenFamilyTaskNative` consumer -- absent reads as
   // "not task-native" (shown), exactly as every existing descriptor comment already documents.
   familyMetadata?: { taskNative?: boolean };
+  /**
+   * claude's own `tools` option: the BUILT-IN tool set, by name -- an array, or the `claude_code` preset
+   * (every built-in, the same as leaving it out). It is a VISIBILITY list, unlike `allowedTools` (which
+   * pre-approves): a built-in left out is not advertised, not searchable, and refused at dispatch as a
+   * tool the model was not offered. MCP servers' tools (including an in-process server's plain-named
+   * ones, `McpSdkServerConfig.toolNames`) are never filtered by it -- name only built-ins here. Leaving
+   * `ToolSearch` out switches deferral off, as in claude. Opt-in built-ins (`Search`) are advertised only
+   * when this list names them. See `RuntimeConfig.tools`.
+   */
+  tools?: string[] | { type: "preset"; preset: "claude_code" };
+  /**
+   * DISCLOSED WINTER option: tools that start DEFERRED (loaded through `ToolSearch` on first use) while
+   * Tool Search is active -- the host's way to defer a BUILT-IN (`CronList`), which otherwise never
+   * defers. See `RuntimeConfig.deferTools`.
+   */
+  deferTools?: string[];
+  /** DISCLOSED WINTER option: a tool's old names, `{ <old>: <current> }`. See `RuntimeConfig.legacyToolNames`. */
+  legacyToolNames?: Record<string, string>;
+  /** DISCLOSED WINTER option: MCP server names only the host's own in-process servers may use. See `RuntimeConfig.reservedMcpServerNames`. */
+  reservedMcpServerNames?: string[];
 
   // Task 6 (WS-07 §6.4): explicit, top-level, and named to be impossible to set by accident — the
   // ONLY thing that lets a session SELECT bypassPermissions (at startup, or via a later

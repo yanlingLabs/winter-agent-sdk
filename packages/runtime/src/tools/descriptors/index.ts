@@ -61,6 +61,7 @@ import "./task-output.ts";
 import "./task-stop.ts";
 import "./task-update.ts";
 import "./todo-write.ts";
+import "./search.ts";
 import "./tool-search.ts";
 import "./wait-for-mcp-servers.ts";
 import "./web-fetch.ts";

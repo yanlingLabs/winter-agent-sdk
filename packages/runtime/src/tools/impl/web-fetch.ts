@@ -47,6 +47,7 @@ import { convertFetchedHtml, WEB_FETCH_HTML_TRUNCATION_NOTICE } from "./_web-fet
 import { webFetchCache, WebFetchCache, type WebFetchCacheEntry } from "./_web-fetch-cache.ts";
 import { defaultResolveHost, parseFailureMessage, performWebFetch, WEB_FETCH_TIMEOUT_MS, type NormalizedPrivateAddressPolicy, type WebFetchNetDeps } from "./_web-fetch-net.ts";
 import { INNER_MODEL_BUDGET_EXCEEDED_DETAIL, runInnerModel, type InnerModelFailureCode } from "./_inner-model.ts";
+import { collectSiteIcons, pageIconUrl } from "./_site-icons.ts";
 
 const DIGEST_CONTENT_CAP = 100_000;
 const RESULT_CAP = 50_000;
@@ -114,6 +115,12 @@ async function raceAgainstAbort<T>(promise: Promise<T>, signal: AbortSignal | un
       },
     );
   });
+}
+
+/** `ToolResultPayload.siteIcons` for the page read -- host-only, never model-visible (`_site-icons.ts`). */
+function siteIconsFor(pageUrl: string, iconUrl: string | undefined): Pick<ToolResultPayload, "siteIcons"> {
+  const siteIcons = iconUrl !== undefined ? collectSiteIcons([{ url: pageUrl, iconUrl }]) : undefined;
+  return siteIcons !== undefined ? { siteIcons } : {};
 }
 
 function capResult(text: string): string {
@@ -412,6 +419,13 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
 
     let content: string;
     let contentType: string;
+    // Host-only (`ToolResultPayload.siteIcons`): the page actually read, and the icon it declares.
+    let pageUrl: string;
+    let iconUrl: string | undefined;
+    // Whether every address this page came from is PUBLIC, from verdicts the call already reached (no
+    // extra lookup): icons are reported only then -- a host fetching `<page>/favicon.ico` for a name that
+    // resolves into the user's own network would be the poke the address policy exists to prevent.
+    let addressPublic: boolean;
 
     const cached = cache.get(ctx.sessionId, inputUrlString);
     if (cached !== undefined) {
@@ -427,6 +441,7 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
       // WebFetch's own 60 s fetch timeout entirely, since a hit never reaches the fetch loop at all).
       const addressVerdict = await raceAgainstAbort(classifyHostname(stripIpv6Brackets(originalUrl.hostname), resolveHost), ctx.signal);
       if (addressVerdict === "aborted") return { output: "WebFetch was interrupted.", isError: true };
+      addressPublic = addressVerdict.class !== "private";
       if (addressVerdict.class === "private") {
         const refusal = privateAddressRefusal(originalUrl.hostname, policy, addressVerdict.reason);
         if (refusal !== undefined) return refusal;
@@ -443,6 +458,7 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
         if (isDomainBlocked(cachedHost, blockedDomains)) return { output: `${brand} is unable to fetch from ${cachedHost}`, isError: true };
         const finalVerdict = await raceAgainstAbort(classifyHostname(stripIpv6Brackets(cachedHost), resolveHost), ctx.signal);
         if (finalVerdict === "aborted") return { output: "WebFetch was interrupted.", isError: true };
+        addressPublic &&= finalVerdict.class !== "private";
         if (finalVerdict.class === "private") {
           const refusal = privateAddressRefusal(cachedHost, policy, finalVerdict.reason);
           if (refusal !== undefined) return refusal;
@@ -450,6 +466,8 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
       }
       content = cached.content;
       contentType = cached.contentType;
+      pageUrl = cached.finalUrl;
+      iconUrl = cached.iconUrl;
     } else {
       const outcome = await performWebFetch(inputUrlString, prompt, { blockedDomains, privateAddressPolicy: policy, userAgent: winterUserAgent(), ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}) }, netDeps);
       switch (outcome.kind) {
@@ -500,9 +518,13 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
 
       const kind = classifyContentType(outcome.contentType);
       if (kind === "html") {
-        content = await convertFetchedHtml(new TextDecoder("utf-8", { fatal: false }).decode(outcome.body));
+        const html = new TextDecoder("utf-8", { fatal: false }).decode(outcome.body);
+        // The page's own icon, read from the HTML already in hand -- never a second request.
+        iconUrl = pageIconUrl(html, outcome.finalUrl);
+        content = await convertFetchedHtml(html);
       } else if (kind === "text") {
         content = new TextDecoder("utf-8", { fatal: false }).decode(outcome.body);
+        iconUrl = pageIconUrl("", outcome.finalUrl); // no markup to declare one: the origin's /favicon.ico
       } else {
         const savedPath = await saveBinaryToTemp(ctx, originalUrl, outcome.body);
         const sizeLabel = `${outcome.body.byteLength.toLocaleString("en-US")} bytes`;
@@ -515,21 +537,30 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
         return { output: note };
       }
       contentType = outcome.contentType;
+      pageUrl = outcome.finalUrl;
+      // Under an effective `deny` or `ask` the fetch loop refused every private hop, so a success proves
+      // every address was public. Only `allow` (a setting, or an explicit approval) admits a private one,
+      // and nothing here knows which it was -- so no icons rather than a second resolution.
+      addressPublic = policy !== "allow";
 
       // Binary responses are never cached (deliberate deviation, see the report): the "saved to"
       // note names an ephemeral temp path that may not outlive the session incarnation that made it,
       // so re-serving it from cache on a later call could point at a file that is already gone.
-      const entry: WebFetchCacheEntry = { bytes: Buffer.byteLength(content, "utf8"), code: outcome.status, codeText: outcome.statusText, content, contentType, finalUrl: outcome.finalUrl };
+      const entry: WebFetchCacheEntry = { bytes: Buffer.byteLength(content, "utf8"), code: outcome.status, codeText: outcome.statusText, content, contentType, finalUrl: outcome.finalUrl, ...(iconUrl !== undefined ? { iconUrl } : {}) };
       cache.set(ctx.sessionId, inputUrlString, entry);
     }
 
+    // Host-only site icons are reported only for a page on a PUBLIC address (`addressPublic`, above):
+    // the host's own lexical check cannot see a resolution.
+    if (!addressPublic) iconUrl = undefined;
+
     // The preapproved verbatim passthrough: skip the digest model entirely.
     if (preapproved && contentType.toLowerCase().includes("text/markdown") && content.length < 100_000) {
-      return { output: capResult(content) };
+      return { output: capResult(content), ...siteIconsFor(pageUrl, iconUrl) };
     }
 
     const digest = await runDigest(ctx, runtime, content, prompt, preapproved);
-    return { output: capResult(digest.output), ...(digest.isError ? { isError: true } : {}) };
+    return { output: capResult(digest.output), ...(digest.isError ? { isError: true } : siteIconsFor(pageUrl, iconUrl)) };
   }
 
   return {

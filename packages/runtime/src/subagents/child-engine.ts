@@ -282,6 +282,10 @@ export interface ChildEngineFactoryDeps {
    */
   parentAutoMemory?: RuntimeConfig["autoMemory"];
   parentWeb?: RuntimeConfig["web"];
+  /** `RuntimeConfig.reservedMcpServerNames`: an agent's own inline server never takes one (it is connected under a free name instead). */
+  parentReservedMcpServerNames?: RuntimeConfig["reservedMcpServerNames"];
+  /** `RuntimeConfig.legacyToolNames`, so a child resolves the host's old tool names as its parent does. */
+  parentLegacyToolNames?: RuntimeConfig["legacyToolNames"];
   /**
    * The session's pricing, stated-model and tool-secret seams, so a CHILD's engine has what its
    * parent's has. `priceUsage` is what makes a child's generations priced at all; the cost then
@@ -434,6 +438,13 @@ interface ChildServerAllocation {
   actual: Map<string, string>;
   /** One legible line per server not connected under its declared name. */
   notes: string[];
+  /**
+   * Declared names renamed because the HOST reserves them (`RuntimeConfig.reservedMcpServerNames`). Such a
+   * server is NOT "the server the definition named" for permission purposes: its declared spelling is the
+   * host's own server's, so it never becomes an extra identity (`mcpServerRenames`) — a saved rule on the
+   * host's `mcp__<reserved>__<tool>` must not reach it. Only its connected name governs it.
+   */
+  reservedRenames: Set<string>;
   /** Releases every name this allocation claimed. Idempotent. */
   release: () => void;
 }
@@ -452,17 +463,23 @@ function renameMcpReference(entry: string, renames: ReadonlyArray<readonly [decl
   return undefined;
 }
 
-function allocateChildScopedServers(
+export function allocateChildScopedServers(
   declared: ChildMcpServers,
   parentVisible: ReadonlySet<string>,
   prefer?: ReadonlyMap<string, string>,
   parentDeclared?: Readonly<Record<string, { type?: string }>>,
+  reserved?: readonly string[],
 ): ChildServerAllocation {
   const claimed: string[] = [];
-  const inUse = (name: string): boolean => liveChildScopedServerNames.has(name) || parentVisible.has(name) || mcpServerHasRegistrations(name);
+  // A name the HOST reserved (`RuntimeConfig.reservedMcpServerNames`) is never handed to an inline
+  // server of any non-sdk type: it is renamed like a clash, so its tools can never be spelled the way
+  // the host's own server's are (the host trusts that spelling).
+  const reservedSet = new Set(reserved ?? []);
+  const inUse = (name: string): boolean => liveChildScopedServerNames.has(name) || parentVisible.has(name) || mcpServerHasRegistrations(name) || reservedSet.has(name);
   const servers: ChildMcpServers = {};
   const actual = new Map<string, string>();
   const notes: string[] = [];
+  const reservedRenames = new Set<string>();
   const claim = (name: string): void => {
     liveChildScopedServerNames.add(name);
     claimed.push(name);
@@ -475,7 +492,9 @@ function allocateChildScopedServers(
             ? `mcpServers declares the in-process server "${name}", which this session already has -- the session's "${name}" is used`
             : parentVisible.has(name)
               ? `mcpServers declares the in-process server "${name}", but this session's "${name}" is a different server -- this agent's own in-process "${name}" is not connected, and the session's is what this agent sees`
-              : `mcpServers declares the in-process server "${name}", which another agent in this session is using -- this agent's own in-process "${name}" is not connected`,
+              : reservedSet.has(name) && !liveChildScopedServerNames.has(name) && !mcpServerHasRegistrations(name)
+                ? `mcpServers declares the in-process server "${name}", a name this session's host reserves -- this agent's own in-process "${name}" is not connected`
+                : `mcpServers declares the in-process server "${name}", which another agent in this session is using -- this agent's own in-process "${name}" is not connected`,
         );
         continue;
       }
@@ -491,6 +510,7 @@ function allocateChildScopedServers(
     claim(pick);
     servers[pick] = cfg;
     actual.set(name, pick);
+    if (pick !== name && reservedSet.has(name)) reservedRenames.add(name);
     if (pick !== name) notes.push(`mcpServers declares "${name}", which is already in use in this session -- this agent's own "${name}" is connected as "${pick}" (its tools are named mcp__${pick}__<tool>)`);
   }
   let released = false;
@@ -498,6 +518,7 @@ function allocateChildScopedServers(
     servers,
     actual,
     notes,
+    reservedRenames,
     release: () => {
       if (released) return;
       released = true;
@@ -653,13 +674,13 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // --- Tool restriction (WS-10 §2) -------------------------------------------------------------
     // `inherit.tools` is the resolved allowlist (a fork's exact pool, a definition's own
     // restriction, or the session's current advertised pool for a bare child -- engine.ts's own
-    // buildChildInheritance already picked the right one). `AdvertisedSetInputs.tools` is never
-    // wired from RuntimeConfig anywhere (engine.ts, frozen, deliberately leaves it unset --
-    // registry.ts's own header: "AdvertisedSetInputs.allowedTools exists for documentation only...
-    // cfg.tools is left unset here"), so the only mechanism reachable from this lane that is
-    // actually ENFORCED (both hidden from advertisement AND denied at evaluation time, not merely
-    // hidden) is `disallowedTools` -- computed as the complement of the allowlist against every
-    // registered canonical tool name, unioned with the resolved definition's own `disallowedTools`.
+    // buildChildInheritance already picked the right one). It reaches the child TWICE: as the
+    // child's own `RuntimeConfig.tools` (the built-in visibility list -- set below from the effective
+    // set, so an opt-in built-in such as `Search` is offered exactly when the parent's pool held it),
+    // and as `disallowedTools` -- the complement of the allowlist against every registered canonical
+    // tool name, unioned with the resolved definition's own `disallowedTools`. The complement is what
+    // is ENFORCED for MCP tools too (both hidden from advertisement AND denied at evaluation time):
+    // `tools` names built-ins only and leaves MCP tools untouched.
     //
     // Spawn-surface parity (research §A6): the inherited pool is first narrowed to what a SUBAGENT
     // may hold at all -- claude's exclusion set (ExitPlanMode kept in plan mode), `Agent` only while
@@ -701,7 +722,15 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // ALLOWED tool's own capabilityRequirements: the parent necessarily already held these tokens
     // (it advertised these exact tools to its own model), so granting the identical set to the child
     // never widens anything beyond what the parent itself already had.
-    const capabilities = [...new Set(effectiveTools.flatMap((name) => getRegisteredTool(name)?.descriptor.capabilityRequirements ?? []))];
+    // A descriptor's any-of tokens (`availability.requiresAnyCapability` -- ToolSearch's) count too: the
+    // child's allowlist above is what bounds its surface, so granting every token one of its tools can be
+    // gated on never widens it.
+    const capabilities = [
+      ...new Set(effectiveTools.flatMap((name) => {
+        const descriptor = getRegisteredTool(name)?.descriptor;
+        return [...(descriptor?.capabilityRequirements ?? []), ...(descriptor?.availability.requiresAnyCapability ?? [])];
+      })),
+    ];
 
     // WS-10 §2: "tools must include Skill if skills is used" -- validation only (skills has no
     // runtime anywhere in this codebase yet). Surfaced in the eventual spawn notice text, never a
@@ -1280,7 +1309,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           // WS-24 (fix round 3): the parent's renames too -- a renamed server of an ancestor's is visible here,
         // so its declared name must govern it here as well. This generation's own win on a shared name.
         ...(() => {
-          const merged = { ...(parentMcp?.serverRenames ?? {}), ...Object.fromEntries(renames.map(([declared, actual]) => [actual, declared])) };
+          // A server renamed off a HOST-RESERVED name never answers to that name (`reservedRenames`).
+          const merged = { ...(parentMcp?.serverRenames ?? {}), ...Object.fromEntries(renames.filter(([declared]) => !servers.reservedRenames.has(declared)).map(([declared, actual]) => [actual, declared])) };
           return Object.keys(merged).length > 0 ? { mcpServerRenames: merged } : {};
         })(),
           ...(parentMcp?.visibleServerNames !== undefined
@@ -1421,6 +1451,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       // The host's auto-memory and web options -- see `ChildEngineFactoryDeps.parentAutoMemory`.
       ...(deps.parentAutoMemory !== undefined ? { autoMemory: deps.parentAutoMemory } : {}),
       ...(deps.parentWeb !== undefined ? { web: deps.parentWeb } : {}),
+      ...(deps.parentReservedMcpServerNames !== undefined ? { reservedMcpServerNames: deps.parentReservedMcpServerNames } : {}),
+      ...(deps.parentLegacyToolNames !== undefined ? { legacyToolNames: deps.parentLegacyToolNames } : {}),
       model: resolvedModel.effectiveModel,
       permissionMode: inherit.policy.effectiveMode,
       allowDangerouslySkipPermissions: inherit.policy.effectiveMode === "bypassPermissions",
@@ -1449,6 +1481,10 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       ...(req.fork === true && inherit.effectiveEffort !== undefined && typeof inherit.effectiveEffort !== "number" ? { effort: inherit.effectiveEffort } : {}),
       ...(req.fork === true && inherit.effectiveThinking !== undefined ? { thinking: inherit.effectiveThinking } : {}),
       disallowedTools,
+      // The child's resolved pool as claude's `tools` list too: `disallowedTools` above already hides
+      // every name outside it, and this is what lets an OPT-IN built-in its parent was offered (`Search`)
+      // be offered to the child as well -- an opt-in tool needs the list to name it.
+      tools: [...effectiveTools],
       capabilities,
       // SDK 0.0.16 Lane P (R3b §4): see the `allowedAgentTypes` const's own header above.
       ...(allowedAgentTypes !== undefined ? { allowedAgentTypes } : {}),
@@ -1562,7 +1598,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // own single "tool_result + directive text" wire message without a bespoke merge here.
     // WS-24: the first generation's servers, allocated (and their names claimed) here so a rename reaches
     // the child's first turn with the other definition warnings.
-    let serverAllocation = allocateChildScopedServers(childScopedMcpServers, parentVisibleServers(), undefined, parentMcp?.declaredServers);
+    let serverAllocation = allocateChildScopedServers(childScopedMcpServers, parentVisibleServers(), undefined, parentMcp?.declaredServers, deps.parentReservedMcpServerNames);
     pendingServerRelease = serverAllocation.release;
     definitionWarnings.push(...serverAllocation.notes);
     const firstTurnText =
@@ -1818,7 +1854,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // Fix round 3: a `stop()` that landed during that wait had no generation of its own to settle (the
         // previous one already had), so it is honoured here -- the new generation never starts.
         if (ticket.stopped) return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: `child ${agentId} was stopped while resuming` };
-        serverAllocation = allocateChildScopedServers(childScopedMcpServers, parentVisibleServers(), previous, parentMcp?.declaredServers);
+        serverAllocation = allocateChildScopedServers(childScopedMcpServers, parentVisibleServers(), previous, parentMcp?.declaredServers, deps.parentReservedMcpServerNames);
         const moved = [...serverAllocation.actual].filter(([declared, name]) => previous.get(declared) !== name).map(([declared, name]) => `this agent's own "${declared}" is now connected as "${name}" (its tools are named mcp__${name}__<tool>)`);
         startGeneration(generationConfig(resumeMode), rebuilt, moved.length > 0 ? `${msg.body}\n\n[winter: ${moved.join("; ")}]` : msg.body, resolvedSystemPrompt, serverAllocation);
         return { status: "resumed_and_delivered", messageId: msg.messageId };

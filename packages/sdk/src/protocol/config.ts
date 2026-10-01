@@ -367,6 +367,28 @@ export interface McpSdkServerConfig {
   // `type: "sdk"` entry with a non-conforming `instance` (e.g. query.test.ts's own stripping fixture)
   // stays byte-identical to before this field existed.
   tools?: WireMcpToolDefinition[];
+  /**
+   * WINTER-OWNED EXTENSION: advertise some of this in-process server's tools under a HOST-CHOSEN plain
+   * name instead of `mcp__<server>__<tool>` -- `{ <tool as listTools() names it>: <plain name> }`.
+   *
+   * A renamed tool is an ordinary-looking tool to the model (`Browser`, never `mcp__…`) and that ONE name
+   * is its identity everywhere a name is carried: the provider request, the transcript, the host's frames,
+   * hook inputs' `tool_name`, `canUseTool`, `permission_denials`. Underneath it is still this server's MCP
+   * tool: it defers like one (unless `_meta["anthropic/alwaysLoad"]`), the call still arrives at the host
+   * as `sdk_mcp_call {server, tool}` with the ORIGINAL tool name, and `winter_mcp_server` / `canUseTool`'s
+   * `mcpServer` still name the server. The old `mcp__<server>__<tool>` spelling stays an EQUIVALENT
+   * identity: a permission rule (`mcp__<server>__<tool>`, `mcp__<server>__*`), a bare `disallowedTools`
+   * entry or a hook matcher written against it governs the renamed tool too (strictest-of, as for an
+   * alias) -- and, as for an alias, the call is then evaluated UNDER that spelling: the hook it selected
+   * and the prompt its ask rule raised carry `mcp__<server>__<tool>` as `tool_name`. A model call under the
+   * old spelling (a resumed history) runs as the renamed tool.
+   *
+   * A plain name must look like a tool name (`[A-Za-z][A-Za-z0-9_-]*`, at most 64 characters), must not
+   * start with `mcp__`, and must not collide with any other registered tool -- a collision refuses the
+   * session at startup rather than shadowing a tool. Only an in-process (`sdk`) server may rename; the
+   * host owns it.
+   */
+  toolNames?: Record<string, string>;
 }
 export type McpServerConfigForProcessTransport = McpStdioServerConfig | McpHttpServerConfig | McpSSEServerConfig | McpSdkServerConfig;
 
@@ -550,6 +572,44 @@ export interface RuntimeConfig {
   toolSearchEnabled?: boolean;
   insideSubagent?: boolean;
   familyMetadata?: { taskNative?: boolean };
+  /**
+   * `Options.tools` (claude's own option): the BUILT-IN tool set this session is offered, by name.
+   * Absent = every built-in (claude's `claude_code` preset, which the wrapper serializes as absent).
+   * Filters built-ins only -- an MCP server's tools, a host's plain-named in-process tools and
+   * host-generated tools (`StructuredOutput`) are never named here and never filtered by it. A built-in
+   * left out is not advertised, not in ToolSearch's pool and refused at dispatch as a tool the model
+   * was not offered. `ToolSearch` left out switches deferral off (claude's rule: no search tool, no
+   * deferred tools). A few built-ins (`Search`) are OPT-IN: advertised only when this list names them.
+   */
+  tools?: string[];
+  /**
+   * Winter extension: tools that START DEFERRED -- loaded through `ToolSearch` on first use -- when Tool
+   * Search is active. A built-in otherwise never defers; an MCP tool already does (unless its
+   * `_meta["anthropic/alwaysLoad"]`, which still wins). `ToolSearch` itself is never deferred.
+   * Inert while deferral is inactive (full injection).
+   */
+  deferTools?: string[];
+  /**
+   * Winter extension: a tool's OLD names -- `{ <old name>: <current tool name> }` -- for a host whose
+   * own tool became another one (a host's in-process `mcp__<server>__Search` became the `Search`
+   * built-in). The old name keeps working everywhere a name is read: a model call under it (a resumed
+   * history taught it) runs the current tool, `ToolSearch`'s `select:` finds it, an agent definition's
+   * `tools` list keeps it, a rule, bare `disallowedTools` entry or hook matcher naming it governs the
+   * current tool (strictest-of, as for an alias). A plain-named in-process tool's own
+   * `mcp__<server>__<tool>` spelling needs no entry here: it is resolved the same way by itself. A key
+   * that names a registered tool is ignored (the live tool wins).
+   */
+  legacyToolNames?: Record<string, string>;
+  /**
+   * Winter extension: MCP server NAMES no server may take in this session except the host's own
+   * in-process (`type: "sdk"`) servers in `mcpServers` -- whatever its origin: a settings scope, a plugin's
+   * `.mcp.json`, an explicit non-sdk entry, the live `mcp_set_servers` door (each refused typed
+   * `reserved_name` and never connected), and an agent definition's inline server (connected under a
+   * renamed `<name>_<n>`, as for any clash; an inline in-process one under a reserved name is not
+   * connected). For a host whose own tools are classified by their server (trust keyed on
+   * `mcp__<server>__*`), so no foreign server can wear that spelling.
+   */
+  reservedMcpServerNames?: string[];
   // Phase 4 Task 2 (WS-09 item (a)/(c)/(d)): pure passthrough, same conditional-spread convention as
   // every field above -- query.ts never interprets these. Lane A (Task 4)/Lane C (Task 6)/[WS-14]
   // (toolAliases' official-branch redirection)/T3 (engine wiring, forwardSubagentText's forwarding

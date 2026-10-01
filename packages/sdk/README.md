@@ -128,6 +128,37 @@ runtime's own — same descriptions, same input schemas, same inner-call prompts
 Withdraw either with `disallowedTools`. `WebSearch` can also be switched off at the backend with
 `web.search.enabled: false`.
 
+- **`Search`** (opt-in, unreleased) takes `{query}` and returns Exa's answer mode: a written answer
+  and the pages it came from, in one call. It is offered only when `Options.tools` names it and
+  `web.search.authRef` names a key (the answer endpoint has no anonymous tier). The cited urls pass
+  the same `blockedDomains` floor, and a withheld source is counted in the result.
+
+All three report the icon of each site they name to the HOST only, as `winter_site_icons:
+[{url, icon_url}]` on the host-facing `tool_result` block. The model never sees it.
+
+### Shaping the tool surface (unreleased)
+
+- **`Options.tools`** — claude's own option: the built-in tool set by name, or the `claude_code`
+  preset (the same as leaving it out). A visibility list: a built-in left out is not advertised, not
+  searchable, and refused at dispatch. MCP servers' tools are never filtered by it. Without `ToolSearch`
+  in it, nothing is deferred.
+- **`Options.deferTools`** — tools that start deferred while Tool Search is active (`toolSearchEnabled`),
+  loaded through `ToolSearch` on first use. This is the only way a built-in defers.
+- **`McpSdkServerConfig.toolNames`** — plain names for an in-process server's tools (`{ browser:
+  "Browser" }`). The model, the transcript, hooks and `canUseTool` all see the plain name. The call still
+  reaches the host as `sdk_mcp_call` with the server's own tool name, and the tool still defers like an
+  MCP tool. The `mcp__<server>__<tool>` spelling stays an equivalent identity for permission rules,
+  `disallowedTools` and hook matchers; when one of those names it, the call is evaluated under that
+  spelling, as for an alias. A plain name that collides with another tool refuses the session. The old
+  spelling also selects the tool in a model call, `ToolSearch`'s `select:` and an agent definition's
+  `tools`.
+- **`Options.legacyToolNames`** — `{ <old name>: <current tool name> }` for a host's own renamed tool:
+  the old name keeps working in calls, `select:`, agent definitions, rules, `disallowedTools` and hook
+  matchers.
+- **`Options.reservedMcpServerNames`** — server names only the host's own `type: "sdk"` servers may
+  take; any other server under one (settings, project, plugin, explicit non-sdk, `mcp_set_servers`) is
+  refused, and an agent definition's inline server is renamed.
+
 - **`Options.web`** — `search.enabled`, `search.authRef` (the backend key, used only once the
   anonymous tier is exhausted), `search.maxSearchesPerCall` / `search.anonymousMaxSearchesPerCall`,
   `fetch.digestModel` / `fetch.authRef` (the page-digest model and its own credential),

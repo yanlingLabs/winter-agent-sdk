@@ -205,6 +205,7 @@ import { agentInputSchemaFor, renderAgentToolDescription, AGENT_TOOL_GATE_DEFAUL
 import type { AgentListingEntry } from "./context/agent-listing.ts";
 import {
   attachmentMessage,
+  computeDeferredToolsDelta,
   dateChangeAnnounced,
   lastPlanModeState,
   localDateString,
@@ -291,6 +292,10 @@ import {
   getRegisteredTool,
   registerMcpServerTools,
   unregisterMcpServerTools,
+  mcpSpellingOf,
+  registeredNameForMcpSpelling,
+  TOOL_SEARCH_TOOL_NAME,
+  DEFERRED_BUILTINS_CAPABILITY,
   // Phase 4 Task 3 (RULING P4-A): the single "Tool Search on" activation authority + the
   // eager/deferred/hidden partition wired on top of buildAdvertisedSet's own output.
   isDeferralActive,
@@ -315,6 +320,7 @@ import {
   resolveSessionCapabilities,
   type RegistryToolExecutorDeps,
   type ToolResultBlock,
+  type ToolResultSiteIcon,
   type McpToolDefinition,
   type DeferralActivation,
   type LoadedToolSet,
@@ -351,7 +357,8 @@ import { aliasExclusionReasons, aliasPermissionIdentities, effectiveAliasTable, 
 import { registerToolSearchSessionRuntime } from "./toolsearch/search.ts";
 // The web tools' session seam (see that module's header for why it is a keyed registry and not the
 // advisor's per-run `replaceExecutor`). Type-only in the other direction, so there is no value cycle.
-import { digestModelResolves, inheritedWebSessionFacts, registerWebSessionRuntime, searchBackendUsable, webSessionRuntimeFor, type WebSessionRuntime } from "./web/session-runtime.ts";
+import { digestModelResolves, inheritedWebSessionFacts, registerWebSessionRuntime, searchAnswerUsable, searchBackendUsable, webSessionRuntimeFor, type WebSessionRuntime } from "./web/session-runtime.ts";
+import { SEARCH_ANSWER_CAPABILITY, SEARCH_CANONICAL_NAME } from "./tools/descriptors/search.ts";
 // The model-id half of the lean-prompt rule (`sessionLeanModel`).
 import { claudeModelTakesFullPrompt } from "./provider/lean-prompt.ts";
 import { isFirstPartyAnthropic } from "./provider/first-party.ts";
@@ -1167,6 +1174,24 @@ export function toolResultsForHost(content: ContentBlock[]): ContentBlock[] {
 }
 
 /**
+ * The host's copy of a tool round's results, each `tool_result` whose call reported site icons
+ * (`ToolResultPayload.siteIcons` -- WebFetch's page icon, WebSearch's Exa favicons) carrying them as
+ * `winter_site_icons: [{url, icon_url}]`. Host-only by construction: it is applied to the frame copy at
+ * the one tool-round write, and copies every block it touches -- `toolResultsForHost` can hand back the
+ * very block objects `resultBlocks` holds, which also feed the history, the transcript and every
+ * provider request, so mutating one would put the field in front of the model.
+ */
+export function withHostSiteIcons(content: ContentBlock[], icons: ReadonlyMap<string, readonly ToolResultSiteIcon[]>): ContentBlock[] {
+  if (icons.size === 0) return content;
+  return content.map((block): ContentBlock => {
+    if (block.type !== "tool_result") return block;
+    const forCall = icons.get(block.tool_use_id);
+    if (forCall === undefined || forCall.length === 0) return block;
+    return { ...block, winter_site_icons: forCall.map((icon) => ({ url: icon.url, icon_url: icon.iconUrl })) } as ContentBlock;
+  });
+}
+
+/**
  * WS-23 (reasoning-state): the in-memory shape of an assistant entry's persisted content -- exactly what
  * `rebuildProviderMessages` (store/resume.ts) rebuilds it as on a resume: a lone text block collapses to
  * its string, anything else stays an array. Holding the same shape live keeps a live session's history
@@ -1349,7 +1374,7 @@ export interface ToolExecutor {
   // `explicitApproval` rides through to `ToolExecutionContext.permission`; see its own JSDoc.
   // `blocks` (code-mode images): when present, the model-facing content of the call's `tool_result` --
   // text and image blocks, claude's own shape -- in place of `output`, which stays the text rendering.
-  execute(call: { id: string; name: string; input: unknown }, opts?: { signal?: AbortSignal; explicitApproval?: "prompt" | "rule" }): Promise<{ output: string; blocks?: ToolResultBlock[]; isError?: boolean }>;
+  execute(call: { id: string; name: string; input: unknown }, opts?: { signal?: AbortSignal; explicitApproval?: "prompt" | "rule" }): Promise<{ output: string; blocks?: ToolResultBlock[]; isError?: boolean; siteIcons?: ToolResultSiteIcon[] }>;
 }
 
 // Ruling P1-B: the minimal, data-shaped interface the engine needs to record a session (blocks/text
@@ -2427,6 +2452,49 @@ function toolOutputReplacement(value: unknown): string | ContentBlock[] {
   }
 }
 
+/**
+ * `RuntimeConfig.legacyToolNames`: a host's OLD tool names. Every config-level rule list
+ * (`allowedTools`, `disallowedTools`, `permissions.allow`/`ask`/`deny`) that names an old one gets the same
+ * rule for the current name beside it, so a bare deny on the old name also HIDES the current tool and a
+ * scoped rule binds it -- one rewrite at the door, read by every consumer of these lists. (Rules from a
+ * settings file are reached through the call's extra identity instead -- `declaredMcpIdentity`.)
+ */
+function withLegacyToolNameRules(opts: EngineOptions): EngineOptions {
+  const legacy = opts.config.legacyToolNames;
+  if (legacy === undefined || Object.keys(legacy).length === 0) return opts;
+  const expand = (rules: readonly string[] | undefined): string[] | undefined => {
+    if (rules === undefined) return undefined;
+    const out = [...rules];
+    for (const raw of rules) {
+      const head = /^([^(]+)(.*)$/s.exec(raw.trim());
+      if (head === null) continue;
+      const target = Object.hasOwn(legacy, head[1]!) ? legacy[head[1]!] : undefined;
+      if (typeof target === "string" && target.length > 0) out.push(`${target}${head[2]}`);
+    }
+    return [...new Set(out)];
+  };
+  const config = opts.config;
+  const permissions = config.permissions;
+  return {
+    ...opts,
+    config: {
+      ...config,
+      ...(config.allowedTools !== undefined ? { allowedTools: expand(config.allowedTools)! } : {}),
+      ...(config.disallowedTools !== undefined ? { disallowedTools: expand(config.disallowedTools)! } : {}),
+      ...(permissions !== undefined
+        ? {
+            permissions: {
+              ...permissions,
+              ...(permissions.allow !== undefined ? { allow: expand(permissions.allow)! } : {}),
+              ...(permissions.ask !== undefined ? { ask: expand(permissions.ask)! } : {}),
+              ...(permissions.deny !== undefined ? { deny: expand(permissions.deny)! } : {}),
+            },
+          }
+        : {}),
+    },
+  };
+}
+
 export async function runEngine(opts: EngineOptions): Promise<number> {
   const facetDisposers: Array<() => void> = [];
   // Review r2 finding 9 (whole-branch): `runEngineBody`'s own background-shell sweep
@@ -2441,7 +2509,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // id/agentId" from `opts.config` alone.
   let sweepBackgroundShellTasksOnExit: (() => void) | undefined;
   try {
-    return await runEngineBody(opts, facetDisposers, (fn) => {
+    return await runEngineBody(withLegacyToolNameRules(opts), facetDisposers, (fn) => {
       sweepBackgroundShellTasksOnExit = fn;
     });
   } finally {
@@ -2542,6 +2610,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     resolveToolSecret: resolveToolSecretRoute,
     onPricedGeneration,
   } = opts;
+
+  /**
+   * THE one resolver from a name a model, a definition or a `select:` may still use to the tool it means
+   * now: a host's `legacyToolNames` entry, else a plain-named in-process tool's `mcp__<server>__<tool>`
+   * spelling (`registeredNameForMcpSpelling`), else the name itself. A registered name always wins (a live
+   * tool is never shadowed by an old name).
+   */
+  const legacyToolNames = config.legacyToolNames ?? {};
+  const currentToolName = (name: string): string => {
+    if (getRegisteredTool(name) !== undefined) return name;
+    const legacy = Object.hasOwn(legacyToolNames, name) ? legacyToolNames[name] : undefined;
+    if (typeof legacy === "string" && getRegisteredTool(legacy) !== undefined) return legacy;
+    return name.startsWith("mcp__") ? registeredNameForMcpSpelling(name) : name;
+  };
+  /** The inverse for identity: the host's old name for a current tool, when it gave one. */
+  const legacyNameOf = (name: string): string | undefined => Object.entries(legacyToolNames).find(([old, current]) => current === name && getRegisteredTool(old) === undefined)?.[0];
 
   // Review r2 finding 9 (whole-branch): registered BEFORE anything else in this function body can
   // throw (even the permission startup validation two lines down) -- `config.sessionId`/`agentId`
@@ -4278,7 +4362,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // "*" against the pool would hand those agents an EMPTY pool.
       tools:
         req.definition?.tools !== undefined && !req.definition.tools.includes("*")
-          ? req.definition.tools.filter((name) => currentAdvertisedCanonicalNames.includes(name))
+          ? // A definition written before a rename names the tool's OLD spelling (`currentToolName`).
+            [...new Set(req.definition.tools.map(currentToolName))].filter((name) => currentAdvertisedCanonicalNames.includes(name))
           : [...currentAdvertisedCanonicalNames],
       // WS-13c §3/§4 (P6.6): a SLOT NAME (`AgentInput.model`) becomes the catalog key that serves it,
       // and the slot it named rides along on `slot`. Everything else -- a full key, a canonical id,
@@ -4708,7 +4793,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             if (def === undefined) return undefined;
             const denyEntry = findAgentDenyRule(evalCtx.policy.rules, agentType, denyOpts);
             if (denyEntry !== undefined) return agentTypeDeniedMessage(agentType, denyEntry);
-            if (isBuiltinAllToolsDenied(def, currentAdvertisedCanonicalNames)) {
+            if (isBuiltinAllToolsDenied({ ...(def.tools !== undefined ? { tools: def.tools.map(currentToolName) } : {}) }, currentAdvertisedCanonicalNames)) {
               return `Agent type '${agentType}' is unavailable because every tool it may use is denied by the current permission settings.`;
             }
             return undefined;
@@ -4782,11 +4867,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // INACTIVE resolveDeferral collapses `deferred: true` to "eager" anyway -- so a default
         // session's advertised set is byte-identical either way; this only becomes observable once
         // activation is genuinely on, which is exactly when WS-09 §8 says these tools should defer.
-        registerMcpServerTools(serverName, toolDefs, { deferredDefault: true });
+        // `toolNames` (Winter extension): the host's PLAIN names for some of its own tools -- each is
+        // registered under that name (the model, hooks and `canUseTool` all see it) while the call
+        // still reaches the host as `sdk_mcp_call {server, tool}` with the server's own tool name.
+        const toolNames = serverCfg.toolNames;
+        registerMcpServerTools(serverName, toolDefs, { deferredDefault: true, ...(toolNames !== undefined ? { toolNames } : {}) });
         sdkMcpServerNames.push(serverName);
         const perServerTimeoutMs = serverCfg.timeout;
         for (const tool of toolDefs) {
-          const canonicalName = `mcp__${serverName}__${tool.name}`;
+          const canonicalName = toolNames !== undefined && Object.hasOwn(toolNames, tool.name) ? toolNames[tool.name]! : `mcp__${serverName}__${tool.name}`;
           replaceExecutor(canonicalName, {
             async execute(input: unknown) {
               const timeoutMs = perServerTimeoutMs ?? mcpEnvConfig.toolTimeoutMs ?? 120_000;
@@ -4885,6 +4974,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // `tools/registry.ts`'s per-session reservation must read ONE name, or a branded session both
       // spawns a child for a server it will refuse to register and refuses a name nothing occupies.
       reservedServerName: sessionBrand.mcpServerName,
+      ...(config.reservedMcpServerNames !== undefined ? { hostReservedServerNames: config.reservedMcpServerNames } : {}),
     });
     // `rejected`/`shadowed` are deliberately NOT surfaced on the wire: no frame shape exists for
     // "this server declaration lost" (WS-09 §1.2's "the losing declaration is reported" needs a
@@ -4898,6 +4988,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // ...and the same name onto the control seam's own `addAndConnect` guard (the live
       // `mcp_set_servers` door), which bypasses `resolveMcpServerSources` entirely.
       reservedServerName: sessionBrand.mcpServerName,
+      ...(config.reservedMcpServerNames !== undefined ? { hostReservedServerNames: config.reservedMcpServerNames } : {}),
       // WS-23: stdio servers start in the SESSION cwd, stated -- a spawned child used to inherit it
       // implicitly; an embedded session's Worker has only the host daemon's cwd to inherit.
       cwd: config.cwd,
@@ -4992,12 +5083,24 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // var (or its own "unset" default) governs. This closes T2's own report Concern 8 (two
   // independent, un-reconciled "is Tool Search on" signals) by making the wire boolean ONE INPUT
   // INTO the single activation resolution, never a second, independently-consulted gate.
-  const enableToolSearch: DeferralActivation["enableToolSearch"] =
-    config.toolSearchEnabled === true ? "true" : config.toolSearchEnabled === false ? "false" : mcpEnvConfig.enableToolSearch;
+  // claude's own rule (`isToolSearchToolAvailable`): a session whose `tools` list leaves `ToolSearch` out
+  // has no search tool, so nothing may be deferred behind one -- folded in HERE, into the one activation
+  // value, so the advertised partition, the ToolSearch-vs-WaitForMcpServers gate and the load-first
+  // boundary cannot disagree about it.
+  const toolSearchExcludedByTools = config.tools !== undefined && !config.tools.includes(TOOL_SEARCH_TOOL_NAME);
+  const enableToolSearch: DeferralActivation["enableToolSearch"] = toolSearchExcludedByTools
+    ? "false"
+    : config.toolSearchEnabled === true
+      ? "true"
+      : config.toolSearchEnabled === false
+        ? "false"
+        : mcpEnvConfig.enableToolSearch;
   const deferralActivation: DeferralActivation = {
     enableToolSearch,
     providerSupportsToolSearch: providerSupportsToolSearch ?? true,
     deferrableContextShare: deferrableContextShare ?? 0,
+    // The host's `deferTools` (a built-in's only way to defer) -- see `DeferralActivation.deferTools`.
+    ...(config.deferTools !== undefined ? { deferTools: config.deferTools } : {}),
   };
   // The SAME activation value derives BOTH readings from here on -- resolveDeferral's own per-
   // descriptor verdicts (via partitionAdvertisedTools, below) and this session-wide boolean can
@@ -5092,7 +5195,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return availableAgentNames(defs, {
       isDenied: (agentType) => findAgentDenyRule(evalCtx.policy.rules, agentType, denyOpts) !== undefined,
       ...(config.allowedAgentTypes !== undefined ? { allowedAgentTypes: config.allowedAgentTypes } : {}),
-      isAllToolsDenied: (def) => isBuiltinAllToolsDenied(def, currentAdvertisedCanonicalNames),
+      isAllToolsDenied: (def) => isBuiltinAllToolsDenied({ ...(def.tools !== undefined ? { tools: def.tools.map(currentToolName) } : {}) }, currentAdvertisedCanonicalNames),
     });
   }
 
@@ -5344,10 +5447,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const WEB_DERIVED_CAPABILITIES: ReadonlyArray<{ token: string; probeTool: string; fact: () => boolean }> = [
     { token: "winter.search-backend", probeTool: "WebSearch", fact: () => searchBackendUsable(webSessionRuntime) },
     { token: "winter.fetch-extractor", probeTool: "WebFetch", fact: () => digestModelResolves(webSessionRuntime) },
+    // `Search` (Exa answer mode): keyed only -- `/answer` has no anonymous tier (`searchAnswerUsable`).
+    { token: SEARCH_ANSWER_CAPABILITY, probeTool: SEARCH_CANONICAL_NAME, fact: () => searchAnswerUsable(webSessionRuntime) },
   ];
   const resolveLiveSessionCapabilities = (): string[] => {
     const base = resolveSessionCapabilities(config.capabilities, { hasMcpServers: sessionHasMcp() });
     const derived = reviewerResolves() ? [ADVISOR_CAPABILITY] : [];
+    // A host-deferred built-in (`deferTools`) is something for ToolSearch to load even in a session with
+    // no MCP server (ToolSearch's `requiresAnyCapability`).
+    if ((config.deferTools?.length ?? 0) > 0) derived.push(DEFERRED_BUILTINS_CAPABILITY);
     for (const cap of WEB_DERIVED_CAPABILITIES) {
       if (getRegisteredTool(cap.probeTool)?.executor !== undefined && cap.fact()) derived.push(cap.token);
     }
@@ -5407,6 +5515,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     mode: policyStateStore.getState().mode,
     platform: process.platform,
     ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
+    // claude's `tools` (the built-in set) -- read by every partition built from this object: the
+    // advertised one, the alias-exclusion recheck and the dispatch availability check.
+    ...(config.tools !== undefined ? { tools: config.tools } : {}),
     capabilities: sessionCapabilities,
     toolSearchEnabled: toolSearchEnabledDerived,
     ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
@@ -5604,6 +5715,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       return visibleServerToolFilter();
     },
     ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
+    // The same built-in set `init.tools` is filtered to: ToolSearch must never find a tool it withheld.
+    ...(config.tools !== undefined ? { tools: config.tools } : {}),
+    // `select:` an old name -> the tool it means now (the same resolver the dispatch loop uses).
+    resolveName: currentToolName,
     ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
     ...(config.familyMetadata !== undefined ? { familyMetadata: config.familyMetadata } : {}),
     // Fix wave, follow-up (1) / RULING P4-E amended: the HOST's own alias table, so ToolSearch's
@@ -7666,6 +7781,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // is attached to the last user message any more, so a mid-turn compaction has nothing to strand.
   const requestMessages = (context: SessionContext, effort?: EffortMarkerPlan, toolChanges?: ToolChangeRendering): ProviderMessage[] =>
     buildRequestMessages(messages, context.userContextText, { systemReminders: systemRemindersOnWire(), ...(effort !== undefined ? { effort } : {}), ...(toolChanges !== undefined ? { toolChanges } : {}) });
+  /**
+   * The DEFERRED tools to announce to the model, by the name it calls them (`deferred_tools_delta`,
+   * `scanAttachments`). Empty when nothing is deferred (deferral inactive, or an empty pool), so a session
+   * without Tool Search announces nothing. A standing-server twin of an offered native
+   * (`suppressAliasedDuplicates`' deferred alias) is not listed: the model already has that tool under its
+   * native name. Read off the LIVE partition (a server that connected since the last scan is included).
+   */
+  const deferredToolNamesToAnnounce = (): string[] => {
+    refreshAdvertisedPartition();
+    const eagerNames = new Set(advertisedPartition.eager.map((d) => d.canonicalName));
+    const twins = new Set(Object.entries(suppressionAliasTable).filter(([source]) => eagerNames.has(source)).map(([, target]) => target));
+    return [...new Set(advertisedPartition.deferred.filter((d) => !twins.has(d.canonicalName)).map((d) => d.advertisedName))];
+  };
   /** WS-23: whether opted-in reminders ride as mid-conversation `system` messages on the LIVE model. */
   const systemRemindersOnWire = (): boolean => currentModelDescription()?.wire?.midConversationSystem === true;
 
@@ -7893,6 +8021,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         const needsAuth = mcpNeedsAuthAttachment(effectiveMcpStateSource.snapshot(), messages, sessionBrand);
         if (needsAuth !== undefined) produced.push(needsAuth);
       }
+    }
+    // claude's `deferred_tools_delta`: the deferred tools the model has not been told about yet (and the
+    // ones it was told about that are gone). NOT gated on an assembler like the authored listings above:
+    // a deferred tool nobody announced is unreachable, so this is the deferral's own half, not prose. A
+    // fork in exact mode keeps its parent's frozen state, as above.
+    if (exactRequestLayout === undefined) {
+      const deferredNow = deferredToolNamesToAnnounce();
+      const offeredNow = [...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => d.advertisedName);
+      const deferredDelta = computeDeferredToolsDelta(deferredNow, offeredNow, messages);
+      if (deferredDelta !== undefined) produced.push(deferredDelta);
     }
     // SDK 0.0.16 Lane N: the MID-TURN delivery. After a tool round the engine drains the
     // `next`-priority notifications addressed to ITS OWN agent id and appends them to the tool
@@ -8336,14 +8474,25 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const cached = effectiveMcpStateSource?.snapshot().some((server) => server.name === identity.name && server.state === "cached") === true;
     return cached ? { name: identity.name, configName: identity.configName } : identity;
   };
-  /** WS-24: `mcp__<declared>[__tool]` for a call to a renamed own server (`EngineOptions.mcpServerRenames`), else `undefined`. */
+  /**
+   * The ONE extra identity a call carries beside the name it was made under, or `undefined`:
+   *  - WS-24: `mcp__<declared>[__tool]` for a call to a renamed own server (`EngineOptions.mcpServerRenames`);
+   *  - a PLAIN-NAMED in-process tool (`McpSdkServerConfig.toolNames`): its `mcp__<server>__<tool>` spelling
+   *    (`ToolDescriptor.mcpName`), so a rule, a bare deny or a hook matcher written against the MCP name
+   *    still governs it -- strictest-of, at every reader of this function.
+   */
   const declaredMcpIdentity = (toolName: string): string | undefined => {
-    if (mcpServerRenames === undefined) return undefined;
-    for (const [actual, declared] of Object.entries(mcpServerRenames)) {
-      if (toolName === `mcp__${actual}`) return `mcp__${declared}`;
-      if (toolName.startsWith(`mcp__${actual}__`)) return `mcp__${declared}__${toolName.slice(`mcp__${actual}__`.length)}`;
+    // A host's own OLD name for this tool (`legacyToolNames`) is its extra identity, like an MCP spelling.
+    const legacy = legacyNameOf(toolName);
+    if (legacy !== undefined) return legacy;
+    const spelled = mcpSpellingOf(toolName) ?? toolName;
+    if (mcpServerRenames !== undefined) {
+      for (const [actual, declared] of Object.entries(mcpServerRenames)) {
+        if (spelled === `mcp__${actual}`) return `mcp__${declared}`;
+        if (spelled.startsWith(`mcp__${actual}__`)) return `mcp__${declared}__${spelled.slice(`mcp__${actual}__`.length)}`;
+      }
     }
-    return undefined;
+    return spelled !== toolName ? spelled : undefined;
   };
   /**
    * WS-24 (fix round 3): the tool name a post-tool hook (PostToolUse / PostToolUseFailure) is matched
@@ -9416,6 +9565,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       });
 
       const resultBlocks: ContentBlock[] = [];
+      // Host-only site icons (`ToolResultPayload.siteIcons`), keyed by call id: written onto the HOST's copy
+      // of this round's frame alone (`withHostSiteIcons`), never into `resultBlocks` -- which also feed the
+      // history, the transcript and every provider request.
+      const hostSiteIcons = new Map<string, ToolResultSiteIcon[]>();
       // Set (alongside `finalResult`) exactly when a call in THIS round throws — kept as its own
       // variable, rather than re-deriving from `finalResult`, because `finalResult` can ALSO be set
       // by the provider.generate() catch above, which already does its own `break roundLoop` and
@@ -9434,7 +9587,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // finish it (splitting a large write if it has to). Counted as a round like any other, so
       // `maxTurns` still bounds a model that keeps overrunning.
       const truncatedByOutputLimit = turn.stopReason === "max_tokens";
-      for (const call of turn.calls) {
+      for (const emitted of turn.calls) {
+        // A PLAIN-NAMED in-process tool (`McpSdkServerConfig.toolNames`) still answers to its old
+        // `mcp__<server>__<tool>` spelling when the MODEL uses it -- a resumed history written before the
+        // rename teaches the model that spelling. The call runs as the registered tool (one identity:
+        // hooks, `canUseTool`, denials and the executor all see the plain name); the history keeps the
+        // `tool_use` exactly as the model wrote it. Not an alias redirect (P4-E): the old spelling names
+        // no registered tool at all, so there is nothing else it could mean.
+        // A host's `legacyToolNames` entry (an old daemon tool that became a built-in) resolves the same way.
+        const resolvedName = currentToolName(emitted.name);
+        const call = resolvedName !== emitted.name ? { ...emitted, name: resolvedName } : emitted;
         // WS-23: once a hook has stopped the turn, the round's remaining calls are not run -- each
         // still gets its tool_result (Ruling P1-G/P1-H's pairing invariant), saying why.
         const stoppedBy = currentTurnStop();
@@ -9953,6 +10115,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             ...(loadedTools.length > 0 ? { loadedTools } : {}),
             ...(loadedToolDefinitions.length > 0 ? { loadedToolDefinitions } : {}),
           });
+          if (raced.value.siteIcons !== undefined && raced.value.siteIcons.length > 0) hostSiteIcons.set(call.id, raced.value.siteIcons);
           // Task 10 (WS-08 §5; PreToolUse/PostToolUse/PostToolUseFailure "fire at the tool round"):
           // contribution-capable, observational at P2 — its own transformedOutput/extraContext
           // fields still have no consumer (a future WS-08 task's job); `classifierContext` DOES have
@@ -10097,7 +10260,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // host-visible frame stays exactly as it was before the field existed.
       // Code-mode images: the host's copy carries every image block with its `data` emptied
       // (`toolResultsForHost`) -- see that function for why the bytes stay out of the frame.
-      output.write({ type: "data", message: { type: "user", message: { content: toolResultsForHost(resultBlocks.map((b) => (b.type === "tool_result" && b.loadedTools !== undefined ? withoutLoadedTools(b) : b))) } } });
+      // Host-only site icons (`ToolResultPayload.siteIcons`) are added to THIS copy alone (`withHostSiteIcons`).
+      output.write({ type: "data", message: { type: "user", message: { content: withHostSiteIcons(toolResultsForHost(resultBlocks.map((b) => (b.type === "tool_result" && b.loadedTools !== undefined ? withoutLoadedTools(b) : b))), hostSiteIcons) } } });
       messages.push({ role: "tool", content: resultBlocks });
       await recordUser(resultBlocks);
       // WS-23: this round's hook context, right AFTER its tool results -- the request builder folds a

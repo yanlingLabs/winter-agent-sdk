@@ -34,6 +34,7 @@ import { anonymousBreakerOpen, createExaSearchClient, EXA_DEFAULT_NUM_RESULTS, e
 import { exaSearchClientForSession } from "./_exa-session-client.ts";
 import { reserveWebSearchCall, resolveMaxWebSearchesPerSession, webSearchBudgetRefusalText } from "./_search-budget.ts";
 import { assembleWebSearchOutputCapped, type WebSearchStreamEvent } from "./_web-search-assembler.ts";
+import { collectSiteIcons } from "./_site-icons.ts";
 
 type EnvBrand = Pick<BrandProfile, "envPrefix">;
 
@@ -317,6 +318,8 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
 
     // --- claude-shaped events, built from the seed search and the inner pass's own ordered steps -----
     const events: WebSearchStreamEvent[] = [];
+    // Host-only (`ToolResultPayload.siteIcons`): each listed hit's Exa favicon, in result order.
+    const iconEntries: Array<{ url: string; iconUrl: string }> = [];
     let successfulSearches = 0;
     let attemptedSearches = 0;
     let lastFailureMessage: string | undefined;
@@ -345,6 +348,7 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
       }
       successfulSearches += 1;
       events.push({ type: "search_result", hits: outcome.hits.map((h) => ({ title: h.title, url: h.url })) });
+      for (const h of outcome.hits) if (h.favicon !== undefined) iconEntries.push({ url: h.url, iconUrl: h.favicon });
     }
 
     // A pass that failed OUTRIGHT (not-wired, provider-error, aborted, ...): show whatever REAL
@@ -380,7 +384,8 @@ export function createWebSearchExecutor(deps: WebSearchExecutorDeps = {}): ToolE
     // Capped by DROPPING ITEMS, never by slicing the finished string -- a raw slice chops from the
     // END, which is exactly where the REMINDER footer lives (review fix; see
     // `renderWebSearchToolResultCapped`'s own header).
-    return { output: assembleWebSearchOutputCapped(query, events, resultCap) };
+    const siteIcons = collectSiteIcons(iconEntries);
+    return { output: assembleWebSearchOutputCapped(query, events, resultCap), ...(siteIcons !== undefined ? { siteIcons } : {}) };
   }
 
   return { execute };

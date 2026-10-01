@@ -101,6 +101,10 @@ import "./web-fetch.ts";
 // a typed "no search runtime is wired up" tool error, never a crash. The WebFetch lane adds its own
 // import here, beside this one -- see that lane's own file for its wiring note.
 import "./web-search.ts";
+// Search (Exa answer mode): the same session-keyed web runtime, and the same key locator
+// (`web.search.authRef`). Opt-in (`tools`) and keyed (`winter.search-answer`), so a default session
+// never sees it.
+import "./search.ts";
 
 // Named export mirroring `descriptors/index.ts`'s own `DESCRIPTORS_REGISTERED` precedent -- lets a
 // consumer force this module to evaluate at an explicit point, and lets a future test assert "the

@@ -17,6 +17,7 @@
 import { SEND_MESSAGE_DEFINITION, READ_NOTIFICATIONS_DEFINITION, WINTER_DEFAULT_TOOL_DEFINITIONS } from "@yanlinglabs/winter-agent-sdk/tools";
 import { WINTER_BRAND, mcpToolName, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { AGENT_TOOL_CANONICAL_NAME } from "../provider/slots.ts";
+import { getRegisteredTool } from "../tools/registry.ts";
 
 function builtinNameOf(def: { builtinName?: string; toolName: string }): string {
   return def.builtinName ?? def.toolName;
@@ -141,7 +142,9 @@ export function applySubagentToolPool(tools: readonly string[], opts: SubagentTo
     if (policyName === AGENT_TOOL_CANONICAL_NAME && !opts.mayNest) return false;
     if (!opts.background) return true;
     if (policyName === BACKGROUND_AGENT_ALWAYS_ALLOWED_TOOL) return true; // depth already checked above
-    if (name.startsWith("mcp__") && !twins.has(name)) return true;
+    // An MCP tool by its REGISTRATION, not its spelling: a host's plain-named in-process tool
+    // (`McpSdkServerConfig.toolNames` -- `Browser`) is an MCP tool with no `mcp__` prefix.
+    if (!twins.has(name) && (name.startsWith("mcp__") || getRegisteredTool(name)?.descriptor.source === "mcp")) return true;
     return allow.has(policyName);
   });
 }

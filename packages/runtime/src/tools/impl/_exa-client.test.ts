@@ -796,6 +796,17 @@ describe("review fixes: bounds, answered errors, single-flight connect, key re-r
 });
 
 describe("parseExaHits -- both measured payload shapes, tolerantly", () => {
+  test("a JSON result's `favicon` is kept when it is https to a public name, dropped otherwise, absent when not sent", () => {
+    const text = JSON.stringify({ results: [
+      { url: "https://a.example/1", title: "A", favicon: "https://a.example/favicon.ico" },
+      { url: "https://b.example/2", title: "B", favicon: "http://b.example/favicon.ico" },
+      { url: "https://c.example/3", title: "C", favicon: "https://10.0.0.1/i.png" },
+      { url: "https://d.example/4", title: "D" },
+    ] });
+    expect(parseExaHits(text).map((h) => h.favicon)).toEqual(["https://a.example/favicon.ico", undefined, undefined, undefined]);
+    expect(Object.keys(parseExaHits(text)[3]!)).not.toContain("favicon");
+  });
+
   test("the advanced tool's JSON: `highlights` is a string ARRAY; a result with no url is dropped; an `id` that is a URL stands in for a missing `url`", () => {
     const text = JSON.stringify({ requestId: "r", results: [{ id: "https://a.example/1", url: "https://a.example/1", title: " A ", publishedDate: "2026-09-05T05:39:32.000Z", highlights: ["one", "two"], text: "ignored when highlights exist" }, { title: "no url" }, { id: "https://b.example/2" }, "not-an-object"] });
     expect(parseExaHits(text)).toEqual([

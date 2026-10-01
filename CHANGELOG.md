@@ -4,6 +4,92 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## Unreleased
+
+### A host shapes the tool surface
+
+- **claude's `tools` option.** `Options.tools` takes the built-in tool set as a list of names (or the
+  `claude_code` preset, which is the same as leaving it out). It is a visibility list, not a
+  pre-approval: a built-in left out is not advertised, is not in `ToolSearch`'s pool, and a call to it
+  is answered "No such tool available". MCP servers' tools are never filtered by it. Leaving
+  `ToolSearch` out switches deferral off, as in claude. A subagent inherits its resolved pool the same
+  way.
+- **Plain names for an in-process server's tools.** `McpSdkServerConfig.toolNames` maps a tool of a
+  `type: "sdk"` server to a plain name, for example `{ browser: "Browser" }`. The model sees `Browser`,
+  never `mcp__<server>__browser`. That one name is used everywhere a name is carried: the provider
+  request, the transcript, the host's frames, hook inputs' `tool_name`, `canUseTool` and
+  `permission_denials`. Underneath it is still the server's MCP tool:
+  - it is deferred like any MCP tool, unless its `_meta["anthropic/alwaysLoad"]` is set;
+  - the call still reaches the host as `sdk_mcp_call {server, tool}`, with the server's own tool name;
+  - `winter_mcp_server`, `canUseTool`'s `mcpServer` and the hook inputs' `mcp_server_name` /
+    `mcp_tool_name` still name the server and the tool.
+  The old `mcp__<server>__<tool>` spelling is still honoured. A bare `disallowedTools` entry on it hides
+  the tool, and a permission rule (`mcp__<server>__<tool>`, `mcp__<server>__*`) or a hook matcher on it
+  governs the call; the strictest one wins, as for an alias. As for an alias, the call is then evaluated
+  under the spelling that governs: a hook selected by an old-spelling matcher, or a prompt raised by an
+  old-spelling ask rule, carries the old spelling as `tool_name`. A plain name must look like a tool name
+  and must not start with `mcp__`. A name that collides with another tool refuses the session at startup.
+- **Deferring a built-in.** `Options.deferTools` lists tools that start deferred while Tool Search is
+  active, loaded through `ToolSearch` on first use. A built-in otherwise never defers. `ToolSearch`
+  itself is never deferred, and an MCP tool's `alwaysLoad` still wins. `ToolSearch` is now offered when
+  there is a deferred built-in, even in a session with no MCP server.
+- **The model is told which tools are deferred.** Before, a deferred tool's name reached the model
+  nowhere, so it could only find one by guessing a keyword for `ToolSearch`. The runtime now writes
+  claude's `deferred_tools_delta` attachment ("The following deferred tools are now available via
+  ToolSearch: …") into the history, once per change of the pool, as claude does. A change costs one
+  appended entry and never moves the cached prefix. `ToolSearch`'s description says where to look.
+  The standing server's alias twins of offered tools are not listed.
+- **An old spelling still works everywhere a name is read.** A renamed tool's `mcp__<server>__<tool>`
+  spelling selects the renamed tool in a model call (for example from a resumed history), in
+  `ToolSearch`'s `select:` (a tool named under both spellings is one match), and in an agent
+  definition's `tools` list. A plain name may not equal
+  another registration's old spelling, nor an old spelling another registration's name: the later
+  registration is refused.
+- **`Options.legacyToolNames`** — `{ <old name>: <current tool name> }`, for a host whose own tool
+  became another one. The old name works as above, and a rule, bare `disallowedTools` entry or hook
+  matcher naming it governs the current tool (strictest-of, as for an alias). A key naming a
+  registered tool is ignored.
+- **`Options.reservedMcpServerNames`** — server names only the host's own in-process (`type: "sdk"`)
+  servers may take. A settings, project or plugin server, an explicit non-sdk entry, or one added
+  through `mcp_set_servers` under a reserved name is refused (`reserved_name`) and never connected.
+  An agent definition's inline server is connected under a renamed `<name>_<n>` that never answers
+  to the reserved spelling (no rule, matcher or identity of the host's server reaches it), and an
+  inline in-process one is not connected. A subagent inherits both options.
+- **The deferred-tools announcement no longer withdraws a tool that is still offered.** A switch to a
+  provider that cannot search makes every deferred tool eager; nothing is announced as gone then. Only
+  a tool no longer offered at all is withdrawn.
+- **A background subagent keeps a plain-named MCP tool.** Its pool now recognises an MCP tool by its
+  registration, not by an `mcp__` prefix.
+- **`Search`, Exa's answer mode, as a built-in.** One call returns a written answer and the pages it
+  came from. It was the Winter daemon's own tool (`mcp__winter__research__Search`) and is ported as it
+  was:
+  - the same request (`POST https://api.exa.ai/answer`, `{query}` only, the key in `x-api-key`, no
+    redirects followed) and the same 45 s timeout;
+  - the same rendering: the answer, then a numbered `Sources:` list;
+  - the same caps (24,000 characters of answer, 20 sources, 30,000 characters in all), each cut stated;
+  - the same unsourced, withheld and no-answer notes, and the same sentence for each failing status;
+  - the dangerous-domain floor on the cited urls, now `web.blockedDomains`.
+  The key is `web.search.authRef`, the same one `WebSearch`'s keyed tier uses, resolved through the
+  session's tool-secret resolver (over the host's `credential_resolve` when the host brokers
+  credentials). `Search` is opt-in: it is advertised only when `tools` names it and a key is named. A
+  session with no key is never offered it, because `/answer` has no anonymous tier. Error texts name no
+  host command. A host keeps its own audit line from its PostToolUse hooks. A host whose floor changes
+  mid-session adds its live list to the call's input as `blocked_domains` from a PreToolUse hook (as
+  for `WebSearch`). It is not in the advertised schema and can only add to the floor.
+- **`winter-test/calls`**, a test double for a host's own end-to-end tests. The calls it makes are
+  `CALL <Tool> <json>` lines in the user's message, made in order and one per round, by the name the
+  model is shown.
+
+### Web tools report site icons to the host
+
+- **`WebFetch`, `WebSearch` and `Search` report the icon of each site they name.** It goes to the HOST
+  only, as `winter_site_icons: [{url, icon_url}]` on the host-facing `tool_result` block. It never
+  reaches the model's content, the history, the transcript or a provider request.
+  - `WebFetch` reports the page's own declared icon (`apple-touch-icon` first, then `icon`; never a
+    mask icon, an SVG or a `data:` url), else the origin's `/favicon.ico`.
+  - `WebSearch` and `Search` pass through Exa's `favicon` for each result or citation they show.
+  - At most 10 entries, https only, public names only, each url at most 2048 characters.
+
 ## 0.0.36
 
 ### The model can see images it reads

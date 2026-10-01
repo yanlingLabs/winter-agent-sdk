@@ -4329,6 +4329,48 @@ describe("WS-24 fix round 3: a renamed server stays governed at every depth; a s
     expect(seen.filter((x) => x.subtype === "permission")).toEqual([{ subtype: "permission", toolName: "mcp__srv__shout", mcpServer: identity }]);
   }, 30_000);
 
+  test("an inline server renamed off a HOST-RESERVED name never answers to the reserved spelling: no rule, matcher or identity of the host's server reaches it", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const seen: Array<{ subtype: string; event?: string; toolName?: string; mcpServer?: unknown }> = [];
+    await withHttpFixture(shoutSpec(() => {}), async (childUrl) => {
+      const req: SpawnChildRequest = {
+        parentToolUseId: "call-1", prompt: "shout", runInBackground: false,
+        definition: { description: "child wearing a reserved name", prompt: "persona", mcpServers: [{ srv: { type: "http", url: childUrl.href } }] },
+      };
+      const { code } = await driveParentAnswering(
+        {
+          provider: scriptedProvider([{ kind: "tool_use", calls: [{ id: "c1", name: "mcp__srv_2__shout", input: {} }] }, { kind: "text", text: "child done" }]),
+          env: { MCP_CONNECTION_NONBLOCKING: "0" },
+          parentReservedMcpServerNames: ["srv"],
+          // A matcher on the RESERVED spelling must not fire for the renamed server's call.
+          parentHooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }], PostToolUse: [{ matcher: "mcp__srv__shout", hookCount: 1, source: "sdk" }] },
+        },
+        // The host's saved ASK rule on its own `srv` must not govern the impostor (and, the other way, an allow
+        // on it would not widen to it): under bypass the renamed call runs with no prompt.
+        baseConfig({ sessionId: `reserved-rename-${randomUUID()}`, reservedMcpServerNames: ["srv"], permissions: { ask: ["mcp__srv__shout"] } }),
+        [
+          { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+          { kind: "text", text: "parent done" },
+        ],
+        (frame) => {
+          const subtype = (frame as { subtype?: string }).subtype ?? "";
+          const payload = (frame as { payload?: { event?: string; toolName?: string; mcpServer?: unknown } }).payload;
+          if ((subtype === "hook" || subtype === "permission") && payload?.toolName?.startsWith("mcp__srv")) {
+            seen.push({ subtype, ...(payload.event !== undefined ? { event: payload.event } : {}), toolName: payload.toolName, ...(payload.mcpServer !== undefined ? { mcpServer: payload.mcpServer } : {}) });
+          }
+          return subtype === "permission" ? { ok: true, payload: { behavior: "allow" } } : { ok: true, payload: {} };
+        },
+      );
+      expect(code).toBe(0);
+    });
+    const pre = seen.find((s) => s.event === "PreToolUse");
+    expect(pre?.toolName).toBe("mcp__srv_2__shout");
+    expect(pre?.mcpServer).toEqual({ name: "srv_2", configName: "srv_2" });
+    expect(seen.filter((s) => s.event === "PostToolUse")).toEqual([]);
+    expect(seen.filter((s) => s.subtype === "permission")).toEqual([]);
+  }, 30_000);
+
   test("stop() while a resume waits for the previous generation's teardown cancels that resume: no new generation starts", async () => {
     const PROBE = "ws24_resume_then_stop";
     let outcome = "";

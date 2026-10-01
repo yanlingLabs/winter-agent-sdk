@@ -380,7 +380,20 @@ export type WireContentBlock =
   // reader (or a differential fixture asserting the pinned shape) sees a normal, non-error result.
   // Typed here as the wire contract; the engine-side producer (`engine.ts:~5965`, setting it from
   // `ToolResultPayload.isError`) is a separate lane's edit -- see that lane's own report.
-  | { type: "tool_result"; tool_use_id: string; content: string | WireContentBlock[]; is_error?: boolean; [k: string]: unknown }
+  | {
+      type: "tool_result";
+      tool_use_id: string;
+      content: string | WireContentBlock[];
+      is_error?: boolean;
+      /**
+       * Winter-only, HOST-facing frame only (never model-visible, never in a transcript): the sites a web
+       * tool's result names and the icon the tool knows for each -- `WebFetch`'s page icon (the page's
+       * own declared `<link rel=icon>`, else its origin's `/favicon.ico`), `WebSearch`'s Exa `favicon`.
+       * At most 10 entries; every url https. Absent on every other result.
+       */
+      winter_site_icons?: Array<{ url: string; icon_url: string }>;
+      [k: string]: unknown;
+    }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string }; [k: string]: unknown };
 
 export type WireStreamEventDelta =
