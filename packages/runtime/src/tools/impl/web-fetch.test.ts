@@ -111,6 +111,7 @@ beforeEach(() => {
       const url = new URL(req.url);
       const p = url.pathname;
       if (p === "/html") return new Response("<h1>Title</h1><p>Hello <b>world</b>.</p>", { headers: { "content-type": "text/html; charset=utf-8" } });
+      if (p === "/icon-page") return new Response('<html><head><link rel="mask-icon" href="/mask.svg"><link rel="icon" href="/static/icon-32.png"><link rel="apple-touch-icon" href="/touch.png?v=2&amp;x=1"></head><body><h1>Docs</h1></body></html>', { headers: { "content-type": "text/html; charset=utf-8" } });
       if (p === "/bightml") {
         const big = `<p>${"a".repeat(1_100_000)}</p>`;
         return new Response(big, { headers: { "content-type": "text/html" } });
@@ -685,7 +686,8 @@ describe("preapproved hosts", () => {
     registerWebSessionRuntime(ctx.sessionId, runtime);
     const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() }, resolveHost: async () => ["93.184.216.34"] });
     const result = await runFetch(executor, { url: "https://bun.sh/markdown-doc", prompt: "irrelevant" }, ctx);
-    expect(result).toEqual({ output: "# Real Docs\n\nSome real markdown." });
+    // The page's host-only icon rides beside it (bun.sh declares none in a markdown doc: its origin's).
+    expect(result).toEqual({ output: "# Real Docs\n\nSome real markdown.", siteIcons: [{ url: "https://bun.sh/markdown-doc", iconUrl: "https://bun.sh/favicon.ico" }] });
     expect(provider.requests).toHaveLength(0);
   });
 });
@@ -727,7 +729,8 @@ describe("cache", () => {
       registerWebSessionRuntime(ctx.sessionId, runtime);
       const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() }, resolveHost: async () => ["93.184.216.34"] });
       const result = await runFetch(executor, { url, prompt: "p" }, ctx);
-      expect(result).toEqual({ output: "digested" });
+      expect(result.output).toBe("digested");
+      expect(result.isError).toBeUndefined();
     }
 
     test("under 'deny', a resolution failure says 'could not resolve', not 'it is a private/loopback address'", async () => {
@@ -939,5 +942,41 @@ describe("digest model resolution", () => {
     const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } });
     const result = await runFetch(executor, { url: `http://127.0.0.1:${port}/html`, prompt: "p" }, ctx);
     expect(result).toEqual({ output: "No response from model" });
+  });
+});
+
+describe("site icons (host-only ToolResultPayload.siteIcons)", () => {
+  const publicHost = { resolveHost: async () => ["93.184.216.34"] };
+
+  test("an HTML page reports its own declared icon, resolved against the page -- and never in the model's output", async () => {
+    const provider = recordingProvider([{ kind: "text", text: "digested" }]);
+    const ctx = makeCtx({ sessionId: "s-icons-html" });
+    registerWebSessionRuntime(ctx.sessionId, fakeRuntime(provider));
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl(), ...publicHost }, ...publicHost });
+    const result = await runFetch(executor, { url: "https://docs.example.com/icon-page", prompt: "summarise" }, ctx);
+    expect(result).toEqual({ output: "digested", siteIcons: [{ url: "https://docs.example.com/icon-page", iconUrl: "https://docs.example.com/touch.png?v=2&x=1" }] });
+    // The digest model was shown the page's text, not its icon url.
+    expect(JSON.stringify(provider.requests)).not.toContain("touch.png");
+
+    // A cache HIT still reports it (the icon rides the cache entry).
+    const again = await runFetch(executor, { url: "https://docs.example.com/icon-page", prompt: "again" }, ctx);
+    expect(again.siteIcons).toEqual(result.siteIcons);
+  });
+
+  test("a page declaring no icon reports its origin's /favicon.ico", async () => {
+    const provider = recordingProvider([{ kind: "text", text: "digested" }]);
+    const ctx = makeCtx({ sessionId: "s-icons-plain" });
+    registerWebSessionRuntime(ctx.sessionId, fakeRuntime(provider));
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl(), ...publicHost }, ...publicHost });
+    const result = await runFetch(executor, { url: "https://plain.example.com/html", prompt: "summarise" }, ctx);
+    expect(result.siteIcons).toEqual([{ url: "https://plain.example.com/html", iconUrl: "https://plain.example.com/favicon.ico" }]);
+  });
+
+  test("a plain-http page reports none", async () => {
+    const ctx = makeCtx({ sessionId: "s-icons-http" });
+    registerWebSessionRuntime(ctx.sessionId, fakeRuntime(recordingProvider([{ kind: "text", text: "digested" }])));
+    const executor = createWebFetchExecutor({ net: { fetchImpl: loopbackFetchImpl() } });
+    const result = await runFetch(executor, { url: `http://127.0.0.1:${port}/icon-page`, prompt: "p" }, ctx);
+    expect(result).toEqual({ output: "digested" });
   });
 });

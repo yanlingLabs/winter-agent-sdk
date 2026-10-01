@@ -207,6 +207,20 @@ export interface ToolResultPayload {
    */
   blocks?: ToolResultBlock[];
   isError?: boolean;
+  /**
+   * HOST-ONLY metadata, never model-visible: the sites this result names and the icon the tool knows
+   * for each (`WebFetch`: the page's own declared icon; `WebSearch`: Exa's `favicon`). The engine
+   * writes it ONLY onto the host-facing frame's `tool_result` block, as `winter_site_icons:
+   * [{url, icon_url}]` -- never into the model-facing content, the history, the transcript or a
+   * provider request. Built through `tools/impl/_site-icons.ts`'s `collectSiteIcons` (bounded, https).
+   */
+  siteIcons?: ToolResultSiteIcon[];
+}
+
+/** One `ToolResultPayload.siteIcons` entry: a page url the result names and its icon url. */
+export interface ToolResultSiteIcon {
+  url: string;
+  iconUrl: string;
 }
 
 /**
@@ -1520,6 +1534,8 @@ export interface EngineToolResult {
    * success.
    */
   isError?: boolean;
+  /** See `ToolResultPayload.siteIcons`: host-only, written onto the host-facing frame and nowhere else. */
+  siteIcons?: ToolResultSiteIcon[];
 }
 
 export interface EngineFacingToolExecutor {
@@ -1548,7 +1564,12 @@ function notYetExecutableResult(name: string): ToolResultPayload {
 // above already writes complete, human/model-legible text into `output` itself, so folding never
 // needs to invent additional prefixing here.
 function foldResult(result: ToolResultPayload): EngineToolResult {
-  return { output: result.output, ...(result.blocks !== undefined ? { blocks: result.blocks } : {}), ...(result.isError === true ? { isError: true } : {}) };
+  return {
+    output: result.output,
+    ...(result.blocks !== undefined ? { blocks: result.blocks } : {}),
+    ...(result.isError === true ? { isError: true } : {}),
+    ...(result.siteIcons !== undefined && result.siteIcons.length > 0 ? { siteIcons: result.siteIcons } : {}),
+  };
 }
 
 export interface RegistryToolExecutorDeps {

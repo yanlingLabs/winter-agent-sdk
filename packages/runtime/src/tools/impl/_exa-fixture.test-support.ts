@@ -42,7 +42,7 @@ export interface ExaFixture {
 }
 
 /** The measured advanced-tool payload shape: one text block holding a JSON string. */
-export function advancedPayload(results: Array<{ title?: string; url: string; highlights?: string[]; text?: string }>): FixtureToolResult {
+export function advancedPayload(results: Array<{ title?: string; url: string; highlights?: string[]; text?: string; favicon?: string }>): FixtureToolResult {
   return { content: [{ type: "text", text: JSON.stringify({ requestId: "fixture", resolvedSearchType: "", results: results.map((r) => ({ id: r.url, publishedDate: "2026-09-05T05:39:32.000Z", image: "https://img.example/x.png", ...r })), searchTime: 12 }) }] };
 }
 

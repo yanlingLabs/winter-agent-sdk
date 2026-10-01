@@ -847,14 +847,14 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/runtime/src/provider/classifier/prompt.ts:272": "the `instructionsFile` option's DEFAULT; session-provider.ts passes the session brand's (M-1's fix; line shifted by WS-24 follow-up 6's text-fallback prompt addition above it)",
   "packages/runtime/src/permissions/protected.ts:92": "the SEED of the protected set; `isProtectedWrite` adds the session brand's own file per call",
   "packages/runtime/src/skills/store.ts:43": "PROJECT_PLUGIN_NAME -- Winter's own value; a session's is `SkillIndexOptions.brand.projectDirName`",
-  "packages/runtime/src/tools/impl/web-fetch.ts:96": "brandNameFor's DEFAULT for the domain-floor refusal text; the call site is `ctx.brand?.productName ?? WINTER_BRAND.productName`, a session's own brand always wins",
+  "packages/runtime/src/tools/impl/web-fetch.ts:97": "brandNameFor's DEFAULT for the domain-floor refusal text; the call site is `ctx.brand?.productName ?? WINTER_BRAND.productName`, a session's own brand always wins",
   "packages/provider-runtime/src/identity.ts:64": "DEFAULT_IDENTITY -- what the process presents as until a branded session installs its own frame",
   "packages/provider-runtime/src/continuity/handoff.ts:46": "INSTRUCTION_FILE_BASENAMES -- a recognition list beside CLAUDE.md/AGENTS.md, not a path this code writes",
   "packages/provider-runtime/src/adapters/openai/codex-config.ts:57": "the codex profile's DEFAULT originator; the wire reads `activeWinterIdentity().codexOriginator`",
   "packages/provider-runtime/src/adapters/openai/codex-config.ts:62": "CODEX_ORIGINATOR -- the same default, exported for the fixtures that assert it",
   "packages/provider-runtime/src/adapters/openai/xai-oauth.ts:63": "DOCUMENTATION ONLY (that row's own comment): nothing reads it; all three wire sites read `activeWinterIdentity().product`",
   // --- (b) the `from` side of a rename, or a comparison against the default ------------------------
-  "packages/runtime/src/tools/registry.ts:842": "RESERVED_MCP_SERVER_NAMES' module-load SEED -- the `from` side; `rebrandStandingServerTools` adds the session's own name (line shifted again by fix round 4's pluginWorkflows/workflowsPaths widening, by WS-23's comment corrections above it, and by code-mode images' `ToolResultPayload.blocks` / `modelReadsImages`)",
+  "packages/runtime/src/tools/registry.ts:856": "RESERVED_MCP_SERVER_NAMES' module-load SEED -- the `from` side; `rebrandStandingServerTools` adds the session's own name (line shifted again by fix round 4's pluginWorkflows/workflowsPaths widening, by WS-23's comment corrections above it, by code-mode images' `ToolResultPayload.blocks` / `modelReadsImages`, and by the host-only `ToolResultPayload.siteIcons`)",
   "packages/runtime/src/mcp/winter-server.ts:23": "WINTER_SERVER_NAME -- the DEFAULT for both MCP doors' `reservedServerName` (I-2's fix), and the rename's `from` side (line moved by WS-23, which deleted the unused server factory above it)",
   "packages/runtime/src/context/winter-code-preset.ts:48": "WINTER_CODE_PRESET_VERSION -- an ATTRIBUTION of who authored the preset, not a name a reuser renames",
   // --- scripts: this repository's own harness ------------------------------------------------------

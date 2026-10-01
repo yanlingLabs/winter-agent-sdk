@@ -315,6 +315,7 @@ import {
   resolveSessionCapabilities,
   type RegistryToolExecutorDeps,
   type ToolResultBlock,
+  type ToolResultSiteIcon,
   type McpToolDefinition,
   type DeferralActivation,
   type LoadedToolSet,
@@ -1167,6 +1168,24 @@ export function toolResultsForHost(content: ContentBlock[]): ContentBlock[] {
 }
 
 /**
+ * The host's copy of a tool round's results, each `tool_result` whose call reported site icons
+ * (`ToolResultPayload.siteIcons` -- WebFetch's page icon, WebSearch's Exa favicons) carrying them as
+ * `winter_site_icons: [{url, icon_url}]`. Host-only by construction: it is applied to the frame copy at
+ * the one tool-round write, and copies every block it touches -- `toolResultsForHost` can hand back the
+ * very block objects `resultBlocks` holds, which also feed the history, the transcript and every
+ * provider request, so mutating one would put the field in front of the model.
+ */
+export function withHostSiteIcons(content: ContentBlock[], icons: ReadonlyMap<string, readonly ToolResultSiteIcon[]>): ContentBlock[] {
+  if (icons.size === 0) return content;
+  return content.map((block): ContentBlock => {
+    if (block.type !== "tool_result") return block;
+    const forCall = icons.get(block.tool_use_id);
+    if (forCall === undefined || forCall.length === 0) return block;
+    return { ...block, winter_site_icons: forCall.map((icon) => ({ url: icon.url, icon_url: icon.iconUrl })) } as ContentBlock;
+  });
+}
+
+/**
  * WS-23 (reasoning-state): the in-memory shape of an assistant entry's persisted content -- exactly what
  * `rebuildProviderMessages` (store/resume.ts) rebuilds it as on a resume: a lone text block collapses to
  * its string, anything else stays an array. Holding the same shape live keeps a live session's history
@@ -1349,7 +1368,7 @@ export interface ToolExecutor {
   // `explicitApproval` rides through to `ToolExecutionContext.permission`; see its own JSDoc.
   // `blocks` (code-mode images): when present, the model-facing content of the call's `tool_result` --
   // text and image blocks, claude's own shape -- in place of `output`, which stays the text rendering.
-  execute(call: { id: string; name: string; input: unknown }, opts?: { signal?: AbortSignal; explicitApproval?: "prompt" | "rule" }): Promise<{ output: string; blocks?: ToolResultBlock[]; isError?: boolean }>;
+  execute(call: { id: string; name: string; input: unknown }, opts?: { signal?: AbortSignal; explicitApproval?: "prompt" | "rule" }): Promise<{ output: string; blocks?: ToolResultBlock[]; isError?: boolean; siteIcons?: ToolResultSiteIcon[] }>;
 }
 
 // Ruling P1-B: the minimal, data-shaped interface the engine needs to record a session (blocks/text
@@ -9416,6 +9435,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       });
 
       const resultBlocks: ContentBlock[] = [];
+      // Host-only site icons (`ToolResultPayload.siteIcons`), keyed by call id: written onto the HOST's copy
+      // of this round's frame alone (`withHostSiteIcons`), never into `resultBlocks` -- which also feed the
+      // history, the transcript and every provider request.
+      const hostSiteIcons = new Map<string, ToolResultSiteIcon[]>();
       // Set (alongside `finalResult`) exactly when a call in THIS round throws — kept as its own
       // variable, rather than re-deriving from `finalResult`, because `finalResult` can ALSO be set
       // by the provider.generate() catch above, which already does its own `break roundLoop` and
@@ -9953,6 +9976,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             ...(loadedTools.length > 0 ? { loadedTools } : {}),
             ...(loadedToolDefinitions.length > 0 ? { loadedToolDefinitions } : {}),
           });
+          if (raced.value.siteIcons !== undefined && raced.value.siteIcons.length > 0) hostSiteIcons.set(call.id, raced.value.siteIcons);
           // Task 10 (WS-08 §5; PreToolUse/PostToolUse/PostToolUseFailure "fire at the tool round"):
           // contribution-capable, observational at P2 — its own transformedOutput/extraContext
           // fields still have no consumer (a future WS-08 task's job); `classifierContext` DOES have
@@ -10097,7 +10121,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // host-visible frame stays exactly as it was before the field existed.
       // Code-mode images: the host's copy carries every image block with its `data` emptied
       // (`toolResultsForHost`) -- see that function for why the bytes stay out of the frame.
-      output.write({ type: "data", message: { type: "user", message: { content: toolResultsForHost(resultBlocks.map((b) => (b.type === "tool_result" && b.loadedTools !== undefined ? withoutLoadedTools(b) : b))) } } });
+      // Host-only site icons (`ToolResultPayload.siteIcons`) are added to THIS copy alone (`withHostSiteIcons`).
+      output.write({ type: "data", message: { type: "user", message: { content: withHostSiteIcons(toolResultsForHost(resultBlocks.map((b) => (b.type === "tool_result" && b.loadedTools !== undefined ? withoutLoadedTools(b) : b))), hostSiteIcons) } } });
       messages.push({ role: "tool", content: resultBlocks });
       await recordUser(resultBlocks);
       // WS-23: this round's hook context, right AFTER its tool results -- the request builder folds a

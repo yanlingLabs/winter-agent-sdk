@@ -36,6 +36,8 @@ export interface WebFetchCacheEntry {
   contentType: string;
   /** The URL actually fetched (after the https upgrade and any auto-followed same-host redirect) -- may differ from the cache key. */
   finalUrl: string;
+  /** The page's icon url (`_site-icons.ts`'s `pageIconUrl`), kept so a cache HIT still reports it to the host. */
+  iconUrl?: string;
 }
 
 interface StoredEntry {

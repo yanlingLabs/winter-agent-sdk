@@ -264,6 +264,28 @@ describe("a real pass against the Exa fixture", () => {
     });
   });
 
+  test("each hit's Exa favicon reaches the HOST as siteIcons, in result order, and never the model's output", async () => {
+    const results = [
+      { title: "A", url: "https://a.example.com/1", favicon: "https://a.example.com/favicon.ico" },
+      { title: "B", url: "https://b.example.org/2" }, // Exa sent no favicon for this one
+      { title: "C", url: "https://c.example.net/3", favicon: "http://c.example.net/favicon.ico" }, // never plain http
+      { title: "D", url: "https://d.example.com/4", favicon: "https://cdn.example.net/d.png" },
+    ];
+    await withExaFixture({ respond: () => advancedPayload(results) }, async (fixture) => {
+      const state = createExaBackendState();
+      const ctx = makeCtx("p-icons");
+      runtimeWith("p-icons", scriptedProvider([{ kind: "text", text: "found them" }]));
+      const result = await run({ query: "icons please" }, ctx, { fixture, state });
+      expect(result.siteIcons).toEqual([
+        { url: "https://a.example.com/1", iconUrl: "https://a.example.com/favicon.ico" },
+        { url: "https://d.example.com/4", iconUrl: "https://cdn.example.net/d.png" },
+      ]);
+      expect(result.output).toContain("https://a.example.com/1");
+      expect(result.output).not.toContain("favicon");
+      expect(result.output).not.toContain("cdn.example.net");
+    });
+  });
+
   test("allowed_domains routes to the advanced tool; the host's blocked-domain floor is filtered OUT of what reaches Exa", async () => {
     await withExaFixture({}, async (fixture) => {
       const state = createExaBackendState();
