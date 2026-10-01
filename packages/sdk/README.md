@@ -136,7 +136,7 @@ Withdraw either with `disallowedTools`. `WebSearch` can also be switched off at 
 All three report the icon of each site they name to the HOST only, as `winter_site_icons:
 [{url, icon_url}]` on the host-facing `tool_result` block. The model never sees it.
 
-### Shaping the tool surface (unreleased)
+### Shaping the tool surface (0.0.37)
 
 - **`Options.tools`** — claude's own option: the built-in tool set by name, or the `claude_code`
   preset (the same as leaving it out). A visibility list: a built-in left out is not advertised, not
