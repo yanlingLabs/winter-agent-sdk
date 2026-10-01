@@ -148,7 +148,8 @@ All three report the icon of each site they name to the HOST only, as `winter_si
   "Browser" }`). The model, the transcript, hooks and `canUseTool` all see the plain name. The call still
   reaches the host as `sdk_mcp_call` with the server's own tool name, and the tool still defers like an
   MCP tool. The `mcp__<server>__<tool>` spelling stays an equivalent identity for permission rules,
-  `disallowedTools` and hook matchers. A plain name that collides with another tool refuses the session.
+  `disallowedTools` and hook matchers; when one of those names it, the call is evaluated under that
+  spelling, as for an alias. A plain name that collides with another tool refuses the session.
 
 - **`Options.web`** — `search.enabled`, `search.authRef` (the backend key, used only once the
   anonymous tier is exhausted), `search.maxSearchesPerCall` / `search.anonymousMaxSearchesPerCall`,

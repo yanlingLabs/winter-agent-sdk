@@ -163,6 +163,9 @@ describe("plain-named in-process tools (`toolNames`)", () => {
     const pre = d.hookPayloads.filter((p) => p["event"] === "PreToolUse");
     expect(pre).toHaveLength(1);
     expect(pre[0]?.["mcpToolName"]).toBe("browser");
+    // The identity FOLLOWS what governs (as for an alias): the matcher named the old spelling, so the
+    // hook runs under it. Unmatched hooks see the plain name (the test above).
+    expect(pre[0]?.["toolName"]).toBe(`mcp__${BROWSER_SERVER}__browser`);
   });
 
   test("the OLD spelling still governs as an ALLOW rule: in default mode the plain-named call runs with no prompt (a saved rule keeps working)", async () => {
@@ -182,6 +185,8 @@ describe("plain-named in-process tools (`toolNames`)", () => {
     expect(bypass.permissionPayloads).toEqual([]);
     const asked = await drive({ mcpServers: plainServer(), permissions: { ask: [`mcp__${BROWSER_SERVER}__spawn`] } }, script);
     expect(asked.permissionPayloads.length).toBe(1);
+    // …and the prompt names the spelling the governing rule named (strictest-of identity, as for an alias).
+    expect(asked.permissionPayloads[0]!["toolName"] ?? asked.permissionPayloads[0]!["tool_name"]).toBe(`mcp__${BROWSER_SERVER}__spawn`);
     // The host answered allow, so it ran.
     expect(asked.sdkCalls).toEqual([{ server: BROWSER_SERVER, tool: "spawn", arguments: {} }]);
   });

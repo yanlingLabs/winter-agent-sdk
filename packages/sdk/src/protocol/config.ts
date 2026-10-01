@@ -377,9 +377,11 @@ export interface McpSdkServerConfig {
    * tool: it defers like one (unless `_meta["anthropic/alwaysLoad"]`), the call still arrives at the host
    * as `sdk_mcp_call {server, tool}` with the ORIGINAL tool name, and `winter_mcp_server` / `canUseTool`'s
    * `mcpServer` still name the server. The old `mcp__<server>__<tool>` spelling stays an EQUIVALENT
-   * identity: a permission rule (`mcp__<server>__<tool>`, `mcp__<server>`, `mcp__<server>__*`), a bare
-   * `disallowedTools` entry or a hook matcher written against it governs the renamed tool too
-   * (strictest-of, as for an alias).
+   * identity: a permission rule (`mcp__<server>__<tool>`, `mcp__<server>__*`), a bare `disallowedTools`
+   * entry or a hook matcher written against it governs the renamed tool too (strictest-of, as for an
+   * alias) -- and, as for an alias, the call is then evaluated UNDER that spelling: the hook it selected
+   * and the prompt its ask rule raised carry `mcp__<server>__<tool>` as `tool_name`. A model call under the
+   * old spelling (a resumed history) runs as the renamed tool.
    *
    * A plain name must look like a tool name (`[A-Za-z][A-Za-z0-9_-]*`, at most 64 characters), must not
    * start with `mcp__`, and must not collide with any other registered tool -- a collision refuses the

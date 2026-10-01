@@ -25,8 +25,10 @@ corresponds to one `chore(release): vX.Y.Z` commit.
     `mcp_tool_name` still name the server and the tool.
   The old `mcp__<server>__<tool>` spelling is still honoured. A bare `disallowedTools` entry on it hides
   the tool, and a permission rule (`mcp__<server>__<tool>`, `mcp__<server>__*`) or a hook matcher on it
-  governs the call; the strictest one wins, as for an alias. A plain name must look like a tool name and
-  must not start with `mcp__`. A name that collides with another tool refuses the session at startup.
+  governs the call; the strictest one wins, as for an alias. As for an alias, the call is then evaluated
+  under the spelling that governs: a hook selected by an old-spelling matcher, or a prompt raised by an
+  old-spelling ask rule, carries the old spelling as `tool_name`. A plain name must look like a tool name
+  and must not start with `mcp__`. A name that collides with another tool refuses the session at startup.
 - **Deferring a built-in.** `Options.deferTools` lists tools that start deferred while Tool Search is
   active, loaded through `ToolSearch` on first use. A built-in otherwise never defers. `ToolSearch`
   itself is never deferred, and an MCP tool's `alwaysLoad` still wins. `ToolSearch` is now offered when
