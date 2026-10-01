@@ -52,8 +52,9 @@ corresponds to one `chore(release): vX.Y.Z` commit.
 - **`Options.reservedMcpServerNames`** — server names only the host's own in-process (`type: "sdk"`)
   servers may take. A settings, project or plugin server, an explicit non-sdk entry, or one added
   through `mcp_set_servers` under a reserved name is refused (`reserved_name`) and never connected.
-  An agent definition's inline server is connected under a renamed `<name>_<n>`, and an inline
-  in-process one is not connected. A subagent inherits both options.
+  An agent definition's inline server is connected under a renamed `<name>_<n>` that never answers
+  to the reserved spelling (no rule, matcher or identity of the host's server reaches it), and an
+  inline in-process one is not connected. A subagent inherits both options.
 - **The deferred-tools announcement no longer withdraws a tool that is still offered.** A switch to a
   provider that cannot search makes every deferred tool eager; nothing is announced as gone then. Only
   a tool no longer offered at all is withdrawn.

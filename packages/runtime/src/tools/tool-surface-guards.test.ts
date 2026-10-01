@@ -63,6 +63,8 @@ describe("`reservedMcpServerNames`: only the host's own in-process server may ho
       expect(allocation.actual.get("host__research")).toBe("host__research_2");
       expect(Object.keys(allocation.servers)).toEqual(["host__research_2"]);
       expect(allocation.notes.join("\n")).toContain('connected as "host__research_2"');
+      // …and it is recorded as a RESERVED rename: its declared spelling never becomes an identity of it.
+      expect([...allocation.reservedRenames]).toEqual(["host__research"]);
     } finally {
       allocation.release();
     }

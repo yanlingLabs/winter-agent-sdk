@@ -438,6 +438,13 @@ interface ChildServerAllocation {
   actual: Map<string, string>;
   /** One legible line per server not connected under its declared name. */
   notes: string[];
+  /**
+   * Declared names renamed because the HOST reserves them (`RuntimeConfig.reservedMcpServerNames`). Such a
+   * server is NOT "the server the definition named" for permission purposes: its declared spelling is the
+   * host's own server's, so it never becomes an extra identity (`mcpServerRenames`) — a saved rule on the
+   * host's `mcp__<reserved>__<tool>` must not reach it. Only its connected name governs it.
+   */
+  reservedRenames: Set<string>;
   /** Releases every name this allocation claimed. Idempotent. */
   release: () => void;
 }
@@ -472,6 +479,7 @@ export function allocateChildScopedServers(
   const servers: ChildMcpServers = {};
   const actual = new Map<string, string>();
   const notes: string[] = [];
+  const reservedRenames = new Set<string>();
   const claim = (name: string): void => {
     liveChildScopedServerNames.add(name);
     claimed.push(name);
@@ -502,6 +510,7 @@ export function allocateChildScopedServers(
     claim(pick);
     servers[pick] = cfg;
     actual.set(name, pick);
+    if (pick !== name && reservedSet.has(name)) reservedRenames.add(name);
     if (pick !== name) notes.push(`mcpServers declares "${name}", which is already in use in this session -- this agent's own "${name}" is connected as "${pick}" (its tools are named mcp__${pick}__<tool>)`);
   }
   let released = false;
@@ -509,6 +518,7 @@ export function allocateChildScopedServers(
     servers,
     actual,
     notes,
+    reservedRenames,
     release: () => {
       if (released) return;
       released = true;
@@ -1299,7 +1309,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           // WS-24 (fix round 3): the parent's renames too -- a renamed server of an ancestor's is visible here,
         // so its declared name must govern it here as well. This generation's own win on a shared name.
         ...(() => {
-          const merged = { ...(parentMcp?.serverRenames ?? {}), ...Object.fromEntries(renames.map(([declared, actual]) => [actual, declared])) };
+          // A server renamed off a HOST-RESERVED name never answers to that name (`reservedRenames`).
+          const merged = { ...(parentMcp?.serverRenames ?? {}), ...Object.fromEntries(renames.filter(([declared]) => !servers.reservedRenames.has(declared)).map(([declared, actual]) => [actual, declared])) };
           return Object.keys(merged).length > 0 ? { mcpServerRenames: merged } : {};
         })(),
           ...(parentMcp?.visibleServerNames !== undefined
