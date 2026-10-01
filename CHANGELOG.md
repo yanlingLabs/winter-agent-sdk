@@ -4,6 +4,61 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## Unreleased
+
+### A host shapes the tool surface
+
+- **claude's `tools` option.** `Options.tools` takes the built-in tool set as a list of names (or the
+  `claude_code` preset, which is the same as leaving it out). It is a visibility list, not a
+  pre-approval: a built-in left out is not advertised, is not in `ToolSearch`'s pool, and a call to it
+  is answered "No such tool available". MCP servers' tools are never filtered by it. Leaving
+  `ToolSearch` out switches deferral off, as in claude. A subagent inherits its resolved pool the same
+  way.
+- **Plain names for an in-process server's tools.** `McpSdkServerConfig.toolNames` maps a tool of a
+  `type: "sdk"` server to a plain name, for example `{ browser: "Browser" }`. The model sees `Browser`,
+  never `mcp__<server>__browser`. That one name is used everywhere a name is carried: the provider
+  request, the transcript, the host's frames, hook inputs' `tool_name`, `canUseTool` and
+  `permission_denials`. Underneath it is still the server's MCP tool:
+  - it is deferred like any MCP tool, unless its `_meta["anthropic/alwaysLoad"]` is set;
+  - the call still reaches the host as `sdk_mcp_call {server, tool}`, with the server's own tool name;
+  - `winter_mcp_server`, `canUseTool`'s `mcpServer` and the hook inputs' `mcp_server_name` /
+    `mcp_tool_name` still name the server and the tool.
+  The old `mcp__<server>__<tool>` spelling is still honoured. A bare `disallowedTools` entry on it hides
+  the tool, and a permission rule (`mcp__<server>__<tool>`, `mcp__<server>__*`) or a hook matcher on it
+  governs the call; the strictest one wins, as for an alias. A plain name must look like a tool name and
+  must not start with `mcp__`. A name that collides with another tool refuses the session at startup.
+- **Deferring a built-in.** `Options.deferTools` lists tools that start deferred while Tool Search is
+  active, loaded through `ToolSearch` on first use. A built-in otherwise never defers. `ToolSearch`
+  itself is never deferred, and an MCP tool's `alwaysLoad` still wins. `ToolSearch` is now offered when
+  there is a deferred built-in, even in a session with no MCP server.
+- **`Search`, Exa's answer mode, as a built-in.** One call returns a written answer and the pages it
+  came from. It was the Winter daemon's own tool (`mcp__winter__research__Search`) and is ported as it
+  was:
+  - the same request (`POST https://api.exa.ai/answer`, `{query}` only, the key in `x-api-key`, no
+    redirects followed) and the same 45 s timeout;
+  - the same rendering: the answer, then a numbered `Sources:` list;
+  - the same caps (24,000 characters of answer, 20 sources, 30,000 characters in all), each cut stated;
+  - the same unsourced, withheld and no-answer notes, and the same sentence for each failing status;
+  - the dangerous-domain floor on the cited urls, now `web.blockedDomains`.
+  The key is `web.search.authRef`, the same one `WebSearch`'s keyed tier uses, resolved through the
+  session's tool-secret resolver (over the host's `credential_resolve` when the host brokers
+  credentials). `Search` is opt-in: it is advertised only when `tools` names it and a key is named. A
+  session with no key is never offered it, because `/answer` has no anonymous tier. Error texts name no
+  host command, and the daemon's audit line has no counterpart.
+- **`winter-test/calls`**, a test double for a host's own end-to-end tests. The calls it makes are
+  `CALL <Tool> <json>` lines in the user's message, made in order and one per round, by the name the
+  model is shown.
+
+### Web tools report site icons to the host
+
+- **`WebFetch`, `WebSearch` and `Search` report the icon of each site they name.** It goes to the HOST
+  only, as `winter_site_icons: [{url, icon_url}]` on the host-facing `tool_result` block. It never
+  reaches the model's content, the history, the transcript or a provider request.
+  - `WebFetch` reports the page's own declared icon (`apple-touch-icon` first, then `icon`; never a
+    mask icon, an SVG or a `data:` url), else the origin's `/favicon.ico`.
+  - `WebSearch` and `Search` pass through Exa's `favicon` for each result or citation they show.
+  - At most 10 entries, https only, public names only, each url at most 2048 characters.
+
 ## 0.0.36
 
 ### The model can see images it reads
