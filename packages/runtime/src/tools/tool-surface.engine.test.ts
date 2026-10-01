@@ -255,6 +255,19 @@ describe("`tools` (claude's own option): the built-in set", () => {
     expect(String(toolResult(d.frames, "c1")?.["content"])).toContain("No such tool available: Bash");
   });
 
+  test("nothing reaches `init.tools` around the list: with an advisor configured, a key named and MCP servers declared, only the named built-ins (and MCP tools) are offered", async () => {
+    // A host that checks `init.tools` against its own `tools` list (Winter refuses the incarnation on a
+    // mismatch) relies on this: no registration path may skip the filter.
+    const d = await drive(
+      { mcpServers: plainServer(), tools: ["Read"], advisor: { model: "winter-test/echo" }, toolSearchEnabled: true, web: { search: { authRef: { kind: "keychain", account: "exa-api-key", service: "t" } } } },
+      [],
+      { resolveToolSecret: async () => ({ status: "found", key: "k" }) },
+    );
+    const plain = new Set(["Browser", "SpawnSession"]);
+    expect(initTools(d.frames).filter((n) => n !== "Read" && !plain.has(n) && !n.startsWith("mcp__"))).toEqual([]);
+    expect(names(d.requests[0]).filter((n) => n !== "Read" && !plain.has(n) && !n.startsWith("mcp__"))).toEqual([]);
+  });
+
   test("leaving `ToolSearch` out switches deferral off even with Tool Search enabled (claude's rule)", async () => {
     const d = await drive({ mcpServers: plainServer(), tools: ["Read"], toolSearchEnabled: true }, []);
     expect(names(d.requests[0])).toEqual(expect.arrayContaining(["Read", "Browser", "SpawnSession"]));
@@ -432,6 +445,35 @@ describe("old names keep working: a renamed tool's MCP spelling, a host's `legac
       expect(messages(denied.frames).some((m) => m["type"] === "system" && m["subtype"] === "permission_denied")).toBe(true);
       expect(seen).toEqual([]);
     });
+  });
+
+  test("a hook matcher, an ask rule and an allow rule written against the legacy name govern the current tool", async () => {
+    await withFakeExa(async (seen) => {
+      const script: ProviderTurn[] = [{ kind: "tool_use", calls: [{ id: "s1", name: "Search", input: { query: "q" } }] }, { kind: "text", text: "ok" }];
+      // The matcher fires for a `Search` call.
+      const hooked = await drive({ ...keyed, hooks: { PreToolUse: [{ hookCount: 1, source: "sdk", matcher: LEGACY }] } }, script, resolver);
+      expect(hooked.hookPayloads.filter((p) => p["event"] === "PreToolUse")).toHaveLength(1);
+      // An ask rule prompts even under bypassPermissions.
+      const asked = await drive({ ...keyed, permissions: { ask: [LEGACY] } }, script, resolver);
+      expect(asked.permissionPayloads).toHaveLength(1);
+      // An allow rule lets it run unprompted in default mode (the baseline without it prompts).
+      const base = await drive({ ...keyed, permissionMode: "default", allowDangerouslySkipPermissions: false }, script, resolver);
+      expect(base.permissionPayloads).toHaveLength(1);
+      const allowed = await drive({ ...keyed, permissionMode: "default", allowDangerouslySkipPermissions: false, allowedTools: [LEGACY] }, script, resolver);
+      expect(allowed.permissionPayloads).toEqual([]);
+      expect(String(toolResult(allowed.frames, "s1")?.["content"])).toContain("an answer");
+      expect(seen.length).toBeGreaterThanOrEqual(3);
+    });
+  });
+
+  test("ToolSearch `select:` naming one tool under both spellings returns it once", async () => {
+    const d = await drive({ mcpServers: plainServer(), toolSearchEnabled: true }, [
+      { kind: "tool_use", calls: [{ id: "c1", name: "ToolSearch", input: { query: `select:Browser,mcp__${BROWSER_SERVER}__browser` } }] },
+      { kind: "text", text: "ok" },
+    ]);
+    const content = JSON.parse(String(toolResult(d.frames, "c1")?.["content"])) as { matches: string[] };
+    expect(content.matches).toEqual(["Browser"]);
+    expect(names(d.requests[1])).toContain("Browser");
   });
 
   test("ToolSearch `select:` under a legacy name finds the tool", async () => {

@@ -167,9 +167,11 @@ export async function executeToolSearch(input: unknown, deps: ToolSearchDeps): P
   const maxResults = typeof rec.max_results === "number" && Number.isFinite(rec.max_results) && rec.max_results > 0 ? Math.floor(rec.max_results) : DEFAULT_MAX_RESULTS;
   const pendingWaitMs = deps.pendingWaitMs ?? DEFAULT_PENDING_WAIT_MS;
   // A name the model still knows under an OLD spelling (a plain-named tool's `mcp__<server>__<tool>`, a host
-  // `legacyToolNames` entry) selects the tool it means now.
+  // `legacyToolNames` entry) selects the tool it means now. Deduped AFTER resolution: `select:Browser,
+  // mcp__<server>__browser` names one tool, and it is one match.
   const resolveName = deps.resolveName ?? registeredNameForMcpSpelling;
-  const selectNames = parseSelect(query)?.map(resolveName);
+  const parsedSelect = parseSelect(query);
+  const selectNames = parsedSelect === undefined ? undefined : [...new Set(parsedSelect.map(resolveName))];
 
   let attempt = runAttempt(query, selectNames, maxResults, deps);
   // "Incomplete": select mode found fewer names than requested; keyword mode found nothing at all.

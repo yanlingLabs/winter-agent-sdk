@@ -41,7 +41,8 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   The standing server's alias twins of offered tools are not listed.
 - **An old spelling still works everywhere a name is read.** A renamed tool's `mcp__<server>__<tool>`
   spelling selects the renamed tool in a model call (for example from a resumed history), in
-  `ToolSearch`'s `select:`, and in an agent definition's `tools` list. A plain name may not equal
+  `ToolSearch`'s `select:` (a tool named under both spellings is one match), and in an agent
+  definition's `tools` list. A plain name may not equal
   another registration's old spelling, nor an old spelling another registration's name: the later
   registration is refused.
 - **`Options.legacyToolNames`** — `{ <old name>: <current tool name> }`, for a host whose own tool
