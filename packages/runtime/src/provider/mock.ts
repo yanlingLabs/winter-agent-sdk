@@ -229,17 +229,19 @@ const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   "calls",
 ]);
 
-/** One `CALL <ToolName> <json input>` line of a `winter-test/calls` prompt. */
-const CALL_LINE = /^CALL\s+(\S+)(?:\s+(.*))?$/;
+/** One `CALL <ToolName> <json input>` line of a `winter-test/calls` prompt; `+CALL` joins the previous line's round. */
+const CALL_LINE = /^(\+?)CALL\s+(\S+)(?:\s+(.*))?$/;
 
 /**
  * `winter-test/calls`: the calls to make are written in the conversation's LATEST plain-text user
  * message, one `CALL <ToolName> <json input>` line each (input `{}` when omitted). The double makes them
  * in order, ONE PER ROUND -- so a call that depends on an earlier one (a `ToolSearch` load, then the
  * loaded tool) sees it -- and then answers with the JSON of every result it got back, in order:
- * `[{name, isError, content}]`. A pure function of the messages (no queue), so any number of turns, any
- * transport, and a parent and a child sharing one instance all work. For a HOST's end-to-end tests: it
- * reaches a tool exactly as a model would, by the name the model is shown.
+ * `[{name, isError, content}]`. A line written `+CALL …` instead joins the round of the line above it, so
+ * one model turn can carry several calls (SDK 0.0.40: a host's test of results reaching it one by one).
+ * A pure function of the messages (no queue), so any number of turns, any transport, and a parent and a
+ * child sharing one instance all work. For a HOST's end-to-end tests: it reaches a tool exactly as a model
+ * would, by the name the model is shown.
  */
 function promptedCallsProvider(): Provider {
   return {
@@ -255,16 +257,21 @@ function promptedCallsProvider(): Provider {
         }
       }
       if (at < 0) return { kind: "text", text: "[]" };
-      const script = userMessageText(messages[at])
+      const rounds: Array<Array<{ name: string; input: unknown }>> = [];
+      for (const m of userMessageText(messages[at])
         .split("\n")
         .map((line) => CALL_LINE.exec(line.trim()))
-        .filter((m): m is RegExpExecArray => m !== null)
-        .map((m) => ({ name: m[1]!, input: m[2] !== undefined && m[2].trim() !== "" ? (JSON.parse(m[2]) as unknown) : {} }));
+        .filter((m): m is RegExpExecArray => m !== null)) {
+        const call = { name: m[2]!, input: m[3] !== undefined && m[3].trim() !== "" ? (JSON.parse(m[3]) as unknown) : {} };
+        if (m[1] === "+" && rounds.length > 0) rounds[rounds.length - 1]!.push(call);
+        else rounds.push([call]);
+      }
       const after = messages.slice(at + 1);
       const made = after.filter((m) => m.role === "assistant" && Array.isArray(m.content) && m.content.some((b) => b.type === "tool_use")).length;
-      if (made < script.length) {
-        const next = script[made]!;
-        return { kind: "tool_use", calls: [{ id: `calls-${at + 1}-${made + 1}`, name: next.name, input: next.input }] };
+      if (made < rounds.length) {
+        // Ids stay `calls-<at>-<round>` for a one-call round (what existing hosts' tests pin); a joined call adds `-<n>`.
+        const round = rounds[made]!;
+        return { kind: "tool_use", calls: round.map((next, i) => ({ id: `calls-${at + 1}-${made + 1}${i === 0 ? "" : `-${i + 1}`}`, name: next.name, input: next.input })) };
       }
       const results = after.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b): b is Extract<typeof b, { type: "tool_result" }> => b.type === "tool_result");
       const named = new Map(after.flatMap((m) => (m.role === "assistant" && Array.isArray(m.content) ? m.content : [])).flatMap((b) => (b.type === "tool_use" ? [[b.id, b.name] as const] : [])));

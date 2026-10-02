@@ -689,6 +689,17 @@ function withoutLoadedTools(block: Extract<ContentBlock, { type: "tool_result" }
   return rest;
 }
 
+/**
+ * The HOST's copy of some of a tool round's result blocks -- the content of one `user` frame: no
+ * `loadedTools` bookkeeping (a host hears about a load through the streaming `tool_reference` frame),
+ * image bytes emptied (`toolResultsForHost`) and site icons added (`withHostSiteIcons`). Every block is
+ * copied before it is touched, so the history, the transcript and the provider requests never see a field
+ * this adds.
+ */
+function hostToolResultContent(blocks: ContentBlock[], icons: ReadonlyMap<string, readonly ToolResultSiteIcon[]>): ContentBlock[] {
+  return withHostSiteIcons(toolResultsForHost(blocks.map((b) => (b.type === "tool_result" && b.loadedTools !== undefined ? withoutLoadedTools(b) : b))), icons);
+}
+
 /** WS-23 (midconv): the MCP namespace (`mcp__<server>`) a tool's advertised name groups under, or `undefined`. */
 function mcpNamespaceFor(advertisedName: string, server: string | undefined): string | undefined {
   if (server === undefined) return undefined;
@@ -9595,7 +9606,27 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // finish it (splitting a large write if it has to). Counted as a round like any other, so
       // `maxTurns` still bounds a model that keeps overrunning.
       const truncatedByOutputLimit = turn.stopReason === "max_tokens";
+      // SDK 0.0.40: EACH CALL'S RESULT REACHES THE HOST WHEN THAT CALL FINISHES -- one `user` frame per
+      // result block, written as soon as the call's iteration below is over (after its PostToolUse hooks
+      // and any `updatedToolOutput` replacement, so the frame carries the final block, and after every hook
+      // the host answered for the call). Before 0.0.40 the round's results crossed in ONE frame after the
+      // last call, so a host showed every call of a batch as running until the slowest had finished.
+      //
+      // The MODEL side is unchanged: `resultBlocks` still goes into the history and the transcript as one
+      // tool message after the loop, so provider requests and caching are byte-identical. Only the host's
+      // view is split -- which is also claude's own stream shape (one `user` message per tool result).
+      // Every result block crosses to the host exactly once: per call here, and the blocks this loop never
+      // reached (the interrupt / throw / structured-output padding below) together in one frame after it.
+      let resultsSentToHost = 0;
+      const sendFinishedResultsToHost = (): void => {
+        while (resultsSentToHost < resultBlocks.length) {
+          const block = resultBlocks[resultsSentToHost++]!;
+          output.write({ type: "data", message: { type: "user", message: { content: hostToolResultContent([block], hostSiteIcons) } } });
+        }
+      };
       for (const emitted of turn.calls) {
+        // The previous call is done: its result goes to the host now, not when the round ends.
+        sendFinishedResultsToHost();
         // A PLAIN-NAMED in-process tool (`McpSdkServerConfig.toolNames`) still answers to its old
         // `mcp__<server>__<tool>` spelling when the MODEL uses it -- a resumed history written before the
         // rename teaches the model that spelling. The call runs as the registered tool (one identity:
@@ -10204,6 +10235,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           break;
         }
       }
+      // The last call's result (or the one a `break` left unsent), before any padding is added.
+      sendFinishedResultsToHost();
 
       if (toolThrowText !== null) {
         // Ruling P1-H: the tool_use/tool_result pairing invariant must hold in ACCUMULATED HISTORY
@@ -10269,7 +10302,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // Code-mode images: the host's copy carries every image block with its `data` emptied
       // (`toolResultsForHost`) -- see that function for why the bytes stay out of the frame.
       // Host-only site icons (`ToolResultPayload.siteIcons`) are added to THIS copy alone (`withHostSiteIcons`).
-      output.write({ type: "data", message: { type: "user", message: { content: withHostSiteIcons(toolResultsForHost(resultBlocks.map((b) => (b.type === "tool_result" && b.loadedTools !== undefined ? withoutLoadedTools(b) : b))), hostSiteIcons) } } });
+      // SDK 0.0.40: the calls that ran were sent to the host one by one as they finished
+      // (`sendFinishedResultsToHost`), so this frame carries only what the loop never reached -- the
+      // padding above -- and is not written at all when there is none.
+      if (resultsSentToHost < resultBlocks.length) {
+        output.write({ type: "data", message: { type: "user", message: { content: hostToolResultContent(resultBlocks.slice(resultsSentToHost), hostSiteIcons) } } });
+        resultsSentToHost = resultBlocks.length;
+      }
       messages.push({ role: "tool", content: resultBlocks });
       await recordUser(resultBlocks);
       // WS-23: this round's hook context, right AFTER its tool results -- the request builder folds a

@@ -530,11 +530,12 @@ test("Ruling P1-H: a tool-executor throw leaves a paired synthetic tool_result, 
   // engine already uses for the top-level error result text (see this test's `result.result`
   // assertion below) rather than a bare, unconditional `String(thrown)` — a deliberate reading of
   // the ruling's literal wording, documented in the task-8 report.
-  const toolResultMsg = dataMessages(seen).find((m) => m.type === "user") as { message: { content: unknown } } | undefined;
-  expect(toolResultMsg).toBeDefined();
-  expect(toolResultMsg!.message.content).toEqual([
-    { type: "tool_result", tool_use_id: "call1", content: "ok" },
-    { type: "tool_result", tool_use_id: "call2", content: "[error: tool boom]", error: true },
+  // SDK 0.0.40: call1 reached the host in its OWN frame as soon as it finished; the padding for the call
+  // that threw follows in the round's closing frame. Together they are exactly the round's results.
+  const toolResultMsgs = dataMessages(seen).filter((m) => m.type === "user") as Array<{ message: { content: unknown } }>;
+  expect(toolResultMsgs.map((m) => m.message.content)).toEqual([
+    [{ type: "tool_result", tool_use_id: "call1", content: "ok" }],
+    [{ type: "tool_result", tool_use_id: "call2", content: "[error: tool boom]", error: true }],
   ]);
 
   // the terminal result is still the real error_during_execution result — P1-H pads history/wire,
@@ -1431,12 +1432,14 @@ test("Task 6: a denied tool call produces a synthetic tool_result with denied:tr
     // T10: the unconditional PermissionDenied "system"/permission_denied message (WS-08 §6 /
     // derived-shapes-p2.md item (d)) now lands between the assistant's tool_use batch and the
     // user's tool_result batch — it fires for call1's denial before call2 is even evaluated.
-    expect(msgs.map((m) => m.type)).toEqual(["system", "assistant", "system", "user", "assistant", "result"]);
+    // SDK 0.0.40: each call's result is its own `user` frame, sent when that call is done.
+    expect(msgs.map((m) => m.type)).toEqual(["system", "assistant", "system", "user", "user", "assistant", "result"]);
     const permissionDeniedMsg = msgs[2] as { subtype: string; tool_name: string; tool_use_id: string };
     expect(permissionDeniedMsg.subtype).toBe("permission_denied");
     expect(permissionDeniedMsg.tool_name).toBe("test_tool");
     expect(permissionDeniedMsg.tool_use_id).toBe("call1");
-    const toolResultMsg = msgs[3] as { message: { content: unknown } };
+    const toolResultMsg = { message: { content: [msgs[3], msgs[4]].flatMap((m) => (m as unknown as { message: { content: unknown[] } }).message.content) } };
+    expect([msgs[3], msgs[4]].map((m) => (m as unknown as { message: { content: unknown[] } }).message.content.length)).toEqual([1, 1]);
     expect(toolResultMsg.message.content).toEqual([
       { type: "tool_result", tool_use_id: "call1", content: expect.any(String), denied: true },
       { type: "tool_result", tool_use_id: "call2", content: "other_tool:{\"x\":1}" }, // never denied — the round continues past the deny

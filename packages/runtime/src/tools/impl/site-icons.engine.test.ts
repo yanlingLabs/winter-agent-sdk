@@ -64,13 +64,17 @@ async function run(siteIcons: typeof ICONS | undefined): Promise<{ requests: Pro
   return { requests, recorded, frames };
 }
 
+/** The round's results as the host received them -- since SDK 0.0.40 one `user` frame per call, each
+ *  carrying exactly its own block, concatenated in arrival order. */
 function toolRoundContent(frames: WinterFrame[]): Array<Record<string, unknown>> {
-  const frame = frames.find((f) => {
+  const round = frames.filter((f) => {
     const msg = (f as { message?: { type?: string; message?: { content?: unknown } } }).message;
     return f.type === "data" && msg?.type === "user" && Array.isArray(msg.message?.content) && (msg.message!.content as Array<{ type?: string }>).some((b) => b.type === "tool_result");
   });
-  if (frame === undefined) throw new Error("no tool-round user frame");
-  return (frame as unknown as { message: { message: { content: Array<Record<string, unknown>> } } }).message.message.content;
+  if (round.length === 0) throw new Error("no tool-round user frame");
+  const contents = round.map((frame) => (frame as unknown as { message: { message: { content: Array<Record<string, unknown>> } } }).message.message.content);
+  for (const content of contents) expect(content).toHaveLength(1);
+  return contents.flat();
 }
 
 describe("site icons through the engine", () => {

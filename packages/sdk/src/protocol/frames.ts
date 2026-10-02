@@ -787,6 +787,13 @@ export type SdkMessage =
   // variant in the pinned declaration -- conflating the two was the brief's own framing error,
   // corrected by the shape authority this task was told to follow.
   | { type: "assistant"; message: { content: Array<{ type: "text"; text: string } | { type: string; [k: string]: unknown }> }; parent_tool_use_id?: string | null; [k: string]: unknown }
+  // SDK 0.0.40: ONE `user` frame PER TOOL RESULT, written the moment that call is done (after its
+  // PostToolUse hooks, so it carries the final block) -- claude's own stream shape. A round's calls that
+  // never ran (an interrupt, a thrown tool, a structured-output end) are padded and sent together in one
+  // closing frame. Every result block crosses exactly once. Before 0.0.40 the whole round crossed in ONE
+  // frame after its last call, so a host showed every call of a batch as running until the slowest was
+  // done. The MODEL's side did not change: the history, the transcript and every provider request still
+  // carry the round's results as one message, in call order.
   | { type: "user"; message: { role: "user"; content: Array<{ type: string; [k: string]: unknown }> }; parent_tool_use_id?: string | null; [k: string]: unknown }
   // Finding 3: `permission_denials` is ALWAYS present (pin-verified) — every result the engine
   // constructs carries it, `[]` when this turn denied nothing.
