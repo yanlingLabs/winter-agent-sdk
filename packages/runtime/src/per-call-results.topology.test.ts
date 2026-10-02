@@ -20,7 +20,7 @@ import { inMemoryProcess } from "./testing.ts";
 import { testProviderByName } from "./provider/mock.ts";
 import { listTasks } from "./tools/impl/background-task-runtime.ts";
 import { getRegisteredTool } from "./tools/registry.ts";
-import type { ToolExecutionContext } from "./engine.ts";
+import type { ToolExecutionContext } from "./tools/registry.ts";
 
 const MAIN = fileURLToPath(new URL("./main.ts", import.meta.url));
 const WORKER_ENTRY = join(import.meta.dir, "embedded-worker.ts");
@@ -281,6 +281,37 @@ for (const [name, spawnerFor] of TOPOLOGIES) {
       expect(frames[1]!.contents[0]).toContain("slow-one");
       expect(markerWhenFirstArrived).toBe(false);
       expect(existsSync(marker)).toBe(true);
+    }, 60_000);
+
+    test("two read-only Bash calls run at the same time: the second is already reading before the first can finish", async () => {
+      const home = tempDir("home");
+      const cwd = tempDir("cwd");
+      const a = join(cwd, "fifo-a");
+      const b = join(cwd, "fifo-b");
+      expect(Bun.spawnSync(["mkfifo", a, b]).exitCode).toBe(0);
+      // Causal, not timed: the writer first opens B -- which blocks until `cat fifo-b`, the SECOND call, is
+      // reading -- and only then answers A, which the FIRST call is waiting on. Run one after the other, the
+      // first call could never finish; after 10 s the fallback answers both "serial", so the test fails
+      // rather than hangs.
+      const writer = Bun.spawn(["sh", "-c", `exec 3>"${b}"; printf together > "${a}"; printf together >&3`]);
+      let fellBack = false;
+      const fallback = setTimeout(() => {
+        fellBack = true;
+        writer.kill();
+        Bun.spawn(["sh", "-c", `printf serial > "${a}"`]);
+        Bun.spawn(["sh", "-c", `printf serial > "${b}"`]);
+      }, 10_000);
+      try {
+        const script = [`CALL Bash ${JSON.stringify({ command: "cat fifo-a" })}`, `+CALL Bash ${JSON.stringify({ command: "cat fifo-b" })}`].join("\n");
+        const { arrivals } = await runScript(spawnerFor(home), home, script, { cwd });
+        const reported = JSON.parse(String(resultOf(arrivals)["result"])) as Array<{ content: string }>;
+        expect(fellBack).toBe(false);
+        expect(reported).toHaveLength(2);
+        expect(reported.every((r) => r.content.includes("together"))).toBe(true);
+      } finally {
+        clearTimeout(fallback);
+        writer.kill();
+      }
     }, 60_000);
 
     test("a host-declared lane: its calls run one at a time in call order, while the round's other calls run beside them", async () => {
