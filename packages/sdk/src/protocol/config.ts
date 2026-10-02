@@ -480,6 +480,17 @@ export interface McpSdkServerConfig {
    * host owns it.
    */
   toolNames?: Record<string, string>;
+  /**
+   * SDK 0.0.40, a Winter extension: CONCURRENCY LANES for some of this server's tools, keyed by the
+   * server's own tool name (`{ computer: "computer", browser: "browser" }`). A round's calls normally run
+   * one at a time unless the tool is read-only (`readOnlyHint: true`); a tool in a lane instead runs BESIDE
+   * the round's other calls, but never beside another call of the SAME lane -- calls of one lane run one at
+   * a time, in call order, across the round. Use it for a tool that holds one exclusive resource (a screen,
+   * a browser) yet is safe next to everything else. A call that is neither read-only nor in a lane is a
+   * barrier, exactly as before. A lane key is 1-64 characters of `[A-Za-z0-9_.:-]`; anything else is
+   * ignored. Only an in-process (`sdk`) server may declare lanes; the host vouches for its own tools.
+   */
+  toolLanes?: Record<string, string>;
 }
 export type McpServerConfigForProcessTransport = McpStdioServerConfig | McpHttpServerConfig | McpSSEServerConfig | McpSdkServerConfig;
 

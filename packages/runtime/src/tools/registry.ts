@@ -176,6 +176,9 @@ export interface ToolDescriptor {
   // eligible ONLY in the listed modes (WS-09 §9: "deferred only in listed modes"); outside them,
   // treated exactly like `false`.
   deferred?: boolean | readonly PermissionMode[];
+  // SDK 0.0.40: the host-declared concurrency lane of an in-process MCP tool (`McpSdkServerConfig.toolLanes`,
+  // see `McpServerToolLanes`). Absent for every other tool.
+  concurrencyLane?: string;
   // WS-09 §1.1/§2: "alwaysLoad: true forces the server's complete tools eager (never deferred)".
   // Unconditionally overrides `deferred` to "eager" in resolveDeferral. The connection-lifecycle
   // half of this flag (forcing the nonblocking startup default to wait) is Lane A's own concern
@@ -1054,10 +1057,26 @@ function dedupeSameBatch(server: string, tools: readonly McpToolDefinition[]): r
   return dropped ? out : tools;
 }
 
+/**
+ * SDK 0.0.40: a HOST's concurrency lanes for some of one in-process server's tools
+ * (`McpSdkServerConfig.toolLanes`): server tool name -> lane key. A tool in a lane runs BESIDE the round's
+ * other calls (it is not a barrier) but one at a time WITHIN its lane, in call order -- e.g. two `Computer`
+ * calls never overlap, while a `Computer` call and a `Browser` call (another lane) and any read-only call
+ * may. Only an in-process (`sdk`) server carries lanes: the host vouches for its own tools. A lane key is
+ * 1-64 characters of `[A-Za-z0-9_.:-]`; anything else is ignored (the tool stays serial).
+ */
+export type McpServerToolLanes = Readonly<Record<string, string>>;
+
+const CONCURRENCY_LANE = /^[A-Za-z0-9_.:-]{1,64}$/;
+/** Whether `lane` is a usable concurrency-lane key. */
+export function isValidConcurrencyLane(lane: unknown): lane is string {
+  return typeof lane === "string" && CONCURRENCY_LANE.test(lane);
+}
+
 export function registerMcpServerTools(
   server: string,
   incomingTools: readonly McpToolDefinition[],
-  opts: { alwaysLoad?: boolean; deferredDefault: boolean | readonly PermissionMode[]; toolNames?: McpServerToolNames },
+  opts: { alwaysLoad?: boolean; deferredDefault: boolean | readonly PermissionMode[]; toolNames?: McpServerToolNames; toolLanes?: McpServerToolLanes },
 ): void {
   if (RESERVED_MCP_SERVER_NAMES.has(server)) {
     throw new Error(
@@ -1164,7 +1183,10 @@ export function registerMcpServerTools(
   for (const tool of tools) {
     const canonicalName = registeredName(tool);
     const existingEntry = registry.get(canonicalName); // present only on a same-server replace (validated above)
-    const descriptor = buildMcpToolDescriptor(server, tool, opts, plainNameFor(tool));
+    const built = buildMcpToolDescriptor(server, tool, opts, plainNameFor(tool));
+    // SDK 0.0.40: the host's concurrency lane for this tool (`McpSdkServerConfig.toolLanes`), when valid.
+    const lane = opts.toolLanes !== undefined && Object.hasOwn(opts.toolLanes, tool.name) ? opts.toolLanes[tool.name] : undefined;
+    const descriptor: ToolDescriptor = isValidConcurrencyLane(lane) ? { ...built, concurrencyLane: lane } : built;
     registry.set(canonicalName, existingEntry ? { ...existingEntry, descriptor } : { descriptor });
     mcpToolOwner.set(canonicalName, server);
     nowOwned.add(canonicalName);

@@ -9,7 +9,7 @@
 // `+CALL` joins it. The slow tools are an in-process SDK MCP server (`t`), whose `slow` tool is listed
 // `readOnlyHint: true` (concurrency-safe) and whose `unsafe` tool carries no hint (a barrier).
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,8 @@ function slowServer() {
     listTools: () => [
       { name: "slow", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
       { name: "unsafe", inputSchema: { type: "object" } },
+      // In the host-declared lane "L" (`toolLanes`, below): beside everything, but one at a time within L.
+      { name: "laned", inputSchema: { type: "object" } },
     ],
     async callTool(_name, args) {
       const label = String(args["label"]);
@@ -56,7 +58,7 @@ function slowServer() {
 }
 
 interface Arrival { at: number; message: Record<string, unknown> }
-interface RunOptions { canUseTool?: Options["canUseTool"]; onMessage?: (m: Record<string, unknown>, q: { interrupt(): Promise<void> }) => void; server?: ReturnType<typeof slowServer> }
+interface RunOptions { canUseTool?: Options["canUseTool"]; onMessage?: (m: Record<string, unknown>, q: { interrupt(): Promise<void> }) => void; server?: ReturnType<typeof slowServer>; cwd?: string }
 
 async function runScript(spawner: Spawner, home: string, script: string, opts: RunOptions = {}) {
   const server = opts.server ?? slowServer();
@@ -65,14 +67,14 @@ async function runScript(spawner: Spawner, home: string, script: string, opts: R
     prompt: script,
     options: {
       model: "winter-test/calls",
-      cwd: tempDir("cwd"),
+      cwd: opts.cwd ?? tempDir("cwd"),
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin", WINTER_HOME: home, WINTER_DISABLE_GIT_INSTRUCTIONS: "1" },
       ...(opts.canUseTool !== undefined
         ? { canUseTool: opts.canUseTool }
         : { permissionMode: "bypassPermissions" as const, allowDangerouslySkipPermissions: true }),
       ...(isSandboxAvailable() ? {} : { sandbox: { enabled: false } }),
       capabilities: ["winter.mcp"],
-      mcpServers: { t: { type: "sdk", name: "t", instance: server.instance } } as NonNullable<Options["mcpServers"]>,
+      mcpServers: { t: { type: "sdk", name: "t", instance: server.instance, toolLanes: { laned: "L" } } } as NonNullable<Options["mcpServers"]>,
       spawnClaudeCodeProcess: spawner,
     },
   });
@@ -111,7 +113,7 @@ function callsOf(arrivals: Arrival[], parent?: string): Array<{ id: string; name
 const resultOf = (arrivals: Arrival[]) => arrivals.find(({ message }) => message["type"] === "result")!.message;
 const slow = (label: string, ms: number, joined = true) => `${joined ? "+" : ""}CALL mcp__t__slow ${JSON.stringify({ label, ms })}`;
 const unsafe = (label: string, ms: number, joined = true) => `${joined ? "+" : ""}CALL mcp__t__unsafe ${JSON.stringify({ label, ms })}`;
-const QUICK_THEN_SLOW = [`CALL Bash {"command":"echo quick-one"}`, `+CALL Bash {"command":"sleep ${SLEEP_SECONDS}; echo slow-one"}`].join("\n");
+const laned = (label: string, ms: number, joined = true) => `${joined ? "+" : ""}CALL mcp__t__laned ${JSON.stringify({ label, ms })}`;
 
 for (const [name, spawnerFor] of TOPOLOGIES) {
   describe(`tool rounds on ${name}`, () => {
@@ -124,11 +126,12 @@ for (const [name, spawnerFor] of TOPOLOGIES) {
       const byId = new Map(calls.map((c) => [c.id, c.label]));
       const frames = resultFrames(arrivals);
       expect(frames.map((f) => f.ids.map((id) => byId.get(id)))).toEqual([["b"], ["c"], ["a"]]);
-      // They overlapped: every call started before any ended, and the whole batch took about the slowest
-      // call, not the sum (900 + 300 + 600 ms).
+      // They overlapped: every call started before any ended. And the results did not arrive together: the
+      // first frame reached the host before the slowest call had even finished (one clock, one process).
       const firstEnd = Math.min(...events.filter((e) => e.what === "end").map((e) => e.at));
       expect(events.filter((e) => e.what === "start").every((e) => e.at < firstEnd)).toBe(true);
-      expect(frames.at(-1)!.at - frames[0]!.at).toBeLessThan(1500);
+      const slowestEnd = events.find((e) => e.what === "end" && e.label === "a")!.at;
+      expect(frames[0]!.at).toBeLessThan(slowestEnd);
       const reported = JSON.parse(String(resultOf(arrivals)["result"])) as Array<{ content: string }>;
       expect(reported.map((r) => r.content)).toEqual(["a done", "b done", "c done"]);
     }, 60_000);
@@ -196,20 +199,80 @@ for (const [name, spawnerFor] of TOPOLOGIES) {
       expect(frames[1]!.flags.every((b) => b["interrupted"] === true)).toBe(true);
     }, 60_000);
 
-    test("serial (unsafe) calls still reach the host one by one: the quick Bash a whole sleep before the slow one", async () => {
+    test("serial calls still reach the host one by one: the first call's result arrives before the second call has finished", async () => {
       const home = tempDir("home");
-      const { arrivals } = await runScript(spawnerFor(home), home, QUICK_THEN_SLOW);
+      const cwd = tempDir("cwd");
+      const marker = join(cwd, "slow-finished");
+      // The second command writes a marker only AFTER its sleep: if the first result arrives while the marker
+      // is still absent, it arrived before the second call finished -- causal, not a millisecond gap.
+      const script = [`CALL Bash {"command":"echo quick-one"}`, `+CALL Bash ${JSON.stringify({ command: `sleep ${SLEEP_SECONDS}; touch ${marker}; echo slow-one` })}`].join("\n");
+      let markerWhenFirstArrived: boolean | undefined;
+      const { arrivals } = await runScript(spawnerFor(home), home, script, {
+        cwd,
+        onMessage: (m) => {
+          if (markerWhenFirstArrived === undefined && m["type"] === "user" && JSON.stringify(m).includes("quick-one")) markerWhenFirstArrived = existsSync(marker);
+        },
+      });
       const frames = resultFrames(arrivals);
       expect(frames.map((f) => f.ids.length)).toEqual([1, 1]);
       expect(frames[0]!.contents[0]).toContain("quick-one");
       expect(frames[1]!.contents[0]).toContain("slow-one");
-      expect(frames[1]!.at - frames[0]!.at).toBeGreaterThan(SLEEP_SECONDS * 1000 * 0.7);
+      expect(markerWhenFirstArrived).toBe(false);
+      expect(existsSync(marker)).toBe(true);
+    }, 60_000);
+
+    test("a host-declared lane: its calls run one at a time in call order, while the round's other calls run beside them", async () => {
+      const home = tempDir("home");
+      const { arrivals, events } = await runScript(spawnerFor(home), home, [laned("x", 400, false), slow("z", 300), laned("y", 50)].join("\n"));
+      const at = (what: "start" | "end", label: string) => events.find((e) => e.what === what && e.label === label)!.at;
+      expect(at("start", "z")).toBeLessThan(at("end", "x")); // z ran beside x
+      expect(at("start", "y")).toBeGreaterThanOrEqual(at("end", "x")); // y (same lane) waited for x
+      const reported = JSON.parse(String(resultOf(arrivals)["result"])) as Array<{ content: string }>;
+      expect(reported.map((r) => r.content)).toEqual(["x done", "z done", "y done"]);
+    }, 60_000);
+
+    test("two subagents run AT THE SAME TIME, each with its own tool calls on its own thread, their approvals relayed to the parent", async () => {
+      const home = tempDir("home");
+      const server = slowServer();
+      const asked: string[] = [];
+      const childOne = [slow("p1", 600, false), slow("p2", 100)].join("\n");
+      const childTwo = [slow("q1", 600, false)].join("\n");
+      const script = [
+        `CALL Agent ${JSON.stringify({ description: "one", prompt: childOne, subagent_type: "general-purpose" })}`,
+        `+CALL Agent ${JSON.stringify({ description: "two", prompt: childTwo, subagent_type: "general-purpose" })}`,
+      ].join("\n");
+      const { arrivals, events } = await runScript(spawnerFor(home), home, script, {
+        server,
+        // Every call -- the two spawns and the children's own calls -- asks the parent's host (the relay).
+        canUseTool: async (tool, input) => {
+          asked.push(tool === "Agent" ? `Agent:${String((input as { description?: unknown }).description)}` : String((input as { label?: unknown }).label));
+          return { behavior: "allow", updatedInput: input };
+        },
+      });
+      const spawns = callsOf(arrivals).filter((c) => c.name === "Agent");
+      expect(spawns).toHaveLength(2);
+      const one = spawns[0]!;
+      const two = spawns[1]!;
+      // Each child's calls ran on its own thread...
+      expect(callsOf(arrivals, one.id).map((c) => c.label)).toEqual(["p1", "p2"]);
+      expect(callsOf(arrivals, two.id).map((c) => c.label)).toEqual(["q1"]);
+      expect(resultFrames(arrivals, one.id).flatMap((f) => f.ids)).toHaveLength(2);
+      expect(resultFrames(arrivals, two.id).flatMap((f) => f.ids)).toHaveLength(1);
+      // ...and the two children overlapped: each child's first call started before the other's ended.
+      const at = (what: "start" | "end", label: string) => events.find((e) => e.what === what && e.label === label)!.at;
+      expect(at("start", "q1")).toBeLessThan(at("end", "p1"));
+      expect(at("start", "p1")).toBeLessThan(at("end", "q1"));
+      // Every call's approval reached the parent's host, the children's included.
+      expect(asked.filter((a) => a.startsWith("Agent:")).sort()).toEqual(["Agent:one", "Agent:two"]);
+      expect(asked.filter((a) => !a.startsWith("Agent:")).sort()).toEqual(["p1", "p2", "q1"]);
+      // Each spawn's own result came back once, on the main thread.
+      expect(resultFrames(arrivals).flatMap((f) => f.ids).sort()).toEqual([one.id, two.id].sort());
     }, 60_000);
 
     test("a subagent's round runs the same way, on the spawning call's thread, with ids distinct from its parent's", async () => {
       const home = tempDir("home");
       const childScript = [slow("x", 800, false), slow("y", 200)].join("\n");
-      const { arrivals } = await runScript(spawnerFor(home), home, `CALL Agent ${JSON.stringify({ description: "two reads", prompt: childScript, subagent_type: "general-purpose" })}`);
+      const { arrivals, events } = await runScript(spawnerFor(home), home, `CALL Agent ${JSON.stringify({ description: "two reads", prompt: childScript, subagent_type: "general-purpose" })}`);
       const spawnId = callsOf(arrivals)[0]!.id;
       const childCalls = callsOf(arrivals, spawnId);
       expect(childCalls.map((c) => c.label)).toEqual(["x", "y"]);
@@ -217,7 +280,8 @@ for (const [name, spawnerFor] of TOPOLOGIES) {
       const byId = new Map(childCalls.map((c) => [c.id, c.label]));
       const childFrames = resultFrames(arrivals, spawnId);
       expect(childFrames.map((f) => f.ids.map((id) => byId.get(id)))).toEqual([["y"], ["x"]]);
-      expect(childFrames[1]!.at - childFrames[0]!.at).toBeGreaterThan(300);
+      // y's result reached the host before x had finished (one clock, one process) -- not a ms gap.
+      expect(childFrames[0]!.at).toBeLessThan(events.find((e) => e.what === "end" && e.label === "x")!.at);
       expect(resultFrames(arrivals).map((f) => f.ids)).toEqual([[spawnId]]);
     }, 60_000);
   });

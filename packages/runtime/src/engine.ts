@@ -334,7 +334,7 @@ import {
 // boundary (this is the opposite direction: the engine reaching INTO a lane's own file, not a lane
 // reaching into the registry).
 import { createAdvisorExecutor, ADVISOR_TOOL_NAME, type ResolvedReviewer, type TranscriptEntry } from "./tools/impl/advisor.ts";
-import { isConcurrencySafeTool, MAX_TOOL_CONCURRENCY } from "./tools/concurrency.ts";
+import { MAX_TOOL_CONCURRENCY, schedulingForCall, type BashReadOnlyContext } from "./tools/concurrency.ts";
 import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
 // Task-frames parity (2026-09-17 contract §7): the ONE read this hook needs to tell a foreground
@@ -4891,7 +4891,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // registered under that name (the model, hooks and `canUseTool` all see it) while the call
         // still reaches the host as `sdk_mcp_call {server, tool}` with the server's own tool name.
         const toolNames = serverCfg.toolNames;
-        registerMcpServerTools(serverName, toolDefs, { deferredDefault: true, ...(toolNames !== undefined ? { toolNames } : {}) });
+        // SDK 0.0.40: the host's concurrency lanes (`McpSdkServerConfig.toolLanes`) land on the descriptors.
+        const toolLanes = serverCfg.toolLanes;
+        registerMcpServerTools(serverName, toolDefs, { deferredDefault: true, ...(toolNames !== undefined ? { toolNames } : {}), ...(toolLanes !== undefined ? { toolLanes } : {}) });
         sdkMcpServerNames.push(serverName);
         const perServerTimeoutMs = serverCfg.timeout;
         for (const tool of toolDefs) {
@@ -9598,6 +9600,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // never reaches this point in the same iteration; this flag only ever reflects a throw from
       // the loop directly below it.
       let toolThrowText: string | null = null;
+      // SDK 0.0.40: under concurrency several calls of one round can throw. Each keeps its OWN text (its
+      // slot is padded with it); `toolThrowText` and `finalResult` keep the FIRST throw, as a serial round
+      // always did, and calls that never started are padded with that first text.
+      const throwTextByIndex = new Map<number, string>();
+      // SDK 0.0.40: a failure OUTSIDE a call's own try (its failure hook's own fire, a frame write on a
+      // closed channel) used to escape the round with a `tool_use` left unanswered in the history. It is
+      // captured here instead: nothing more starts, every slot is padded and recorded, then it is rethrown.
+      let lateFailure: { error: unknown } | undefined;
       // Phase 5 Task 3 (R5-10): set when a StructuredOutput call ENDED this turn (accepted or
       // exhausted). Its own flag rather than a re-derivation from `finalResult`, for exactly the
       // reason `toolThrowText` above is one -- `finalResult` has several other producers.
@@ -9642,21 +9652,46 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // (and for their PostToolUse effects, below), then is checked and run alone.
       //
       // A concurrent call's PostToolUse/PostToolUseFailure OUTCOME -- its notices, its context for the model,
-      // its `continue: false`, its classifier context -- is applied when the batch settles, in CALL ORDER
-      // (`settleConcurrent`), so what the model is told does not depend on which call finished first. Its
-      // `updatedToolOutput` is applied at once (it is the call's own result, and its frame must carry it).
-      // Consequence, deliberately: a PostToolUse `continue: false` on a concurrent call stops the turn when
-      // its batch settles; its siblings in the batch have already run (they are read-only).
+      // its classifier context -- is applied when the batch settles, in CALL ORDER (`settleConcurrent`), so
+      // what the model is told does not depend on which call finished first. Its `updatedToolOutput` is
+      // applied at once (it is the call's own result, and its frame must carry it). Its `continue: false`
+      // takes effect AS SOON AS IT IS KNOWN (`applyFinishedStops`): before any later call's checks begin and
+      // again just before a checked call starts executing, so no further call starts and no further card is
+      // raised; calls already executing finish and are reported.
       const inFlight = new Set<Promise<unknown>>();
-      const deferredPostToolEffects = new Map<number, () => void>();
+      const deferredPostToolEffects = new Map<number, { apply: () => void; stop?: { hookName: string; reason?: string } }>();
+      // The `continue: false` of every FINISHED concurrent call, applied to the turn now (the lowest call
+      // index first, as the settle would have); the rest of each outcome still waits for the settle.
+      const applyFinishedStops = (): void => {
+        if (turnStop.request !== undefined) return;
+        for (const index of [...deferredPostToolEffects.keys()].sort((a, b) => a - b)) {
+          const stop = deferredPostToolEffects.get(index)!.stop;
+          if (stop !== undefined) {
+            turnStop.request = stop;
+            return;
+          }
+        }
+      };
       const settleConcurrent = async (): Promise<void> => {
+        // A tracked call never rejects (a failure becomes `lateFailure`), so this always drains every call.
         while (inFlight.size > 0) await Promise.all([...inFlight]);
-        for (const index of [...deferredPostToolEffects.keys()].sort((a, b) => a - b)) deferredPostToolEffects.get(index)!();
+        for (const index of [...deferredPostToolEffects.keys()].sort((a, b) => a - b)) deferredPostToolEffects.get(index)!.apply();
         deferredPostToolEffects.clear();
+      };
+      const deferPostToolEffects = (index: number, composite: HookComposite, hookName: string, apply: () => void): void => {
+        const prevent = composite.preventContinuation;
+        deferredPostToolEffects.set(index, {
+          apply,
+          ...(prevent !== undefined ? { stop: { hookName, ...(prevent.reason !== undefined ? { reason: prevent.reason } : {}) } } : {}),
+        });
       };
       // One call, from its checks to its result: "next" moves the round on, "stop" ends it (an interrupt, a
       // thrown tool, a structured-output end -- the padding below gives every call left a result).
-      const processCall = async (emitted: (typeof turn.calls)[number], index: number, mode: { concurrent: boolean; readyToExecute?: () => void }): Promise<"next" | "stop"> => {
+      const processCall = async (
+        emitted: (typeof turn.calls)[number],
+        index: number,
+        mode: { concurrent: boolean; readyToExecute?: () => void; laneTurn?: Promise<unknown> },
+      ): Promise<"next" | "stop"> => {
         const record = (block: ContentBlock): void => {
           slots[index] = block;
         };
@@ -9670,7 +9705,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         const resolvedName = currentToolName(emitted.name);
         const call = resolvedName !== emitted.name ? { ...emitted, name: resolvedName } : emitted;
         // WS-23: once a hook has stopped the turn, the round's remaining calls are not run -- each
-        // still gets its tool_result (Ruling P1-G/P1-H's pairing invariant), saying why.
+        // still gets its tool_result (Ruling P1-G/P1-H's pairing invariant), saying why. SDK 0.0.40: a
+        // FINISHED concurrent call's PostToolUse stop counts from the moment it is known.
+        applyFinishedStops();
         const stoppedBy = currentTurnStop();
         if (stoppedBy !== undefined) {
           record({ type: "tool_result", tool_use_id: call.id, content: `[not executed: the ${stoppedBy.hookName} hook stopped the turn]`, error: true });
@@ -10154,9 +10191,35 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // R6-6: the SAME per-turn signal `provider.generate` receives. The race still unwinds the
           // turn promptly; the signal is what stops the work the race walked away from.
           // The decision's explicit-approval marker rides to the executor's context beside the signal.
+          // SDK 0.0.40: re-checked now that this call's checks are done (they may have waited on a card while
+          // its siblings ran): a call that threw, an interrupt or a late failure means nothing more STARTS --
+          // this call is left unanswered here and padded with the round's other unrun calls; a hook stop
+          // (a sibling's PostToolUse included) answers it as not executed, like any call after the stop.
+          if (interrupted || toolThrowText !== null || lateFailure !== undefined) return "stop";
+          applyFinishedStops();
+          const stoppedBeforeStart = currentTurnStop();
+          if (stoppedBeforeStart !== undefined) {
+            record({ type: "tool_result", tool_use_id: call.id, content: `[not executed: the ${stoppedBeforeStart.hookName} hook stopped the turn]`, error: true });
+            return "next";
+          }
           // SDK 0.0.40: the checks are done -- a concurrency-safe call is released to run beside the round's
           // other safe calls from here on, and the round's walk moves on to its next call.
           mode.readyToExecute?.();
+          // A LANE call waits for the previous call of its lane, then is re-checked like any call about to start.
+          if (mode.laneTurn !== undefined) {
+            const turnOfLane = await raceInterrupt(mode.laneTurn, interruptSignal);
+            if (turnOfLane.kind === "interrupted") {
+              interrupted = true;
+              return "stop";
+            }
+            if (interrupted || toolThrowText !== null || lateFailure !== undefined) return "stop";
+            applyFinishedStops();
+            const stoppedInLane = currentTurnStop();
+            if (stoppedInLane !== undefined) {
+              record({ type: "tool_result", tool_use_id: call.id, content: `[not executed: the ${stoppedInLane.hookName} hook stopped the turn]`, error: true });
+              return "next";
+            }
+          }
           // WS-23: the per-call tool-reference collector is exact because only a SERIAL call uses it: the
           // calls that load tools (`ToolSearch`) are never concurrency-safe, and a concurrent call neither
           // sets nor reads it, so it can never take another call's references.
@@ -10236,13 +10299,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // WS-23: the post-tool hook's context reaches the model (appended after this round's
           // results), its notices the host, its `continue: false` the turn loop. SDK 0.0.40: a CONCURRENT
           // call's effects wait for its batch to settle and are applied in call order (`settleConcurrent`).
+          const postHookName = `${raced.value.isError === true ? "PostToolUseFailure" : "PostToolUse"}:${call.name}`;
           const applyPostToolEffects = (): void => {
             if (postToolUseHookOutcome.classifierContext !== undefined) {
               accumulatedClassifierContext.push(...postToolUseHookOutcome.classifierContext);
             }
-            absorbHookComposite(postToolUseHookOutcome, { hookName: `${raced.value.isError === true ? "PostToolUseFailure" : "PostToolUse"}:${call.name}`, context: true, toolUseID: call.id });
+            absorbHookComposite(postToolUseHookOutcome, { hookName: postHookName, context: true, toolUseID: call.id });
           };
-          if (mode.concurrent) deferredPostToolEffects.set(index, applyPostToolEffects);
+          if (mode.concurrent) deferPostToolEffects(index, postToolUseHookOutcome, postHookName, applyPostToolEffects);
           else applyPostToolEffects();
           // WS-23 (brief item 5): `updatedToolOutput` REPLACES what the model is shown for this call
           // (claude 2.1.282: "Replaces the tool output before it is sent to the model"; its MCP-only
@@ -10257,24 +10321,31 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           }
         } catch (err) {
           const text = err instanceof Error ? err.message : String(err);
-          finalResult = { type: "result", subtype: "error_during_execution", is_error: true, result: text };
-          toolThrowText = text;
+          // SDK 0.0.40: this call's own text pads its own slot; the FIRST throw of the round names the
+          // round's error result and pads the calls that never started (a serial round's behaviour).
+          throwTextByIndex.set(index, text);
+          if (toolThrowText === null) {
+            finalResult = { type: "result", subtype: "error_during_execution", is_error: true, result: text };
+            toolThrowText = text;
+          }
           // Task 10 (WS-08 §5): the failure-arm sibling of PostToolUse above — fires when this
           // call's own tool executor threw (or, less commonly, when an earlier step in this SAME
           // try block threw first, e.g. evaluateWithFreshPolicy or the updatedPermissions loop —
           // `executedCall`/`decision` are try-block-scoped and not reachable from `catch`, so this
           // uses `call`'s own raw, untransformed input, the one value guaranteed available
           // regardless of which line inside the try actually threw).
-          absorbHookComposite(
-            await fireObservationalHook("PostToolUseFailure", {
-              toolUseID: call.id,
-              toolName: postToolHookSubject("PostToolUseFailure", call.name),
-              ...(callMcpServer !== undefined ? { mcpServer: callMcpServer } : {}),
-              input: typeof call.input === "object" && call.input !== null ? (call.input as Record<string, unknown>) : {},
-              payload: { error: text },
-            }),
-            { hookName: `PostToolUseFailure:${call.name}`, context: true, toolUseID: call.id },
-          );
+          const failureOutcome = await fireObservationalHook("PostToolUseFailure", {
+            toolUseID: call.id,
+            toolName: postToolHookSubject("PostToolUseFailure", call.name),
+            ...(callMcpServer !== undefined ? { mcpServer: callMcpServer } : {}),
+            input: typeof call.input === "object" && call.input !== null ? (call.input as Record<string, unknown>) : {},
+            payload: { error: text },
+          });
+          const failureHookName = `PostToolUseFailure:${call.name}`;
+          const applyFailureEffects = (): void => absorbHookComposite(failureOutcome, { hookName: failureHookName, context: true, toolUseID: call.id });
+          // SDK 0.0.40: deferred for a concurrent call exactly like the normal path's PostToolUse effects.
+          if (mode.concurrent) deferPostToolEffects(index, failureOutcome, failureHookName, applyFailureEffects);
+          else applyFailureEffects();
           return "stop";
         }
         return "next";
@@ -10284,38 +10355,60 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // READY TO EXECUTE (its checks passed) or done (its checks decided it: a denial, a hook stop, ...);
       // an unsafe call first lets every call in flight finish, then runs to completion before the next.
       // Every call's frame is sent the moment it is done (`sendResultToHost`).
+      // A LANE call (`tools/concurrency.ts`) is concurrent too, but waits for the previous call of its own
+      // lane before it starts executing -- so a lane's calls run one at a time, in call order, across the round.
+      const laneTails = new Map<string, Promise<unknown>>();
+      const bashReadOnlyContext = (): BashReadOnlyContext => ({
+        cwd: currentCwd,
+        originalCwd: config.cwd,
+        sandboxEnabled: sandboxSettingsForSession.enabled !== false && isSandboxAvailable(),
+      });
       for (let index = 0; index < turn.calls.length; index++) {
         const emitted = turn.calls[index]!;
-        const concurrent = isConcurrencySafeTool(currentToolName(emitted.name));
-        if (concurrent) {
-          while (inFlight.size >= MAX_TOOL_CONCURRENCY) await Promise.race(inFlight);
-        } else {
+        const scheduling = schedulingForCall(currentToolName(emitted.name), emitted.input, bashReadOnlyContext());
+        if (scheduling.kind === "serial") {
           await settleConcurrent();
+        } else {
+          while (inFlight.size >= MAX_TOOL_CONCURRENCY) await Promise.race(inFlight);
         }
-        // A call in flight was interrupted or threw: nothing more is started (the padding below answers it).
-        if (interrupted || toolThrowText !== null) break;
-        if (!concurrent) {
-          const outcome = await processCall(emitted, index, { concurrent: false });
-          sendResultToHost(index);
-          if (outcome === "stop") break;
+        // A call in flight was interrupted or threw, or something failed outside a call: nothing more is
+        // started (the padding below answers every call left).
+        if (interrupted || toolThrowText !== null || lateFailure !== undefined) break;
+        if (scheduling.kind === "serial") {
+          try {
+            const outcome = await processCall(emitted, index, { concurrent: false });
+            sendResultToHost(index);
+            if (outcome === "stop") break;
+          } catch (error) {
+            lateFailure = { error };
+            break;
+          }
           continue;
         }
+        const laneTurn = scheduling.kind === "lane" ? laneTails.get(scheduling.lane) : undefined;
         let markReady!: () => void;
         const ready = new Promise<"ready">((resolve) => (markReady = () => resolve("ready")));
-        const done = processCall(emitted, index, { concurrent: true, readyToExecute: markReady }).then((outcome) => {
-          sendResultToHost(index);
-          return outcome;
-        });
-        const first = await Promise.race([ready, done]);
-        if (first === "ready") {
-          const tracked: Promise<unknown> = done.finally(() => inFlight.delete(tracked));
-          // Observed here so a call that fails while nothing is awaiting it is not an unhandled rejection;
-          // `settleConcurrent` (or the cap's race) still sees the failure and rethrows it.
-          tracked.catch(() => undefined);
-          inFlight.add(tracked);
-        } else if (first === "stop") {
-          break;
-        }
+        // Tracked from the start, and never rejecting: a failure anywhere in the call (outside its own try)
+        // becomes `lateFailure`, so the round still drains, pads every slot and records its history first.
+        const settled: Promise<"next" | "stop"> = processCall(emitted, index, {
+          concurrent: true,
+          readyToExecute: markReady,
+          ...(laneTurn !== undefined ? { laneTurn } : {}),
+        })
+          .then((outcome) => {
+            sendResultToHost(index);
+            return outcome;
+          })
+          // `.catch` AFTER the `.then`: a failure of the call OR of its frame write (a closed channel) is caught.
+          .catch((error: unknown) => {
+            if (lateFailure === undefined) lateFailure = { error };
+            return "stop" as const;
+          });
+        const tracked: Promise<unknown> = settled.finally(() => inFlight.delete(tracked));
+        inFlight.add(tracked);
+        if (scheduling.kind === "lane") laneTails.set(scheduling.lane, tracked);
+        const first = await Promise.race([ready, settled]);
+        if (first === "stop") break;
       }
       // Every call still in flight finishes (an interrupt ends them promptly), and their post-tool effects
       // are applied in call order, before any padding is decided.
@@ -10335,8 +10428,20 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // than an unconditional `String(thrown)` — see the task-8 report's deviations for why.
         // SDK 0.0.40: into the call's own SLOT, so the model's message stays in call order even when a
         // concurrent call after the gap finished (a call left unanswered is no longer always a suffix).
+        // Each call that threw carries its OWN text; a call that never started carries the round's first.
         turn.calls.forEach((call, index) => {
-          if (slots[index] === undefined) slots[index] = { type: "tool_result", tool_use_id: call.id, content: `[error: ${toolThrowText}]`, error: true };
+          if (slots[index] === undefined) slots[index] = { type: "tool_result", tool_use_id: call.id, content: `[error: ${throwTextByIndex.get(index) ?? toolThrowText}]`, error: true };
+        });
+      }
+
+      if (lateFailure !== undefined) {
+        // SDK 0.0.40: a failure outside any call's own try (see `lateFailure`) -- every call left still gets
+        // its result, so the history never carries a dangling tool_use, and the failure is rethrown below
+        // once the round is recorded.
+        const failure = lateFailure.error;
+        const text = failure instanceof Error ? failure.message : String(failure);
+        turn.calls.forEach((call, index) => {
+          if (slots[index] === undefined) slots[index] = { type: "tool_result", tool_use_id: call.id, content: `[error: ${text}]`, error: true };
         });
       }
 
@@ -10388,11 +10493,18 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // so this frame carries only the padding above, in call order, and is not written when there is none.
       const unsent = resultBlocks.filter((_, index) => !sentToHost.has(index));
       if (unsent.length > 0) {
-        output.write({ type: "data", message: { type: "user", message: { content: hostToolResultContent(unsent, hostSiteIcons) } } });
+        try {
+          output.write({ type: "data", message: { type: "user", message: { content: hostToolResultContent(unsent, hostSiteIcons) } } });
+        } catch (error) {
+          // A frame that cannot be written (a closed channel) must not cost the history its results.
+          if (lateFailure === undefined) lateFailure = { error };
+        }
         resultBlocks.forEach((_, index) => sentToHost.add(index));
       }
       messages.push({ role: "tool", content: resultBlocks });
       await recordUser(resultBlocks);
+      // SDK 0.0.40: a failure outside a call (above) ends the turn as it always did -- after the round is padded and recorded.
+      if (lateFailure !== undefined) throw lateFailure.error;
       // WS-23: this round's hook context, right AFTER its tool results -- the request builder folds a
       // text-only attachment into the last tool_result (context/request-layout.ts). Flushed before
       // any break below, so a turn that ends here still carries what its hooks said.

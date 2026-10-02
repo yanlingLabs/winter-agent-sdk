@@ -1,31 +1,64 @@
-// SDK 0.0.40: which calls of a tool round may run AT THE SAME TIME (claude's `isConcurrencySafe` rule).
+// SDK 0.0.40: how each call of a tool round is SCHEDULED (claude's `isConcurrencySafe` rule, plus lanes).
 //
-// The engine runs a round's calls in call order, but consecutive CONCURRENCY-SAFE calls overlap: each is
-// started as soon as its own checks (hook stop, availability, permission -- run one at a time, in call
-// order) have passed, up to `MAX_TOOL_CONCURRENCY` in flight. Any other call is a BARRIER: it waits for
-// every call in flight to finish, then runs alone (engine.ts's tool round).
+// The engine walks a round's calls in call order. Each call is one of:
+//   - CONCURRENT: it runs beside the round's other concurrent and lane calls, up to `MAX_TOOL_CONCURRENCY`
+//     in flight. Started as soon as its own checks (hook stop, availability, permission -- one at a time,
+//     in call order) have passed.
+//   - LANE: it runs beside everything else too, but never beside another call of the SAME lane -- a lane's
+//     calls run one at a time, in call order, across the round (a host-declared exclusive resource:
+//     Winter's `Computer` and `Browser`).
+//   - SERIAL (a barrier): it waits for every call in flight to finish, then runs alone.
 //
-// SAFE means "provably read-only", and nothing is guessed:
-//   - a BUILT-IN is safe only when it is named below -- the file readers and searchers and the web tools,
-//     the set claude itself runs concurrently. A built-in that reads but changes the session's own state
-//     is not: `ToolSearch` loads tools (its references are collected per call), `TaskOutput` / `Monitor`
-//     follow live tasks.
-//   - an MCP, in-process SDK or plugin tool is safe only when the server's own listing marks it
-//     `readOnlyHint: true` (claude's rule for MCP tools). No hint, or any other value, is unsafe.
-//   - a name the registry does not know (a host's own executor, a test double) is unsafe.
+// Concurrent means "provably read-only", and nothing is guessed:
+//   - a BUILT-IN is concurrent only when it is named below -- the file readers and searchers, the web tools
+//     and `Agent` (subagents run in parallel, as in claude) -- or when it is `Bash` with a command that is
+//     read-only by claude's own classification (`permissions/bash-read-only.ts`). A built-in that changes
+//     the session's own state is not: `ToolSearch` loads tools (its references are collected per call),
+//     `TaskOutput` / `Monitor` follow live tasks.
+//   - an MCP, in-process SDK or plugin tool is concurrent only when its server lists it `readOnlyHint: true`
+//     (claude's rule for MCP tools); otherwise it is in its host-declared lane (`McpSdkServerConfig.toolLanes`,
+//     in-process servers only), else serial.
+//   - a name the registry does not know (a host's own executor, a test double) is serial.
 import { getRegisteredTool } from "./registry.ts";
+import { isBashCommandReadOnly } from "../permissions/bash-read-only.ts";
 
-/** At most this many concurrency-safe calls of one round run at once (claude's default). */
+/** At most this many concurrent/lane calls of one round run at once (claude's default). */
 export const MAX_TOOL_CONCURRENCY = 10;
 
-/** The built-ins that may run concurrently, by canonical name. */
-export const CONCURRENCY_SAFE_BUILTINS: ReadonlySet<string> = new Set(["Read", "Glob", "Grep", "LSP", "WebFetch", "WebSearch", "Search"]);
+/** The built-ins that always run concurrently, by canonical name. */
+export const CONCURRENCY_SAFE_BUILTINS: ReadonlySet<string> = new Set(["Read", "Glob", "Grep", "LSP", "WebFetch", "WebSearch", "Search", "Agent"]);
 
-/** Whether a call to `name` (the registered name the call will run as) may run beside other safe calls. */
-export function isConcurrencySafeTool(name: string): boolean {
+/** What `Bash`'s read-only classification needs to know about the session (claude reads the same three). */
+export interface BashReadOnlyContext {
+  cwd: string;
+  originalCwd: string;
+  sandboxEnabled: boolean;
+}
+
+export type CallScheduling = { kind: "concurrent" } | { kind: "lane"; lane: string } | { kind: "serial" };
+
+/** How a call to `name` (the registered name it will run as) with `input` is scheduled. */
+export function schedulingForCall(name: string, input: unknown, bash?: BashReadOnlyContext): CallScheduling {
   const descriptor = getRegisteredTool(name)?.descriptor;
-  if (descriptor === undefined) return false;
-  if (descriptor.source === "builtin") return CONCURRENCY_SAFE_BUILTINS.has(descriptor.canonicalName);
-  if (descriptor.source === "mcp" || descriptor.source === "sdk" || descriptor.source === "plugin") return descriptor.annotations?.readOnlyHint === true;
-  return false;
+  if (descriptor === undefined) return { kind: "serial" };
+  if (descriptor.source === "builtin") {
+    if (CONCURRENCY_SAFE_BUILTINS.has(descriptor.canonicalName)) return { kind: "concurrent" };
+    if (descriptor.canonicalName === "Bash" && bash !== undefined) {
+      const command = typeof input === "object" && input !== null ? (input as { command?: unknown }).command : undefined;
+      // A sandbox escape is never read-only scheduling-wise: it is decided by its own permission path.
+      const escapes = typeof input === "object" && input !== null && (input as { dangerouslyDisableSandbox?: unknown }).dangerouslyDisableSandbox === true;
+      if (typeof command === "string" && !escapes && isBashCommandReadOnly(command, bash)) return { kind: "concurrent" };
+    }
+    return { kind: "serial" };
+  }
+  if (descriptor.source === "mcp" || descriptor.source === "sdk" || descriptor.source === "plugin") {
+    if (descriptor.annotations?.readOnlyHint === true) return { kind: "concurrent" };
+    if (descriptor.concurrencyLane !== undefined) return { kind: "lane", lane: descriptor.concurrencyLane };
+  }
+  return { kind: "serial" };
+}
+
+/** Whether a call to `name` always runs beside other concurrent calls (no lane, no input-dependence). */
+export function isConcurrencySafeTool(name: string): boolean {
+  return schedulingForCall(name, undefined).kind === "concurrent";
 }

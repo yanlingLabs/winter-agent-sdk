@@ -326,6 +326,8 @@ function toWireMcpServers(servers: Record<string, McpServerConfig> | undefined):
             // Winter extension: the host's plain names for some of this server's tools (see
             // `McpSdkServerConfig.toolNames`) -- plain data, so it rides `--config-json` verbatim.
             ...(cfg.toolNames !== undefined ? { toolNames: { ...cfg.toolNames } } : {}),
+            // SDK 0.0.40: the host's concurrency lanes for some of its tools (`McpSdkServerConfig.toolLanes`).
+            ...(cfg.toolLanes !== undefined ? { toolLanes: { ...cfg.toolLanes } } : {}),
           }
         : cfg;
   }
