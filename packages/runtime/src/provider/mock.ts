@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Provider, ProviderMessage, ProviderRequest, ProviderTurn, ProviderUsage, ToolExecutor } from "../engine.ts";
 import { registerTool } from "../tools/registry.ts";
 import { isCompactionSummaryRequest } from "../compaction/summarizer.ts";
@@ -269,9 +269,12 @@ function promptedCallsProvider(): Provider {
       const after = messages.slice(at + 1);
       const made = after.filter((m) => m.role === "assistant" && Array.isArray(m.content) && m.content.some((b) => b.type === "tool_use")).length;
       if (made < rounds.length) {
-        // Ids stay `calls-<at>-<round>` for a one-call round (what existing hosts' tests pin); a joined call adds `-<n>`.
+        // Ids are `calls-<script>-<at>-<round>`, plus `-<n>` for a joined call: `<script>` is a short digest of the
+        // script message, so a parent and the subagents it scripts (each a different message) never mint the
+        // same id. (Two subagents handed byte-identical scripts still would.)
+        const script = createHash("sha256").update(userMessageText(messages[at])).digest("hex").slice(0, 6);
         const round = rounds[made]!;
-        return { kind: "tool_use", calls: round.map((next, i) => ({ id: `calls-${at + 1}-${made + 1}${i === 0 ? "" : `-${i + 1}`}`, name: next.name, input: next.input })) };
+        return { kind: "tool_use", calls: round.map((next, i) => ({ id: `calls-${script}-${at + 1}-${made + 1}${i === 0 ? "" : `-${i + 1}`}`, name: next.name, input: next.input })) };
       }
       const results = after.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b): b is Extract<typeof b, { type: "tool_result" }> => b.type === "tool_result");
       const named = new Map(after.flatMap((m) => (m.role === "assistant" && Array.isArray(m.content) ? m.content : [])).flatMap((b) => (b.type === "tool_use" ? [[b.id, b.name] as const] : [])));

@@ -334,6 +334,7 @@ import {
 // boundary (this is the opposite direction: the engine reaching INTO a lane's own file, not a lane
 // reaching into the registry).
 import { createAdvisorExecutor, ADVISOR_TOOL_NAME, type ResolvedReviewer, type TranscriptEntry } from "./tools/impl/advisor.ts";
+import { isConcurrencySafeTool, MAX_TOOL_CONCURRENCY } from "./tools/concurrency.ts";
 import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
 // Task-frames parity (2026-09-17 contract §7): the ONE read this hook needs to tell a foreground
@@ -9583,7 +9584,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         ...(generationEffort ?? {}),
       });
 
-      const resultBlocks: ContentBlock[] = [];
+      // SDK 0.0.40: the round's results, one SLOT PER CALL, in CALL ORDER -- filled as each call finishes
+      // (which, under concurrency, is not call order) and read in call order once the round is over, so
+      // the model's tool message is exactly what it was when calls ran one by one.
+      const slots: Array<ContentBlock | undefined> = turn.calls.map(() => undefined);
       // Host-only site icons (`ToolResultPayload.siteIcons`), keyed by call id: written onto the HOST's copy
       // of this round's frame alone (`withHostSiteIcons`), never into `resultBlocks` -- which also feed the
       // history, the transcript and every provider request.
@@ -9607,26 +9611,55 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // `maxTurns` still bounds a model that keeps overrunning.
       const truncatedByOutputLimit = turn.stopReason === "max_tokens";
       // SDK 0.0.40: EACH CALL'S RESULT REACHES THE HOST WHEN THAT CALL FINISHES -- one `user` frame per
-      // result block, written as soon as the call's iteration below is over (after its PostToolUse hooks
-      // and any `updatedToolOutput` replacement, so the frame carries the final block, and after every hook
-      // the host answered for the call). Before 0.0.40 the round's results crossed in ONE frame after the
-      // last call, so a host showed every call of a batch as running until the slowest had finished.
+      // result block, written as soon as the call is done (after its PostToolUse hooks and any
+      // `updatedToolOutput` replacement, so the frame carries the final block, and after every hook the
+      // host answered for the call). A call the round decides not to run (a hook stop, an output-limit
+      // truncation, a denial, an unavailable tool) is "done" at that decision and gets its own frame too.
+      // Before 0.0.40 the round's results crossed in ONE frame after the last call, so a host showed every
+      // call of a batch as running until the slowest had finished.
       //
-      // The MODEL side is unchanged: `resultBlocks` still goes into the history and the transcript as one
-      // tool message after the loop, so provider requests and caching are byte-identical. Only the host's
+      // The MODEL side is unchanged: the slots go into the history and the transcript as ONE tool message
+      // in call order after the loop, so provider requests and caching are byte-identical. Only the host's
       // view is split -- which is also claude's own stream shape (one `user` message per tool result).
-      // Every result block crosses to the host exactly once: per call here, and the blocks this loop never
-      // reached (the interrupt / throw / structured-output padding below) together in one frame after it.
-      let resultsSentToHost = 0;
-      const sendFinishedResultsToHost = (): void => {
-        while (resultsSentToHost < resultBlocks.length) {
-          const block = resultBlocks[resultsSentToHost++]!;
-          output.write({ type: "data", message: { type: "user", message: { content: hostToolResultContent([block], hostSiteIcons) } } });
-        }
+      // Every result block crosses to the host exactly once: per call here, and the blocks only the padding
+      // below produces (an interrupt, a thrown tool, a structured-output end) together in one frame after it.
+      const sentToHost = new Set<number>();
+      const sendResultToHost = (index: number): void => {
+        const block = slots[index];
+        if (block === undefined || sentToHost.has(index)) return;
+        sentToHost.add(index);
+        output.write({ type: "data", message: { type: "user", message: { content: hostToolResultContent([block], hostSiteIcons) } } });
       };
-      for (const emitted of turn.calls) {
-        // The previous call is done: its result goes to the host now, not when the round ends.
-        sendFinishedResultsToHost();
+      // SDK 0.0.40: READ-ONLY CALLS RUN CONCURRENTLY (claude's scheduler; `tools/concurrency.ts` says which
+      // calls are safe). The round still walks its calls in CALL ORDER, and each call's checks -- the hook
+      // stop, the output-limit truncation, availability, load-first, the permission pipeline with its
+      // PreToolUse/PermissionRequest hooks and any approval card, the file checkpoint -- still run one at a
+      // time in that order, exactly as before (`processCall` up to `readyToExecute`). What changes is
+      // execution: a SAFE call starts executing the moment its own checks pass and the walk moves on to the
+      // next call without waiting for it, up to `MAX_TOOL_CONCURRENCY` in flight. So a search that needs no
+      // approval runs while a later call's approval card waits for its human, and the cards still come one
+      // at a time, in call order. An UNSAFE call is a barrier: it waits for every call in flight to finish
+      // (and for their PostToolUse effects, below), then is checked and run alone.
+      //
+      // A concurrent call's PostToolUse/PostToolUseFailure OUTCOME -- its notices, its context for the model,
+      // its `continue: false`, its classifier context -- is applied when the batch settles, in CALL ORDER
+      // (`settleConcurrent`), so what the model is told does not depend on which call finished first. Its
+      // `updatedToolOutput` is applied at once (it is the call's own result, and its frame must carry it).
+      // Consequence, deliberately: a PostToolUse `continue: false` on a concurrent call stops the turn when
+      // its batch settles; its siblings in the batch have already run (they are read-only).
+      const inFlight = new Set<Promise<unknown>>();
+      const deferredPostToolEffects = new Map<number, () => void>();
+      const settleConcurrent = async (): Promise<void> => {
+        while (inFlight.size > 0) await Promise.all([...inFlight]);
+        for (const index of [...deferredPostToolEffects.keys()].sort((a, b) => a - b)) deferredPostToolEffects.get(index)!();
+        deferredPostToolEffects.clear();
+      };
+      // One call, from its checks to its result: "next" moves the round on, "stop" ends it (an interrupt, a
+      // thrown tool, a structured-output end -- the padding below gives every call left a result).
+      const processCall = async (emitted: (typeof turn.calls)[number], index: number, mode: { concurrent: boolean; readyToExecute?: () => void }): Promise<"next" | "stop"> => {
+        const record = (block: ContentBlock): void => {
+          slots[index] = block;
+        };
         // A PLAIN-NAMED in-process tool (`McpSdkServerConfig.toolNames`) still answers to its old
         // `mcp__<server>__<tool>` spelling when the MODEL uses it -- a resumed history written before the
         // rename teaches the model that spelling. The call runs as the registered tool (one identity:
@@ -9640,12 +9673,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // still gets its tool_result (Ruling P1-G/P1-H's pairing invariant), saying why.
         const stoppedBy = currentTurnStop();
         if (stoppedBy !== undefined) {
-          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: `[not executed: the ${stoppedBy.hookName} hook stopped the turn]`, error: true });
-          continue;
+          record({ type: "tool_result", tool_use_id: call.id, content: `[not executed: the ${stoppedBy.hookName} hook stopped the turn]`, error: true });
+          return "next";
         }
         if (truncatedByOutputLimit) {
-          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: OUTPUT_LIMIT_TRUNCATED_CALL_TEXT, is_error: true });
-          continue;
+          record({ type: "tool_result", tool_use_id: call.id, content: OUTPUT_LIMIT_TRUNCATED_CALL_TEXT, is_error: true });
+          return "next";
         }
         // --- Phase 5 Task 3 (R5-10): the host-generated StructuredOutput tool -----------------------
         //
@@ -9664,13 +9697,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           structuredOutputAttempts++;
           const validation = structuredOutput.validate(outputFormatSchema!, call.input);
           if (validation.ok) {
-            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: "Structured output accepted." });
+            record({ type: "tool_result", tool_use_id: call.id, content: "Structured output accepted." });
             finalResult = { type: "result", subtype: "success", is_error: false, structured_output: validation.value };
             structuredTerminated = true;
-            break;
+            return "stop";
           }
           if (structuredOutputAttempts >= maxStructuredOutputAttempts) {
-            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: `Structured output validation failed: ${validation.errors.join("; ")}`, error: true });
+            record({ type: "tool_result", tool_use_id: call.id, content: `Structured output validation failed: ${validation.errors.join("; ")}`, error: true });
             finalResult = {
               type: "result",
               subtype: "error_max_structured_output_retries",
@@ -9679,10 +9712,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
               terminal_reason: "structured_output_retry_exhausted",
             };
             structuredTerminated = true;
-            break;
+            return "stop";
           }
-          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: `Structured output validation failed: ${validation.errors.join("; ")}. Call ${STRUCTURED_OUTPUT_TOOL_NAME} again with a corrected value.`, error: true });
-          continue;
+          record({ type: "tool_result", tool_use_id: call.id, content: `Structured output validation failed: ${validation.errors.join("; ")}. Call ${STRUCTURED_OUTPUT_TOOL_NAME} again with a corrected value.`, error: true });
+          return "next";
         }
         // WS-27: the MCP server this call's tool belongs to, read ONCE from the name the model called (a
         // renamed server's gating hook may run under its declared spelling, which the registry resolves to a
@@ -9714,13 +9747,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // refusal and the child continues normally.
           const availabilityDescriptor = getRegisteredTool(call.name)?.descriptor;
           if (availabilityDescriptor !== undefined && !isToolAvailable(availabilityDescriptor, { ...advertisedCfg, mode: policyStateStore.getState().mode })) {
-            resultBlocks.push({
+            record({
               type: "tool_result",
               tool_use_id: call.id,
               content: `'${call.name}' is not available in this session's current configuration (WS-06 §1.5 availability) -- it is registered but excluded here, so it was not executed`,
               error: true,
             });
-            continue;
+            return "next";
           }
           // NEW-5 (residual round): an ALIAS-EXCLUDED name is refused with the reason it was taken
           // away, not with the load-first hint. The two look identical from the load-first
@@ -9745,7 +9778,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // the same twin with Tool Search inactive -- still falls through to the permission
             // pipeline and gets a real rule denial with its `permission_denied` frame.
             const excludedReason = aliasExclusionLive(call.name);
-            resultBlocks.push(
+            record(
               excludedReason !== undefined
                 ? {
                     type: "tool_result",
@@ -9760,7 +9793,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
                     loadFirst: true,
                   },
             );
-            continue;
+            return "next";
           }
           // Task 6 (WS-07 §2, WS-04 §4 ordering rule 5): the permission gate slots HERE — between
           // this round's tool_use emission (already written/pushed/recorded above) and execution.
@@ -9825,8 +9858,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             ? undefined
             : toolNotOfferedRefusal(call.name);
           if (notOffered !== undefined) {
-            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: notOffered, is_error: true });
-            continue;
+            record({ type: "tool_result", tool_use_id: call.id, content: notOffered, is_error: true });
+            return "next";
           }
           const identityProbes = {
             deniedByRule: probeRule("deny"),
@@ -9859,7 +9892,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           const decisionRaced = await raceInterrupt(evaluateWithFreshPolicy(permissionCall), interruptSignal);
           if (decisionRaced.kind === "interrupted") {
             interrupted = true;
-            break;
+            return "stop";
           }
           const decision = decisionRaced.value;
           // WS-23: what the PreToolUse/PermissionRequest hooks said BESIDE their decision -- context
@@ -9874,7 +9907,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // (WS-07 §7.2's own union) — an engine-originated fail-closed denial invents no such
           // signal, so the one real call site below still handles it inline, after calling this.
           const denyCall = async (message: string, mechanism: string, ruleRef?: string): Promise<void> => {
-            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: message, denied: true });
+            record({ type: "tool_result", tool_use_id: call.id, content: message, denied: true });
             // Finding 3 (P2 fix-wave, IMPORTANT): the ONE accumulation site — every denial reaches
             // here (hook/rule/mode/canUseTool/autoEngine, plus both fail-closed-defer cases below),
             // so this single push is the array's complete producer. `tool_input` is `permissionCall.
@@ -9936,7 +9969,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             // "[deferred]" marker nothing could ever resume would be strictly worse than a denial.
             if (!approvalStore) {
               await denyCall(`Denied: cannot defer -- no durable approval store is available for this session (${deferMessage})`, "hook");
-              continue;
+              return "next";
             }
             const requestId = randomUUID();
             const executedInput = decision.transformedInput ?? permissionCall.input;
@@ -9979,9 +10012,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             } catch (err) {
               const text = err instanceof Error ? err.message : String(err);
               await denyCall(`Denied: failed to persist the durable approval record (${text})`, "hook");
-              continue;
+              return "next";
             }
-            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: "[deferred]", deferred: true });
+            record({ type: "tool_result", tool_use_id: call.id, content: "[deferred]", deferred: true });
             // Winter-original public system message (no pinned upstream shape exists for a durable
             // defer — WS-07 §9 itself frames the durable-approval layer as a Winter product
             // addition over the SDK-compatible surface, not an upstream wire pin, unlike
@@ -10002,7 +10035,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
                 uuid: randomUUID(),
               },
             });
-            continue;
+            return "next";
           }
 
           if (decision.decision !== "allow") {
@@ -10025,9 +10058,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             if (decision.interrupt === true) {
               interrupted = true;
               interruptCurrentTurn.current?.();
-              break;
+              return "stop";
             }
-            continue;
+            return "next";
           }
           // Task 8 (WS-07 §7.2): updatedPermissions applies each suggested update to the LIVE
           // policy, bumping policyVersion (authority "session" — a canUseTool answer is a live
@@ -10121,25 +10154,30 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // R6-6: the SAME per-turn signal `provider.generate` receives. The race still unwinds the
           // turn promptly; the signal is what stops the work the race walked away from.
           // The decision's explicit-approval marker rides to the executor's context beside the signal.
-          // WS-23: tool calls run one at a time, so a per-call collector is exact.
-          toolReferenceCollector = [];
+          // SDK 0.0.40: the checks are done -- a concurrency-safe call is released to run beside the round's
+          // other safe calls from here on, and the round's walk moves on to its next call.
+          mode.readyToExecute?.();
+          // WS-23: the per-call tool-reference collector is exact because only a SERIAL call uses it: the
+          // calls that load tools (`ToolSearch`) are never concurrency-safe, and a concurrent call neither
+          // sets nor reads it, so it can never take another call's references.
+          if (!mode.concurrent) toolReferenceCollector = [];
           const raced = await raceInterrupt(tools.execute(executedCall, { signal: turnAbort.signal, ...(decision.explicitApproval !== undefined ? { explicitApproval: decision.explicitApproval } : {}) }), interruptSignal);
-          const loadedTools = advertisedNamesFor(toolReferenceCollector);
-          toolReferenceCollector = undefined;
+          const loadedTools = mode.concurrent ? [] : advertisedNamesFor(toolReferenceCollector);
+          if (!mode.concurrent) toolReferenceCollector = undefined;
           const loadedToolDefinitions = loadedDefinitionsFor(loadedTools);
           // WS-24: a FORK's frozen `tools` cannot carry what it just loaded (see `providerToolSpecs`), so
           // the definitions ride this result -- after the prefix the fork shares with its parent.
           const forkDefinitionsText = exactRequestLayout !== undefined ? forkLoadedDefinitionsText(loadedToolDefinitions) : "";
           if (raced.kind === "interrupted") {
             interrupted = true;
-            break;
+            return "stop";
           }
           // Spawn-surface parity (R-S4): an executor's `isError` rides the block as claude's own
           // `is_error: true` -- on the wire, into history, into persistence and into every adapter.
           // Code-mode images: a result that carries blocks (an image Read) is written as claude's own
           // content ARRAY; every other result keeps its plain string, byte-identical to before.
           const resultBlocksOfCall = raced.value.blocks;
-          resultBlocks.push({
+          record({
             type: "tool_result",
             tool_use_id: call.id,
             content:
@@ -10195,21 +10233,26 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // PostToolUseFailureHookSpecificOutput carries no `classifierContext` field at all (its
           // own pinned shape is just `{hookEventName, additionalContext?}`), so this branch is a
           // no-op on that arm -- nothing to accumulate, not a dropped contribution.
-          if (postToolUseHookOutcome.classifierContext !== undefined) {
-            accumulatedClassifierContext.push(...postToolUseHookOutcome.classifierContext);
-          }
           // WS-23: the post-tool hook's context reaches the model (appended after this round's
-          // results), its notices the host, its `continue: false` the turn loop.
-          absorbHookComposite(postToolUseHookOutcome, { hookName: `${raced.value.isError === true ? "PostToolUseFailure" : "PostToolUse"}:${call.name}`, context: true, toolUseID: call.id });
+          // results), its notices the host, its `continue: false` the turn loop. SDK 0.0.40: a CONCURRENT
+          // call's effects wait for its batch to settle and are applied in call order (`settleConcurrent`).
+          const applyPostToolEffects = (): void => {
+            if (postToolUseHookOutcome.classifierContext !== undefined) {
+              accumulatedClassifierContext.push(...postToolUseHookOutcome.classifierContext);
+            }
+            absorbHookComposite(postToolUseHookOutcome, { hookName: `${raced.value.isError === true ? "PostToolUseFailure" : "PostToolUse"}:${call.name}`, context: true, toolUseID: call.id });
+          };
+          if (mode.concurrent) deferredPostToolEffects.set(index, applyPostToolEffects);
+          else applyPostToolEffects();
           // WS-23 (brief item 5): `updatedToolOutput` REPLACES what the model is shown for this call
           // (claude 2.1.282: "Replaces the tool output before it is sent to the model"; its MCP-only
           // twin `updatedMCPToolOutput` is read by the same interpreter). Applied to the result block
-          // this call just pushed, before the round's tool message is emitted, pushed and recorded --
-          // so the wire, the history and the transcript all carry the replacement.
+          // this call just recorded, before the call's frame is sent and the round's tool message is
+          // pushed and recorded -- so the wire, the history and the transcript all carry the replacement.
           if (postToolUseHookOutcome.transformedOutput !== undefined) {
-            const last = resultBlocks[resultBlocks.length - 1];
-            if (last !== undefined && last.type === "tool_result" && last.tool_use_id === call.id) {
-              resultBlocks[resultBlocks.length - 1] = { ...last, content: toolOutputReplacement(postToolUseHookOutcome.transformedOutput) };
+            const own = slots[index];
+            if (own !== undefined && own.type === "tool_result" && own.tool_use_id === call.id) {
+              slots[index] = { ...own, content: toolOutputReplacement(postToolUseHookOutcome.transformedOutput) };
             }
           }
         } catch (err) {
@@ -10232,11 +10275,51 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             }),
             { hookName: `PostToolUseFailure:${call.name}`, context: true, toolUseID: call.id },
           );
+          return "stop";
+        }
+        return "next";
+      };
+
+      // The walk, in call order. A safe call is handed to `processCall` and the walk waits only until it is
+      // READY TO EXECUTE (its checks passed) or done (its checks decided it: a denial, a hook stop, ...);
+      // an unsafe call first lets every call in flight finish, then runs to completion before the next.
+      // Every call's frame is sent the moment it is done (`sendResultToHost`).
+      for (let index = 0; index < turn.calls.length; index++) {
+        const emitted = turn.calls[index]!;
+        const concurrent = isConcurrencySafeTool(currentToolName(emitted.name));
+        if (concurrent) {
+          while (inFlight.size >= MAX_TOOL_CONCURRENCY) await Promise.race(inFlight);
+        } else {
+          await settleConcurrent();
+        }
+        // A call in flight was interrupted or threw: nothing more is started (the padding below answers it).
+        if (interrupted || toolThrowText !== null) break;
+        if (!concurrent) {
+          const outcome = await processCall(emitted, index, { concurrent: false });
+          sendResultToHost(index);
+          if (outcome === "stop") break;
+          continue;
+        }
+        let markReady!: () => void;
+        const ready = new Promise<"ready">((resolve) => (markReady = () => resolve("ready")));
+        const done = processCall(emitted, index, { concurrent: true, readyToExecute: markReady }).then((outcome) => {
+          sendResultToHost(index);
+          return outcome;
+        });
+        const first = await Promise.race([ready, done]);
+        if (first === "ready") {
+          const tracked: Promise<unknown> = done.finally(() => inFlight.delete(tracked));
+          // Observed here so a call that fails while nothing is awaiting it is not an unhandled rejection;
+          // `settleConcurrent` (or the cap's race) still sees the failure and rethrows it.
+          tracked.catch(() => undefined);
+          inFlight.add(tracked);
+        } else if (first === "stop") {
           break;
         }
       }
-      // The last call's result (or the one a `break` left unsent), before any padding is added.
-      sendFinishedResultsToHost();
+      // Every call still in flight finishes (an interrupt ends them promptly), and their post-tool effects
+      // are applied in call order, before any padding is decided.
+      await settleConcurrent();
 
       if (toolThrowText !== null) {
         // Ruling P1-H: the tool_use/tool_result pairing invariant must hold in ACCUMULATED HISTORY
@@ -10250,12 +10333,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // the call that threw and any calls after it in this round that never got to run. Uses the
         // SAME Error-message-or-String(err) rendering as `finalResult.result` above (`text`) rather
         // than an unconditional `String(thrown)` — see the task-8 report's deviations for why.
-        const resultedIds = new Set(resultBlocks.map((b) => (b as { tool_use_id: string }).tool_use_id));
-        for (const call of turn.calls) {
-          if (!resultedIds.has(call.id)) {
-            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: `[error: ${toolThrowText}]`, error: true });
-          }
-        }
+        // SDK 0.0.40: into the call's own SLOT, so the model's message stays in call order even when a
+        // concurrent call after the gap finished (a call left unanswered is no longer always a suffix).
+        turn.calls.forEach((call, index) => {
+          if (slots[index] === undefined) slots[index] = { type: "tool_result", tool_use_id: call.id, content: `[error: ${toolThrowText}]`, error: true };
+        });
       }
 
       if (structuredTerminated) {
@@ -10263,12 +10345,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // that ends the turn leaves any LATER call in the same round unexecuted, so each still needs
         // a tool_result or the persisted history carries a dangling tool_use that a real provider
         // rejects outright on the next request.
-        const resultedIds = new Set(resultBlocks.map((b) => (b as { tool_use_id: string }).tool_use_id));
-        for (const call of turn.calls) {
-          if (!resultedIds.has(call.id)) {
-            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: "[not executed: the turn ended on a structured-output result]", error: true });
-          }
-        }
+        turn.calls.forEach((call, index) => {
+          if (slots[index] === undefined) slots[index] = { type: "tool_result", tool_use_id: call.id, content: "[not executed: the turn ended on a structured-output result]", error: true };
+        });
       }
 
       if (interrupted) {
@@ -10280,13 +10359,16 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // standing pattern as the interrupted-result shape below): content "[interrupted]" +
         // `interrupted: true` marks a call that never got a real result because the turn was
         // interrupted — covers both "never started" and "was mid-execution when interrupted" calls.
-        const resultedIds = new Set(resultBlocks.map((b) => (b as { tool_use_id: string }).tool_use_id));
-        for (const call of turn.calls) {
-          if (!resultedIds.has(call.id)) {
-            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: "[interrupted]", interrupted: true });
-          }
-        }
+        turn.calls.forEach((call, index) => {
+          if (slots[index] === undefined) slots[index] = { type: "tool_result", tool_use_id: call.id, content: "[interrupted]", interrupted: true };
+        });
       }
+      // Belt: a call no rule above answered (nothing should reach here) still gets a result rather than
+      // leaving a dangling tool_use in the history.
+      turn.calls.forEach((call, index) => {
+        if (slots[index] === undefined) slots[index] = { type: "tool_result", tool_use_id: call.id, content: "[not executed]", error: true };
+      });
+      const resultBlocks = slots as ContentBlock[];
 
       // Emitted/pushed/recorded unconditionally (normal completion, padded-after-interrupt, OR
       // padded-after-throw) so the wire, the in-memory history, and persistence never disagree about
@@ -10302,12 +10384,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // Code-mode images: the host's copy carries every image block with its `data` emptied
       // (`toolResultsForHost`) -- see that function for why the bytes stay out of the frame.
       // Host-only site icons (`ToolResultPayload.siteIcons`) are added to THIS copy alone (`withHostSiteIcons`).
-      // SDK 0.0.40: the calls that ran were sent to the host one by one as they finished
-      // (`sendFinishedResultsToHost`), so this frame carries only what the loop never reached -- the
-      // padding above -- and is not written at all when there is none.
-      if (resultsSentToHost < resultBlocks.length) {
-        output.write({ type: "data", message: { type: "user", message: { content: hostToolResultContent(resultBlocks.slice(resultsSentToHost), hostSiteIcons) } } });
-        resultsSentToHost = resultBlocks.length;
+      // SDK 0.0.40: every call the round decided was sent to the host when it was done (`sendResultToHost`),
+      // so this frame carries only the padding above, in call order, and is not written when there is none.
+      const unsent = resultBlocks.filter((_, index) => !sentToHost.has(index));
+      if (unsent.length > 0) {
+        output.write({ type: "data", message: { type: "user", message: { content: hostToolResultContent(unsent, hostSiteIcons) } } });
+        resultBlocks.forEach((_, index) => sentToHost.add(index));
       }
       messages.push({ role: "tool", content: resultBlocks });
       await recordUser(resultBlocks);

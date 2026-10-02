@@ -788,12 +788,23 @@ export type SdkMessage =
   // corrected by the shape authority this task was told to follow.
   | { type: "assistant"; message: { content: Array<{ type: "text"; text: string } | { type: string; [k: string]: unknown }> }; parent_tool_use_id?: string | null; [k: string]: unknown }
   // SDK 0.0.40: ONE `user` frame PER TOOL RESULT, written the moment that call is done (after its
-  // PostToolUse hooks, so it carries the final block) -- claude's own stream shape. A round's calls that
-  // never ran (an interrupt, a thrown tool, a structured-output end) are padded and sent together in one
-  // closing frame. Every result block crosses exactly once. Before 0.0.40 the whole round crossed in ONE
-  // frame after its last call, so a host showed every call of a batch as running until the slowest was
-  // done. The MODEL's side did not change: the history, the transcript and every provider request still
-  // carry the round's results as one message, in call order.
+  // PostToolUse hooks, so it carries the final block) -- claude's own stream shape. A call the round
+  // decides not to run (a hook stop, an output-limit truncation, a denial, an unavailable tool) is done at
+  // that decision and gets its own frame too. Only the padding for calls an interrupt, a thrown tool or a
+  // structured-output end left unanswered is sent together, in one closing frame, in call order. Every
+  // result block crosses exactly once, and a tool round with no results sends no frame at all (before
+  // 0.0.40 a `tool_use` turn with zero calls sent an empty one).
+  //
+  // A round's READ-ONLY calls run CONCURRENTLY (runtime `tools/concurrency.ts`: Read, Glob, Grep, LSP,
+  // WebFetch, WebSearch, Search, and any MCP tool its server lists with `readOnlyHint: true`; up to 10 at
+  // once; any other call is a barrier that runs alone), so these frames arrive in COMPLETION order, which
+  // is not call order. Fold them by `tool_use_id`.
+  //
+  // Before 0.0.40 the whole round crossed in ONE frame after its last call, so a host showed every call
+  // of a batch as running until the slowest was done. A host that folds results block by block needs no
+  // change; one that assumed exactly one `user` frame per round now sees one per call. The MODEL's side
+  // did not change: the history, the transcript and every provider request still carry the round's
+  // results as one message, in CALL order.
   | { type: "user"; message: { role: "user"; content: Array<{ type: string; [k: string]: unknown }> }; parent_tool_use_id?: string | null; [k: string]: unknown }
   // Finding 3: `permission_denials` is ALWAYS present (pin-verified) — every result the engine
   // constructs carries it, `[]` when this turn denied nothing.
