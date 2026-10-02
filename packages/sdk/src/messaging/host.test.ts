@@ -6,7 +6,7 @@ import { createFakeMessagingRouterSeam, type DeliveryOutcome, type ListedRuntime
 import { createLoopGuard } from "./outcomes.ts";
 import { createNotificationQueue } from "./idle.ts";
 import { createSubscriberDirectory, listAgents, sendMessage, type MessagingRuntimeDeps } from "./router.ts";
-import { hostAnswerToOutcome, isHostMessageSendAnswer, normaliseHostMessageListAnswer, boundedHostNote, HOST_MESSAGE_NOTE_MAX, type HostMessagingPort } from "./host.ts";
+import { hostAnswerToOutcome, isHostMessageSendAnswer, isHostSessionStopAnswer, normaliseHostMessageListAnswer, boundedHostNote, HOST_MESSAGE_NOTE_MAX, type HostMessagingPort } from "./host.ts";
 import { createFakeChild } from "./child-fake.test-support.ts";
 import { createMessagingToolHandlers } from "../tools/messaging-handlers.ts";
 import { messagingToolPortFromRuntimeDeps } from "../tools/port.ts";
@@ -40,6 +40,9 @@ function host(answer: HostMessageSendAnswer | Error | unknown, listing: HostMess
       port.lists++;
       if (listing instanceof Error) throw listing;
       return listing;
+    },
+    async stop() {
+      return { status: "not_running" as const };
     },
   };
   return port;
@@ -130,6 +133,26 @@ describe("listAgents with a host port", () => {
     expect(listing.split("\n")[1]).toBe("- Fix it (session:s_1) [session/winter-agent] status=running mode=code");
   });
 
+  test("a host's omitted count (and the SDK's own cap) is reported, never silently cut", async () => {
+    const port = host({ status: "delivered" }, { sessions: [{ address: "session:s_1", status: "running", mode: "code" }], omitted: 7 });
+    const result = await listAgents(deps({ port }), { sessionId: SELF }, {});
+    expect(result.omitted).toBe(7);
+    expect(result.listing.split("\n").at(-1)).toBe("(7 more reachable sessions not listed)");
+    const many = Array.from({ length: 205 }, (_, i) => ({ address: `session:s_${i}`, status: "running" as const, mode: "code" }));
+    expect(normaliseHostMessageListAnswer({ sessions: many })?.omitted).toBe(5);
+    const handlers = createMessagingToolHandlers(messagingToolPortFromRuntimeDeps(deps({ port })), { sessionId: SELF });
+    const listed = JSON.parse((await handlers.listAgents({})).text) as { listing: string };
+    expect(listed.listing).toEndWith("(7 more reachable sessions not listed)");
+  });
+
+  test("the calling tool's signal reaches the host's send", async () => {
+    const seen: Array<AbortSignal | undefined> = [];
+    const port = { ...host({ status: "delivered" }), async send(_r: HostMessageSendRequest, opts?: { signal?: AbortSignal }) { seen.push(opts?.signal); return { status: "delivered" as const }; } };
+    const controller = new AbortController();
+    await sendMessage(deps({ port }), { sessionId: SELF, toolUseId: "t" }, { to: "s_abc", message: "hi" }, { signal: controller.signal });
+    expect(seen[0]).toBe(controller.signal);
+  });
+
   test("a failing host listing lists only the in-process rows", async () => {
     const port = host({ status: "delivered" }, new Error("down"));
     const { rows } = await listAgents(deps({ port, reachable: [local] }), { sessionId: SELF }, {});
@@ -148,6 +171,14 @@ describe("the tool handler renders the host's note", () => {
 });
 
 describe("the guards", () => {
+  test("isHostSessionStopAnswer requires a reason for the failure statuses", () => {
+    expect(isHostSessionStopAnswer({ status: "stopped" })).toBe(true);
+    expect(isHostSessionStopAnswer({ status: "not_running" })).toBe(true);
+    expect(isHostSessionStopAnswer({ status: "refused" })).toBe(false);
+    expect(isHostSessionStopAnswer({ status: "refused", reason: "a chat session" })).toBe(true);
+    expect(isHostSessionStopAnswer({ status: "killed" })).toBe(false);
+  });
+
   test("isHostMessageSendAnswer requires a reason exactly where the outcome carries one", () => {
     expect(isHostMessageSendAnswer({ status: "delivered" })).toBe(true);
     expect(isHostMessageSendAnswer({ status: "not_found" })).toBe(false);

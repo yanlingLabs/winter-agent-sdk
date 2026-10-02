@@ -13,6 +13,7 @@ import { renderAgentNotification, renderTaskStopNotification } from "../../subag
 // that pinned field (after task_started and background_tasks_changed) and was missing from the
 // inventory the mapping's own header lists.
 import { wireTaskType } from "../background-tasks.ts";
+import { getMessagingRuntime } from "../../messaging/router.ts";
 
 interface TaskStopInput {
   task_id?: string;
@@ -64,6 +65,11 @@ const taskStopExecutor: ToolExecutor = {
     const id = parsed.task_id ?? parsed.shell_id!;
     const task = getTask(id);
     if (!task) {
+      // Host messaging: an id no task of this session has may be one of the HOST's sessions (a
+      // multi-session host such as the Winter daemon); stopping one interrupts its running turn. A
+      // session with no host line answers exactly as before.
+      const host = getMessagingRuntime()?.hostMessaging?.(ctx.sessionId);
+      if (host !== undefined) return stopHostSession(host, id, ctx.agentId, ctx.signal);
       return { output: `Error: TaskStop: unknown task_id "${id}"`, isError: true };
     }
 
@@ -113,6 +119,27 @@ const taskStopExecutor: ToolExecutor = {
     return { output: formatResult(`stopped task ${id}`, id, task.kind, task.command) };
   },
 };
+
+/** `task_type` for a host session in TaskStop's pinned result shape. */
+export const HOST_SESSION_TASK_TYPE = "session";
+
+async function stopHostSession(
+  host: NonNullable<ReturnType<NonNullable<NonNullable<ReturnType<typeof getMessagingRuntime>>["hostMessaging"]>>>,
+  id: string,
+  agentId: string | undefined,
+  signal: AbortSignal | undefined,
+): Promise<{ output: string; isError?: boolean }> {
+  let answer: Awaited<ReturnType<typeof host.stop>>;
+  try {
+    answer = await host.stop({ id, ...(agentId !== undefined ? { fromAgentId: agentId } : {}) }, signal !== undefined ? { signal } : {});
+  } catch (err) {
+    return { output: `Error: TaskStop: the host did not answer the stop for "${id}" (${err instanceof Error ? err.name : "error"}); it may or may not have stopped`, isError: true };
+  }
+  if (answer.status === "stopped") return { output: JSON.stringify({ message: `stopped session ${id}: its running turn was interrupted`, task_id: id, task_type: HOST_SESSION_TASK_TYPE }) };
+  if (answer.status === "not_running") return { output: JSON.stringify({ message: `session ${id} has no turn running -- nothing to stop`, task_id: id, task_type: HOST_SESSION_TASK_TYPE }) };
+  if (answer.status === "not_found") return { output: `Error: TaskStop: unknown task_id "${id}" (${answer.reason ?? "not found"})`, isError: true };
+  return { output: `Error: TaskStop: ${answer.reason ?? answer.status}`, isError: true };
+}
 
 replaceExecutor("TaskStop", taskStopExecutor);
 

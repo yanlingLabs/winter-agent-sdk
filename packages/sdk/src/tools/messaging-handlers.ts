@@ -19,7 +19,7 @@
 import type { DeliveryOutcome } from "../messaging/index.ts";
 // The listing renderer is the core's own (WS-10 §10.2's exact line format), reached directly rather
 // than re-implemented: a second formatter is a second answer to "what does the model see".
-import { formatListing } from "../messaging/router.ts";
+import { formatListing, omittedLine } from "../messaging/router.ts";
 
 import { acceptNativeListAgentsArgs, acceptNativeReadNotificationsArgs, acceptNativeSendMessageArgs, deriveSendMessageSummary } from "./accept.ts";
 import { callerAddress, type MessagingToolPort } from "./port.ts";
@@ -40,6 +40,8 @@ export interface WinterToolCaller {
   sessionId: string;
   agentId?: string;
   toolUseId?: string;
+  /** The calling tool's own abort signal, when the host binds the caller per call (host messaging cancels a pending delivery with it). */
+  signal?: AbortSignal;
 }
 
 /** The host-neutral tool result: one text body, plus whether the model should read it as a failure. */
@@ -151,6 +153,7 @@ export function createMessagingToolHandlers(port: MessagingToolPort, caller: Win
           ...(summary === undefined ? {} : { summary }),
           ...(accepted.args.notify_when_idle === undefined ? {} : { notifyWhenIdle: accepted.args.notify_when_idle }),
           ...(who.toolUseId === undefined ? {} : { originToolCallId: who.toolUseId }),
+          ...(who.signal === undefined ? {} : { signal: who.signal }),
         });
         // WS-10 §10.1: the result "reports success/message and MAY include a message ID, routing/receipt
         // information … or a CLASSIFIED FAILURE" — so the typed outcome IS the result, rendered whole.
@@ -167,7 +170,10 @@ export function createMessagingToolHandlers(port: MessagingToolPort, caller: Win
       const accepted = acceptNativeListAgentsArgs(rawArgs);
       if (!accepted.ok) return text(accepted.reason, true);
       return guarded("ListAgents could not reach the messaging system", async () => {
-        const rows = await port.listReachable({ from: callerAddress(identity()) });
+        const from = callerAddress(identity());
+        const detailed = port.listReachableDetailed !== undefined ? await port.listReachableDetailed({ from }) : { rows: await port.listReachable({ from }) };
+        const rows = detailed.rows;
+        const omitted = detailed.omitted ?? 0;
         // WS-10 §10.2: "Output is EXACTLY `{ listing: string }`" — one string field, and nothing else.
         // The rows behind it are never enumerated as structured output here, and an exited transcript
         // is never among them: the listing view drops exited sessions by construction.
@@ -179,7 +185,7 @@ export function createMessagingToolHandlers(port: MessagingToolPort, caller: Win
         // recorded here rather than papered over — a re-filter at this layer would be a second,
         // divergent answer to the same question, since the handler knows only the address it was
         // handed. Ledgered for the 0.0.4 patch wave.
-        return text(JSON.stringify({ listing: formatListing(rows) }));
+        return text(JSON.stringify({ listing: omitted > 0 ? `${formatListing(rows)}\n${omittedLine(omitted)}` : formatListing(rows) }));
       });
     },
 

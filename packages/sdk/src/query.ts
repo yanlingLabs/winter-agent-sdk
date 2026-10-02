@@ -3,8 +3,8 @@ import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRe
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
 import type { AccountInfo, AgentInfo, CredentialResolveAnswer, CredentialResolveRequest, EffortLevel, ModelInfo, ModelFamilyListing, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, McpOAuthRefreshAnswer, McpOAuthRefreshRequest, RewindFilesResult } from "./protocol/config.ts";
-import { CREDENTIAL_RESOLVE_SUBTYPE, HOST_MESSAGE_LIST_SUBTYPE, HOST_MESSAGE_SEND_SUBTYPE, isWinterMcpServerInstance, MCP_OAUTH_REFRESH_SUBTYPE, TEST_KEYCHAIN_ENV, type HostMessagingHandler, type Options, type McpServerConfig } from "./options.ts";
-import { isHostMessageListRequest, isHostMessageSendAnswer, isHostMessageSendRequest, normaliseHostMessageListAnswer } from "./messaging/host.ts";
+import { CREDENTIAL_RESOLVE_SUBTYPE, HOST_MESSAGE_LIST_SUBTYPE, HOST_MESSAGE_SEND_SUBTYPE, HOST_SESSION_STOP_SUBTYPE, isWinterMcpServerInstance, MCP_OAUTH_REFRESH_SUBTYPE, TEST_KEYCHAIN_ENV, type HostMessagingHandler, type Options, type McpServerConfig } from "./options.ts";
+import { isHostMessageListRequest, isHostMessageSendAnswer, isHostMessageSendRequest, isHostSessionStopAnswer, isHostSessionStopRequest, normaliseHostMessageListAnswer } from "./messaging/host.ts";
 import type {
   PermissionMode,
   CanUseTool,
@@ -512,17 +512,27 @@ function makeCredentialResolveHandler(onCredentialResolve: NonNullable<Options["
 // answers `delivery_uncertain` (from here the host may have delivered before it failed), a throwing or
 // garbage-returning `list` answers an empty listing (a data answer claims no delivery). The log line on a
 // throw names the error's NAME only -- a host's error text may quote the message body.
-function abortableFor(abortController: AbortController | undefined, handlerCtx: { signal: AbortSignal } | undefined): AbortController {
+// The handler's signal: aborted by the session's own abort or by the runtime cancelling THIS request.
+// `dispose` removes the listeners again -- the session-lifetime signal outlives every request, and a
+// listener per request left on it would accumulate for the whole session.
+function abortableFor(abortController: AbortController | undefined, handlerCtx: { signal: AbortSignal } | undefined): { controller: AbortController; dispose: () => void } {
   const controller = new AbortController();
+  const onAbort = (): void => controller.abort();
   if (abortController?.signal.aborted === true || handlerCtx?.signal.aborted === true) controller.abort();
-  abortController?.signal.addEventListener("abort", () => controller.abort(), { once: true });
-  handlerCtx?.signal.addEventListener("abort", () => controller.abort(), { once: true });
-  return controller;
+  abortController?.signal.addEventListener("abort", onAbort, { once: true });
+  handlerCtx?.signal.addEventListener("abort", onAbort, { once: true });
+  return {
+    controller,
+    dispose: () => {
+      abortController?.signal.removeEventListener("abort", onAbort);
+      handlerCtx?.signal.removeEventListener("abort", onAbort);
+    },
+  };
 }
 function makeHostMessageSendHandler(host: HostMessagingHandler, abortController: AbortController | undefined): ControlRequestHandler {
   return async (payload: unknown, handlerCtx?: { signal: AbortSignal }): Promise<ControlRequestHandlerResult> => {
     if (!isHostMessageSendRequest(payload)) return { ok: false, error: { code: "invalid_payload", message: "host_message_send expects { to, message, messageId, summary?, notifyWhenIdle?, fromAgentId? }" } };
-    const controller = abortableFor(abortController, handlerCtx);
+    const { controller, dispose } = abortableFor(abortController, handlerCtx);
     const request = {
       to: payload.to,
       message: payload.message,
@@ -537,19 +547,39 @@ function makeHostMessageSendHandler(host: HostMessagingHandler, abortController:
     } catch (err) {
       console.error(`winter: hostMessaging.send threw (${err instanceof Error ? err.name : "error"}) -- answering delivery_uncertain`);
       return { ok: true, payload: { status: "delivery_uncertain", reason: "the host's message handler failed" } };
+    } finally {
+      dispose();
     }
   };
 }
 function makeHostMessageListHandler(host: HostMessagingHandler, abortController: AbortController | undefined): ControlRequestHandler {
   return async (payload: unknown, handlerCtx?: { signal: AbortSignal }): Promise<ControlRequestHandlerResult> => {
     if (!isHostMessageListRequest(payload)) return { ok: false, error: { code: "invalid_payload", message: "host_message_list expects { fromAgentId? }" } };
-    const controller = abortableFor(abortController, handlerCtx);
+    const { controller, dispose } = abortableFor(abortController, handlerCtx);
     try {
       const answer = await host.list({ ...(payload?.fromAgentId !== undefined ? { fromAgentId: payload.fromAgentId } : {}) }, { signal: controller.signal });
       return { ok: true, payload: normaliseHostMessageListAnswer(answer) ?? { sessions: [] } };
     } catch (err) {
       console.error(`winter: hostMessaging.list threw (${err instanceof Error ? err.name : "error"}) -- answering an empty listing`);
       return { ok: true, payload: { sessions: [] } };
+    } finally {
+      dispose();
+    }
+  };
+}
+function makeHostSessionStopHandler(host: HostMessagingHandler, abortController: AbortController | undefined): ControlRequestHandler {
+  return async (payload: unknown, handlerCtx?: { signal: AbortSignal }): Promise<ControlRequestHandlerResult> => {
+    if (!isHostSessionStopRequest(payload)) return { ok: false, error: { code: "invalid_payload", message: "host_session_stop expects { id, fromAgentId? }" } };
+    if (host.stop === undefined) return { ok: true, payload: { status: "not_found", reason: `no task or session "${payload.id}" is known` } };
+    const { controller, dispose } = abortableFor(abortController, handlerCtx);
+    try {
+      const answer = await host.stop({ id: payload.id, ...(payload.fromAgentId !== undefined ? { fromAgentId: payload.fromAgentId } : {}) }, { signal: controller.signal });
+      return { ok: true, payload: isHostSessionStopAnswer(answer) ? answer : { status: "unavailable", reason: "the host's stop handler returned a malformed answer" } };
+    } catch (err) {
+      console.error(`winter: hostMessaging.stop threw (${err instanceof Error ? err.name : "error"}) -- answering unavailable`);
+      return { ok: true, payload: { status: "unavailable", reason: "the host's stop handler failed" } };
+    } finally {
+      dispose();
     }
   };
 }
@@ -1213,6 +1243,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   if (options.hostMessaging) {
     controlRequestHandlers.set(HOST_MESSAGE_SEND_SUBTYPE, makeHostMessageSendHandler(options.hostMessaging, options.abortController));
     controlRequestHandlers.set(HOST_MESSAGE_LIST_SUBTYPE, makeHostMessageListHandler(options.hostMessaging, options.abortController));
+    controlRequestHandlers.set(HOST_SESSION_STOP_SUBTYPE, makeHostSessionStopHandler(options.hostMessaging, options.abortController));
   }
   if (options.onMcpOAuthRefresh) {
     controlRequestHandlers.set(MCP_OAUTH_REFRESH_SUBTYPE, makeMcpOAuthRefreshHandler(options.onMcpOAuthRefresh, options.abortController));

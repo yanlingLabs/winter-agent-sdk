@@ -66,6 +66,7 @@ async function runCalls(leg: Leg, script: string, hostMessaging: HostMessagingHa
 function recordingHost(answer: HostMessageSendAnswer | (() => Promise<HostMessageSendAnswer>), rows: Awaited<ReturnType<HostMessagingHandler["list"]>>["sessions"] = []) {
   const sends: HostMessageSendRequest[] = [];
   const lists: HostMessageListRequest[] = [];
+  const stops: string[] = [];
   const handler: HostMessagingHandler = {
     async send(request) {
       sends.push(request);
@@ -73,10 +74,14 @@ function recordingHost(answer: HostMessageSendAnswer | (() => Promise<HostMessag
     },
     async list(request) {
       lists.push(request);
-      return { sessions: rows };
+      return { sessions: rows, omitted: 3 };
+    },
+    async stop(request) {
+      stops.push(request.id);
+      return request.id === "s_running" ? { status: "stopped" } : request.id === "s_idle" ? { status: "not_running" } : { status: "refused", reason: "a dispatch session cannot be stopped" };
     },
   };
-  return { handler, sends, lists };
+  return { handler, sends, lists, stops };
 }
 
 describe.each(LEGS)("host messaging over the %s leg", (leg) => {
@@ -126,10 +131,25 @@ describe.each(LEGS)("host messaging over the %s leg", (leg) => {
     expect(host.lists).toHaveLength(1);
     expect(list!.isError).toBe(false);
     const listing = (JSON.parse(list!.content) as { listing: string }).listing;
-    expect(listing).toBe("- Fix the login bug (session:s_live1) [session/winter-agent] status=running mode=code");
+    expect(listing).toBe("- Fix the login bug (session:s_live1) [session/winter-agent] status=running mode=code\n(3 more reachable sessions not listed)");
   }, 60_000);
 
-  test("without a host handler nothing changes: SendMessage is not_found and ListAgents lists nothing", async () => {
+  test("TaskStop with an id that is no task of this session asks the host to stop that session", async () => {
+    const host = recordingHost({ status: "delivered" });
+    const [running, idle, refused] = await runCalls(leg, 'CALL TaskStop {"task_id":"s_running"}\nCALL TaskStop {"task_id":"s_idle"}\nCALL TaskStop {"task_id":"s_dispatch"}', host.handler);
+    expect(host.stops).toEqual(["s_running", "s_idle", "s_dispatch"]);
+    expect(running!.isError).toBe(false);
+    expect(JSON.parse(running!.content)).toEqual({ message: "stopped session s_running: its running turn was interrupted", task_id: "s_running", task_type: "session" });
+    expect(idle!.isError).toBe(false);
+    expect(JSON.parse(idle!.content)).toMatchObject({ task_id: "s_idle", task_type: "session" });
+    expect(refused!.isError).toBe(true);
+    expect(refused!.content).toBe("Error: TaskStop: a dispatch session cannot be stopped");
+  }, 60_000);
+
+  test("without a host handler nothing changes: SendMessage is not_found, ListAgents lists nothing, TaskStop is unknown", async () => {
+    const [stop] = await runCalls(leg, 'CALL TaskStop {"task_id":"s_running"}', undefined);
+    expect(stop!.isError).toBe(true);
+    expect(stop!.content).toBe('Error: TaskStop: unknown task_id "s_running"');
     const [send, list] = await runCalls(leg, 'CALL SendMessage {"to":"s_0123abcd","message":"hi","summary":"hi"}\nCALL ListAgents {}', undefined);
     expect(send!.isError).toBe(true);
     expect(JSON.parse(send!.content)).toMatchObject({ status: "not_found", reason: 'no agent or session named "s_0123abcd" is currently reachable' });

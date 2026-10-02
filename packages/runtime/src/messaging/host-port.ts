@@ -8,8 +8,8 @@
 // session id, so its SendMessage reaches the same port through the same lookup, and a child engine never
 // registers one of its own. Identical in the two topologies: a spawned `winter` process and an embedded
 // Worker both run this engine over the same frame stream.
-import { HOST_MESSAGE_LIST_SUBTYPE, HOST_MESSAGE_SEND_SUBTYPE } from "@yanlinglabs/winter-agent-sdk";
-import { isHostMessageSendAnswer, normaliseHostMessageListAnswer, type HostMessagingPort } from "@yanlinglabs/winter-agent-sdk/messaging";
+import { HOST_MESSAGE_LIST_SUBTYPE, HOST_MESSAGE_SEND_SUBTYPE, HOST_SESSION_STOP_SUBTYPE } from "@yanlinglabs/winter-agent-sdk";
+import { isHostMessageSendAnswer, isHostSessionStopAnswer, normaliseHostMessageListAnswer, type HostMessagingPort } from "@yanlinglabs/winter-agent-sdk/messaging";
 import type { HostRequestSender } from "../provider/host-credentials.ts";
 
 /**
@@ -20,6 +20,8 @@ import type { HostRequestSender } from "../provider/host-credentials.ts";
 export const HOST_MESSAGE_SEND_TIMEOUT_MS = 180_000;
 /** How long a listing may take; a slow one lists nothing more (ListAgents still shows the subagents). */
 export const HOST_MESSAGE_LIST_TIMEOUT_MS = 15_000;
+/** How long a session stop may take (an interrupt is quick; the host answers once it is requested). */
+export const HOST_SESSION_STOP_TIMEOUT_MS = 30_000;
 
 /** Thrown for a malformed send answer, so the router core reports it as `delivery_uncertain`. */
 export class HostMessagingAnswerError extends Error {
@@ -31,14 +33,19 @@ export class HostMessagingAnswerError extends Error {
 
 export function createHostMessagingPort(sender: HostRequestSender): HostMessagingPort {
   return {
-    async send(request) {
-      const answer = await sender.request(HOST_MESSAGE_SEND_SUBTYPE, request, { timeoutMs: HOST_MESSAGE_SEND_TIMEOUT_MS });
+    async send(request, opts) {
+      const answer = await sender.request(HOST_MESSAGE_SEND_SUBTYPE, request, { timeoutMs: HOST_MESSAGE_SEND_TIMEOUT_MS, ...(opts?.signal !== undefined ? { signal: opts.signal } : {}) });
       if (!isHostMessageSendAnswer(answer)) throw new HostMessagingAnswerError("the host answered host_message_send with a malformed outcome");
       return answer;
     },
-    async list(request) {
-      const answer = await sender.request(HOST_MESSAGE_LIST_SUBTYPE, request, { timeoutMs: HOST_MESSAGE_LIST_TIMEOUT_MS });
+    async list(request, opts) {
+      const answer = await sender.request(HOST_MESSAGE_LIST_SUBTYPE, request, { timeoutMs: HOST_MESSAGE_LIST_TIMEOUT_MS, ...(opts?.signal !== undefined ? { signal: opts.signal } : {}) });
       return normaliseHostMessageListAnswer(answer) ?? { sessions: [] };
+    },
+    async stop(request, opts) {
+      const answer = await sender.request(HOST_SESSION_STOP_SUBTYPE, request, { timeoutMs: HOST_SESSION_STOP_TIMEOUT_MS, ...(opts?.signal !== undefined ? { signal: opts.signal } : {}) });
+      if (!isHostSessionStopAnswer(answer)) throw new HostMessagingAnswerError("the host answered host_session_stop with a malformed answer");
+      return answer;
     },
   };
 }

@@ -13,14 +13,19 @@
 // Both sides validate: the wrapper checks the host callback's answer before it goes on the wire
 // (`query.ts`), and the runtime checks the wire answer before the router core reads it. The same guards,
 // once, here.
-import type { HostMessageListAnswer, HostMessageListRequest, HostMessageSendAnswer, HostMessageSendRequest, HostReachableSession } from "../protocol/config.ts";
+import type { HostMessageListAnswer, HostMessageListRequest, HostMessageSendAnswer, HostMessageSendRequest, HostReachableSession, HostSessionStopAnswer, HostSessionStopRequest } from "../protocol/config.ts";
 import type { DeliveryOutcome, ListedRuntimeObject } from "./adapter.ts";
 import { validateToField } from "./addressing.ts";
 
-/** What the router core needs from a host: the two halves of `Options.hostMessaging`, already bound to one session. */
+/**
+ * What the router core (and `TaskStop`) need from a host: `Options.hostMessaging`, already bound to one
+ * session. `signal` is the calling tool's own: an interrupted sender cancels the request, and the host
+ * is told (its handler's `signal` aborts) so it can avoid delivering.
+ */
 export interface HostMessagingPort {
-  send(request: HostMessageSendRequest): Promise<HostMessageSendAnswer>;
-  list(request: HostMessageListRequest): Promise<HostMessageListAnswer>;
+  send(request: HostMessageSendRequest, opts?: { signal?: AbortSignal }): Promise<HostMessageSendAnswer>;
+  list(request: HostMessageListRequest, opts?: { signal?: AbortSignal }): Promise<HostMessageListAnswer>;
+  stop(request: HostSessionStopRequest, opts?: { signal?: AbortSignal }): Promise<HostSessionStopAnswer>;
 }
 
 const SEND_STATUSES: ReadonlySet<string> = new Set(["delivered", "queued", "resumed_and_delivered", "refused", "not_found", "unavailable", "delivery_uncertain"]);
@@ -51,6 +56,22 @@ export function isHostMessageSendRequest(payload: unknown): payload is HostMessa
 export function isHostMessageListRequest(payload: unknown): payload is HostMessageListRequest {
   if (payload === undefined) return true;
   return isRecord(payload) && (payload.fromAgentId === undefined || typeof payload.fromAgentId === "string");
+}
+
+export function isHostSessionStopRequest(payload: unknown): payload is HostSessionStopRequest {
+  return isRecord(payload) && typeof payload.id === "string" && (payload.fromAgentId === undefined || typeof payload.fromAgentId === "string");
+}
+
+const STOP_STATUSES: ReadonlySet<string> = new Set(["stopped", "not_running", "refused", "not_found", "unavailable"]);
+const STOP_NEEDS_REASON: ReadonlySet<string> = new Set(["refused", "not_found", "unavailable"]);
+
+/** A well-formed stop answer: a known status, a non-empty reason wherever one is required. */
+export function isHostSessionStopAnswer(value: unknown): value is HostSessionStopAnswer {
+  if (!isRecord(value)) return false;
+  if (typeof value.status !== "string" || !STOP_STATUSES.has(value.status)) return false;
+  if (value.reason !== undefined && typeof value.reason !== "string") return false;
+  if (STOP_NEEDS_REASON.has(value.status) && (typeof value.reason !== "string" || value.reason.length === 0)) return false;
+  return true;
 }
 
 /** A well-formed send answer: a known status, a reason wherever one is required, the optional facts typed. */
@@ -86,8 +107,13 @@ function isHostReachableSession(value: unknown): value is HostReachableSession {
  */
 export function normaliseHostMessageListAnswer(value: unknown): HostMessageListAnswer | undefined {
   if (!isRecord(value) || !Array.isArray(value.sessions)) return undefined;
-  const sessions = value.sessions.filter(isHostReachableSession).slice(0, HOST_MESSAGE_LIST_MAX);
+  const valid = value.sessions.filter(isHostReachableSession);
+  const sessions = valid.slice(0, HOST_MESSAGE_LIST_MAX);
+  // Never silently cut: the host's own count of what it did not list, plus whatever this cap dropped.
+  const hostOmitted = typeof value.omitted === "number" && Number.isInteger(value.omitted) && value.omitted > 0 ? value.omitted : 0;
+  const omitted = hostOmitted + (valid.length - sessions.length);
   return {
+    ...(omitted > 0 ? { omitted } : {}),
     sessions: sessions.map((s) => ({
       address: s.address,
       ...(s.name !== undefined ? { name: s.name } : {}),

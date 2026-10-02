@@ -220,7 +220,7 @@ function outcomeReason(outcome: DeliveryOutcome): string {
   return "reason" in outcome ? outcome.reason : outcome.status;
 }
 
-export async function sendMessage(deps: MessagingRuntimeDeps, caller: CallerContext, input: SendMessageInput): Promise<SendMessageResult> {
+export async function sendMessage(deps: MessagingRuntimeDeps, caller: CallerContext, input: SendMessageInput, opts: { signal?: AbortSignal } = {}): Promise<SendMessageResult> {
   const now = deps.now();
   const messageId = deps.seam.allocateMessageId(caller.sessionId, caller.toolUseId);
 
@@ -264,7 +264,7 @@ export async function sendMessage(deps: MessagingRuntimeDeps, caller: CallerCont
     // other answer above and below (stale, ambiguous, self-target, a subagent) stays in-process.
     const host = deps.hostMessaging?.(caller.sessionId);
     if (host === undefined) return settle(notFound(messageId, resolved.message));
-    return settle(...(await askHost(host, messageId, caller, input)));
+    return settle(...(await askHost(host, messageId, caller, input, opts.signal)));
   }
   if (resolved.kind === "stale") return settle(refused(messageId, resolved.message));
   if (resolved.kind === "ambiguous") return settle(ambiguous(messageId, resolved.candidates));
@@ -353,7 +353,7 @@ export async function sendMessage(deps: MessagingRuntimeDeps, caller: CallerCont
 // here, a host that answered garbage may still have delivered), stamped with THIS router's messageId,
 // and settled into the same ledger as an in-process outcome -- so a retry of the same tool call returns
 // the stored outcome and never asks the host twice.
-async function askHost(host: HostMessagingPort, messageId: string, caller: CallerContext, input: SendMessageInput): Promise<[DeliveryOutcome, (NotifyOutcome | undefined)?, (string | undefined)?]> {
+async function askHost(host: HostMessagingPort, messageId: string, caller: CallerContext, input: SendMessageInput, signal: AbortSignal | undefined): Promise<[DeliveryOutcome, (NotifyOutcome | undefined)?, (string | undefined)?]> {
   let answer: unknown;
   try {
     answer = await host.send({
@@ -363,7 +363,7 @@ async function askHost(host: HostMessagingPort, messageId: string, caller: Calle
       ...(input.notify_when_idle !== undefined ? { notifyWhenIdle: input.notify_when_idle } : {}),
       messageId,
       ...(caller.agentId !== undefined ? { fromAgentId: caller.agentId } : {}),
-    });
+    }, signal !== undefined ? { signal } : {});
   } catch (err) {
     return [deliveryUncertain(messageId, `the host did not answer the delivery: ${describeThrow(err)}`)];
   }
@@ -444,7 +444,12 @@ export interface SessionCallerContext {
   sessionId: string;
 }
 
-export async function listAgents(deps: MessagingRuntimeDeps, caller: SessionCallerContext, _input: ListAgentsInput): Promise<{ listing: string; rows: ListedRuntimeObject[] }> {
+/** The line a listing ends with when the host left reachable sessions out (its cap), so nothing is silently cut. */
+export function omittedLine(omitted: number): string {
+  return `(${omitted} more reachable session${omitted === 1 ? "" : "s"} not listed)`;
+}
+
+export async function listAgents(deps: MessagingRuntimeDeps, caller: SessionCallerContext, _input: ListAgentsInput): Promise<{ listing: string; rows: ListedRuntimeObject[]; omitted?: number }> {
   const selfAddr = buildSessionAddress(caller.sessionId);
   const selfKey = serializeRuntimeAddress(selfAddr);
   const reachable = await deps.adapter.listReachable({ parent: selfAddr });
@@ -454,8 +459,10 @@ export async function listAgents(deps: MessagingRuntimeDeps, caller: SessionCall
   // host row whose address an in-process row already has is dropped -- the in-process one is what
   // SendMessage would reach first.
   const host = deps.hostMessaging?.(caller.sessionId);
+  let omitted = 0;
   if (host !== undefined) {
     const answer = normaliseHostMessageListAnswer(await host.list({}).catch(() => undefined));
+    omitted = answer?.omitted ?? 0;
     const seen = new Set(rows.map((r) => r.address));
     for (const row of answer?.sessions ?? []) {
       if (seen.has(row.address) || row.address === selfKey) continue;
@@ -463,7 +470,8 @@ export async function listAgents(deps: MessagingRuntimeDeps, caller: SessionCall
       rows.push(hostSessionToListed(row));
     }
   }
-  return { listing: formatListing(rows), rows };
+  const listing = omitted > 0 ? `${formatListing(rows)}\n${omittedLine(omitted)}` : formatListing(rows);
+  return { listing, rows, ...(omitted > 0 ? { omitted } : {}) };
 }
 
 // --- ReadNotifications ---------------------------------------------------------------------------
@@ -484,7 +492,7 @@ export type { RuntimeAddress, ListedRuntimeObject, DeliveryOutcome };
 // and nothing more: no state, no second copy of any rule.
 export interface MessagingRouter {
   sendMessage(caller: CallerContext, input: SendMessageInput): Promise<SendMessageResult>;
-  listAgents(caller: SessionCallerContext, input: ListAgentsInput): Promise<{ listing: string; rows: ListedRuntimeObject[] }>;
+  listAgents(caller: SessionCallerContext, input: ListAgentsInput): Promise<{ listing: string; rows: ListedRuntimeObject[]; omitted?: number }>;
   readNotifications(caller: SessionCallerContext): { notifications: NotificationRecord[]; remaining: number };
   readonly deps: MessagingRuntimeDeps;
 }

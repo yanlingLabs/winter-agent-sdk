@@ -24,8 +24,11 @@ import {
 } from "../messaging/index.ts";
 
 export interface MessagingToolPort {
-  sendDetailed(request: { from: RuntimeAddress; to: string; body: string; summary?: string; notifyWhenIdle?: boolean; originToolCallId?: string }): Promise<SendMessageResult>;
+  /** `signal`: the calling tool's own (host messaging cancels a pending host delivery with it). */
+  sendDetailed(request: { from: RuntimeAddress; to: string; body: string; summary?: string; notifyWhenIdle?: boolean; originToolCallId?: string; signal?: AbortSignal }): Promise<SendMessageResult>;
   listReachable(scope: { from: RuntimeAddress }): Promise<ListedRuntimeObject[]>;
+  /** Optional: the rows plus how many reachable ones were NOT listed (a host's cap). Preferred by the ListAgents handler when present. */
+  listReachableDetailed?(scope: { from: RuntimeAddress }): Promise<{ rows: ListedRuntimeObject[]; omitted?: number }>;
   readNotifications(sessionId: string): { notifications: NotificationRecord[]; remaining: number };
 }
 
@@ -88,12 +91,17 @@ export function messagingToolPortFromRuntimeDeps(deps: MessagingRuntimeDeps): Me
         message: request.body,
         ...(request.summary === undefined ? {} : { summary: request.summary }),
         ...(request.notifyWhenIdle === undefined ? {} : { notify_when_idle: request.notifyWhenIdle }),
-      });
+      }, request.signal !== undefined ? { signal: request.signal } : {});
     },
 
     async listReachable(scope) {
       const { rows } = await listAgents(deps, { sessionId: scope.from.parentWinterSessionId ?? scope.from.winterSessionId }, {});
       return rows;
+    },
+
+    async listReachableDetailed(scope) {
+      const { rows, omitted } = await listAgents(deps, { sessionId: scope.from.parentWinterSessionId ?? scope.from.winterSessionId }, {});
+      return { rows, ...(omitted !== undefined ? { omitted } : {}) };
     },
 
     readNotifications(sessionId) {

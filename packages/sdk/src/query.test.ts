@@ -2690,6 +2690,48 @@ describe("host messaging: host_message_send / host_message_list", () => {
     expect(decodeControlResponse(writes, "hm-4")).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
   });
 
+  test("stop: the request reaches the handler; no stop handler answers not_found; garbage answers unavailable", async () => {
+    let seen: unknown;
+    const one = recordingProcessWithControlRequestPayload("host_session_stop", "hs-1", { id: "s_abc" });
+    for await (const _msg of query({ prompt: "hi", options: { hostMessaging: handler({ stop: async (req) => ((seen = req), { status: "stopped" }) }), spawnClaudeCodeProcess: () => one.proc } })) {
+      /* drain */
+    }
+    expect(seen).toEqual({ id: "s_abc" });
+    expect(decodeControlResponse(one.writes, "hs-1")).toMatchObject({ ok: true, payload: { status: "stopped" } });
+    const none = recordingProcessWithControlRequestPayload("host_session_stop", "hs-2", { id: "s_abc" });
+    for await (const _msg of query({ prompt: "hi", options: { hostMessaging: handler(), spawnClaudeCodeProcess: () => none.proc } })) {
+      /* drain */
+    }
+    expect(decodeControlResponse(none.writes, "hs-2")).toMatchObject({ ok: true, payload: { status: "not_found" } });
+    const bad = recordingProcessWithControlRequestPayload("host_session_stop", "hs-3", { id: "s_abc" });
+    for await (const _msg of query({ prompt: "hi", options: { hostMessaging: handler({ stop: async () => ({ status: "refused" }) as never }), spawnClaudeCodeProcess: () => bad.proc } })) {
+      /* drain */
+    }
+    expect(decodeControlResponse(bad.writes, "hs-3")).toMatchObject({ ok: true, payload: { status: "unavailable" } });
+  });
+
+  test("a handler's listeners on the session-lifetime abort signal are removed when it answers", async () => {
+    const abortController = new AbortController();
+    let added = 0;
+    let removed = 0;
+    const add = abortController.signal.addEventListener.bind(abortController.signal);
+    const remove = abortController.signal.removeEventListener.bind(abortController.signal);
+    abortController.signal.addEventListener = ((...a: Parameters<typeof add>) => { if (a[0] === "abort") added++; return add(...a); }) as typeof add;
+    abortController.signal.removeEventListener = ((...a: Parameters<typeof remove>) => { if (a[0] === "abort") removed++; return remove(...a); }) as typeof remove;
+    const { proc } = recordingProcessWithControlRequestPayload("host_message_send", "hm-9", send);
+    for await (const _msg of query({ prompt: "hi", options: { abortController, hostMessaging: handler(), spawnClaudeCodeProcess: () => proc } })) {
+      /* drain */
+    }
+    // Whatever query() itself keeps on the signal, the send handler added one listener and removed it again.
+    const { proc: proc2 } = recordingProcessWithControlRequestPayload("host_message_send", "hm-10", send);
+    const before = { added, removed };
+    for await (const _msg of query({ prompt: "hi", options: { abortController, spawnClaudeCodeProcess: () => proc2 } })) {
+      /* drain: no host messaging -- the baseline */
+    }
+    const baseline = { added: added - before.added, removed: removed - before.removed };
+    expect(before.added - before.removed - (baseline.added - baseline.removed)).toBe(0);
+  });
+
   test("list: rows are normalised (malformed ones dropped), and a throwing handler lists nothing", async () => {
     const { proc, writes } = recordingProcessWithControlRequestPayload("host_message_list", "hl-1", {});
     const rows = [{ address: "session:s_1", name: "Fix it", status: "running", mode: "code" }, { address: "", status: "running", mode: "code" }];

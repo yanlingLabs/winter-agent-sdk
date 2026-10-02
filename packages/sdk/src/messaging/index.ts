@@ -127,13 +127,15 @@ export {
   isHostMessageSendRequest,
   isHostMessageListRequest,
   isHostMessageSendAnswer,
+  isHostSessionStopRequest,
+  isHostSessionStopAnswer,
   normaliseHostMessageListAnswer,
   hostSessionToListed,
   hostAnswerToOutcome,
   boundedHostNote,
 } from "./host.ts";
 export type { HostMessagingPort } from "./host.ts";
-export type { HostMessageSendRequest, HostMessageSendAnswer, HostMessageListRequest, HostMessageListAnswer, HostReachableSession } from "../protocol/config.ts";
+export type { HostMessageSendRequest, HostMessageSendAnswer, HostMessageListRequest, HostMessageListAnswer, HostReachableSession, HostSessionStopRequest, HostSessionStopAnswer } from "../protocol/config.ts";
 
 // --- the router core -----------------------------------------------------------------------------
 export {

@@ -191,8 +191,14 @@ the same way for a spawned `winter` process and an embedded Worker:
   `delivery_uncertain`, plus an optional `notify` fact and a one-sentence `note`) is the tool's
   result under the runtime's message id, so a retry of the same tool call is answered from the
   ledger and never asks the host twice. A throwing or malformed `send` is `delivery_uncertain`.
-- `ListAgents` lists the subagents, then the sessions `list` returns as `session` rows. A failing
+- `ListAgents` lists the subagents, then the sessions `list` returns as `session` rows, ending with
+  a count of the ones the host left out (`omitted`) — a listing is never silently cut. A failing
   `list` lists nothing more.
+- `TaskStop` with a `task_id` that names no task of this session goes to the optional `stop`
+  (`host_session_stop`): the host interrupts that session's running turn and answers `stopped`,
+  `not_running`, `refused`, `not_found` or `unavailable`.
+- The calling tool's abort signal travels with the request: an interrupted call cancels it
+  (`control_cancel_request`), and the handler's own `signal` aborts so the host can skip the delivery.
 
 The handler is per session and never told who is sending: it knows its caller by construction. The
 router core reaches the same seam through `MessagingRuntimeDeps.hostMessaging` (a `HostMessagingPort`

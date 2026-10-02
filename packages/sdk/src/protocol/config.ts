@@ -374,6 +374,27 @@ export interface HostReachableSession {
 }
 export interface HostMessageListAnswer {
   sessions: HostReachableSession[];
+  /** How many MORE reachable sessions the host did not list (its own cap). Rendered as a count, so a listing is never silently truncated. */
+  omitted?: number;
+}
+/**
+ * Host messaging: the runtime -> host `host_session_stop` control request (subtype
+ * `HOST_SESSION_STOP_SUBTYPE`). `TaskStop` sends it when its `task_id` names no task of this session (a
+ * background command, a subagent, a workflow) -- i.e. when the id may be one of the HOST's sessions.
+ * Stopping a session interrupts the turn it is running; it never deletes or archives anything.
+ * `fromAgentId` as on `HostMessageSendRequest`: information only.
+ */
+export interface HostSessionStopRequest {
+  id: string;
+  fromAgentId?: string;
+}
+/**
+ * `stopped` (a running turn was interrupted) and `not_running` (nothing to stop) are ordinary answers;
+ * `refused`, `not_found` and `unavailable` carry a required `reason` and reach the model as errors.
+ */
+export interface HostSessionStopAnswer {
+  status: "stopped" | "not_running" | "refused" | "not_found" | "unavailable";
+  reason?: string;
 }
 export interface McpStdioServerConfig {
   type?: "stdio"; // the ONLY optional discriminant of the four transport variants (derived-shapes item (a))

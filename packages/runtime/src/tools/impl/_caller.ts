@@ -32,5 +32,7 @@ export function callerContextFrom(ctx: ToolExecutionContext): WinterToolCaller {
     sessionId: ctx.sessionId,
     ...(ctx.agentId !== undefined ? { agentId: ctx.agentId } : {}),
     ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}),
+    // Host messaging: an interrupted call cancels its pending host delivery (the host is told, and does not deliver).
+    ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
   };
 }

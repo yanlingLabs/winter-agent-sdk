@@ -29,6 +29,8 @@ import type {
   HostMessageSendAnswer,
   HostMessageListRequest,
   HostMessageListAnswer,
+  HostSessionStopRequest,
+  HostSessionStopAnswer,
 } from "./protocol/config.ts";
 import type { SettingSource } from "./settings/types.ts";
 import type { SessionStore } from "./store/session-store.ts";
@@ -125,6 +127,8 @@ export const CREDENTIAL_RESOLVE_SUBTYPE = "credential_resolve";
 export const HOST_MESSAGE_SEND_SUBTYPE = "host_message_send";
 /** Host messaging: the runtime -> host control subtype `ListAgents` asks its host what it can reach with (`HostMessageListRequest` -> `HostMessageListAnswer`). */
 export const HOST_MESSAGE_LIST_SUBTYPE = "host_message_list";
+/** Host messaging: the runtime -> host control subtype `TaskStop` asks its host to stop one of the host's sessions with (`HostSessionStopRequest` -> `HostSessionStopAnswer`). */
+export const HOST_SESSION_STOP_SUBTYPE = "host_session_stop";
 
 /**
  * Host messaging, WINTER-ONLY: the handler a host that runs MANY sessions gives one session so its
@@ -135,6 +139,11 @@ export interface HostMessagingHandler {
   send(request: HostMessageSendRequest, options: { signal: AbortSignal }): Promise<HostMessageSendAnswer>;
   /** The sessions this session can reach through the host, for `ListAgents` (beside its own subagents). */
   list(request: HostMessageListRequest, options: { signal: AbortSignal }): Promise<HostMessageListAnswer>;
+  /**
+   * Stop (interrupt the running turn of) one of the host's sessions, for a `TaskStop` whose `task_id`
+   * names no task of this session. Optional: a host without it answers every such request `not_found`.
+   */
+  stop?(request: HostSessionStopRequest, options: { signal: AbortSignal }): Promise<HostSessionStopAnswer>;
 }
 
 // --- The web tools' defaults and their one reader -------------------------------------------------
@@ -626,7 +635,10 @@ export interface Options {
    *   directory). Only a `not_found` there is handed to `send`; a subagent, a self-target, a stale or an
    *   ambiguous name never reaches the host. The host's typed answer is the tool's result, under the
    *   runtime's own message id (so a retry of the same tool call short-circuits on the stored outcome).
-   * - `ListAgents` lists this session's subagents and then whatever `list` returns, as `session` rows.
+   * - `ListAgents` lists this session's subagents and then whatever `list` returns, as `session` rows
+   *   (with the host's `omitted` count, so nothing is silently cut).
+   * - `TaskStop` with a `task_id` that names no task of this session is handed to `stop` (when given):
+   *   the host interrupts that session's running turn.
    *
    * The handler is per session: it knows its caller by construction, and the request never names the
    * sender (only `fromAgentId`, information about which subagent of THIS session asked). A throwing
