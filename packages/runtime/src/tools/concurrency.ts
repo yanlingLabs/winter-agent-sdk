@@ -91,9 +91,13 @@ export function createToolLaneTails(): ToolLaneTails {
  */
 export function enterToolLane(lanes: ToolLaneTails, lane: string, tail: Promise<unknown>): Promise<unknown> | undefined {
   const previous = lanes.get(lane);
-  lanes.set(lane, tail);
-  void tail.finally(() => {
-    if (lanes.get(lane) === tail) lanes.delete(lane);
+  // The lane's new tail settles only once BOTH this call and every holder before it are done: a call that
+  // gives up while still waiting its turn (an interrupt) must not let the next one start beside a holder
+  // that is still running.
+  const chained = previous === undefined ? tail : Promise.all([previous, tail]).then(() => undefined);
+  lanes.set(lane, chained);
+  void chained.finally(() => {
+    if (lanes.get(lane) === chained) lanes.delete(lane);
   });
   return previous;
 }

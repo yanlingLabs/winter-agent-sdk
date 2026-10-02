@@ -476,11 +476,27 @@ describe("enterToolLane (one session's lanes, shared by every engine of the sess
     releaseA();
     await a;
     await Promise.resolve();
-    expect(lanes.get("screen")).toBe(c); // a settled, but c is the tail: kept
+    expect(lanes.has("screen")).toBe(true); // a settled, but c is still the lane's holder: kept
     releaseC();
     await c;
-    await Promise.resolve();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
     expect(lanes.size).toBe(0);
+  });
+
+  test("a holder that gives up while still waiting its turn never lets the next one start beside the running holder", async () => {
+    const lanes = createToolLaneTails();
+    let releaseA!: () => void;
+    const a = new Promise<void>((r) => (releaseA = r)); // running
+    enterToolLane(lanes, "screen", a);
+    enterToolLane(lanes, "screen", Promise.resolve()); // b: entered, then interrupted while waiting -- released at once
+    const waitForTurn = enterToolLane(lanes, "screen", new Promise<void>(() => {}))!; // c
+    let cMayStart = false;
+    void waitForTurn.then(() => { cMayStart = true; });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(cMayStart).toBe(false); // a is still running
+    releaseA();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(cMayStart).toBe(true);
   });
 });
 
