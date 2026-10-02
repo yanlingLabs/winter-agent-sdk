@@ -4,6 +4,158 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.40
+
+### Tool calls run at the same time when that is safe, and each result reaches the host as it finishes
+
+Before this release, a tool round ran its calls one after another and wrote all their results to the
+host in ONE `user` frame after the last call. Eight web searches and fetches took the sum of their
+times, and a host showed every one of them as running until the slowest had finished, then marked
+them all done at once.
+
+**Concurrency (claude's scheduler, plus lanes).** Each call is scheduled one of three ways
+(`tools/concurrency.ts`, `schedulingForCall`):
+
+- **Concurrent.** Consecutive concurrent calls run at the same time, up to 10 at once
+  (`MAX_TOOL_CONCURRENCY`). A call is concurrent when it is safe by claude's own rule:
+  - the built-ins `Read`, `Glob`, `Grep`, `LSP`, `WebFetch`, `WebSearch` and `Search`;
+  - **`Agent`**: several FOREGROUND subagents of one round run at once (a background spawn already
+    returned at once). Each keeps its own transcript, its own `parent_tool_use_id` on its frames, its
+    own abort (`TaskStop` on one stops that one alone), and its approvals reach the parent's host
+    through the same bridge. Their usage and cost fold into the session's synchronously, so concurrent
+    children cannot lose each other's counts;
+  - **`Bash`** when its command is read-only by claude's classification (`permissions/bash-read-only.ts`:
+    claude's read-only BEHAVIOUR re-derived from its observable rules, reusing its command lists and flag
+    tables as data, never its code; stricter in the documented corners listed in that file's header, so a
+    few read-only commands run one at a time). A sandbox escape never is;
+  - an MCP, in-process SDK or plugin tool whose server lists it `readOnlyHint: true`.
+- **In a lane.** A host can put some of its in-process tools in a **concurrency lane**:
+  `McpSdkServerConfig.toolLanes: { <tool>: <lane> }`. A lane call runs beside the round's other calls,
+  but waits for the previous call of its own lane, so one lane's calls run one at a time. A lane is
+  exclusive across the whole SESSION, not just one round: the top-level engine and every subagent
+  engine (foreground or background, at any depth) share one set of lanes (`EngineOptions.toolLaneTails`,
+  built once per session by the wiring and handed to the child-engine factory). A call takes its lane
+  only once its OWN checks are done -- hook stop, permission, any approval card -- so a call parked on a
+  card holds no lane. One engine's calls finish their checks one at a time in call order, so they take a
+  lane in call order; across engines, in the order their calls became ready. A call keeps its lane until
+  its work has really STOPPED: an interrupted in-process tool keeps it until the host answers the cancel
+  (below) or `SDK_MCP_CANCEL_GRACE_MS` (5 s) runs out. Use it for a tool that holds one exclusive
+  resource: Winter puts `Computer` and `Browser` each in its own lane.
+- **Serial (a barrier).** Anything else (writes, edits, a Bash command that is not read-only,
+  `ToolSearch`, an MCP tool with no hint and no lane, an unknown name) waits for every call in flight
+  to finish, then runs alone, in call order.
+
+Around that:
+
+- **Checks still run one at a time, in call order.** That means the hook stop, the output-limit
+  truncation, availability, the permission pipeline with its PreToolUse/PermissionRequest hooks and
+  any approval card, and the file checkpoint. Only execution overlaps. A call starts as soon as its own
+  checks pass, so an approved search runs while a later call's card waits. Within one engine, cards
+  still come one at a time, in call order. Across engines they do not: two subagents running at once
+  can each have a card pending in the same session, and a card raised while a tool EXECUTES (one a
+  tool asks for itself) can sit beside another engine's or another lane's card.
+- **PostToolUse effects are applied in call order.** For a concurrent call, the PostToolUse or
+  PostToolUseFailure notices, model context and classifier context are applied when its batch settles,
+  so what the model is told does not depend on which call finished first. `updatedToolOutput` is
+  applied at once, because it is the call's own result.
+- **A hook stop takes effect as soon as it is known.** A FINISHED call's PostToolUse `continue: false`
+  is checked before each later call's checks begin, and again just before a checked call starts
+  executing. From then on no further call starts and no further card is raised. Calls already
+  executing finish and are reported.
+- **Interrupts, throws and failures.**
+  - An interrupt ends every call in flight. Each call is answered exactly once: finished calls with
+    their result, the rest `[interrupted]`.
+  - **An interrupt cancels an in-process host tool.** `sdk_mcp_call` now carries the turn's abort
+    signal: an interrupt sends `control_cancel_request`, and the host aborts the tool's own signal
+    (`WinterMcpServerInstance.callTool(name, args, extra?: { signal })` -- optional, so an instance that
+    ignores it behaves as before). The host still ANSWERS a cancelled `sdk_mcp_call` once the tool returns
+    (the one runtime-originated subtype answered after a cancel), and the runtime keeps that request
+    pending until the answer or the grace, so the tool's lane is held until the tool has stopped
+    (`RpcBridge.request`'s new `cancelGraceMs`). The model's side is unchanged: the call is answered
+    `[interrupted]` at once.
+  - A thrown tool stops further calls from starting, including a call whose checks were still under
+    way. Calls already executing finish and keep their results. Each call that threw is answered with
+    its own error; the round's error result, and the calls that never started, carry the first one.
+  - A failure outside any call (a frame that cannot be written) still pads and records the round, so
+    the history never holds an unanswered `tool_use`, before it ends the turn.
+
+**Host frames.**
+
+- **One `user` frame per tool result**, written the moment that call is done. That is after the call's
+  PostToolUse hooks and any `updatedToolOutput` replacement, so the frame carries the final block, and
+  after every hook the host answered for the call. This is claude's own stream shape. With
+  concurrency, frames arrive in **completion order**: fold them by `tool_use_id`.
+- **Calls the round decides not to run get their own frame.** A hook stop answers each call left
+  unrun with `[not executed: the <hook> hook stopped the turn]`. An output-limit truncation answers
+  each call with its truncation notice (`OUTPUT_LIMIT_TRUNCATED_CALL_TEXT`). Each of these, like a
+  denial or an unavailable tool, gets its own frame.
+- **Only one case shares a closing frame:** the padding for calls left unanswered by an interrupt, a
+  thrown tool, a structured-output end or a failure outside any call. Those are sent together, in call
+  order. Every result block reaches the host exactly once.
+- **No empty frames.** A tool round with no results sends no frame; before, a `tool_use` turn with zero
+  calls sent an empty `user` frame.
+- **The host copy is unchanged block by block.** It still drops the `loadedTools` bookkeeping, empties
+  image bytes and adds `winter_site_icons`.
+- **Host compatibility.** The frame type is unchanged, so a host that folds results block by block
+  needs no change. A host that assumed exactly one `user` frame per round now sees one per call, and
+  must not assume they arrive in call order.
+- **Crash window.** A host that persists results as frames arrive can now hold results the runtime's
+  transcript never recorded, if the process dies mid-round. The transcript is still written once per
+  round, after its last call. This class existed before for the round's one frame (written before its
+  record); the window is wider now, from the first call's frame to the end of the round.
+
+**What doesn't change.**
+
+- **The model's side.** The history, the transcript and every provider request still carry the
+  round's results as one message, in **call order**. Prompt caching, provider pairing rules and resume
+  are unaffected.
+- **Both topologies behave the same**, the spawned `winter` process and the embedded Worker. Subagent
+  rounds take the same path, and their frames are stamped with `parent_tool_use_id` as before.
+
+**`winter-test/calls`.** A `+CALL` line joins the previous call's round, so a host's end-to-end test
+can make several calls in one model turn. Call ids are now `calls-<script digest>-<at>-<round>`, plus
+`-<n>` for a joined call, so a parent and the subagents it scripts never mint the same id.
+
+### Shell words are read exactly as bash reads them
+
+- **`dequoteShellWord` now matches bash inside double quotes:** a backslash escapes only `$`, `` ` ``,
+  `"`, `\` and a newline there; before any other character it stays (`"\-o"` is the word `\-o`, as bash
+  passes it). `shellWords` gains a `"bash" | "broad"` reading (default `"broad"`, unchanged).
+- **Which reading each check uses** (nothing that was caught before is missed):
+  - deny and ask Bash rules match the raw text and the broad (backslash-dropping) reading, as in
+    0.0.39; a wrapper word counts as a wrapper there when EITHER reading names it;
+  - allow Bash rules match the raw text, looking through a wrapper only when bash's reading names it;
+    a word that names a wrapper only in the broad reading (`"\timeout"`) makes the command match no
+    allow rule;
+  - redirect targets (`extractRedirectWrites`/`extractRedirectTargets`, which feed the protected write
+    floor, path deny rules, `isRecognizedReadOnly`, the auto envelope and the approvals key) and the
+    bypass floor's fallback word reader (`shellWordReadings`) use BOTH readings;
+  - the operands of `cp`/`mv`/`touch`/`rm`/`rmdir`/`mkdir`/`sed`/`tee`, critical-removal operands and
+    `cd` detection keep the broad reading;
+  - the `cd` target in a Bash call's approvals key, and the read-only classifier, read bash's way.
+- **A deferred approval issued under 0.0.39 can fail closed.** A record stamps its resolved target
+  paths; on resume they are recomputed, and a command whose `cd` target or redirect target is spelled
+  with a kept backslash (`"\.git"`) now resolves differently, so the record expires and the call is
+  answered `Approval expired: normalized target drift: …` -- never run. Ask again.
+- **The read-only classifier is stricter in a few corners** (those commands now run one at a time):
+  a kept backslash before `-`, `+`, `{` or `}` (or in any word of a command that takes no patterns);
+  a `-`-word that is not an exact flag (a Unicode dash, `-.x`, `-nr=x`, a GNU abbreviation); flags
+  after `--` for `git stash list|show`, `git reflog`, `git ls-remote`, `tree` and `lsof`; a `date`
+  positional other than `+FORMAT`; `xargs -` or `xargs ''`; `base64` with two operands; `jq -nf`;
+  `git branch -`; `git reflog` naming expire/delete/exists anywhere.
+
+### Fixed: a redirection glued to a wrapper's argument (present in 0.0.39)
+
+`stripWrappers` let a wrapper's duration, flag or assignment word swallow a glued redirection, so the
+protected write floor never saw the write: under `bypassPermissions` with no rules `timeout x>.git/config`,
+`timeout 5>.git/config`, `timeout x>|…`, `timeout x&>…`, `nice -n5>.git/config`,
+`timeout -k1>.git/config 5 ls` and `time -p>.git/config ls` were ALLOWED (bash writes the file even with
+an invalid duration or no `timeout` installed), and with an allow `Bash(*)` so was
+`timeout x>.git/config` in plan mode. Every file-writing redirection inside a looked-through wrapper
+part is now carried to the stripped command (`timeout -k1>.git/config 5 ls` reads as
+`ls 1>.git/config`), for every wrapper, flag and assignment word; the write floors and path checks see
+it, deny/ask rules match with and without it, and allow rules never match a carried target.
+
 ## 0.0.39
 
 ### SendMessage and ListAgents reach a host's other sessions
