@@ -25,6 +25,10 @@ import type {
   McpOAuthRefreshAnswer,
   CredentialResolveRequest,
   CredentialResolveAnswer,
+  HostMessageSendRequest,
+  HostMessageSendAnswer,
+  HostMessageListRequest,
+  HostMessageListAnswer,
 } from "./protocol/config.ts";
 import type { SettingSource } from "./settings/types.ts";
 import type { SessionStore } from "./store/session-store.ts";
@@ -116,6 +120,22 @@ export const MCP_OAUTH_REFRESH_SUBTYPE = "mcp_oauth_refresh";
 
 /** WS-25 §7: the runtime -> host control subtype a host-brokered session resolves a Keychain credential with (`CredentialResolveRequest` -> `CredentialResolveAnswer`). */
 export const CREDENTIAL_RESOLVE_SUBTYPE = "credential_resolve";
+
+/** Host messaging: the runtime -> host control subtype `SendMessage` asks its host to deliver with (`HostMessageSendRequest` -> `HostMessageSendAnswer`). */
+export const HOST_MESSAGE_SEND_SUBTYPE = "host_message_send";
+/** Host messaging: the runtime -> host control subtype `ListAgents` asks its host what it can reach with (`HostMessageListRequest` -> `HostMessageListAnswer`). */
+export const HOST_MESSAGE_LIST_SUBTYPE = "host_message_list";
+
+/**
+ * Host messaging, WINTER-ONLY: the handler a host that runs MANY sessions gives one session so its
+ * `SendMessage` and `ListAgents` reach the host's other sessions. See `Options.hostMessaging`.
+ */
+export interface HostMessagingHandler {
+  /** Deliver one message this session's `SendMessage` could not resolve in-process. Never throws for a policy answer -- refuse with a typed status. */
+  send(request: HostMessageSendRequest, options: { signal: AbortSignal }): Promise<HostMessageSendAnswer>;
+  /** The sessions this session can reach through the host, for `ListAgents` (beside its own subagents). */
+  list(request: HostMessageListRequest, options: { signal: AbortSignal }): Promise<HostMessageListAnswer>;
+}
 
 // --- The web tools' defaults and their one reader -------------------------------------------------
 //
@@ -595,6 +615,27 @@ export interface Options {
    * control_response frame.
    */
   onCredentialResolve?: (request: CredentialResolveRequest, options: { signal: AbortSignal }) => Promise<CredentialResolveAnswer>;
+
+  /**
+   * Host messaging, WINTER-ONLY: this session's line to the host's OTHER sessions. When set, `query()`
+   * puts `hostMessaging: true` on the wire and answers the runtime's `host_message_send` /
+   * `host_message_list` control requests with it -- identically for a spawned `winter` process and an
+   * embedded Worker, since both speak the same frame stream to this wrapper.
+   *
+   * - `SendMessage` resolves `to` in-process first (this session's subagents, then the in-process peer
+   *   directory). Only a `not_found` there is handed to `send`; a subagent, a self-target, a stale or an
+   *   ambiguous name never reaches the host. The host's typed answer is the tool's result, under the
+   *   runtime's own message id (so a retry of the same tool call short-circuits on the stored outcome).
+   * - `ListAgents` lists this session's subagents and then whatever `list` returns, as `session` rows.
+   *
+   * The handler is per session: it knows its caller by construction, and the request never names the
+   * sender (only `fromAgentId`, information about which subagent of THIS session asked). A throwing
+   * `send` answers `delivery_uncertain`; a throwing `list` lists nothing.
+   *
+   * Absent: `SendMessage` and `ListAgents` reach exactly what the session's own process holds, as before.
+   * Never serialized (a JS object of functions).
+   */
+  hostMessaging?: HostMessagingHandler;
 
   // --- Phase 5 Task 2 (WS-11; derived-shapes-p5.md items (b)/(c)/(d)/(e)) --------------------------
   //

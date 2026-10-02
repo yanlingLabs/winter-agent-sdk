@@ -120,6 +120,21 @@ export type { NotificationRecord, NotificationQueue, PendingIdleSubscription, Id
 // --- how a delivered message is rendered, and how the facet's queue bucket is named ---------------
 export { AGENT_MESSAGE_TAG, RESERVED_NOTIFICATION_KEY_PREFIX, escapeAttributionText, escapeAttributionAttribute, facetNotificationKey, isReservedNotificationKey } from "./attribution.ts";
 
+// --- host messaging: the seam to a multi-session host's OTHER sessions (`Options.hostMessaging`) ---
+export {
+  HOST_MESSAGE_NOTE_MAX,
+  HOST_MESSAGE_LIST_MAX,
+  isHostMessageSendRequest,
+  isHostMessageListRequest,
+  isHostMessageSendAnswer,
+  normaliseHostMessageListAnswer,
+  hostSessionToListed,
+  hostAnswerToOutcome,
+  boundedHostNote,
+} from "./host.ts";
+export type { HostMessagingPort } from "./host.ts";
+export type { HostMessageSendRequest, HostMessageSendAnswer, HostMessageListRequest, HostMessageListAnswer, HostReachableSession } from "../protocol/config.ts";
+
 // --- the router core -----------------------------------------------------------------------------
 export {
   MAX_TRACKED_MESSAGE_IDS,

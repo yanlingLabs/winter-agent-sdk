@@ -25,6 +25,7 @@ import {
 import { buildSessionAddress, buildChildAddress, sameAddress } from "./addressing.ts";
 import { childToListedRuntimeObject, resolveTarget } from "./resolution.ts";
 import { isIdleSubscribeSenderAllowed } from "./idle.ts";
+import { boundedHostNote, hostAnswerToOutcome, hostSessionToListed, isHostMessageSendAnswer, normaliseHostMessageListAnswer, type HostMessagingPort } from "./host.ts";
 import type { NotificationQueue, NotificationRecord } from "./idle.ts";
 import {
   MAX_GLOBAL_MESSAGE_SIZE,
@@ -153,6 +154,14 @@ export interface MessagingRuntimeDeps {
    * "everything is uncertain", which is exactly the conservative reading.
    */
   classifyDeliveryError?(err: unknown): "refused" | "uncertain";
+  /**
+   * Host messaging (`Options.hostMessaging`): the port to the HOST's other sessions for the OWNING
+   * session `owningSessionId` (a subagent's calls use its parent's, since they share the session id),
+   * or `undefined` when that session has none -- which is every session of a standalone SDK user, and
+   * every session of a host that composes this core itself (the router package). Consulted only after
+   * in-process resolution answered `not_found` (SendMessage) and to add rows (ListAgents).
+   */
+  hostMessaging?(owningSessionId: string): HostMessagingPort | undefined;
 }
 
 // --- Caller identity -----------------------------------------------------------------------------
@@ -199,6 +208,10 @@ export interface SendMessageResult {
   // supplementary field here is the honest place for it -- never invented as a second top-level
   // DeliveryOutcome status.
   notify?: NotifyOutcome;
+  // Host messaging: the host's one sentence for the model beside its outcome (for example whether the
+  // sender will be told when the target finishes). Rendered beside the outcome like `notify`, never a
+  // status of its own. Absent for every in-process delivery.
+  note?: string;
 }
 
 const SUCCESS_CLASS_STATUSES: ReadonlySet<DeliveryOutcome["status"]> = new Set(["delivered", "queued", "resumed_and_delivered"]);
@@ -217,9 +230,9 @@ export async function sendMessage(deps: MessagingRuntimeDeps, caller: CallerCont
   const existing = deps.seam.lookupOutcome(messageId);
   if (existing !== undefined) return { outcome: existing };
 
-  function settle(outcome: DeliveryOutcome, notify?: NotifyOutcome): SendMessageResult {
+  function settle(outcome: DeliveryOutcome, notify?: NotifyOutcome, note?: string): SendMessageResult {
     deps.seam.recordOutcome(messageId, outcome);
-    return notify !== undefined ? { outcome, notify } : { outcome };
+    return { outcome, ...(notify !== undefined ? { notify } : {}), ...(note !== undefined ? { note } : {}) };
   }
 
   const from = callerAddress(caller);
@@ -246,7 +259,13 @@ export async function sendMessage(deps: MessagingRuntimeDeps, caller: CallerCont
   const peers = reachable.filter((r): r is ListedRuntimeObject => r.objectKind === "session");
   const resolved = resolveTarget({ to: input.to, callerParentSessionId: caller.sessionId, children: deps.seam.children(), peers });
 
-  if (resolved.kind === "not_found") return settle(notFound(messageId, resolved.message));
+  if (resolved.kind === "not_found") {
+    // Host messaging: nothing in this process answers to `to` -- the one case the host is asked. Every
+    // other answer above and below (stale, ambiguous, self-target, a subagent) stays in-process.
+    const host = deps.hostMessaging?.(caller.sessionId);
+    if (host === undefined) return settle(notFound(messageId, resolved.message));
+    return settle(...(await askHost(host, messageId, caller, input)));
+  }
   if (resolved.kind === "stale") return settle(refused(messageId, resolved.message));
   if (resolved.kind === "ambiguous") return settle(ambiguous(messageId, resolved.candidates));
 
@@ -330,6 +349,30 @@ export async function sendMessage(deps: MessagingRuntimeDeps, caller: CallerCont
   return settle(bodyOutcome, idleOutcome.status === "subscribed" ? { subscribed: true } : { refused: outcomeReason(idleOutcome) });
 }
 
+// The host's half of a SendMessage. Its answer is checked (a malformed one is `delivery_uncertain`: from
+// here, a host that answered garbage may still have delivered), stamped with THIS router's messageId,
+// and settled into the same ledger as an in-process outcome -- so a retry of the same tool call returns
+// the stored outcome and never asks the host twice.
+async function askHost(host: HostMessagingPort, messageId: string, caller: CallerContext, input: SendMessageInput): Promise<[DeliveryOutcome, (NotifyOutcome | undefined)?, (string | undefined)?]> {
+  let answer: unknown;
+  try {
+    answer = await host.send({
+      to: input.to,
+      message: input.message,
+      ...(input.summary !== undefined ? { summary: input.summary } : {}),
+      ...(input.notify_when_idle !== undefined ? { notifyWhenIdle: input.notify_when_idle } : {}),
+      messageId,
+      ...(caller.agentId !== undefined ? { fromAgentId: caller.agentId } : {}),
+    });
+  } catch (err) {
+    return [deliveryUncertain(messageId, `the host did not answer the delivery: ${describeThrow(err)}`)];
+  }
+  if (!isHostMessageSendAnswer(answer)) return [deliveryUncertain(messageId, "the host answered the delivery with a malformed outcome")];
+  const notify: NotifyOutcome | undefined =
+    answer.notify === undefined ? undefined : { ...(answer.notify.subscribed === true ? { subscribed: true as const } : {}), ...(answer.notify.refused !== undefined ? { refused: answer.notify.refused } : {}) };
+  return [hostAnswerToOutcome(messageId, answer), notify, boundedHostNote(answer.note)];
+}
+
 function describeThrow(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -406,6 +449,20 @@ export async function listAgents(deps: MessagingRuntimeDeps, caller: SessionCall
   const selfKey = serializeRuntimeAddress(selfAddr);
   const reachable = await deps.adapter.listReachable({ parent: selfAddr });
   const rows = reachable.filter((r) => r.address !== selfKey); // WS-10 §10.2: what SendMessage can reach -- never yourself
+  // Host messaging: what the host says this session can reach, after the in-process rows. A failing or
+  // malformed host listing lists nothing more (a DATA answer: an empty listing claims no delivery). A
+  // host row whose address an in-process row already has is dropped -- the in-process one is what
+  // SendMessage would reach first.
+  const host = deps.hostMessaging?.(caller.sessionId);
+  if (host !== undefined) {
+    const answer = normaliseHostMessageListAnswer(await host.list({}).catch(() => undefined));
+    const seen = new Set(rows.map((r) => r.address));
+    for (const row of answer?.sessions ?? []) {
+      if (seen.has(row.address) || row.address === selfKey) continue;
+      seen.add(row.address);
+      rows.push(hostSessionToListed(row));
+    }
+  }
   return { listing: formatListing(rows), rows };
 }
 

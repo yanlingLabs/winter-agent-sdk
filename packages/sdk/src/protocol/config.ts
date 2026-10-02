@@ -308,6 +308,73 @@ export interface CredentialResolveRequest {
  * could be produced -- a refresh failed), `unavailable` (retry later).
  */
 export type CredentialResolveAnswer = { ok: true; material: string; expiresAt?: number; generation: number } | { ok: false; reason: "not_found" | "not_allowed" | "stale" | "unavailable" };
+/**
+ * Host messaging, WINTER-ONLY: the runtime -> host `host_message_send` control request (subtype
+ * `HOST_MESSAGE_SEND_SUBTYPE`), sent only when `RuntimeConfig.hostMessaging` is set.
+ *
+ * WHY. A session's `SendMessage` resolves `to` against what its own process can reach: the session's
+ * subagents and the in-process peer directory, which holds the calling session alone. A HOST that runs
+ * many sessions (the Winter daemon: one process or one Worker per session) owns every other one, so the
+ * runtime asks it when -- and only when -- local resolution finds nothing (`not_found`). Subagents,
+ * self-target, a stale or ambiguous name are all still answered in-process and never reach the host.
+ *
+ * - `to` -- EXACTLY what the model wrote (a host session id, a `session:<id>` address from ListAgents,
+ *   a name the host recognises). Resolution is the host's.
+ * - `messageId` -- the runtime's own id for this call, stable across a retry of the same tool call (the
+ *   runtime's ledger short-circuits a retry before it ever asks again; the host MAY also dedupe on it).
+ * - `fromAgentId` -- set when one of this session's SUBAGENTS is the sender. Information only: the host
+ *   knows which session is asking from which session's handler answered, and must never take the sender
+ *   from the payload.
+ */
+export interface HostMessageSendRequest {
+  to: string;
+  message: string;
+  summary?: string;
+  notifyWhenIdle?: boolean;
+  messageId: string;
+  fromAgentId?: string;
+}
+/**
+ * The host's answer. `status` is one of the delivery outcomes a host can honestly report; the runtime
+ * stamps its own `messageId` on it and records it in its ledger.
+ *
+ * - `delivered` (the target is reading it now), `queued` (behind a turn already running),
+ *   `resumed_and_delivered` (the target was not running and the host resumed it for this message);
+ * - `refused` / `not_found` -- `reason` required; `unavailable` -- `reason` required, `retryable`
+ *   optional (default `false`); `delivery_uncertain` -- `reason` required (the effect may have happened).
+ *
+ * `notify` is the separate fact of whether `notifyWhenIdle` was honoured, rendered beside the outcome
+ * exactly like the in-process router's combined call. `note` is ONE short sentence for the model beside
+ * the outcome (e.g. whether it will be told when the target finishes) -- never a second outcome.
+ */
+export interface HostMessageSendAnswer {
+  status: "delivered" | "queued" | "resumed_and_delivered" | "refused" | "not_found" | "unavailable" | "delivery_uncertain";
+  reason?: string;
+  retryable?: boolean;
+  notify?: { subscribed?: true; refused?: string };
+  note?: string;
+}
+/** `host_message_list` (subtype `HOST_MESSAGE_LIST_SUBTYPE`): what this session can reach through its host, for `ListAgents`. */
+export interface HostMessageListRequest {
+  /** As on `HostMessageSendRequest`: set when a subagent is asking. Information only. */
+  fromAgentId?: string;
+}
+/**
+ * One session the host lists. `address` is what the model passes back as `to` (it must satisfy
+ * `SendMessage`'s own `to` rules: non-empty, at most 300 characters, no newline, no `*`); `name` is a
+ * display name (a title). The runtime renders each as an ordinary `session` row of ListAgents.
+ */
+export interface HostReachableSession {
+  address: string;
+  name?: string;
+  status: "starting" | "running" | "idle" | "exited" | "unavailable" | "archived";
+  /** The session's product mode (`code`, `dispatch`, …). */
+  mode: string;
+  cwd?: string;
+}
+export interface HostMessageListAnswer {
+  sessions: HostReachableSession[];
+}
 export interface McpStdioServerConfig {
   type?: "stdio"; // the ONLY optional discriminant of the four transport variants (derived-shapes item (a))
   command: string;
@@ -740,6 +807,13 @@ export interface RuntimeConfig {
    * runtime's own Keychain store, as before (a standalone SDK user). A flag, never material.
    */
   hostCredentials?: boolean;
+  /**
+   * Host messaging, WINTER-ONLY: `true` when the host answers `host_message_send` / `host_message_list`
+   * (`Options.hostMessaging`). `SendMessage` then asks the host to deliver whatever it cannot resolve
+   * in-process, and `ListAgents` adds the sessions the host lists. Absent: in-process only, as before.
+   * A flag, never a handler.
+   */
+  hostMessaging?: boolean;
   autoClassifier?: AutoClassifierConfig;
   advisor?: AdvisorConfig;
   /** The wire twin of `Options.web` -- see `WebToolsConfig`. Pure passthrough; absent means every default in `WEB_TOOLS_DEFAULTS`. */

@@ -61,6 +61,7 @@ import {
   type MessagingRouterSeamWithRoster,
   type MessagingRuntimeDeps,
   type SubscriberDirectory,
+  type HostMessagingPort,
 } from "@yanlinglabs/winter-agent-sdk/messaging";
 import { ChildResumeModeIncomparableError } from "../permissions/auto/inheritance.ts";
 import { getMessagingRuntime, registerMessagingRuntime } from "./router.ts";
@@ -497,6 +498,13 @@ export interface DefaultMessagingRuntime extends MessagingRuntimeDeps {
   // roster-aggregating seam, and saying so here is what lets `ensureDefaultMessagingRuntimeRegistered`
   // (and any test) reach `addChildRosterSource` without a cast asserting a fact the type had erased.
   seam: MessagingRouterSeamWithRoster;
+  /**
+   * Host messaging: register `port` as the host line of the OWNING session `sessionId` (a top-level run
+   * whose config says `hostMessaging: true`). Returns the withdrawal, which removes only this exact
+   * registration. Keyed by session, never one process slot: the in-memory leg runs several sessions in
+   * one realm, and each must reach only its own host handler.
+   */
+  registerHostMessagingPort(sessionId: string, port: HostMessagingPort): () => void;
 }
 
 /**
@@ -550,7 +558,24 @@ export function createDefaultMessagingRuntime(opts: { now?: () => number; getChi
     subscribers,
     now,
   });
-  return { seam, adapter, notifications, loopGuard: createLoopGuard(), subscribers, now, peers, classifyDeliveryError };
+  const hostPorts = new Map<string, HostMessagingPort>();
+  return {
+    seam,
+    adapter,
+    notifications,
+    loopGuard: createLoopGuard(),
+    subscribers,
+    now,
+    peers,
+    classifyDeliveryError,
+    hostMessaging: (sessionId) => hostPorts.get(sessionId),
+    registerHostMessagingPort(sessionId, port) {
+      hostPorts.set(sessionId, port);
+      return () => {
+        if (hostPorts.get(sessionId) === port) hostPorts.delete(sessionId);
+      };
+    },
+  };
 }
 
 // --- Phase 4 Task 8: the PROCESS-LEVEL default messaging runtime ---------------------------------

@@ -176,6 +176,28 @@ All three report the icon of each site they name to the HOST only, as `winter_si
 
 Subagents inherit both.
 
+### Messaging a host's other sessions (0.0.39)
+
+**`Options.hostMessaging`** — `{ send, list }`, for a host that runs many sessions (one process or one
+Worker each) and wants `SendMessage` and `ListAgents` to reach the others. With it set, `query()` puts
+`hostMessaging: true` on the wire and answers two runtime → host control requests,
+`host_message_send` and `host_message_list` (`HOST_MESSAGE_SEND_SUBTYPE` / `HOST_MESSAGE_LIST_SUBTYPE`),
+the same way for a spawned `winter` process and an embedded Worker:
+
+- `SendMessage` resolves `to` in-process first — the session's own subagents, then the in-process
+  peers. Only a `not_found` there goes to `send`, with the model's raw `to`, the message, its summary,
+  `notifyWhenIdle`, the runtime's message id and (for a subagent's call) `fromAgentId`. The host's
+  answer (`delivered`, `queued`, `resumed_and_delivered`, `refused`, `not_found`, `unavailable`,
+  `delivery_uncertain`, plus an optional `notify` fact and a one-sentence `note`) is the tool's
+  result under the runtime's message id, so a retry of the same tool call is answered from the
+  ledger and never asks the host twice. A throwing or malformed `send` is `delivery_uncertain`.
+- `ListAgents` lists the subagents, then the sessions `list` returns as `session` rows. A failing
+  `list` lists nothing more.
+
+The handler is per session and never told who is sending: it knows its caller by construction. The
+router core reaches the same seam through `MessagingRuntimeDeps.hostMessaging` (a `HostMessagingPort`
+per owning session, on the `/messaging` subpath). Without the option, nothing changes.
+
 ### The 0.0.16 background-default change
 
 Before 0.0.16, an Agent tool call with no `run_in_background` ran in the **foreground** (this call

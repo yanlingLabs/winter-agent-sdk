@@ -156,7 +156,9 @@ export function createMessagingToolHandlers(port: MessagingToolPort, caller: Win
         // information … or a CLASSIFIED FAILURE" — so the typed outcome IS the result, rendered whole.
         // The supplementary `notify` fact rides beside it rather than as an eleventh outcome status,
         // which is the shape the shared core already chose for a combined call.
-        const payload = result.notify === undefined ? result.outcome : { ...result.outcome, notify: result.notify };
+        // Host messaging: a host's `note` (one sentence -- e.g. whether the sender will be told when the
+        // target finishes) rides beside the outcome the same way, never as a status of its own.
+        const payload = { ...result.outcome, ...(result.notify === undefined ? {} : { notify: result.notify }), ...(result.note === undefined ? {} : { note: result.note }) };
         return text(JSON.stringify(payload), MODEL_FACING_FAILURES.has(result.outcome.status));
       });
     },

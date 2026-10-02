@@ -2630,6 +2630,86 @@ describe("WS-25 §7: credential_resolve", () => {
   });
 });
 
+describe("host messaging: host_message_send / host_message_list", () => {
+  const send = { to: "s_abc", message: "hi", messageId: "msg-1", summary: "hi" };
+  const handler = (over: Partial<NonNullable<Options["hostMessaging"]>> = {}): NonNullable<Options["hostMessaging"]> => ({
+    send: async () => ({ status: "delivered" }),
+    list: async () => ({ sessions: [] }),
+    ...over,
+  });
+
+  test("Options.hostMessaging puts ONLY a flag on the wire, and its absence puts nothing", async () => {
+    const capture = captureConfigJson();
+    for await (const _msg of query({ prompt: "ping", options: { hostMessaging: handler(), spawnClaudeCodeProcess: capture.hook } })) {
+      /* drain */
+    }
+    expect(capture.get()).toMatchObject({ hostMessaging: true });
+    const none = captureConfigJson();
+    for await (const _msg of query({ prompt: "ping", options: { spawnClaudeCodeProcess: none.hook } })) {
+      /* drain */
+    }
+    expect((none.get() as Record<string, unknown>).hostMessaging).toBeUndefined();
+  });
+
+  test("send: the runtime's request reaches the handler verbatim and its answer goes back", async () => {
+    let seen: unknown;
+    const { proc, writes } = recordingProcessWithControlRequestPayload("host_message_send", "hm-1", send);
+    for await (const _msg of query({ prompt: "hi", options: { hostMessaging: handler({ send: async (req) => ((seen = req), { status: "queued", note: "behind its turn" }) }), spawnClaudeCodeProcess: () => proc } })) {
+      /* drain */
+    }
+    expect(seen).toEqual(send);
+    expect(decodeControlResponse(writes, "hm-1")).toMatchObject({ ok: true, payload: { status: "queued", note: "behind its turn" } });
+  });
+
+  test("send: a throwing or garbage handler answers delivery_uncertain, and the log never quotes the error text", async () => {
+    for (const [id, cb] of [
+      ["hm-2", async () => { throw new Error("body: secret plans"); }],
+      ["hm-3", async () => ({ status: "refused" }) as never],
+    ] as const) {
+      const { proc, writes } = recordingProcessWithControlRequestPayload("host_message_send", id, send);
+      const spy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        for await (const _msg of query({ prompt: "hi", options: { hostMessaging: handler({ send: cb as never }), spawnClaudeCodeProcess: () => proc } })) {
+          /* drain */
+        }
+        for (const call of spy.mock.calls) expect(call.join(" ")).not.toContain("secret plans");
+      } finally {
+        spy.mockRestore();
+      }
+      expect(decodeControlResponse(writes, id)).toMatchObject({ ok: true, payload: { status: "delivery_uncertain" } });
+    }
+  });
+
+  test("send: a malformed request is refused before the handler runs", async () => {
+    let called = false;
+    const { proc, writes } = recordingProcessWithControlRequestPayload("host_message_send", "hm-4", { to: "s_abc" });
+    for await (const _msg of query({ prompt: "hi", options: { hostMessaging: handler({ send: async () => ((called = true), { status: "delivered" }) }), spawnClaudeCodeProcess: () => proc } })) {
+      /* drain */
+    }
+    expect(called).toBe(false);
+    expect(decodeControlResponse(writes, "hm-4")).toMatchObject({ ok: false, error: { code: "invalid_payload" } });
+  });
+
+  test("list: rows are normalised (malformed ones dropped), and a throwing handler lists nothing", async () => {
+    const { proc, writes } = recordingProcessWithControlRequestPayload("host_message_list", "hl-1", {});
+    const rows = [{ address: "session:s_1", name: "Fix it", status: "running", mode: "code" }, { address: "", status: "running", mode: "code" }];
+    for await (const _msg of query({ prompt: "hi", options: { hostMessaging: handler({ list: async () => ({ sessions: rows as never }) }), spawnClaudeCodeProcess: () => proc } })) {
+      /* drain */
+    }
+    expect(decodeControlResponse(writes, "hl-1")).toMatchObject({ ok: true, payload: { sessions: [rows[0]] } });
+    const failing = recordingProcessWithControlRequestPayload("host_message_list", "hl-2", {});
+    const spy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for await (const _msg of query({ prompt: "hi", options: { hostMessaging: handler({ list: async () => { throw new Error("down"); } }), spawnClaudeCodeProcess: () => failing.proc } })) {
+        /* drain */
+      }
+    } finally {
+      spy.mockRestore();
+    }
+    expect(decodeControlResponse(failing.writes, "hl-2")).toMatchObject({ ok: true, payload: { sessions: [] } });
+  });
+});
+
 // The first-frame check stays STRICT for every frame type -- a runtime->host control_request included (the
 // runtime holds those until its handshake is written; one ahead of `init` is a runtime bug). The refusal
 // names the request's subtype, so such a bug says which door fired early (WS-25: `credential_resolve`).

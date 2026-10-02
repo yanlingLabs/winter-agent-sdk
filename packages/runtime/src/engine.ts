@@ -142,6 +142,7 @@ import { getChildEngineFactory, transformChildFrame, type ChildHandle, type Chil
 // see that function's own header for why it is process-level and why the roster is contributed
 // per-run rather than the runtime being rebuilt per-run.
 import { ensureDefaultMessagingRuntimeRegistered } from "./messaging/reference-adapter.ts";
+import { createHostMessagingPort } from "./messaging/host-port.ts";
 // Phase 4 Task 3 (WS-07 §11 / RULING P2-M): the child permission-policy comparator.
 import { computeChildPolicy } from "./permissions/auto/inheritance.ts";
 import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode, BUBBLE_PERMISSION_MODE } from "./permissions/policy-state.ts";
@@ -3555,6 +3556,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // process and leaves any host-registered runtime alone -- see its own header for why the runtime
   // is process-level while the roster contribution is per-run. Withdrawn at teardown.
   const removeChildRosterSource = ensureDefaultMessagingRuntimeRegistered().addChildRosterSource(() => childRoster);
+  // Host messaging (`RuntimeConfig.hostMessaging`): this session's SendMessage/ListAgents reach the host's
+  // OTHER sessions over THIS run's control bridge (`host_message_send` / `host_message_list`). Top-level
+  // runs only -- a child engine shares the parent's session id, and so its registration. A host-registered
+  // messaging runtime (not this process's default) owns its own routing and gets nothing here. Withdrawn
+  // at teardown beside the roster contribution.
+  const removeHostMessagingPort =
+    config.hostMessaging === true && config.agentId === undefined ? getDefaultMessagingRuntime()?.registerHostMessagingPort?.(config.sessionId, createHostMessagingPort(bridge)) : undefined;
   // --- Phase 5 fix wave, B-H1(a): the sandboxed-posture predicate ---------------------------------
   //
   // WS-12 §1's composition MUST, which had two type declarations and no consumer. Three conditions,
@@ -10447,6 +10455,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // drop it. Singleton hygiene, matching `clearSessionRequestLayout`.
   if (config.agentId === undefined) clearNotificationQueue(config.sessionId);
   removeChildRosterSource();
+  removeHostMessagingPort?.();
   // R-7b-4 addendum: withdraw this run's self-peer and its notice forwarder at teardown, exactly like
   // the roster contribution above -- the messaging runtime is PROCESS-level and outlives the run, so
   // a leaked peer would keep answering `list_reachable` for a session that is gone.

@@ -3,7 +3,8 @@ import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRe
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
 import type { AccountInfo, AgentInfo, CredentialResolveAnswer, CredentialResolveRequest, EffortLevel, ModelInfo, ModelFamilyListing, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, McpOAuthRefreshAnswer, McpOAuthRefreshRequest, RewindFilesResult } from "./protocol/config.ts";
-import { CREDENTIAL_RESOLVE_SUBTYPE, isWinterMcpServerInstance, MCP_OAUTH_REFRESH_SUBTYPE, TEST_KEYCHAIN_ENV, type Options, type McpServerConfig } from "./options.ts";
+import { CREDENTIAL_RESOLVE_SUBTYPE, HOST_MESSAGE_LIST_SUBTYPE, HOST_MESSAGE_SEND_SUBTYPE, isWinterMcpServerInstance, MCP_OAUTH_REFRESH_SUBTYPE, TEST_KEYCHAIN_ENV, type HostMessagingHandler, type Options, type McpServerConfig } from "./options.ts";
+import { isHostMessageListRequest, isHostMessageSendAnswer, isHostMessageSendRequest, normaliseHostMessageListAnswer } from "./messaging/host.ts";
 import type {
   PermissionMode,
   CanUseTool,
@@ -505,6 +506,54 @@ function makeCredentialResolveHandler(onCredentialResolve: NonNullable<Options["
   };
 }
 
+// Host messaging: the runtime-originated `host_message_send` / `host_message_list` responders, registered
+// ONLY with `Options.hostMessaging` (which also sets `hostMessaging` on the wire, so a runtime never asks a
+// host that cannot answer). Every outcome is a well-formed ANSWER: a throwing or garbage-returning `send`
+// answers `delivery_uncertain` (from here the host may have delivered before it failed), a throwing or
+// garbage-returning `list` answers an empty listing (a data answer claims no delivery). The log line on a
+// throw names the error's NAME only -- a host's error text may quote the message body.
+function abortableFor(abortController: AbortController | undefined, handlerCtx: { signal: AbortSignal } | undefined): AbortController {
+  const controller = new AbortController();
+  if (abortController?.signal.aborted === true || handlerCtx?.signal.aborted === true) controller.abort();
+  abortController?.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  handlerCtx?.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  return controller;
+}
+function makeHostMessageSendHandler(host: HostMessagingHandler, abortController: AbortController | undefined): ControlRequestHandler {
+  return async (payload: unknown, handlerCtx?: { signal: AbortSignal }): Promise<ControlRequestHandlerResult> => {
+    if (!isHostMessageSendRequest(payload)) return { ok: false, error: { code: "invalid_payload", message: "host_message_send expects { to, message, messageId, summary?, notifyWhenIdle?, fromAgentId? }" } };
+    const controller = abortableFor(abortController, handlerCtx);
+    const request = {
+      to: payload.to,
+      message: payload.message,
+      messageId: payload.messageId,
+      ...(payload.summary !== undefined ? { summary: payload.summary } : {}),
+      ...(payload.notifyWhenIdle !== undefined ? { notifyWhenIdle: payload.notifyWhenIdle } : {}),
+      ...(payload.fromAgentId !== undefined ? { fromAgentId: payload.fromAgentId } : {}),
+    };
+    try {
+      const answer = await host.send(request, { signal: controller.signal });
+      return { ok: true, payload: isHostMessageSendAnswer(answer) ? answer : { status: "delivery_uncertain", reason: "the host's message handler returned a malformed answer" } };
+    } catch (err) {
+      console.error(`winter: hostMessaging.send threw (${err instanceof Error ? err.name : "error"}) -- answering delivery_uncertain`);
+      return { ok: true, payload: { status: "delivery_uncertain", reason: "the host's message handler failed" } };
+    }
+  };
+}
+function makeHostMessageListHandler(host: HostMessagingHandler, abortController: AbortController | undefined): ControlRequestHandler {
+  return async (payload: unknown, handlerCtx?: { signal: AbortSignal }): Promise<ControlRequestHandlerResult> => {
+    if (!isHostMessageListRequest(payload)) return { ok: false, error: { code: "invalid_payload", message: "host_message_list expects { fromAgentId? }" } };
+    const controller = abortableFor(abortController, handlerCtx);
+    try {
+      const answer = await host.list({ ...(payload?.fromAgentId !== undefined ? { fromAgentId: payload.fromAgentId } : {}) }, { signal: controller.signal });
+      return { ok: true, payload: normaliseHostMessageListAnswer(answer) ?? { sessions: [] } };
+    } catch (err) {
+      console.error(`winter: hostMessaging.list threw (${err instanceof Error ? err.name : "error"}) -- answering an empty listing`);
+      return { ok: true, payload: { sessions: [] } };
+    }
+  };
+}
+
 // Builds the wire-safe RuntimeConfig.hooks shape from a real Options.hooks value — undefined when
 // there is nothing to send at all (an absent/empty hooks option must serialize to an ABSENT
 // `hooks` key, never `{}`, so the runtime's own "hooks default-off, byte-identical wire trace" claim
@@ -882,6 +931,8 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(brand.keychainService !== WINTER_BRAND.keychainService || options.keychainService !== undefined ? { keychainService: brand.keychainService } : {}),
     // WS-25 §7: a flag only -- the host's answers ride control responses, never the wire config.
     ...(options.onCredentialResolve !== undefined ? { hostCredentials: true } : {}),
+    // Host messaging: a flag only -- the handler stays in this process and answers control requests.
+    ...(options.hostMessaging !== undefined ? { hostMessaging: true } : {}),
     ...(options.autoClassifier !== undefined ? { autoClassifier: options.autoClassifier } : {}),
     ...(options.advisor !== undefined ? { advisor: options.advisor } : {}),
     // The web tools' and auto-memory's own blocks: pure passthrough, same convention as `advisor`.
@@ -1158,6 +1209,10 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   }
   if (options.onCredentialResolve) {
     controlRequestHandlers.set(CREDENTIAL_RESOLVE_SUBTYPE, makeCredentialResolveHandler(options.onCredentialResolve, options.abortController));
+  }
+  if (options.hostMessaging) {
+    controlRequestHandlers.set(HOST_MESSAGE_SEND_SUBTYPE, makeHostMessageSendHandler(options.hostMessaging, options.abortController));
+    controlRequestHandlers.set(HOST_MESSAGE_LIST_SUBTYPE, makeHostMessageListHandler(options.hostMessaging, options.abortController));
   }
   if (options.onMcpOAuthRefresh) {
     controlRequestHandlers.set(MCP_OAUTH_REFRESH_SUBTYPE, makeMcpOAuthRefreshHandler(options.onMcpOAuthRefresh, options.abortController));
