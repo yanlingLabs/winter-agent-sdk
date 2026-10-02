@@ -71,6 +71,7 @@ export function isHostSessionStopAnswer(value: unknown): value is HostSessionSto
   if (typeof value.status !== "string" || !STOP_STATUSES.has(value.status)) return false;
   if (value.reason !== undefined && typeof value.reason !== "string") return false;
   if (STOP_NEEDS_REASON.has(value.status) && (typeof value.reason !== "string" || value.reason.length === 0)) return false;
+  if (value.note !== undefined && typeof value.note !== "string") return false;
   return true;
 }
 

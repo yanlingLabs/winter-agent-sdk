@@ -186,6 +186,8 @@ describe("the guards", () => {
     expect(isHostSessionStopAnswer({ status: "refused" })).toBe(false);
     expect(isHostSessionStopAnswer({ status: "refused", reason: "a chat session" })).toBe(true);
     expect(isHostSessionStopAnswer({ status: "killed" })).toBe(false);
+    expect(isHostSessionStopAnswer({ status: "stopped", note: "queued ones wait" })).toBe(true);
+    expect(isHostSessionStopAnswer({ status: "stopped", note: 3 })).toBe(false);
   });
 
   test("isHostMessageSendAnswer requires a reason exactly where the outcome carries one", () => {

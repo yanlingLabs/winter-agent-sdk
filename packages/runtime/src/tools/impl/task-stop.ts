@@ -14,6 +14,7 @@ import { renderAgentNotification, renderTaskStopNotification } from "../../subag
 // inventory the mapping's own header lists.
 import { wireTaskType } from "../background-tasks.ts";
 import { getMessagingRuntime } from "../../messaging/router.ts";
+import { boundedHostNote } from "@yanlinglabs/winter-agent-sdk/messaging";
 
 interface TaskStopInput {
   task_id?: string;
@@ -135,8 +136,10 @@ async function stopHostSession(
   } catch (err) {
     return { output: `Error: TaskStop: the host did not answer the stop for "${id}" (${err instanceof Error ? err.name : "error"}); it may or may not have stopped`, isError: true };
   }
-  if (answer.status === "stopped") return { output: JSON.stringify({ message: `stopped session ${id}: its running turn was interrupted`, task_id: id, task_type: HOST_SESSION_TASK_TYPE }) };
-  if (answer.status === "not_running") return { output: JSON.stringify({ message: `session ${id} has no turn running -- nothing to stop`, task_id: id, task_type: HOST_SESSION_TASK_TYPE }) };
+  const note = boundedHostNote(answer.note);
+  const withNote = (message: string): string => (note === undefined ? message : `${message}. ${note}`);
+  if (answer.status === "stopped") return { output: JSON.stringify({ message: withNote(`stopped session ${id}: its running turn was interrupted`), task_id: id, task_type: HOST_SESSION_TASK_TYPE }) };
+  if (answer.status === "not_running") return { output: JSON.stringify({ message: withNote(`session ${id} has no turn running -- nothing to stop`), task_id: id, task_type: HOST_SESSION_TASK_TYPE }) };
   if (answer.status === "not_found") return { output: `Error: TaskStop: unknown task_id "${id}" (${answer.reason ?? "not found"})`, isError: true };
   return { output: `Error: TaskStop: ${answer.reason ?? answer.status}`, isError: true };
 }

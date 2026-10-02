@@ -395,6 +395,9 @@ export interface HostSessionStopRequest {
 export interface HostSessionStopAnswer {
   status: "stopped" | "not_running" | "refused" | "not_found" | "unavailable";
   reason?: string;
+  /** One sentence for the model beside a `stopped` / `not_running` result — e.g. what happens to messages
+   *  that were queued behind the interrupted turn. Rendered into TaskStop's `message`. */
+  note?: string;
 }
 export interface McpStdioServerConfig {
   type?: "stdio"; // the ONLY optional discriminant of the four transport variants (derived-shapes item (a))

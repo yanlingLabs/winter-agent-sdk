@@ -78,7 +78,7 @@ function recordingHost(answer: HostMessageSendAnswer | (() => Promise<HostMessag
     },
     async stop(request) {
       stops.push(request.id);
-      return request.id === "s_running" ? { status: "stopped" } : request.id === "s_idle" ? { status: "not_running" } : { status: "refused", reason: "a dispatch session cannot be stopped" };
+      return request.id === "s_running" ? { status: "stopped", note: "1 queued message waits for the next one" } : request.id === "s_idle" ? { status: "not_running" } : { status: "refused", reason: "a dispatch session cannot be stopped" };
     },
   };
   return { handler, sends, lists, stops };
@@ -139,7 +139,7 @@ describe.each(LEGS)("host messaging over the %s leg", (leg) => {
     const [running, idle, refused] = await runCalls(leg, 'CALL TaskStop {"task_id":"s_running"}\nCALL TaskStop {"task_id":"s_idle"}\nCALL TaskStop {"task_id":"s_dispatch"}', host.handler);
     expect(host.stops).toEqual(["s_running", "s_idle", "s_dispatch"]);
     expect(running!.isError).toBe(false);
-    expect(JSON.parse(running!.content)).toEqual({ message: "stopped session s_running: its running turn was interrupted", task_id: "s_running", task_type: "session" });
+    expect(JSON.parse(running!.content)).toEqual({ message: "stopped session s_running: its running turn was interrupted. 1 queued message waits for the next one", task_id: "s_running", task_type: "session" });
     expect(idle!.isError).toBe(false);
     expect(JSON.parse(idle!.content)).toMatchObject({ task_id: "s_idle", task_type: "session" });
     expect(refused!.isError).toBe(true);
