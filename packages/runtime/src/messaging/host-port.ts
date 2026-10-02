@@ -10,7 +10,7 @@
 // Worker both run this engine over the same frame stream.
 import { HOST_MESSAGE_LIST_SUBTYPE, HOST_MESSAGE_SEND_SUBTYPE, HOST_SESSION_STOP_SUBTYPE } from "@yanlinglabs/winter-agent-sdk";
 import { isHostMessageSendAnswer, isHostSessionStopAnswer, normaliseHostMessageListAnswer, type HostMessagingPort } from "@yanlinglabs/winter-agent-sdk/messaging";
-import type { HostRequestSender } from "../provider/host-credentials.ts";
+import type { RpcBridge } from "../rpc/bridge.ts";
 
 /**
  * How long one delivery may take. Generous on purpose: a host may RESUME a finished session for the
@@ -31,7 +31,10 @@ export class HostMessagingAnswerError extends Error {
   }
 }
 
-export function createHostMessagingPort(sender: HostRequestSender): HostMessagingPort {
+/** The bridge's own `request`, whose options carry the `signal` the host requests ride. */
+export type HostMessagingSender = Pick<RpcBridge, "request">;
+
+export function createHostMessagingPort(sender: HostMessagingSender): HostMessagingPort {
   return {
     async send(request, opts) {
       const answer = await sender.request(HOST_MESSAGE_SEND_SUBTYPE, request, { timeoutMs: HOST_MESSAGE_SEND_TIMEOUT_MS, ...(opts?.signal !== undefined ? { signal: opts.signal } : {}) });

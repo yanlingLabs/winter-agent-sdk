@@ -153,6 +153,15 @@ describe("listAgents with a host port", () => {
     expect(seen[0]).toBe(controller.signal);
   });
 
+  test("the calling tool's signal reaches the host's list too (ListAgents)", async () => {
+    const seen: Array<AbortSignal | undefined> = [];
+    const port = { ...host({ status: "delivered" }), async list(_r: unknown, opts?: { signal?: AbortSignal }) { seen.push(opts?.signal); return { sessions: [] }; } };
+    const controller = new AbortController();
+    const handlers = createMessagingToolHandlers(messagingToolPortFromRuntimeDeps(deps({ port })), { sessionId: SELF, signal: controller.signal });
+    await handlers.listAgents({});
+    expect(seen[0]).toBe(controller.signal);
+  });
+
   test("a failing host listing lists only the in-process rows", async () => {
     const port = host({ status: "delivered" }, new Error("down"));
     const { rows } = await listAgents(deps({ port, reachable: [local] }), { sessionId: SELF }, {});

@@ -170,8 +170,9 @@ export function createMessagingToolHandlers(port: MessagingToolPort, caller: Win
       const accepted = acceptNativeListAgentsArgs(rawArgs);
       if (!accepted.ok) return text(accepted.reason, true);
       return guarded("ListAgents could not reach the messaging system", async () => {
-        const from = callerAddress(identity());
-        const detailed = port.listReachableDetailed !== undefined ? await port.listReachableDetailed({ from }) : { rows: await port.listReachable({ from }) };
+        const who = identity();
+        const from = callerAddress(who);
+        const detailed = port.listReachableDetailed !== undefined ? await port.listReachableDetailed({ from, ...(who.signal !== undefined ? { signal: who.signal } : {}) }) : { rows: await port.listReachable({ from }) };
         const rows = detailed.rows;
         const omitted = detailed.omitted ?? 0;
         // WS-10 §10.2: "Output is EXACTLY `{ listing: string }`" — one string field, and nothing else.

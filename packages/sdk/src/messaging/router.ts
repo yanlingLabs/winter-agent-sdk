@@ -449,7 +449,7 @@ export function omittedLine(omitted: number): string {
   return `(${omitted} more reachable session${omitted === 1 ? "" : "s"} not listed)`;
 }
 
-export async function listAgents(deps: MessagingRuntimeDeps, caller: SessionCallerContext, _input: ListAgentsInput): Promise<{ listing: string; rows: ListedRuntimeObject[]; omitted?: number }> {
+export async function listAgents(deps: MessagingRuntimeDeps, caller: SessionCallerContext, _input: ListAgentsInput, opts: { signal?: AbortSignal } = {}): Promise<{ listing: string; rows: ListedRuntimeObject[]; omitted?: number }> {
   const selfAddr = buildSessionAddress(caller.sessionId);
   const selfKey = serializeRuntimeAddress(selfAddr);
   const reachable = await deps.adapter.listReachable({ parent: selfAddr });
@@ -461,7 +461,7 @@ export async function listAgents(deps: MessagingRuntimeDeps, caller: SessionCall
   const host = deps.hostMessaging?.(caller.sessionId);
   let omitted = 0;
   if (host !== undefined) {
-    const answer = normaliseHostMessageListAnswer(await host.list({}).catch(() => undefined));
+    const answer = normaliseHostMessageListAnswer(await host.list({}, opts.signal !== undefined ? { signal: opts.signal } : {}).catch(() => undefined));
     omitted = answer?.omitted ?? 0;
     const seen = new Set(rows.map((r) => r.address));
     for (const row of answer?.sessions ?? []) {

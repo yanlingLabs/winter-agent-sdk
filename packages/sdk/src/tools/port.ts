@@ -28,7 +28,7 @@ export interface MessagingToolPort {
   sendDetailed(request: { from: RuntimeAddress; to: string; body: string; summary?: string; notifyWhenIdle?: boolean; originToolCallId?: string; signal?: AbortSignal }): Promise<SendMessageResult>;
   listReachable(scope: { from: RuntimeAddress }): Promise<ListedRuntimeObject[]>;
   /** Optional: the rows plus how many reachable ones were NOT listed (a host's cap). Preferred by the ListAgents handler when present. */
-  listReachableDetailed?(scope: { from: RuntimeAddress }): Promise<{ rows: ListedRuntimeObject[]; omitted?: number }>;
+  listReachableDetailed?(scope: { from: RuntimeAddress; signal?: AbortSignal }): Promise<{ rows: ListedRuntimeObject[]; omitted?: number }>;
   readNotifications(sessionId: string): { notifications: NotificationRecord[]; remaining: number };
 }
 
@@ -100,7 +100,7 @@ export function messagingToolPortFromRuntimeDeps(deps: MessagingRuntimeDeps): Me
     },
 
     async listReachableDetailed(scope) {
-      const { rows, omitted } = await listAgents(deps, { sessionId: scope.from.parentWinterSessionId ?? scope.from.winterSessionId }, {});
+      const { rows, omitted } = await listAgents(deps, { sessionId: scope.from.parentWinterSessionId ?? scope.from.winterSessionId }, {}, scope.signal !== undefined ? { signal: scope.signal } : {});
       return { rows, ...(omitted !== undefined ? { omitted } : {}) };
     },
 
