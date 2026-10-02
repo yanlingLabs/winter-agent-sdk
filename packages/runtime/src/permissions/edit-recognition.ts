@@ -46,7 +46,7 @@
 // operators, only whitespace-delimited operands within an ALREADY-split-and-stripped subcommand).
 import { join } from "node:path";
 import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
-import { stripWrappers, extractRedirectWrites, shellWords, dequoteShellWord, type ShellWord } from "./grammar.ts";
+import { stripWrappers, extractRedirectWrites, shellWords, shellWordReadings, type ShellWord } from "./grammar.ts";
 import { flattenSubcommands, hasProcessSubstitution, naiveCommandPieces } from "./shell-structure.ts";
 
 export type RecognizedEditKind = "edit" | "bashFsOp" | "other";
@@ -214,8 +214,11 @@ function naiveWriteWords(command: string): ShellWord[] {
   const out: ShellWord[] = [];
   for (const m of command.matchAll(/(?:&>>?|[0-9]*>>?\|?|[0-9]*>&|<>)[ \t]*([^\s;&|()<>]+)/g)) {
     const raw = m[1]!;
-    const word = dequoteShellWord(raw);
-    if (!/^(?:[0-9]+|-)$/.test(word)) out.push({ word, raw, quoted: word !== raw });
+    // Every reading of the target: bash's own and, when it differs, the backslash-dropping one
+    // (`"\.git/config"` is also judged as `.git/config`) -- an extra reading only adds a path.
+    for (const word of shellWordReadings(raw)) {
+      if (!/^(?:[0-9]+|-)$/.test(word)) out.push({ word, raw, quoted: word !== raw });
+    }
   }
   for (const piece of naiveCommandPieces(command)) {
     const stripped = stripWrappers(piece, "denyAsk");

@@ -362,10 +362,28 @@ export function leadingWord(s: string): { word: string | undefined; afterWord: s
  */
 export function joinLineContinuations(command: string): string {
   if (!command.includes("\\\n")) return command;
-  return command.replace(/\\+\n/g, (run) => {
-    const backslashes = run.length - 1;
-    return backslashes % 2 === 1 ? "\\".repeat(backslashes - 1) : run;
-  });
+  // One forward pass (a backtracking `\\+\n` regex is quadratic on a long backslash run with no
+  // newline after it): measure each backslash run, then look at the character that ends it.
+  let out = "";
+  let i = 0;
+  while (i < command.length) {
+    if (command[i] !== "\\") {
+      out += command[i];
+      i++;
+      continue;
+    }
+    let end = i;
+    while (end < command.length && command[end] === "\\") end++;
+    const run = end - i;
+    if (command[end] === "\n" && run % 2 === 1) {
+      out += "\\".repeat(run - 1);
+      i = end + 1; // the escaping backslash and the newline both vanish
+    } else {
+      out += "\\".repeat(run);
+      i = end;
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -485,8 +503,11 @@ export function stripWrappers(rawCmd: string, direction: "allow" | "denyAsk"): s
     pos = stripLeadingAssignmentsAt(cmd, info, pos, direction);
     const { word: rawWord, end: afterWordEnd } = leadingWordAt(cmd, info, pos);
     if (rawWord === undefined) return cmd.slice(pos);
-    // After quote removal, as bash sees it: `'timeout' 5 rm -rf ~` runs `rm` under `timeout`.
-    const word = dequoteShellWord(rawWord);
+    // After quote removal, as bash sees it: `'timeout' 5 rm -rf ~` runs `rm` under `timeout`. An
+    // allow only looks through what bash itself would run as the wrapper; a deny/ask also looks
+    // through a word that names one in the broad reading (`"\timeout" 5 rm …`), never less than before.
+    const readings = direction === "allow" ? [dequoteShellWord(rawWord)] : shellWordReadings(rawWord);
+    const word = readings.find((r) => r === XARGS || FIXED_WRAPPERS.has(r)) ?? readings[0]!;
 
     if (word === XARGS) {
       const { word: next } = leadingWordAt(cmd, info, afterWordEnd);
@@ -556,13 +577,31 @@ function decodeAnsiCEscape(s: string, i: number): { text: string; next: number }
 }
 
 /**
- * bash's quote removal (and, with `split`, its word splitting at unquoted blanks) over one command's
- * text: single quotes, double quotes (a backslash there drops -- stricter than bash, which keeps it
- * before an ordinary character, and never naming a DIFFERENT protected file), backslash escapes,
- * ANSI-C `$'…'` (decoded) and locale `$"…"` (as double quotes). Expansions are left as written. An
- * unterminated quote runs to the end.
+ * How a backslash inside double quotes is read.
+ *
+ * - `"bash"`: exactly as bash does. Inside `"…"` a backslash escapes only `$`, `` ` ``, `"`, `\` and a
+ *   newline (backslash-newline is a line continuation: both characters vanish); before any other
+ *   character the backslash is kept, so `"\-o"` is the word `\-o` and `"a\b"` is `a\b`.
+ * - `"broad"`: the backslash is dropped before every character, so `"\-o"` reads `-o`. Not what bash
+ *   runs, but a superset view for the permission layer's deny rules and write floors: a spelling
+ *   like `"\.git/config"` or `sort "\-o"` is still matched against `.git/config` / `sort -o`.
+ *
+ * Outside quotes a backslash escapes the next character (backslash-newline vanishes) and inside single
+ * quotes nothing is special, in both readings.
  */
-export function shellWords(s: string, split = true): ShellWord[] {
+export type QuoteReading = "bash" | "broad";
+
+/** Inside double quotes, the characters a backslash escapes in bash. */
+const DOUBLE_QUOTE_ESCAPABLE = new Set(["$", "`", '"', "\\", "\n"]);
+
+/**
+ * bash's quote removal (and, with `split`, its word splitting at unquoted blanks) over one command's
+ * text: single quotes, double quotes (a backslash inside them per `reading` -- see `QuoteReading`;
+ * the default `"broad"` is what the permission layer's deny rules and write floors read), backslash
+ * escapes, ANSI-C `$'…'` (decoded) and locale `$"…"` (as double quotes). Expansions are left as
+ * written. An unterminated quote runs to the end.
+ */
+export function shellWords(s: string, split = true, reading: QuoteReading = "broad"): ShellWord[] {
   const words: ShellWord[] = [];
   let cur = "";
   let start = -1;
@@ -600,7 +639,9 @@ export function shellWords(s: string, split = true): ShellWord[] {
     if (quote === '"') {
       if (ch === '"') quote = null;
       else if (ch === "\\" && i + 1 < s.length) {
-        if (s[i + 1] !== "\n") cur += s[i + 1];
+        const next = s[i + 1]!;
+        if (reading === "bash" && !DOUBLE_QUOTE_ESCAPABLE.has(next)) cur += ch + next;
+        else if (next !== "\n") cur += next;
         i++;
       } else cur += ch;
       i++;
@@ -637,9 +678,19 @@ export function shellWords(s: string, split = true): ShellWord[] {
   return words;
 }
 
-/** `word` after bash's quote removal, as ONE word (blanks inside it are kept). */
+/** `word` after bash's quote removal, exactly as bash reads it, as ONE word (blanks inside it are kept). */
 export function dequoteShellWord(word: string): string {
-  return shellWords(word, false)[0]?.word ?? "";
+  return shellWords(word, false, "bash")[0]?.word ?? "";
+}
+
+/**
+ * `word` in bash's reading and, when it differs, the broad one (see `QuoteReading`) -- for deny-side
+ * checks and write floors, which must judge every file the word could be taken to name.
+ */
+export function shellWordReadings(word: string): string[] {
+  const exact = dequoteShellWord(word);
+  const broad = shellWords(word, false, "broad")[0]?.word ?? "";
+  return broad === exact ? [exact] : [exact, broad];
 }
 
 /** One file-writing redirection: the target word as written (`raw`) and after bash's quote removal. */
@@ -678,9 +729,14 @@ export function extractRedirectWrites(rawCommand: string): RedirectWrite[] {
   const { topLevel } = info;
 
   const writes: RedirectWrite[] = [];
+  // bash's own reading of the target, plus the broad one when it differs (`"\.git/config"` names
+  // `\.git/config` to bash; the floors also judge `.git/config`) -- each extra reading only adds a path.
+  const pushReadings = (raw: string): void => {
+    for (const target of shellWordReadings(raw)) writes.push({ raw, target });
+  };
   const push = (raw: string): void => {
-    writes.push({ raw, target: dequoteShellWord(raw) });
-    if (raw.length > 1 && raw.startsWith("!")) writes.push({ raw: raw.slice(1), target: dequoteShellWord(raw.slice(1)) });
+    pushReadings(raw);
+    if (raw.length > 1 && raw.startsWith("!")) pushReadings(raw.slice(1));
   };
   let i = 0;
   while (i < command.length) {
@@ -766,8 +822,8 @@ export function isRecognizedReadOnly(command: string): boolean {
 
   // The flags are checked on the arguments AFTER quote removal too: `find . '-exec' …` and
   // `rg "--pre" …` pass exactly those flags to the program.
-  const dequotedArgs = shellWords(afterWord).map((w) => w.word).join(" ");
-  const hasFlag = (pattern: RegExp): boolean => pattern.test(afterWord) || pattern.test(dequotedArgs);
+  const views = [afterWord, ...(["broad", "bash"] as const).map((reading) => shellWords(afterWord, true, reading).map((w) => w.word).join(" "))];
+  const hasFlag = (pattern: RegExp): boolean => views.some((view) => pattern.test(view));
 
   if (first === "git") {
     const { word: sub } = leadingWord(afterWord);

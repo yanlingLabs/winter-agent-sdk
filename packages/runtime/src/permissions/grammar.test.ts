@@ -18,6 +18,9 @@ import {
   webFetchUrlOf,
   isExactWebFetchDomainRule,
   validatePermissionRuleString,
+  dequoteShellWord,
+  shellWords,
+  joinLineContinuations,
 } from "./grammar.ts";
 
 function call(toolName: string, input: Record<string, unknown>) {
@@ -904,5 +907,74 @@ describe("validatePermissionRuleString -- fix round 10, item A: sue, ported exac
     expect(validatePermissionRuleString("Bash(npm test)", "allow")).toEqual({ valid: true });
     expect(validatePermissionRuleString("Agent(model:opus)", "deny")).toEqual({ valid: true });
     expect(validatePermissionRuleString("Bash", "deny")).toEqual({ valid: true });
+  });
+});
+
+describe("dequoteShellWord: bash's exact quote removal", () => {
+  const cases: Array<[string, string]> = [
+    // Inside double quotes a backslash escapes only $ ` " \ and a newline...
+    ['"\\$x"', "$x"],
+    ['"\\`"', "`"],
+    ['"\\""', '"'],
+    ['"\\\\"', "\\"],
+    ['"a\\\nb"', "ab"], // backslash-newline is a line continuation: both characters vanish
+    // ...and is kept before any other character.
+    ['"\\-o"', "\\-o"],
+    ['"a\\b"', "a\\b"],
+    ['"\\x"', "\\x"],
+    ['"\\{}"', "\\{}"],
+    ['"\\\\x"', "\\x"],
+    ['"\\.git/config"', "\\.git/config"],
+    // Outside quotes a backslash escapes the next character; backslash-newline vanishes.
+    ["a\\b", "ab"],
+    ["\\-o", "-o"],
+    ["a\\\nb", "ab"],
+    ["\\\\", "\\"],
+    // Inside single quotes nothing is special.
+    ["'a\\b'", "a\\b"],
+    ["'\\-o'", "\\-o"],
+    ["'a\\\nb'", "a\\\nb"],
+    // Adjacent quoting concatenates; locale quoting reads as double quotes, ANSI-C is decoded.
+    ['"\\-"o', "\\-o"],
+    ["'-'\"\\x\"", "-\\x"],
+    ['$"\\-o"', "\\-o"],
+    ["$'\\x2d'o", "-o"],
+  ];
+  for (const [word, expected] of cases) {
+    test(JSON.stringify(word), () => expect(dequoteShellWord(word)).toBe(expected));
+  }
+});
+
+describe("shellWords readings", () => {
+  test("the default (broad) reading drops a backslash inside double quotes before any character", () => {
+    expect(shellWords('a "\\-o" "a\\b" "\\$x"').map((w) => w.word)).toEqual(["a", "-o", "ab", "$x"]);
+  });
+  test("the bash reading keeps it before an ordinary character", () => {
+    expect(shellWords('a "\\-o" "a\\b" "\\$x"', true, "bash").map((w) => w.word)).toEqual(["a", "\\-o", "a\\b", "$x"]);
+  });
+  test("both readings agree outside double quotes", () => {
+    const text = "a\\b 'c\\d' \\-e";
+    expect(shellWords(text, true, "bash")).toEqual(shellWords(text, true, "broad"));
+  });
+});
+
+describe("joinLineContinuations", () => {
+  const cases: Array<[string, string]> = [
+    ["ls \\\n-la", "ls -la"],
+    ["ls \\\\\n-la", "ls \\\\\n-la"], // an escaped backslash, then a real newline
+    ["ls \\\\\\\n-la", "ls \\\\-la"],
+    ["a\\\nb\\\nc", "abc"],
+    ["no continuation", "no continuation"],
+    ["trailing \\", "trailing \\"],
+    ["\\\\\\\\x \\\n", "\\\\\\\\x "],
+  ];
+  for (const [input, expected] of cases) {
+    test(JSON.stringify(input), () => expect(joinLineContinuations(input)).toBe(expected));
+  }
+  test("a long backslash run with no newline after it stays linear", () => {
+    const input = `${"\\".repeat(40_000)}x\\\n`;
+    const start = performance.now();
+    expect(joinLineContinuations(input)).toBe(`${"\\".repeat(40_000)}x`);
+    expect(performance.now() - start).toBeLessThan(50);
   });
 });
