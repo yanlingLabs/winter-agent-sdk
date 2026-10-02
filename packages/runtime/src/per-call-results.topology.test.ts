@@ -16,6 +16,11 @@ import { fileURLToPath } from "node:url";
 import { defaultSpawn, query, type Options, type SpawnRuntimeOptions, type WinterMcpServerInstance } from "@yanlinglabs/winter-agent-sdk";
 import { spawnEmbeddedWorker } from "./embedded-host.ts";
 import { isSandboxAvailable } from "./sandbox/spawn.ts";
+import { inMemoryProcess } from "./testing.ts";
+import { testProviderByName } from "./provider/mock.ts";
+import { listTasks } from "./tools/impl/background-task-runtime.ts";
+import { getRegisteredTool } from "./tools/registry.ts";
+import type { ToolExecutionContext } from "./engine.ts";
 
 const MAIN = fileURLToPath(new URL("./main.ts", import.meta.url));
 const WORKER_ENTRY = join(import.meta.dir, "embedded-worker.ts");
@@ -114,6 +119,63 @@ const resultOf = (arrivals: Arrival[]) => arrivals.find(({ message }) => message
 const slow = (label: string, ms: number, joined = true) => `${joined ? "+" : ""}CALL mcp__t__slow ${JSON.stringify({ label, ms })}`;
 const unsafe = (label: string, ms: number, joined = true) => `${joined ? "+" : ""}CALL mcp__t__unsafe ${JSON.stringify({ label, ms })}`;
 const laned = (label: string, ms: number, joined = true) => `${joined ? "+" : ""}CALL mcp__t__laned ${JSON.stringify({ label, ms })}`;
+
+// The in-memory leg runs the engine in THIS process, so the test can reach the session's own task
+// registry while the round is running -- the one place a single subagent can be stopped from outside.
+describe("concurrent subagents on an in-memory process", () => {
+  const inMemory = (home: string): Spawner => (opts) => inMemoryProcess(opts.args, testProviderByName("calls"), undefined, { ...opts.env, WINTER_HOME: home });
+
+  test("TaskStop on one of two concurrent subagents stops that one alone; each spawn's result lands exactly once; both children's usage reaches the session", async () => {
+    const home = tempDir("home");
+    const base = slowServer();
+    let stopOutput: string | undefined;
+    const server = {
+      events: base.events,
+      instance: {
+        listTools: base.instance.listTools,
+        async callTool(toolName: string, args: Record<string, unknown>) {
+          if (args["label"] === "one-long") {
+            // Child one is now running: stop it by its task id, through the real TaskStop tool.
+            const row = listTasks().find((t) => t.kind === "agent" && t.description === "one" && t.status === "running")!;
+            const ctx = { sessionId: "test", signal: new AbortController().signal, emitFrame: () => {} } as unknown as ToolExecutionContext;
+            const out = await getRegisteredTool("TaskStop")!.executor!.execute({ task_id: row.taskId }, ctx);
+            stopOutput = out.output;
+          }
+          return base.instance.callTool(toolName, args);
+        },
+      } as WinterMcpServerInstance,
+    };
+    const script = [
+      `CALL Agent ${JSON.stringify({ description: "one", prompt: slow("one-long", 20_000, false), subagent_type: "general-purpose", run_in_background: false })}`,
+      `+CALL Agent ${JSON.stringify({ description: "two", prompt: [slow("two-a", 300, false), slow("two-b", 300)].join("\n"), subagent_type: "general-purpose", run_in_background: false })}`,
+    ].join("\n");
+    const { arrivals, events } = await runScript(inMemory(home), home, script, { server });
+    expect(stopOutput).toContain("stopped task");
+    const spawns = callsOf(arrivals).filter((c) => c.name === "Agent");
+    expect(spawns).toHaveLength(2);
+    // Child two was untouched: both its calls ran to the end and both results reached its thread once.
+    expect(events.filter((e) => e.what === "end").map((e) => e.label).sort()).toEqual(expect.arrayContaining(["two-a", "two-b"]));
+    expect(resultFrames(arrivals, spawns[1]!.id).flatMap((f) => f.contents).join(" ")).toContain("two-a done");
+    // Each spawn's own result reached the main thread exactly once (one stopped, one completed)...
+    const mainIds = resultFrames(arrivals).flatMap((f) => f.ids);
+    expect(mainIds.sort()).toEqual([spawns[0]!.id, spawns[1]!.id].sort());
+    const reported = JSON.parse(String(resultOf(arrivals)["result"])) as Array<{ content: string }>;
+    expect(reported).toHaveLength(2);
+    expect(reported[0]!.content).toContain("stopped by request");
+    expect(reported[0]!.content).not.toContain("one-long done");
+    // ...and the turn ended normally (no hang, no error), its usage including both children's generations.
+    const result = resultOf(arrivals);
+    expect(result["subtype"]).toBe("success");
+    const modelUsage = result["modelUsage"] as Record<string, { inputTokens: number; outputTokens: number }>;
+    const sessionTokens = Object.values(modelUsage).reduce((sum, row) => sum + row.inputTokens + row.outputTokens, 0);
+    const own = result["usage"] as { input_tokens: number; output_tokens: number };
+    const childTokens = ["one", "two"].map((d) => listTasks().find((t) => t.kind === "agent" && t.description === d)!.usage!()!.total_tokens);
+    // The roll-up is a synchronous fold (no await between read and write), so concurrent children cannot
+    // lose each other's updates: the session's tokens hold its own last generation AND both children's.
+    expect(childTokens.every((n) => n > 0)).toBe(true);
+    expect(sessionTokens).toBeGreaterThanOrEqual(own.input_tokens + own.output_tokens + childTokens[0]! + childTokens[1]!);
+  }, 60_000);
+});
 
 for (const [name, spawnerFor] of TOPOLOGIES) {
   describe(`tool rounds on ${name}`, () => {
@@ -238,8 +300,8 @@ for (const [name, spawnerFor] of TOPOLOGIES) {
       const childOne = [slow("p1", 600, false), slow("p2", 100)].join("\n");
       const childTwo = [slow("q1", 600, false)].join("\n");
       const script = [
-        `CALL Agent ${JSON.stringify({ description: "one", prompt: childOne, subagent_type: "general-purpose" })}`,
-        `+CALL Agent ${JSON.stringify({ description: "two", prompt: childTwo, subagent_type: "general-purpose" })}`,
+        `CALL Agent ${JSON.stringify({ description: "one", prompt: childOne, subagent_type: "general-purpose", run_in_background: false })}`,
+        `+CALL Agent ${JSON.stringify({ description: "two", prompt: childTwo, subagent_type: "general-purpose", run_in_background: false })}`,
       ].join("\n");
       const { arrivals, events } = await runScript(spawnerFor(home), home, script, {
         server,
@@ -269,10 +331,59 @@ for (const [name, spawnerFor] of TOPOLOGIES) {
       expect(resultFrames(arrivals).flatMap((f) => f.ids).sort()).toEqual([one.id, two.id].sort());
     }, 60_000);
 
+    for (const background of [false, true]) test(`a lane holds across the SESSION: two concurrent ${background ? "background" : "foreground"} subagents' lane calls, and the parent's beside them, never overlap`, async () => {
+      const home = tempDir("home");
+      const server = slowServer();
+      // Each child first runs a read-only call (so the two children are demonstrably at work at the same
+      // time), then a call in lane L; the parent's own round has a lane-L call beside the two spawns.
+      const child = (tag: string) => [slow(`${tag}-read`, 300, false), `CALL mcp__t__laned ${JSON.stringify({ label: `${tag}-lane`, ms: 400 })}`].join("\n");
+      const script = [
+        `CALL Agent ${JSON.stringify({ description: "one", prompt: child("one"), subagent_type: "general-purpose", run_in_background: background })}`,
+        `+CALL Agent ${JSON.stringify({ description: "two", prompt: child("two"), subagent_type: "general-purpose", run_in_background: background })}`,
+        laned("parent-lane", 400),
+      ].join("\n");
+      const { arrivals, events } = await runScript(spawnerFor(home), home, script, { server });
+      const at = (what: "start" | "end", label: string) => events.find((e) => e.what === what && e.label === label)!.at;
+      // The two children really ran side by side...
+      expect(at("start", "two-read")).toBeLessThan(at("end", "one-read"));
+      expect(at("start", "one-read")).toBeLessThan(at("end", "two-read"));
+      // ...and still no two lane-L calls were ever running at once, wherever they came from.
+      const lane = ["one-lane", "two-lane", "parent-lane"].map((label) => ({ label, start: at("start", label), end: at("end", label) })).sort((a, b) => a.start - b.start);
+      for (let i = 1; i < lane.length; i++) expect(lane[i]!.start).toBeGreaterThanOrEqual(lane[i - 1]!.end);
+      const reported = JSON.parse(String(resultOf(arrivals)["result"])) as Array<{ content: string }>;
+      expect(reported).toHaveLength(3);
+      expect(reported[2]!.content).toBe("parent-lane done");
+    }, 60_000);
+
+    test("an interrupt while two foreground subagents run ends both promptly; each spawn is answered exactly once", async () => {
+      const home = tempDir("home");
+      let interrupted = false;
+      const started = performance.now();
+      const script = [
+        `CALL Agent ${JSON.stringify({ description: "one", prompt: slow("one-long", 20_000, false), subagent_type: "general-purpose", run_in_background: false })}`,
+        `+CALL Agent ${JSON.stringify({ description: "two", prompt: [slow("two-quick", 50, false), `CALL mcp__t__slow ${JSON.stringify({ label: "two-long", ms: 20_000 })}`].join("\n"), subagent_type: "general-purpose", run_in_background: false })}`,
+      ].join("\n");
+      const { arrivals } = await runScript(spawnerFor(home), home, script, {
+        onMessage: (m, q) => {
+          // Child two's first result reached the host: both children are mid-call now.
+          if (!interrupted && m["type"] === "user" && m["parent_tool_use_id"] != null && JSON.stringify(m).includes("two-quick done")) {
+            interrupted = true;
+            void q.interrupt();
+          }
+        },
+      });
+      expect(interrupted).toBe(true);
+      expect(performance.now() - started).toBeLessThan(15_000); // neither 20 s call ran out
+      const spawns = callsOf(arrivals).filter((c) => c.name === "Agent");
+      expect(spawns).toHaveLength(2);
+      const answered = resultFrames(arrivals).flatMap((f) => f.ids);
+      expect(answered.sort()).toEqual([spawns[0]!.id, spawns[1]!.id].sort());
+    }, 60_000);
+
     test("a subagent's round runs the same way, on the spawning call's thread, with ids distinct from its parent's", async () => {
       const home = tempDir("home");
       const childScript = [slow("x", 800, false), slow("y", 200)].join("\n");
-      const { arrivals, events } = await runScript(spawnerFor(home), home, `CALL Agent ${JSON.stringify({ description: "two reads", prompt: childScript, subagent_type: "general-purpose" })}`);
+      const { arrivals, events } = await runScript(spawnerFor(home), home, `CALL Agent ${JSON.stringify({ description: "two reads", prompt: childScript, subagent_type: "general-purpose", run_in_background: false })}`);
       const spawnId = callsOf(arrivals)[0]!.id;
       const childCalls = callsOf(arrivals, spawnId);
       expect(childCalls.map((c) => c.label)).toEqual(["x", "y"]);

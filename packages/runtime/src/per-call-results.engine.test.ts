@@ -11,7 +11,7 @@ import { join } from "node:path";
 import type { ControlRequestFrame, RuntimeHooksConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "./protocol/channel.ts";
 import { runEngine, type ContentBlock, type EngineOptions, type ProviderRequest } from "./engine.ts";
-import { MAX_TOOL_CONCURRENCY, schedulingForCall } from "./tools/concurrency.ts";
+import { MAX_TOOL_CONCURRENCY, createToolLaneTails, enterToolLane, schedulingForCall } from "./tools/concurrency.ts";
 import { registerMcpServerTools, unregisterMcpServerTools } from "./tools/registry.ts";
 
 let dir: string;
@@ -411,6 +411,31 @@ describe("concurrency lanes (McpSdkServerConfig.toolLanes)", () => {
       expect(resultFrames(frames).flat().sort()).toEqual(["r", "s1", "s2", "w1"]);
       expect(idsOf((toolMessages[0] as { content: unknown }).content)).toEqual(["s1", "w1", "s2", "r"]);
     }
+  });
+});
+
+describe("enterToolLane (one session's lanes, shared by every engine of the session)", () => {
+  test("each entrant waits for the previous one of its lane only; a settled lane is dropped", async () => {
+    const lanes = createToolLaneTails();
+    let releaseA!: () => void;
+    const a = new Promise<void>((r) => (releaseA = r));
+    expect(enterToolLane(lanes, "screen", a)).toBeUndefined();
+    const b = Promise.resolve();
+    expect(enterToolLane(lanes, "web", b)).toBeUndefined(); // another lane: nothing to wait for
+    let releaseC!: () => void;
+    const c = new Promise<void>((r) => (releaseC = r));
+    expect(enterToolLane(lanes, "screen", c)).toBe(a); // the second "screen" entrant waits for the first
+    await b;
+    await Promise.resolve();
+    expect(lanes.has("web")).toBe(false); // settled and still the tail: dropped
+    releaseA();
+    await a;
+    await Promise.resolve();
+    expect(lanes.get("screen")).toBe(c); // a settled, but c is the tail: kept
+    releaseC();
+    await c;
+    await Promise.resolve();
+    expect(lanes.size).toBe(0);
   });
 });
 

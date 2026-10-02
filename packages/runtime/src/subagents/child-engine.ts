@@ -298,6 +298,8 @@ export interface ChildEngineFactoryDeps {
   usageRowFacts?: EngineOptions["usageRowFacts"];
   resolveAuxiliaryModel?: EngineOptions["resolveAuxiliaryModel"];
   resolveToolSecret?: EngineOptions["resolveToolSecret"];
+  /** SDK 0.0.40: the SESSION's concurrency lanes, the same map the top-level engine runs with -- see `EngineOptions.toolLaneTails`. */
+  toolLaneTails?: EngineOptions["toolLaneTails"];
   // Fix round 1 (finding Q1, forward-compat): WS-07 §11's own "resume applies the stricter of
   // recorded vs. current parent policy" is structurally unreachable in production today --
   // `resolveChildResumeMode` (permissions/auto/inheritance.ts) has ZERO call sites anywhere in this
@@ -1353,6 +1355,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           ...(runCtx.budgetExceeded !== undefined ? { ancestorBudgetExceeded: () => runCtx.budgetExceeded!() } : {}),
           ...(deps.resolveAuxiliaryModel !== undefined ? { resolveAuxiliaryModel: deps.resolveAuxiliaryModel } : {}),
           ...(deps.resolveToolSecret !== undefined ? { resolveToolSecret: deps.resolveToolSecret } : {}),
+          // SDK 0.0.40: a lane is exclusive across the session, so every descendant shares the root's lanes.
+          ...(deps.toolLaneTails !== undefined ? { toolLaneTails: deps.toolLaneTails } : {}),
           // NEW-4, the two threads that close C1 and I1 for the child leg. `winterHome` already
           // existed on the factory and was read ONLY for transcript paths (`childTranscriptSubpath`);
           // the engine needs it to derive `buildBaselineDenyRules(resolvedWinterHome)`, which is what

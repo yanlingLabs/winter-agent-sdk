@@ -105,6 +105,8 @@ export interface DefaultChildEngineFactoryOptions {
   usageRowFacts?: EngineOptions["usageRowFacts"];
   resolveAuxiliaryModel?: EngineOptions["resolveAuxiliaryModel"];
   resolveToolSecret?: EngineOptions["resolveToolSecret"];
+  /** SDK 0.0.40: the session's concurrency lanes -- see `ChildEngineFactoryDeps.toolLaneTails`. */
+  toolLaneTails?: EngineOptions["toolLaneTails"];
 }
 
 // WHOLE-BRANCH M3(d) -- THE ONE-LIVE-SESSION-PER-PROCESS ASSUMPTION, stated plainly because this
@@ -188,6 +190,7 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       ...(opts.usageRowFacts !== undefined ? { usageRowFacts: opts.usageRowFacts } : {}),
       ...(opts.resolveAuxiliaryModel !== undefined ? { resolveAuxiliaryModel: opts.resolveAuxiliaryModel } : {}),
       ...(opts.resolveToolSecret !== undefined ? { resolveToolSecret: opts.resolveToolSecret } : {}),
+      ...(opts.toolLaneTails !== undefined ? { toolLaneTails: opts.toolLaneTails } : {}),
     }),
   );
 }

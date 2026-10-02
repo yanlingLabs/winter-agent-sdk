@@ -102,6 +102,7 @@ import { rowsForCanonicalId, type WinterCatalog } from "@yanlinglabs/winter-prov
  */
 const LISTING_PROBE_SLOT_NAME = "probe";
 import type { AttachmentProducer, EngineOptions, ModelDescription, ModelWireFeatures, PricedUsage, ProviderUsage, ResolveModelSwitch, UsageRowFacts } from "./engine.ts";
+import { createToolLaneTails } from "./tools/concurrency.ts";
 
 // --- narrowing the six undeclared settings keys ---------------------------------------------------
 //
@@ -601,6 +602,8 @@ export interface ProductionWiring {
      */
     resolveAuxiliaryModel?: NonNullable<EngineOptions["resolveAuxiliaryModel"]>;
     resolveToolSecret: NonNullable<EngineOptions["resolveToolSecret"]>;
+    /** SDK 0.0.40: the session's concurrency lanes -- the SAME map `childFactoryOptions.toolLaneTails` carries. */
+    toolLaneTails: NonNullable<EngineOptions["toolLaneTails"]>;
   };
   /**
    * Mirrors handed to `registerDefaultChildEngineFactory`, so a CHILD engine gets the same context
@@ -624,7 +627,7 @@ export interface ProductionWiring {
   childFactoryOptions: Required<
     Pick<
       DefaultChildEngineFactoryOptions,
-      "systemPromptAssembler" | "skillRuntime" | "skillListing" | "settingsRules" | "structuredOutput" | "extraHookEntries" | "compactionControllerFactory" | "resolveChildProvider" | "describeModel" | "priceUsage" | "usageRowFacts" | "resolveToolSecret"
+      "systemPromptAssembler" | "skillRuntime" | "skillListing" | "settingsRules" | "structuredOutput" | "extraHookEntries" | "compactionControllerFactory" | "resolveChildProvider" | "describeModel" | "priceUsage" | "usageRowFacts" | "resolveToolSecret" | "toolLaneTails"
     >
   > &
     // OPTIONAL on the wiring itself (withheld on the arms with no catalog identity), so it cannot sit
@@ -1740,6 +1743,8 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     ...(mergedSandbox !== undefined ? { sandbox: mergedSandbox } : {}),
   };
 
+  // SDK 0.0.40: the session's concurrency lanes, shared by the top-level engine and every child engine.
+  const toolLaneTails = createToolLaneTails();
   return {
     providerWiring,
     settingsEnv,
@@ -1843,6 +1848,8 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // through the web session registry -- see `web/session-runtime.ts`.
       ...(providerWiring.resolveAuxiliaryModel !== undefined ? { resolveAuxiliaryModel: providerWiring.resolveAuxiliaryModel } : {}),
       resolveToolSecret: providerWiring.resolveToolSecret,
+      // SDK 0.0.40: ONE lane map per session, the same instance as `childFactoryOptions.toolLaneTails`.
+      toolLaneTails,
       ...(providerWiring.providerSupportsToolSearch !== undefined ? { providerSupportsToolSearch: providerWiring.providerSupportsToolSearch } : {}),
       ...(providerWiring.classifier !== undefined ? { classifier: providerWiring.classifier } : {}),
       systemPromptAssembler,
@@ -1890,6 +1897,8 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       priceUsage: (modelKey, usage) => providerWiring.priceUsage(modelKey, usage),
       usageRowFacts: (modelKey) => providerWiring.usageRowFacts(modelKey),
       resolveToolSecret: providerWiring.resolveToolSecret,
+      // SDK 0.0.40: the SAME lane map the parent runs with, so a lane is exclusive across every subagent.
+      toolLaneTails,
       ...(providerWiring.resolveAuxiliaryModel !== undefined ? { resolveAuxiliaryModel: providerWiring.resolveAuxiliaryModel } : {}),
       // NEW-4: the settings seed. Everything else in this object is a mirror of what the parent got;
       // this was the one whose absence was a security boundary rather than a context difference.

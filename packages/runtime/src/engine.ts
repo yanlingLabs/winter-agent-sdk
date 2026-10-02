@@ -334,7 +334,7 @@ import {
 // boundary (this is the opposite direction: the engine reaching INTO a lane's own file, not a lane
 // reaching into the registry).
 import { createAdvisorExecutor, ADVISOR_TOOL_NAME, type ResolvedReviewer, type TranscriptEntry } from "./tools/impl/advisor.ts";
-import { MAX_TOOL_CONCURRENCY, schedulingForCall, type BashReadOnlyContext } from "./tools/concurrency.ts";
+import { MAX_TOOL_CONCURRENCY, createToolLaneTails, enterToolLane, schedulingForCall, type BashReadOnlyContext, type ToolLaneTails } from "./tools/concurrency.ts";
 import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
 // Task-frames parity (2026-09-17 contract §7): the ONE read this hook needs to tell a foreground
@@ -2074,6 +2074,13 @@ export interface EngineOptions {
   /** The wiring's tool-secret resolver (`provider/tool-secret.ts`), reached by a tool through the web session registry. */
   resolveToolSecret?: ToolSecretResolver;
   /**
+   * SDK 0.0.40: the SESSION's concurrency lanes (`tools/concurrency.ts`'s `ToolLaneTails`). The wiring builds
+   * one per session and hands the SAME map to the child-engine factory, so a lane is exclusive across the
+   * top-level engine and every subagent engine. ABSENT (a host driving `runEngine` directly) -> this run
+   * makes its own, and its lanes then bind within this engine only.
+   */
+  toolLaneTails?: ToolLaneTails;
+  /**
    * Called for EVERY generation this run prices -- its own main-loop and inner generations, and
    * every descendant's it folded in. A CHILD engine is handed its parent's
    * `ChildEngineRunContext.recordDescendantCost` here, which is what makes a subagent's spend reach
@@ -2550,6 +2557,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
 }
 
 async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => void>, registerBackgroundShellSweep: (fn: () => void) => void): Promise<number> {
+  // SDK 0.0.40: one lane map for the whole session (see `EngineOptions.toolLaneTails`).
+  const sessionLaneTails: ToolLaneTails = opts.toolLaneTails ?? createToolLaneTails();
   // Task 1 (P3): `tools` renamed to `providedTools` at the destructuring site ONLY -- every existing
   // reference to the bare name `tools` further down this function (both `tools.execute(...)` call
   // sites) is deliberately left untouched; `const tools: ToolExecutor = providedTools ?? ...` is
@@ -10356,8 +10365,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // an unsafe call first lets every call in flight finish, then runs to completion before the next.
       // Every call's frame is sent the moment it is done (`sendResultToHost`).
       // A LANE call (`tools/concurrency.ts`) is concurrent too, but waits for the previous call of its own
-      // lane before it starts executing -- so a lane's calls run one at a time, in call order, across the round.
-      const laneTails = new Map<string, Promise<unknown>>();
+      // lane before it starts executing -- so a lane's calls run one at a time, in the order they were reached,
+      // across the whole SESSION: `sessionLaneTails` is shared with every subagent engine of the session.
       const bashReadOnlyContext = (): BashReadOnlyContext => ({
         cwd: currentCwd,
         originalCwd: config.cwd,
@@ -10385,7 +10394,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           }
           continue;
         }
-        const laneTurn = scheduling.kind === "lane" ? laneTails.get(scheduling.lane) : undefined;
+        // The call enters its lane NOW (before its checks), holding it until it is done -- see `enterToolLane`.
+        let releaseLane: (() => void) | undefined;
+        const laneTurn =
+          scheduling.kind === "lane" ? enterToolLane(sessionLaneTails, scheduling.lane, new Promise<void>((resolve) => (releaseLane = resolve))) : undefined;
         let markReady!: () => void;
         const ready = new Promise<"ready">((resolve) => (markReady = () => resolve("ready")));
         // Tracked from the start, and never rejecting: a failure anywhere in the call (outside its own try)
@@ -10404,9 +10416,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             if (lateFailure === undefined) lateFailure = { error };
             return "stop" as const;
           });
-        const tracked: Promise<unknown> = settled.finally(() => inFlight.delete(tracked));
+        const tracked: Promise<unknown> = settled.finally(() => {
+          inFlight.delete(tracked);
+          releaseLane?.();
+        });
         inFlight.add(tracked);
-        if (scheduling.kind === "lane") laneTails.set(scheduling.lane, tracked);
         const first = await Promise.race([ready, settled]);
         if (first === "stop") break;
       }

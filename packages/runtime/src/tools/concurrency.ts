@@ -5,8 +5,8 @@
 //     in flight. Started as soon as its own checks (hook stop, availability, permission -- one at a time,
 //     in call order) have passed.
 //   - LANE: it runs beside everything else too, but never beside another call of the SAME lane -- a lane's
-//     calls run one at a time, in call order, across the round (a host-declared exclusive resource:
-//     Winter's `Computer` and `Browser`).
+//     calls run one at a time across the whole SESSION, subagents included (a host-declared exclusive
+//     resource: Winter's `Computer` and `Browser`) -- see `ToolLaneTails`.
 //   - SERIAL (a barrier): it waits for every call in flight to finish, then runs alone.
 //
 // Concurrent means "provably read-only", and nothing is guessed:
@@ -56,6 +56,36 @@ export function schedulingForCall(name: string, input: unknown, bash?: BashReadO
     if (descriptor.concurrencyLane !== undefined) return { kind: "lane", lane: descriptor.concurrencyLane };
   }
   return { kind: "serial" };
+}
+
+/**
+ * A SESSION's lanes: for each lane, the last call that entered it (settling once that call is done).
+ *
+ * One map per session, shared by the top-level engine and every subagent engine of the session (it rides
+ * `EngineOptions.toolLaneTails` and the child-engine factory's deps), so a lane is exclusive across the
+ * whole session -- two concurrent subagents, or a parent and its subagent, never run the same lane at once.
+ * A call enters its lane when its checks begin (so lane order is the order calls were reached, across
+ * engines) and waits for the previous tail only once its checks have passed. Never rejects: each tail is a
+ * call's tracked, never-rejecting settle.
+ */
+export type ToolLaneTails = Map<string, Promise<unknown>>;
+
+/** A fresh, empty set of lanes for one session. */
+export function createToolLaneTails(): ToolLaneTails {
+  return new Map();
+}
+
+/**
+ * Enter `lane` with `tail` (a call's never-rejecting settle): returns the previous tail to wait for, if any,
+ * and drops the entry once `tail` settles while it is still the lane's last call (no unbounded growth).
+ */
+export function enterToolLane(lanes: ToolLaneTails, lane: string, tail: Promise<unknown>): Promise<unknown> | undefined {
+  const previous = lanes.get(lane);
+  lanes.set(lane, tail);
+  void tail.finally(() => {
+    if (lanes.get(lane) === tail) lanes.delete(lane);
+  });
+  return previous;
 }
 
 /** Whether a call to `name` always runs beside other concurrent calls (no lane, no input-dependence). */
