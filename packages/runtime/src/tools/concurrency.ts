@@ -6,7 +6,8 @@
 //     in call order) have passed.
 //   - LANE: it runs beside everything else too, but never beside another call of the SAME lane -- a lane's
 //     calls run one at a time across the whole SESSION, subagents included (a host-declared exclusive
-//     resource: Winter's `Computer` and `Browser`) -- see `ToolLaneTails`.
+//     resource: Winter's `Computer` and `Browser`). A call takes its lane after its own checks and card, and
+//     keeps it until its host work has really stopped -- see `ToolLaneTails`.
 //   - SERIAL (a barrier): it waits for every call in flight to finish, then runs alone.
 //
 // Concurrent means "provably read-only", and nothing is guessed:
@@ -64,11 +65,20 @@ export function schedulingForCall(name: string, input: unknown, bash?: BashReadO
  * One map per session, shared by the top-level engine and every subagent engine of the session (it rides
  * `EngineOptions.toolLaneTails` and the child-engine factory's deps), so a lane is exclusive across the
  * whole session -- two concurrent subagents, or a parent and its subagent, never run the same lane at once.
- * A call enters its lane when its checks begin (so lane order is the order calls were reached, across
- * engines) and waits for the previous tail only once its checks have passed. Never rejects: each tail is a
- * call's tracked, never-rejecting settle.
+ * A call enters its lane only once its OWN checks are done -- hook stop, permission, any approval card --
+ * so a call parked on a card holds no lane. One engine's calls finish their checks one at a time in call
+ * order, so they enter a lane in call order; across engines, in the order their calls became ready. A call
+ * holds its lane until it is done AND its execution has really stopped: an interrupted in-process host tool
+ * keeps the lane until the host answers the cancel, or `SDK_MCP_CANCEL_GRACE_MS` runs out. Never rejects.
  */
 export type ToolLaneTails = Map<string, Promise<unknown>>;
+
+/**
+ * How long an interrupted `sdk_mcp_call` stays pending after its `control_cancel_request`, waiting for the
+ * host to answer that the tool stopped (a host that answers nothing after a cancel -- an older SDK -- costs
+ * the lane this long). Until it settles, the call's concurrency lane stays held.
+ */
+export const SDK_MCP_CANCEL_GRACE_MS = 5_000;
 
 /** A fresh, empty set of lanes for one session. */
 export function createToolLaneTails(): ToolLaneTails {

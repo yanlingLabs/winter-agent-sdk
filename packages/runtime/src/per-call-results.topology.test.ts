@@ -43,7 +43,7 @@ const TOPOLOGIES: Array<[string, (home: string) => Spawner]> = [
 
 /** The test's MCP server: `slow` (read-only) and `unsafe` (no hint) each wait `ms`, then answer their `label`. */
 function slowServer() {
-  const events: Array<{ at: number; what: "start" | "end"; label: string }> = [];
+  const events: Array<{ at: number; what: "start" | "end" | "aborted"; label: string }> = [];
   const instance: WinterMcpServerInstance = {
     listTools: () => [
       { name: "slow", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
@@ -51,10 +51,18 @@ function slowServer() {
       // In the host-declared lane "L" (`toolLanes`, below): beside everything, but one at a time within L.
       { name: "laned", inputSchema: { type: "object" } },
     ],
-    async callTool(_name, args) {
+    async callTool(_name, args, extra) {
       const label = String(args["label"]);
       events.push({ at: performance.now(), what: "start", label });
-      await Bun.sleep(Number(args["ms"] ?? 0));
+      // A tool that honours the runtime's cancel: on abort it takes `stopMs` to wind down, then returns.
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, Number(args["ms"] ?? 0));
+        extra?.signal?.addEventListener("abort", () => {
+          events.push({ at: performance.now(), what: "aborted", label });
+          clearTimeout(timer);
+          setTimeout(resolve, Number(args["stopMs"] ?? 0));
+        }, { once: true });
+      });
       events.push({ at: performance.now(), what: "end", label });
       return { content: [{ type: "text", text: `${label} done` }] };
     },
@@ -409,6 +417,56 @@ for (const [name, spawnerFor] of TOPOLOGIES) {
       expect(spawns).toHaveLength(2);
       const answered = resultFrames(arrivals).flatMap((f) => f.ids);
       expect(answered.sort()).toEqual([spawns[0]!.id, spawns[1]!.id].sort());
+    }, 60_000);
+
+    test("a lane call waiting on its approval card holds no lane: another subagent's call of that lane runs meanwhile", async () => {
+      const home = tempDir("home");
+      const server = slowServer();
+      const ended = (label: string): boolean => server.events.some((e) => e.what === "end" && e.label === label);
+      let yEndedBeforeXApproved: boolean | undefined;
+      // Child one's lane call x reaches its card at once; child two reads first, so its lane call y comes later.
+      const childOne = `CALL mcp__t__laned ${JSON.stringify({ label: "x", ms: 50 })}`;
+      const childTwo = [slow("two-read", 300, false), `CALL mcp__t__laned ${JSON.stringify({ label: "y", ms: 50 })}`].join("\n");
+      const script = [
+        `CALL Agent ${JSON.stringify({ description: "one", prompt: childOne, subagent_type: "general-purpose", run_in_background: false })}`,
+        `+CALL Agent ${JSON.stringify({ description: "two", prompt: childTwo, subagent_type: "general-purpose", run_in_background: false })}`,
+      ].join("\n");
+      const { events } = await runScript(spawnerFor(home), home, script, {
+        server,
+        canUseTool: async (_tool, input) => {
+          if ((input as { label?: unknown }).label === "x") {
+            // x's card is answered only once y has RUN -- possible only if x's pending card held no lane.
+            for (let n = 0; n < 1000 && !ended("y"); n++) await Bun.sleep(10);
+            yEndedBeforeXApproved = ended("y");
+          }
+          return { behavior: "allow", updatedInput: input };
+        },
+      });
+      expect(yEndedBeforeXApproved).toBe(true);
+      expect(events.filter((e) => e.what === "end").map((e) => e.label)).toEqual(expect.arrayContaining(["x", "y"]));
+    }, 60_000);
+
+    test("an interrupt cancels a running host tool: its signal aborts, and it is answered once it has stopped", async () => {
+      const home = tempDir("home");
+      let interrupted = false;
+      const server = slowServer();
+      const script = [`CALL mcp__t__laned ${JSON.stringify({ label: "held", ms: 20_000, stopMs: 200 })}`, slow("b", 50)].join("\n");
+      const started = performance.now();
+      await runScript(spawnerFor(home), home, script, {
+        server,
+        onMessage: (m, q) => {
+          if (!interrupted && m["type"] === "user" && JSON.stringify(m).includes("b done")) {
+            interrupted = true;
+            void q.interrupt();
+          }
+        },
+      });
+      expect(interrupted).toBe(true);
+      const of = (what: "start" | "end" | "aborted") => server.events.find((e) => e.label === "held" && e.what === what);
+      expect(of("aborted")).toBeDefined(); // the runtime's cancel reached the tool
+      for (let n = 0; n < 200 && of("end") === undefined; n++) await Bun.sleep(10);
+      expect(of("end")).toBeDefined(); // and it wound down instead of running its 20 s
+      expect(performance.now() - started).toBeLessThan(15_000);
     }, 60_000);
 
     test("a subagent's round runs the same way, on the spawning call's thread, with ids distinct from its parent's", async () => {

@@ -11,7 +11,7 @@ import { join } from "node:path";
 import type { ControlRequestFrame, RuntimeHooksConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "./protocol/channel.ts";
 import { runEngine, type ContentBlock, type EngineOptions, type ProviderRequest } from "./engine.ts";
-import { MAX_TOOL_CONCURRENCY, createToolLaneTails, enterToolLane, schedulingForCall } from "./tools/concurrency.ts";
+import { MAX_TOOL_CONCURRENCY, createToolLaneTails, enterToolLane, schedulingForCall, type ToolLaneTails } from "./tools/concurrency.ts";
 import { registerMcpServerTools, unregisterMcpServerTools } from "./tools/registry.ts";
 
 let dir: string;
@@ -35,6 +35,10 @@ interface RunOptions {
   failWrite?: (f: WinterFrame) => boolean;
   capabilities?: string[];
   mcpServers?: Record<string, unknown>;
+  /** The session's lanes -- share one map between two runs to make them two engines of ONE session. */
+  toolLaneTails?: ToolLaneTails;
+  /** Handed the host handle as soon as the run starts (an executor can then interrupt its own turn). */
+  onHost?: (host: Host) => void;
 }
 
 const userFrameIds = (f: WinterFrame): string[] | undefined => {
@@ -74,6 +78,7 @@ async function run(calls: Call[], execute: Executor, opts: RunOptions = {}) {
       },
     },
     tools: { execute },
+    ...(opts.toolLaneTails !== undefined ? { toolLaneTails: opts.toolLaneTails } : {}),
     providerIdentity: { providerId: "anthropic", modelKey: "anthropic/claude-sonnet-5-5", family: "anthropic" },
     describeModel: () => ({}),
     store: {
@@ -86,6 +91,7 @@ async function run(calls: Call[], execute: Executor, opts: RunOptions = {}) {
     interrupt: () => host.output.write({ type: "control_request", requestId: "int-1", subtype: "interrupt", payload: { scope: "turn" } }),
     answer: (requestId, payload) => host.output.write({ type: "control_response", requestId, ok: true, payload }),
   };
+  opts.onHost?.(handle);
   const reader = (async () => {
     for await (const f of host.input) {
       frames.push(f);
@@ -411,6 +417,45 @@ describe("concurrency lanes (McpSdkServerConfig.toolLanes)", () => {
       expect(resultFrames(frames).flat().sort()).toEqual(["r", "s1", "s2", "w1"]);
       expect(idsOf((toolMessages[0] as { content: unknown }).content)).toEqual(["s1", "w1", "s2", "r"]);
     }
+  });
+});
+
+describe("a lane is held until the call's work has really stopped (two engines of one session)", () => {
+  const laneServer = (name: string) => ({
+    type: "sdk",
+    name,
+    tools: [{ name: "screen", inputSchema: { type: "object" } }],
+    toolLanes: { screen: "screen" },
+  });
+
+  test("an interrupted lane call keeps its lane until its execution settles; the next holder starts only then", async () => {
+    const lanes = createToolLaneTails();
+    let host1: Host | undefined;
+    let releaseStop!: () => void;
+    const stopped = new Promise<void>((r) => (releaseStop = r));
+    let s1Settled = false;
+    let s2StartedWhileS1Running: boolean | undefined;
+    // Engine 1: its lane call is interrupted while running, and its "host" takes a while to actually stop.
+    const first = await run([{ id: "s1", name: "mcp__lanesrv1__screen", input: {} }], async (_call, opts) => {
+      queueMicrotask(() => host1!.interrupt());
+      await new Promise<void>((resolve) => opts?.signal?.addEventListener("abort", () => resolve(), { once: true }));
+      await stopped; // still stopping after the cancel
+      s1Settled = true;
+      return { output: "s1 stopped late" };
+    }, { capabilities: ["winter.mcp"], mcpServers: { lanesrv1: laneServer("lanesrv1") }, toolLaneTails: lanes, onHost: (h) => { host1 = h; } });
+    expect(resultFrames(first.frames)).toEqual([["s1"]]); // engine 1 answered s1 [interrupted] and moved on
+    expect(s1Settled).toBe(false);
+    // Engine 2 of the same session: its call of the same lane must wait for s1's work to stop.
+    const second = run([{ id: "s2", name: "mcp__lanesrv2__screen", input: {} }], async () => {
+      s2StartedWhileS1Running = !s1Settled;
+      return { output: "s2 result" };
+    }, { capabilities: ["winter.mcp"], mcpServers: { lanesrv2: laneServer("lanesrv2") }, toolLaneTails: lanes });
+    for (let i = 0; i < 20; i++) await flush();
+    expect(s2StartedWhileS1Running).toBeUndefined(); // not started: the lane is still held
+    releaseStop();
+    const { frames } = await second;
+    expect(s2StartedWhileS1Running).toBe(false);
+    expect(resultFrames(frames)).toEqual([["s2"]]);
   });
 });
 

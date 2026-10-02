@@ -346,8 +346,15 @@ interface SdkMcpCallRequestPayload {
   tool?: string;
   arguments?: Record<string, unknown>;
 }
+/**
+ * SDK 0.0.40: runtime-originated subtypes still ANSWERED after the runtime cancelled them. For `sdk_mcp_call`
+ * the late answer is how the runtime learns the in-process tool has actually stopped: it keeps the call
+ * pending for a bounded grace after its cancel, and keeps the tool's concurrency lane held until then.
+ */
+const ANSWERED_AFTER_CANCEL: ReadonlySet<string> = new Set(["sdk_mcp_call"]);
+
 function makeSdkMcpCallHandler(mcpServers: Record<string, McpServerConfig>): ControlRequestHandler {
-  return async (payload: unknown): Promise<ControlRequestHandlerResult> => {
+  return async (payload: unknown, handlerCtx?: { signal: AbortSignal }): Promise<ControlRequestHandlerResult> => {
     const req = payload as SdkMcpCallRequestPayload;
     const cfg = req.server !== undefined ? mcpServers[req.server] : undefined;
     if (!cfg || cfg.type !== "sdk") {
@@ -363,7 +370,9 @@ function makeSdkMcpCallHandler(mcpServers: Record<string, McpServerConfig>): Con
       };
     }
     try {
-      const result = await cfg.instance.callTool(req.tool ?? "", req.arguments ?? {});
+      // SDK 0.0.40: the runtime's cancel (`control_cancel_request`, an interrupted turn) aborts the tool's
+      // signal; the answer is still sent once the tool returns -- see `ANSWERED_AFTER_CANCEL`.
+      const result = await cfg.instance.callTool(req.tool ?? "", req.arguments ?? {}, ...(handlerCtx !== undefined ? [{ signal: handlerCtx.signal }] : []));
       return { ok: true, payload: result };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1126,8 +1135,9 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       try {
         const result = await handler(cf.payload, { signal: cancel.signal });
         // CANCELLED while the handler ran: the runtime stopped waiting and dropped the request, so an
-        // answer now would only be a stale response it has to discard (claude's orphan handling).
-        if (cancel.signal.aborted) return;
+        // answer now would only be a stale response it has to discard (claude's orphan handling) -- except
+        // for a subtype whose answer tells the runtime the host work has STOPPED (`ANSWERED_AFTER_CANCEL`).
+        if (cancel.signal.aborted && !ANSWERED_AFTER_CANCEL.has(cf.subtype)) return;
         if (result.ok) {
           writeControlResponse({
             type: "control_response",
@@ -1139,7 +1149,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
           writeControlResponse({ type: "control_response", requestId: cf.requestId, ok: false, error: result.error });
         }
       } catch (err) {
-        if (cancel.signal.aborted) return;
+        if (cancel.signal.aborted && !ANSWERED_AFTER_CANCEL.has(cf.subtype)) return;
         // A throwing handler fails closed — ok:false, never a dropped request or a wrapper crash.
         const message = err instanceof Error ? err.message : String(err);
         writeControlResponse({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "handler_threw", message } });

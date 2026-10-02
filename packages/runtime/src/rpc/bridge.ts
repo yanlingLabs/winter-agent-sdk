@@ -22,7 +22,12 @@ export interface RpcBridge {
   // exactly what claude's structuredIO.sendRequest does (it enqueues `control_cancel_request` and
   // rejects without waiting for the host). A host answer arriving afterwards takes the ordinary
   // unknown-requestId path. A signal already aborted issues nothing at all.
-  request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string; signal?: AbortSignal }): Promise<T>;
+  //
+  // `opts.cancelGraceMs` (SDK 0.0.40) changes what an abort does for a request whose host work must be seen
+  // to STOP (an in-process host tool holding a concurrency lane): the cancel frame is still sent at once, but
+  // the request stays pending until the host answers it (its handler stopped) or `cancelGraceMs` runs out,
+  // whichever is first; only then does the promise settle (the host's answer, or `WinterRpcError("cancelled")`).
+  request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string; signal?: AbortSignal; cancelGraceMs?: number }): Promise<T>;
   // Routes a host->runtime control_response to its correlated pending request. Returns false (and
   // never throws) for a requestId this bridge never issued, or one that already settled (a
   // timed-out request's late answer) — a stale response must never kill the run (WS-04).
@@ -119,7 +124,7 @@ export function createRpcBridge(output: FrameSink, bridgeOpts: RpcBridgeOptions 
   let closed = false;
 
   return {
-    request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string; signal?: AbortSignal }): Promise<T> {
+    request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string; signal?: AbortSignal; cancelGraceMs?: number }): Promise<T> {
       if (closed) {
         return Promise.reject(new WinterRpcError("connection_closed", `rpc bridge is closed: cannot issue a '${subtype}' request`));
       }
@@ -143,11 +148,23 @@ export function createRpcBridge(output: FrameSink, bridgeOpts: RpcBridgeOptions 
         if (signal !== undefined) {
           const onAbort = (): void => {
             if (pending.get(requestId) !== entry) return;
-            pending.delete(requestId);
             if (entry.timer !== undefined) clearTimeout(entry.timer);
-            // Still held: the host never saw it, so there is nothing to cancel on the wire.
-            if (held?.delete(requestId) !== true) output.write({ type: "control_cancel_request", requestId });
-            reject(new WinterRpcError("cancelled", `the '${subtype}' request was cancelled: the runtime stopped waiting for it`));
+            // Still held: the host never saw it, so there is nothing to cancel on the wire -- or to wait for.
+            const wasHeld = held?.delete(requestId) === true;
+            if (!wasHeld) output.write({ type: "control_cancel_request", requestId });
+            const cancelled = (): void => {
+              if (pending.get(requestId) !== entry) return;
+              pending.delete(requestId);
+              reject(new WinterRpcError("cancelled", `the '${subtype}' request was cancelled: the runtime stopped waiting for it`));
+            };
+            const grace = opts?.cancelGraceMs;
+            if (grace === undefined || wasHeld) {
+              cancelled();
+              return;
+            }
+            // Kept pending: the host's answer (its handler has stopped) settles it, or the grace runs out.
+            entry.timer = setTimeout(cancelled, grace);
+            entry.timer.unref?.();
           };
           signal.addEventListener("abort", onAbort, { once: true });
           entry.detach = () => signal.removeEventListener("abort", onAbort);

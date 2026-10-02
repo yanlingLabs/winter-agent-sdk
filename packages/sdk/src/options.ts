@@ -275,7 +275,14 @@ export interface WinterMcpServerInstance {
     annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; openWorldHint?: boolean; title?: string; idempotentHint?: boolean };
     _meta?: Record<string, unknown>;
   }>;
-  callTool(name: string, args: Record<string, unknown>): Promise<{ content: unknown[]; isError?: boolean }>;
+  /**
+   * `extra.signal` (SDK 0.0.40) is ABORTED when the runtime cancels the call (an interrupted turn sends
+   * `control_cancel_request`). A tool that holds an exclusive resource should stop promptly and then return:
+   * the runtime keeps the tool's concurrency lane held until this promise settles (or a bounded grace runs
+   * out), so the next call of that lane never overlaps a tool still running. Optional: an instance that
+   * ignores it behaves as before.
+   */
+  callTool(name: string, args: Record<string, unknown>, extra?: { signal?: AbortSignal }): Promise<{ content: unknown[]; isError?: boolean }>;
 }
 
 // Exported so query.ts's own two call sites (toWireMcpServers, makeSdkMcpCallHandler) and this

@@ -266,6 +266,36 @@ test("an aborted signal cancels the request: a control_cancel_request frame name
   }
 });
 
+// SDK 0.0.40: `cancelGraceMs` -- for a request whose host work must be seen to STOP (an `sdk_mcp_call` holding
+// a concurrency lane), the cancel is sent at once but the request stays pending until the host answers it.
+test("cancelGraceMs: the cancel is sent at once, and the request settles only on the host's answer", async () => {
+  const { sink, written } = recordingSink();
+  const bridge = createRpcBridge(sink);
+  const controller = new AbortController();
+  let settled = false;
+  const pending = bridge.request("sdk_mcp_call", {}, { requestId: "mcp-x", signal: controller.signal, cancelGraceMs: 5_000 });
+  void pending.then(() => { settled = true; }, () => { settled = true; });
+  controller.abort();
+  expect(written[1]).toEqual({ type: "control_cancel_request", requestId: "mcp-x" });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(settled).toBe(false); // still waiting for the host to say it stopped
+  expect(bridge.ownsRequest("mcp-x")).toBe(true);
+  expect(bridge.handleResponse({ type: "control_response", requestId: "mcp-x", ok: true, payload: { content: [] } })).toBe(true);
+  expect(await pending).toEqual({ content: [] });
+});
+
+test("cancelGraceMs: a host that never answers the cancelled request releases it when the grace runs out", async () => {
+  const { sink } = recordingSink();
+  const bridge = createRpcBridge(sink);
+  const controller = new AbortController();
+  const pending = bridge.request("sdk_mcp_call", {}, { requestId: "mcp-y", signal: controller.signal, cancelGraceMs: 30 });
+  const started = performance.now();
+  controller.abort();
+  await expect(pending).rejects.toBeInstanceOf(WinterRpcError);
+  expect(performance.now() - started).toBeGreaterThanOrEqual(25);
+  expect(bridge.ownsRequest("mcp-y")).toBe(false);
+});
+
 test("a signal that is ALREADY aborted issues nothing: no request frame, no cancel frame, an immediate rejection", async () => {
   const { sink, written } = recordingSink();
   const bridge = createRpcBridge(sink);

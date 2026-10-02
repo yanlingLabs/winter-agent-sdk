@@ -325,6 +325,7 @@ import {
   type McpToolDefinition,
   type DeferralActivation,
   type LoadedToolSet,
+  type ToolExecutionContext,
 } from "./tools/registry.ts";
 // M6 (fix wave, P3 close-out): RULING R3-2's own "T8 wires the REAL source, from wherever the
 // engine's real turn history... actually lives" instruction -- this IS that wiring. A specific,
@@ -334,7 +335,7 @@ import {
 // boundary (this is the opposite direction: the engine reaching INTO a lane's own file, not a lane
 // reaching into the registry).
 import { createAdvisorExecutor, ADVISOR_TOOL_NAME, type ResolvedReviewer, type TranscriptEntry } from "./tools/impl/advisor.ts";
-import { MAX_TOOL_CONCURRENCY, createToolLaneTails, enterToolLane, schedulingForCall, type BashReadOnlyContext, type ToolLaneTails } from "./tools/concurrency.ts";
+import { MAX_TOOL_CONCURRENCY, SDK_MCP_CANCEL_GRACE_MS, createToolLaneTails, enterToolLane, schedulingForCall, type BashReadOnlyContext, type ToolLaneTails } from "./tools/concurrency.ts";
 import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
 // Task-frames parity (2026-09-17 contract §7): the ONE read this hook needs to tell a foreground
@@ -4908,13 +4909,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         for (const tool of toolDefs) {
           const canonicalName = toolNames !== undefined && Object.hasOwn(toolNames, tool.name) ? toolNames[tool.name]! : `mcp__${serverName}__${tool.name}`;
           replaceExecutor(canonicalName, {
-            async execute(input: unknown) {
+            async execute(input: unknown, ctx: ToolExecutionContext) {
               const timeoutMs = perServerTimeoutMs ?? mcpEnvConfig.toolTimeoutMs ?? 120_000;
               try {
+                // SDK 0.0.40: an interrupt CANCELS the host call (`control_cancel_request`; the host aborts the
+                // tool's signal) -- and the call stays pending until the host answers that it stopped, or
+                // SDK_MCP_CANCEL_GRACE_MS runs out. That is what keeps a concurrency lane held until the host
+                // tool has really stopped (the engine holds a lane until this promise settles).
                 const result = await bridge.request<{ content?: Array<{ type?: string; text?: string; [k: string]: unknown }>; isError?: boolean }>(
                   "sdk_mcp_call",
                   { server: serverName, tool: tool.name, arguments: input && typeof input === "object" ? input : {} },
-                  { timeoutMs },
+                  { timeoutMs, ...(ctx?.signal !== undefined ? { signal: ctx.signal, cancelGraceMs: SDK_MCP_CANCEL_GRACE_MS } : {}) },
                 );
                 const text = (result.content ?? [])
                   .map((block) => (typeof block.text === "string" ? block.text : JSON.stringify(block)))
@@ -9699,7 +9704,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       const processCall = async (
         emitted: (typeof turn.calls)[number],
         index: number,
-        mode: { concurrent: boolean; readyToExecute?: () => void; laneTurn?: Promise<unknown> },
+        mode: {
+          concurrent: boolean;
+          readyToExecute?: () => void;
+          /** A LANE call takes its lane here -- once its own checks (and any card) are done, just before it is
+           *  released to run; returns the lane's previous holder to wait for, if any (`tools/concurrency.ts`). */
+          enterLane?: () => Promise<unknown> | undefined;
+          /** Handed the call's own execution promise, so the lane is held until the work has actually stopped. */
+          onExecution?: (execution: Promise<unknown>) => void;
+        },
       ): Promise<"next" | "stop"> => {
         const record = (block: ContentBlock): void => {
           slots[index] = block;
@@ -10211,12 +10224,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
             record({ type: "tool_result", tool_use_id: call.id, content: `[not executed: the ${stoppedBeforeStart.hookName} hook stopped the turn]`, error: true });
             return "next";
           }
-          // SDK 0.0.40: the checks are done -- a concurrency-safe call is released to run beside the round's
-          // other safe calls from here on, and the round's walk moves on to its next call.
+          // SDK 0.0.40: the checks are done. A LANE call takes its lane NOW -- after its own card, never while
+          // waiting on one, so a call parked on an approval holds no lane. This engine's calls reach this point
+          // one at a time in call order (checks are serial), so a lane is entered in call order; across the
+          // session's engines, in the order their calls became ready.
+          const laneTurn = mode.enterLane?.();
+          // A concurrency-safe call is released to run beside the round's other safe calls from here on, and
+          // the round's walk moves on to its next call.
           mode.readyToExecute?.();
-          // A LANE call waits for the previous call of its lane, then is re-checked like any call about to start.
-          if (mode.laneTurn !== undefined) {
-            const turnOfLane = await raceInterrupt(mode.laneTurn, interruptSignal);
+          // A LANE call waits for the previous holder of its lane, then is re-checked like any call about to start.
+          if (laneTurn !== undefined) {
+            const turnOfLane = await raceInterrupt(laneTurn, interruptSignal);
             if (turnOfLane.kind === "interrupted") {
               interrupted = true;
               return "stop";
@@ -10233,7 +10251,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // calls that load tools (`ToolSearch`) are never concurrency-safe, and a concurrent call neither
           // sets nor reads it, so it can never take another call's references.
           if (!mode.concurrent) toolReferenceCollector = [];
-          const raced = await raceInterrupt(tools.execute(executedCall, { signal: turnAbort.signal, ...(decision.explicitApproval !== undefined ? { explicitApproval: decision.explicitApproval } : {}) }), interruptSignal);
+          const execution = tools.execute(executedCall, { signal: turnAbort.signal, ...(decision.explicitApproval !== undefined ? { explicitApproval: decision.explicitApproval } : {}) });
+          // An interrupt walks away from the execution below, but a LANE stays held until it has really stopped.
+          mode.onExecution?.(execution);
+          const raced = await raceInterrupt(execution, interruptSignal);
           const loadedTools = mode.concurrent ? [] : advertisedNamesFor(toolReferenceCollector);
           if (!mode.concurrent) toolReferenceCollector = undefined;
           const loadedToolDefinitions = loadedDefinitionsFor(loadedTools);
@@ -10394,10 +10415,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           }
           continue;
         }
-        // The call enters its lane NOW (before its checks), holding it until it is done -- see `enterToolLane`.
+        // A lane call enters its lane once its checks are done (`enterLane`, called by `processCall`), and holds
+        // it until the call is done AND its execution has really stopped (an interrupted host tool keeps the
+        // lane until the host answers its cancel, or the bridge's bound runs out -- `sdk_mcp_call`).
         let releaseLane: (() => void) | undefined;
-        const laneTurn =
-          scheduling.kind === "lane" ? enterToolLane(sessionLaneTails, scheduling.lane, new Promise<void>((resolve) => (releaseLane = resolve))) : undefined;
+        let laneExecution: Promise<unknown> | undefined;
+        const lane = scheduling.kind === "lane" ? scheduling.lane : undefined;
+        const enterLane =
+          lane !== undefined ? () => enterToolLane(sessionLaneTails, lane, new Promise<void>((resolve) => (releaseLane = resolve))) : undefined;
         let markReady!: () => void;
         const ready = new Promise<"ready">((resolve) => (markReady = () => resolve("ready")));
         // Tracked from the start, and never rejecting: a failure anywhere in the call (outside its own try)
@@ -10405,7 +10430,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         const settled: Promise<"next" | "stop"> = processCall(emitted, index, {
           concurrent: true,
           readyToExecute: markReady,
-          ...(laneTurn !== undefined ? { laneTurn } : {}),
+          ...(enterLane !== undefined ? { enterLane, onExecution: (execution: Promise<unknown>) => { laneExecution = execution; } } : {}),
         })
           .then((outcome) => {
             sendResultToHost(index);
@@ -10418,7 +10443,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           });
         const tracked: Promise<unknown> = settled.finally(() => {
           inFlight.delete(tracked);
-          releaseLane?.();
+          const release = (): void => releaseLane?.();
+          if (laneExecution !== undefined) void laneExecution.then(release, release);
+          else release();
         });
         inFlight.add(tracked);
         const first = await Promise.race([ready, settled]);
