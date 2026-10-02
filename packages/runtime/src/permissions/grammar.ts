@@ -491,32 +491,57 @@ function stripLeadingAssignmentsAt(s: string, info: ScanInfo, start: number, dir
   return pos;
 }
 
-export function stripWrappers(rawCmd: string, direction: "allow" | "denyAsk"): string {
+/**
+ * What `stripWrappers` found. `inner` is the command left once wrappers and assignments are looked
+ * through; `carried` holds the file-writing redirections that sat inside the part looked through.
+ * Words are consumed whitespace-delimited, so a redirection GLUED to a wrapper's word (`timeout
+ * x>.git/config`, `nice -n5>f`, `A=1>f ls`) is consumed with that word -- bash still performs it, so
+ * it is carried over onto the end of the result instead of being lost.
+ */
+interface WrapperStrip {
+  inner: string;
+  carried: string[];
+  /**
+   * An ALLOW-direction read where a word names a wrapper only in the broad reading (`"\timeout"`):
+   * bash runs a different program than the one an allow rule's text would suggest, so no allow rule
+   * may match it.
+   */
+  ambiguousForAllow: boolean;
+}
+
+function stripWrappersDetailed(rawCmd: string, direction: "allow" | "denyAsk"): WrapperStrip {
   const cmd = joinLineContinuations(rawCmd);
   // P2 fix-wave item 2: ONE scan for this whole call, threaded through every helper below via a
   // plain integer offset into this SAME, unchanging `cmd` string -- never a re-scan of a
   // progressively-sliced substring (see leadingWordAt/stripLeadingAssignmentsAt's own headers for
   // the O(n^2) shape this closes).
   const info = scanShellLike(cmd);
+  const finish = (pos: number, ambiguousForAllow = false): WrapperStrip => {
+    const carried = info.ok ? redirectWriteSpans(cmd, info).filter((span) => span.start < pos).map((span) => cmd.slice(span.start, span.end)) : [];
+    return { inner: cmd.slice(pos), carried, ambiguousForAllow };
+  };
   let pos = 0;
   for (;;) {
     pos = stripLeadingAssignmentsAt(cmd, info, pos, direction);
     const { word: rawWord, end: afterWordEnd } = leadingWordAt(cmd, info, pos);
-    if (rawWord === undefined) return cmd.slice(pos);
+    if (rawWord === undefined) return finish(pos);
     // After quote removal, as bash sees it: `'timeout' 5 rm -rf ~` runs `rm` under `timeout`. An
     // allow only looks through what bash itself would run as the wrapper; a deny/ask also looks
     // through a word that names one in the broad reading (`"\timeout" 5 rm …`), never less than before.
-    const readings = direction === "allow" ? [dequoteShellWord(rawWord)] : shellWordReadings(rawWord);
-    const word = readings.find((r) => r === XARGS || FIXED_WRAPPERS.has(r)) ?? readings[0]!;
+    const isWrapperName = (r: string): boolean => r === XARGS || FIXED_WRAPPERS.has(r);
+    const readings = shellWordReadings(rawWord);
+    const exact = readings[0]!;
+    if (direction === "allow" && !isWrapperName(exact) && readings.some(isWrapperName)) return finish(pos, true);
+    const word = direction === "allow" ? exact : (readings.find(isWrapperName) ?? exact);
 
     if (word === XARGS) {
       const { word: next } = leadingWordAt(cmd, info, afterWordEnd);
-      if (next !== undefined && next.startsWith("-")) return cmd.slice(pos); // not flag-free -- stop stripping
+      if (next !== undefined && next.startsWith("-")) return finish(pos); // not flag-free -- stop stripping
       pos = afterWordEnd;
       continue;
     }
 
-    if (!FIXED_WRAPPERS.has(word)) return cmd.slice(pos);
+    if (!FIXED_WRAPPERS.has(word)) return finish(pos);
 
     let remainderPos = afterWordEnd;
     for (;;) {
@@ -530,6 +555,37 @@ export function stripWrappers(rawCmd: string, direction: "allow" | "denyAsk"): s
     }
     pos = remainderPos;
   }
+}
+
+/** The command once leading assignments and wrappers are looked through, carried-over redirections appended. */
+const joinedStrip = (strip: WrapperStrip): string => [strip.inner, ...strip.carried].filter((part) => part !== "").join(" ");
+
+/**
+ * The command a wrapper-prefixed (sub)command really runs: leading assignments and the fixed wrappers
+ * (`timeout 5`, `nice -n 5`, flag-free `xargs`, ...) looked through, per `direction` (see the module
+ * header). Any file-writing redirection that was part of the looked-through words is appended, so
+ * every redirect scan of the result still sees it. For an allow whose wrapper word is spelled so that
+ * only the broad reading names a wrapper (`"\timeout" …`), the command is returned as written.
+ */
+export function stripWrappers(rawCmd: string, direction: "allow" | "denyAsk"): string {
+  const strip = stripWrappersDetailed(rawCmd, direction);
+  return strip.ambiguousForAllow ? joinLineContinuations(rawCmd).trimStart() : joinedStrip(strip);
+}
+
+/**
+ * The texts a Bash pattern rule is matched against.
+ *   - An ALLOW matches only the command left once wrappers are looked through, never the carried
+ *     redirections: a redirection's target is a FILE NAME, and an allow glob must never be satisfied
+ *     by it (`timeout x<>push ls` is not "a command mentioning push"). The carried writes are judged
+ *     as writes by the floors and path checks, which read `stripWrappers`' full result. An allow
+ *     matches nothing at all when the wrapper spelling is ambiguous.
+ *   - A DENY/ASK matches the looked-through command both with and without the carried
+ *     redirections, so it never matches less than before they were carried.
+ */
+function ruleMatchTexts(command: string, direction: "allow" | "denyAsk"): string[] {
+  const strip = stripWrappersDetailed(command, direction);
+  if (strip.ambiguousForAllow) return [];
+  return direction === "allow" ? [strip.inner] : [joinedStrip(strip), strip.inner];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -726,17 +782,32 @@ export function extractRedirectWrites(rawCommand: string): RedirectWrite[] {
   const command = joinLineContinuations(rawCommand);
   const info = scanShellLike(command);
   if (!info.ok) return [];
-  const { topLevel } = info;
-
   const writes: RedirectWrite[] = [];
   // bash's own reading of the target, plus the broad one when it differs (`"\.git/config"` names
   // `\.git/config` to bash; the floors also judge `.git/config`) -- each extra reading only adds a path.
   const pushReadings = (raw: string): void => {
     for (const target of shellWordReadings(raw)) writes.push({ raw, target });
   };
-  const push = (raw: string): void => {
+  for (const { target: raw } of redirectWriteSpans(command, info)) {
     pushReadings(raw);
     if (raw.length > 1 && raw.startsWith("!")) pushReadings(raw.slice(1));
+  }
+  return writes;
+}
+
+/** One file-writing redirection in a command: where it starts (its descriptor digits included), where it ends, and its target as written. */
+interface RedirectWriteSpan {
+  start: number;
+  end: number;
+  target: string;
+}
+
+/** The file-writing redirections of `command` (see `extractRedirectWrites`), with their positions. */
+function redirectWriteSpans(command: string, info: ScanInfo): RedirectWriteSpan[] {
+  const { topLevel } = info;
+  const spans: RedirectWriteSpan[] = [];
+  const push = (start: number, target: string, end: number): void => {
+    spans.push({ start, end, target });
   };
   let i = 0;
   while (i < command.length) {
@@ -780,10 +851,10 @@ export function extractRedirectWrites(rawCommand: string): RedirectWrite[] {
       i = opEnd;
       continue;
     }
-    if (!(descriptorCopy && /^(?:[0-9]+|-)$/.test(dequoteShellWord(word)))) push(word);
+    if (!(descriptorCopy && /^(?:[0-9]+|-)$/.test(dequoteShellWord(word)))) push(i, word, end);
     i = end;
   }
-  return writes;
+  return spans;
 }
 
 /** `extractRedirectWrites`, target paths only (quotes removed). */
@@ -1265,8 +1336,8 @@ export function matchesRule(
     case "pattern": {
       const raw = call.input["command"];
       const cmd = typeof raw === "string" ? raw : "";
-      const stripped = stripWrappers(cmd, opts.direction);
-      return compilePattern(rule.specifier.source).test(stripped);
+      const pattern = compilePattern(rule.specifier.source);
+      return ruleMatchTexts(cmd, opts.direction).some((text) => pattern.test(text));
     }
   }
 }
