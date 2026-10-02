@@ -4,6 +4,62 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.39
+
+### SendMessage and ListAgents reach a host's other sessions
+
+Before this release, a session's `SendMessage` could only reach what its own process held: its
+subagents and the in-process peer directory, which contains just the calling session. A host that runs
+each session in its own process or Worker, like the Winter daemon, therefore had no way to let one
+session message another. Every such call answered `not_found: no agent or session named "…" is
+currently reachable`, including for a session id the host had just given the model.
+
+- **`Options.hostMessaging`** — `{ send, list }`. When it is set, `query()` puts `hostMessaging: true` on
+  the wire. It then answers two new runtime → host control requests, `host_message_send` and
+  `host_message_list` (`HOST_MESSAGE_SEND_SUBTYPE`, `HOST_MESSAGE_LIST_SUBTYPE`). Both topologies use
+  this path: a spawned `winter` process and an embedded Worker run the same engine over the same frame
+  stream.
+- **`SendMessage`** resolves in-process first. Only an in-process `not_found` is handed to the host, with:
+  - the model's raw `to`;
+  - the message and its summary;
+  - `notifyWhenIdle`;
+  - the runtime's own message id;
+  - `fromAgentId` when a subagent is the sender (information only; the host knows its caller by
+    construction).
+
+  Subagents, self-target, stale and ambiguous names, the size bound and the loop guard all stay
+  in-process and never reach the host. The host answers with one of `delivered`, `queued`,
+  `resumed_and_delivered`, `refused`, `not_found`, `unavailable` or `delivery_uncertain`. It may add
+  `notify` and a one-sentence `note`, which are rendered beside the outcome. The answer is recorded under
+  the runtime's message id, so a retry of the same tool call returns the stored outcome without asking
+  the host again. A host that throws, times out (180 s, room for the host to resume a finished session)
+  or answers garbage gives `delivery_uncertain`, never `not_found`.
+- **`ListAgents`** lists the subagents, then the sessions the host returns, as `session` rows. Malformed
+  or unaddressable rows are dropped, and the listing is capped at 200 rows. Whatever the host left out
+  (`HostMessageListAnswer.omitted`) or the cap dropped is reported as a closing count line, never
+  silently cut. A host that fails to list adds nothing.
+- **`TaskStop`** on an id that names no task of this session asks the host's optional `stop`
+  (`host_session_stop`, `HOST_SESSION_STOP_SUBTYPE`) to stop that session: `stopped` and `not_running`
+  are ordinary results (`task_type: "session"`, with the host's optional one-sentence `note` appended to the
+  message), `refused` / `not_found` / `unavailable` are errors.
+  Without a host, an unknown id is refused exactly as before.
+- **Cancellation:** the calling tool's abort signal rides every host request, so an interrupted
+  `SendMessage` cancels its pending delivery and the handler's `signal` aborts. The wrapper's handlers
+  remove the listeners they add to the session's abort signal once they answer.
+- **The `/messaging` subpath:**
+  - `MessagingRuntimeDeps.hostMessaging(owningSessionId)` (optional) returns a `HostMessagingPort`, the
+    seam the router core consults.
+  - The guards `isHostMessageSendAnswer` and `normaliseHostMessageListAnswer` are exported, along with
+    `hostAnswerToOutcome` and `hostSessionToListed`.
+  - `SendMessageResult.note` is new.
+
+  A host that composes the core itself and sets none of this is unaffected.
+- **In the runtime:** a top-level run with `hostMessaging` registers its port per session id in the
+  process-level messaging runtime. A subagent shares the port through its parent's session id. The
+  registration is withdrawn at teardown.
+
+Without the option, nothing changes.
+
 ## 0.0.38
 
 0.0.37 was tagged but never published: its release run failed on a calendar-dated golden test (fixed in
