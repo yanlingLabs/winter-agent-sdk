@@ -161,19 +161,17 @@ export interface SandboxSettingsConfig {
   autoAllowBashIfSandboxed?: boolean;
   excludedCommands?: string[];
   allowUnsandboxedCommands?: boolean;
-  // `allowRead` (WS-21 fix round 10, item C): claude's own `getFsReadConfig` carries it (dump-
-  // confirmed: `allowWithinDeny:(e?.filesystem.allowRead??[]).map(Og)` -- a re-permit CARVED OUT OF
-  // an otherwise-denied region, not a broad allow-list the way `allowWrite` gates the write-default-
-  // deny). The type carries it (so it merges correctly, see resolve.ts's own union) but Winter's own
+  // `allowRead` (WS-21 fix round 10, item C): a read re-permit CARVED OUT OF an otherwise-denied
+  // region, as the settings key means in Claude Code -- not a broad allow-list the way `allowWrite`
+  // gates the write-default-deny. The type carries it (so it merges correctly, see resolve.ts's own union) but Winter's own
   // seatbelt profile generator (sandbox/profile.ts's `buildSeatbeltProfile`) has NO "allow-within-
   // deny" read mechanism to hand it to yet -- reads are already broadly unfenced by design (CLAUDE.md's
   // own standing rule), so an unenforced `allowRead` FAILS CLOSED (the outer denyRead it would have
   // carved an exception out of simply stays in full effect), never open. Disclosed WS-21 follow-up:
   // building the SBPL "allow re-permit after a deny" rule is a separate, larger change.
-  // `allowGitConfig` (WS-21 fix round 16, item 2): claude's own `ag()` reads
-  // `sandbox.filesystem.allowGitConfig` (dump-confirmed: `function ag(){return
-  // pe?.filesystem?.allowGitConfig??!1}`) -- gates `.git/config` out of `cR`'s own default write
-  // protection (sandbox/profile.ts's `SeatbeltProfileInput.allowGitConfigWrites`). Must stay in sync
+  // `allowGitConfig` (WS-21 fix round 16, item 2): `sandbox.filesystem.allowGitConfig` (default
+  // false, as in Claude Code) lets sandboxed commands write `.git/config`, which the default write
+  // protection otherwise denies (sandbox/profile.ts's `SeatbeltProfileInput.allowGitConfigWrites`). Must stay in sync
   // with `sandbox/profile.ts`'s own `SandboxFilesystemSettings`, per this interface's own header.
   filesystem?: { allowWrite?: string[]; denyWrite?: string[]; allowRead?: string[]; denyRead?: string[]; allowGitConfig?: boolean };
   network?: { allowedDomains?: string[]; deniedDomains?: string[]; [key: string]: unknown };

@@ -305,8 +305,8 @@ export interface EvaluationContext {
   cwd: string;
   /**
    * Does this Bash call's `dangerouslyDisableSandbox` actually take it OUT of a sandbox it would
-   * otherwise run in? (dist-session fixes, lane C C3 -- claude's `!shouldUseSandbox(input) &&
-   * shouldUseSandbox({...input, dangerouslyDisableSandbox: false})`.) False when the session's sandbox
+   * otherwise run in? (dist-session fixes, lane C C3 -- the call would be sandboxed without the flag
+   * and is not sandboxed with it.) False when the session's sandbox
    * is off, when the policy forbids unsandboxed commands (the flag is then ignored), or when the
    * command is an allowed `excludedCommands` entry. Only such a call is an ESCAPE, handled by
    * `resolveSandboxEscape`. Injected because the evaluator cannot see the session's sandbox settings;
@@ -376,8 +376,8 @@ export interface EvaluationContext {
   /**
    * The session's outputs directory (`RuntimeConfig.outputsDir`, exported to the shell as `$OUTDIR`).
    * Two effects, both mirroring what the Bash tool already does with it (a sandbox-writable root):
-   * a shell write there is inside the session's writable directories (claude's sandbox-write-allowlist
-   * step), and, when it sits inside the winter home, the protected floor's winter-home part does not
+   * a shell write there is inside the session's writable directories (sandbox-writable locations count
+   * as allowed write locations, as in Claude Code), and, when it sits inside the winter home, the protected floor's winter-home part does not
    * cover it (protected.ts's outputs carve-out). It is NOT a working directory: acceptEdits and the
    * mode allows are unchanged. Absent = no outputs directory.
    */
@@ -541,18 +541,16 @@ export function boundedRoots(ctx: EvaluationContext): string[] {
 // granted root is correctly NOT auto-approved.
 //
 // Fix round 4 (SV-8, the router same-view test): this used to reuse the general file-rule matcher
-// with a `"**"` sentinel pattern -- claude's own boundary check is not a glob at all
-// (`isPathWithinRoot`, file-rules.ts's own header has the dump evidence and full reasoning). A root
+// with a `"**"` sentinel pattern -- but a working-directory boundary is not a glob at all, in Claude
+// Code either (`isPathWithinRoot`, file-rules.ts, has the reasoning). A root
 // containing `[`, `]`, `*` or `\` (a cwd literally named e.g. `[wip] app`) made the OLD `"**"`-glob
 // composition ask for every write inside it once SV-6/C-1 made those characters glob-special;
 // `isPathWithinRoot` is a plain path-prefix test and needs no escaping for either operand at all.
-// Fix round 5, N-2 (the re-review of 57e7fef..20b623e, Important): claude's own working-directory
-// check (`f_`, dump ~272633) calls `sm(d,p,{caseFold:false,uncShapeParity:true})` -- it does NOT
-// fold case, unlike this function's pre-fix reliance on `isPathWithinRoot`'s default
-// (`caseFold:true`), which silently treated a path differing from a root only in case as in-bounds
-// on a case-sensitive volume. `uncShapeParity` has no Winter equivalent to match -- it is a
-// Windows-only UNC-path-shape concern (`\\?\`-prefixed paths), and this codebase targets macOS only
-// (CLAUDE.md's own latest-OS-floors rule); disclosed rather than silently ignored.
+// Fix round 5, N-2 (the re-review of 57e7fef..20b623e, Important): the working-directory check does
+// NOT fold case (Claude Code's does not either), unlike this function's pre-fix reliance on
+// `isPathWithinRoot`'s default (`caseFold:true`), which silently treated a path differing from a root
+// only in case as in-bounds on a case-sensitive volume. Windows-only path shapes (UNC, `\\?\`
+// prefixes) get no special handling: this codebase targets macOS only.
 function isWithinBounds(path: string, ctx: EvaluationContext): boolean {
   // Fix round 11 (defense in depth, "the check and the write must never disagree"): trimmed here
   // too, REGARDLESS of whether a caller already trimmed its own candidate -- every caller today
@@ -562,14 +560,13 @@ function isWithinBounds(path: string, ctx: EvaluationContext): boolean {
   // of drift round 10 item B introduced. Trimming HERE means a future caller cannot re-open it.
   const absPath = resolve(ctx.cwd, path.trim());
   const target = resolveRealTarget(absPath);
-  // Fix round 14 (CRITICAL item 2, claude's own `Ii`/`f_`): a THIRD candidate, `resolveSymlinkTargetChain`'s
-  // own result -- resolveRealTarget's ENOENT fallback never reads a DANGLING symlink's own stored
-  // target (it falls back to the link's own literal path, so `target === absPath` for a dangling
-  // link), which let a working-directory bounds check see the SAME in-bounds path twice and miss the
-  // symlink's real, possibly out-of-bounds destination entirely. claude's own `f_` runs
-  // `o.every(d => sm(d, root))` over EVERY `Ii`-derived candidate for a winning root, so an
-  // undefined chain target (nothing to resolve, or genuinely unresolvable) must FAIL that root
-  // rather than being skipped -- fail-closed, never a free pass.
+  // Fix round 14 (CRITICAL item 2): a THIRD candidate, `resolveSymlinkTargetChain`'s own result --
+  // resolveRealTarget's ENOENT fallback never reads a DANGLING symlink's own stored target (it falls
+  // back to the link's own literal path, so `target === absPath` for a dangling link), which let a
+  // working-directory bounds check see the SAME in-bounds path twice and miss the symlink's real,
+  // possibly out-of-bounds destination entirely. EVERY symlink variant must fall inside the winning
+  // root (as in Claude Code), so an undefined chain target (nothing to resolve, or genuinely
+  // unresolvable) must FAIL that root rather than being skipped -- fail-closed, never a free pass.
   const chainTarget = resolveSymlinkTargetChain(absPath);
   return boundedRoots(ctx).some(
     (root) =>
@@ -611,117 +608,58 @@ export function extractCandidateWritePaths(call: PermissionCall, ctx: Evaluation
   return recognized ? recognized.paths : [];
 }
 
-// --- Fix round 11: claude's `mL` -- the "suspicious Windows path pattern" safety check -------------
-//
-// A path COMPONENT ending in a run of dots and/or whitespace (claude's own `Vbe`, dump byte 14328362,
-// pinned 2.1.250: `/[.\s]+$/`, ground-truth-verified via `grep -bo`/byte-slice extraction, NOT the
-// coordinator's own cited "~272613" -- see this file's history of every prior round's citation
-// never landing on the number given). Windows silently strips trailing dots/spaces off a path
-// component when it resolves it, so `.bashrc ` / `.bashrc.` and `.bashrc` name the SAME file THERE --
-// claude treats any such component as suspicious enough to force a manual ask, on every OS, not only
-// Windows (this branch of `mL`, dump byte 14442494, is not itself OS-gated).
-const TRAILING_DOT_OR_WHITESPACE_COMPONENT = /[.\s]+$/;
-
-// A path whose FULL TEXT ends in a literal `.<device-name>` suffix (claude's own `In`, same dump
-// region: `/\.(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i`) -- a Windows reserved-device name used as an
-// "extension", e.g. `notes.CON`. Also not OS-gated in claude's own `mL`.
-//
-// Deliberately does NOT also flag a BARE component (a path ending exactly in `CON`, no leading dot):
-// `mL`'s own dump-verified body (byte 14442494) has no such branch -- `In` requires the literal dot,
-// and no other branch of `mL` covers it either. Claude DOES have bare-device-name checks elsewhere in
-// the same dump, confirmed by content search, but neither is on `$K`'s own call graph (the file-write
-// permission path this port targets):
-//   - `co(e)` (dump byte 14327883: `let t=gt(e,".").replace(/ +$/,"");return/~\d/.test(e)||
-//     /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(t)`) is claude's SYNCED-ITEM/skill-sync name
-//     validator (`$le`/"synced item name resolves to reserved path") -- an unrelated feature.
-//   - `wee(e)` (dump byte 14328421, right next to `Vbe`/`In`'s own definitions) is composed with
-//     `mL` at exactly ONE of `$K`'s own five call sites (dump byte 28948162: `if(Ae&&(mL(Me)||
-//     wee(Me)))`, an artifact/document-save naming check, "unsafe_name") -- not the other four,
-//     which are the ordinary Edit/Write/NotebookEdit/Bash-redirect permission path this port covers.
-// So a BARE `CON` genuinely does not trip claude's own file-write safety check either -- tested below
-// as `notes.CON` (the actual shape `In` targets), not a bare `CON`.
-const DEVICE_NAME_SUFFIX = /\.(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
-
-// Three-or-more dots as a WHOLE path component (claude inlines this directly in `mL`, same dump
-// region): `...`, `....`, etc., between separators or at either end of the string.
-const TRIPLE_DOT_COMPONENT = /(^|\/|\\)\.{3,}(\/|\\|$)/;
-
-// An NT short-filename tilde-sequence anywhere in the path (claude inlines this too, directly in
-// `mL`): `~1`, `~23`, ...
-const SHORT_FILENAME_TILDE = /~\d/;
+// --- The "suspicious Windows path pattern" safety check ------------------------------------------
 
 /**
- * Port of claude's `mL` (dump byte 14442494, pinned 2.1.250) -- the safety check `$K` (same byte
- * region) runs on every candidate write path BEFORE any other approval logic, unconditionally
- * forcing an ask (`classifierApprovable:!1` in claude's own source -- never classifier/auto-
- * approvable, unlike `$K`'s OTHER checks) when it fires. Ported here as a pure predicate; the
- * evaluator wires it in as a new stage-3 mandatory-ask reason, below.
- *
- * Two of claude's own branches are Windows/WSL-only BY CLAUDE'S OWN GATE and are DELIBERATELY
- * omitted, disclosed rather than silently dropped (this codebase targets macOS only, CLAUDE.md's own
- * latest-OS-floors rule):
- *   - the `U()==="windows"||U()==="wsl"`-gated colon-position check (a second `:` after index 2,
- *     Windows alternate-data-stream syntax) is genuinely inert off Windows/WSL in claude's OWN
- *     source -- there is nothing to port.
- *   - the trailing `Dg(e,!0)&&!Ha(e)&&!Fe(e,t)` clause is STRUCTURALLY DEAD on macOS in claude's own
- *     source too: `Dg`'s (dump byte 14418249) own first line is `if(U()!=="windows")return!1`, which
- *     short-circuits the whole `&&` chain to `false` on every non-Windows host claude itself runs
- *     on. Porting an intentional no-op would just be dead code; omitted, disclosed rather than
- *     silently dropped.
- *
- * `FU` (dump byte 11268201: `function FU(t){return lt.test(t)||t.includes("??")&&lt.test(pt(t))}`,
- * `pt` win32-normalizes only on Windows, else identity) IS ported below, in its macOS-reduced form
- * (`pt` is the identity function here, so `FU` reduces to the single regex test) -- claude calls it
- * unconditionally, not gated to Windows, so this is a straight port, not a judgment call. `lt`'s own
- * literal bytes (re-verified with a fresh byte-slice extraction after an advisor review caught a
- * narrower first draft: the dump's raw bytes are `[` `\` `\` `/` `]`, i.e. a JS source character
- * class holding an ESCAPED backslash plus a forward slash) is `/^[\\/]\?\?[\\/]/` -- EITHER separator
- * at both ends (`\??\`, `\??/`, `/??\`, `/??/`), not `/` alone.
+ * Whether a write target's path has a shape that Windows (or a Windows filesystem mounted elsewhere)
+ * could resolve to a DIFFERENT file than the text suggests. Such a write always asks, before any
+ * other approval logic, and is never classifier- or auto-approvable (stage 3's mandatory-ask
+ * reasons). Applied on every OS, as Claude Code does. True when ANY of these holds:
+ *   - the path starts with a separator (`/` or `\`), then `??`, then a separator (an NT object path:
+ *     `\??\`, `/??/`, `\??/`, `/??\`);
+ *   - `~` followed by an ASCII digit appears anywhere (an 8.3 short name such as `PROGRA~1`);
+ *   - the path starts with `\\?\`, `\\.\`, `//?/` or `//./` (a device or long-path prefix);
+ *   - a path component -- splitting on both `/` and `\`, and skipping empty components, `.` and `..`
+ *     -- ends in a `.` or a whitespace character (`\s`): Windows strips those, so `.bashrc.` and
+ *     `.bashrc ` name `.bashrc` there (this covers a component of three or more dots too);
+ *   - the WHOLE path ends in `.` plus a reserved device name -- `CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`
+ *     or `LPT1`-`LPT9`, in any letter case (`notes.CON`). A bare device name (`/w/CON`) is not flagged.
+ * Windows-only checks that depend on running on Windows (alternate data streams, drive-relative
+ * paths) do not apply on macOS and are not made.
  */
 export function isSuspiciousPath(path: string): boolean {
-  if (/^[\\/]\?\?[\\/]/.test(path)) return true; // FU, macOS-reduced (see header)
-  if (SHORT_FILENAME_TILDE.test(path)) return true;
-  if (path.startsWith("\\\\?\\") || path.startsWith("\\\\.\\") || path.startsWith("//?/") || path.startsWith("//./")) return true;
+  if (/^[/\\]\?\?[/\\]/.test(path)) return true; // NT object path
+  if (/~[0-9]/.test(path)) return true; // 8.3 short name
+  if (SUSPICIOUS_PATH_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;
   for (const component of path.split(/[/\\]/)) {
     if (component === "" || component === "." || component === "..") continue;
-    if (TRAILING_DOT_OR_WHITESPACE_COMPONENT.test(component)) return true;
+    if (/[.\s]$/.test(component)) return true;
   }
-  if (DEVICE_NAME_SUFFIX.test(path)) return true;
-  if (TRIPLE_DOT_COMPONENT.test(path)) return true;
-  return false;
+  return /\.(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(path);
 }
 
-// claude's own message text is unconditionally "write to" ($K, same dump region) -- `$K` is called
-// from the write/edit permission-check path, never the read one, so this is scoped to write-shaped
-// candidates rather than also covering Read/Glob/Grep, matching claude's own message wording exactly
-// rather than inventing a read-shaped variant claude's own source has no message for.
+/** Device-namespace and long-path prefixes. */
+const SUSPICIOUS_PATH_PREFIXES: readonly string[] = ["\\\\?\\", "\\\\.\\", "//?/", "//./"];
+
+// The check's message says "write to" unconditionally, so it applies to write-shaped candidates only,
+// never to Read/Glob/Grep (no read-shaped variant of the message is invented).
 //
-// CORRECTED (this same round, advisor-caught before this comment's first draft was committed): `$K`
-// IS reached from Bash's own output-redirection parsing, not just the write/edit structured-field
-// path -- dump byte 16957904, `E6(e,t,r,o,u,p)`, claude's shell-redirect-safety validator
-// (`hasDangerousRedirection`/`UJ(e.command)`/"Output redirection to '${we}' was blocked by a deny
-// rule."): `let we=$K(Ce.path,Oe);if(!we.safe&&...)j={behavior:"ask",message:we.message,...}` runs
-// `$K` on every dangerous-redirection target. Ported below via `isShellCall`/`shellWriteTargets`
-// (the SAME shell-target extraction `REAL_SPECIAL_CHECKS.isProtectedWrite`'s own shell half already
-// uses) alongside the structured-field branch.
+// It covers the targets of a shell command's output redirections as well as the structured
+// Edit/Write/NotebookEdit field -- as Claude Code's shell-redirect validation does -- via
+// `isShellCall`/`shellWriteTargets` (the SAME shell-target extraction
+// `REAL_SPECIAL_CHECKS.isProtectedWrite`'s own shell half already uses).
 //
 // The structured-field branch (Edit/Write/NotebookEdit) reads the field straight off `call.input`
 // (mirroring `dedicatedReadToolPath`'s own style) and TRIMS it -- fix round 17, add-on A, which
-// CORRECTS round 11's reading here. Round 11 read the raw field on the theory that claude's `ht` trims
-// for matching while `mL` inspects the as-typed shape; the dump says otherwise: claude backfills
-// `file_path=ht(file_path)` before the permission step ever runs, so `$K`'s `mL` sees the trimmed path
-// (the full trail is on `firstSuspiciousWritePath`, below). Round 11's "confirmed empirically" was its
-// own fixtures, written for the raw reading. The SHELL branch below is unaffected: claude's `E6` is a
-// separate call graph, and `shellWriteTargets`' output is already the as-parsed shape (a genuinely
-// QUOTED trailing space in a redirect target, e.g. `echo x > "foo.bashrc "`, survives real shell
-// tokenization; an UNQUOTED one is a word separator and never reaches here at all -- a real
-// tokenization fact, not a Winter-side trim).
-// Fix round 12 (minor, claude's own `Ii`): `$K` runs `mL` on every candidate from `Ii(e)`, claude's
-// symlink-variant collector -- not merely the raw/as-typed path, ALSO its resolved real target (dump
-// byte 16957904's own `E6`: `let Oe=Ii(Ce.path);for(let we of Oe){...$K(Ce.path,Oe)...}` -- `Oe` is
-// computed BEFORE `$K` is even called, confirming the caller pre-resolves the symlink-variant set
-// rather than relying on `$K`'s own internal `Ii(e)` fallback). An innocuous-looking symlink whose
-// OWN name has no suspicious shape at all can still point AT a suspiciously-named target (e.g. a
+// CORRECTS round 11's reading here: Claude Code trims the path before its permission step ever runs,
+// so its check sees the trimmed path (more on `firstSuspiciousWritePath`, below). The SHELL branch is
+// unaffected: `shellWriteTargets`' output is already the as-parsed shape (a genuinely QUOTED trailing
+// space in a redirect target, e.g. `echo x > "foo.bashrc "`, survives real shell tokenization; an
+// UNQUOTED one is a word separator and never reaches here at all -- a real tokenization fact, not a
+// Winter-side trim).
+// Fix round 12 (minor): the check runs on every symlink variant of a candidate -- not merely the
+// raw/as-typed path, ALSO its resolved real target, as Claude Code's does. An innocuous-looking
+// symlink whose OWN name has no suspicious shape at all can still point AT a suspiciously-named target (e.g. a
 // path containing an NT short-filename tilde, or a component ending in a run of dots/whitespace) --
 // this closes that gap. Best-effort: any resolution failure (the candidate does not exist, an
 // intermediate ancestor is inaccessible, ...) is swallowed, matching this whole file's own
@@ -746,7 +684,7 @@ function suspiciousSymlinkTarget(rawCandidate: string, ctx: EvaluationContext): 
     const absPath = resolveTargetPath(rawCandidate, ctx.cwd);
     const target = resolveRealTarget(absPath);
     if (isSuspiciousPath(target)) return target;
-    // Fix round 13 (Important item 2, claude's own Ii): resolveRealTarget's own fallback never reads
+    // Fix round 13 (Important item 2): resolveRealTarget's own fallback never reads
     // a symlink's OWN stored target when the ultimate chain doesn't fully exist on disk (a dangling
     // link, or a link into a not-yet-created subtree) -- it falls back to the LINK'S OWN literal
     // name, silently losing the fact it was ever a symlink. resolveSymlinkTargetChain (paths.ts,
@@ -761,21 +699,16 @@ function suspiciousSymlinkTarget(rawCandidate: string, ctx: EvaluationContext): 
 }
 
 // Fix round 17, add-on A (the R.2 same-view escape-table regression; corrects round 11's "reads the
-// RAW, untrimmed candidate"): the structured field reaches `mL` TRIMMED, because that is what claude's
-// `$K` sees. claude's tool loop (dump byte 18520374) runs `validateInput`, then
-// `Ie={...Oe};e.backfillObservableInput(Ie);Oe=Ie` BEFORE the hooks and `x3` (the permission step,
-// 17080895); Write's and Edit's backfill is `e.file_path=ht(e.file_path)` (18134024 / 19723975), and
-// `ht` (12083670, the chunk the Write/Edit chunk imports it from) begins `let r=t.trim()`. `zC`
-// (14454832) then matches deny rules over `Ii(getPath(input))` -- the trimmed path -- and only after
-// the allow/ask rules calls `$K(u,d,…)` (14442946), whose `mL` loop covers those SAME candidates. So
-// whole-path trailing whitespace never reaches `mL` on claude, and the Winter tool writes the trimmed
-// path too (round 10, item B): the checked path is the written path. Reading the raw field made an
-// escaped `sp\ ` deny rule (the router's `escapeRulePath` spelling, which misses the trimmed `sp` on
-// both runtimes) ASK for `<root>/sp ` where claude writes `<root>/sp` without asking. `.trim()` strips
-// only the ENDS, so `mL` keeps its teeth: a trailing dot (`foo.`), `PROGRA~1`, `...`, `notes.CON` and a
-// MID-path component ending in whitespace all still fire. The Bash/Monitor branch below is unchanged
-// (claude's `E6` shell-redirect validator is a separate call graph; a quoted trailing space survives
-// shell tokenization there).
+// RAW, untrimmed candidate"): the structured field reaches the check TRIMMED. Claude Code trims a
+// Write/Edit `file_path` at both ends before its hooks and its permission step see the call, so its
+// deny rules and this check see the trimmed path and whole-path trailing whitespace never reaches the
+// check; the Winter tool writes the trimmed path too (round 10, item B), so the checked path is the
+// written path. Reading the raw field made an escaped `sp\ ` deny rule (the router's `escapeRulePath`
+// spelling, which misses the trimmed `sp` on both runtimes) ASK for `<root>/sp ` where Claude Code
+// writes `<root>/sp` without asking. `.trim()` strips only the ENDS, so the check keeps its teeth: a
+// trailing dot (`foo.`), `PROGRA~1`, `...`, `notes.CON` and a MID-path component ending in whitespace
+// all still fire. The Bash/Monitor branch below is unchanged (a quoted trailing space survives shell
+// tokenization there).
 function firstSuspiciousWritePath(call: PermissionCall, ctx: EvaluationContext): string | undefined {
   if (call.toolName === "Edit" || call.toolName === "Write" || call.toolName === "NotebookEdit") {
     const raw = call.input[fileRulePathField(call.toolName)];
@@ -794,18 +727,16 @@ function firstSuspiciousWritePath(call: PermissionCall, ctx: EvaluationContext):
   return undefined;
 }
 
-// Verbatim claude string (user directive: claude INTERFACE strings ship verbatim) -- `$K`'s own
-// per-candidate message, dump byte 14442494 region: `` `Claude requested permissions to write to
-// ${e}, which contains a suspicious Windows path pattern that requires manual approval.` ``.
+// The card text is Claude Code's interface string, kept verbatim (user directive: interface strings
+// ship verbatim).
 function suspiciousPathAskMessage(path: string): string {
   return `Claude requested permissions to write to ${path}, which contains a suspicious Windows path pattern that requires manual approval.`;
 }
 
-// --- The SHELL write-target floor (dist-session fixes, lane C C3; claude's pathValidation.ts) ------
+// --- The SHELL write-target floor (dist-session fixes, lane C C3) ----------------------------------
 //
-// claude validates a shell command's write targets -- output redirections and the targets of the
-// file-writing commands -- BEFORE its allow rules (checkPathConstraints -> validatePath ->
-// checkPathSafetyForAutoEdit), and its safety check is bypass-immune. Winter's protected-write check
+// Claude Code validates a shell command's write targets -- output redirections and the targets of the
+// file-writing commands -- BEFORE its allow rules, and its path-safety check is bypass-immune. Winter's protected-write check
 // already saw those targets (`extractCandidateWritePaths` includes redirects); what it lacked, for a
 // SHELL write specifically, is below. Scoped to Bash/Monitor on purpose: the Edit/Write tools keep
 // WS-07 §6.7's matrix, and the host's own deny rules are their floor.
@@ -817,7 +748,7 @@ function isShellCall(call: PermissionCall): boolean {
   return call.toolName === "Bash" || call.toolName === "Monitor";
 }
 
-/** A shell call's write targets, minus `/dev/null` (claude: "always safe - it discards output"). */
+/** A shell call's write targets, minus `/dev/null` (always safe: it discards output). */
 function shellWriteTargets(call: PermissionCall, ctx: EvaluationContext): string[] {
   if (!isShellCall(call)) return [];
   return extractCandidateWritePaths(call, ctx).filter((p) => p !== "/dev/null");
@@ -826,8 +757,8 @@ function shellWriteTargets(call: PermissionCall, ctx: EvaluationContext): string
 /**
  * Does any subcommand CHANGE DIRECTORY? Then a relative write target is resolved against the wrong
  * base -- `cd .winter && echo x > permissions.local.json` names a file this check would read as
- * `<cwd>/permissions.local.json`. claude asks for exactly this compound (pathValidation.ts: "Commands
- * that change directories and write via output redirection require explicit approval").
+ * `<cwd>/permissions.local.json`. Claude Code asks for exactly this compound ("Commands that change
+ * directories and write via output redirection require explicit approval").
  */
 function shellCommandChangesDirectory(call: PermissionCall): boolean {
   const raw = call.input["command"];
@@ -893,8 +824,8 @@ function isShellTargetInWorkingDirs(path: string, ctx: EvaluationContext): boole
   // already-authored rule match, so an unresolvable third candidate must never widen the exemption.
   const chainTarget = resolveSymlinkTargetChain(absPath);
   if (chainTarget === undefined) return false;
-  // The outputs directory is sandbox-writable (the Bash tool's writable roots), which claude counts as
-  // an allowed write location for a shell target (its step 3.7) -- not a working directory otherwise.
+  // The outputs directory is sandbox-writable (the Bash tool's writable roots), which counts as an
+  // allowed write location for a shell target, as in Claude Code -- not a working directory otherwise.
   const roots = [...boundedRoots(ctx), ...(ctx.outputsDir !== undefined && ctx.outputsDir.length > 0 ? [resolve(ctx.cwd, ctx.outputsDir)] : [])];
   return roots.some((root) => {
     let realRoot: string;
@@ -909,9 +840,9 @@ function isShellTargetInWorkingDirs(path: string, ctx: EvaluationContext): boole
 }
 
 /**
- * A shell write an allow RULE may not clear by itself (claude's `checkPathConstraints`, run before its
- * allow rules): a target outside the session's working directories, or any target of a command that
- * changes directory first. Not bypass-immune -- claude's bypass allows both -- and a caller in
+ * A shell write an allow RULE may not clear by itself (a path constraint, checked before the allow
+ * rules): a target outside the session's working directories, or any target of a command that
+ * changes directory first. Not bypass-immune -- bypass allows both, as in Claude Code -- and a caller in
  * `bypassPermissions` never asks.
  */
 function shellWriteNeedsApproval(call: PermissionCall, ctx: EvaluationContext): { reason: string } | undefined {
@@ -926,12 +857,12 @@ function shellWriteNeedsApproval(call: PermissionCall, ctx: EvaluationContext): 
 }
 
 /**
- * claude's checkPathConstraints for a shell call, write side: why nothing but a person (or bypass) may
- * clear this command -- a write target the layer cannot resolve (an expansion, a `~user` form, a
- * glob), a process substitution, an unparseable command, `cp`/`mv` with a flag, then a write after a
- * `cd` or outside the working directories. claude runs it BEFORE its allow rules and its mode allows;
- * so does Winter (evaluateModeStage and stage 5). Not bypass-immune: the protected floor is the part
- * of claude's check that is.
+ * The path constraints for a shell call, write side: why nothing but a person (or bypass) may clear
+ * this command -- a write target the layer cannot resolve (an expansion, a `~user` form, a glob), a
+ * process substitution, an unparseable command, `cp`/`mv` with a flag, then a write after a `cd` or
+ * outside the working directories. They run BEFORE the allow rules and the mode allows
+ * (evaluateModeStage and stage 5), as in Claude Code. Not bypass-immune: the protected floor is the
+ * part of the check that is.
  */
 function shellPathConstraint(call: PermissionCall, ctx: EvaluationContext): { reason: string } | undefined {
   const command = shellCommandOf(call);
@@ -1008,10 +939,10 @@ export const REAL_SPECIAL_CHECKS: SpecialChecks = {
 function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "allow" | "denyAsk", ctx: EvaluationContext): boolean {
   // Fix round 4 (C-1 + SV-7, the router same-view test): FILE_RULE_TOOLS (Read/Edit/Write/
   // NotebookEdit/Glob/Grep) with a SCOPED pattern specifier is no longer handled HERE at all --
-  // claude's own file-rule pipeline (jOe -> xi -> ki -> ln -> Ma, file-rules.ts's own port) matches
-  // every applicable rule for one (kind, behavior) pair TOGETHER, as a single `ignore()` group, not
-  // one rule at a time the way this per-rule function is shaped -- a negation pattern (`!x`) and the
-  // grouped un-anchoring `ki` applies only make sense evaluated as a group (this module's own
+  // the file-rule pipeline (file-rules.ts) matches every applicable rule for one (kind, behavior)
+  // pair TOGETHER, as a single `ignore()` group, not one rule at a time the way this per-rule function
+  // is shaped -- a negation pattern (`!x`) and the trailing-`/**` rewrite only make sense evaluated as
+  // a group (this module's own
   // file-rules.ts header explains why). `findMatchingFileRuleEntry` below is the FILE_RULE_TOOLS
   // entry point now; `findMatchingRuleEntry` branches to it before ever reaching this function, so a
   // FILE_RULE_TOOLS rule with a pattern specifier can no longer reach this line at all.
@@ -1050,7 +981,7 @@ function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "
     const command = typeof raw === "string" ? raw : "";
     // EVERY command the string runs -- the ones inside a subshell, a `$(…)`/backtick/process
     // substitution or an `if`/`for` body too: a deny rule for `rm` must see `ls $(rm -rf x)`, and an
-    // allow rule for `echo` must not clear the `rm` it would run (claude asks for any substitution
+    // allow rule for `echo` must not clear the `rm` it would run (Claude Code asks for any substitution
     // before a prefix allow rule; here the substituted command must itself be allowed).
     const parts = flattenSubcommands(command);
     if (parts === null) {
@@ -1102,8 +1033,7 @@ function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "
  * `matchFileRuleAtBothEnds` call inside `matchesRuleForCall`. Every candidate rule for the call's
  * OWN file-rule kind (`fileRuleKindFor`, SV-7's tool-to-rule-kind map) is gathered FIRST and matched
  * as ONE group (`matchFileRulesGrouped`, file-rules.ts) -- never one rule at a time -- so a
- * negation pattern among the candidates behaves the way claude's own grouped `ignore()` instance
- * does. Trust-gating and `opts.skip` are applied identically to `findMatchingRuleEntry`'s own
+ * negation pattern among the candidates behaves the way a grouped `ignore()` instance does. Trust-gating and `opts.skip` are applied identically to `findMatchingRuleEntry`'s own
  * per-rule loop, BEFORE a candidate ever enters the group, so a project-tier allow rule still
  * requires workspace trust and an auto-mode-suspended entry is still excluded.
  *
@@ -1133,7 +1063,7 @@ function findMatchingFileRuleEntry(
   const candidates: FileRuleCandidate<SourcedRuleEntry>[] = [];
   // SV-7's "reverse" finding: only a rule literally AUTHORED under the kind's own canonical tool
   // name ("Edit" for "edit", "Read" for "read") is ever consulted -- a Write(...)/NotebookEdit(...)/
-  // Glob(...)/Grep(...)-authored rule is dead code claude never reads, even for a call from that
+  // Glob(...)/Grep(...)-authored rule is never consulted, even for a call from that
   // exact same tool (canonicalFileRuleAuthoringToolName's own header).
   const authoringToolName = canonicalFileRuleAuthoringToolName(kind);
   for (const entry of pool) {
@@ -1142,7 +1072,7 @@ function findMatchingFileRuleEntry(
     if (behavior === "allow" && entry.source === "project" && !ctx.trustedWorkspace) continue;
     if (entry.rule.specifier?.kind !== "pattern") continue; // a bare/wildcardAll rule for this tool is the OLD per-rule path's job, not this group's
     if (entry.rule.toolName !== authoringToolName) continue;
-    // Fix round 11 ("important" item, claude's own TFt): threads a `/`-anchored pattern's own
+    // Fix round 11 ("important" item): threads a `/`-anchored pattern's own
     // settings-source root through to matchFileRulesGrouped's per-candidate anchor resolution.
     candidates.push({ entry, pattern: entry.rule.specifier.source, ...(entry.sourceDir !== undefined ? { sourceDir: entry.sourceDir } : {}) });
   }
@@ -1150,9 +1080,9 @@ function findMatchingFileRuleEntry(
 
   const absPath = resolveTargetPath(path, ctx.cwd);
   const target = resolveRealTarget(absPath);
-  // Fix round 14 (CRITICAL item 2, claude's own `Ii`): a THIRD candidate joins the link and
-  // resolveRealTarget's own target -- every rule lookup (`Ma`/`cqe`) claude runs over the FULL
-  // `Ii`-derived candidate set, not just these two. Without it, a DANGLING symlink (resolveRealTarget's
+  // Fix round 14 (CRITICAL item 2): a THIRD candidate joins the link and resolveRealTarget's own
+  // target -- every rule lookup runs over the FULL set of symlink variants (as in Claude Code), not
+  // just these two. Without it, a DANGLING symlink (resolveRealTarget's
   // own ENOENT fallback returns the LINK'S OWN literal path, so `target === absPath`) let an allow
   // rule scoped to the cwd match the SAME path twice and silently allow, and let a deny rule scoped to
   // the symlink's real (outside) destination never match at all. `undefined` (chain resolution itself
@@ -1163,12 +1093,11 @@ function findMatchingFileRuleEntry(
   const chainTarget = resolveSymlinkTargetChain(absPath);
   const matchAt = (candidatePath: string): SourcedRuleEntry | null => matchFileRulesGrouped(candidates, candidatePath, { cwd: ctx.cwd, home: ctx.home }, direction);
   if (direction === "allow") {
-    // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): claude's own `ZCt` tries the
-    // TRUSTED-SYMLINK-ALIASED spelling of a candidate path when the raw one does not match an allow
-    // rule (dump-confirmed by content search: `Ea(u,n,r,"allow")`, then `QCt(u)` retried the SAME
-    // way, `"allow"` hardcoded regardless of caller) -- so a rule written `allow //tmp/**` matches a
-    // target whose resolved real path is `/private/tmp/...`, the spelling `realpathSync` actually
-    // returns. DENY/ASK never gets this fallback, matching `ZCt`'s own scope exactly.
+    // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): when the raw candidate path
+    // does not match an allow rule, its TRUSTED-SYMLINK-ALIASED spelling is tried too, as Claude Code
+    // does -- so a rule written `allow //tmp/**` matches a target whose resolved real path is
+    // `/private/tmp/...`, the spelling `realpathSync` actually returns. DENY/ASK never gets this
+    // fallback.
     const matchAtWithAlias = (candidatePath: string): SourcedRuleEntry | null => {
       const direct = matchAt(candidatePath);
       if (direct !== null) return direct;
@@ -1482,10 +1411,10 @@ function findFileDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext):
     // paths.ts's own readDenyBlocksEdit primitive now is. ANY candidate path matching is enough —
     // deny is a safety check (mirrors isCriticalRemoval/isProtectedWrite's own "any candidate path"
     // looping, and matchesRuleForCall's own "ANY dangerous subcommand taints the whole compound").
-    // Fix round 4 (C-1): the grammar is now file-rules.ts's ported pipeline, not the old
+    // Fix round 4 (C-1): the grammar is now file-rules.ts's pipeline, not the old
     // matchFileRuleAtBothEnds -- matchesSingleFileRulePattern's own header explains why this stays
-    // a single-pattern check rather than a grouped one (this is a cross-tool safety net with no
-    // claude analogue, not part of the SV-7/C-1 ported pipeline itself).
+    // a single-pattern check rather than a grouped one (this is a Winter-only cross-tool safety net,
+    // not part of the SV-7/C-1 rule pipeline itself).
     const matchesCandidate = (path: string): boolean => {
       const absPath = resolveTargetPath(path, ctx.cwd);
       const target = resolveRealTarget(absPath);
@@ -1493,7 +1422,7 @@ function findFileDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext):
       // matching isWithinBounds/findMatchingFileRuleEntry's own new treatment above, for the same
       // dangling-symlink reason -- widening a DENY-side "any candidate matches" check is always safe
       // (fail-closed direction only, never narrows what this safety net catches), even though this
-      // function's own header already discloses it has no direct claude analogue.
+      // function's own header already discloses it is Winter-only.
       const chainTarget = resolveSymlinkTargetChain(absPath);
       return (
         matchesSingleFileRulePattern(pattern, absPath, { cwd: ctx.cwd, home: ctx.home }, "denyAsk") ||
@@ -1509,25 +1438,22 @@ function findFileDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext):
 }
 
 /**
- * Fix round 10, item 3 (widened, fix round 11 "minors, promoted"): claude's own read decision
- * function, `D0`, unconditionally calls the EDIT decision function, `zC`, for every read (dump-
- * confirmed: `D0` checks its own Read deny/ask rules first, then a network-trust gate, THEN
- * `T=zC(e,t,R,u)` -- an "allow" from `zC` grants the read too ("edit implies read"), which
- * CLAUDE.md's own standing ruling deliberately does NOT port ("Winter's reads are ungated" -- a
+ * Fix round 10, item 3 (widened, fix round 11 "minors, promoted"): in Claude Code a read is also
+ * decided against the EDIT rules, and an edit "allow" grants the read too ("edit implies read").
+ * CLAUDE.md's own standing ruling deliberately does NOT adopt that ("Winter's reads are ungated" -- a
  * Read/Glob/Grep call consults only Read-authored rules, never Edit ones).
  *
  * What THIS function exists for is narrower and is what the controller's own item-3 ruling actually
- * asks for -- round 10's own version only covered deny; round 11's re-review widened it to match
- * `zC`'s full SEQUENCE, verbatim: "a broken ask rule denies; a broken allow rule denies once it is
- * reached." `zC` itself is deny -> ask -> allow, each stage short-circuiting the next on a WELL-FORMED
- * match (claude's own decision resolves there and never even compiles the later stages' patterns) --
- * so a malformed pattern in a LATER stage only crashes when that stage is actually reached, i.e. no
+ * asks for -- round 10's own version only covered deny; round 11's re-review widened it to the full
+ * edit-rule SEQUENCE: "a broken ask rule denies; a broken allow rule denies once it is reached." The
+ * sequence is deny -> ask -> allow, each stage short-circuiting the next on a WELL-FORMED match (the
+ * decision resolves there and the later stages' patterns are never even compiled) -- so a malformed
+ * pattern in a LATER stage only crashes when that stage is actually reached, i.e. no
  * earlier stage's well-formed rule already matched. This function reproduces exactly that
  * short-circuit-on-well-formed-match SEQUENCING, and nothing else: every `matchFileRulesGrouped`
  * return value is still discarded UNCONDITIONALLY for its OWN decision purposes (a well-formed match
  * at ANY stage has zero effect on the read's outcome, preserving "reads are ungated") -- it is
- * consulted ONLY to decide whether to proceed to the next stage at all, mirroring `zC`'s own
- * early-return. Only a `FileRuleCompileError` throw (from a stage that genuinely gets reached) ever
+ * consulted ONLY to decide whether to proceed to the next stage at all, mirroring that early return. Only a `FileRuleCompileError` throw (from a stage that genuinely gets reached) ever
  * escapes this function, propagating to `evaluate()`'s own catch exactly like round 10's narrower
  * version did.
  */
@@ -1574,8 +1500,8 @@ function crashCheckEditRulesDuringRead(rules: SourcedRuleSet, call: PermissionCa
     );
   }
 
-  if (stageMatched("deny", "denyAsk")) return; // zC resolves here; ask/allow are never reached
-  if (stageMatched("ask", "denyAsk")) return; // zC resolves here; allow is never reached
+  if (stageMatched("deny", "denyAsk")) return; // the sequence resolves here; ask/allow are never reached
+  if (stageMatched("ask", "denyAsk")) return; // the sequence resolves here; allow is never reached
   stageMatched("allow", "allow"); // "once it is reached" -- evaluated (and can crash) only now
 }
 
@@ -1892,8 +1818,8 @@ function resolveCriticalRemoval(mode: PermissionMode, reason: string | undefined
 
 function resolveProtectedWrite(mode: PermissionMode, ctx: EvaluationContext, call: PermissionCall): ModeStageResult {
   const message = "Denied: protected path write requires approval (WS-07 §6.7)";
-  // A SHELL write to a protected path is BYPASS-IMMUNE (dist-session fixes, lane C C3): claude's
-  // checkPathSafetyForAutoEdit is a safety check bypass never clears, and for a shell command the
+  // A SHELL write to a protected path is BYPASS-IMMUNE (dist-session fixes, lane C C3): Claude Code's
+  // path-safety check is one bypass never clears, and for a shell command the
   // Seatbelt used to be the only floor -- which `dangerouslyDisableSandbox` removes. The Edit/Write
   // tools keep §6.7's bypass allow below.
   const bypassImmune = isShellCall(call);
@@ -1991,8 +1917,8 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     return { kind: "allow" };
   }
 
-  // claude's path constraints run before its mode allows (a read-only command, acceptEdits'/auto's
-  // bounded fs-ops) as well as before its allow rules -- but after its sandbox auto-allow, whose
+  // The path constraints run before the mode allows (a read-only command, acceptEdits'/auto's bounded
+  // fs-ops) as well as before the allow rules, as in Claude Code -- but after the sandbox auto-allow, whose
   // containment is what makes an unresolvable write target harmless there.
   const shellGate = shellPathConstraint(call, ctx);
 
@@ -2039,7 +1965,7 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     if (recognized !== null && (recognized.kind === "edit" || recognized.kind === "bashFsOp")) {
       // "other" (a redirect, or a subcommand mixed with an unblessed one) NEVER auto-approves here
       // — it falls through to "unresolved" below, same as an unrecognized command.
-      // A `cd` first moves the base the paths were resolved against (claude asks for this compound).
+      // A `cd` first moves the base the paths were resolved against (Claude Code asks for this compound).
       if (shellGate === undefined && recognized.paths.every((p) => isWithinBounds(p, ctx)) && !(isShellCall(call) && shellCommandChangesDirectory(call))) return { kind: "allow" };
     }
     // Out-of-root, unrecognized, or "other"-kind: WS-07 §2 stage 5's standing-exceptions list does
@@ -2278,17 +2204,11 @@ async function resolveAutoDecision(
 
 // --- `dangerouslyDisableSandbox` (dist-session fixes, lane C C3), replacing RULING P3-J -------------
 //
-// P3-J made every escape mandatory interaction ahead of the allow rules and even under bypass. The
-// pinned claude 0.3.250 Bash `checkPermissions` does something narrower, and this is it:
-//
-//   r = <the ordinary evaluation>;
-//   if (input.dangerouslyDisableSandbox && r.behavior !== "deny" && r.behavior !== "ask"
-//       && !Kit(r.decisionReason)            // the allow did NOT come from a rule
-//       && !shouldUseSandbox(input) && shouldUseSandbox({...input, dangerouslyDisableSandbox: false}))
-//     return { behavior: "ask", decisionReason: { type: "sandboxOverride" }, message: "Run outside of the sandbox" };
-//
-// and `sandboxOverride` is absent from its bypass-immune table, so bypassPermissions turns that ask
-// into an allow. So: deny rules, ask rules, hooks and the protected-path/critical-removal floors
+// P3-J made every escape mandatory interaction ahead of the allow rules and even under bypass. Claude
+// Code's observable rule is narrower: the ordinary evaluation runs first, and an escape it ALLOWED --
+// by mode, not by a rule -- is turned into an ask ("Run outside of the sandbox", decision reason
+// `sandboxOverride`) when the flag really takes the command out of a sandbox it would otherwise run
+// in. That ask is not bypass-immune, so bypassPermissions turns it into an allow. So: deny rules, ask rules, hooks and the protected-path/critical-removal floors
 // decide exactly as for any Bash call; a matching allow RULE runs the escape; bypass runs it; dontAsk
 // denies it; and an escape nothing sanctioned is ASKED -- in every other mode, auto and plan included,
 // through the PermissionRequest hook and the host's canUseTool, never the classifier (the host's own
@@ -2342,14 +2262,10 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
   // pattern's own compile failure, thrown by `matchFileRulesGrouped` (file-rules.ts) from wherever
   // among the six stages below happens to reach it first (deny rules are consulted before ask,
   // which is consulted before allow -- so "a broken ask rule denies; a broken allow rule denies
-  // once it is reached" falls out of stage ORDER, not a special case here). Matches claude's own
-  // architecture exactly: `Ma` (the pattern matcher) has no per-group catch, `D0`/`zC` (the
-  // read/edit decision functions) have none either -- the ONE catch is at the per-TOOL-CALL
-  // boundary far above everything (`aD`/`WKe`'s own try/catch around `e.checkPermissions(...)`,
-  // dump-confirmed), and its fallback (`d8t`, reached when a tool declares no custom
-  // `permissionCheckFailureDecision` -- Read/Edit do not) is a hardcoded deny: "The <name>
-  // permission check failed and its fail-closed posture could not be determined. The call is
-  // denied." `evaluate()` is Winter's own equivalent boundary -- the ONE function every caller asks
+  // once it is reached" falls out of stage ORDER, not a special case here). Claude Code behaves the
+  // same way: a broken rule aborts the whole permission check for one tool call, and that call is
+  // denied with "The <name> permission check failed and its fail-closed posture could not be
+  // determined. The call is denied." `evaluate()` is Winter's per-call boundary -- the ONE function every caller asks
   // "what should happen for this one call" -- so it is the ONE place this is caught, never inside
   // any of the six stages themselves, and never further up (which would still be a crash of
   // whatever called `evaluate()`).
@@ -2451,9 +2367,9 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
     };
   }
 
-  // Fix round 10, item 3 (widened fix round 11 -- deny/ask/allow, not deny alone): mirrors claude's
-  // own D0 unconditionally calling zC for every read -- see `crashCheckEditRulesDuringRead`'s own
-  // header. A THROW here (a malformed Edit(...) rule, in whichever stage zC would actually reach)
+  // Fix round 10, item 3 (widened fix round 11 -- deny/ask/allow, not deny alone): a read also runs
+  // the Edit rules' crash check -- see `crashCheckEditRulesDuringRead`'s own header. A THROW here (a
+  // malformed Edit(...) rule, in whichever stage the edit-rule sequence would actually reach)
   // propagates to `evaluate()`'s own catch; an ordinary match or non-match has no effect at all.
   const readKind = fileRuleKindFor(effectiveCall.toolName);
   if (readKind !== undefined) crashCheckEditRulesDuringRead(policy.rules, effectiveCall, ctx, readKind);
@@ -2580,7 +2496,7 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
   // still wins outright — stage 2 already returned before this stage ever runs.
   const isMandatoryAskUserQuestion = effectiveCall.toolName === ASK_USER_QUESTION_TOOL_NAME;
   // RULING P3-J (the `dangerouslyDisableSandbox` mandate) used to sit here, ahead of the allow rules
-  // and even under bypass; it is replaced by claude's own rule -- see `resolveSandboxEscape`.
+  // and even under bypass; it is replaced by Claude Code's rule -- see `resolveSandboxEscape`.
   // Phase 4 Task 3 (WS-09 §6): a mandatory-interaction reason (stage-3 placement: "never
   // rule-silenced, never auto-approved by acceptEdits/auto, dontAsk denies it") -- see EvaluationContext.
   // requiresInteraction's own header for why this is an injected seam rather than a direct registry
@@ -2588,14 +2504,14 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
   // truthy-coercion" posture for a descriptor-derived signal (registry.ts's own `_meta['anthropic/
   // requiresUserInteraction'] === true` check for the identical reason).
   const isMandatoryMcpInteraction = ctx.requiresInteraction?.(effectiveCall.toolName) === true;
-  // Fix round 11: claude's own `mL`/`$K` (see `isSuspiciousPath`'s own header above) -- a suspicious
+  // Fix round 11: the suspicious-path check (see `isSuspiciousPath`'s own header above) -- a suspicious
   // write-shaped candidate path forces the SAME kind of mandatory, rule-immune, bypass-immune ask as
-  // AskUserQuestion/the private-address mandate just above (`classifierApprovable:!1` in claude's own
-  // source: never softened by an allow rule, acceptEdits, auto's classifier, or bypassPermissions --
+  // AskUserQuestion/the private-address mandate just above (as in Claude Code, never softened by an
+  // allow rule, acceptEdits, auto's classifier, or bypassPermissions --
   // stage 3 runs strictly before stage 4's mode baseline and stage 5's allow rules, which is exactly
   // "before acceptEdits and auto" and, unlike the pre-existing protected-write standing exception
   // (whose OWN bypassPermissions cell is an unconditional allow — WS-07 §6.7), this one does NOT
-  // exempt bypass either, matching `$K`'s own "checked first, never classifier-approvable" posture).
+  // exempt bypass either: checked first, never classifier-approvable).
   const suspiciousWritePath = firstSuspiciousWritePath(effectiveCall, ctx);
   const isMandatorySuspiciousPathAsk = suspiciousWritePath !== undefined;
   // T10-CARRY 1: a hook-forced ask (no rule matched) joins this gate as a reason to reach the
@@ -2710,7 +2626,7 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
           : isMandatoryPrivateAddressAsk && privateTarget !== undefined
             ? privateAddressAskReason(privateTarget)
             : isMandatorySuspiciousPathAsk && suspiciousWritePath !== undefined
-              ? suspiciousPathAskMessage(suspiciousWritePath) // fix round 11: claude's own $K card text, verbatim
+              ? suspiciousPathAskMessage(suspiciousWritePath) // fix round 11: the interface card text, verbatim
               : (hookAskMessage ?? "a PreToolUse hook requested interactive approval (WS-08 §3)");
     const meta: PromptStageMeta = {
       decisionReason,
@@ -2756,7 +2672,7 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
       }
       if (isMandatorySuspiciousPathAsk && suspiciousWritePath !== undefined) {
         // Fix round 11: fails CLOSED like every other mandatory-interaction branch here -- no real
-        // host answered a request claude itself would never classifier-approve.
+        // host answered a request that is never classifier-approvable.
         return {
           decision: "deny",
           mechanism: "mode",
@@ -2831,7 +2747,7 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
   // An ESCAPE (see `resolveSandboxEscape`): a MODE allow does not clear it -- except bypass's -- and an
   // allow RULE (stage 5) does.
   const sandboxEscape = isSandboxEscape(effectiveCall, ctx);
-  // claude's path constraints for a shell call (see shellPathConstraint): no mode allow (evaluateModeStage)
+  // The path constraints for a shell call (see shellPathConstraint): no mode allow (evaluateModeStage)
   // and no allow rule (stage 5) clears one; the reason is what the person is shown.
   const shellGate = shellPathConstraint(effectiveCall, ctx);
 
@@ -2937,8 +2853,8 @@ async function evaluateStages(call: PermissionCall, ctx: EvaluationContext): Pro
     policy.mode === "auto" ? { skip: (entry) => isAutoSuspendedAllowRule(entry.rule, { classifyAllShell: policy.autoConfig?.classifyAllShell === true }) } : undefined,
   );
   // An allow RULE clears a SHELL write only inside the working directories and only when no `cd`
-  // moves the base first -- claude's checkPathConstraints runs before its allow rules and asks for
-  // both (dist-session fixes, lane C C3). The ask then takes this mode's ordinary route below.
+  // moves the base first -- the path constraints run before the allow rules and ask for both, as in
+  // Claude Code (dist-session fixes, lane C C3). The ask then takes this mode's ordinary route below.
   const ruleBlockedShellWrite = allowEntry !== undefined ? shellGate : undefined;
   if (allowEntry && ruleBlockedShellWrite === undefined) {
     return {
@@ -3077,9 +2993,8 @@ export function probeReadAccess(filePath: string, ctx: EvaluationContext): ReadA
   // Fix round 17 (R.3 M-1): the probe is called OUTSIDE `evaluate()` -- per matched file by Glob and
   // Grep, and by the read-before-edit check of Edit/Write/NotebookEdit -- so `evaluate()`'s ONE
   // `FileRuleCompileError` catch never covered it, and a malformed `Read(...)` rule threw out of the
-  // tool (`error_during_execution` for the whole round). claude's boundary is per tool call (`aD`/
-  // `WKe`'s try/catch, falling back to `d8t`'s hardcoded deny -- `evaluate()`'s own header): one call
-  // is denied, never the round. So a compile failure here is `"deny"` for this one probed path; any
+  // tool (`error_during_execution` for the whole round). The boundary is per tool call, as in Claude
+  // Code (`evaluate()`'s own header): one call is denied, never the round. So a compile failure here is `"deny"` for this one probed path; any
   // other throw still propagates, exactly as `evaluate()`'s catch re-throws it.
   try {
     return probeReadAccessStages(filePath, ctx);

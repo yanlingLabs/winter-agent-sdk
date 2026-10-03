@@ -120,12 +120,10 @@ export interface Settings {
    * `permissions.deny`'s own union exists to prevent; see `unionSandboxFilesystemDenyArrays` below).
    * CORRECTED in fix round 10, item C: round 9 reasoned `allowWrite` should NOT union (a widening
    * key should never accumulate) and used the ordinary replace-by-higher-tier merge for it instead
-   * -- the controller's round-10 ruling reverses this, dump-confirmed against claude's own live
-   * sandbox-reconciliation code unioning its OWN rule-derived allowWrite set with the native
-   * sandbox's currently-configured one (`xr=se([...yr,...$r.filter(...)])`, not a replacement).
-   * Claude itself unions the widening array too; ported here to match. `allowRead` (also new this
-   * round) is claude's own read carve-out (`getFsReadConfig`'s `allowWithinDeny`) -- carried and
-   * unioned identically for merge-parity, though `packages/runtime/src/sandbox/profile.ts`'s own
+   * -- the controller's round-10 ruling reverses this: Claude Code accumulates allowWrite entries
+   * from every source rather than letting one replace another, so Winter unions the widening array
+   * too. `allowRead` (also new this round) is the settings key for re-permitting reads inside a
+   * denied region -- carried and unioned identically for merge-parity, though `packages/runtime/src/sandbox/profile.ts`'s own
    * `buildSeatbeltProfile` does not yet enforce it (a disclosed, fails-CLOSED gap: see that file's
    * own `SandboxFilesystemSettings.allowRead` doc comment).
    */

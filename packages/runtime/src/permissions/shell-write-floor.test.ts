@@ -1,14 +1,13 @@
-// The Bash WRITE-TARGET floor (dist-session fixes, lane C C3 prerequisites 1+2) -- mirroring claude's
-// path validation for a shell command's write targets (tools/BashTool/pathValidation.ts's
-// checkPathConstraints -> validatePath -> checkPathSafetyForAutoEdit, run BEFORE the allow rules):
+// The Bash WRITE-TARGET floor (dist-session fixes, lane C C3 prerequisites 1+2) -- mirroring Claude
+// Code's observable checks on a shell command's write targets, which run BEFORE the allow rules:
 //
 //   - a target on the protected set -- the SDK's own (dot-dirs, VCS/editor dirs, shell rc files,
 //     lockfiles), the resolved winter home wholesale, and the three control-plane filenames at any
 //     depth -- is never auto-approved: no allow rule clears it and, for a SHELL write, not bypass
-//     either (claude's safety check is bypass-immune);
+//     either (the safety check is bypass-immune, as in Claude Code);
 //   - a target a host's Edit/Write/Read deny rule names is DENIED (already true; pinned here);
 //   - an allow RULE does not clear a write outside the session's working directories, nor a
-//     compound command that changes directory before writing -- those ask, as claude's do.
+//     compound command that changes directory before writing -- those ask, as in Claude Code.
 //
 // Until now the Seatbelt was the only floor for a shell write to these paths, and an escape
 // (`dangerouslyDisableSandbox`) removes the Seatbelt.
@@ -156,7 +155,7 @@ describe("an allow RULE does not clear a write outside the working directories, 
   });
 });
 
-// --- claude's checkPathConstraints, ported (the security review of 0af80de) --------------------------
+// --- the write-target path constraints (the security review of 0af80de) ------------------------------
 //
 // "A matching allow rule runs the escape" is only as good as the write-target check in front of the
 // rule. Each command below wrote somewhere the check never saw -- `~` read as `<cwd>/~`, an expansion
@@ -166,7 +165,7 @@ const escaped = (command: string): PermissionCall => ({ toolName: "Bash", input:
 const RULES = (): SourcedRuleEntry[] => [rule("Bash(echo:*)", "allow"), rule("Bash(cp:*)", "allow"), rule("Bash(mv:*)", "allow")];
 const escapeCtx = (mode: PermissionMode, rules: SourcedRuleEntry[] = RULES()) => ctxWith(mode, rules, { bashSandboxEscape: (c: PermissionCall) => c.input["dangerouslyDisableSandbox"] === true });
 
-describe("claude's path constraints run BEFORE the allow rule that would clear an escape", () => {
+describe("the write-target path constraints run BEFORE the allow rule that would clear an escape", () => {
   const cases: Array<[string, string, string]> = [
     ["`~/` is the home directory, outside the working directories", "echo k >> ~/.ssh/authorized_keys", "outside the allowed working directories"],
     ["a LaunchAgent under `~/`", "echo x >> ~/Library/LaunchAgents/evil.plist", "outside the allowed working directories"],
@@ -193,7 +192,7 @@ describe("claude's path constraints run BEFORE the allow rule that would clear a
     });
   }
 
-  test("process substitution and cp/mv flags carry claude's reasons when nothing protected is named", async () => {
+  test("process substitution and cp/mv flags carry their own reasons when nothing protected is named", async () => {
     for (const [command, reason] of [
       ["echo x > >(tee notes.txt)", "Process substitution (>(...) or <(...)) can execute arbitrary commands and requires manual approval"],
       ["cp -r src dst", "cp command with flags requires manual approval"],
@@ -301,7 +300,7 @@ describe("a command hidden inside another is still seen", () => {
   });
 });
 
-describe("protected targets match case-insensitively (claude's normalizeCaseForComparison)", () => {
+describe("protected targets match case-insensitively", () => {
   for (const command of ["echo x > .GIT/config", "echo '{}' > .Winter/Permissions.Local.json", "echo '{}' > sub/SETTINGS.json", "echo x >> ~/.GITCONFIG"]) {
     test(`bypass: \`${command}\` is asked`, async () => {
       const { ctx, prompts } = ctxWith("bypassPermissions", []);

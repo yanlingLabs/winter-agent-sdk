@@ -11,8 +11,8 @@
 // tokens), never an exact ranking ORDER, per §12 Q3's own proposed tolerance ("no assertion beyond
 // requested tool discoverable via its own name/description tokens").
 //
-// Deliberately NOT reimplementing the inspected private pipeline's `+term` prefilters or per-term
-// weight table -- those are exactly the "version-specific... not a stable contract" internals §8.3
+// Deliberately NOT reproducing any particular release's `+term` prefilters or per-term weights --
+// those are exactly the "version-specific... not a stable contract" internals §8.3
 // disclaims. This scorer is intentionally simple and REPLACEABLE (§8.3's own word): a future task may
 // swap it for an embedding/reranker-backed implementation without touching search.ts's own contract
 // (RankableCandidate/rankCandidates is the whole surface search.ts depends on).

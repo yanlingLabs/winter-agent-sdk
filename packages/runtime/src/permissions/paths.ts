@@ -130,12 +130,12 @@ function joinBaseAndRest(base: string, rest: string): string {
 // four spellings WS-07 §3.1 or the task's own ruling names, but the identical shape structurally,
 // and treating it identically is the more defensible single rule rather than four hand-picked
 // string literals (capture-noted, like every other anchor-edge judgment call in this file).
-// SV-6 (the router same-view test, real claude 2.1.250): the "author already said how far the rule
-// reaches" test must recognise EVERY glob metacharacter claude's own grammar has, not only `*` --
+// SV-6 (the router same-view test against the real claude binary): the "author already said how far
+// the rule reaches" test must recognise EVERY glob metacharacter the rule grammar has, not only `*` --
 // `Read(fo?)` or `Read([abc])` are just as much an explicit wildcard as `Read(fo*)`, so they must
 // compile through the general glob path below rather than being treated as an exact bare name.
 // Escape-aware: `\*`, `\?`, `\[` are literal characters to the AUTHOR (whatever the compiled regex
-// ultimately does with them -- see globSegmentToRegexBody's own header for `\?`'s claude-side
+// ultimately does with them -- see globSegmentToRegexBody's own header for the `\?`
 // quirk), so a pattern that is ENTIRELY escaped metacharacters (e.g. `Read(\*)`, matching a literal
 // filename "*") is still a bare single-segment name, not a wildcard.
 function hasUnescapedWildcard(text: string): boolean {
@@ -159,8 +159,8 @@ function isSingleSegmentDirectoryPattern(anchor: AnchorResolution): boolean {
 // Fix round 4: exported so evaluator.ts's file-rules.ts-backed callers normalize a call's raw path
 // field the SAME way this module's own matchFileRule always has, rather than a second, slightly
 // different resolve-and-normalize step drifting in over time.
-// Fix round 10, item B: claude's own `ht` (dump byte offset 12083670, pinned 2.1.250) trims its raw
-// input FIRST, before anything else -- `let r=t.trim()`, both ends, not merely trailing. Without
+// Fix round 10, item B: a tool's raw path is trimmed FIRST, before anything else -- both ends, not
+// merely trailing -- as Claude Code does. Without
 // this, an unescaped trailing-space deny rule still failed open: round 9's own
 // `escapeFileRulePathSegment` fix covers the RULE side (a Winter-built rule preserves its own real
 // trailing whitespace); this covers the QUERY side (the path being CHECKED). `join`/`isAbsolute`/
@@ -168,7 +168,7 @@ function isSingleSegmentDirectoryPattern(anchor: AnchorResolution): boolean {
 // space here while the real `ignore` package's own line-trimming (round 9's own finding) silently
 // dropped it from an UNESCAPED rule's own pattern text -- the two sides never converged. Trimming
 // here first means a plain, unescaped `Read(//r/sp )` deny rule protects a call naming `/r/sp `
-// (trailing space and all) exactly as it does on claude, with no escaping required.
+// (trailing space and all) exactly as it does in Claude Code, with no escaping required.
 export function resolveTargetPath(path: string, cwd: string): string {
   const trimmed = path.trim();
   const abs = isAbsolute(trimmed) ? trimmed : join(cwd, trimmed);
@@ -195,66 +195,35 @@ function escapeRegexChar(ch: string): string {
 // WS-21 fix round 4 (minors): SUPERSEDED for Read/Edit permission-rule matching by
 // `permissions/file-rules.ts` (C-1, built on the real `ignore` package) -- retained here only as the
 // matcher for `context/rules.ts`'s `paths:` conditional-attachment globs (F17), which were never
-// asked to replicate claude's file-rule grammar bullet-for-bullet. Said plainly here, at the top,
-// because two of the bullets below now say the opposite of what this block's own next two lines
-// claim ("ported... exactly") -- see those two bullets' own fix-round-4 notes for which claims are
-// wrong and why; this note is what makes reading top-down not land on the wrong one first.
+// asked to reproduce the file-rule grammar bullet-for-bullet. Two places where this matcher and the
+// file-rule grammar differ are noted below and kept as behaviour on purpose.
 //
-// SV-6 (the router same-view test, real claude 2.1.250): the ABSOLUTE-PATH-PATTERN grammar, ported
-// to match claude's own file-rule matcher exactly -- the bundled `ignore` npm package (dump-
-// confirmed, claude CLI 2.1.250 / agent-sdk 0.3.250: the package's own `Ignore` class,
-// `constructor({ignorecase:t=!0,ignoreCase:e=t,...})`, `ignorecase` defaulting TRUE), not Winter's
-// own pre-fix-round-3 "every character but `*` is literal" grammar. Exact semantics implemented
-// (measured/decoded against the bundled package's own REPLACERS pipeline, dump-confirmed):
+// SV-6: the ABSOLUTE-PATH-PATTERN grammar this compiles, gitignore-flavoured (case-insensitive, see
+// compileFsGlobToRegex) rather than Winter's pre-fix-round-3 "every character but `*` is literal":
 //
-//   - `*` matches zero or more characters WITHIN one path segment (unchanged from before this fix --
-//     WS-07 §3.1's own "`*` stays within one path segment", and "build*" matching bare "build" too).
-//   - `?` matches EXACTLY ONE character, never `/` (the `ignore` package's own
-//     `[/(?!\\)\?/g, () => "[^/]"]` replacer).
-//   - `[...]` is a CHARACTER CLASS, passed through to the compiled regex near-verbatim (the
-//     package's own bracket-expression replacer keeps the class body largely as authored); a
-//     malformed class -- unterminated, or one whose *compiled* regex construction throws for any
+//   - `*` matches zero or more characters WITHIN one path segment (WS-07 §3.1's own "`*` stays
+//     within one path segment", and "build*" matching bare "build" too).
+//   - `?` matches EXACTLY ONE character, never `/`.
+//   - `[...]` is a CHARACTER CLASS, passed through to the compiled regex largely as authored; a
+//     malformed class -- unterminated, or one whose compiled regex construction throws for any
 //     reason -- degrades HERE to an impossible class (`[]`, matches nothing) rather than a thrown
-//     SyntaxError propagating out of a rule-matching call.
-//     WS-21 fix round 4 (minors, review-L1a-fix3-findings.md): the line this replaces claimed that
-//     was "the SAME never-match posture the package's own replacer falls back to" -- WRONG, and
-//     corrected here rather than silently left. A REVERSED RANGE such as `[z-a]` is exactly the
-//     case that shows the gap: the real `ignore` package (confirmed against the pinned 7.0.5 source,
-//     `file-rules.ts`'s own citation) drops only the offending range and keeps matching on the rest
-//     of the class, where this function's `new RegExp(...)` construction throws on the WHOLE
-//     pattern and this catch degrades the WHOLE class to never-match -- a real behavioural
-//     divergence from claude, not a "same posture" restated. It is left AS BEHAVIOUR here
-//     deliberately: this module is no longer the claude-parity engine for `Read`/`Edit` file rules
-//     (`file-rules.ts`, built on the real package, is -- see this module's own header), and its one
-//     remaining production caller (`context/rules.ts`'s `paths:` conditional-attachment glob, F17)
-//     was never asked to replicate claude's file-rule grammar bullet-for-bullet.
-//   - `\[` (and its natural pair `\]`) escapes to a literal `[`/`]` -- the escape the package's own
-//     grammar meaningfully recognises (its bracket replacer's `e===g` branch: an escaped `[` is
-//     re-escaped as a literal match and never opens a class; a `]` is not a metacharacter outside
-//     an open class to begin with, so escaping it is a courtesy pairing, not a distinct mechanism).
-//   - `\*` escapes to a literal `*` -- recognised the same deliberate way (the package's own
-//     star-wildcard replacer only ever converts a run of UNESCAPED stars).
-//   - `\?` is a CLAUDE-SIDE QUIRK, not a Winter simplification, and is ported exactly rather than
-//     "fixed": the package's grammar has no dedicated `\?`-escape rule the way it does for `[`/`*`,
-//     so the backslash is not consumed as an escape at all -- it survives into the compiled pattern
-//     as a LITERAL BACKSLASH CHARACTER requirement immediately before the (still-wildcarded) `?`
-//     slot. No real path segment contains a literal backslash, so an author-written `\?` compiles
-//     to something that can never match a real target -- "an escaped `\?` never matches" is
-//     therefore an accurate description of the OBSERVABLE behaviour, not a bug Winter is expected to
-//     paper over.
+//     SyntaxError propagating out of a rule-matching call. DIFFERS from the file-rule grammar: for a
+//     REVERSED RANGE such as `[z-a]` the `ignore` package drops only the offending range and keeps
+//     matching on the rest of the class, while here the whole class never matches. Kept as
+//     behaviour: this module is no longer the engine for `Read`/`Edit` file rules.
+//   - `\[` (and its natural pair `\]`) escapes to a literal `[`/`]`: an escaped `[` never opens a
+//     class; a `]` is not a metacharacter outside an open class anyway, so escaping it is a
+//     courtesy pairing, not a distinct mechanism.
+//   - `\*` escapes to a literal `*` (only UNESCAPED stars are wildcards).
+//   - `\?` NEVER MATCHES a real path, as in the file-rule grammar: there is no `\?` escape, so the
+//     backslash is not consumed -- it stays a LITERAL BACKSLASH requirement in front of the
+//     (still-wildcarded) `?` slot, and no real path segment contains one.
 //   - `{`, `}`, `(`, `)`, `!`, `#` and a literal space all match themselves LITERALLY in THIS
-//     function -- none of them carry glob meaning inside a pattern body here.
-//     WS-21 fix round 4 (minors, review-L1a-fix3-findings.md): the line this replaces claimed `!`/
-//     `#` "do not apply here" for a `Read`/`Edit` specifier because it is "one rule's pattern text,
-//     never a multi-line ignore-file body" -- WRONG. Claude's own pipeline feeds a Read/Edit
-//     specifier's pattern through the identical `ignore()` machinery a `.gitignore` LINE goes
-//     through, one line at a time, so a leading `!` (negation) or `#` (comment) DOES carry its
-//     gitignore meaning there, "one rule, not a multi-line file" notwithstanding -- confirmed by the
-//     real `ignore` package's own replacers, which `file-rules.ts` now runs unmodified for every
-//     Read/Edit rule. Left as BEHAVIOUR here deliberately, same reasoning as the character-class
-//     note above: this function is no longer the claude-parity engine for those rules.
+//     function. DIFFERS from the file-rule grammar, where a leading `!` (negation) or `#` (comment)
+//     carries its gitignore meaning, exactly as on a `.gitignore` line. Kept as behaviour, for the
+//     same reason as the character-class note above.
 //   - Every other character is an ordinary literal, regex-escaped only when it is itself a regex
-//     metacharacter (unchanged from before this fix).
+//     metacharacter.
 //
 // Case-insensitivity is applied by the CALLER (compileFsGlobToRegex, the `i` flag) rather than
 // here, since it is a whole-regex construction concern, not a per-segment one.
@@ -289,13 +258,13 @@ function globSegmentToRegexBody(segment: string): string {
         continue;
       }
       if (next === "?") {
-        // The "\? never matches" quirk, ported exactly -- see this function's own header. The
+        // The "\? never matches" quirk -- see this function's own header. The
         // literal backslash requirement is what makes it unmatchable against a real path.
         out += "\\\\[^/]";
         i++;
         continue;
       }
-      // No other escape is meaningfully recognised by claude's own grammar either -- the backslash
+      // No other escape is meaningfully recognised by the grammar either -- the backslash
       // itself is just another literal character to match, like every other unescaped one.
       out += "\\\\";
       continue;
@@ -439,9 +408,8 @@ export function exceedsStarsPerSegmentCap(pattern: string): boolean {
 // rule rather than three positional variants, since WS-07 §3.1 pins "`**` crosses directories" as
 // one general fact, not gitignore's own fuller grammar. Flagged in the report; a one-line change
 // (require 1+ reps only when the "**" is the LAST segment) if a differential capture disagrees.
-// SV-6: `i` (case-insensitive), matching claude's own matcher exactly -- the bundled `ignore`
-// package's `ignorecase` option defaults TRUE (dump-confirmed, this function's own sibling comment
-// on globSegmentToRegexBody). A character class whose body is malformed enough to make the FINAL
+// SV-6: `i` (case-insensitive), as the file-rule grammar is (the `ignore` package's `ignorecase`
+// option defaults TRUE). A character class whose body is malformed enough to make the FINAL
 // regex construction itself throw (a real, if rare, possibility despite sanitizeCharClassBody's own
 // escaping) degrades to never-matching rather than propagating a SyntaxError out of a rule-matching
 // call -- the same never-match posture this compiler already gives an unterminated `[...]`.
@@ -555,65 +523,65 @@ export function resolveRealTarget(path: string): string {
   }
 }
 
-// Fix round 13 (Important item 2, claude's own `Ii`/here named `yh` in its own dump chunk -- see
-// this function's own citation below): a MANUAL, ITERATIVE symlink-chain resolver, distinct from
-// `resolveRealTarget` above and NOT a replacement for it -- `resolveRealTarget` is correct and
-// unchanged for its own, much more common purpose ("a not-yet-existing WRITE target with no symlink
-// involved at all," where falling back to the literal path text is exactly right). This one exists
-// for a narrower, security-relevant case `resolveRealTarget` cannot answer: a symlink whose ULTIMATE
-// target does not (yet) fully exist on disk -- a dangling link, or a link into a not-yet-created
-// subtree (`ln -s .git/hooks/pre-commit innocent` in a fresh repo with no hooks installed yet).
-// `realpathSync` throws for the WHOLE chain in that case, and `resolveRealTarget`'s own ENOENT
-// fallback walks up `path`'s OWN ancestors -- it never reads what the symlink ITSELF points at, so
-// it falls back to the LINK'S OWN literal name, silently losing the fact that it was ever a symlink
-// at all.
+// The target a path's FULL symlink chain points at, followed by hand so that a link whose final
+// target does not exist (a dangling link, or a link into a not-yet-created subtree such as
+// `ln -s .git/hooks/pre-commit innocent` in a repo with no hooks yet) still reports where it points.
+// `resolveRealTarget` cannot: on a missing target its fallback walks `path`'s OWN ancestors and gives
+// back the link's own name, losing the fact it was ever a symlink. Not a replacement for it --
+// `resolveRealTarget` stays right for its common case, a not-yet-existing write target.
 //
-// claude's own `Ii` (dump byte 15346812; minified as `yh` in the chunk it was found in --
-// content-search on `readlinkSync` near the sandbox/permissions super-region, since a name search
-// for the literal `Ii` collides with unrelated same-named functions in other bundle chunks, the
-// SAME cross-chunk problem this whole engagement keeps hitting): up to `eR` (40) hops, each one
-// tries `realpathSync` on the whole current candidate; on failure, walks UP via `dirname` to find
-// the DEEPEST ancestor that DOES fully resolve, then `readlinkSync`s the immediate child under that
-// ancestor (works even when that child is a DANGLING symlink, unlike `realpathSync`) -- a non-symlink
-// (readlink itself throws) returns the reconstructed "resolved-ancestor + literal remainder" path,
-// matching `resolveRealTarget`'s own fallback shape exactly; a symlink (readlink succeeds) splices
-// its OWN raw target text in place of the unresolved child and loops again, so a CHAIN of dangling
-// symlinks is followed just as far as claude's own `Ii` follows it.
-const MAX_SYMLINK_CHAIN_HOPS = 40;
-
+// Behaviour, in at most 40 resolution steps (after which it gives up, returning `undefined` -- so a
+// symlink loop gives up too). Each step, with `current` starting as `path`:
+//   1. if `realpathSync(current)` succeeds, that is the answer;
+//   2. otherwise find the deepest ancestor of `current` that `realpathSync` resolves, walking up with
+//      `path.dirname` and remembering each name passed (`path.basename`); if `dirname` stops changing
+//      before any ancestor resolves, give up (`undefined`);
+//   3. the first name below that real ancestor is the first unresolvable entry. If it is not a
+//      symlink (`readlinkSync` fails), the answer is the real ancestor joined (`path.join`) with all
+//      the remembered names;
+//   4. if it is a symlink, its stored target is resolved against the entry's directory
+//      (`path.resolve`), the remaining remembered names are joined back on (`path.join`), and that is
+//      `current` for the next step.
 export function resolveSymlinkTargetChain(path: string): string | undefined {
   let current = path;
-  for (let hop = 0; hop < MAX_SYMLINK_CHAIN_HOPS; hop++) {
+  for (let step = 0; step < MAX_SYMLINK_CHAIN_STEPS; step++) {
+    const whole = tryRealpath(current);
+    if (whole !== undefined) return whole;
+
+    // Walk up to the deepest ancestor that resolves, remembering the names passed (nearest the
+    // ancestor first once the walk is done).
+    const below: string[] = [];
+    let dir = current;
+    let realAncestor: string | undefined;
+    while (realAncestor === undefined) {
+      const parent = dirname(dir);
+      if (parent === dir) return undefined;
+      below.unshift(basename(dir));
+      dir = parent;
+      realAncestor = tryRealpath(dir);
+    }
+
+    const [firstName, ...rest] = below as [string, ...string[]];
+    const entry = join(realAncestor, firstName);
+    let linkTarget: string;
     try {
-      return realpathSync(current);
+      linkTarget = readlinkSync(entry);
     } catch {
-      // fall through to the manual, one-hop-at-a-time walk below
+      return join(realAncestor, ...below);
     }
-    let probe = current;
-    const remainder: string[] = [];
-    let deepestReal: string | null = null;
-    while (deepestReal === null) {
-      const parent = dirname(probe);
-      if (parent === probe) return undefined; // reached the fs root and still nothing resolves -- give up
-      remainder.unshift(basename(probe));
-      probe = parent;
-      try {
-        deepestReal = realpathSync(probe);
-      } catch {
-        // keep walking up
-      }
-    }
-    const firstUnresolved = join(deepestReal, remainder[0]!);
-    let linkValue: string | null = null;
-    try {
-      linkValue = readlinkSync(firstUnresolved);
-    } catch {
-      // not a symlink at all -- linkValue stays null, matching claude's own w===null branch
-    }
-    if (linkValue === null) return join(deepestReal, ...remainder);
-    current = join(resolve(dirname(firstUnresolved), linkValue), ...remainder.slice(1));
+    current = join(resolve(realAncestor, linkTarget), ...rest);
   }
   return undefined;
+}
+
+const MAX_SYMLINK_CHAIN_STEPS = 40;
+
+function tryRealpath(p: string): string | undefined {
+  try {
+    return realpathSync(p);
+  } catch {
+    return undefined;
+  }
 }
 
 // WS-24: the ends one ABSOLUTE path resolves to, as the live file-rule check sees them -- its real
@@ -639,9 +607,9 @@ export function resolveSymlinkEnds(path: string): SymlinkEnds {
 //
 // Fix round 13: a THIRD candidate, `resolveSymlinkTargetChain`'s own result, joins the SAME "deny if
 // any end matches, allow only if every end does" composition -- `checkSymlinkBothEnds`'s own header
-// already calls this "a bare predicate-composer" (Ruling P2-J, a Winter-specific mechanism, not
-// itself a direct claude port), so extending its own "both/either" rule to a third candidate is this
-// module's own consistent choice, not a claim about claude's own (different) allow-retry mechanism.
+// already calls this "a bare predicate-composer" (Ruling P2-J, a Winter-specific mechanism), so
+// extending its own "both/either" rule to a third candidate is this module's own consistent choice,
+// not a claim about Claude Code's (different) allow-retry mechanism.
 // `undefined` when the chain resolver gives up entirely (mirrors `resolveRealTarget`'s own
 // "give up at the fs root" case) -- simply omitted from the candidate set, never treated as a match.
 export function checkSymlinkBothEnds(

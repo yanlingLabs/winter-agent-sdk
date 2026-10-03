@@ -150,10 +150,10 @@ const GIT_READ_ONLY_SUBCOMMANDS: ReadonlySet<string> = new Set(["status", "log",
 // below is shaped so a later task can add `sed: /(^|\s)-i\b/` alongside a `sed` entry in
 // READ_ONLY_COMMANDS without touching isRecognizedReadOnly's logic at all.
 //
-// claude's read-only find excludes every action that writes or runs a command (readOnlyValidation.ts:
-// -delete, -exec, -execdir, -ok, -okdir, -fprint, -fprint0, -fprintf, -fls); rg's `--pre` runs a
-// command on every file. For both, ANY `$`/backtick is refused too: an expansion can assemble the flag
-// (`rg . "$Z--pre=bash" FILE` -- claude's own example).
+// A read-only `find` excludes every action that writes or runs a command (-delete, -exec, -execdir,
+// -ok, -okdir, -fprint, -fprint0, -fprintf, -fls), as in Claude Code; rg's `--pre` runs a command on
+// every file. For both, ANY `$`/backtick is refused too: an expansion can assemble the flag
+// (`rg . "$Z--pre=bash" FILE`).
 const WRITE_CAPABLE_FLAGS: Readonly<Record<string, RegExp>> = {
   find: /(^|\s)-(?:delete|exec|execdir|ok|okdir|fprint0?|fprintf|fls)(\s|$)|[$`]/,
   rg: /--pre|[$`]/,
@@ -911,11 +911,12 @@ export function isRecognizedReadOnly(command: string): boolean {
 // Glob/prefix pattern compiler (WS-07 §3's general `*` / trailing `:*` rule)
 // ---------------------------------------------------------------------------------------------
 
-// Exported (WS-21 fix round 9): claude's own `Tu(t){return t.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}`
-// (dump-confirmed, byte offset 11028957 of the pinned 2.1.250 dump) is the IDENTICAL regex --
-// `commands/resolver.ts`'s own port of claude's `zE` (the full `$ARGUMENTS`/named-arg substituter)
-// reuses this one implementation rather than duplicating it, since both are literally the same
-// function serving the same "safely embed a literal name inside a dynamically-built RegExp" need.
+/**
+ * `s` with a backslash put before every character a JavaScript regular expression gives a meaning
+ * to -- `. * + ? ^ $ { } ( ) | [ ] \` -- so it can be embedded as literal text in a `RegExp` built at
+ * run time. Every other character is left as it is. Shared with `commands/resolver.ts`,
+ * `skills/permission-rules.ts` and `settings/env-filter.ts`.
+ */
 export function escapeRegExpLiteral(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1041,107 +1042,102 @@ const SKILL_RULE_TOOL = "Skill";
 
 const FIELD_VALUE = /^([A-Za-z_][A-Za-z0-9_]*):(.*)$/s;
 
-// Fix round 8 (a rule-content parity item found by the integration run on both real binaries):
-// claude's `Tool(content)` extraction and unescape, ported exactly from the pinned 2.1.250 dump.
-// This SUPERSEDES the plain greedy regex this module used to use (`/^([^\s(]+)\((.*)\)$/s`), which
-// found the specifier boundary correctly for an UNESCAPED literal paren (a real directory named
-// "Project (old)" already worked) but never unescaped the captured content at all -- so a rule
-// authored (or, cross-leg, PERSISTED BY CLAUDE ITSELF) with claude's own escaped spelling required
-// a literal backslash where claude requires two, and misread an escaped `\)` mid-content as
-// ordinary text rather than the literal `)` it denotes.
+// ---------------------------------------------------------------------------------------------
+// `Tool(content)`: splitting the rule text and unescaping the content
+// ---------------------------------------------------------------------------------------------
 //
-// The exact grammar (dump-confirmed, byte offset ~11910950 of the pinned 2.1.250 dump):
-//   function l(e,r){for(let t=0;t<e.length;t++)if(e[t]===r){let n=0,s=t-1;while(s>=0&&e[s]==="\\")n++,s--;if(n%2===0)return t}return-1}
-//   function u(e,r){for(let t=e.length-1;t>=0;t--)if(e[t]===r){let n=0,s=t-1;while(s>=0&&e[s]==="\\")n++,s--;if(n%2===0)return t}return-1}
-//   function a(e){return e.replaceAll("\\(","(").replaceAll("\\)",")").replaceAll("\\\\","\\")}
-//   function jr(e){
-//     let r=l(e,"(");
-//     if(r===-1)return{toolName:vd(e)};
-//     let t=u(e,")");
-//     if(t===-1||t<=r)return{toolName:vd(e)};
-//     if(t!==e.length-1)return{toolName:vd(e)};
-//     let n=e.substring(0,r),s=e.substring(r+1,t);
-//     if(!n)return{toolName:vd(e)};
-//     if(s===""||s==="*")return{toolName:vd(n)};
-//     let o=a(s);
-//     return{toolName:vd(n),ruleContent:o}
-//   }
-// `l`/`u` are an ESCAPE-AWARE first/last-index-of: an occurrence of `r` at position `t` counts only
-// when it is preceded by an EVEN run of backslashes (an odd run means IT is the one being escaped).
-// `jr` requires the last unescaped ")" to be the string's literal final character (a "stray text
-// after the close" shape falls back to the whole string as a bare tool name, same posture this
-// module already had); `a` then runs, ONCE, as three SEQUENTIAL passes in this exact order -- `\(`
-// -> `(`, then `\)` -> `)`, then `\\` -> `\` -- before any specifier-family parsing ever sees the
-// content. The write side (`Fr`/`c`, same dump region) is the exact inverse, applied in the
-// opposite order: `c(e)` escapes `\` -> `\\` first, then `(` -> `\(`, then `)` -> `\)` -- so a rule
-// claude itself persists for a path with a literal backslash or literal parens is written
-// pre-escaped this way, and this module must read it back identically or silently fail to match a
-// rule the other leg wrote, in a shared home this whole workstream exists to make behave as one.
-//
-// `vd` (claude's tool-name-alias table, e.g. `KillShell`->`TaskStop`) is Winter's OWN separate
-// concern and out of scope here -- Winter's toolName is used as authored, unaliased.
-//
-// ONE DELIBERATE NARROWING, disclosed: `jr` places no shape restriction on the toolName half at all
-// (an embedded space is accepted verbatim, e.g. "Read foo(bar)" parses with toolName "Read foo").
-// This module keeps its own pre-existing, narrower guard -- a toolName containing whitespace falls
-// back to the bare-tool-name treatment, exactly as the superseded regex already gave it (that
-// regex's own `[^\s(]+` never matched a space either) -- because every downstream toolName
-// comparison in this codebase assumes an exact, whitespace-free name, and no fixture past or present
-// needs a whitespace-bearing one to parse as anything else.
-function isEscapedAt(s: string, t: number): boolean {
-  let backslashes = 0;
-  let i = t - 1;
-  while (i >= 0 && s[i] === "\\") {
-    backslashes++;
-    i--;
+// A rule is `Tool` or `Tool(content)`, in the rule grammar Winter shares with Claude Code (a rule
+// one runtime writes into a shared settings file must read back identically in the other). Inside
+// the content, `\(`, `\)` and `\\` stand for a literal `(`, `)` and `\`; any other backslash is an
+// ordinary character. A parenthesis that is preceded by an ODD number of consecutive backslashes is
+// escaped; one preceded by an even number (zero included) is unescaped.
+
+/** The two halves of `Tool(content)`, before the content is unescaped. */
+interface RuleTextParts {
+  toolName: string;
+  rawContent: string;
+}
+
+/**
+ * Splits an (already trimmed) rule text into its tool name and its raw content, or `undefined` when
+ * the text is not of the form `Tool(content)` -- the caller then reads the whole text as a bare tool
+ * name. It is of that form when:
+ *   - it holds an unescaped `(`; the FIRST one opens the content, and the tool name is everything
+ *     before it, which must not be empty;
+ *   - the LAST unescaped `)` is the text's final character and comes after that opening `(`.
+ * The raw content is everything strictly between the two. No other constraint is placed on the tool
+ * name (`parseRule` adds its own whitespace check; the validator does not).
+ */
+function splitRuleText(text: string): RuleTextParts | undefined {
+  const { opens, closes } = unescapedParens(text);
+  const open = opens[0];
+  if (open === undefined || open === 0) return undefined; // no unescaped `(`, or an empty tool name
+  const close = closes[closes.length - 1];
+  if (close === undefined || close !== text.length - 1 || close <= open) return undefined;
+  return { toolName: text.slice(0, open), rawContent: text.slice(open + 1, close) };
+}
+
+/**
+ * The positions of every unescaped `(` and `)` in `text`, in order, from one left-to-right pass that
+ * tracks the length of the current run of backslashes: a parenthesis after an even run (zero
+ * included) is unescaped.
+ */
+function unescapedParens(text: string): { opens: number[]; closes: number[] } {
+  const opens: number[] = [];
+  const closes: number[] = [];
+  let backslashRun = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "\\") {
+      backslashRun++;
+      continue;
+    }
+    if (backslashRun % 2 === 0) {
+      if (ch === "(") opens.push(i);
+      else if (ch === ")") closes.push(i);
+    }
+    backslashRun = 0;
   }
-  return backslashes % 2 !== 0;
+  return { opens, closes };
 }
 
-/** claude's `l` -- the first UNESCAPED occurrence of `ch` in `s`, or -1. */
-function firstUnescaped(s: string, ch: string): number {
-  for (let t = 0; t < s.length; t++) if (s[t] === ch && !isEscapedAt(s, t)) return t;
-  return -1;
-}
-
-/** claude's `u` -- the LAST UNESCAPED occurrence of `ch` in `s`, or -1. */
-function lastUnescaped(s: string, ch: string): number {
-  for (let t = s.length - 1; t >= 0; t--) if (s[t] === ch && !isEscapedAt(s, t)) return t;
-  return -1;
-}
-
-/** claude's `a` -- the Tool(content) parse-side unescape, run once, in this exact sequential order. */
+/**
+ * The content with its escapes removed, read left to right: a backslash followed by `(`, `)` or a
+ * second backslash stands for that following character (the pair is consumed); every other character
+ * -- a backslash before anything else included -- stands for itself.
+ */
 function unescapeRuleContent(raw: string): string {
-  return raw.replaceAll("\\(", "(").replaceAll("\\)", ")").replaceAll("\\\\", "\\");
+  let out = "";
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]!;
+    const next = raw[i + 1];
+    if (ch === "\\" && (next === "(" || next === ")" || next === "\\")) {
+      out += next;
+      i++;
+    } else {
+      out += ch;
+    }
+  }
+  return out;
 }
 
 export function parseRule(raw: string): ParsedRule {
   const trimmed = raw.trim();
   const bareFallback = (): ParsedRule => ({ toolName: trimmed, isBareEquivalent: true });
 
-  const openIdx = firstUnescaped(trimmed, "(");
-  if (openIdx === -1) return bareFallback();
-  const toolName = trimmed.slice(0, openIdx);
-  if (toolName === "" || /\s/.test(toolName)) return bareFallback();
-  const closeIdx = lastUnescaped(trimmed, ")");
-  // Also refuses stray trailing text after the real close (`closeIdx !== trimmed.length - 1`) --
-  // an unusual input no fixture exercises; treating the whole string as a literal bare tool name is
-  // a safe, inert failure mode since it won't equal any real toolName.
-  if (closeIdx === -1 || closeIdx <= openIdx || closeIdx !== trimmed.length - 1) return bareFallback();
+  // Not of the form `Tool(content)` -- including stray text after the real close, which reads as a
+  // literal bare tool name that equals no real tool, an inert failure mode.
+  const parts = splitRuleText(trimmed);
+  if (parts === undefined) return bareFallback();
+  const { toolName, rawContent } = parts;
+  // A tool name with whitespace in it is read as a bare name too: every tool-name comparison
+  // downstream expects an exact, whitespace-free name.
+  if (/\s/.test(toolName)) return bareFallback();
 
-  const rawContent = trimmed.slice(openIdx + 1, closeIdx);
-  // `jr` itself treats an EMPTY parenthetical (`s===""`) exactly like `s==="*"` -- both collapse to
-  // a bare rule with no specifier at all.
-  //
-  // Fix round 9 (full parity, superseding round 8's disclosed non-port): round 8 deliberately kept
-  // this shortcut scoped to `*` alone, to avoid silently overriding Winter's own pre-existing
-  // `WebSearch()`-is-`invalid` ruling. The controller's round-9 ruling reverses that: FULL parity --
-  // fold every `Tool()` to bare, `WebSearch()` and `mcp__s__x()` included, because under WS-21 both
-  // legs read the SAME `settings.json`, so a deny `Bash()`/`Read()` that blocks the whole tool on
-  // claude and does NOTHING on Winter (round 8's own gap, since an unmatched `content:""` pattern
-  // specifier never matches anything) is a fail-open divergence in a shared home, which outranks the
-  // narrower WebSearch design goal. This one shortcut check already runs BEFORE the `mcp__` branch
-  // below, so folding `""` in here also covers `mcp__s__x()` for free, with no separate edit there.
+  // An EMPTY content (`Tool()`) means the same as `Tool(*)`: the bare tool, with no specifier. This
+  // holds for every tool, `WebSearch()` and `mcp__s__x()` included (this check runs before the `mcp__`
+  // branch below): both runtimes read the SAME settings file, and a deny `Bash()` that blocked the
+  // whole tool on one and matched nothing on the other would be a fail-open divergence.
   if (rawContent === "" || rawContent === "*") {
     return { toolName, specifier: { kind: "wildcardAll" }, isBareEquivalent: true };
   }
@@ -1343,238 +1339,153 @@ export function matchesRule(
 }
 
 // ---------------------------------------------------------------------------------------------
-// WS-21 fix round 10, item A: `sue` -- the settings-LOAD rule validator
+// The settings-load rule validator
 // ---------------------------------------------------------------------------------------------
 //
-// Claude's own settings loader (`io`, dump-confirmed alongside `sue`, byte offset ~12279285 of the
-// pinned 2.1.250 dump) filters `permissions.{allow,deny,ask}` at LOAD TIME: each raw rule string is
-// checked with `sue(raw, direction)`, and an invalid one is DROPPED (never becomes an active rule at
-// all) with a warning, `io`'s own two-part text: `Invalid permission rule "<raw>" was skipped:
-// <error>[. <suggestion>]`. `sue` returns a `.warning` field too, for a handful of VALID-but-worth-
-// flagging shapes (a Bash wildcard sitting before the subcommand; a Write/NotebookEdit/MultiEdit/Glob
-// rule that file-permission checks never actually consult) -- `io` never reads `.warning` at all,
-// only `.valid`, so those two cases have NO observable effect on which rules survive settings load
-// and are deliberately NOT ported here.
+// `permissions.{allow,deny,ask}` read from a settings FILE are validated when the file loads: an
+// invalid rule is DROPPED (it never becomes an active rule) with the warning
+// `Invalid permission rule "<raw>" was skipped: <error>[. <suggestion>]`. The error and suggestion
+// texts are the rule grammar's interface strings, shared with Claude Code and kept byte for byte.
 //
-// SCOPE, per the controller's own ruling: this validator applies ONLY at settings-file load
-// (`production-wiring.ts`'s `buildSettingsRuleSeed`, the one Winter call site that reads
-// `permissions.{allow,deny,ask}` from a raw settings object, mirroring `io` being the one claude
-// call site that does). A rule arriving through any OTHER door -- `Options.allow/deny/
-// disallowedTools`, a `canUseTool` "always allow", a plugin's own `permissions` block -- is
-// untouched by this function and keeps going through `parseRule`'s own `jr`-ported grammar exactly
-// as before, `Tool()` folding to bare per round 9's own ruling. `sue` itself calls `jr` internally
-// (see `sueExtractToolAndContent` below, a deliberately SEPARATE extraction from `parseRule`'s own:
-// `jr` has no "toolName contains whitespace" guard the way Winter's own `parseRule` does, and `sue`
-// needs `jr`'s exact, unnarrowed behaviour to validate the same way claude does).
+// Only the settings-file door validates (`production-wiring.ts`'s `buildSettingsRuleSeed`). A rule
+// arriving any other way -- `Options.allow/deny/disallowedTools`, a `canUseTool` "always allow", a
+// plugin's own `permissions` block -- goes straight to `parseRule`.
 //
-// `sue`'s full source, verbatim (renamed identifiers in this comment only, never in behaviour):
-//   function sue(e,t){
-//     if(!e||e.trim()==="")return{valid:!1,error:"Permission rule cannot be empty"};
-//     let o=_e(e,"("),s=_e(e,")");
-//     if(o!==s)return{valid:!1,error:"Mismatched parentheses",suggestion:"..."};
-//     if(On(e)){
-//       let c=e.substring(0,e.indexOf("("));
-//       if(!c)return{valid:!1,error:"Empty parentheses with no tool name",suggestion:"..."};
-//       return{valid:!1,error:"Empty parentheses",suggestion:`Either specify a pattern or use just "${c}" without parentheses`}
-//     }
-//     let r=jr(e),p=Xs(r.toolName);
-//     if(p){
-//       if(r.ruleContent!==void 0||_e(e,"(")>0)return{valid:!1,error:"MCP rules do not support patterns in parentheses",suggestion:"..."};
-//       if(t==="allow"){let c=zDe(r.toolName);if(c)return c}
-//       return{valid:!0}
-//     }
-//     if(!r.toolName||r.toolName.length===0)return{valid:!1,error:"Tool name cannot be empty"};
-//     if(t==="allow"){let c=zDe(r.toolName);if(c)return c}
-//     if(!r.toolName.includes("_")&&r.toolName[0]!==r.toolName[0]?.toUpperCase())
-//       return{valid:!1,error:"Tool names must start with uppercase",suggestion:`Use "${bf(String(r.toolName))}"`};
-//     let g=nt(r.toolName);
-//     if(g&&r.ruleContent!==void 0){let c=g(r.ruleContent);if(!c.valid)return c}
-//     if(tt(r.toolName)&&r.ruleContent!==void 0){
-//       let c=r.ruleContent;
-//       if(c.includes(":*")&&!c.endsWith(":*"))return{valid:!1,error:"The :* pattern must be at the end",suggestion:"..."};
-//       if(c===":*")return{valid:!1,error:"Prefix cannot be empty before :*",suggestion:"..."};
-//       if(t==="allow"){let E=Rn(c);if(E!==void 0)return{valid:!0,warning:"..."}}
-//     }
-//     if(et(r.toolName)&&r.ruleContent!==void 0){
-//       if(r.ruleContent.includes(":*"))return{valid:!1,error:'The ":*" syntax is only for Bash prefix rules',suggestion:"..."}
-//     }
-//     if(r.ruleContent!==void 0){
-//       let c=r.toolName==="Write"||r.toolName==="NotebookEdit"||r.toolName==="MultiEdit"?"Edit":r.toolName==="Glob"?"Read":void 0;
-//       if(c!==void 0&&!r.ruleContent.includes(":*"))return{valid:!0,warning:"..."}
-//     }
-//     return{valid:!0}
-//   }
-// `be`/`_e` are the SAME escape-aware helpers this module already ported in round 8 (`isEscapedAt`/
-// a count variant); `jr` is this module's own `parseRule` extraction, reused here in the SEPARATE
-// unnarrowed form described above; `Xs` splits an MCP tool name (`mcp__server__tool`); `zDe` is the
-// allow-direction wildcard-scope check; `nt`/`tt`/`et` look up `jte`'s own three tables (dump-
-// confirmed at the SAME byte region as `sue`):
-//   var jte={
-//     filePatternTools:["Read","Write","Edit","Glob","NotebookRead","NotebookEdit","Cd"],
-//     bashPrefixTools:["Bash"],
-//     customValidation:{
-//       WebSearch:(e)=>{ if(e.includes("*")||e.includes("?")) return {valid:!1,error:"WebSearch does not support wildcards",suggestion:"..."}; return{valid:!0} },
-//       WebFetch:(e)=>{ if(e.includes("://")||e.startsWith("http")) return {valid:!1,error:"WebFetch permissions use domain format, not URLs",suggestion:"..."};
-//                        if(!e.startsWith("domain:")) return {valid:!1,error:'WebFetch permissions must use "domain:" prefix',suggestion:"..."}; return{valid:!0} }
-//     }
-//   }
-// CONTENT-VERIFIED DIVERGENCE, disclosed: `jte.filePatternTools` is NOT this module's own
-// `FILE_RULE_TOOLS` constant (used for actual rule-matching DISPATCH). Claude's validator list
-// includes "NotebookRead" and "Cd" -- neither a Winter-registered tool -- and EXCLUDES "Grep",
-// which Winter's own `FILE_RULE_TOOLS` DOES include (added later, I1 fix wave). Ported here as
-// claude's own list, verbatim, for THIS validator alone: a settings-file `Grep(foo:*)` rule is
-// therefore NOT rejected by the ":* on file tools" check below, matching claude exactly, even
-// though Winter's own matcher (grammar.ts's FILE_RULE_TOOLS) treats Grep as a file-rule tool for
-// everything else.
+// The validator splits the rule text the way `parseRule` does (`splitRuleText`), WITHOUT `parseRule`'s
+// whitespace check on the tool name. Shapes that are valid but merely worth a warning (a Bash
+// wildcard before the subcommand; a Write/NotebookEdit/MultiEdit/Glob rule, which file checks never
+// consult) have no effect on which rules load, so they are not reported here.
+
 export interface PermissionRuleValidation {
   valid: boolean;
   error?: string;
   suggestion?: string;
 }
 
-const SUE_FILE_PATTERN_TOOLS: ReadonlySet<string> = new Set(["Read", "Write", "Edit", "Glob", "NotebookRead", "NotebookEdit", "Cd"]);
-const SUE_BASH_PREFIX_TOOLS: ReadonlySet<string> = new Set(["Bash"]);
-
-function sueCustomValidator(toolName: string): ((content: string) => PermissionRuleValidation) | undefined {
-  if (toolName === "WebSearch") {
-    return (content) =>
-      content.includes("*") || content.includes("?")
-        ? { valid: false, error: "WebSearch does not support wildcards", suggestion: "Use exact search terms without * or ?" }
-        : { valid: true };
-  }
-  if (toolName === "WebFetch") {
-    return (content) => {
-      if (content.includes("://") || content.startsWith("http")) {
-        return { valid: false, error: "WebFetch permissions use domain format, not URLs", suggestion: 'Use "domain:hostname" format' };
-      }
-      if (!content.startsWith("domain:")) {
-        return { valid: false, error: 'WebFetch permissions must use "domain:" prefix', suggestion: 'Use "domain:hostname" format' };
-      }
-      return { valid: true };
-    };
-  }
-  return undefined;
-}
-
-function sueCountUnescaped(s: string, ch: string): number {
-  let count = 0;
-  for (let i = 0; i < s.length; i++) if (s[i] === ch && !isEscapedAt(s, i)) count++;
-  return count;
-}
-
-function sueHasUnescapedEmptyParens(s: string): boolean {
-  for (let i = 0; i < s.length - 1; i++) {
-    if (s[i] === "(" && s[i + 1] === ")" && !isEscapedAt(s, i)) return true;
-  }
-  return false;
-}
-
-function sueParseMcpName(toolName: string): { serverName: string; toolName?: string } | null {
-  const parts = toolName.split("__");
-  const first = parts[0];
-  const serverName = parts[1];
-  if (first !== "mcp" || !serverName) return null;
-  const rest = parts.slice(2);
-  return { serverName, ...(rest.length > 0 ? { toolName: rest.join("__") } : {}) };
-}
-
-// Fix round 17 (R.3 M-3): claude's `zDe` (dump byte 11968484), text byte for byte -- the dash in the
-// suggestion is `\u2014` (an em dash) in claude's own source; round 10's port had two hyphens. `zDe`
-// also returns an `examples` array, which `io` never reads, so it is not carried.
-function sueAllowWildcardScopeError(toolName: string): PermissionRuleValidation | null {
-  if (!toolName.includes("*")) return null;
-  const mcp = sueParseMcpName(toolName);
-  if (mcp !== null && !mcp.serverName.includes("*")) return null;
-  return {
-    valid: false,
-    error: `Wildcard tool name "${toolName}" is not supported in allow rules`,
-    suggestion:
-      "An allow pattern must name the scope it widens \u2014 globs are permitted only in the tool position after a literal mcp__<server>__ prefix. Deny and ask rules accept wildcards anywhere",
-  };
-}
-
-/** `jr`'s own extraction, unnarrowed -- see this section's header for why it is not `parseRule`. */
-function sueExtractToolAndContent(raw: string): { toolName: string; ruleContent?: string } {
-  const trimmed = raw.trim();
-  const openIdx = firstUnescaped(trimmed, "(");
-  if (openIdx === -1) return { toolName: trimmed };
-  const toolName = trimmed.slice(0, openIdx);
-  if (toolName === "") return { toolName: trimmed };
-  const closeIdx = lastUnescaped(trimmed, ")");
-  if (closeIdx === -1 || closeIdx <= openIdx || closeIdx !== trimmed.length - 1) return { toolName: trimmed };
-  const rawContent = trimmed.slice(openIdx + 1, closeIdx);
-  if (rawContent === "" || rawContent === "*") return { toolName };
-  return { toolName, ruleContent: unescapeRuleContent(rawContent) };
-}
-
+/**
+ * Validates one raw rule string for `direction`. Every count and position below is taken on the RAW
+ * text as given, except where the split text is named. The checks, in order -- the first that fails
+ * decides:
+ *
+ *  1. Empty, or only whitespace: `{valid:false, error:"Permission rule cannot be empty"}`.
+ *  2. The number of unescaped `(` differs from the number of unescaped `)`:
+ *     error `"Mismatched parentheses"`, suggestion `"Ensure all opening parentheses have matching
+ *     closing parentheses"`.
+ *  3. Somewhere an unescaped `(` is immediately followed by `)`. Let `prefix` be the text before the
+ *     FIRST `(` character of the raw rule, escaped or not. If `prefix` is empty: error
+ *     `"Empty parentheses with no tool name"`, suggestion `"Specify a tool name before the
+ *     parentheses"`; otherwise error `"Empty parentheses"`, suggestion
+ *     `` `Either specify a pattern or use just "${prefix}" without parentheses` ``.
+ *  4. Split the trimmed text (`splitRuleText`). If it is not `Tool(content)`, the tool name is the
+ *     whole trimmed text and there is no content; if the raw content is `""` or `"*"`, there is no
+ *     content; otherwise the content is the unescaped raw content.
+ *  5. MCP names: split the tool name on `__`; when the first part is `mcp` and the second part is not
+ *     empty, the second part is the server name and the rule is an MCP rule:
+ *       - with content, or with any unescaped `(` in the raw text: error `"MCP rules do not support
+ *         patterns in parentheses"`, suggestion
+ *         `` `Use "${toolName}" without parentheses, or use "mcp__${server}__*" for all tools` ``;
+ *       - for `allow`, a `*` in the server name is refused as in check 7 (a `*` only after a literal
+ *         `mcp__<server>__` is fine);
+ *       - otherwise valid. No further check applies to an MCP rule.
+ *  6. An empty tool name: error `"Tool name cannot be empty"`.
+ *  7. For `allow`, a tool name containing `*`: error
+ *     `` `Wildcard tool name "${toolName}" is not supported in allow rules` ``, suggestion
+ *     `"An allow pattern must name the scope it widens \u2014 globs are permitted only in the tool
+ *     position after a literal mcp__<server>__ prefix. Deny and ask rules accept wildcards anywhere"`
+ *     (with a real em dash, U+2014).
+ *  8. A tool name with no `_` whose first UTF-16 code unit differs from its upper-case form: error
+ *     `"Tool names must start with uppercase"`, suggestion `` `Use "${first upper-cased}${rest}"` ``.
+ *  9. With content:
+ *       - `WebSearch` content containing `*` or `?`: error `"WebSearch does not support wildcards"`,
+ *         suggestion `"Use exact search terms without * or ?"`;
+ *       - `WebFetch` content containing `://` or starting with `http`: error `"WebFetch permissions use
+ *         domain format, not URLs"`, suggestion `'Use "domain:hostname" format'`; else content not
+ *         starting with `domain:`: error `'WebFetch permissions must use "domain:" prefix'`, same
+ *         suggestion.
+ * 10. `Bash` with content: content that contains `:*` but does not END with `:*` (an earlier `:*` is
+ *     accepted when the content also ends with one, e.g. `a:*b:*`): error `"The :* pattern
+ *     must be at the end"`, suggestion `"Move :* to the end for prefix matching, or use * for wildcard
+ *     matching"`; content exactly `:*`: error `"Prefix cannot be empty before :*"`, suggestion
+ *     `"Specify a command prefix before :*"`.
+ * 11. A file-pattern tool -- `Read`, `Write`, `Edit`, `Glob`, `NotebookRead`, `NotebookEdit`, `Cd`
+ *     (this load-time list, not `FILE_RULE_TOOLS`: it has `NotebookRead` and `Cd` and not `Grep`) --
+ *     with content containing `:*`: error `'The ":*" syntax is only for Bash prefix rules'`,
+ *     suggestion `'Use glob patterns like "*" or "**" for file matching'`.
+ * 12. Otherwise `{valid:true}`.
+ * A result carries `suggestion` only where one is named above.
+ */
 export function validatePermissionRuleString(raw: string, direction: "allow" | "deny" | "ask"): PermissionRuleValidation {
-  if (!raw || raw.trim() === "") return { valid: false, error: "Permission rule cannot be empty" };
+  const invalid = (error: string, suggestion?: string): PermissionRuleValidation => (suggestion === undefined ? { valid: false, error } : { valid: false, error, suggestion });
 
-  const openCount = sueCountUnescaped(raw, "(");
-  const closeCount = sueCountUnescaped(raw, ")");
-  if (openCount !== closeCount) {
-    return { valid: false, error: "Mismatched parentheses", suggestion: "Ensure all opening parentheses have matching closing parentheses" };
+  // 1.
+  const trimmed = raw.trim();
+  if (trimmed === "") return invalid("Permission rule cannot be empty");
+
+  // 2-3, on the raw text.
+  const { opens, closes } = unescapedParens(raw);
+  if (opens.length !== closes.length) return invalid("Mismatched parentheses", "Ensure all opening parentheses have matching closing parentheses");
+  if (opens.some((i) => raw[i + 1] === ")")) {
+    const prefix = raw.slice(0, raw.indexOf("("));
+    return prefix === ""
+      ? invalid("Empty parentheses with no tool name", "Specify a tool name before the parentheses")
+      : invalid("Empty parentheses", `Either specify a pattern or use just "${prefix}" without parentheses`);
   }
 
-  if (sueHasUnescapedEmptyParens(raw)) {
-    const parenIdx = raw.indexOf("(");
-    const prefix = parenIdx === -1 ? "" : raw.substring(0, parenIdx);
-    if (!prefix) return { valid: false, error: "Empty parentheses with no tool name", suggestion: "Specify a tool name before the parentheses" };
-    return { valid: false, error: "Empty parentheses", suggestion: `Either specify a pattern or use just "${prefix}" without parentheses` };
-  }
+  // 4.
+  const parts = splitRuleText(trimmed);
+  const toolName = parts === undefined ? trimmed : parts.toolName;
+  const content = parts === undefined || parts.rawContent === "" || parts.rawContent === "*" ? undefined : unescapeRuleContent(parts.rawContent);
 
-  const { toolName, ruleContent } = sueExtractToolAndContent(raw);
-  const mcp = sueParseMcpName(toolName);
-  if (mcp !== null) {
-    if (ruleContent !== undefined || sueCountUnescaped(raw, "(") > 0) {
-      return {
-        valid: false,
-        error: "MCP rules do not support patterns in parentheses",
-        suggestion: `Use "${toolName}" without parentheses, or use "mcp__${mcp.serverName}__*" for all tools`,
-      };
+  const wildcardRefusal = (): PermissionRuleValidation => invalid(`Wildcard tool name "${toolName}" is not supported in allow rules`, ALLOW_WILDCARD_SUGGESTION);
+
+  // 5.
+  const nameParts = toolName.split("__");
+  if (nameParts[0] === "mcp" && nameParts[1]) {
+    const server = nameParts[1];
+    if (content !== undefined || opens.length > 0) {
+      return invalid("MCP rules do not support patterns in parentheses", `Use "${toolName}" without parentheses, or use "mcp__${server}__*" for all tools`);
     }
-    if (direction === "allow") {
-      const wildcardError = sueAllowWildcardScopeError(toolName);
-      if (wildcardError !== null) return wildcardError;
-    }
+    if (direction === "allow" && server.includes("*")) return wildcardRefusal();
     return { valid: true };
   }
 
-  if (!toolName || toolName.length === 0) return { valid: false, error: "Tool name cannot be empty" };
-
-  if (direction === "allow") {
-    const wildcardError = sueAllowWildcardScopeError(toolName);
-    if (wildcardError !== null) return wildcardError;
+  // 6-8.
+  if (toolName === "") return invalid("Tool name cannot be empty");
+  if (direction === "allow" && toolName.includes("*")) return wildcardRefusal();
+  if (!toolName.includes("_")) {
+    const first = toolName[0]!;
+    const upper = first.toUpperCase();
+    if (first !== upper) return invalid("Tool names must start with uppercase", `Use "${upper}${toolName.slice(1)}"`);
   }
 
-  if (!toolName.includes("_") && toolName[0] !== toolName[0]?.toUpperCase()) {
-    return { valid: false, error: "Tool names must start with uppercase", suggestion: `Use "${toolName.charAt(0).toUpperCase()}${toolName.slice(1)}"` };
-  }
-
-  const customValidator = sueCustomValidator(toolName);
-  if (customValidator !== undefined && ruleContent !== undefined) {
-    const result = customValidator(ruleContent);
-    if (!result.valid) return result;
-  }
-
-  if (SUE_BASH_PREFIX_TOOLS.has(toolName) && ruleContent !== undefined) {
-    if (ruleContent.includes(":*") && !ruleContent.endsWith(":*")) {
-      return { valid: false, error: "The :* pattern must be at the end", suggestion: "Move :* to the end for prefix matching, or use * for wildcard matching" };
+  if (content !== undefined) {
+    // 9.
+    if (toolName === "WebSearch" && (content.includes("*") || content.includes("?"))) {
+      return invalid("WebSearch does not support wildcards", "Use exact search terms without * or ?");
     }
-    if (ruleContent === ":*") {
-      return { valid: false, error: "Prefix cannot be empty before :*", suggestion: "Specify a command prefix before :*" };
+    if (toolName === "WebFetch") {
+      if (content.includes("://") || content.startsWith("http")) return invalid("WebFetch permissions use domain format, not URLs", 'Use "domain:hostname" format');
+      if (!content.startsWith("domain:")) return invalid('WebFetch permissions must use "domain:" prefix', 'Use "domain:hostname" format');
     }
-    // The allow-direction "wildcard sits before the subcommand" WARNING (`Rn`) is deliberately not
-    // ported -- `io` never reads `.warning`, so it has no effect on which rules survive load.
-  }
-
-  if (SUE_FILE_PATTERN_TOOLS.has(toolName) && ruleContent !== undefined) {
-    if (ruleContent.includes(":*")) {
-      return { valid: false, error: 'The ":*" syntax is only for Bash prefix rules', suggestion: 'Use glob patterns like "*" or "**" for file matching' };
+    // 10.
+    if (toolName === "Bash") {
+      if (content.includes(":*") && !content.endsWith(":*")) {
+        return invalid("The :* pattern must be at the end", "Move :* to the end for prefix matching, or use * for wildcard matching");
+      }
+      if (content === ":*") return invalid("Prefix cannot be empty before :*", "Specify a command prefix before :*");
+    }
+    // 11.
+    if (LOAD_TIME_FILE_PATTERN_TOOLS.has(toolName) && content.includes(":*")) {
+      return invalid('The ":*" syntax is only for Bash prefix rules', 'Use glob patterns like "*" or "**" for file matching');
     }
   }
 
-  // The trailing "Write/NotebookEdit/MultiEdit/Glob aren't checked, use Edit/Read instead" WARNING
-  // is also not ported, for the identical reason: warning-only, invisible to `io`.
+  // 12.
   return { valid: true };
 }
+
+const ALLOW_WILDCARD_SUGGESTION =
+  "An allow pattern must name the scope it widens — globs are permitted only in the tool position after a literal mcp__<server>__ prefix. Deny and ask rules accept wildcards anywhere";
+
+/** The file-pattern tools the settings-load validator refuses `:*` on (not `FILE_RULE_TOOLS`). */
+const LOAD_TIME_FILE_PATTERN_TOOLS: ReadonlySet<string> = new Set(["Read", "Write", "Edit", "Glob", "NotebookRead", "NotebookEdit", "Cd"]);

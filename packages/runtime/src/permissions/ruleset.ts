@@ -75,7 +75,7 @@ export interface SourcedRuleEntry {
   // ParsedRule's own shape.
   ruleValue: PermissionRuleValue;
   /**
-   * Fix round 11 ("important" item, claude's own `TFt`/`bl`, dump byte 15441060): the settings
+   * Fix round 11 ("important" item): the settings
    * SOURCE's own directory, for a SINGLE-`/`-anchored pattern's root (`resolveFileRuleAnchor`'s own
    * `/`-branch, file-rules.ts -- already fully wired to consume this, INERT_ANCHOR when absent, a
    * pre-existing disclosed gap this field closes). Populated ONLY by `buildSettingsRuleSeed`

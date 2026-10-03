@@ -357,12 +357,12 @@ export function recognizeEditOperation(
 }
 
 // ---------------------------------------------------------------------------------------------
-// shellWriteConstraint -- claude's checkPathConstraints / validatePath, write side
+// shellWriteConstraint -- the write-target pre-checks for a shell command
 // ---------------------------------------------------------------------------------------------
 //
-// claude runs these checks on a Bash command BEFORE any allow rule and before its permission-mode
-// allows (tools/BashTool/pathValidation.ts, bashPermissions.ts); an ask from one of them is not
-// bypass-immune (only its path SAFETY check is -- here, the protected floor). Each is a write target
+// These run on a Bash command BEFORE any allow rule and before the permission mode's own allows, as
+// in Claude Code; an ask from one of them is not bypass-immune (only the path SAFETY check is --
+// here, the protected floor). Each is a write target
 // the permission layer cannot resolve to one file, so nothing may clear it without a person.
 
 const SHELL_EXPANSION_REASON = "Shell expansion syntax in paths requires manual approval";
@@ -372,7 +372,7 @@ const PROCESS_SUBSTITUTION_REASON = "Process substitution (>(...) or <(...)) can
 const UNPARSEABLE_REASON = "This command could not be parsed, so the files it writes cannot be checked; it requires manual approval";
 
 /**
- * claude's validatePath pre-checks for one WRITE target. Judged on the word AS WRITTEN (`raw`), so an
+ * The pre-checks for one WRITE target. Judged on the word AS WRITTEN (`raw`), so an
  * ANSI-C `$'…'` or locale `$"…"` quote -- which quote removal decodes -- is still an expansion to ask
  * about; `target` is the word after quote removal.
  */
@@ -388,7 +388,7 @@ function writeTargetReason(raw: string, target: string): string | undefined {
  * Why a shell command's WRITES cannot be auto-approved, or `undefined`: a process substitution, a
  * command that cannot be parsed, a write target that is a variable/command expansion, a `~user` form
  * or a glob, and `cp`/`mv` with ANY flag (`--target-directory=PATH` hides the destination). The
- * working-directory and `cd` checks that follow claude's are evaluator.ts's (they need the session).
+ * working-directory and `cd` checks that follow these are evaluator.ts's (they need the session).
  */
 export function shellWriteConstraint(command: string): string | undefined {
   if (hasProcessSubstitution(command)) return PROCESS_SUBSTITUTION_REASON;

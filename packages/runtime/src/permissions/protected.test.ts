@@ -235,7 +235,7 @@ describe("isCriticalRemoval -- unparseable/non-removal fallbacks", () => {
   });
 });
 
-describe("case-insensitive, like claude's checkPathSafetyForAutoEdit (the macOS volume is)", () => {
+describe("case-insensitive, as in Claude Code (the macOS volume is)", () => {
   const ctx = { cwd: "/work/repo", home: "/Users/tester" };
   for (const path of [".GIT/config", ".Git/hooks/pre-commit", ".WINTER/settings.json", ".VSCode/settings.json", "PACKAGE.JSON", ".ZSHRC", "winter.md", "/Users/tester/.Winter/runtimes/bin/winter"]) {
     test(`${path} is protected`, () => expect(isProtectedWrite(path, ctx)).toBe(true));
@@ -245,7 +245,7 @@ describe("case-insensitive, like claude's checkPathSafetyForAutoEdit (the macOS 
   });
 });
 
-describe("claude's DANGEROUS_FILES additions", () => {
+describe("the further dangerous files Claude Code also protects", () => {
   const ctx = { cwd: "/work/repo", home: "/Users/tester" };
   for (const path of [".gitconfig", "/Users/tester/.gitconfig", ".gitmodules", "sub/.gitmodules", ".ripgreprc", "/Users/tester/.ripgreprc"]) {
     test(`${path} is protected`, () => expect(isProtectedWrite(path, ctx)).toBe(true));

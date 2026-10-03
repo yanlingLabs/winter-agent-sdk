@@ -49,7 +49,7 @@ export function isPermissionMode(value: string): value is PermissionMode {
 }
 
 /**
- * SDK 0.0.16 (P16-7): claude's fork agent (`Ex`) carries `permissionMode: "bubble"` -- NOT a member
+ * SDK 0.0.16 (P16-7): Claude Code's fork agent carries `permissionMode: "bubble"` -- NOT a member
  * of `PERMISSION_MODES` and never widened into one (`PermissionMode` is a closed 6-value union read
  * exhaustively elsewhere -- `classifyPermissionMode` in particular). "bubble" is an explicit ALIAS
  * for "no override": the child keeps whatever mode the parent session is CURRENTLY running (never a

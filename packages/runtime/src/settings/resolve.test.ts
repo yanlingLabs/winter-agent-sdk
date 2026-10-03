@@ -208,9 +208,8 @@ describe("precedence + provenance", () => {
 // own architecture: its SDK `Options` occupies this identical position), exactly like
 // `permissions.deny` -- a restrictive rule set must never be silently narrowed by a higher tier's
 // own list. Round 9 reasoned `allowWrite` (a widening key) should NOT union and used plain
-// replace-by-higher-tier instead -- round 10's controller ruling reverses that, dump-confirmed
-// against claude's own live sandbox-reconciliation code, which unions its rule-derived allowWrite
-// set with the native sandbox's own currently-configured one rather than replacing it.
+// replace-by-higher-tier instead -- round 10's controller ruling reverses that, because Claude Code
+// itself accumulates allowWrite entries across sources rather than letting one replace another.
 describe("SV-11: sandbox.filesystem union across all four arrays and tiers, including the host's own inline config", () => {
   test("a PROJECT denyWrite survives a LOCAL denyWrite -- the identical fail-open shape permissions.deny's own union prevents", async () => {
     writeProject({ sandbox: { filesystem: { denyWrite: ["**/secrets/**"] } } });

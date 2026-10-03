@@ -206,15 +206,15 @@ describe("matchFileRule -- glob semantics (WS-07 §3.1: `*` stays within one seg
   });
 });
 
-// SV-6 (the router same-view test, real claude 2.1.250): claude's file-rule matcher is the bundled
-// `ignore` npm package (dump-confirmed: its own `Ignore` class, `ignorecase` defaulting TRUE),
-// gitignore-style -- not Winter's pre-fix-round-3 "every character but `*` is literal" grammar. The
+// SV-6 (the router same-view test against the real claude binary): the file-rule grammar is
+// gitignore-style, case-insensitive matching (the `ignore` npm package's, `ignorecase` defaulting
+// TRUE) -- not Winter's pre-fix-round-3 "every character but `*` is literal" grammar. The
 // grammar change is UNIFORM across every anchor kind (bare/cwd-relative, `~/`, `//`, `/`+sourceDir --
 // they all funnel through this ONE segment compiler); anchor RESOLUTION itself (which base directory
 // each spelling resolves against) is untouched, so a `//`-anchored fixture here is representative
-// of every other anchor too. See paths.ts's own globSegmentToRegexBody header for the exact,
-// dump-decoded semantics each fixture below pins.
-describe("matchFileRule -- SV-6: claude's gitignore-style grammar ([...], ?, escapes, case-insensitivity)", () => {
+// of every other anchor too. See paths.ts's own globSegmentToRegexBody header for the exact
+// semantics each fixture below pins.
+describe("matchFileRule -- SV-6: the gitignore-style grammar ([...], ?, escapes, case-insensitivity)", () => {
   test("`[abc]` is a character class -- matches any ONE of the listed characters", () => {
     expect(matchFileRule("//etc/service[abc].conf", opts({ path: "/etc/servicea.conf", direction: "allow" }))).toBe(true);
     expect(matchFileRule("//etc/service[abc].conf", opts({ path: "/etc/serviceb.conf", direction: "allow" }))).toBe(true);
@@ -255,11 +255,11 @@ describe("matchFileRule -- SV-6: claude's gitignore-style grammar ([...], ?, esc
     expect(matchFileRule("//notes/note\\*.md", opts({ path: "/notes/noteX.md", direction: "allow" }))).toBe(false); // proves it is NOT a wildcard
   });
 
-  test("claude quirk, ported exactly: an escaped `\\?` never matches a real path (the backslash survives as a literal-backslash requirement)", () => {
+  test("an escaped `\\?` never matches a real path (the backslash survives as a literal-backslash requirement)", () => {
     expect(matchFileRule("//notes/note\\?.md", opts({ path: "/notes/note?.md", direction: "allow" }))).toBe(false);
     expect(matchFileRule("//notes/note\\?.md", opts({ path: "/notes/noteX.md", direction: "allow" }))).toBe(false);
     // Deny direction too -- a rule author who wrote `\?` expecting a literal-? deny gets NO
-    // protection, exactly like claude, not a Winter-invented safety net.
+    // protection, as in Claude Code -- not a Winter-invented safety net.
     expect(matchFileRule("//notes/note\\?.md", opts({ path: "/notes/note?.md", direction: "denyAsk" }))).toBe(false);
   });
 
@@ -275,7 +275,7 @@ describe("matchFileRule -- SV-6: claude's gitignore-style grammar ([...], ?, esc
     expect(matchFileRule("//repo/{secrets}/**", opts({ path: "/repo/secrets/key.pem", direction: "denyAsk" }))).toBe(false); // the braces are LITERAL, not grouping/expansion
   });
 
-  test("matching is CASE-INSENSITIVE, matching claude's own ignorecase:true default", () => {
+  test("matching is CASE-INSENSITIVE, as the gitignore grammar's ignorecase:true default is", () => {
     expect(matchFileRule("//etc/Secret.conf", opts({ path: "/etc/secret.conf", direction: "allow" }))).toBe(true);
     expect(matchFileRule("//etc/secret.conf", opts({ path: "/ETC/SECRET.CONF", direction: "allow" }))).toBe(true);
   });
@@ -627,7 +627,7 @@ describe("checkSymlinkBothEnds (WS-07 §3.1: 'symlinks are checked at both ends'
     }
   });
 
-  // Fix round 13 (Important item 2, claude's own Ii): a DANGLING symlink whose stored target sits
+  // Fix round 13 (Important item 2): a DANGLING symlink whose stored target sits
   // OUTSIDE the link's own location (unlike the test just above, where the dangling target happens
   // to be a sibling INSIDE the same project dir) -- the case resolveRealTarget's own ENOENT fallback
   // cannot answer, since it never reads the symlink's own readlink() value and falls back to the
@@ -655,7 +655,7 @@ describe("checkSymlinkBothEnds (WS-07 §3.1: 'symlinks are checked at both ends'
   });
 });
 
-describe("resolveSymlinkTargetChain -- fix round 13 (Important item 2), claude's own Ii", () => {
+describe("resolveSymlinkTargetChain -- fix round 13 (Important item 2): following a dangling symlink chain", () => {
   function freshRoot(): string {
     return realpathSync(mkdtempSync(join(tmpdir(), "winter-paths-symlink-chain-")));
   }
@@ -956,15 +956,13 @@ describe("exceedsStarsPerSegmentCap (P2 fix-wave item 3: rule-add-time probe for
   });
 });
 
-// Fix round 10, item B: claude's own `ht` (dump byte offset 12083670, pinned 2.1.250 -- the
-// function every path-resolving caller in that codebase shares, dump-confirmed as a shared export
-// alongside `c7e`/`S1`/`uj`/`Ad`) trims its raw input FIRST, before anything else: `let r=t.trim()`.
-// `resolveTargetPath` (Winter's own analogous "make this tool's path argument real") never trimmed
+// Fix round 10, item B: Claude Code trims a tool's raw path argument at BOTH ends before anything
+// else uses it. `resolveTargetPath` (Winter's "make this tool's path argument real") never trimmed
 // at all, so an unescaped trailing-space deny rule (round 9's own escapeFileRulePathSegment fix
 // covers the RULE side; this is the QUERY side) still failed open: the CHECKED path kept its own
 // trailing space while the rule's own pattern text lost it to the real `ignore` package's own
 // line-trimming (round 9's own finding), so the two never converged.
-describe("resolveTargetPath -- fix round 10, item B: trims the raw path first, matching claude's own ht", () => {
+describe("resolveTargetPath -- fix round 10, item B: trims the raw path first, at both ends", () => {
   test("a trailing space is trimmed before resolution", () => {
     expect(resolveTargetPath("/r/sp ", CWD)).toBe("/r/sp");
   });

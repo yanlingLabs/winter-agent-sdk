@@ -8,7 +8,7 @@
 // mechanism:
 //  1. POSITION: an attachment is appended to the history right after what triggered it, and the
 //     request builder (context/request-layout.ts) folds a text-only attachment INTO the preceding
-//     `tool_result` (claude's `IMe`) or merges it with the user message. So tool-event context lands
+//     `tool_result` (as Claude Code does) or merges it with the user message. So tool-event context lands
 //     inside/after that call's result and prompt context lands with the prompt -- the conversation
 //     TAIL, where it is sent once and then sits in the cached prefix like any other history. It is
 //     never placed in the system prompt, which a caching lane keeps byte-stable.

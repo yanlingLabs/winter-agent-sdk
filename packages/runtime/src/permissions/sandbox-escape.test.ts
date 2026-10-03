@@ -1,12 +1,12 @@
-// `dangerouslyDisableSandbox` under claude's rule, replacing RULING P3-J (dist-session fixes, lane C C3).
+// `dangerouslyDisableSandbox` under Claude Code's rule, replacing RULING P3-J (dist-session fixes,
+// lane C C3).
 //
 // P3-J made every escape MANDATORY INTERACTION ahead of the allow rules, even under bypass, so the
 // user's "Allow `Bash(gh repo:*)` everywhere" never cleared `gh repo view … dangerouslyDisableSandbox`.
-// The pinned claude 0.3.250 Bash `checkPermissions` runs the ordinary evaluation and escalates an
-// escape to an ask ("Run outside of the sandbox", decisionReason sandboxOverride) ONLY when that
-// evaluation allowed it by MODE -- not by a rule (`Kit(r.decisionReason)`) -- and only when the flag
-// actually takes the command out of a sandbox it would otherwise run in; `sandboxOverride` is not in
-// its bypass-immune table, so bypass turns the ask into an allow. Winter mirrors that, with one host
+// Claude Code's observable rule: the ordinary evaluation runs, and an escape is escalated to an ask
+// ("Run outside of the sandbox", decision reason `sandboxOverride`) ONLY when that evaluation allowed
+// it by MODE -- not by a rule -- and only when the flag actually takes the command out of a sandbox it
+// would otherwise run in; that ask is not bypass-immune, so bypass turns it into an allow. Winter mirrors that, with one host
 // requirement on top: an escape no allow rule sanctions ALWAYS reaches the host's canUseTool -- in
 // auto and plan too, never the classifier -- because the host's own reviewer clears it there.
 import { describe, expect, test } from "bun:test";

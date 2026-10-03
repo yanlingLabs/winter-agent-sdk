@@ -80,7 +80,7 @@ export const PROTECTED_FILE_BASENAMES: ReadonlySet<string> = new Set([
   // MCP project config: the UPSTREAM literal `.mcp.json` (defense in depth for an upstream-shaped
   // repo); the native `<projectDir>/mcp.json` is already covered by the dot-dir rule below.
   ".mcp.json",
-  // claude's DANGEROUS_FILES (utils/permissions/filesystem.ts) beyond the categories above: git's own
+  // Files Claude Code also protects, beyond the categories above: git's own
   // config and submodule map (a pager, a hooks path or a submodule URL runs code), and ripgrep's config
   // (`--pre` runs a command on every file searched).
   ".gitconfig",
@@ -245,7 +245,7 @@ function pathSegments(absPath: string): string[] {
   return absPath.split("/").filter((s) => s.length > 0);
 }
 
-// CASE-INSENSITIVE, like claude's (`normalizeCaseForComparison`): the default macOS volume is, so
+// CASE-INSENSITIVE, as in Claude Code: the default macOS volume is, so
 // `.GIT/config` and `.Winter/settings.json` ARE the protected files. Stricter on a case-sensitive
 // volume, never looser.
 const PROTECTED_DIRECTORY_NAMES_LC: ReadonlySet<string> = new Set([...PROTECTED_DIRECTORY_NAMES].map((n) => n.toLowerCase()));

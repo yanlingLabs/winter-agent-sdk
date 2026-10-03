@@ -902,12 +902,12 @@ describe("Task 8 — AskUserQuestion as mandatory interaction (WS-07 §8)", () =
 });
 
 // --- Task 8 (P3 close-out) RULING P3-J, SUPERSEDED (dist-session fixes, lane C C3): a Bash call
-// requesting dangerouslyDisableSandbox is no longer mandatory interaction. It follows the pinned claude
-// 0.3.250 Bash checkPermissions: an allow RULE runs it, bypass runs it, dontAsk denies it, and one
+// requesting dangerouslyDisableSandbox is no longer mandatory interaction. It follows Claude Code's
+// escape rule: an allow RULE runs it, bypass runs it, dontAsk denies it, and one
 // nothing sanctioned is asked through the host's canUseTool in every other mode (never the
 // classifier). The full matrix lives in `sandbox-escape.test.ts`; these pins keep the old block's
 // cells, each now asserting the behaviour that replaced it.
-describe("RULING P3-J superseded: Bash dangerouslyDisableSandbox follows claude's escape rule", () => {
+describe("RULING P3-J superseded: Bash dangerouslyDisableSandbox follows Claude Code's escape rule", () => {
   const overrideCall = call("Bash", { command: "gh repo view yanlingLabs/winter", dangerouslyDisableSandbox: true });
 
   for (const mode of ["default", "acceptEdits", "auto"] as const) {
@@ -1217,12 +1217,11 @@ describe("Task 7 — acceptEdits real semantics (WS-07 §6.2)", () => {
     expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
   });
 
-  // Fix round 5, N-2 (the re-review of 57e7fef..20b623e, Important): claude's own working-directory
-  // check (`f_`, dump ~272633) calls `sm(d,p,{caseFold:false,...})` -- it does NOT fold case, unlike
-  // isWithinBounds's pre-fix use of isPathWithinRoot's default (`caseFold:true`). On a case-sensitive
+  // Fix round 5, N-2 (the re-review of 57e7fef..20b623e, Important): the working-directory check does
+  // NOT fold case (Claude Code's does not either), unlike isWithinBounds's pre-fix use of isPathWithinRoot's default (`caseFold:true`). On a case-sensitive
   // volume, a path differing from cwd only in case was silently treated as in-bounds and
-  // auto-approved under acceptEdits, where claude still asks.
-  test("N-2: a path differing from cwd ONLY in case is NOT auto-approved under acceptEdits -- claude's own boundary check does not fold case", async () => {
+  // auto-approved under acceptEdits, where Claude Code still asks.
+  test("N-2: a path differing from cwd ONLY in case is NOT auto-approved under acceptEdits -- the boundary check does not fold case", async () => {
     const ctx = baseCtx({ cwd: "/work/proj", policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
     const record = await evaluate(call("Edit", { file_path: "/WORK/PROJ/src/a.ts" }), ctx);
     // "mode" is also the mechanism a fail-closed DENY carries when nothing upstream resolved the
@@ -1238,13 +1237,12 @@ describe("Task 7 — acceptEdits real semantics (WS-07 §6.2)", () => {
     expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
   });
 
-  // Fix round 6, R5-2 (the re-review against the pinned 2.1.250 dump): round 5 widened
-  // isPathWithinRoot's own alias-folding to claude's SIX-pair trusted-symlink map (`ni()`/`Sl()`),
-  // which does NOT belong here -- the pinned 2.1.250 dump's own `sm` (the acceptEdits boundary
-  // check) aliases ONLY `/private/var/` and `/private/tmp`, never `/private/etc`/`/usr/bin`/
-  // `/usr/lib`/`/usr/sbin`. With those four extra pairs, Winter was auto-approving MORE than
-  // claude does. Reverted: `isPathWithinRoot` is back to the two-pair form; the six-pair map now
-  // backs ONLY the allow-rule retry in evaluator.ts (`cqe`'s own scope).
+  // Fix round 6, R5-2: round 5 widened isPathWithinRoot's own alias-folding to the SIX-pair trusted
+  // system-symlink map, which does NOT belong here -- the acceptEdits boundary check aliases ONLY
+  // `/private/var/` and `/private/tmp`, never `/private/etc`/`/usr/bin`/`/usr/lib`/`/usr/sbin`. With
+  // those four extra pairs, Winter was auto-approving MORE than Claude Code does. Reverted:
+  // `isPathWithinRoot` is back to the two-pair form; the six-pair map now backs ONLY the allow-rule
+  // retry in evaluator.ts.
   test("fix round 6, R5-2: with cwd /etc, a write to /private/etc/x is NOT auto-approved -- /private/etc is no longer an aliased boundary pair", async () => {
     const ctx = baseCtx({ cwd: "/etc", policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
     const record = await evaluate(call("Edit", { file_path: "/private/etc/winter-round6-probe-does-not-exist.txt" }), ctx);
@@ -2181,15 +2179,14 @@ describe("Task 7 — T6-review obligation: Read-deny-blocks-Edit enforced genera
 
 // Fix round 10, item 3: an uncompilable file-rule pattern (a `FileRuleCompileError`,
 // `matchFileRulesGrouped`) is caught at exactly ONE place, `evaluate()` itself, and resolved to the
-// generic fail-closed deny claude's own `d8t` fallback produces -- see evaluator.ts's own header on
-// `evaluate()` for the dump-confirmed shape. A "broken ask rule denies" and "a broken allow rule
+// generic fail-closed deny -- see evaluator.ts's own header on `evaluate()`. A "broken ask rule denies" and "a broken allow rule
 // denies once it is reached" both fall out of ORDINARY STAGE ORDER (deny checked before ask before
 // allow), not a direction-specific special case: whichever stage's own lookup reaches the broken
 // group first is the one whose throw gets caught.
 describe("evaluate() -- fix round 10, item 3: an uncompilable file-rule pattern denies the CALL, never crashes the run", () => {
   const BROKEN_PATTERN = "[bad/baz"; // an unterminated character class followed by another path segment -- the confirmed multi-segment-throw shape (round 9's own report)
 
-  test("a broken DENY rule denies the call, mechanism 'crash', claude's own fail-closed message", async () => {
+  test("a broken DENY rule denies the call, mechanism 'crash', with the fail-closed message", async () => {
     const ctx = baseCtx({
       cwd: "/work",
       policy: policy({ mode: "default", rules: withRules(rule(`Read(${BROKEN_PATTERN})`, "deny")) }),
@@ -2241,8 +2238,8 @@ describe("evaluate() -- fix round 10, item 3: an uncompilable file-rule pattern 
     expect(unrelated).toMatchObject({ decision: "deny", mechanism: "rule" });
   });
 
-  // Mirrors claude's own D0 unconditionally calling zC for every read (crashCheckEditDenyDuringRead,
-  // evaluator.ts) -- see that function's own header for the exact scope: ONLY a crash escapes; an
+  // A read also runs the Edit rules' crash check (crashCheckEditRulesDuringRead, evaluator.ts) -- see
+  // that function's own header for the exact scope: ONLY a crash escapes; an
   // ordinary, well-formed Edit(...) deny match has NO effect on a read (CLAUDE.md's own standing
   // "Winter's reads are ungated" ruling stays intact).
   test("a broken Edit(...) deny rule ALSO denies a Read call under its own root, via the crash-check", async () => {
@@ -2290,14 +2287,14 @@ describe("evaluate() -- fix round 10, item 3: an uncompilable file-rule pattern 
 });
 
 // Fix round 11 ("minors, promoted", item 3 widened): round 10's own crash-check only ever probed
-// Edit DENY candidates. The controller's re-review pointed out claude's `zC` runs its FULL sequence
-// for a read (deny -> ask -> allow, each short-circuiting the next on a WELL-FORMED match) -- "a
+// Edit DENY candidates. The controller's re-review pointed out that the edit-rule check runs its FULL
+// sequence for a read (deny -> ask -> allow, each short-circuiting the next on a WELL-FORMED match) -- "a
 // broken ask rule denies; a broken allow rule denies once it is reached." Widened
 // (crashCheckEditRulesDuringRead, evaluator.ts) to probe all three behaviors in that order, still
 // discarding every matchFileRulesGrouped return value for its OWN purpose (a well-formed match at ANY
 // stage has zero effect on the read -- "reads are ungated" stays intact) and using it ONLY to decide
-// whether the next stage is reached at all, mirroring zC's own short-circuit.
-describe("evaluate() -- fix round 11 (item 3 widened): the read crash-check now covers Edit ask/allow rules too, in zC's own deny -> ask -> allow sequence", () => {
+// whether the next stage is reached at all, mirroring that short-circuit.
+describe("evaluate() -- fix round 11 (item 3 widened): the read crash-check now covers Edit ask/allow rules too, in deny -> ask -> allow sequence", () => {
   const BROKEN_PATTERN = "[bad/baz";
 
   test("a broken Edit(...) ASK rule (no deny at all) ALSO denies a Read call under its own root", async () => {
@@ -2344,7 +2341,7 @@ describe("evaluate() -- fix round 11 (item 3 widened): the read crash-check now 
 
   // The controller's own "once it is reached" edge, named explicitly: a well-formed deny under ONE
   // root plus a broken allow rule under a DIFFERENT root -- the well-formed deny's own match (when it
-  // fires) stops zC before the broken allow is ever compiled; a call the well-formed deny does NOT
+  // fires) stops the sequence before the broken allow is ever compiled; a call the well-formed deny does NOT
   // match still reaches (and crashes on) the broken allow stage.
   test("a well-formed Edit(//w/ok/**) deny + a broken Edit(...) allow: a Read under the well-formed root does NOT crash (deny resolves first, allow never reached)", async () => {
     const ctx = baseCtx({
@@ -2371,7 +2368,7 @@ describe("evaluate() -- fix round 11 (item 3 widened): the read crash-check now 
   });
 });
 
-// Fix round 11 ("important" item, claude's own TFt/bl, dump byte 15441060): a SINGLE-`/`-anchored
+// Fix round 11 ("important" item): a SINGLE-`/`-anchored
 // pattern (as opposed to `//`, root-anchored, or `~/`, home-anchored) joins to the settings SOURCE's
 // own directory -- resolveFileRuleAnchor's own `/`-branch (file-rules.ts) was ALREADY fully wired for
 // this (INERT_ANCHOR when `opts.sourceDir` is absent, `opts.sourceDir` itself when present); the gap
@@ -2425,15 +2422,15 @@ describe("evaluate() -- fix round 11: a `/`-anchored pattern anchors to SourcedR
   });
 });
 
-// Fix round 10, item B: claude's own `ht` trims a raw path FIRST (dump byte offset 12083670, pinned
-// 2.1.250) -- the permission check (permissions/paths.ts's `resolveTargetPath`, same fix) and the
+// Fix round 10, item B: a raw tool path is trimmed at both ends FIRST, as Claude Code does -- the
+// permission check (permissions/paths.ts's `resolveTargetPath`, same fix) and the
 // tool's actual write (tools/impl/{read,write,edit,...}.ts, same fix) must never disagree. Before
 // this fix, an UNESCAPED trailing-space deny rule failed open: the real `ignore` package trims an
 // unescaped trailing whitespace run off the RULE's own pattern text (round 9's own finding), while
 // the CHECKED path kept its own trailing space -- the two never converged. The controller's own test
 // shape: a raw (unescaped) rule for `//r/sp ` against a call naming `/r/sp ` (trailing space and
 // all, exactly as a model would type it).
-describe("evaluate() -- fix round 10, item B: a raw, UNESCAPED trailing-space deny rule protects the real path, matching claude", () => {
+describe("evaluate() -- fix round 10, item B: a raw, UNESCAPED trailing-space deny rule protects the real path", () => {
   test("Read(//r/sp ) (raw, unescaped) denies a call naming /r/sp  (trailing space and all)", async () => {
     const ctx = baseCtx({
       cwd: "/work",
@@ -2461,13 +2458,12 @@ describe("evaluate() -- fix round 10, item B: a raw, UNESCAPED trailing-space de
     expect(record.mechanism).not.toBe("rule");
   });
 
-  // Disclosed tension, same as claude's own (I_t escapes trailing whitespace so a rule can PRESERVE
-  // it as literal content; ht trims so no real query/write path this codebase resolves a tool
-  // argument through ever HAS trailing whitespace left to match against) -- an ESCAPED trailing
-  // space (round 9's own escapeFileRulePathSegment output) no longer matches a call whose path gets
-  // trimmed before the check ever sees it. Not a regression to fix: claude has the identical
-  // tension between its own I_t and ht, and this ruling (trim the query/write side) is explicit.
-  test("disclosed tension: an ESCAPED trailing space no longer matches, now that the query path is trimmed before the check -- matching claude's own I_t/ht tension, not a regression", async () => {
+  // Disclosed tension, the same one Claude Code has (the path-to-pattern escaper escapes trailing
+  // whitespace so a rule can PRESERVE it as literal content; the path trim means no real query/write
+  // path ever HAS trailing whitespace left to match against) -- an ESCAPED trailing space (round 9's
+  // own escapeFileRulePathSegment output) no longer matches a call whose path gets trimmed before the
+  // check ever sees it. Not a regression to fix: this ruling (trim the query/write side) is explicit.
+  test("disclosed tension: an ESCAPED trailing space no longer matches, now that the query path is trimmed before the check -- a known tension, not a regression", async () => {
     const ctx = baseCtx({
       cwd: "/work",
       policy: policy({ mode: "default", rules: withRules(rule("Read(//r/sp\\ )", "deny")) }),
@@ -2490,11 +2486,11 @@ describe("evaluate() -- fix round 10, item B: a raw, UNESCAPED trailing-space de
 //
 // This describe block tests the PRIMITIVE directly (`REAL_SPECIAL_CHECKS.isProtectedWrite`, the exact
 // function the controller's own bug report named) rather than through `evaluate()` -- once fix round
-// 11's OTHER half (the `mL` safety check, below) also lands, every `evaluate()`-level fixture for a
-// `Vbe`-shaped name like `.bashrc ` is masked: `mL` fires at stage 3, ahead of the standing-exception
+// 11's OTHER half (the suspicious-path check, below) also lands, every `evaluate()`-level fixture for a
+// name ending in whitespace or a dot, like `.bashrc `, is masked: that check fires at stage 3, ahead of the standing-exception
 // stage `isProtectedWrite` belongs to, so `evaluate()`'s own outcome no longer discriminates whether
 // THIS fix, specifically, is the one doing the work. Calling the primitive directly sidesteps that.
-describe("REAL_SPECIAL_CHECKS.isProtectedWrite -- fix round 11 (CRITICAL), tested as a primitive so fix round 11's OWN mL check (which ALSO fires for these paths, at evaluate()'s stage 3) can't mask a regression here", () => {
+describe("REAL_SPECIAL_CHECKS.isProtectedWrite -- fix round 11 (CRITICAL), tested as a primitive so fix round 11's OWN suspicious-path check (which ALSO fires for these paths, at evaluate()'s stage 3) can't mask a regression here", () => {
   test(".bashrc with a trailing space is recognized as protected", () => {
     const ctx = baseCtx({ cwd: "/w/proj" });
     expect(REAL_SPECIAL_CHECKS.isProtectedWrite(call("Write", { file_path: "/w/proj/.bashrc " }), ctx)).toBe(true);
@@ -2547,14 +2543,14 @@ describe("evaluate() -- fix round 11 (CRITICAL): a trailing space/tab no longer 
     expect(record.decision).toBe("deny");
   });
 
-  // Fix round 17, add-on A (corrects this block's round-11 bypass fixture): `mL` sees the TRIMMED
-  // path, as claude's `$K` does (claude backfills `file_path=ht(file_path)`, and `ht` trims, before the
-  // permission step -- the add-on A describe block below has the dump trail). So `.bashrc ` under
+  // Fix round 17, add-on A (corrects this block's round-11 bypass fixture): the suspicious-path check
+  // sees the TRIMMED path, as Claude Code's does (it trims the path before the permission step -- see
+  // the add-on A describe block below). So `.bashrc ` under
   // bypassPermissions is exactly `.bashrc` under bypassPermissions: WS-07 §6.7's protected-write bypass
   // cell (see the untrimmed `.git/config` fixture in the Task 7 matrix above). The trailing space is
   // invisible to the permission pipeline, and the tool writes the trimmed name (round 10 item B), so
   // there is no gap between the checked path and the written one.
-  test("bypassPermissions: the trailing-space protected write gets exactly the trimmed write's outcome (WS-07 §6.7's bypass cell) -- the space is invisible, as on claude", async () => {
+  test("bypassPermissions: the trailing-space protected write gets exactly the trimmed write's outcome (WS-07 §6.7's bypass cell) -- the space is invisible, as in Claude Code", async () => {
     const ctx = baseCtx({ cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }), specialChecks: REAL_SPECIAL_CHECKS });
     const spaced = await evaluate(call("Write", { file_path: "/w/proj/.bashrc " }), ctx);
     const plain = await evaluate(call("Write", { file_path: "/w/proj/.bashrc" }), ctx);
@@ -2570,22 +2566,22 @@ describe("evaluate() -- fix round 11 (CRITICAL): a trailing space/tab no longer 
   });
 });
 
-// Fix round 11: claude's own `mL`/`$K` (evaluator.ts's `isSuspiciousPath`/`firstSuspiciousWritePath`
-// own header has the full dump citation, byte 14442494, pinned 2.1.250) -- a NEW, second half of the
-// controller's "both parts" fix, additive to the trim fix above. This is the part that makes
-// `.bashrc ` (and the other Vbe-shaped candidates) ask even under `bypassPermissions`, which the
+// Fix round 11: the suspicious Windows path check (evaluator.ts's `isSuspiciousPath`/
+// `firstSuspiciousWritePath`) -- a NEW, second half of the controller's "both parts" fix, additive to
+// the trim fix above. This is the part that makes `foo.` (and the other names ending in a dot or
+// whitespace) ask even under `bypassPermissions`, which the
 // pre-existing protected-write standing exception's own bypass cell does NOT do (that cell is an
-// unconditional ALLOW, WS-07 §6.7 -- see the "control" test just above). `classifierApprovable:!1` in
-// claude's own source: this check is never softened by an allow rule, acceptEdits, auto's classifier,
+// unconditional ALLOW, WS-07 §6.7 -- see the "control" test just above). As in Claude Code, this
+// check is never softened by an allow rule, acceptEdits, auto's classifier,
 // or bypassPermissions -- it is wired at stage 3, strictly before stage 4 (mode baseline) and stage 5
 // (allow rules).
-describe("evaluate() -- fix round 11: claude's own mL/$K, an always-mandatory ask that survives even bypassPermissions", () => {
+describe("evaluate() -- fix round 11: the suspicious-path check, an always-mandatory ask that survives even bypassPermissions", () => {
   // Fix round 17, add-on A: round 11 pinned the four WHOLE-PATH trailing-whitespace shapes below as
-  // mL asks, reading the raw field. claude's `$K` never sees that whitespace -- its permission step
-  // runs on the backfilled `ht(file_path)`, which is trimmed (the add-on A describe block has the dump
-  // trail) -- so each now gets exactly its trimmed twin's outcome, mode by mode: the protected-file
+  // suspicious-path asks, reading the raw field. The check never sees that whitespace -- the path is
+  // trimmed before the permission step (the add-on A describe block) -- so each now gets exactly its
+  // trimmed twin's outcome, mode by mode: the protected-file
   // check (REAL_SPECIAL_CHECKS) still asks under acceptEdits, and WS-07 §6.7's bypass cell applies
-  // under bypassPermissions, as it does for the plain name. `mL` itself is pinned by the shapes a trim
+  // under bypassPermissions, as it does for the plain name. The check itself is pinned by the shapes a trim
   // leaves in place (`foo.`, `PROGRA~1`, `...`, `notes.CON`, below; a mid-path space in add-on A).
   for (const [label, spaced, plain, cwd] of [
     [".bashrc + a space", "/w/proj/.bashrc ", "/w/proj/.bashrc", "/w/proj"],
@@ -2593,7 +2589,7 @@ describe("evaluate() -- fix round 11: claude's own mL/$K, an always-mandatory as
     [".mcp.json + a tab", "/w/proj/.mcp.json\t", "/w/proj/.mcp.json", "/w/proj"],
   ] as const) {
     for (const mode of ["acceptEdits", "bypassPermissions"] as const) {
-      test(`${label} under ${mode}: exactly the trimmed name's outcome (claude's $K sees ht(file_path), trimmed)`, async () => {
+      test(`${label} under ${mode}: exactly the trimmed name's outcome (the check sees the trimmed path)`, async () => {
         const run = async (file_path: string) => {
           const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
           const ctx = baseCtx({ promptStage: promptSpy.stage, cwd, policy: policy({ mode }), specialChecks: REAL_SPECIAL_CHECKS });
@@ -2637,12 +2633,10 @@ describe("evaluate() -- fix round 11: claude's own mL/$K, an always-mandatory as
     expect(record.decision).toBe("deny");
   });
 
-  // Ground-truth note (dump-verified, byte 14442494): claude's own `mL` flags a device name ONLY as a
-  // literal `.<name>` SUFFIX on the whole path (`In=/\.(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i`) -- a
-  // BARE component with no leading dot (a path ending exactly in `CON`, no extension) does NOT match
-  // `In`, is not a `Vbe`-shaped trailing dot/whitespace run, and is not covered by ANY other branch of
-  // the dump-verified `mL` body; claude itself would not flag it either. Tested here as `notes.CON`
-  // (the actual reserved-device-as-extension shape claude's own check targets), not a bare `CON`.
+  // The check flags a reserved device name ONLY as a literal `.<name>` SUFFIX on the whole path -- a
+  // BARE component with no leading dot (a path ending exactly in `CON`, no extension) is not flagged,
+  // in Claude Code either. Tested here as `notes.CON` (the reserved-device-as-extension shape the
+  // check targets), not a bare `CON`.
   test("a device name used as a file extension (notes.CON) asks under bypassPermissions", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
     const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
@@ -2651,8 +2645,8 @@ describe("evaluate() -- fix round 11: claude's own mL/$K, an always-mandatory as
     expect(record.decision).toBe("deny");
   });
 
-  // Fix round 17, add-on A: the two stage-order fixtures below use `foo.` -- a shape `mL` still flags
-  // after the trim -- instead of round 11's `.bashrc `, which no longer reaches `mL` at all.
+  // Fix round 17, add-on A: the two stage-order fixtures below use `foo.` -- a shape the check still
+  // flags after the trim -- instead of round 11's `.bashrc `, which no longer reaches the check at all.
   test("dontAsk converts this mandatory ask into an immediate denial, mechanism 'mode', canUseTool never called -- matching the isMandatoryPrivateAddressAsk/isMandatoryMcpInteraction precedent", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "allow" })); // even if it WOULD ask-then-allow, dontAsk must never ask at all
     const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "dontAsk" }) });
@@ -2681,7 +2675,7 @@ describe("evaluate() -- fix round 11: claude's own mL/$K, an always-mandatory as
     expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
   });
 
-  test("control: a Read of a suspicious-shaped path is unaffected -- claude's own $K message is unconditionally 'write to', scoped here to write-shaped candidates only (extractCandidateWritePaths), matching claude's own message text rather than inventing a read-shaped variant it has none for", async () => {
+  test("control: a Read of a suspicious-shaped path is unaffected -- the check's message is unconditionally 'write to', so it is scoped to write-shaped candidates only (extractCandidateWritePaths), never a read-shaped variant", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
     const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
     const record = await evaluate(call("Read", { file_path: "/w/proj/.bashrc " }), ctx);
@@ -2689,15 +2683,14 @@ describe("evaluate() -- fix round 11: claude's own mL/$K, an always-mandatory as
     expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
   });
 
-  // Advisor-caught gap (this same round): $K IS reached from Bash's own output-redirection parsing
-  // too (dump byte 16957904, claude's `E6` shell-redirect-safety validator), not only the structured
-  // Edit/Write/NotebookEdit field -- an earlier draft's own header comment claimed otherwise before
-  // being checked against the dump and corrected. A QUOTED trailing space survives real shell-word
+  // Advisor-caught gap (this same round): the check also covers Bash's own output-redirection targets,
+  // as Claude Code's shell-redirect validation does, not only the structured Edit/Write/NotebookEdit
+  // field -- an earlier draft's own header comment claimed otherwise before being corrected. A QUOTED trailing space survives real shell-word
   // tokenization (empirically confirmed here against Winter's own shellWords/extractRedirectWrites,
   // the disclosed tree-sitter-bash stand-in from round 9): `echo x > "foo.bashrc "` -> candidate
   // `foo.bashrc ` (trailing space intact); an UNQUOTED one is a word separator and never reaches this
   // check at all, which is a genuine tokenization fact, not a Winter-side trim.
-  test("a Bash output redirect to a QUOTED, trailing-space-shaped target asks under bypassPermissions (claude's E6 reaches $K for shell redirects too)", async () => {
+  test("a Bash output redirect to a QUOTED, trailing-space-shaped target asks under bypassPermissions (shell redirect targets are checked too)", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
     const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/w/proj", policy: policy({ mode: "bypassPermissions" }) });
     const record = await evaluate(call("Bash", { command: 'echo x > "foo.bashrc "' }), ctx);
@@ -2772,12 +2765,12 @@ describe("Task 8 (P3 close-out): the baseline `~/.winter/run` read denial (WS-12
 });
 
 // Fix round 4 (SV-7, the router same-view test on the 57e7fef binary): "which rule kind each tool
-// consults." Under acceptEdits, an Edit(...) ASK rule made claude ask before a WRITE; Winter wrote
+// consults." Under acceptEdits, an Edit(...) ASK rule made Claude Code ask before a WRITE; Winter wrote
 // the file without asking, because its old per-rule matching required an exact toolName match. The
-// reverse also held: a Write(...) rule fired on Winter but never on claude (claude checks a Write
+// reverse also held: a Write(...) rule fired on Winter but never on Claude Code (which checks a Write
 // against Edit(...) rules only). Same-view-style differential cases, end to end through evaluate().
-describe("SV-7: claude's tool-to-rule-kind mapping -- Edit/Write/NotebookEdit share one kind, Read/Glob/Grep share another", () => {
-  test("an Edit(...) ASK rule fires for a Write call, matching claude -- the exact SV-7 finding", async () => {
+describe("SV-7: the tool-to-rule-kind mapping -- Edit/Write/NotebookEdit share one kind, Read/Glob/Grep share another", () => {
+  test("an Edit(...) ASK rule fires for a Write call, as in Claude Code -- the exact SV-7 finding", async () => {
     const ctx = baseCtx({
       cwd: "/work",
       policy: policy({ mode: "default", rules: withRules(rule("Edit(secrets/**)", "ask")) }),
@@ -2851,7 +2844,7 @@ describe("Task 8 (P3 close-out, RULING P3-E): NotebookEdit joins FILE_RULE_TOOLS
   test("a deny rule on a notebook path blocks NotebookEdit, before ever reaching the mode/prompt stage (mirrors the Edit/Write fixture above)", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "allow" })); // proves the denial happens BEFORE the prompt stage
     // Fix round 4 (SV-7): authored under Edit(...), not NotebookEdit(...) -- a NotebookEdit(...)-
-    // authored rule is dead code claude never reads, even for a NotebookEdit call itself (Edit is
+    // authored rule is never consulted, even for a NotebookEdit call itself (Edit is
     // the ONE canonical authoring name for the whole edit-class kind).
     const ctx = baseCtx({
       promptStage: promptSpy.stage,
@@ -2976,13 +2969,13 @@ describe("I1 (fix wave, P3 close-out): Glob/Grep join the dedicated-read-tool ba
   });
 
   // Fix round 4 (SV-7, the router same-view test), superseding this test's own pre-fix-round-4 name
-  // and premise: claude's file-rule grammar has only TWO rule kinds, "edit" and "read" -- Read/Glob/
+  // and premise: the file-rule grammar has only TWO rule kinds, "edit" and "read" -- Read/Glob/
   // Grep all consult `Read(...)`-authored rules, and there is no per-exact-tool-name matching left
   // at all (file-rules.ts's own `fileRuleKindFor`). A `Read(...)`-only baseline now DOES cover a
-  // Grep call, matching claude; engine.ts emitting all three tool names is still harmlessly
+  // Grep call, as in Claude Code; engine.ts emitting all three tool names is still harmlessly
   // redundant (a Read(...)-only baseline is now sufficient), not required the way this test used to
   // document.
-  test("SV-7: a Read(...) baseline deny rule ALONE now covers a Grep call too -- Read/Glob/Grep share one rule kind, matching claude", async () => {
+  test("SV-7: a Read(...) baseline deny rule ALONE now covers a Grep call too -- Read/Glob/Grep share one rule kind", async () => {
     const readOnlyBaseline = withRules(rule("Read(~/.winter/run)", "deny", "managed"), rule("Read(~/.winter/run/**)", "deny", "managed"));
     const ctx = baseCtx({ home: "/synthetic/home", cwd: "/work", policy: policy({ mode: "default", rules: readOnlyBaseline }) });
     const record = await evaluate(call("Grep", { pattern: "x", path: "/synthetic/home/.winter/run" }), ctx);
@@ -3380,14 +3373,14 @@ describe("Task 7 — Ruling P2-J (rider 2) proven at the evaluator layer, not ju
     }
   });
 
-  // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): claude's own trusted-symlink
-  // fallback for ALLOW rules (`ZCt`/`ni`/`QCt`, dump-confirmed) -- an allow rule written in the
+  // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): the trusted system-symlink
+  // fallback for ALLOW rules, as in Claude Code -- an allow rule written in the
   // commonly-typed short form (`//tmp/**`) must still fire when the call's REAL resolved path comes
   // back in the long form (`/private/tmp/...`, what `realpathSync` actually returns on macOS). The
   // target does not need to exist on disk: `resolveRealTarget`'s own graceful fallback walks up to
   // the nearest EXISTING ancestor (here, `/tmp` itself, a real OS path) and realpaths THAT, which is
   // enough to exercise the alias without creating a real file under `/tmp`.
-  test("fix round 5: an allow rule written //tmp/** matches a target whose REAL path resolves to /private/tmp/... (claude's own trusted-symlink fallback)", async () => {
+  test("fix round 5: an allow rule written //tmp/** matches a target whose REAL path resolves to /private/tmp/... (the trusted-symlink fallback)", async () => {
     const ctx = baseCtx({
       cwd: "/work",
       policy: policy({ rules: withRules(rule("Edit(//tmp/**)", "allow")) }),
@@ -3396,8 +3389,7 @@ describe("Task 7 — Ruling P2-J (rider 2) proven at the evaluator layer, not ju
     expect(record).toMatchObject({ decision: "allow", mechanism: "rule" });
   });
 
-  // The scope check: claude's own `ZCt` hardcodes "allow" regardless of caller -- DENY/ASK gets no
-  // alias fallback. This is not actually a gap: `target` is already the REAL (long-form) path via
+  // The scope check: the fallback applies to ALLOW rules only -- DENY/ASK gets no alias fallback. This is not actually a gap: `target` is already the REAL (long-form) path via
   // `resolveRealTarget`, so a deny rule written in the LONG form already matches it directly with no
   // aliasing needed; this test is the control proving deny still behaves via direct matching alone.
   // `target` is `resolveRealTarget`'s own graceful-fallback result, not a raw realpath: for a
@@ -3453,7 +3445,7 @@ describe("Task 7 — advisor-flagged gap, fixed: protected-write is symlink-awar
     }
   });
 
-  // Fix round 13 (Important item 2, claude's own Ii, dump byte 15346812): the controller's own exact
+  // Fix round 13 (Important item 2): the controller's own exact
   // scenario -- a DANGLING symlink (its target does not exist yet at all). resolveRealTarget's own
   // ENOENT fallback never reads the symlink's OWN stored value, so it fell back to the LINK's own
   // literal name ("innocent") -- no ".git" segment there, so isProtectedPath saw nothing protected
@@ -3485,16 +3477,12 @@ describe("Task 7 — advisor-flagged gap, fixed: protected-write is symlink-awar
 });
 
 // Fix round 17, add-on A (the R.2 same-view escape-table regression): a trailing-space Write path is
-// checked TRIMMED, the way claude hands it to `zC`/`$K`. claude's tool loop (dump byte 18520374) runs
-// `validateInput` on the parsed input -- Write's does `Ma(ht(file_path),…,"edit","deny")` -- then
-// `Ie={...Oe};e.backfillObservableInput(Ie);Oe=Ie`, where Write's/Edit's backfill is
-// `e.file_path=ht(e.file_path)` (18134024 / 19723975) and `ht` (12083670) begins `let r=t.trim()`. The
-// hooks and `x3` (the permission step, 17080895) then see that TRIMMED input: `zC` (14454832) matches
-// deny rules over `Ii(getPath(input))` and only later runs `$K` (14442946), whose `mL` loop covers the
-// same candidates. So trailing whitespace on the whole path never reaches `mL` on claude; round 11 read
-// the raw field instead, which made an escaped `sp\ ` deny rule (the router's `escapeRulePath` spelling)
-// ASK for a Write to `<root>/sp ` where claude writes `<root>/sp` silently.
-describe("evaluate() -- fix round 17 add-on A: a trailing-space Write path reaches mL TRIMMED, as claude's backfill hands it to zC/$K", () => {
+// checked TRIMMED. Claude Code trims a Write/Edit `file_path` at both ends before its hooks and its
+// permission step see the call, so its deny rules and its suspicious-path check both see the trimmed
+// path, and trailing whitespace on the whole path never reaches that check. Round 11 read the raw
+// field instead, which made an escaped `sp\ ` deny rule (the router's `escapeRulePath` spelling) ASK
+// for a Write to `<root>/sp ` where Claude Code writes `<root>/sp` silently.
+describe("evaluate() -- fix round 17 add-on A: a trailing-space Write path reaches the suspicious-path check TRIMMED", () => {
   const MODES = ["acceptEdits", "bypassPermissions", "default"] as const;
 
   async function outcome(file_path: string, mode: (typeof MODES)[number], rules: SourcedRuleEntry[]) {
@@ -3511,7 +3499,7 @@ describe("evaluate() -- fix round 17 add-on A: a trailing-space Write path reach
     }
   });
 
-  test("the router's row: under acceptEdits the raw `sp ` input is allowed WITHOUT asking (claude writes the trimmed name), never an mL ask", async () => {
+  test("the router's row: under acceptEdits the raw `sp ` input is allowed WITHOUT asking (claude writes the trimmed name), never a suspicious-path ask", async () => {
     const escaped = [rule("Edit(//w/proj/sp\\ )", "deny")];
     expect(await outcome("/w/proj/sp ", "acceptEdits", escaped)).toEqual({ decision: "allow", mechanism: "mode", asked: 0 });
   });
@@ -3521,7 +3509,7 @@ describe("evaluate() -- fix round 17 add-on A: a trailing-space Write path reach
   });
 
   // The coordinator's literal ask, which holds for the UNESCAPED rule: `ignore` drops the pattern's
-  // unescaped trailing space and `ht` drops the path's, so they meet -- deny, never ask, on the raw and
+  // unescaped trailing space and the path trim drops the path's, so they meet -- deny, never ask, on the raw and
   // the trimmed input alike (green before this fix too; kept as the guard).
   test("an UNESCAPED trailing-space deny rule (sp ) denies without asking on the raw AND the trimmed input, in every mode", async () => {
     const unescaped = [rule("Edit(//w/proj/sp )", "deny")];
@@ -3532,18 +3520,18 @@ describe("evaluate() -- fix round 17 add-on A: a trailing-space Write path reach
     }
   });
 
-  // `ht` trims only the ENDS: a component ending in whitespace MID-path still reaches mL on claude
-  // (`Vbe=/[.\s]+$/` per component), so it still asks, bypass included (a guard).
-  test("a MID-path component ending in a space still asks under bypassPermissions -- trimming the ends does not blunt mL", async () => {
+  // The trim touches only the ENDS: a component ending in whitespace MID-path still reaches the
+  // suspicious-path check (which tests every component), so it still asks, bypass included (a guard).
+  test("a MID-path component ending in a space still asks under bypassPermissions -- trimming the ends does not blunt the check", async () => {
     expect(await outcome("/w/proj/dir /x.txt", "bypassPermissions", [])).toMatchObject({ asked: 1 });
   });
 });
 
-// Fix round 12 (minor, claude's own `Ii`): `$K` runs `mL` on every candidate from `Ii(e)`, not just
-// the raw/as-typed path -- ALSO its resolved real target (`suspiciousSymlinkTarget`, evaluator.ts's
-// own header on `firstSuspiciousWritePath` has the full dump citation). An innocuous-LOOKING symlink
+// Fix round 12 (minor): the suspicious-path check runs on every symlink variant of a write target, not
+// just the raw/as-typed path -- ALSO its resolved real target (`suspiciousSymlinkTarget`, evaluator.ts),
+// as Claude Code's does. An innocuous-LOOKING symlink
 // whose own name has no suspicious shape at all can still point AT a suspiciously-named target.
-describe("evaluate() -- fix round 12 (minor): mL also runs on a symlink's RESOLVED real target, not just the link's own as-typed name", () => {
+describe("evaluate() -- fix round 12 (minor): the suspicious-path check also runs on a symlink's RESOLVED real target, not just the link's own as-typed name", () => {
   function freshRoot(): string {
     return realpathSync(mkdtempSync(join(tmpdir(), "winter-evaluator-suspicious-symlink-")));
   }
@@ -3592,9 +3580,9 @@ describe("evaluate() -- fix round 12 (minor): mL also runs on a symlink's RESOLV
   });
 });
 
-// Fix round 14 (CRITICAL item 2, claude's own `Ii`): claude threads its FULL `Ii`-derived candidate
-// set into `f_` (the working-directory bounds check, this file's own `isWithinBounds`) and every
-// rule lookup (`Ma`/`cqe`, this file's own `findMatchingFileRuleEntry`) -- not just the SAME TWO
+// Fix round 14 (CRITICAL item 2): the FULL symlink-variant candidate set feeds the working-directory
+// bounds check (`isWithinBounds`) and every rule lookup (`findMatchingFileRuleEntry`), as in Claude
+// Code -- not just the SAME TWO
 // candidates `suspiciousSymlinkTarget` already used (round 13). Before this fix, both checks still
 // called `resolveRealTarget` alone for their "resolved target" candidate, which falls back to the
 // LINK'S OWN literal path text for a DANGLING symlink (see paths.ts's own header on
@@ -3603,7 +3591,7 @@ describe("evaluate() -- fix round 12 (minor): mL also runs on a symlink's RESOLV
 // destination. The controller's own exact scenario: a cloned repo ships `notes.md -> ../../../
 // Library/LaunchAgents/x.plist` (dangling). `resolveSymlinkTargetChain` (paths.ts, round 13) is the
 // THIRD candidate that actually follows the dangling link's own readlink() value.
-describe("evaluate() -- fix round 14 (CRITICAL): Ii's full candidate set (link + resolveRealTarget + resolveSymlinkTargetChain) feeds isWithinBounds and the rule lookups, not just link+resolveRealTarget", () => {
+describe("evaluate() -- fix round 14 (CRITICAL): the full symlink candidate set (link + resolveRealTarget + resolveSymlinkTargetChain) feeds isWithinBounds and the rule lookups, not just link+resolveRealTarget", () => {
   function freshRoot(): string {
     return realpathSync(mkdtempSync(join(tmpdir(), "winter-evaluator-r14-ii-")));
   }
@@ -4185,8 +4173,8 @@ describe("probeReadAccess (P3 seam, widened by RULING P3-B): side-effect-free by
   // Fix round 17 (R.3 M-1): Glob/Grep call this per matched file, and Edit/Write/NotebookEdit's
   // read-before-edit check calls it too -- none of them inside `evaluate()`'s catch. A malformed
   // cwd-anchored `Read(...)` rule used to throw `FileRuleCompileError` out of the TOOL, ending the round
-  // with `error_during_execution`; claude's per-call boundary denies the one call instead (`evaluate()`'s
-  // own header has the `aD`/`d8t` citation). The probe now answers "deny".
+  // with `error_during_execution`; a per-call boundary denies the one call instead, as Claude Code's
+  // does (see `evaluate()`'s own header). The probe now answers "deny".
   test('"deny" -- a malformed file rule (FileRuleCompileError) denies the probed read instead of throwing out of the tool', () => {
     const ctx = poisonedCtx({ policy: policy({ rules: withRules(rule("Read([bad/baz)", "deny")) }) });
     expect(() => probeReadAccess("/work/bad/baz/x", ctx)).not.toThrow();

@@ -1,12 +1,10 @@
-// Fix round 4 (C-1 + SV-7, the router same-view test): the ported pipeline (jOe -> xi -> ki -> ln ->
-// Ma), using the REAL `ignore@7.0.5` package -- see file-rules.ts's own header for the four
-// independent version-fingerprint findings and the full list of disclosed simplifications.
+// Fix round 4 (C-1 + SV-7, the router same-view test): the file-rule pipeline (anchor -> normalise ->
+// trailing-`/**` rewrite -> grouped `ignore@7.0.5` match) -- see file-rules.ts's own header for the
+// grammar it gives and what it deliberately leaves out.
 //
-// Every probe row below is copied VERBATIM from the reviewer's own harness output (cwd `/w/proj`,
-// home `/h`), which paired claude's real `ignore` module with claude's own rule pipeline and ran it
-// side by side with Winter's OLD matchFileRule. Each row is `winter / claude`; Winter's OLD answer
-// is what paths.test.ts's own (now-superseded) corpus pinned, and claude's answer is the bar this
-// module must clear.
+// The first probe rows below come from the reviewer's harness (cwd `/w/proj`, home `/h`), which
+// measured Claude Code's file-rule decisions side by side with Winter's OLD matchFileRule; Claude
+// Code's answer is the bar this module must clear.
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -42,12 +40,12 @@ function matchOne(pattern: string, path: string, behavior: "allow" | "denyAsk", 
   return matchFileRulesGrouped(candidates, path, { cwd: overrides.cwd ?? CWD, home: overrides.home ?? HOME }, behavior) !== null;
 }
 
-describe("C-1: claude's file-rule pipeline, dump-confirmed probe rows (reviewer harness, cwd /w/proj, home /h)", () => {
+describe("C-1: file-rule decisions measured against Claude Code (reviewer harness, cwd /w/proj, home /h)", () => {
   test("deny ./.env matches /w/proj/pkg/.env (a bare no-inner-slash pattern matches at any depth)", () => {
     expect(matchOne("./.env", "/w/proj/pkg/.env", "denyAsk")).toBe(true);
   });
 
-  test("deny ./secrets/** matches /w/proj/pkg/secrets/a (ki unanchors the trailing /** for deny)", () => {
+  test("deny ./secrets/** matches /w/proj/pkg/secrets/a (the trailing /** is dropped, unanchored, for deny)", () => {
     expect(matchOne("./secrets/**", "/w/proj/pkg/secrets/a", "denyAsk")).toBe(true);
   });
 
@@ -62,11 +60,10 @@ describe("C-1: claude's file-rule pipeline, dump-confirmed probe rows (reviewer 
 
 // Fix round 5, N-1 (the re-review of 57e7fef..20b623e, Important): `isPathValidRelative` rejected
 // every relative path starting with the LITERAL TWO CHARACTERS "..", including a valid name like
-// "..x/evil.sh" -- a substring-prefix check, not a path-segment check. Claude's own `Ma` uses the
-// real package's own `isPathValid` (`REGEX_TEST_INVALID_PATH = /^\.{0,2}\/|^\.{1,2}$/`, this
-// module's own 7.0.5 fingerprint #2 from the C-1 commit), which rejects only a LEADING `/`, `./` or
-// `../` segment, or the bare strings "." / ".." -- never a name that merely starts with the two
-// characters ".." without being followed by a path separator. Probe rows verbatim from the re-review.
+// "..x/evil.sh" -- a substring-prefix check, not a path-segment check. The `ignore` package's own
+// path-validity rule rejects only a LEADING `/`, `./` or `../` segment, or the bare strings "." /
+// ".." -- never a name that merely starts with the two characters ".." without being followed by a
+// path separator. Probe rows from the re-review.
 describe("N-1: a directory/file name starting with '..' as a literal prefix is NOT a traversal escape", () => {
   test("deny *.sh matches /w/proj/..x/evil.sh", () => {
     expect(matchOne("*.sh", "/w/proj/..x/evil.sh", "denyAsk")).toBe(true);
@@ -88,12 +85,12 @@ describe("N-1: a directory/file name starting with '..' as a literal prefix is N
 });
 
 describe("Ruling: Winter's allow-exact-only asymmetry is RETIRED", () => {
-  test("allow foo matches /w/proj/a/foo, not only /w/proj/foo -- claude's own behaviour", () => {
+  test("allow foo matches /w/proj/a/foo, not only /w/proj/foo -- as in Claude Code", () => {
     expect(matchOne("foo", "/w/proj/a/foo", "allow")).toBe(true);
   });
 });
 
-describe("I-A: `^` inside [...] is a literal on claude's grammar, not negation", () => {
+describe("I-A: `^` inside [...] is a literal in the rule grammar, not negation", () => {
   test("deny //repo/[^a]* matches /repo/afoo (the class contains literal ^ and a, not a negated class)", () => {
     expect(matchOne("//repo/[^a]*", "/repo/afoo", "denyAsk")).toBe(true);
   });
@@ -143,8 +140,8 @@ describe("Minor: trailing whitespace is trimmed (git parity)", () => {
 describe("Minor: a reversed character-class range drops just that range, never the whole rule", () => {
   test("[z-a] is dropped, but the rest of a multi-range class still works", () => {
     // A lone reversed range collapses to an EMPTY class contribution; combined with a real range the
-    // rest of the class still functions (git's own documented behaviour, ported via the real
-    // package's own sanitizeRange, never a thrown error the way Winter's own hand-rolled compiler
+    // rest of the class still functions (git's own documented behaviour, which the real package
+    // implements -- never a thrown error the way Winter's own hand-rolled compiler
     // used to produce).
     expect(() => matchOne("//repo/[z-ab-c]", "/repo/b", "denyAsk")).not.toThrow();
     expect(matchOne("//repo/[z-ab-c]", "/repo/b", "denyAsk")).toBe(true);
@@ -169,14 +166,14 @@ describe("fileRuleKindFor: SV-7's tool -> rule-kind map", () => {
   });
 });
 
-describe("SV-7: an Edit(...) rule fires for a Write call, matching claude; a Write(...) rule is inert", () => {
+describe("SV-7: an Edit(...) rule fires for a Write call, as in Claude Code; a Write(...) rule is inert", () => {
   test("a Write call is decided against Edit(...)-authored rule candidates", () => {
     const writeKind = fileRuleKindFor("Write");
     const editRuleKind = fileRuleKindFor("Edit");
     expect(writeKind).toBe(editRuleKind);
   });
 
-  test("a Write(...)-toolName rule has no kind claude's own pipeline ever consults", () => {
+  test("a Write(...)-toolName rule has no kind of its own that is ever consulted", () => {
     // grammar.ts's FILE_RULE_TOOLS still recognizes "Write" as a rule TOOL NAME (so a rule can be
     // AUTHORED against it and parsed), but fileRuleKindFor is what evaluator.ts must use to decide
     // which GROUP a call's candidates come from -- a caller that filtered candidates by
@@ -185,18 +182,18 @@ describe("SV-7: an Edit(...) rule fires for a Write call, matching claude; a Wri
     // because nothing ever calls with call.toolName === "Write" AND rule kind sourced from a
     // "Write(...)" rule specifically -- Edit/Write/NotebookEdit all collapse into the SAME "edit"
     // pool, so a "Write(...)" rule is simply one more "edit"-kind candidate, exactly as inert (on
-    // its own distinct identity) as claude's own model makes it.
+    // its own distinct identity) as the rule grammar makes it.
     expect(fileRuleKindFor("Write")).toBe("edit");
   });
 });
 
 describe("Grouping is load-bearing: a negation rule only works when matched together with its sibling", () => {
   // Empirically verified against the real ignore@7.0.5 package directly (bun -e), not assumed: a
-  // bare directory-covering pattern like ki-transformed "src/**" (deny) -> "src" excludes the
+  // bare directory-covering pattern like "src/**" (deny), rewritten to "src", excludes the
   // DIRECTORY itself, and gitignore's own documented rule ("it is not possible to re-include a file
   // if a parent directory of that file is excluded") means a file-scoped negation INSIDE an
   // excluded directory can never fire -- this is real `ignore` package behaviour, not a Winter gap.
-  // A pattern that does NOT end in "/**" (so `ki` never touches it) demonstrates the grouping
+  // A pattern that does NOT end in "/**" (so the trailing rewrite never touches it) demonstrates the grouping
   // property cleanly instead.
   test("deny *.log plus deny !important.log in ONE group un-ignores important.log", () => {
     const candidates: FileRuleCandidate<{ id: string }>[] = [
@@ -231,14 +228,14 @@ describe("resolveFileRuleAnchor -- the four anchor spellings", () => {
   test("bare x roots at cwd (null), pattern untouched", () => {
     expect(resolveFileRuleAnchor("notes", { home: HOME })).toEqual({ relativePattern: "notes", root: null });
   });
-  test("a bare ~ (no trailing slash) is a literal filename pattern, ported faithfully from claude's own jOe", () => {
+  test("a bare ~ (no trailing slash) is a literal filename pattern", () => {
     expect(resolveFileRuleAnchor("~", { home: HOME })).toEqual({ relativePattern: "~", root: null });
   });
 });
 
 // Fix round 10, item C: a Read/Edit rule's own pattern, resolved to ONE absolute path for the
 // sandbox's own `subpath` rule -- see resolveFileRuleAbsolutePath's own header for the full
-// rationale (the glob-shaped-entries posture is dump-confirmed against claude's own `Jm`).
+// rationale (a glob-shaped write-allow entry is left out of the sandbox, as Claude Code does).
 describe("resolveFileRuleAbsolutePath -- fix round 10, item C: a rule pattern resolved to ONE path for the sandbox's own subpath rule", () => {
   const opts = { cwd: CWD, home: HOME };
 
@@ -274,7 +271,7 @@ describe("resolveFileRuleAbsolutePath -- fix round 10, item C: a rule pattern re
   });
 });
 
-// Fix round 11 (claude's Li/Rt, dump byte 15365905/15282610, pinned 2.1.250): the sibling of
+// Fix round 11: the sibling of
 // resolveFileRuleAbsolutePath that does NOT drop a glob-shaped pattern -- see that function's own
 // header for the full rationale (a glob-shaped DENY becomes an SBPL regex clause instead of being
 // silently unenforced by the sandbox layer; ALLOW keeps resolveFileRuleAbsolutePath's own
@@ -300,7 +297,7 @@ describe("resolveFileRuleAbsoluteGlobText -- fix round 11: the DENY-side sibling
   });
 });
 
-describe("isGlobShapedFileRulePattern -- claude's own Rt (dump byte 15282610), confirmed byte-equivalent to this module's own RULE_PATH_GLOB_CHARS", () => {
+describe("isGlobShapedFileRulePattern -- any of * ? [ ] makes a text glob-shaped", () => {
   test("a plain path is not glob-shaped", () => {
     expect(isGlobShapedFileRulePattern("/repo/secrets")).toBe(false);
   });
@@ -311,11 +308,9 @@ describe("isGlobShapedFileRulePattern -- claude's own Rt (dump byte 15282610), c
   });
 });
 
-// Fix round 11: claude's own Po (dump byte 15287939, pinned 2.1.250, ground-truth byte-slice-
-// verified via grep -bo + byte-slice extraction -- the coordinator's own "~272946" does not land
-// there, the same pattern as every prior round's citation). Real RegExp behavior asserted, not just
-// the source string, so a subtly-wrong conversion cannot hide behind a passing string-equality check.
-describe("globToSbplRegexSource / recursiveGlobToSbplRegexSource -- claude's own Po/td", () => {
+// Fix round 11: a deny glob rendered as an SBPL regex. Real RegExp behavior asserted, not just the
+// source string, so a subtly-wrong conversion cannot hide behind a passing string-equality check.
+describe("globToSbplRegexSource / recursiveGlobToSbplRegexSource -- a deny glob as an SBPL regex", () => {
   test("a single * matches any run of non-separator characters, never crossing a /", () => {
     const re = new RegExp(globToSbplRegexSource("/repo/*.ts"));
     expect(re.test("/repo/foo.ts")).toBe(true);
@@ -362,15 +357,13 @@ describe("globToSbplRegexSource / recursiveGlobToSbplRegexSource -- claude's own
     expect(re.test("/repo/.envfile")).toBe(false); // not a path-separator boundary
   });
 
-  // Fix round 11's own addition, disclosure CORRECTED round 12: the fixed (non-glob) prefix is
-  // canonicalized (resolveRealTarget) before conversion, GUARDED by claude's own `ko` (`isSuspicious
-  // RealpathResolution`, this module) -- claude's OWN `Cv` does exactly this too (round 11's own
-  // disclosure that `Cv` "does not perform real symlink resolution" was wrong, per the controller's
-  // own re-review; see `isSuspiciousRealpathResolution`'s own header for the corrected dump citation).
-  // The well-known macOS `/tmp` <-> `/private/tmp` alias is `ko`'s own explicitly-safe case -- real,
+  // Fix round 11's own addition, corrected in round 12: the fixed (non-glob) prefix is canonicalized
+  // (resolveRealTarget) before conversion, GUARDED by `isSuspiciousRealpathResolution` (this module),
+  // as Claude Code's sandbox does too. The well-known macOS `/tmp` <-> `/private/tmp` alias is one of
+  // the guard's explicitly-safe cases -- real,
   // not a synthetic symlink, so this specific test is darwin-only (guarded below); the SIBLING-symlink
   // rejection case right after it uses a synthetic symlink and runs on any host/CI.
-  test.skipIf(process.platform !== "darwin")("the fixed prefix IS canonicalized through the well-known macOS /tmp <-> /private/tmp alias (ko's own explicitly-safe case)", () => {
+  test.skipIf(process.platform !== "darwin")("the fixed prefix IS canonicalized through the well-known macOS /tmp <-> /private/tmp alias (an explicitly-safe case of the guard)", () => {
     const dir = mkdtempSync(join("/tmp", "winter-glob-prefix-canon-"));
     try {
       const source = globToSbplRegexSource(join(dir, "*.ts"));
@@ -385,11 +378,11 @@ describe("globToSbplRegexSource / recursiveGlobToSbplRegexSource -- claude's own
 
   // Fix round 12: a symlink pointing OUTSIDE its own subtree (here, a plain SIBLING under the same
   // parent -- neither "no change" nor the tmp/var alias nor a proper descendant of the original) is
-  // exactly the shape `ko`/`isSuspiciousRealpathResolution` REJECTS -- the canonicalization is
+  // exactly the shape `isSuspiciousRealpathResolution` REJECTS -- the canonicalization is
   // skipped and the AS-TYPED (symlinked) text is what the regex anchors on. This is a real behavior
-  // change from round 11's own (unguarded) fixture, which asserted the opposite -- ko's own point is
+  // change from round 11's own (unguarded) fixture, which asserted the opposite -- the guard's point is
   // precisely that an ARBITRARY symlink target must not be silently trusted as "the canonical form."
-  test("a symlink pointing to a SIBLING path (not a descendant, not the tmp/var alias) is NOT canonicalized -- ko rejects it, the as-typed text is used", () => {
+  test("a symlink pointing to a SIBLING path (not a descendant, not the tmp/var alias) is NOT canonicalized -- the guard rejects it, the as-typed text is used", () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "winter-glob-prefix-canon-")));
     try {
       const real = join(dir, "real");
@@ -435,7 +428,7 @@ describe("splitDenyPathsByGlobShape -- fix round 11: the one shared split point 
     expect(result.globFixedPrefixes).toEqual(["/repo/sub"]);
   });
 
-  test("a glob-shaped path whose fixed prefix resolves to the filesystem root contributes NOTHING to globFixedPrefixes -- matching claude's own Ch (`if(p===\"/\")continue`)", () => {
+  test("a glob-shaped path whose fixed prefix resolves to the filesystem root contributes NOTHING to globFixedPrefixes -- a root prefix is skipped", () => {
     const result = splitDenyPathsByGlobShape(["/*.secret"]);
     expect(result.globFixedPrefixes).toEqual([]);
   });
@@ -446,9 +439,9 @@ describe("splitDenyPathsByGlobShape -- fix round 11: the one shared split point 
   });
 });
 
-// Fix round 12 ("Important" item, claude's own `ed`, dump byte 15367994): every ancestor directory of
-// a path, walking up until `/` or a fixed point -- feeds the ancestor-rename-bypass port.
-describe("ancestorDirectoriesOf -- claude's own ed", () => {
+// Fix round 12 ("Important" item): every ancestor directory of a path, walking up until `/` or a
+// fixed point -- feeds the sandbox's ancestor-rename fence.
+describe("ancestorDirectoriesOf -- every ancestor directory, nearest first", () => {
   test("a nested path yields every ancestor up to but not including the root", () => {
     expect(ancestorDirectoriesOf("/a/b/c/d")).toEqual(["/a/b/c", "/a/b", "/a"]);
   });
@@ -466,10 +459,10 @@ describe("ancestorDirectoriesOf -- claude's own ed", () => {
   });
 });
 
-// Fix round 13 ("Important" item 1, claude's own `fR`): the PAIRED form `buildReadDenyKeepInPlaceBlock`
+// Fix round 13 ("Important" item 1): the PAIRED form `buildReadDenyKeepInPlaceBlock`
 // (sandbox/profile.ts) needs -- see `GlobDenyEntry`'s own header for why `splitDenyPathsByGlobShape`'s
 // own two flat arrays cannot answer this.
-describe("globDenyEntriesOf -- fix round 13, the paired regex+fixedPrefix form fR needs", () => {
+describe("globDenyEntriesOf -- fix round 13, the paired regex+fixedPrefix form the read-deny block needs", () => {
   test("a non-glob path contributes nothing", () => {
     expect(globDenyEntriesOf(["/repo/secrets"])).toEqual([]);
   });
@@ -558,13 +551,13 @@ describe("fix round 17 (R.3 C-1 part 2a): single-character bracket classes are l
     expect(splitDenyPathsByGlobShape(["/repo/v1.2/**/.env"]).regexes).toEqual(["^/repo/v1\\.2/(.*/)?\\.env(/.*)?$"]);
   });
 
-  test("isGlobShapedFileRulePattern itself stays claude's Rt -- the hardening lives in the deny split only", () => {
+  test("isGlobShapedFileRulePattern itself is unchanged -- the hardening lives in the deny split only", () => {
     expect(isGlobShapedFileRulePattern("/x/[[]wip] app/.winter/skills")).toBe(true);
     expect(isGlobShapedFileRulePattern("/x/a]b")).toBe(true);
   });
 });
 
-describe("unanchorTrailingDoubleStar -- the ki transform", () => {
+describe("unanchorTrailingDoubleStar -- the trailing-/** rewrite, per direction", () => {
   test("deny x/** unanchors to bare x", () => {
     expect(unanchorTrailingDoubleStar("x/**", false)).toBe("x");
   });
@@ -596,7 +589,7 @@ describe("escapeFileRulePathSegment -- I-G: a real path escaped before becoming 
     expect(escapeFileRulePathSegment("/home/name\\back")).toBe("/home/name\\\\back");
   });
 
-  test("leaves ? RAW, deliberately -- claude has no working escape for it, and over-matching is the safe direction for a deny", () => {
+  test("leaves ? RAW, deliberately -- the grammar has no working escape for it, and over-matching is the safe direction for a deny", () => {
     expect(escapeFileRulePathSegment("/home/name?question")).toBe("/home/name?question");
   });
 
@@ -617,10 +610,8 @@ describe("escapeFileRulePathSegment -- I-G: a real path escaped before becoming 
   // Fix round 9 (a divergence the router measured): the real `ignore` package trims an UNESCAPED
   // trailing whitespace run off a pattern line, exactly like real gitignore -- confirmed empirically
   // (`ignoreFactory().add("repo/sp ").test("repo/sp ")` is `false`; the same call with the trailing
-  // space escaped, `"repo/sp\\ "`, is `true`). Claude's own path-to-pattern escaper, `I_t`
-  // (dump-confirmed, same region as `c`/`jr`), protects against exactly this:
-  //   `t.replace(/\s+$/, (n) => Array.from(n, (s) => `\${s}`).join(""))`
-  // -- every character of a trailing whitespace RUN individually escaped. Before this fix,
+  // space escaped, `"repo/sp\\ "`, is `true`). A path-to-pattern escaper therefore has to escape
+  // every character of a trailing whitespace RUN individually, as Claude Code's does. Before this fix,
   // `escapeFileRulePathSegment` escaped none of it, so a Winter-BUILT deny rule for a real path
   // ending in a space (or any trailing whitespace) silently failed to protect that exact file: the
   // compiled pattern named the file WITHOUT its trailing space, so a write to the real,
@@ -629,7 +620,7 @@ describe("escapeFileRulePathSegment -- I-G: a real path escaped before becoming 
   // `unescapeRuleContent` doesn't touch `\ ` (it only recognises `\(`, `\)`, `\\`), so it reaches the
   // `ignore` layer unchanged and already matches correctly; this gap was specific to the PATH ->
   // PATTERN direction (`escapeFileRulePathSegment`), not the read-back direction.
-  test("escapes a trailing space -- claude's own I_t escapes every character of a trailing whitespace run", () => {
+  test("escapes a trailing space -- every character of a trailing whitespace run is escaped", () => {
     expect(escapeFileRulePathSegment("/home/sp ")).toBe("/home/sp\\ ");
   });
 
@@ -637,7 +628,7 @@ describe("escapeFileRulePathSegment -- I-G: a real path escaped before becoming 
     expect(escapeFileRulePathSegment("/home/sp  ")).toBe("/home/sp\\ \\ ");
   });
 
-  test("a trailing tab is escaped too -- I_t's regex is \\s+$, not space-specific", () => {
+  test("a trailing tab is escaped too -- any trailing whitespace counts, not only spaces", () => {
     expect(escapeFileRulePathSegment("/home/sp\t")).toBe("/home/sp\\\t");
   });
 
@@ -652,7 +643,7 @@ describe("escapeFileRulePathSegment -- I-G: a real path escaped before becoming 
     expect(matchFileRulesGrouped(candidates, real, { cwd: "/w", home: "/h" }, "denyAsk")).not.toBeNull();
   });
 
-  test("control: a rule authored directly with claude's OWN escaped spelling (\\ before the trailing space) already matched correctly before this fix -- the gap was only in escapeFileRulePathSegment, never in the ignore layer itself", () => {
+  test("control: a rule authored directly with the escaped spelling (\\ before the trailing space) already matched correctly before this fix -- the gap was only in escapeFileRulePathSegment, never in the ignore layer itself", () => {
     const rule = parseRule("Read(//repo/sp\\ )");
     expect(rule.specifier).toEqual({ kind: "pattern", source: "//repo/sp\\ " });
     const specifier = rule.specifier;
@@ -665,7 +656,7 @@ describe("escapeFileRulePathSegment -- I-G: a real path escaped before becoming 
 // loader would hand it (`resolve(root, entry)`'s result) -- the LOADER-level test suite
 // (plugins/loader.test.ts) is where a raw manifest entry like "../x" is exercised end to end,
 // since collapsing "../" is `path.resolve`'s own job, done before this function is ever called.
-describe("resolvesWithinPluginRoot -- fix round 5/6, the plugin-manifest traversal fence (KGe realpath step + claude's own nV comparison)", () => {
+describe("resolvesWithinPluginRoot -- fix round 5/6, the plugin-manifest traversal fence (realpath first, then a case-sensitive, naive-prefix comparison)", () => {
   function mkTemp(prefix: string): string {
     return mkdtempSync(join(tmpdir(), prefix));
   }
@@ -723,14 +714,13 @@ describe("resolvesWithinPluginRoot -- fix round 5/6, the plugin-manifest travers
     rmSync(root, { recursive: true, force: true });
   });
 
-  test("a literal backslash refuses outright -- KGe's own defensive check, ported for parity", () => {
+  test("a literal backslash refuses outright -- a defensive check", () => {
     const root = mkTemp("winter-fence-root-");
     expect(resolvesWithinPluginRoot(join(root, "a\\b"), root)).toBe(false);
     rmSync(root, { recursive: true, force: true });
   });
 
-  // Fix round 6, R5-1 (the re-review against the pinned 2.1.250 dump): claude's own nV compares
-  // case-SENSITIVELY -- round 5's own delegation to isPathWithinRoot's default caseFold:true was
+  // Fix round 6, R5-1: the fence compares case-SENSITIVELY, as Claude Code's does -- round 5's own delegation to isPathWithinRoot's default caseFold:true was
   // wrong. Neither side needs to exist on disk: resolveRealTarget's own fallback (walk up to the
   // nearest EXISTING ancestor, "/" here, and rejoin the literal, case-PRESERVED tail) means this
   // exercises the comparison directly, without needing a genuinely case-sensitive volume (this dev
@@ -749,12 +739,11 @@ describe("resolvesWithinPluginRoot -- fix round 5/6, the plugin-manifest travers
     expect(resolvesWithinPluginRoot(candidate, root)).toBe(true);
   });
 
-  // Fix round 6 (a promoted minor, the re-review against the pinned 2.1.250 dump): claude's own nV
-  // uses a NAIVE startsWith("..") check (dump-confirmed, reading nV's full body), not the
-  // segment-aware one isPathWithinRoot/sm has -- so a component name that merely STARTS WITH the two
+  // Fix round 6 (a promoted minor): the fence uses a NAIVE startsWith("..") check, as Claude Code's
+  // does, not the segment-aware one isPathWithinRoot has -- so a component name that merely STARTS WITH the two
   // characters ".." is refused too, not only a genuine "../" escape. A real behaviour CHANGE from
   // round 5 (which delegated to isPathWithinRoot's segment-aware check and would have admitted this).
-  test("minor: a name starting with '..' (e.g. '..x/agents') is REFUSED, matching claude's own nV exactly", () => {
+  test("minor: a name starting with '..' (e.g. '..x/agents') is REFUSED", () => {
     const root = mkTemp("winter-fence-root-");
     mkdirSync(join(root, "..x", "agents"), { recursive: true });
     expect(resolvesWithinPluginRoot(join(root, "..x", "agents"), root)).toBe(false);
@@ -769,13 +758,13 @@ describe("resolvesWithinPluginRoot -- fix round 5/6, the plugin-manifest travers
   });
 });
 
-// Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): claude's own trusted-symlink
-// mapping (`ni`/`QCt`, dump-confirmed) -- these probes exercise the pairs that actually hold on the
+// Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): the trusted system-symlink
+// mapping -- these probes exercise the pairs that actually hold on the
 // REAL machine running this test (verified via `readlink -f`: `/tmp`->`/private/tmp`,
 // `/var`->`/private/var`, `/etc`->`/private/etc` all resolve that way on macOS; `/bin`/`/lib`/`/sbin`
 // do not on every macOS version -- e.g. a sealed-system-volume install may have `/bin` as a real,
 // non-symlinked directory -- which is exactly why the map is VERIFIED dynamically, never assumed).
-describe("canonicalizeTrustedSymlinkPath -- fix round 5, claude's trusted-symlink mapping (ni/QCt)", () => {
+describe("canonicalizeTrustedSymlinkPath -- fix round 5, the trusted system-symlink mapping", () => {
   // trustedSymlinkEquivalences() VERIFIES each pair dynamically (realpathSync(alias) === real) --
   // that's the whole point (see the map's own doc comment: "a pair that does not resolve that way on
   // a given machine is excluded"). `/tmp` -> `/private/tmp` and `/var` -> `/private/var` are real
@@ -809,11 +798,11 @@ describe("canonicalizeTrustedSymlinkPath -- fix round 5, claude's trusted-symlin
   });
 });
 
-describe("normalizeFileRulePattern -- the xi transform", () => {
+describe("normalizeFileRulePattern -- slash collapsing and byte-order-mark handling", () => {
   test("collapses repeated slashes", () => {
     expect(normalizeFileRulePattern("a//b///c")).toBe("a/b/c");
   });
-  test("a bare leading BOM is deleted outright (the class-escaping second replace is dead code -- see the function's own header)", () => {
+  test("a single leading BOM is deleted outright", () => {
     expect(normalizeFileRulePattern("﻿foo")).toBe("foo");
   });
   test("a leading BOM before ! or # escapes the directive character instead of stripping it", () => {
@@ -824,20 +813,20 @@ describe("normalizeFileRulePattern -- the xi transform", () => {
 
 // Fix round 8 (a rule-content parity item found by the integration run on both real binaries): end
 // to end through the REAL pipeline -- a rule STRING (grammar.ts's parseRule) feeding the real
-// `ignore`-package matcher this module builds (see grammar.ts's own header for the ported
-// Tool(content) grammar, jr/l/u/a, this composes with).
+// `ignore`-package matcher this module builds (see grammar.ts's `splitRuleText`/`unescapeRuleContent`
+// for the Tool(content) grammar this composes with).
 function matchAuthoredRule(ruleString: string, path: string, behavior: "allow" | "denyAsk", overrides: { cwd?: string; home?: string } = {}): boolean {
   const rule = parseRule(ruleString);
   if (rule.specifier?.kind !== "pattern") throw new Error(`expected a pattern specifier, got ${JSON.stringify(rule.specifier)}`);
   return matchOne(rule.specifier.source, path, behavior, overrides);
 }
 
-describe("end to end -- fix round 8: a rule string parses through grammar.ts and matches through the real ignore pipeline exactly as claude's own would", () => {
+describe("end to end -- fix round 8: a rule string parses through grammar.ts and matches through the real ignore pipeline", () => {
   test("an UNESCAPED literal paren pair (a real directory named 'Project (old)') matches -- unchanged from before this fix", () => {
     expect(matchAuthoredRule("Read(//repo/Project (old)/**)", "/repo/Project (old)/secret.txt", "denyAsk")).toBe(true);
   });
 
-  test("the SAME rule authored with claude's OWN escaped spelling (\\( and \\)) matches the identical real path", () => {
+  test("the SAME rule authored with the escaped spelling (\\( and \\)) matches the identical real path", () => {
     expect(matchAuthoredRule("Read(//repo/Project \\(old\\)/**)", "/repo/Project (old)/secret.txt", "denyAsk")).toBe(true);
   });
 
@@ -845,9 +834,9 @@ describe("end to end -- fix round 8: a rule string parses through grammar.ts and
     expect(matchAuthoredRule("Read(//repo/Project \\(old\\)/**)", "/repo/Project (new)/secret.txt", "denyAsk")).toBe(false);
   });
 
-  test("a literal backslash in the real path matches ONLY claude's own two-layer escape spelling, not the pre-fix single layer", () => {
+  test("a literal backslash in the real path matches ONLY the two-layer escape spelling, not the pre-fix single layer", () => {
     // Two INDEPENDENT escape layers stack for a literal backslash: (1) this round's OWN fix --
-    // grammar.ts's Tool(content) unescape (`a`) halves an authored run of backslashes ONCE before
+    // grammar.ts's Tool(content) unescape halves an authored run of backslashes ONCE before
     // any specifier-family parsing ever sees it; (2) the real `ignore` package's OWN, separate,
     // already-verified (round 4, 1476 cases, 0 diffs) escape grammar, which ALSO requires a doubled
     // backslash in the PATTERN TEXT it receives to match one literal backslash in a real path.
@@ -869,18 +858,14 @@ describe("end to end -- fix round 8: a rule string parses through grammar.ts and
 // the WHOLE RUN.
 //
 // Round 9 tried to resolve the failure inside `matchFileRulesGrouped` itself, direction-aware
-// (denyAsk -> the broken group's own entry, allow -> null). Round 10's controller ruling is that
-// this is not what claude does: claude's own `Ma` has no per-group catch at all -- only the
-// per-TOOL-CALL one far above it, `d8t`'s hardcoded fallback (reached when a tool declares no
-// custom `permissionCheckFailureDecision`; Read/Edit do not) -- `{behavior:"deny", message:"The
-// <name> permission check failed and its fail-closed posture could not be determined. The call is
-// denied.", decisionReason:{type:"other", reason:"permission check crashed; tool declares a
-// fail-closed posture"}}`. So `matchFileRulesGrouped` now THROWS a typed `FileRuleCompileError`
-// instead of resolving anything itself -- deny/ask/allow all abort the SAME way, exactly like
-// claude's own `Ma`. `evaluator.test.ts` is where the one catch site (`evaluate()`) and its
-// fail-closed-deny outcome are pinned; THIS file only proves the throw itself, scoped per ANCHOR
-// ROOT group's own `.test()` call, matching claude's own `ln`/`Ma` structure: ONE `ignore()`
-// instance is memoized per anchor root, built from every candidate that shares it. A query whose
+// (denyAsk -> the broken group's own entry, allow -> null). Round 10's controller ruling: a broken
+// rule aborts the whole permission check for that call, on every direction, and the call is denied
+// once, at the per-call boundary, with "The <name> permission check failed and its fail-closed
+// posture could not be determined. The call is denied." -- as Claude Code behaves. So
+// `matchFileRulesGrouped` now THROWS a typed `FileRuleCompileError` instead of resolving anything
+// itself. `evaluator.test.ts` is where the one catch site (`evaluate()`) and its fail-closed-deny
+// outcome are pinned; THIS file only proves the throw itself, scoped per ANCHOR ROOT group's own
+// `.test()` call: ONE `ignore()` instance per anchor root, built from every candidate that shares it. A query whose
 // path falls OUTSIDE a broken root entirely (filtered by `isPathValidRelative` before `.test()` is
 // ever reached) never triggers the throw at all -- but a "//"-anchored broken rule's own root is
 // "/", which every absolute path is trivially "under", so its blast radius is every query, not a
@@ -891,7 +876,7 @@ describe("matchFileRulesGrouped -- fix round 10, item 3: an uncompilable rule TH
     expect(() => matchFileRulesGrouped(candidates, "/repo/foo[bar/baz/x", { cwd: CWD, home: HOME }, "denyAsk")).toThrow(FileRuleCompileError);
   });
 
-  test("a malformed pattern ALSO throws on the allow direction -- claude's own Ma has no direction-aware recovery either", () => {
+  test("a malformed pattern ALSO throws on the allow direction -- there is no direction-aware recovery", () => {
     const candidates: FileRuleCandidate<{ id: string }>[] = [{ entry: { id: "bad" }, pattern: "//repo/foo[bar/baz" }];
     expect(() => matchFileRulesGrouped(candidates, "/repo/foo[bar/baz/x", { cwd: CWD, home: HOME }, "allow")).toThrow(FileRuleCompileError);
   });
@@ -913,7 +898,7 @@ describe("matchFileRulesGrouped -- fix round 10, item 3: an uncompilable rule TH
     expect(matchFileRulesGrouped(candidates, `${CWD}/secret/key`, { cwd: CWD, home: HOME }, "denyAsk")).toEqual({ id: "good" });
   });
 
-  test("a '//'-anchored broken rule's blast radius is every path (root '/' contains every absolute path) -- disclosed, not a bug: claude's own one-ignore()-per-root architecture has the identical property, since a throw during that root's own combined regex compilation aborts the WHOLE check for any query that root's group is even consulted for", () => {
+  test("a '//'-anchored broken rule's blast radius is every path (root '/' contains every absolute path) -- disclosed, not a bug: the one-ignore()-per-root design has this property by construction, since a throw during that root's own combined regex compilation aborts the WHOLE check for any query that root's group is even consulted for", () => {
     const candidates: FileRuleCandidate<{ id: string }>[] = [{ entry: { id: "bad" }, pattern: "//repo/foo[bar/baz" }];
     expect(() => matchFileRulesGrouped(candidates, `${CWD}/completely/unrelated/path`, { cwd: CWD, home: HOME }, "denyAsk")).toThrow(FileRuleCompileError);
   });

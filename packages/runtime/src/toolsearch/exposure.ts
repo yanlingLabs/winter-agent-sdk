@@ -46,9 +46,9 @@ export interface ExposureQuery {
    * Fix round 21: the run's own scope over the process-wide registry -- engine.ts passes the SAME
    * predicate its advertised partition applies (`computeAdvertisedPartition`: a live server's MCP tool
    * only for a server the run can see), so ToolSearch never finds or selects another run's tools
-   * (e.g. a subagent's own object-form server's, while that subagent runs). claude's ToolSearch
-   * searches only the calling agent's own tools (`x = refreshTools?.() ?? tools`, dump byte
-   * 15619044). Absent = no scope (every pre-round-21 caller).
+   * (e.g. a subagent's own object-form server's, while that subagent runs), matching Claude Code,
+   * whose ToolSearch searches only the calling agent's own tools. Absent = no scope (every
+   * pre-round-21 caller).
    */
   toolFilter?: (descriptor: ToolDescriptor) => boolean;
 }

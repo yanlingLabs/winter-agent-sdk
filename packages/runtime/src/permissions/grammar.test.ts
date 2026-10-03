@@ -128,33 +128,25 @@ describe("parseRule -- fix round 2, Ruling P2-G (file-rule tools are never gener
   });
 });
 
-// Fix round 8 (a rule-content parity item found by the integration run on both real binaries):
-// claude's `Tool(content)` parse step (dump-confirmed, byte offset ~11910950 of the pinned 2.1.250
-// dump; the function itself is `jr`) finds the specifier boundary with an ESCAPE-AWARE search --
-// the first UNESCAPED "(" and the last UNESCAPED ")" (an occurrence is escaped when it is preceded
-// by an ODD run of backslashes, `jr`'s own helpers `l`/`u`) -- and then unescapes the captured
-// content with THREE SEQUENTIAL passes (`jr`'s own `a`, byte offset ~11910950): `\(` -> `(`, then
-// `\)` -> `)`, then `\\` -> `\`, in that exact order. This runs ONCE, before ANY specifier-family
-// parsing (FILE_RULE_TOOLS/Bash/param/etc. below all see the ALREADY-UNESCAPED content). The write
-// side (`Fr`/`c`, the same dump region) is the exact inverse: `c(e)` escapes `\` -> `\\` FIRST, then
-// `(` -> `\(`, then `)` -> `\)` -- so a rule persisted BY claude for a path containing a literal
-// backslash or literal parens is written pre-escaped this way, and Winter must parse it back the
-// same way or silently fail to match a rule claude itself wrote (a shared-home, cross-leg fixture
-// class, not a hypothetical one).
+// Fix round 8 (a rule-content parity item found by the integration run on both real binaries): the
+// `Tool(content)` grammar finds the content with an ESCAPE-AWARE search -- the first UNESCAPED "("
+// and the last UNESCAPED ")", where an occurrence is escaped when an ODD run of backslashes precedes
+// it -- and then unescapes the content once (`\(` -> `(`, `\)` -> `)`, `\\` -> `\`) before ANY
+// specifier-family parsing sees it. A rule written by Claude Code for a path containing a literal
+// backslash or parens arrives escaped that way (backslashes doubled, parens escaped), and Winter
+// must read it back identically or silently fail to match it in a shared home.
 //
-// Before this fix, `parseRule` extracted the specifier boundary with a plain greedy regex
-// (`/^([^\s(]+)\((.*)\)$/s`) and performed NO unescaping at all -- so it required only ONE literal
-// backslash character to match one in the real path (claude's own two-layer pipeline requires TWO,
-// since its OWN parse-side unescape consumes one layer before the file-rule matcher's OWN,
-// separately-ported, gitignore-style escape grammar ever sees the content) and misread an escaped
-// `\)` mid-content as ordinary text rather than a literal `)`.
-describe("parseRule -- fix round 8, claude's Tool(content) escape-aware extraction and unescape", () => {
+// Before this fix, `parseRule` used a plain greedy regex and performed NO unescaping -- so it needed
+// only ONE literal backslash to match one in the real path (the grammar needs TWO: the parse-side
+// unescape consumes one layer before the file-rule matcher's own gitignore-style escapes see the
+// content) and misread an escaped `\)` mid-content as ordinary text rather than a literal `)`.
+describe("parseRule -- fix round 8, the Tool(content) escape-aware extraction and unescape", () => {
   test("an UNESCAPED literal paren pair in the content is left exactly as authored (the common case: a real directory named 'Project (old)') -- unchanged from before this fix", () => {
     const rule = parseRule("Read(/repo/Project (old)/**)");
     expect(rule.specifier).toEqual({ kind: "pattern", source: "/repo/Project (old)/**" });
   });
 
-  test("an escaped paren pair, \\( and \\), unescapes to a literal ( and ) in the content -- claude's OWN serializer writes literal parens exactly this way", () => {
+  test("an escaped paren pair, \\( and \\), unescapes to a literal ( and ) in the content -- the escaped spelling a written-back rule uses for literal parens", () => {
     const rule = parseRule("Read(/repo/Project \\(old\\)/**)");
     expect(rule.specifier).toEqual({ kind: "pattern", source: "/repo/Project (old)/**" });
   });
@@ -169,9 +161,9 @@ describe("parseRule -- fix round 8, claude's Tool(content) escape-aware extracti
     expect(rule.specifier).toEqual({ kind: "pattern", source: "C:\\Users\\x" });
   });
 
-  test("a backslash and parens together, exactly as claude's own serializer (c(e): backslash first, then parens) would write a path containing both", () => {
-    // The real path is `C:\Projects\Old (v1)\file`. claude's Fr/c serializes it backslash-first
-    // then parens: every "\" becomes "\\", then every "(" becomes "\(" and ")" becomes "\)".
+  test("a backslash and parens together, as a rule written back for a path containing both is spelled", () => {
+    // The real path is `C:\Projects\Old (v1)\file`, written with every "\" doubled and every "("
+    // and ")" escaped.
     const rule = parseRule("Read(C:\\\\Projects\\\\Old \\(v1\\)\\\\file)");
     expect(rule.specifier).toEqual({ kind: "pattern", source: "C:\\Projects\\Old (v1)\\file" });
   });
@@ -787,17 +779,14 @@ describe("read-only recognition refuses the find/rg/git forms that write or run 
   }
 });
 
-// Fix round 10, item A: `sue`, ported exactly (dump byte offset 11968903, pinned 2.1.250) -- the
-// settings-LOAD rule validator claude's own `io` calls for every `permissions.{allow,deny,ask}`
-// string. Applied at settings load ONLY (production-wiring.ts's buildSettingsRuleSeed) -- see
-// grammar.ts's own header on `validatePermissionRuleString` for the full source, the disclosed
-// warning-only omissions, and the content-verified filePatternTools divergence (Grep excluded).
-// Every rejection class the controller listed, tested with BOTH an allow and a deny where the
-// controller's own list distinguishes them.
-describe("validatePermissionRuleString -- fix round 10, item A: sue, ported exactly", () => {
-  // Fix round 17 (R.3 M-3): `zDe`'s suggestion, byte for byte (dump byte 11968484) -- claude's source
-  // spells the dash as `\u2014`, an em dash, where round 10's port had two hyphens.
-  test("fix round 17: the allow-wildcard suggestion is claude's text byte for byte, em dash included", () => {
+// Fix round 10, item A: the settings-LOAD rule validator, run for every `permissions.{allow,deny,ask}`
+// string read from a settings file (production-wiring.ts's buildSettingsRuleSeed) and nowhere else.
+// See `validatePermissionRuleString`'s own doc comment for the checks in order. Every rejection
+// class is tested with BOTH an allow and a deny where the direction matters.
+describe("validatePermissionRuleString -- fix round 10, item A: the settings-load validator", () => {
+  // Fix round 17 (R.3 M-3): the suggestion is the grammar's interface text byte for byte -- its dash
+  // is `\u2014`, an em dash, where round 10's version had two hyphens.
+  test("fix round 17: the allow-wildcard suggestion is the interface text byte for byte, em dash included", () => {
     expect(validatePermissionRuleString("*", "allow")).toMatchObject({
       valid: false,
       error: 'Wildcard tool name "*" is not supported in allow rules',
@@ -817,7 +806,7 @@ describe("validatePermissionRuleString -- fix round 10, item A: sue, ported exac
       expect(validatePermissionRuleString("Bash(foo)bar)", dir).valid).toBe(false);
     }
     // An escaped paren is NOT counted -- content with one real "(" and one ESCAPED "\(" is balanced
-    // by sue's own escape-aware count (1 unescaped "(" total, 1 unescaped ")" total: the trailing,
+    // by the escape-aware count (1 unescaped "(" total, 1 unescaped ")" total: the trailing,
     // real close).
     expect(validatePermissionRuleString("Read(foo\\(bar)", "deny").valid).toBe(true);
   });
@@ -838,17 +827,11 @@ describe("validatePermissionRuleString -- fix round 10, item A: sue, ported exac
     expect(validatePermissionRuleString("mcp__server__tool", "deny")).toEqual({ valid: true });
   });
 
-  // DUMP-VERIFIED, disclosed: `sue`'s own "Tool name cannot be empty" branch reads `r.toolName`
-  // straight from `jr(e)` -- and `jr` itself NEVER returns an empty `toolName`: its own fallback,
-  // `if(!n)return{toolName:vd(e)}`, substitutes the WHOLE ORIGINAL STRING the moment the extracted
-  // prefix would be empty (e.g. "(foo)" -- toolName up to the first "(" is "", so `jr` returns
-  // `{toolName:"(foo)"}`, the untouched original string, not an empty one). Combined with `sue`'s
-  // own leading `!e.trim()===""` guard (which already rejects a genuinely empty/blank string), this
-  // makes the "Tool name cannot be empty" branch UNREACHABLE in claude's own real implementation --
-  // ported here byte-for-byte anyway (dead code copied faithfully, not "fixed" into something that
-  // fires), so a `"(foo)"`-shaped rule is `valid: true` on BOTH legs, verified directly rather than
-  // assumed.
-  test("a rule whose extracted prefix would be empty (e.g. a leading paren) falls back to jr's own whole-string toolName, not an empty one -- 'Tool name cannot be empty' is unreachable, matching claude exactly", () => {
+  // "Tool name cannot be empty" cannot actually fire: a rule whose text before the first "(" is
+  // empty (e.g. "(foo)") is not split at all, so its tool name is the WHOLE text, never an empty
+  // string -- and a blank rule is already refused by the first check. So a "(foo)"-shaped rule is
+  // valid.
+  test("a rule whose extracted prefix would be empty (e.g. a leading paren) keeps the whole text as its tool name, not an empty one -- 'Tool name cannot be empty' is unreachable", () => {
     expect(validatePermissionRuleString("(foo)", "deny")).toEqual({ valid: true });
   });
 
@@ -890,15 +873,14 @@ describe("validatePermissionRuleString -- fix round 10, item A: sue, ported exac
     expect(validatePermissionRuleString("Bash(npm run:*)", "deny")).toEqual({ valid: true });
   });
 
-  test("any :* on a file tool is rejected -- claude's own validator list (Read/Write/Edit/Glob/NotebookRead/NotebookEdit/Cd), content-verified to EXCLUDE Grep", () => {
+  test("any :* on a file tool is rejected -- the load-time list (Read/Write/Edit/Glob/NotebookRead/NotebookEdit/Cd), which EXCLUDES Grep", () => {
     expect(validatePermissionRuleString("Read(foo:*)", "deny")).toMatchObject({ valid: false, error: 'The ":*" syntax is only for Bash prefix rules' });
     expect(validatePermissionRuleString("Edit(foo:*)", "deny")).toMatchObject({ valid: false, error: 'The ":*" syntax is only for Bash prefix rules' });
     expect(validatePermissionRuleString("Write(foo:*)", "deny")).toMatchObject({ valid: false, error: 'The ":*" syntax is only for Bash prefix rules' });
     expect(validatePermissionRuleString("Glob(foo:*)", "deny")).toMatchObject({ valid: false, error: 'The ":*" syntax is only for Bash prefix rules' });
     expect(validatePermissionRuleString("NotebookEdit(foo:*)", "deny")).toMatchObject({ valid: false, error: 'The ":*" syntax is only for Bash prefix rules' });
-    // Content-verified divergence from Winter's OWN FILE_RULE_TOOLS (grammar.ts, used for actual
-    // rule-matching dispatch, which DOES include Grep): claude's own settings-load validator table
-    // does not, so this specific rejection never fires for Grep.
+    // Unlike Winter's FILE_RULE_TOOLS (grammar.ts, used for rule-matching dispatch, which DOES include
+    // Grep), the load-time list does not, so this rejection never fires for Grep.
     expect(validatePermissionRuleString("Grep(foo:*)", "deny")).toEqual({ valid: true });
   });
 

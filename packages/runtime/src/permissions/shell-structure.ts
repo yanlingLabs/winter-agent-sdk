@@ -12,7 +12,7 @@
 //
 // `flattenSubcommands` returns every one of them as its own subcommand, ALONGSIDE the enclosing text
 // (which keeps its own top-level redirections, e.g. `(cmd) > f`). Here-document BODIES are removed
-// first (claude extracts them before it joins continuations or parses, for the reason in
+// first, before continuations are joined or anything is parsed (for the reason in
 // `extractHeredocs`), so body lines are never mistaken for commands, and `#` comments are dropped.
 //
 // Unparseable input -- an unterminated quote, unbalanced parentheses, `case` patterns, nesting past
@@ -57,7 +57,7 @@ function opensAnsiQuote(s: string, i: number): boolean {
  * bodies bash will still expand. Bodies are removed BEFORE line continuations are joined: a QUOTED
  * here-document's body is literal (`\<newline>` is not a continuation there), and joining first could
  * shift its delimiter so that a later line -- `> /etc/passwd` -- was swallowed into the body and never
- * seen (claude's `extractOutputRedirections` documents that exact attack).
+ * seen.
  *
  * This is the one scanner that DROPS text, so it follows bash's contexts closely enough never to drop
  * a command bash runs: `<<` is a here-document only in a command context (not inside `((…))`,
@@ -402,7 +402,7 @@ export function flattenSubcommands(command: string): string[] | null {
     const extracted = extractHeredocs(text);
     if (extracted === null) return false;
     // `$(cat <<'EOF' … EOF)` only produces its (literal, quoted-delimiter) body as TEXT -- the
-    // commit-message idiom. Nothing in it runs, so it adds no subcommand (claude's isSafeHeredoc).
+    // commit-message idiom. Nothing in it runs, so it adds no subcommand.
     if (depth > 0 && extracted.liveBodies.length === 0 && LITERAL_CAT_HEREDOC.test(extracted.text)) return true;
     for (const body of extracted.liveBodies) {
       if (!visitBodies(substitutionBodies(joinLineContinuations(body), true), depth)) return false;

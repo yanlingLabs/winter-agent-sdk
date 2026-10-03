@@ -295,11 +295,9 @@ function unionSandboxFilesystemArray(tiersLowestFirst: readonly { values: Settin
  * every contributing tier, the identical reasoning `unionPermissionRuleArrays` (below/
  * `permissions.deny`) already applies. Round 9 unioned only the two deny arrays and left
  * `allowWrite` to plain replace-by-higher-tier, reasoning that a widening key should never
- * accumulate. Round 10's controller ruling REVERSES that, dump-confirmed against claude's own live
- * sandbox-reconciliation code: `xr=se([...yr,...$r.filter((On)=>On!=="/"&&On.length>0)])` -- a
- * UNION of the rule-derived allowWrite set (`yr`) with the native sandbox's own currently-configured
- * allowWrite (`$r`), not a replacement. Claude itself unions the widening array too; ported here to
- * match. A user-tier `sandbox.filesystem.denyWrite:["**\/.env"]` plus a project-tier `denyWrite:
+ * accumulate. Round 10's controller ruling REVERSES that: Claude Code accumulates allowWrite entries
+ * from every source rather than letting one replace another, so Winter unions the widening array
+ * too. A user-tier `sandbox.filesystem.denyWrite:["**\/.env"]` plus a project-tier `denyWrite:
  * ["**\/secrets/**"]` must deny BOTH, not just whichever tier happened to win the plain merge --
  * under replacement, the LOWER tier's own restriction would silently vanish the moment a higher
  * tier's file declared any `denyWrite` array of its own, even one naming something unrelated.
