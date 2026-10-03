@@ -665,6 +665,11 @@ export function buildFsFixture(): FsFixture {
   // A dangling chain longer than any hop limit, and a shorter one that ends on a real file.
   for (let i = 0; i < 45; i++) symlinkSync(i === 44 ? "long-missing" : `long${i + 1}`, at(`long${i}`));
   for (let i = 0; i < 20; i++) symlinkSync(i === 19 ? "dir/file" : `short${i + 1}`, at(`short${i}`));
+  // Dangling chains of exactly 39 and 40 links, either side of the chain resolver's step limit: the
+  // 39-link chain still reports its missing end, the 40-link one gives up.
+  for (const length of [39, 40]) {
+    for (let i = 0; i < length; i++) symlinkSync(i === length - 1 ? `d${length}-missing` : `d${length}-${i + 1}`, at(`d${length}-${i}`));
+  }
   return { root, dispose: () => rmSync(root, { recursive: true, force: true }) };
 }
 
@@ -710,6 +715,11 @@ const FS_CHAIN_QUERIES = [
   "long44",
   "short0",
   "short10",
+  "d39-0",
+  "d39-0/child",
+  "d39-1",
+  "d40-0",
+  "d40-0/child",
   "nothing-here",
   "nothing-here/at/all",
   "case/dir",

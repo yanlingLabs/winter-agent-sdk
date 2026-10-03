@@ -25,6 +25,15 @@
   "chain:case/dir": "<ROOT>/case/Dir",
   "chain:chain1": "<ROOT>/dir/file",
   "chain:chain1/x": "<ROOT>/dir/file/x",
+  "chain:d39-0": "<ROOT>/d39-missing",
+  "chain:d39-0/child": "<ROOT>/d39-missing/child",
+  "chain:d39-1": "<ROOT>/d39-missing",
+  "chain:d40-0": {
+   "$u": 1
+  },
+  "chain:d40-0/child": {
+   "$u": 1
+  },
   "chain:dangling": "<ROOT>/missing/leaf",
   "chain:dangling-rel": "<TMP>/nowhere/x",
   "chain:dangling/child": "<ROOT>/missing/leaf/child",
@@ -579,6 +588,15 @@
   "suspicious-resolution:case/dir": true,
   "suspicious-resolution:chain1": true,
   "suspicious-resolution:chain1/x": true,
+  "suspicious-resolution:d39-0": true,
+  "suspicious-resolution:d39-0/child": true,
+  "suspicious-resolution:d39-1": true,
+  "suspicious-resolution:d40-0": {
+   "$u": 1
+  },
+  "suspicious-resolution:d40-0/child": {
+   "$u": 1
+  },
   "suspicious-resolution:dangling": true,
   "suspicious-resolution:dangling-rel": true,
   "suspicious-resolution:dangling/child": true,
