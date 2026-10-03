@@ -179,6 +179,11 @@ export interface ToolDescriptor {
   // SDK 0.0.40: the host-declared concurrency lane of an in-process MCP tool (`McpSdkServerConfig.toolLanes`,
   // see `McpServerToolLanes`). Absent for every other tool.
   concurrencyLane?: string;
+  // SDK 0.0.41: the host declared this in-process MCP tool CONCURRENCY-SAFE without it being read-only
+  // (`McpSdkServerConfig.concurrentTools`, see `McpServerConcurrentTools`). Read ONLY by the scheduler
+  // (`tools/concurrency.ts`); never by anything that asks whether a tool is read-only -- that is
+  // `annotations.readOnlyHint`, which this never sets. Absent for every other tool.
+  concurrencySafe?: true;
   // WS-09 §1.1/§2: "alwaysLoad: true forces the server's complete tools eager (never deferred)".
   // Unconditionally overrides `deferred` to "eager" in resolveDeferral. The connection-lifecycle
   // half of this flag (forcing the nonblocking startup default to wait) is Lane A's own concern
@@ -1073,10 +1078,33 @@ export function isValidConcurrencyLane(lane: unknown): lane is string {
   return typeof lane === "string" && CONCURRENCY_LANE.test(lane);
 }
 
+/**
+ * SDK 0.0.41: a HOST's concurrency-safe tools of one in-process server (`McpSdkServerConfig.concurrentTools`):
+ * server tool names whose calls may run BESIDE the round's other concurrent calls although the tool is not
+ * read-only (Winter's `SpawnSession`: each call starts its own session). A scheduling fact only -- it never
+ * sets `annotations.readOnlyHint`, so nothing that asks "is this read-only" sees it. A tool that is also in
+ * a lane stays in its lane (the stricter answer). Only an in-process (`sdk`) server carries it. Read
+ * defensively: anything that is not an array of strings counts as empty, and a name the server does not
+ * list is ignored.
+ */
+export type McpServerConcurrentTools = readonly string[];
+
+/** The set of tool names a raw `concurrentTools` value declares (anything malformed declares nothing). */
+function concurrentToolSet(raw: unknown): ReadonlySet<string> {
+  if (!Array.isArray(raw)) return new Set();
+  return new Set(raw.filter((name): name is string => typeof name === "string"));
+}
+
 export function registerMcpServerTools(
   server: string,
   incomingTools: readonly McpToolDefinition[],
-  opts: { alwaysLoad?: boolean; deferredDefault: boolean | readonly PermissionMode[]; toolNames?: McpServerToolNames; toolLanes?: McpServerToolLanes },
+  opts: {
+    alwaysLoad?: boolean;
+    deferredDefault: boolean | readonly PermissionMode[];
+    toolNames?: McpServerToolNames;
+    toolLanes?: McpServerToolLanes;
+    concurrentTools?: McpServerConcurrentTools;
+  },
 ): void {
   if (RESERVED_MCP_SERVER_NAMES.has(server)) {
     throw new Error(
@@ -1180,13 +1208,17 @@ export function registerMcpServerTools(
   }
 
   const nowOwned = new Set<string>();
+  const concurrent = concurrentToolSet(opts.concurrentTools);
   for (const tool of tools) {
     const canonicalName = registeredName(tool);
     const existingEntry = registry.get(canonicalName); // present only on a same-server replace (validated above)
     const built = buildMcpToolDescriptor(server, tool, opts, plainNameFor(tool));
     // SDK 0.0.40: the host's concurrency lane for this tool (`McpSdkServerConfig.toolLanes`), when valid.
     const lane = opts.toolLanes !== undefined && Object.hasOwn(opts.toolLanes, tool.name) ? opts.toolLanes[tool.name] : undefined;
-    const descriptor: ToolDescriptor = isValidConcurrencyLane(lane) ? { ...built, concurrencyLane: lane } : built;
+    // SDK 0.0.41: a lane wins over `concurrentTools` (the stricter answer), so a tool gets at most one of them.
+    const descriptor: ToolDescriptor = isValidConcurrencyLane(lane)
+      ? { ...built, concurrencyLane: lane }
+      : concurrent.has(tool.name) ? { ...built, concurrencySafe: true } : built;
     registry.set(canonicalName, existingEntry ? { ...existingEntry, descriptor } : { descriptor });
     mcpToolOwner.set(canonicalName, server);
     nowOwned.add(canonicalName);

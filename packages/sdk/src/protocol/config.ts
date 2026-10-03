@@ -491,6 +491,23 @@ export interface McpSdkServerConfig {
    * ignored. Only an in-process (`sdk`) server may declare lanes; the host vouches for its own tools.
    */
   toolLanes?: Record<string, string>;
+  /**
+   * SDK 0.0.41, a Winter extension: some of this server's tools, by the server's own tool name, that are
+   * SAFE TO RUN CONCURRENTLY without being read-only (`["session_spawn"]`). A round's calls normally run
+   * one at a time unless the tool is read-only (`readOnlyHint: true`); a tool listed here runs BESIDE the
+   * round's other concurrent calls (up to 10 at once), exactly like a read-only one -- several calls of it
+   * in one round run at the same time (claude runs several `Agent` calls of a round at once; this is the
+   * same thing for a host tool that starts work elsewhere).
+   *
+   * It is a SCHEDULING statement only. It never makes the tool read-only anywhere else: the tool's
+   * `annotations` are not touched, plan mode, permission evaluation, the hook input's `winter_mcp_server`
+   * and `canUseTool`'s `mcpServer` read the server's own `readOnlyHint` exactly as before. Use it only for a
+   * tool whose concurrent calls cannot interfere with each other (each call's work is its own); a tool
+   * that holds one exclusive resource belongs in a lane (`toolLanes`) instead. A tool named in BOTH is in
+   * its lane (the stricter answer). An entry that is not a string, or names no tool of this server, is
+   * ignored. Only an in-process (`sdk`) server may declare it; the host vouches for its own tools.
+   */
+  concurrentTools?: string[];
 }
 export type McpServerConfigForProcessTransport = McpStdioServerConfig | McpHttpServerConfig | McpSSEServerConfig | McpSdkServerConfig;
 

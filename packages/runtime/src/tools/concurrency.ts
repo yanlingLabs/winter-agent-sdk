@@ -10,7 +10,8 @@
 //     keeps it until its host work has really stopped -- see `ToolLaneTails`.
 //   - SERIAL (a barrier): it waits for every call in flight to finish, then runs alone.
 //
-// Concurrent means "provably read-only", and nothing is guessed:
+// Concurrent means "provably read-only" -- or, for a host's own in-process tool, "the host vouches its calls
+// cannot interfere" -- and nothing is guessed:
 //   - a BUILT-IN is concurrent only when it is named below -- the file readers and searchers, the web tools
 //     and `Agent` (subagents run in parallel, as in claude) -- or when it is `Bash` with a command that is
 //     read-only by claude's own classification (`permissions/bash-read-only.ts`). A built-in that changes
@@ -18,7 +19,10 @@
 //     `TaskOutput` / `Monitor` follow live tasks.
 //   - an MCP, in-process SDK or plugin tool is concurrent only when its server lists it `readOnlyHint: true`
 //     (claude's rule for MCP tools); otherwise it is in its host-declared lane (`McpSdkServerConfig.toolLanes`,
-//     in-process servers only), else serial.
+//     in-process servers only), else concurrent when the HOST declared it concurrency-safe
+//     (`McpSdkServerConfig.concurrentTools`, SDK 0.0.41, in-process servers only -- a tool that is safe to
+//     run beside others without being read-only, like Winter's `SpawnSession`: the descriptor's
+//     `concurrencySafe`, which nothing but this scheduler reads), else serial.
 //   - a name the registry does not know (a host's own executor, a test double) is serial.
 import { getRegisteredTool } from "./registry.ts";
 import { isBashCommandReadOnly } from "../permissions/bash-read-only.ts";
@@ -55,6 +59,9 @@ export function schedulingForCall(name: string, input: unknown, bash?: BashReadO
   if (descriptor.source === "mcp" || descriptor.source === "sdk" || descriptor.source === "plugin") {
     if (descriptor.annotations?.readOnlyHint === true) return { kind: "concurrent" };
     if (descriptor.concurrencyLane !== undefined) return { kind: "lane", lane: descriptor.concurrencyLane };
+    // SDK 0.0.41: host-declared concurrency-safe (NOT read-only). Checked after the lane: a tool in both is
+    // in its lane, the stricter answer (registration already keeps at most one of the two).
+    if (descriptor.concurrencySafe === true) return { kind: "concurrent" };
   }
   return { kind: "serial" };
 }

@@ -328,6 +328,8 @@ function toWireMcpServers(servers: Record<string, McpServerConfig> | undefined):
             ...(cfg.toolNames !== undefined ? { toolNames: { ...cfg.toolNames } } : {}),
             // SDK 0.0.40: the host's concurrency lanes for some of its tools (`McpSdkServerConfig.toolLanes`).
             ...(cfg.toolLanes !== undefined ? { toolLanes: { ...cfg.toolLanes } } : {}),
+            // SDK 0.0.41: the host's concurrency-safe (NOT read-only) tools (`McpSdkServerConfig.concurrentTools`).
+            ...(Array.isArray(cfg.concurrentTools) ? { concurrentTools: [...cfg.concurrentTools] } : {}),
           }
         : cfg;
   }

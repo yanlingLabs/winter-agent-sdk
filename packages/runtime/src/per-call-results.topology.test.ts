@@ -50,10 +50,25 @@ function slowServer() {
       { name: "unsafe", inputSchema: { type: "object" } },
       // In the host-declared lane "L" (`toolLanes`, below): beside everything, but one at a time within L.
       { name: "laned", inputSchema: { type: "object" } },
+      // SDK 0.0.41: declared CONCURRENCY-SAFE by the host (`concurrentTools`, below) but NOT read-only.
+      { name: "spawner", inputSchema: { type: "object" } },
     ],
     async callTool(_name, args, extra) {
       const label = String(args["label"]);
       events.push({ at: performance.now(), what: "start", label });
+      if (typeof args["waitFor"] === "string") {
+        // Causal, not timed: this call finishes only once the call it waits for has STARTED. Run one after
+        // the other, two calls waiting for each other could never both see that; after 10 s each answers
+        // "alone", so the test fails rather than hangs.
+        const other = args["waitFor"];
+        let together = false;
+        for (let n = 0; n < 1000 && !together; n++) {
+          together = events.some((e) => e.what === "start" && e.label === other);
+          if (!together) await new Promise((r) => setTimeout(r, 10));
+        }
+        events.push({ at: performance.now(), what: "end", label });
+        return { content: [{ type: "text", text: `${label} ${together ? "together" : "alone"}` }] };
+      }
       // A tool that honours the runtime's cancel: on abort it takes `stopMs` to wind down, then returns.
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, Number(args["ms"] ?? 0));
@@ -87,7 +102,7 @@ async function runScript(spawner: Spawner, home: string, script: string, opts: R
         : { permissionMode: "bypassPermissions" as const, allowDangerouslySkipPermissions: true }),
       ...(isSandboxAvailable() ? {} : { sandbox: { enabled: false } }),
       capabilities: ["winter.mcp"],
-      mcpServers: { t: { type: "sdk", name: "t", instance: server.instance, toolLanes: { laned: "L" } } } as NonNullable<Options["mcpServers"]>,
+      mcpServers: { t: { type: "sdk", name: "t", instance: server.instance, toolLanes: { laned: "L" }, concurrentTools: ["spawner"] } } as NonNullable<Options["mcpServers"]>,
       spawnClaudeCodeProcess: spawner,
     },
   });
@@ -127,6 +142,7 @@ const resultOf = (arrivals: Arrival[]) => arrivals.find(({ message }) => message
 const slow = (label: string, ms: number, joined = true) => `${joined ? "+" : ""}CALL mcp__t__slow ${JSON.stringify({ label, ms })}`;
 const unsafe = (label: string, ms: number, joined = true) => `${joined ? "+" : ""}CALL mcp__t__unsafe ${JSON.stringify({ label, ms })}`;
 const laned = (label: string, ms: number, joined = true) => `${joined ? "+" : ""}CALL mcp__t__laned ${JSON.stringify({ label, ms })}`;
+const spawner = (label: string, waitFor: string, joined = true) => `${joined ? "+" : ""}CALL mcp__t__spawner ${JSON.stringify({ label, waitFor })}`;
 
 // The in-memory leg runs the engine in THIS process, so the test can reach the session's own task
 // registry while the round is running -- the one place a single subagent can be stopped from outside.
@@ -330,6 +346,17 @@ for (const [name, spawnerFor] of TOPOLOGIES) {
       expect(at("start", "y")).toBeGreaterThanOrEqual(at("end", "x")); // y (same lane) waited for x
       const reported = JSON.parse(String(resultOf(arrivals)["result"])) as Array<{ content: string }>;
       expect(reported.map((r) => r.content)).toEqual(["x done", "z done", "y done"]);
+    }, 60_000);
+
+    test("host-declared concurrency-safe calls (concurrentTools) run at the same time; an undeclared call after them is still a barrier", async () => {
+      const home = tempDir("home");
+      // p finishes only once q has started, and q only once p has: both "together" proves they overlapped.
+      const { arrivals, events } = await runScript(spawnerFor(home), home, [spawner("p", "q", false), spawner("q", "p"), unsafe("u", 50)].join("\n"));
+      const at = (what: "start" | "end", label: string) => events.find((e) => e.what === what && e.label === label)!.at;
+      const reported = JSON.parse(String(resultOf(arrivals)["result"])) as Array<{ content: string }>;
+      expect(reported.map((r) => r.content)).toEqual(["p together", "q together", "u done"]);
+      // u (no hint, no lane, not declared) waited for both: a barrier, exactly as before.
+      expect(at("start", "u")).toBeGreaterThanOrEqual(Math.max(at("end", "p"), at("end", "q")));
     }, 60_000);
 
     test("two subagents run AT THE SAME TIME, each with its own tool calls on its own thread, their approvals relayed to the parent", async () => {

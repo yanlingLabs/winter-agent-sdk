@@ -4903,7 +4903,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         const toolNames = serverCfg.toolNames;
         // SDK 0.0.40: the host's concurrency lanes (`McpSdkServerConfig.toolLanes`) land on the descriptors.
         const toolLanes = serverCfg.toolLanes;
-        registerMcpServerTools(serverName, toolDefs, { deferredDefault: true, ...(toolNames !== undefined ? { toolNames } : {}), ...(toolLanes !== undefined ? { toolLanes } : {}) });
+        // SDK 0.0.41: the host's concurrency-safe, NOT read-only, tools (`McpSdkServerConfig.concurrentTools`).
+        const concurrentTools = serverCfg.concurrentTools;
+        registerMcpServerTools(serverName, toolDefs, {
+          deferredDefault: true,
+          ...(toolNames !== undefined ? { toolNames } : {}),
+          ...(toolLanes !== undefined ? { toolLanes } : {}),
+          ...(concurrentTools !== undefined ? { concurrentTools } : {}),
+        });
         sdkMcpServerNames.push(serverName);
         const perServerTimeoutMs = serverCfg.timeout;
         for (const tool of toolDefs) {

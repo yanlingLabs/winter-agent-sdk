@@ -12,7 +12,8 @@ import type { ControlRequestFrame, RuntimeHooksConfig, WinterFrame } from "@yanl
 import { createInMemoryChannel } from "./protocol/channel.ts";
 import { runEngine, type ContentBlock, type EngineOptions, type ProviderRequest } from "./engine.ts";
 import { MAX_TOOL_CONCURRENCY, createToolLaneTails, enterToolLane, schedulingForCall, type ToolLaneTails } from "./tools/concurrency.ts";
-import { registerMcpServerTools, unregisterMcpServerTools } from "./tools/registry.ts";
+import { getRegisteredTool, registerMcpServerTools, unregisterMcpServerTools } from "./tools/registry.ts";
+import { mcpServerIdentity } from "./hooks/runner.ts";
 
 let dir: string;
 beforeEach(() => {
@@ -420,6 +421,41 @@ describe("concurrency lanes (McpSdkServerConfig.toolLanes)", () => {
   });
 });
 
+describe("host-declared concurrency-safe tools (McpSdkServerConfig.concurrentTools, SDK 0.0.41)", () => {
+  test("two declared calls run at the same time; an undeclared call of the same server is still a barrier", async () => {
+    // Declared the way a host declares it: `spawn` is safe to run beside other calls but NOT read-only.
+    const hostsrv = {
+      type: "sdk",
+      name: "hostsrv",
+      tools: [{ name: "spawn", inputSchema: { type: "object" } }, { name: "plain", inputSchema: { type: "object" } }],
+      concurrentTools: ["spawn"],
+    };
+    const g = gates(["a", "b", "u"]);
+    const started: string[] = [];
+    let bothRunning = false;
+    let uStartedWhileOthersRan = false;
+    const done = new Set<string>();
+    const call = (id: string, tool: string): Call => ({ id, name: `mcp__hostsrv__${tool}`, input: {} });
+    const { frames, toolMessages } = await run([call("a", "spawn"), call("b", "spawn"), call("u", "plain")], async (c) => {
+      started.push(c.id);
+      if (c.id === "u" && (!done.has("a") || !done.has("b"))) uStartedWhileOthersRan = true;
+      if (c.id === "b") {
+        // b started while a is still held: the two declared calls overlap. Then let them both finish.
+        bothRunning = started.includes("a") && !done.has("a");
+        void flush().then(() => { g.release("a"); g.release("b"); });
+      }
+      if (c.id === "u") g.release("u");
+      await g.wait(c.id);
+      done.add(c.id);
+      return { output: `${c.id} result` };
+    }, { capabilities: ["winter.mcp"], mcpServers: { hostsrv } });
+    expect(bothRunning).toBe(true);
+    expect(uStartedWhileOthersRan).toBe(false); // the undeclared tool waited for both: a barrier
+    expect(resultFrames(frames).flat().sort()).toEqual(["a", "b", "u"]);
+    expect(idsOf((toolMessages[0] as { content: unknown }).content)).toEqual(["a", "b", "u"]);
+  });
+});
+
 describe("a lane is held until the call's work has really stopped (two engines of one session)", () => {
   const laneServer = (name: string) => ({
     type: "sdk",
@@ -517,6 +553,37 @@ describe("schedulingForCall", () => {
       expect(schedulingForCall("mcp__hintsrv__badlane", {})).toEqual({ kind: "serial" });
     } finally {
       unregisterMcpServerTools("hintsrv");
+    }
+  });
+
+  test("a host's concurrentTools: concurrent, never read-only; a lane beats it; malformed or unknown entries are ignored", () => {
+    registerMcpServerTools("ccsrv", [
+      { name: "spawn", inputSchema: { type: "object" } },
+      { name: "both", inputSchema: { type: "object" } },
+      { name: "plain", inputSchema: { type: "object" } },
+      { name: "rw", inputSchema: { type: "object" }, annotations: { readOnlyHint: false } },
+    ], { deferredDefault: false, toolLanes: { both: "the-lane" }, concurrentTools: ["spawn", "both", "rw", "no-such-tool", 7 as unknown as string] });
+    try {
+      expect(schedulingForCall("mcp__ccsrv__spawn", {})).toEqual({ kind: "concurrent" });
+      expect(schedulingForCall("mcp__ccsrv__both", {})).toEqual({ kind: "lane", lane: "the-lane" });
+      expect(schedulingForCall("mcp__ccsrv__plain", {})).toEqual({ kind: "serial" });
+      // A declared tool whose server says it is NOT read-only still runs concurrently (scheduling only)...
+      expect(schedulingForCall("mcp__ccsrv__rw", {})).toEqual({ kind: "concurrent" });
+      // ...and the declaration never becomes a read-only fact: annotations untouched, the stated server
+      // identity (the hook input's `winter_mcp_server`, `canUseTool`'s `mcpServer`) carries no read-only hint.
+      expect(getRegisteredTool("mcp__ccsrv__spawn")!.descriptor.annotations?.readOnlyHint).toBeUndefined();
+      expect(getRegisteredTool("mcp__ccsrv__rw")!.descriptor.annotations?.readOnlyHint).toBe(false);
+      expect(mcpServerIdentity("mcp__ccsrv__spawn")).toEqual({ name: "ccsrv", configName: "ccsrv" });
+      expect(mcpServerIdentity("mcp__ccsrv__rw")).toEqual({ name: "ccsrv", configName: "ccsrv", readOnlyHint: false });
+    } finally {
+      unregisterMcpServerTools("ccsrv");
+    }
+    // Not an array: declares nothing.
+    registerMcpServerTools("ccsrv2", [{ name: "spawn", inputSchema: { type: "object" } }], { deferredDefault: false, concurrentTools: "spawn" as unknown as string[] });
+    try {
+      expect(schedulingForCall("mcp__ccsrv2__spawn", {})).toEqual({ kind: "serial" });
+    } finally {
+      unregisterMcpServerTools("ccsrv2");
     }
   });
 

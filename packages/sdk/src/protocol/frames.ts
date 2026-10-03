@@ -798,8 +798,9 @@ export type SdkMessage =
   // A round's concurrency-safe calls run CONCURRENTLY (runtime `tools/concurrency.ts`, claude's rule: Read,
   // Glob, Grep, LSP, WebFetch, WebSearch, Search, Agent, a Bash command claude classifies read-only, and any
   // MCP tool its server lists with `readOnlyHint: true`; up to 10 at once), and a host's in-process tool in
-  // a concurrency LANE (`McpSdkServerConfig.toolLanes`) runs beside them, one at a time within its lane; any
-  // other call is a barrier that runs alone. So these frames arrive in COMPLETION order, which is not call
+  // a concurrency LANE (`McpSdkServerConfig.toolLanes`) runs beside them, one at a time within its lane, and
+  // (0.0.41) a host's in-process tool it declared concurrency-safe (`McpSdkServerConfig.concurrentTools`)
+  // runs beside them like a read-only one; any other call is a barrier that runs alone. So these frames arrive in COMPLETION order, which is not call
   // order. Fold them by `tool_use_id`.
   //
   // Before 0.0.40 the whole round crossed in ONE frame after its last call, so a host showed every call
