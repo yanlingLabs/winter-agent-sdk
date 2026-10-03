@@ -540,7 +540,7 @@ export interface ProviderMessage {
    */
   meta?: { attachment: AttachmentPayload };
   /**
-   * 0.0.16 request layout: the per-request userContext message (claude's `mbt`) at INDEX 0 of the
+   * 0.0.16 request layout: the per-request userContext message (as claude sends it) at INDEX 0 of the
    * live request. Never in the engine's history and never persisted; it only appears on an outbound
    * request whose first history message it could not be merged into (context/request-layout.ts).
    */
@@ -1912,8 +1912,8 @@ export interface EngineOptions {
    * resolution path that could disagree with the session's own.
    *
    * `supportedModels` answers the pinned payload-free `list_models` control request
-   * (`sdk.d.ts:3855`), whose own JSDoc frames it as "ask the worker" — a table inside the binary, per
-   * capture (J), never a `/v1/models` fetch. Absent -> the handler answers an empty array, which is
+   * (`sdk.d.ts:3855`), whose own JSDoc frames it as "ask the worker" — answered locally, with no
+   * `/v1/models` request on the wire (capture (J)). Absent -> the handler answers an empty array, which is
    * the honest answer for a session running a scripted double.
    */
   supportedModels?: () => unknown[];
@@ -2142,7 +2142,7 @@ type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
 // is abandoned (interrupted) and later settles anyway, that settlement never surfaces as an
 // unhandled rejection — Provider/ToolExecutor take no AbortSignal at P1, so "abort" here means
 // "the engine stops waiting," not "the underlying call actually stops" (WS-04 §5).
-/** A result that ran no main-loop generation of its own (the /compact built-in): claude's EMPTY_USAGE, fresh per call (a host may hold and mutate it). */
+/** A result that ran no main-loop generation of its own (the /compact built-in): claude's all-zero usage, fresh per call (a host may hold and mutate it). */
 const emptyResultUsage = (): WireResultUsage => ({
   output_tokens_details: { thinking_tokens: 0 },
   input_tokens: 0,
@@ -3620,8 +3620,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   let currentTurnSignal: AbortSignal | undefined;
   /**
    * Does this call's `dangerouslyDisableSandbox` take it OUT of a sandbox it would otherwise run in?
-   * (EvaluationContext.bashSandboxEscape; claude's `!shouldUseSandbox(input) &&
-   * shouldUseSandbox({...input, dangerouslyDisableSandbox: false})`.) Not when the session's sandbox
+   * (EvaluationContext.bashSandboxEscape: the same call WITHOUT the flag would run sandboxed, and WITH
+   * it does not.) Not when the session's sandbox
    * is off, not when the policy forbids unsandboxed commands (the flag is then ignored,
    * `sandbox/spawn.ts`), not for an allowed `excludedCommands` entry (it runs unsandboxed anyway). A
    * host with no `sandbox-exec` still counts: there the flag turns a REFUSED command into a running one.
@@ -4129,92 +4129,67 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   }
 
   // ---------------------------------------------------------------------------------------------
-  // SDK 0.0.16 Lane P (R3b §5): two small "which Claude tier is this model" helpers, both traced
-  // from the pinned 0.3.250 binary and both reused for two DIFFERENT purposes below -- the Explore
-  // model cap (`resolveChildModel`, immediately after this block) and the Agent-listing's lean/
-  // normal `whenToUse` choice (`scanAttachments`'s own `computeAgentListingDelta` call site).
+  // SDK 0.0.16 Lane P (R3b §5): two "which Claude model is this" rules, used for two DIFFERENT
+  // purposes below -- the Explore model cap (`resolveChildModel`, immediately after this block) and
+  // the lean/full text choice (the Agent listing's `whenToUse`, both web tools' descriptions).
   //
-  // TRACED (python, latin-1 decode, grep around "whenToUseLean"/"leanPrompt"): claude's `D8`:
-  //   function D8(e,t){ if (e.agentType!=="Explore"||e.source!=="built-in") return e.model;
-  //     if (a.CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP) return "inherit";
-  //     return _Ut(t) ? "opus" : "inherit" }
-  //   function _Ut(e){ if (Me()!=="firstParty") return false;
-  //     let t=["haiku","sonnet","opus"]; return !OBt(e,t) }
-  // `Me()` reports the pin's own `AccountInfo.apiProvider` ("firstParty" = direct Anthropic API key
-  // or claude.ai/Console OAuth, never Bedrock/Vertex/Foundry/a gateway -- `session-provider.ts`'s
-  // own `API_PROVIDER_BY_PROVIDER_ID` mirrors the identical partition). `OBt(model, tiers)` checks
-  // membership; `_Ut` is therefore "first-party AND the model's tier is NOT haiku/sonnet/opus" --
-  // i.e. Fable, the one tier above Opus in Winter's own four-tier Claude family.
-  //
-  // WINTER MAPPING, CORRECTED (whole-branch review MINOR 3 -- the earlier reading of this said the
-  // catalog carries exactly one Anthropic-family provider id and that "console" belongs to another
-  // engine entirely; both halves were wrong). The catalog carries TWO rows that ARE Anthropic's own
-  // API: `anthropic` (an API key) and `console` (the Anthropic Console profile) -- same endpoint, same
-  // models, and either can be a live `currentProviderIdentity.providerId` here. The membership is
-  // `provider/first-party.ts`'s `isFirstPartyAnthropic`, shared by every site that asks the question,
-  // and deliberately NOT the whole `family: "anthropic"` column (which is a DIALECT statement: seven
-  // third-party providers speak `anthropic-messages` at their own endpoints). `cc` does not ship.
-  //
-  // "which tier is modelKey" is answered by REVERSE-CHECKING `resolveSlot` (already used below for
-  // real slot-name requests): resolving a tier NAME in modelKey's own context and comparing the
-  // result's `modelKey` against `modelKey` itself tells us whether modelKey already IS that tier,
-  // on the SAME provider -- no separate catalog import needed (`resolveSlot` is the one catalog-
-  // aware dependency this closure already holds).
-  function claudeTierMatches(modelKey: string, tier: "haiku" | "sonnet" | "opus"): boolean {
-    if (resolveSlot === undefined) return false;
-    const resolution = resolveSlot(tier, modelKey);
-    return resolution.ok && resolution.modelKey === modelKey;
-  }
-
-  /** `exploreModelCap`'s question (claude's `_Ut`): is `modelKey` at or below the Opus TIER (haiku/sonnet/opus), as opposed to Fable, the one tier above it? Not the lean-prompt rule, which reads the model ID -- see `sessionLeanModel`. */
-  function isAtOrBelowOpusTier(modelKey: string): boolean {
-    return claudeTierMatches(modelKey, "haiku") || claudeTierMatches(modelKey, "sonnet") || claudeTierMatches(modelKey, "opus");
-  }
+  // First-party means Anthropic's own API: the catalog carries TWO such rows, `anthropic` (an API key)
+  // and `console` (the Anthropic Console profile) -- same endpoint, same models, and either can be a
+  // live `currentProviderIdentity.providerId` here. The membership is `provider/first-party.ts`'s
+  // `isFirstPartyAnthropic`, shared by every site that asks the question, and deliberately NOT the
+  // whole `family: "anthropic"` column (which is a DIALECT statement: seven third-party providers speak
+  // `anthropic-messages` at their own endpoints). `cc` does not ship.
 
   /**
-   * claude's lean-prompt gate (`leanPrompt(model)`), the ONE rule behind every lean/full text choice
-   * in this engine: the Agent tool's `whenToUseLean` listing line and both web tools' descriptions.
+   * The lean-prompt rule, the ONE rule behind every lean/full text choice in this engine: the Agent
+   * tool's `whenToUseLean` listing line and both web tools' descriptions.
    *
-   * The deterministic core of claude's selector, from the pinned binary:
-   *   function w(e){ if(xee(e))return false; let o=Ye(e);
-   *     if(hg(o,"lean_prompt")||o==="claude-mythos-5")return false;
-   *     if(o.includes("claude-3-")||o.includes("haiku")||o.includes("sonnet")
-   *        ||o==="claude-opus-4-0"||o==="claude-opus-4-1"||o==="claude-opus-4-5"
-   *        ||o==="claude-opus-4-6"||o==="claude-opus-4-7")return true;
-   *     return !qs() }                         // qs(): a first-party Anthropic session
-   * and `leanPrompt = !w(model)` (the remaining branches are env overrides and a remote experiment).
-   * So on Anthropic's own API a model gets the FULL text when its id names the claude-3 line, haiku,
-   * sonnet, or one of the five Opus 4.0-4.7 builds -- and EVERYTHING ELSE is lean: Opus 4.8, Opus 5,
-   * the tier above Opus, and any id the list does not know. Measured against the binary, not only
-   * read out of it: `claude-haiku-4-5` is advertised the full texts, `claude-opus-5` and
-   * `claude-fable-5` the lean ones.
-   *
-   * An earlier reading of the same function drew the line ABOVE the whole opus tier (lean for Fable
-   * only), by asking the slot resolver which TIER a model sits on. That is `_Ut`'s question (the
-   * Explore cap, below), not this one: this rule is a test on the model ID, and Opus 5 sits on the
+   * On Anthropic's own API a model gets the FULL text when its id names the claude-3 line, haiku,
+   * sonnet, or one of the Opus 4.0/4.1/4.5/4.6/4.7 builds (`provider/lean-prompt.ts`'s
+   * `claudeModelTakesFullPrompt`) -- and EVERYTHING ELSE is lean: Opus 4.8, Opus 5, the tier above
+   * Opus, and any id the list does not know. Measured on the official runtime: `claude-haiku-4-5` is
+   * advertised the full texts, `claude-opus-5` and `claude-fable-5` the lean ones. This is a test on
+   * the model ID, not on the slot TIER (that is the Explore cap's question, below): Opus 5 sits on the
    * lean side of it.
    *
-   * Off Anthropic's own API the answer stays what it has always been here -- never lean: claude's own
-   * `return !qs()` makes a non-first-party session "ordinary", and the fuller text is the safer one
-   * for a model family these texts were not written for.
+   * Off Anthropic's own API the answer stays what it has always been here -- never lean: claude treats
+   * a non-first-party session as ordinary, and the fuller text is the safer one for a model family
+   * these texts were not written for.
    */
   function sessionLeanModel(modelKey: string): boolean {
     if (!isFirstPartyAnthropic(currentProviderIdentity?.providerId)) return false;
     return !claudeModelTakesFullPrompt(modelKey);
   }
 
-  /**
-   * claude's `_Ut`, reused verbatim per the trace above: first-party Anthropic AND modelKey's own
-   * tier is NOT haiku/sonnet/opus (i.e. Fable). `WINTER_DISABLE_EXPLORE_INHERIT_CAP` (env, read
-   * fresh per call -- brand-gate rules 9/10) opts out unconditionally, mirroring
-   * `CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP`'s own "return inherit" branch in `D8`.
-   */
+  /** The Explore built-in's model cap: `"opus"` when the cap applies to a session on `parentModel`, else `undefined`. */
   function exploreModelCap(parentModel: string): string | undefined {
-    const env = engineEnv ?? process.env;
-    if (isTruthyEnvValue(env[envName(sessionBrand, "DISABLE_EXPLORE_INHERIT_CAP")])) return undefined;
+    // The opt-out is read per call, so a change between two spawns of one session takes effect.
+    if (exploreCapOptedOut()) return undefined;
+    // Only Anthropic's own API (an API key or the Console profile) is capped.
     if (!isFirstPartyAnthropic(currentProviderIdentity?.providerId)) return undefined;
-    if (isAtOrBelowOpusTier(parentModel)) return undefined;
-    return "opus"; // resolveChildSlot (the caller's caller) resolves this slot name on the SAME provider
+    // A parent already on the haiku, sonnet or opus tier is cheap enough: Explore simply inherits.
+    if (modelSitsOnCappedOrLowerTier(parentModel)) return undefined;
+    return "opus";
+  }
+
+  /** True when the session's opt-out variable for the Explore cap holds `"1"` or `"true"`. */
+  function exploreCapOptedOut(): boolean {
+    const env = engineEnv ?? process.env;
+    return isTruthyEnvValue(env[envName(sessionBrand, "DISABLE_EXPLORE_INHERIT_CAP")]);
+  }
+
+  /**
+   * True when `modelKey` is exactly what the slot resolver names for one of the haiku, sonnet or opus
+   * tiers (asked with `modelKey` as the context key). With no resolver wired no tier can be confirmed,
+   * so the answer is false.
+   */
+  function modelSitsOnCappedOrLowerTier(modelKey: string): boolean {
+    if (resolveSlot === undefined) return false;
+    for (const tier of ["haiku", "sonnet", "opus"] as const) {
+      const resolution = resolveSlot(tier, modelKey);
+      if (resolution.ok && resolution.modelKey === modelKey) return true;
+    }
+    return false;
   }
 
   // Phase 4 Task 3 (MUST 5, WS-10 §3.1/§3.5): the STRUCTURAL model precedence chain --
@@ -4244,10 +4219,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     if (req.model !== undefined && req.model !== "inherit") return req.model;
     const defModel = req.definition?.model;
     if (defModel !== undefined && defModel !== "inherit") return defModel;
-    // SDK 0.0.16 Lane P (R3b §5): the Explore built-in's own model cap -- claude's `D8`, position
-    // matches the trace exactly (env -> invocation override -> definition-step, THEN the cap, THEN
-    // plain inherit): every real override layer above has already had its say and found nothing, so
-    // only an ACTUAL "inherit" resolution is ever capped. `req.builtinAgentType` is set by
+    // SDK 0.0.16 Lane P (R3b §5): the Explore built-in's own model cap, AFTER every explicit layer
+    // (env -> invocation override -> definition) and BEFORE plain inherit: every real override layer
+    // above has already had its say and found nothing, so only an ACTUAL "inherit" resolution is ever
+    // capped. `req.builtinAgentType` is set by
     // `tools/impl/agent.ts` ONLY when the resolved definition's own `_source === "builtin"` -- a
     // same-named user/project/plugin/programmatic "Explore" that merely shadows the built-in never
     // reaches this branch (see that field's own header on `SpawnChildRequest`).
@@ -5126,7 +5101,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // var (or its own "unset" default) governs. This closes T2's own report Concern 8 (two
   // independent, un-reconciled "is Tool Search on" signals) by making the wire boolean ONE INPUT
   // INTO the single activation resolution, never a second, independently-consulted gate.
-  // claude's own rule (`isToolSearchToolAvailable`): a session whose `tools` list leaves `ToolSearch` out
+  // claude's own rule: a session whose `tools` list leaves `ToolSearch` out
   // has no search tool, so nothing may be deferred behind one -- folded in HERE, into the one activation
   // value, so the advertised partition, the ToolSearch-vs-WaitForMcpServers gate and the load-first
   // boundary cannot disagree about it.
@@ -5589,8 +5564,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // never frozen at startup. A stdio server's `registerMcpServerTools` lands whenever it connects --
   // usually after this point -- and a partition built once here left its tools out of every request
   // for the whole session (measured: servers `connected`, zero `mcp__` tools on any turn). claude
-  // rebuilds each turn's tools from live state (`runHeadless`, dump byte 34017501: `let Dr=p(),…` per
-  // dequeued command). Recomputed (1) on every live-registry mutation (`onRegistryChange`, registry.ts:
+  // offers each turn the tools of the servers connected by then. Recomputed (1) on every live-registry mutation (`onRegistryChange`, registry.ts:
   // whose own header names "re-derive system/init.tools" as the obligation -- never wired until now),
   // i.e. a server connecting, reconnecting, refreshing its tools or going away; (2) at every provider
   // request (`providerToolSpecs`), which also picks up a capability fact that changed without a
@@ -5601,7 +5575,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // is unchanged, and the live mode still governs execution. The startup `type:"init"` handshake and
   // `advertisedToolNames` below read the first derivation, taken BEFORE the first-turn MCP wait (WS-24:
   // the wait now runs once the pump is reading, below it); `system/init` and the first request re-derive
-  // after the wait (claude's `km`), so a server that connected within it is listed there; a slower one
+  // after the first-turn MCP wait, so a server that connected within it is listed there; a slower one
   // is still `pending`, with none of its tools, and joins from a later request.
   //
   // Fix round 20 (the round-19 re-review): the registry is PROCESS-WIDE, and a subagent's object-form
@@ -5612,9 +5586,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // when its server is one this run can see: on its own state board, among its own declared
   // `config.mcpServers` (the sdk servers this engine registers itself), or -- fix round 21, for EVERY
   // child, recursively -- in its parent's visible set (`inheritedMcpServerNames`). claude offers every
-  // descendant the session's MCP tools plus its caller's own: the Agent tool's pool is
-  // `JP($n, Y2(yr.mcp.tools.concat(pn)))` (dump byte 18016381), `pn = E.options.tools.filter(uy)`
-  // (18011928), and `runAgent` adds the agent's frontmatter tools (`[...Jn, ...fo]`, `zar`, 17889428).
+  // descendant the session's MCP tools plus its caller's own, and an agent's own frontmatter servers'
+  // tools to that agent.
   const visibleMcpServers = (): Set<string> =>
     new Set([
       ...(effectiveMcpStateSource?.snapshot() ?? []).map((s) => s.name),
@@ -5950,7 +5923,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // engine is torn down by `child-engine.ts`'s own `settle()` the moment it produces a result -- a
   // second turn there would run inside an engine its wrapper has already finished with. A child still
   // gets its notifications MID-TURN, and anything left over when its endpoint is withdrawn is
-  // re-addressed to the main thread (the queue's own `Loe` behaviour). Recorded deviation: claude can
+  // re-addressed to the main thread (the queue's own behaviour). Recorded deviation: claude can
   // re-wake a completed agent, Winter routes to the parent instead.
   const notifications: SessionNotificationQueue = notificationQueueFor(config.sessionId);
   /** True from the moment a turn's envelope is claimed until its terminal result has been written. */
@@ -6007,10 +5980,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * A streaming-input host (the daemon) never holds anything: every turn's `result` goes out the
    * moment the turn ends, and a later completion arrives as its own unsolicited turn. A `-p`-style
    * host has no later -- it closes its input with the prompt, so the instant the turn ends there is
-   * nowhere for a background completion to go. claude's answer, ported here:
+   * nowhere for a background completion to go. Winter answers it the way claude's print mode
+   * behaves:
    *
    *   * the turn's `result` is HELD while a background agent or workflow is still running, or while a
-   *     notification is still queued (`holdBackActive`, the pin's `xu`/`Qo`);
+   *     notification is still queued (`holdBackActive`);
    *   * `userFrames` does NOT end -- `runBackgroundWait` keeps the turn loop alive, so each queued
    *     notification still gets its own turn, with its own held result;
    *   * a ceiling (default 600 s, `0` = wait forever) then a 5 s grace then a SWEEP kills what is left
@@ -6023,9 +5997,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // without a cast at the two call sites. The cast is honest: the object IS this message.
   type TurnResultMessage = Extract<SdkMessage, { type: "result" }>;
   const heldResults: TurnResultMessage[] = [];
-  /** claude's `ia`: the grace between arming the wind-down and actually sweeping. */
+  /** The grace between arming the wind-down and actually sweeping. */
   const BG_WAIT_GRACE_MS = 5_000;
-  /** claude's `Vp`. `0` means "wait indefinitely". */
+  /** The default ceiling. `0` means "wait indefinitely". */
   const BG_WAIT_CEILING_DEFAULT_MS = 600_000;
   const BG_WAIT_POLL_MS = 100;
   const backgroundWaitCeilingMs = (): number => {
@@ -6038,26 +6012,26 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   /** Every background row this session is still waiting on (ambient ws monitors excluded -- see the registry). */
   const runningBackgroundTasks = (): readonly { kind: string }[] => listSessionRunningTasks(sessionOwner());
   /**
-   * claude's `xM`: the kinds whose completion is worth HOLDING a result for. A background shell does
+   * The kinds whose completion is worth HOLDING a result for. A background shell does
    * not hold one (the model was told where its output file is); an agent or a workflow does, because
    * its whole result is the notification that has not been delivered yet.
    */
   const holdingTasksRunning = (): boolean => runningBackgroundTasks().some((t) => t.kind === "agent" || t.kind === "workflow");
   /**
-   * claude's `xu` OR `Qo`. The second disjunct is "a terminal agent notification has not been
-   * delivered": in Winter the enqueue is SYNCHRONOUS with the terminal transition, so a pending queue
-   * entry is exactly that condition and the pin's 60 s "terminal but never enqueued" expiry has
-   * nothing to guard (named simplification).
+   * A holding task is still running, OR a notification is still queued for the main thread. The
+   * second disjunct means "a finished agent's notification has not been delivered yet": in Winter the
+   * enqueue is SYNCHRONOUS with the terminal transition, so a pending queue entry is exactly that
+   * condition and no separate "finished but not yet enqueued" timeout is needed.
    */
   const holdBackActive = (): boolean => inputClosed && config.agentId === undefined && (holdingTasksRunning() || notifications.peekMain() !== undefined);
   const flushHeldResults = (): void => {
     if (heldResults.length === 0) return;
-    // Re-stamped at FLUSH with `costFields()`, which is the session-cumulative ledger -- the pin
-    // re-stamps a held result with the session's own totals for the same reason: by the time it goes
+    // Re-stamped at FLUSH with `costFields()`, which is the session-cumulative ledger -- a held result
+    // goes out carrying the session's totals, for the same reason: by the time it goes
     // out, "this turn's cost" is no longer what the caller is being told.
     for (const message of heldResults.splice(0)) output.write({ type: "data", message: { ...message, ...costFields() } });
   };
-  /** claude's `hl`: a result that is NOT held flushes everything held before it, then itself. */
+  /** A result that is NOT held flushes everything held before it, then itself. */
   const writeTurnResult = (message: TurnResultMessage): void => {
     if (holdBackActive()) {
       heldResults.push(message);
@@ -6079,19 +6053,19 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     turnsCompleted++;
     pumpNotifications();
     signalBackgroundWait();
-    // claude's `Lu`: a session whose input is still OPEN is idle the moment its turn ends. With the
-    // input closed the authoritative `idle` waits for the held flush and the wind-down, which is what
-    // the pin's own doc comment on this frame calls "the authoritative turn-over signal".
+    // A session whose input is still OPEN is idle the moment its turn ends. With the input closed the
+    // authoritative `idle` waits for the held flush and the wind-down, which is what sdk.d.ts's doc
+    // comment on this frame calls "the authoritative turn-over signal".
     if (!inputClosed && !turnActive) emitSessionState("idle");
   };
   /**
-   * The SESSION-level abort, claude's `Qe.signal.aborted`: set when a turn ends interrupted AND when an
+   * The SESSION-level abort: set when a turn ends interrupted AND when an
    * `interrupt` arrives while the wind-down is the only thing still running. Both matter, and the
    * second is why this is not simply "the last turn was interrupted": with the input closed and no
    * turn active, `interruptCurrentTurn.current` is null, so an interrupt would otherwise be a silent
    * no-op and a session waiting on a background agent under `…_CEILING_MS=0` would never return.
    * `runBackgroundWait` breaks on it; the post-loop flush reads it to decide whether to stop the
-   * background children first (claude's `Fu`).
+   * background children first.
    */
   let sessionAborted = false;
   /**
@@ -6116,14 +6090,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   /** Counts completed turns, so the ceiling clock can restart whenever the wait actually made progress. */
   let turnsCompleted = 0;
   let backgroundWaitRunning = false;
-  /** The `turnsCompleted` value the ceiling clock was last reset at (claude resets `Be` whenever a command ran). */
+  /** The `turnsCompleted` value the ceiling clock was last reset at (the clock restarts whenever a command ran). */
   let ceilingClockTurns = 0;
   /**
-   * Wakes the wait loop out of its poll sleep. The pin polls at a flat 100 ms because ITS loop is the
-   * turn runner and therefore observes a turn ending directly; Winter's wait is a separate loop beside
-   * the turn loop, so without this signal "the last turn just ended and nothing is running" would cost
-   * a full poll interval of pure latency on EVERY closed-input session -- teardown would get slower for
-   * every host, to no one's benefit.
+   * Wakes the wait loop out of its poll sleep. Winter's wait is a separate loop beside the turn loop,
+   * so without this signal "the last turn just ended and nothing is running" would cost a full poll
+   * interval of pure latency on EVERY closed-input session -- teardown would get slower for every
+   * host, to no one's benefit.
    */
   let wakeBackgroundWait: (() => void) | undefined;
   const signalBackgroundWait = (): void => {
@@ -6133,7 +6106,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   };
 
   /**
-   * The wait loop (claude's print-mode do/while). Runs ONLY on the top-level engine: a child engine is
+   * The wait loop (print mode's background wait). Runs ONLY on the top-level engine: a child engine is
    * torn down by its wrapper the moment it produces a result, so deferring its `userFrames.end()`
    * would strand the engine and the parent call awaiting it.
    */
@@ -6147,15 +6120,15 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     try {
       for (;;) {
         pumpNotifications();
-        // An interrupted turn stops the wait outright (the pin's own `!aborted` guard on the wait
-        // branch): the caller asked for the session to end, not for more background work.
+        // An interrupted turn stops the wait outright: the caller asked for the session to end, not
+        // for more background work.
         if (sessionAborted) break;
         const running = runningBackgroundTasks();
         const queued = notifications.peekMain() !== undefined;
         if (!turnActive && !queued && running.length === 0) break;
         const now = Date.now();
         const ceiling = backgroundWaitCeilingMs();
-        // claude's `Be`: the clock runs only while the wait is making no progress -- a turn that ran,
+        // The ceiling clock runs only while the wait is making no progress -- a turn that ran,
         // or a command still queued, restarts it.
         const progressing = turnActive || queued || turnsCompleted !== ceilingClockTurns;
         if (progressing) {
@@ -6165,7 +6138,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           ceilingClockStartedAt = now;
         }
         const ceilingExceeded = ceiling > 0 && ceilingClockStartedAt !== null && now - ceilingClockStartedAt >= ceiling;
-        // claude's `ju`: the wind-down arms only when nothing model-facing is pending -- either the
+        // The wind-down arms only when nothing model-facing is pending -- either the
         // ceiling blew, or the only thing left running is work whose result the model does not need.
         const armed = !queued && running.length > 0 && (ceilingExceeded || !holdingTasksRunning());
         if (!armed) sweepDeadline = null;
@@ -6181,7 +6154,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           }
           swept = true;
           // The sweep's own notifications are queued, so the loop runs once more and delivers them as
-          // a final turn -- the pin's `ae` stays true for exactly that reason.
+          // a final turn -- which is why it continues rather than breaks.
           sweepSessionBackgroundTasks(sessionOwner());
           try {
             output.write({ type: "data", message: { type: "system", subtype: "background_tasks_changed", tasks: listRunningTasks().map(toBackgroundTasksChangedEntry), uuid: randomUUID(), session_id: config.sessionId } });
@@ -6933,11 +6906,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
   // --- The first-turn MCP wait (fix round 19/20; moved here in WS-24) ---------------------------------
   //
-  // claude's FIRST-TURN wait on its SDK path (`km`, dump byte 34109614; the full trail is on
-  // mcp/lifecycle.ts's `firstTurnMcpWaitDeadlineMs`). `start()` is claude's nonblocking connect, so
-  // without this every ordinary stdio server is still `pending` when `system/init` and the first turn
-  // are built. claude awaits `km` before its first turn (34017496) and builds that turn's `system/init`
-  // and tools from live state (33881679); Winter writes its startup `system/init` once, before the first
+  // claude waits, bounded, for its MCP servers before its FIRST turn (the bounds are on
+  // mcp/lifecycle.ts's `firstTurnMcpWaitDeadlineMs`). `start()` connects without blocking, so without
+  // this every ordinary stdio server is still `pending` when `system/init` and the first turn are
+  // built. claude's first turn's `system/init` and tools reflect the servers as they stand after that
+  // wait; Winter writes its startup `system/init` once, before the first
   // turn, so the wait comes first and `writeSdkInit()` right after it. Settled means not `pending`
   // (connected, cached, failed, needs-auth): a server that cannot spawn ends the wait at once. `alwaysLoad`
   // (and the MCP_CONNECTION_NONBLOCKING=0 batch) is awaited just before it, bounded by its own
@@ -6966,7 +6939,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // parent's board and never builds its own lifecycle" -- true only for a child that declares nothing, so
   // a slow server's tools missed the subagent's first request. Its bound is the DEFAULT 2 s, never the
   // MCP_TIMEOUT long wait `firstTurnMcpWaitDeadlineMs` gives an explicit non-sdk server: that long wait is
-  // the reading of a HOST's explicit `--mcp-config` declaration (claude's `explicitMcpConfigFlag`), which a
+  // the reading of a HOST's explicit `--mcp-config` declaration, which a
   // definition's inline server is not -- and the parent's turn is blocked on this child meanwhile. A server
   // slower than that still joins a later request, and `WaitForMcpServers` is there for the model.
   const firstTurnMcpWaitMs = (): number | undefined => {
@@ -7390,7 +7363,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // system prompt that changed between rounds of the same turn would invalidate provider prompt
   // caching and make the turn's own history internally inconsistent. SDK 0.0.16: the date and the
   // git snapshot are no longer part of it -- they are the session context, memoized below
-  // (`ensureSessionContext`), exactly as claude 0.3.250 keeps them.
+  // (`ensureSessionContext`), as claude keeps them.
   //
   // R5-16: with no assembler registered this returns the caller's `agentSystemPrompt` (a child's
   // persona, R5-3) or an EMPTY prompt. No authored text lives here, deliberately -- the only authored
@@ -7670,7 +7643,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   let latestAgentDefinitions: Map<string, SourcedAgentDefinition> | undefined;
   /**
    * The agent types this session may list right now, or `undefined` when the Agent tool is not
-   * advertised (claude's `s1t` then produces nothing at all). A child without `Agent` in its pool
+   * advertised (claude then lists no agent types at all). A child without `Agent` in its pool
    * (child-engine.ts's depth gate) gets `undefined` here, which is also the depth filter.
    */
   const agentListingEntries = (): AgentListingEntry[] | undefined => {
@@ -7779,7 +7752,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const placement = assembled.systemContextPlacement ?? "none";
     const gitStatus = placement !== "none" ? await computeGitStatus(config.cwd) : undefined;
     let userContext: ContextEntry[] = systemPromptAssembler?.userContext?.(input) ?? [];
-    // `excludeDynamicSections`: claude's `{...systemContext, ...userContext, ...dynamic}` -- git FIRST.
+    // `excludeDynamicSections`: the git status goes FIRST, ahead of the user context entries.
     if (placement === "userContext" && gitStatus !== undefined) userContext = [["gitStatus", gitStatus], ...userContext];
     const dated = userContext.find(([key]) => key === "currentDate");
     sessionContext = {
@@ -7820,7 +7793,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
   // Builds the LIVE request's message list (context/request-layout.ts): a COPY of the history with
   // the index-0 context prepended, attachments reordered and consecutive user-role turns merged,
-  // exactly as claude 0.3.250 lays out its requests. SDK 0.0.16 retires P5-F's re-anchoring: nothing
+  // exactly as claude lays out its requests (observed on the 0.3.250 runtime's captured requests). SDK 0.0.16 retires P5-F's re-anchoring: nothing
   // is attached to the last user message any more, so a mid-turn compaction has nothing to strand.
   const requestMessages = (context: SessionContext, effort?: EffortMarkerPlan, toolChanges?: ToolChangeRendering): ProviderMessage[] =>
     buildRequestMessages(messages, context.userContextText, { systemReminders: systemRemindersOnWire(), ...(effort !== undefined ? { effort } : {}), ...(toolChanges !== undefined ? { toolChanges } : {}) });
@@ -7935,10 +7908,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     };
   };
 
-  // --- the skill listing's session state (claude's `sentSkillNames`) -------------------------------
+  // --- the skill listing's session state (the skill names already sent) -----------------------------
   //
   // NOT a fold: a set of names already sent, seeded on resume from the persisted `skill_listing`
-  // entries (claude's `vlr`), and NOT reset by a compaction (claude clears it only on /clear or a
+  // entries, and NOT reset by a compaction (claude clears it only on /clear or a
   // skills reload, neither of which Winter has).
   const sentSkillNames = new Set<string>();
   let skillResumeSeed: Set<string> | null = null;
@@ -7949,7 +7922,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     if (seed.suppressNext) suppressNextSkillListing = true;
   }
   const currentSkillListing = (): SkillListing => (typeof skillListing === "function" ? skillListing() : (skillListing ?? []));
-  /** claude's `Urn` + `rwt`: the `skill_listing` attachment for the skills not yet sent, or `undefined`. */
+  /** The `skill_listing` attachment for the skills not yet sent, or `undefined`. */
   const skillListingAttachment = (): SkillListingAttachment | undefined => {
     // Withheld when `Skill` is not advertised -- see EngineOptions.skillListing.
     if (!advertisedToolNames.includes(SKILL_TOOL_ADVERTISED_NAME)) return undefined;
@@ -7970,7 +7943,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     return { type: "skill_listing", content: renderSkillListingContent(fresh), skillCount: fresh.length, isInitial, names: fresh.map((e) => e.name) };
   };
 
-  /** claude's `alr`: a `date_change` once the local date moved past the one the session context was built with. */
+  /** A `date_change` once the local date moved past the one the session context was built with. */
   const dateChangeAttachment = (): DateChangeAttachment | undefined => {
     const contextDate = sessionContext?.date;
     if (contextDate === undefined) return undefined;
@@ -8020,7 +7993,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   };
 
   /**
-   * THE ATTACHMENT SCAN (claude's `nlr`): at the start of every turn, after every tool round that
+   * THE ATTACHMENT SCAN: at the start of every turn, after every tool round that
    * continues the turn, and after a compaction. Each attachment is appended to the history right
    * after what triggered it (the user prompt, the tool results, the summary) and persisted; the
    * request builder then places it where claude does. Order: the agent listing, the skill listing,
@@ -8040,7 +8013,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // claude's own fork never re-announces one on its first turn (the differential oracle's own
     // "official" capture: the fork's directive tail carries no such notice); the fork's whole point
     // is the parent's frozen state, not this run's own fresh negotiation of it. Left uncaught, that
-    // delta attachment BUBBLES UP (`reorderAttachments`, claude's own `SJn`) to land immediately
+    // delta attachment BUBBLES UP (`reorderAttachments`) to land immediately
     // after the placeholder tool_result and FOLDS INTO its string content
     // (`joinAttachmentBlocks`/`foldTextIntoToolResult`) -- silently corrupting
     // `FORK_PLACEHOLDER_TOOL_RESULT` into "Fork started — processing in background\n\n<system-
@@ -8049,7 +8022,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       const entries = agentListingEntries();
       if (entries !== undefined) {
         // SDK 0.0.16 Lane P (R3b §5): `leanModel` -- see `sessionLeanModel`'s own header for the
-        // traced rule and Winter's disclosed mapping onto its own Claude-family tiers.
+        // rule.
         const delta = computeAgentListingDelta(entries, messages, { leanModel: sessionLeanModel(currentProviderIdentity?.modelKey ?? currentModel) });
         if (delta !== undefined) produced.push(delta);
       }
@@ -8485,13 +8458,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
   /**
    * Fix round 19, add-on C (the R.3 live gate): a call is refused unless its tool was OFFERED on the
-   * request that produced it -- claude's rule. claude's tool runner `IQ` (dump byte 18510312) resolves
-   * the call against the query's own tool list, `g=Zr(o.options.tools,p,o.options.toolAliases)`, and
-   * a miss never runs: it answers `{type:"tool_result",content:`<tool_use_error>Error: No such tool
-   * available: ${p}${ke}</tool_use_error>`,is_error:!0}`, where `ke` is `KTe`'s hint (18504953). The
-   * one hint ported is `oMn`'s (18510312 region), for an MCP tool whose server is still connecting
-   * while `WaitForMcpServers` (claude's `U3`, 14054483) is offered; `KTe`'s other hints name claude
-   * surfaces Winter does not have and are not carried.
+   * request that produced it -- claude's rule. A call whose name is not in that request's tool list
+   * (alias-aware) never runs: it is answered with an `is_error` tool_result whose content is
+   * `<tool_use_error>Error: No such tool available: <name><hint></tool_use_error>`. Winter carries one
+   * hint: for an MCP tool whose server is still connecting while `WaitForMcpServers` is offered (plus
+   * its own sign-in hint, WS-25); claude's other hints name surfaces Winter does not have.
    *
    * Winter used to run any REGISTERED tool by name. At 47d9adc a call to an MCP tool whose server had
    * connected after the request was built EXECUTED though the model was never offered it. Checked in
@@ -8501,7 +8472,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    *
    * Scope: a name the registry knows (other than a static `hidden` one, below), or any `mcp__` name
    * (claude's MCP namespace). Any other name has no descriptor; it keeps the executor's own answer (the registry's "unknown tool", or a host
-   * `tools` executor that serves names outside the registry). Alias-aware as claude's `Zr` is: a name
+   * `tools` executor that serves names outside the registry). Alias-aware: a name
    * whose alias-equivalent was offered (`aliasPermissionIdentities`) resolves. `offeredThisRequest`
    * includes the deferred names, so a deferred-but-unloaded tool still reaches the load-first
    * boundary and its "use ToolSearch" answer.
@@ -8955,7 +8926,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // both fail-closed-defer denials (no durable approval store; persisting the record itself
     // failed) already route through — nothing else needs separate instrumentation.
     const turnPermissionDenials: SDKPermissionDenial[] = [];
-    // claude's per-turn `result.usage` (a fresh QueryEngine's `totalUsage` per prompt in SDK mode):
+    // claude's per-turn `result.usage` (fresh per prompt in SDK mode):
     // the sum of THIS turn's main-loop generations -- not a subagent's, not a tool's inner pass, which
     // land on `modelUsage` instead. Stamped on this turn's terminal result, priced row or not.
     const turnUsage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cache_creation_1h_input_tokens: 0, reasoning_tokens: 0 };
@@ -9896,7 +9867,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // catch, so a malformed file rule used to escape here and end the round with
           // `error_during_execution`. A rule the probe cannot compile is treated as MATCHING: the call
           // is then evaluated under that identity (the strictest one), and `evaluate()`'s own catch
-          // denies this one call -- claude's per-call boundary (`evaluate()`'s header, `aD`/`d8t`).
+          // denies this one call -- claude's per-call boundary (`evaluate()`'s header).
           const probeRule = (behavior: "deny" | "ask" | "allow") => (candidate: string): boolean => {
             try {
               return (
@@ -10638,8 +10609,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
   // SDK 0.0.16 Lane N: the turn loop has drained, so the wait (if any) is over -- flush what was held.
   //
-  // ORDER: stop background agents FIRST when the wait ended on an INTERRUPT with results still held
-  // (claude's `Fu` -> `SV`): the caller asked for the session to end, and a background child that
+  // ORDER: stop background agents FIRST when the wait ended on an INTERRUPT with results still held:
+  // the caller asked for the session to end, and a background child that
   // outlived it would keep burning tokens with nobody reading its result. Then the held results go
   // out, re-stamped with the session's totals, and only then does the ordinary teardown below run --
   // which is what makes "the model was told about its background work" true before the sweep.
@@ -10710,12 +10681,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // pre-existing lifetime.
   await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c) && c.status() === "running").map((c) => c.stop()));
   // Review r1 finding 2 (controller ruling): a BACKGROUND shell outlives the turn that started it
-  // (its runCommand no longer carries the per-turn signal -- the pin's ShellCommand.background()
-  // drops its abort listeners), so the session going away is one of its three kill doors, beside its
+  // (its runCommand no longer carries the per-turn signal -- in claude too, a backgrounded shell no
+  // longer follows the turn's abort), so the session going away is one of its three kill doors, beside its
   // own exit and TaskStop. Before this, NOTHING killed one at teardown: `detached: true` groups
   // survived `runEngine` returning and even `process.exit`. A top-level engine stops every background
-  // shell of its session; a subagent engine stops the ones IT started (the pin's
-  // `killShellTasksForAgent` on agent exit). BEFORE `output.end()`, so the kill frames can still land.
+  // shell of its session; a subagent engine stops the ones IT started (claude likewise kills an
+  // agent's shells when the agent exits). BEFORE `output.end()`, so the kill frames can still land.
   const sweptShellTasks = stopSessionShellTasks({ sessionId: config.sessionId, ...(config.agentId !== undefined ? { agentId: config.agentId } : {}) });
   // WS-24: the session's background (async) hooks die with it, like its background shells.
   hookInvoker.asyncHooks?.dispose();
