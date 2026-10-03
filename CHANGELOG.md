@@ -4,6 +4,29 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.42
+
+### Clean-room rewrite of helpers that mirrored claude's internals. No behaviour change.
+
+Some helpers in the permission rule grammar, file rules, path checks, sandbox profile, plugin and
+marketplace paths, context assembly, subagents, MCP, store, commands, skills and web tools had been
+written by following another implementation's code. Their comments named its internal functions and
+even quoted it. 0.0.42 deletes the quoted code and the references, and writes every such helper again
+from scratch. The new code was written from tests and plain behaviour specs, without seeing the
+old code. Comments now describe behaviour in plain words. Interface strings, the rule grammar and
+file formats are unchanged, so saved rules, settings and plugins keep meaning exactly what they did.
+
+- **Zero changed decisions.** Each rewritten area has a committed corpus of inputs and outputs, recorded
+  from 0.0.41, and a differential test that fails on any difference. Examples: permission rules
+  (parse, validate, match, path checks, symlink chains), the full seatbelt profile text, marketplace
+  path containment, plugin loading over on-disk layouts, `$ARGUMENTS`, request layout and frontmatter.
+  Old-versus-new fuzzing ran over tens of millions of inputs, with zero differences.
+- **New edge-case tests** state the quirks the old comments only described. Two places where the
+  rewrite first differed are now pinned: `Bash(a:*b:*)` stays valid, and a uuid listed twice in a
+  compact boundary's `preservedMessages` still splices its recovered results after each occurrence.
+- The Console OAuth compatibility record and the WebFetch differential now state interface facts
+  directly, without reading the pinned binary's bytes.
+
 ## 0.0.41
 
 ### A host can declare some of its in-process tools concurrency-safe without making them read-only
