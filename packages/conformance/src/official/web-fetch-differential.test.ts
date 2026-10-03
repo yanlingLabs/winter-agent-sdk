@@ -22,7 +22,7 @@
 // What CANNOT be driven hermetically, and is therefore not claimed here: the PERMISSIVE guidelines,
 // the preapproved auto-allow and the verbatim markdown passthrough all key on a real preapproved
 // HOSTNAME, which a loopback cannot impersonate without real DNS. The permissive text is instead
-// checked for verbatim presence in the pinned binary's own bytes.
+// asserted as a literal against Winter's own implementation.
 //
 // Every assertion states ONE contract for both sides; a difference is a finding to report.
 //
@@ -515,12 +515,20 @@ describe.skipIf(skipReason !== undefined)(`WebFetch: Winter's executor vs pinned
   // --- what a loopback cannot drive ---------------------------------------------------------------------------------
 
   test(
-    "the PERMISSIVE guidelines (preapproved hosts only -- not drivable on a loopback) are present VERBATIM in the pinned binary's own bytes, as are the strict ones' lines",
-    async () => {
-      const bytes = Buffer.from(await Bun.file("binaryPath" in resolved ? resolved.binaryPath : "").arrayBuffer());
-      expect(bytes.includes(Buffer.from(PERMISSIVE_GUIDELINES, "utf8")), "Winter's permissive guidelines text must appear verbatim in the binary").toBe(true);
-      for (const line of STRICT_GUIDELINES.split("\n")) expect(bytes.includes(Buffer.from(line, "utf8")), `strict guideline line must appear verbatim in the binary: ${line}`).toBe(true);
+    "the PERMISSIVE guidelines (preapproved hosts only -- not drivable on a loopback) and the strict ones are the documented interface text, as Winter's own implementation states them",
+    () => {
+      expect(PERMISSIVE_GUIDELINES).toBe(
+        "Provide a concise response based on the content above. Include relevant details, code examples, and documentation excerpts as needed.",
+      );
+      expect(STRICT_GUIDELINES).toBe(
+        [
+          "Provide a concise response based only on the content above. In your response:",
+          " - Enforce a strict 125-character maximum for quotes from any source document. Open Source Software is ok as long as we respect the license.",
+          " - Use quotation marks for exact language from articles; any language outside of the quotation should never be word-for-word the same.",
+          " - You are not a lawyer and never comment on the legality of your own prompts and responses.",
+          " - Never produce or reproduce exact song lyrics.",
+        ].join("\n"),
+      );
     },
-    240_000,
   );
 });

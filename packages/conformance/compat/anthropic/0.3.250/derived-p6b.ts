@@ -1,65 +1,53 @@
 // The §3 table of `derived-shapes-p6b.md`, as typed data.
 //
-// RETIRED AS A LOGIN, KEPT AS HISTORY (2026-09-13, P10a-1). The login these values once shipped as
+// RETIRED AS A LOGIN, KEPT AS A RECORD (2026-09-13, P10a-1). The login these values once shipped as
 // `CONSOLE_OAUTH` is gone -- Console OAuth is host-brokered now (`console-broker.ts`, spawning
-// `claude`/`ant`, never speaking OAuth to Anthropic directly). This table is UNCHANGED regardless:
-// every value here was genuinely read out of the pinned artifact, and the record stays intact even
-// though only `betaHeader` still has a shipped consumer (`CONSOLE_BEARER.betaHeader` in
-// `console-oauth.ts`, asserted against `DERIVED.consoleOauth.betaHeader` alone, not field-by-field).
-// See `derived-shapes-p6b.md` §2's own RETIRED note for the full account.
+// `ant`, never speaking OAuth to Anthropic directly). The table is unchanged; only `betaHeader` still
+// has a shipped consumer (`CONSOLE_BEARER.betaHeader` in `console-oauth.ts`, asserted against
+// `DERIVED.consoleOauth.betaHeader` alone, not field-by-field). See `derived-shapes-p6b.md` §1.
 //
 // WHY A SECOND FILE SAYING THE SAME THING. `derived-shapes-p6b.md` is prose a human reads; nothing
-// makes the code agree with it. This file is the same values in a form a TEST can compare against.
-// So a constant that drifts — in either direction — fails a test rather than quietly diverging from
-// its own derivation.
-//
-// EVERY VALUE HERE WAS READ OUT OF THE PINNED ARTIFACT, never typed from memory. The document beside
-// this file records the byte offset each one came from and the two-artifact checksum chain that made
-// the read hermetic. Nothing else from the artifact is committed.
+// makes the code agree with it. This file is the same values in a form a TEST can compare against,
+// so a constant that drifts fails a test rather than quietly diverging.
 //
 // This file holds NO credential: a public OAuth client id, three vendor URLs, two scope strings and
-// a beta header value are configuration, all of them shipped in a public npm package.
+// a beta header value are configuration.
 
-/** The Anthropic Console OAuth constants (D20) derived from `@anthropic-ai/claude-agent-sdk@0.3.250`. */
+/** The Anthropic Console OAuth constants (D20) for the pinned 0.3.250 runtime. */
 export const DERIVED = {
   consoleOauth: {
-    /** `CLIENT_ID`. A PUBLIC PKCE client id from a public artifact — no client secret exists. */
+    /** The client id. A PUBLIC PKCE client id -- no client secret exists. */
     clientId: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
     /**
-     * `CONSOLE_AUTHORIZE_URL` — the Console host, which is what D20 is.
-     * The artifact's OTHER authorize host (`CLAUDE_AI_AUTHORIZE_URL`, the consumer subscription
-     * login) is recorded in the document as excluded by D13/D14 and is deliberately NOT here: a
-     * constant that exists is a constant something can come to use.
+     * The Console authorize endpoint -- the Console host, which is what D20 is. The consumer
+     * subscription login's authorize host is recorded in the document as excluded by D13/D14 and is
+     * deliberately NOT here: a constant that exists is a constant something can come to use.
      */
     authorizeUrl: "https://platform.claude.com/oauth/authorize",
-    /** `TOKEN_URL`. Serves both the authorization-code and the refresh grant. */
+    /** The token endpoint. Serves both the authorization-code and the refresh grant. */
     tokenUrl: "https://platform.claude.com/v1/oauth/token",
-    /** Where the account id comes from — a separate authenticated GET, NOT a claim in the token response. */
+    /** Where the account id comes from -- a separate authenticated GET, NOT a claim in the token response. */
     profileUrl: "https://api.anthropic.com/api/oauth/profile",
     /**
-     * A WINTER-AUTHORED SUBSET of the artifact's scope vocabulary, space-joined as its own builder
-     * joins them. `user:inference` is the artifact's own inference scope (its "can this token run a
-     * turn" predicate tests for exactly it); `user:profile` authorises the account lookup that names
-     * the credential record. The artifact's DEFAULT list is the union of two larger lists and is
-     * excluded whole: it carries the vendor application's own entitlements and the API-key-minting
-     * scope whose only consumer is a `claude_cli`-scoped endpoint (D21).
+     * A WINTER-AUTHORED SUBSET of the vendor's scope vocabulary, space-joined. `user:inference` is the
+     * scope a token needs to run a turn; `user:profile` authorises the account lookup that names the
+     * credential record. The vendor's default list is excluded whole: it carries the vendor
+     * application's own entitlements and the API-key-minting scope, whose only consumer is a
+     * `claude_cli`-scoped endpoint (D21).
      */
     scope: "user:inference user:profile",
-    /** §2.2 row 1: `code=true` is the artifact's first authorize parameter (`B@155590290`). */
+    /** `code=true` is the authorize request's first parameter. */
     extraAuthorizeParams: { code: "true" },
     /**
-     * `0` — an ephemeral port, which is the DERIVED behaviour rather than a fallback.
-     * The artifact builds its redirect URI as `http://localhost:${port}/callback` with a runtime
-     * variable, so this client's registration accepts a loopback URI on any port (RFC 8252 §7.3).
-     * That is the opposite of codex, whose 1455/1457 pair is fixed because its registration is.
+     * `0` -- an ephemeral port. The redirect URI is `http://localhost:<port>/callback` with a
+     * caller-chosen port, so this client's registration accepts a loopback URI on any port
+     * (RFC 8252 §7.3). That is the opposite of codex, whose 1455/1457 pair is fixed because its
+     * registration is.
      */
     callbackPort: 0,
-    /** The artifact's callback PATH. Not `pkce.ts`'s own default of `/auth/callback`. */
+    /** The callback PATH. Not `pkce.ts`'s own default of `/auth/callback`. */
     callbackPath: "/callback",
-    /**
-     * The header value of the beta the artifact itself names `oauth_auth`. All 13 sites that set it
-     * also set an `Authorization: Bearer`, and none of those sites sends `x-api-key`.
-     */
+    /** The `oauth_auth` beta header value. It always travels with an `Authorization: Bearer`, never `x-api-key`. */
     betaHeader: "oauth-2025-04-20",
     /** The profile-response field that names the record: `{ account: { uuid } }`. */
     accountIdPath: "account.uuid",
