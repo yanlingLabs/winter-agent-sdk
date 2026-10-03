@@ -35,136 +35,118 @@ export interface SourcedAgentDefinition extends RuntimeAgentDefinition {
  */
 export type PluginAgentDefinition = RuntimeAgentDefinition & { plugin: string };
 
-// --- Filesystem loading: frontmatter parsing, matching claude's own pinned split -------------------
+// --- Filesystem loading: frontmatter parsing, compatible with claude's -------------------------------
 //
-// WS-21 §6.3 item 2 (fix round 2, corrected in the batch-2 fix round): `Bun.YAML` is a Bun BUILT-IN
-// (no package.json entry), not an npm package -- the earlier "no YAML dependency exists in this
-// workspace" rationale for a hand-rolled `key: value` scanner was itself about R4-10's "new
-// dependency" rule, which a runtime built-in never trips.
+// WS-21 §6.3 item 2: the block is read as real YAML with `Bun.YAML` -- a Bun BUILT-IN (no package.json
+// entry), not an npm package, so R4-10's "new dependency" rule does not apply.
 //
-// THE AUTHORITY FOR CLAUDE BEHAVIOUR IS THE PINNED BINARY (claude CLI 2.1.250 inside agent-sdk
-// 0.3.250), NOT `claude-code-reference @ 6f6f12b` -- that clone is an OLDER, unobfuscated snapshot
-// and is not what ships. `FRONTMATTER_REGEX`, `YAML_SPECIAL_CHARS` and the base of
-// `quoteProblematicValues` below were CONFIRMED present, verbatim, as literal string constants in
-// the pinned binary's own strings dump (searched by substring: `^---\s*\n([\s\S]*?)---\s*\n?`,
-// `[{}[\]*&#!|>%@\`]|: `, `^([a-zA-Z_-]+):\s+(.+)$` all appear). The BOM-strip and the retry's
-// tab-detab step below are NOT visible in that dump (a numeric comparison and a regex applied
-// programmatically leave no independently-checkable string trace) and were confirmed from the
-// pinned binary's own disassembled `gE`/`kdn` functions directly, per the batch-2 fix round's
-// instruction -- see this fix round's report for the exact citations.
-//
-// `attrs` is `Record<string, unknown>` now, not `Record<string, string>`: real YAML returns a typed
-// value (`effort: 5` is the number 5, `background: true` is the boolean true, `model:` with nothing
-// after is `null`, not `""`) exactly as claude's own `Bun.YAML.parse` does, so every reader below
-// narrows defensively instead of assuming a string -- claude's own `typeof x !== 'string'` gate for
-// `name`/`description` is the same discipline, ported into `parseAgentDefinitionFile`.
+// `attrs` is `Record<string, unknown>`, not `Record<string, string>`: real YAML returns a typed value
+// (`effort: 5` is the number 5, `background: true` is the boolean true, `model:` with nothing after is
+// `null`, not `""`), as claude reads it, so every reader below narrows defensively instead of assuming a
+// string -- the same discipline as claude's string-type check for `name`/`description`, applied in
+// `parseAgentDefinitionFile`.
 export interface FrontmatterResult {
   attrs: Record<string, unknown>;
   body: string;
 }
 
-// LAZY (`[\s\S]*?`): the closing fence need not be alone on its own line and needs no trailing
-// newline, unlike the old line-based scanner's `/^---\s*$/`-per-line requirement --
-// `"---\nname: x\n---body"` finds frontmatter under this regex (claude does too) where the old
-// scanner called it unterminated.
-const FRONTMATTER_REGEX = /^---\s*\n([\s\S]*?)---\s*\n?/;
-
-// Pinned binary's `gE(e)`: `e.charCodeAt(0)===65279 ? e.slice(1) : e`. Strips exactly ONE leading
-// U+FEFF (byte-order mark), applied ONCE, before `FRONTMATTER_REGEX` ever runs -- so a single-BOM
-// file parses exactly as if the BOM were never there, while a double-BOM file still has one
-// residual BOM in front of `---`, which still defeats the `^` anchor (no frontmatter, matching
-// claude). Neither Bun's nor Node's plain `readFileSync(path, "utf8")` strips a BOM on its own
-// (measured empirically, definitions.test.ts's own header records it), so this step is load-bearing
-// for every real agent file read from disk, not merely a hypothetical.
-function stripLeadingBom(raw: string): string {
-  return raw.charCodeAt(0) === 65279 ? raw.slice(1) : raw;
+/** Splits a markdown file into its YAML frontmatter (one quote-and-detab retry on a parse failure) and its body. */
+export function parseFrontmatter(raw: string): FrontmatterResult {
+  // Exactly one leading byte-order mark is skipped when looking for the fence; a second one stays.
+  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  const split = splitFrontmatter(text);
+  if (split === undefined) return { attrs: {}, body: raw };
+  return { attrs: readFrontmatterBlock(split.block), body: text.slice(split.bodyStart) };
 }
 
-// A value with a bare `: ` mid-string (`description: Use when: foo`) is invalid YAML on the first
-// pass (a nested mapping) -- this is the retry that quotes it and tries again, rather than losing
-// the whole file to one common, unquoted author mistake.
-const YAML_SPECIAL_CHARS = /[{}[\]*&#!|>%@`]|: /;
+/** JavaScript's `\s` class, tested one UTF-16 code unit at a time. */
+const WHITESPACE_CHAR = /\s/;
 
-function quoteProblematicValues(frontmatterText: string): string {
-  const lines = frontmatterText.split("\n");
-  const result: string[] = [];
-  for (const line of lines) {
-    const match = /^([a-zA-Z_-]+):\s+(.+)$/.exec(line);
-    if (match) {
-      const key = match[1]!;
-      const value = match[2]!;
-      // Fix round 3 (I-2): the pinned binary's own `M` checks this BEFORE the quoted-string
-      // passthrough (dump-confirmed): `if(s.startsWith("[")&&s.endsWith("]"))try{if(Array.isArray(
-      // EO(s))){r.push(i);continue}}catch{}`. `[` is itself one of `YAML_SPECIAL_CHARS`, so an
-      // ALREADY-VALID inline array value (`tools: ["Bash(git add, commit)", Read]`) would otherwise
-      // be wrongly quoted into a single STRING on any retry triggered by a DIFFERENT line's problem
-      // -- turning a real array into text `splitList`'s bracket-strip-then-comma-split then tears
-      // apart on every embedded comma, not just the array's own separators (`"Bash(git add,
-      // commit)"` becomes two entries). Left untouched (the original line, unmodified) when it
-      // already parses as a real array.
+/** Index just past the maximal run of whitespace starting at `from`. */
+function skipWhitespace(text: string, from: number): number {
+  let i = from;
+  while (i < text.length && WHITESPACE_CHAR.test(text[i]!)) i++;
+  return i;
+}
+
+/**
+ * The lenient fence split. The text must open with `---` followed by a whitespace run holding at least one
+ * LF (the opener ends after the run's last LF, so blank lines right after the fence are not part of the
+ * block); the block then runs up to the first `---` found anywhere after that, and the closer swallows
+ * that `---` plus all whitespace following it. `undefined` when there is no opener or no closing `---`.
+ */
+function splitFrontmatter(text: string): { block: string; bodyStart: number } | undefined {
+  if (!text.startsWith("---")) return undefined;
+  const runEnd = skipWhitespace(text, 3);
+  const lastLf = text.lastIndexOf("\n", runEnd - 1);
+  if (lastLf < 3) return undefined;
+  const blockStart = lastLf + 1;
+  const close = text.indexOf("---", blockStart);
+  if (close === -1) return undefined;
+  return { block: text.slice(blockStart, close), bodyStart: skipWhitespace(text, close + 3) };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Reads the block as YAML. A successful first parse is final (anything that is not a plain object reads
+ * as `{}`); only when it throws is the block repaired (loose values quoted, leading tabs expanded) and
+ * parsed once more, a second failure also reading as `{}`.
+ */
+function readFrontmatterBlock(block: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = Bun.YAML.parse(block);
+  } catch {
+    try {
+      parsed = Bun.YAML.parse(detabLineStarts(quoteLooseValues(block)));
+    } catch {
+      return {};
+    }
+  }
+  return isPlainObject(parsed) ? parsed : {};
+}
+
+/** A column-0 `key:` (ASCII letters, `_`, `-`) followed by its whitespace separator. */
+const KEY_LINE_HEAD = /^([A-Za-z_-]+):(\s+)/;
+const LINE_TERMINATOR = /[\r\u2028\u2029]/;
+const YAML_SPECIAL_CHAR = /[{}[\]*&#!|>%@`]/;
+
+/**
+ * Wraps in double quotes every top-level `key: value` whose value holds a YAML-significant character
+ * (or a `: ` pair) and is neither a valid flow list nor already quoted. Lines split on LF only, so a
+ * CRLF line keeps its CR in the value and is never rewritten.
+ */
+function quoteLooseValues(block: string): string {
+  return block
+    .split("\n")
+    .map((line) => {
+      const head = KEY_LINE_HEAD.exec(line);
+      if (head === null) return line;
+      const key = head[1]!;
+      const value = line.slice(head[0].length);
+      if (value.length === 0 || LINE_TERMINATOR.test(value)) return line;
       if (value.startsWith("[") && value.endsWith("]")) {
         try {
-          if (Array.isArray(Bun.YAML.parse(value))) {
-            result.push(line);
-            continue;
-          }
+          if (Array.isArray(Bun.YAML.parse(value))) return line;
         } catch {
-          // not valid YAML on its own -- fall through to the ordinary checks below
+          // Not a readable flow list: fall through to the other rules.
         }
       }
-      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-        result.push(line);
-        continue;
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) return line;
+      if (YAML_SPECIAL_CHAR.test(value) || value.includes(": ")) {
+        return `${key}: "${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
       }
-      if (YAML_SPECIAL_CHARS.test(value)) {
-        const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-        result.push(`${key}: "${escaped}"`);
-        continue;
-      }
-    }
-    result.push(line);
-  }
-  return result.join("\n");
+      return line;
+    })
+    .join("\n");
 }
 
-// Pinned binary's `kdn(e)`: `M(e).replace(/^\t+/gm, r => "  ".repeat(r.length))` -- quote-loose-
-// values FIRST (`M`, `quoteProblematicValues` above), THEN a per-line leading-tab detab (2 spaces
-// per tab) on the QUOTED result. YAML forbids tab indentation, so a hand-authored file edited with
-// tabs would otherwise lose its whole frontmatter block on the first parse failure and AGAIN on the
-// retry, since quoting loose values alone does nothing about indentation.
-function quoteAndDetab(frontmatterText: string): string {
-  return quoteProblematicValues(frontmatterText).replace(/^\t+/gm, (m) => "  ".repeat(m.length));
-}
-
-export function parseFrontmatter(raw: string): FrontmatterResult {
-  const stripped = stripLeadingBom(raw);
-  const match = FRONTMATTER_REGEX.exec(stripped);
-  // Fix round 3 (M-1): the pinned binary's own `$o` returns the ORIGINAL, un-BOM-stripped text as
-  // the body when there is no fence at all -- the BOM strip exists only to let the fence's `^`
-  // anchor see past a leading BOM when frontmatter IS present; a file with no frontmatter is never
-  // parsed at all, so nothing should have touched its bytes.
-  if (!match) return { attrs: {}, body: raw };
-  const frontmatterText = match[1] ?? "";
-  const body = stripped.slice(match[0].length);
-  let attrs: Record<string, unknown> = {};
-  try {
-    const parsed = Bun.YAML.parse(frontmatterText) as unknown;
-    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) attrs = parsed as Record<string, unknown>;
-  } catch {
-    // YAML parsing failed -- retry once after quoting loose values and detabbing (claude's own
-    // two-attempt structure), rather than losing the whole file to one fixable shape.
-    try {
-      const parsed = Bun.YAML.parse(quoteAndDetab(frontmatterText)) as unknown;
-      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) attrs = parsed as Record<string, unknown>;
-    } catch {
-      // Both attempts failed -- attrs stays {}, matching the pinned binary's own silent degrade (it
-      // logs for debugging there; here, a required field simply being absent from `{}` is what
-      // surfaces as `parseAgentDefinitionFile`'s own typed rejection a few lines below, so the
-      // failure is still disclosed to a caller, just at the field-validation layer rather than
-      // this one).
-    }
-  }
-  return { attrs, body };
+/** Replaces each tab of a line's leading tab run with two spaces (a line starts after LF, CR, U+2028 or U+2029). */
+function detabLineStarts(text: string): string {
+  return text.replace(/^\t+/gm, (tabs) => "  ".repeat(tabs.length));
 }
 
 /** `typeof v === "string"` only -- a YAML-typed number/boolean/null is never silently stringified (claude parity: it is treated as ABSENT, never coerced). */
@@ -172,7 +154,7 @@ function asString(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
 
-/** Accepts a real YAML boolean OR its quoted string form (`background: true` and `background: "true"` both work) -- claude's own `parseAgentFromMarkdown` accepts both shapes for this one field. */
+/** Accepts a real YAML boolean OR its quoted string form (`background: true` and `background: "true"` both work) -- claude accepts both shapes for this one field. */
 function asBoolean(v: unknown): boolean | undefined {
   if (v === true || v === "true") return true;
   if (v === false || v === "false") return false;
@@ -240,13 +222,13 @@ function isValidAgentName(name: string): boolean {
 // own tracked subagent-file convention).
 export function parseAgentDefinitionFile(raw: string, filePath: string): ParsedAgentDefinitionResult {
   const { attrs, body: rawBody } = parseFrontmatter(raw);
-  // `parseFrontmatter` no longer trims (claude's own generic parser doesn't either -- see its
-  // header); the trim moves here, to the ONE caller that turns a body into a `prompt`.
+  // `parseFrontmatter` does not trim (claude's frontmatter reading does not either); the trim lives
+  // here, in the ONE caller that turns a body into a `prompt`.
   const body = rawBody.trim();
   if (body.length === 0) return { ok: false, filePath, reason: "no prompt body (the file's content after any frontmatter block is empty)" };
 
-  // claude parity, TYPE not just presence: `typeof x !== 'string'` rejects a YAML-typed `name: 123`/
-  // `description: true` exactly as claude's own `parseAgentFromMarkdown` does -- `asString` returns
+  // claude parity, TYPE not just presence: a YAML-typed `name: 123`/`description: true` is rejected,
+  // as claude rejects it -- `asString` returns
   // `undefined` for anything that isn't a real string (including YAML `null`), so these two checks
   // read identically to the pre-fix-round-2 code, just sourced from a type-narrowed value.
   const name = asString(attrs["name"]);
@@ -396,8 +378,8 @@ export interface LoadAgentDefinitionsOptions {
   trustedWorkspace: boolean;
   /**
    * Fix round 3 (I-4, security): a project `agents/*.md` load ALSO requires `"project"` in
-   * `settingSources` -- claude's own `yZt`: `N=yo("projectSettings")&&!D` (dump-confirmed,
-   * `!D` being its own disabled-flag, not a Winter concept). Without this, a run started with
+   * `settingSources` -- claude loads project agents only when project settings are a setting source
+   * (and its own disable switch is off, which has no Winter counterpart). Without this, a run started with
    * `settingSources:["user"]` but ALSO `trustedWorkspace:true` read `<cwd>/.winter/agents`
    * unfiltered -- skipping the router's own F19c `permissionMode` strip for that source tier, and
    * `computeChildPolicy` would honour a checked-in `bypassPermissions` the run never meant to trust.
@@ -415,7 +397,7 @@ export interface LoadAgentDefinitionsOptions {
    * (`Options.plugins`) or the user installed it under `~/.winter/plugins` -- a decision already
    * made outside the repository, and the same decision that lets a plugin contribute hooks and MCP
    * servers. Gating it on workspace trust would make plugin behaviour depend on which directory the
-   * session happens to be in, which is neither the pin's model nor Winter's.
+   * session happens to be in, which is neither claude's model nor Winter's.
    */
   pluginAgents?: Record<string, PluginAgentDefinition>;
   /**
@@ -597,17 +579,17 @@ export function allowedAgentTypesFromTools(tools: readonly string[] | undefined)
 }
 
 /**
- * The pinned `AgentInfo[]` shape (`Query.supportedAgents()`, research §A3: "Same list feeds
+ * The `AgentInfo[]` shape the SDK declares (`Query.supportedAgents()`, research §A3: "Same list feeds
  * `system/init.agents?: string[]` and `Query.supportedAgents(): AgentInfo[]`") -- lane L2b's own
  * `list_agents` control handler is expected to build its response with this, so the two lists this
  * one merged map feeds (the bare-name `init.agents`/`findAgentByType` and the richer `AgentInfo[]`)
  * can never disagree about WHICH agents exist.
  *
- * `model: "inherit"` is OMITTED, never passed through literally: the pin's own field doc reads
+ * `model: "inherit"` is OMITTED, never passed through literally: the SDK declaration's field doc reads
  * "Model alias this agent uses. If omitted, inherits the parent's model" -- `"inherit"` is Winter's
  * internal sentinel for exactly that (`engine.ts`'s own `resolveChildModel`: `defModel !== "inherit"`
  * is the guard), and a caller reading `AgentInfo.model` verbatim would otherwise see the literal
- * string `"inherit"` where the pin's own contract says absence means the same thing.
+ * string `"inherit"` where the declared contract says absence means the same thing.
  */
 export function toAgentInfoList(defs: ReadonlyMap<string, SourcedAgentDefinition>): AgentInfo[] {
   return [...defs.entries()]
