@@ -78,7 +78,7 @@ export interface ChildResult {
    * settle() -- `total_tokens` is the LAST recorded turn's (input + cache_write + cache_read) plus
    * the SUM of every turn's output_tokens; `tool_uses` is every `tool_use` block seen across the
    * child's own assistant messages; `duration_ms` is settle time minus spawn time. Needed here (not
-   * only on the last `task_progress` frame) because the pin's FINAL `task_notification.usage` must
+   * only on the last `task_progress` frame) because claude's FINAL `task_notification.usage` must
    * include the child's LAST turn too -- a trailing text-only turn (no tool_use block) never fires
    * `onProgress` at all, so tools/impl/agent.ts has nowhere else to read a complete total from.
    *
@@ -103,8 +103,8 @@ export interface ChildTaskProgress {
   lastToolName: string;
   /**
    * Contract §8: the activity text of the child's MOST RECENT RECORDED tool call (every `tool_use`
-   * except the structured-output tool is recorded; the value is sticky across messages, like the
-   * pin's tracker `lastActivity`). `undefined` when that call's tool has no activity text (or nothing
+   * except the structured-output tool is recorded; the value is sticky across messages, like
+   * claude's own last-activity text). `undefined` when that call's tool has no activity text (or nothing
    * has been recorded yet) -- the caller then falls back to the task description.
    */
   activity?: string;
@@ -441,8 +441,8 @@ export interface ParentMcpState {
    * Fix round 21: every MCP server the parent run can see -- its own board, its declared servers and,
    * recursively, what IT inherited -- read at call time. A child's advertised partition keeps a live
    * server's tools for these servers plus its own (engine.ts's `computeAdvertisedPartition`), so every
-   * descendant is offered the session's servers as claude's are (the Agent tool's pool is
-   * `JP($n, Y2(yr.mcp.tools.concat(pn)))`, dump byte 18016381).
+   * descendant is offered the session's servers as claude's are (claude builds a spawned agent's pool
+   * from the session's MCP tools plus the calling agent's own).
    */
   visibleServerNames?: () => readonly string[];
   /**
@@ -572,7 +572,7 @@ export function transformChildFrame(
   // (`session_state_changed`). Forwarded UNCORRELATED they read as the session's own: a host that threads
   // by `parent_tool_use_id` (Winter's daemon does) filed a subagent's stop notice on the main thread,
   // where it looked like the main turn stopping, and a child's fallback moved the main model. So they
-  // carry the child's `parent_tool_use_id` -- an ADDITIVE field on these messages (the pin's
+  // carry the child's `parent_tool_use_id` -- an ADDITIVE field on these messages (claude's declared
   // `SDKSystemMessage` has none), overwriting a grandchild's exactly as the assistant/user frames above do,
   // so the whole subtree stays on the thread the host knows.
   //

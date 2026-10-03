@@ -145,7 +145,7 @@ export function resolveForegroundBackground(input: ResolveForegroundBackgroundIn
     return { background: true, reason: "AgentDefinition.background" };
   }
 
-  // Stage 3: a FORK always runs in the background (R3a §2: the pin's fork definition forces it, and a
+  // Stage 3: a FORK always runs in the background (R3a §2: claude's fork definition forces it, and a
   // fork inherits the parent's live conversation precisely so the parent can carry on meanwhile).
   // Ranked here, above the invocation's own request, for the same "force" reading as
   // `definitionBackground` above it.

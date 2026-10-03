@@ -16,7 +16,7 @@
 //    SDK 0.0.16 retired 0.0.15's `userContextBlocks` (prepended to the turn's user message and
 //    re-read every turn) together with Ruling P5-F's re-anchoring of them across a compaction.
 //
-// WHAT GOES WHERE (SDK 0.0.16, P16-5 -- claude 0.3.250's request layout):
+// WHAT GOES WHERE (SDK 0.0.16, P16-5 -- claude's request layout):
 //
 //   system (static half)   the authored prompt (minimal / caller string / caller blocks / preset) --
 //                          fix round 4 (I-F): minus its coding-instructions section when a style asks
@@ -256,22 +256,21 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
         });
       }
       const styleBody = style !== null && style.body.trim().length > 0 ? style.body : undefined;
-      // Fix round 4 (I-F), CORRECTING M-4's mis-port: claude drops ONLY the base prompt's
-      // coding-instructions section when a style exists and does not ask to keep it
-      // (`M===null||M.keepCodingInstructions===!0`, dump ~276873) -- it never swaps the WHOLE
-      // authored region for the style. The gate is the STYLE OBJECT existing, not whether its body is
-      // non-empty (claude's own condition does not test the body at all): an empty-bodied keyless
-      // style still drops the section even though it then contributes nothing to the dynamic half.
+      // Fix round 4 (I-F), CORRECTING M-4: claude drops ONLY the base prompt's coding-instructions
+      // section when a style is selected and does not explicitly ask to keep it -- it never swaps the
+      // WHOLE authored region for the style. The gate is the STYLE OBJECT existing, not whether its
+      // body is non-empty: an empty-bodied keyless style still drops the section even though it then
+      // contributes nothing to the dynamic half.
       // The style's body -- for EVERY style, dropping or not -- always lands in the dynamic half now;
       // pre-fix-round-4 code put it in the static half on the (now-retired) full-replace branch.
       const dropCodingInstructions = style !== null && !style.keepCodingInstructions;
 
       // --- assembly ---------------------------------------------------------------------------
       //
-      // SDK 0.0.16: the dynamic sections are claude's -- `# auto memory` then `# Environment` (its
-      // `memory` then `env_info_simple`), in the dynamic half. Under `excludeDynamicSections` the
-      // machine-specific half of both moves into the index-0 userContext (`userContext()` below) and
-      // only the model/product half of the environment stays, in the STATIC half (claude's `MGn`).
+      // SDK 0.0.16: the dynamic sections are claude's -- `# auto memory` then `# Environment`, in the
+      // dynamic half. Under `excludeDynamicSections` the machine-specific half of both moves into the
+      // index-0 userContext (`userContext()` below) and only the model/product half of the
+      // environment stays, in the STATIC half.
       const staticHalf: (string | undefined)[] = [
         ...region.staticBlocks.map((block) => (dropCodingInstructions ? dropCodingInstructionsSection(block) : block)),
         region.excludeDynamicSections ? renderStaticEnvironmentSection(environment) : undefined,
@@ -299,7 +298,7 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       const dynamicParts = nonEmpty(dynamicHalf);
       const system = [...staticParts, ...dynamicParts].join("\n\n");
 
-      // --- where the systemContext goes (claude's `ko`) ----------------------------------------
+      // --- where the systemContext goes -------------------------------------------------------------
       //
       // claude computes NO systemContext for a custom system prompt (string or array), and its
       // Explore/Plan agents drop `gitStatus`; `<PREFIX>DISABLE_GIT_INSTRUCTIONS` over the
@@ -330,7 +329,7 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
 
       // `claudeMd`: every instructions file (user, then each directory from the repository root down,
       // checked-in before local) and the MEMORY.md index last, as ONE value. `omitProjectContext`
-      // (claude's `omitClaudeMd`) drops the whole key.
+      // drops the whole key (as claude's Explore/Plan agents get no instructions files).
       if (input.omitProjectContext !== true) {
         // WS-21 §6.3 item 2 (fix round 1, Critical 1), CORRECTED by the router's same-view test
         // (SV-1): UNCONDITIONAL rules ride the SAME claudeMd value the instructions files do,

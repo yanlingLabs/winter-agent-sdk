@@ -111,8 +111,8 @@ export function projectSkillRoots(cwd: string, brand?: Pick<BrandProfile, "proje
 }
 
 /**
- * Admit a `readdirSync` entry as a skill directory, WS-21 §6.3 item 1 (F6, F7): claude admits
- * `entry.isDirectory() || entry.isSymbolicLink()`, then resolves the link. A link is resolved
+ * Admit a `readdirSync` entry as a skill directory, WS-21 §6.3 item 1 (F6, F7): a symlink is
+ * admitted alongside a real directory (as claude does) and then resolved. A link is resolved
  * relative to the directory being scanned (`root` here is always that directory, never a
  * higher-level scan root, since this is called from inside `scanSkillRoot`'s own loop). A dangling
  * link, or a link to a non-directory, is excluded silently -- the same fate an ordinary
@@ -147,8 +147,8 @@ export function scanSkillRoot(root: string, source: SkillTier, exclude?: Readonl
     // the tail (listing.ts), so an unstable within-root order would make WHICH skills the model can
     // see depend on the order they happened to be written to disk.
     //
-    // WS-21 §6.3 item 1 (F6, F7): a symlinked skill directory is admitted exactly as claude admits
-    // one (`entry.isDirectory() || entry.isSymbolicLink()`), resolved with `isDirEntry` below. A
+    // WS-21 §6.3 item 1 (F6, F7): a symlinked skill directory is admitted like a real one, as
+    // claude admits one, resolved with `isDirEntry` below. A
     // dangling link, or a link to a non-directory, is silently excluded -- the same fate a plain
     // subdirectory with no SKILL.md already has.
     dirs = readdirSync(root, { withFileTypes: true })

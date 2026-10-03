@@ -42,8 +42,7 @@
 // (`ant auth print-credentials`, 60 s before `expiresAt`, per P10a-4), not a self-refresh this
 // adapter drove with `CONSOLE_OAUTH.tokenUrl`/`clientId`.
 //
-// The full derivation record — every field this file used to ship, where each one came from in the
-// pinned `@anthropic-ai/claude-agent-sdk@0.3.250` artifact, and why D21 excluded the rest — stays on
+// The full record — every field this file used to ship and why D21 excluded the rest — stays on
 // the record at `packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6b.md` §2 (now headed
 // "RETIRED — host-brokered per the 2026-09-13 ruling") and `derived-p6b.ts` (unchanged: the typed
 // twin of that history). Nothing here disputes that derivation; it is simply no longer what ships.

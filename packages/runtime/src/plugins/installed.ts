@@ -2,7 +2,7 @@
 // -- the SAME V2 document `@yanlinglabs/winter-agent-sdk`'s `packages/sdk/src/plugins/manage.ts`
 // writes (`{version:2, plugins: {"<key>": [<record>, ...]}}`, one array per compound key because the
 // identical plugin id can be installed at more than one scope; see `manage.ts`'s own header for the
-// pinned-binary evidence this shape is measured against). This is the RUNTIME's own reader, called
+// file format). This is the RUNTIME's own reader, called
 // synchronously from `production-wiring.ts`'s plugin section (mirroring `loadPlugins`'s own
 // synchronous file I/O), deliberately separate from `manage.ts`'s async, CLI-facing reader of the
 // identical file -- the runtime reads once at startup, the CLI writes through its own locking

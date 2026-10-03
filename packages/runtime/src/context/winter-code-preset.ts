@@ -88,8 +88,8 @@ export function resolvePresetSystemPrompt(preset: SystemPromptPreset): string {
 // actions" together. The discriminating question: would a legitimate NON-coding style (a tutor, a
 // writer) ever want a section gone? "Task execution" (act, don't just narrate a plan; understand
 // before changing; finish what you start; prefer the smallest change) is the coding-task-posture
-// analog of claude's own `tHn()` (dump ~276873, cited by I-F). "Careful actions" is safety floor --
-// sort reversible from irreversible, name the exact destructive target, treat credentials as
+// analog of the coding-instructions section claude drops for a style (cited by I-F). "Careful
+// actions" is safety floor -- sort reversible from irreversible, name the exact destructive target, treat credentials as
 // radioactive, ask before the irreversible -- that must survive every style, coding-focused or not; a
 // non-coding style dropping it on a bare `keep-coding-instructions: false` (M-4: now the default for
 // ANY unresolved value, including absent) would be a safety regression the ruling's "only the coding

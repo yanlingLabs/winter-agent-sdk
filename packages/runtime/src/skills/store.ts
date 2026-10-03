@@ -108,9 +108,8 @@ export interface SkillIndexOptions {
   bodyBytes?: number | undefined;
   /**
    * Fix round 4 (I-E, the router same-view test): a workflow, registered as a SYNTHETIC skill so
-   * `Skill("<name>")` and the slash-command surface both run it -- claude's own `m()` turns every
-   * discovered workflow into exactly this shape (dump-confirmed: `{type:"prompt", kind:"workflow",
-   * ...}`). Unlike every other entry `discover()` finds, a synthetic entry carries its own BODY
+   * `Skill("<name>")` and the slash-command surface both run it -- claude likewise offers every
+   * discovered workflow as a prompt-type command under the workflow's name. Unlike every other entry `discover()` finds, a synthetic entry carries its own BODY
    * directly (`load()` returns it as-is, never reading `path` from disk -- there is no SKILL.md a
    * workflow script's own identity could point `load()` at). `path` is still required on the
    * resulting `SkillMeta` (a synthetic, non-filesystem marker -- `workflows/store.ts`'s own

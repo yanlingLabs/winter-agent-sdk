@@ -3,7 +3,7 @@
 //
 // 15-minute TTL, 50 MiB weighted by the CONVERTED CONTENT's own byte length, LRU, keyed on the
 // ORIGINAL input URL string (before the http->https upgrade and before any redirect walk) --
-// exactly what the extraction pins. Redirects and non-2xx responses are never cached; only the
+// matching claude's own WebFetch cache. Redirects and non-2xx responses are never cached; only the
 // caller (`impl/web-fetch.ts`) knows that distinction, so this module simply never sees them (it has
 // no "outcome" concept at all -- only "here is a successful fetch's converted content, remember it").
 //

@@ -94,12 +94,13 @@ export interface SystemPromptInput {
    */
   agentPrompt?: string;
   /**
-   * Spawn-surface parity (research §A1's `Explore`/`Plan` field table: "`omitClaudeMd: true`;
-   * context also drops gitStatus", mirrored on `RuntimeAgentDefinition.omitProjectContext`). When
-   * true, the index-0 userContext carries NO `claudeMd` entry at all (claude's `omitClaudeMd` drops the
-   * whole value -- the auto-memory index is one of its entries, so it goes too) and the systemContext
-   * `gitStatus` is not produced (`systemContextPlacement: "none"`). Everything else -- the date, the
-   * environment and auto-memory sections, the listings -- is unaffected.
+   * Spawn-surface parity (research §A1's `Explore`/`Plan` field table: neither agent gets the
+   * instructions files, and their context also drops gitStatus; mirrored on
+   * `RuntimeAgentDefinition.omitProjectContext`). When true, the index-0 userContext carries NO
+   * `claudeMd` entry at all (the whole value goes -- the auto-memory index is one of its entries, so
+   * it goes too) and the systemContext `gitStatus` is not produced (`systemContextPlacement:
+   * "none"`). Everything else -- the date, the environment and auto-memory sections, the listings --
+   * is unaffected.
    */
   omitProjectContext?: boolean;
 }

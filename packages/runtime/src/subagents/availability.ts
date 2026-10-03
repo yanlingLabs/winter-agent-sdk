@@ -1,4 +1,4 @@
-// SDK 0.0.16 Lane P (R3b §4, "listing filters" `l8n`/`zFn`): the pure filter functions behind
+// SDK 0.0.16 Lane P (R3b §4, "listing filters"): the pure filter functions behind
 // which `subagent_type` names a session shows right now -- `Agent(type)` deny rules,
 // `allowedAgentTypes` (a running agent's own `tools: ["Agent(a,b)"]` restriction) and
 // "all-tools-denied" (a built-in whose own explicit `tools` list is itself entirely denied).
@@ -19,12 +19,12 @@ export interface AgentAvailabilityInputs {
   isDenied: (agentType: string) => boolean;
   /** R3b §4: the running agent's (or the session's) own `tools: ["Agent(a,b)"]` restriction -- `allowedAgentTypesFromTools`'s own result. `undefined` = unrestricted. */
   allowedAgentTypes?: readonly string[];
-  /** R3b §4 `zFn`: is EVERY tool this definition may use itself denied right now? See `isBuiltinAllToolsDenied` below for the one production implementation. */
+  /** R3b §4: is EVERY tool this definition may use itself denied right now? See `isBuiltinAllToolsDenied` below for the one production implementation. */
   isAllToolsDenied: (def: SourcedAgentDefinition) => boolean;
 }
 
 /**
- * claude's `l8n`, composed: the filtered set of `subagent_type` names a session may list/resolve
+ * The filtered set of `subagent_type` names a session may list/resolve
  * right now. Order-preserving over `defs`' own iteration order (a `Map`'s insertion order) -- the
  * caller sorts if it wants a sorted list, exactly as `sessionAgentDefinitions()`'s existing
  * consumers already do for the unfiltered set.
@@ -49,12 +49,14 @@ export function availableAgentNames(defs: ReadonlyMap<string, SourcedAgentDefini
 const AGENT_SCOPE_ENTRY_RE = /^Agent\(.*\)$/s;
 
 /**
- * claude's `zFn`: a built-in with an EXPLICIT `tools` list, every one of whose (concrete) tools is
- * itself denied right now, is unavailable -- "Agent type '<x>' is unavailable because every tool it
- * may use is denied by the current permission settings." Winter's own Explore/Plan built-ins use
- * `disallowedTools` (an ADDITIVE restriction over "all tools"), never an explicit `tools` list, so
- * they are EXEMPT from this filter by construction (`def.tools === undefined` always reads false
- * here) -- exactly R3b §4's own "built-ins with explicit tools list only."
+ * A definition with an EXPLICIT, non-empty `tools` list, every one of whose concrete tools (the
+ * `Agent(...)` scoping entries aside) is absent from the advertised set right now, is unavailable --
+ * "Agent type '<x>' is unavailable because every tool it may use is denied by the current permission
+ * settings." A `"*"` entry reads as unavailable only when NOTHING is advertised. The check looks at
+ * the `tools` list alone, not at the definition's source: R3b §4 frames it as a rule for built-ins
+ * with an explicit tools list, and Winter's own Explore/Plan built-ins use `disallowedTools` (an
+ * ADDITIVE restriction over "all tools"), never an explicit `tools` list, so they are never caught by
+ * it (`def.tools === undefined` always reads false here).
  *
  * `advertised` is the session's own currently-advertised canonical tool-name set (engine.ts's
  * `currentAdvertisedCanonicalNames`) -- the SAME ground truth the pre-existing "bare-denied" check

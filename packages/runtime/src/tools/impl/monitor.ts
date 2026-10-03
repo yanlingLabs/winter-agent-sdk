@@ -109,7 +109,7 @@ const PERSISTENT_STAND_IN_TIMEOUT_MS = 2_147_483_647;
 // (this file's own tool_result text) never carried one to begin with -- unlike bash.ts, Monitor has
 // no foreground result text for the annotation to survive on, so nothing calls it any more.
 //
-// Task-frames parity (2026-09-17 contract §4 "Summary wording", pin `CMe`): the EXACT pinned
+// Task-frames parity (2026-09-17 contract §4 "Summary wording"): the EXACT pinned
 // strings for Monitor's COMMAND half -- measured directly on the pinned binary. The pre-spawn
 // rejection branch below (no RunCommandResult, `runMonitorCommand`'s own reject callback) has no
 // exit code and produced no output by construction, so it is a disclosed departure from this
@@ -157,8 +157,8 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
    * killed" is not satisfied by covering only one of the two tools that spawn one.
    *
    * NOT PASSED TO `runCommand` (review r1 finding 2, controller ruling): a Monitor is a background
-   * task, and the pin's backgrounded shell drops its abort listeners -- a turn interrupt must not end
-   * it. `runMonitorCommand` strips this field; the session teardown (`stopSessionShellTasks`) and
+   * task, and on the pinned claude binary a turn interrupt does not end a backgrounded shell -- so it
+   * must not end this one. `runMonitorCommand` strips this field; the session teardown (`stopSessionShellTasks`) and
    * TaskStop are its kill doors. Kept on the options shape so the one builder stays comparable with
    * bash.ts's own.
    */
@@ -497,7 +497,7 @@ export async function connectMonitorWs(
   const { taskId, outputPath } = createBackgroundTask("monitor_ws");
   const outStream = createWriteStream(outputPath, { flags: "a" });
   const emitter = { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId };
-  // SDK 0.0.16 Lane N: the MODEL-facing stream relay (claude's `TD`). A monitor exists to tell the
+  // SDK 0.0.16 Lane N: the MODEL-facing stream relay. A monitor exists to tell the
   // model that something happened on this socket, and before this the model could only learn that by
   // reading the `.output` file: every message went to disk and nowhere else. Now each coalesced batch
   // becomes a `Monitor event: "<description>"` notification addressed to whoever started the monitor.
@@ -603,7 +603,7 @@ export async function connectMonitorWs(
     task_id: taskId,
     ...(ctx.toolUseId !== undefined ? { tool_use_id: ctx.toolUseId } : {}),
     description,
-    // §1/§2: `monitor_ws` never carries `is_backgrounded` at all -- the pin's own register() only
+    // §1/§2: `monitor_ws` never carries `is_backgrounded` at all -- the pinned claude binary only
     // puts that flag on a `local_agent`/`local_bash` row.
     task_type: "monitor_ws",
     uuid: randomUUID(),

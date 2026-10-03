@@ -146,8 +146,8 @@ interface DenyPaths {
 // canonicalized fixed-prefix directory) threads through too, feeding the ancestor-rename-bypass fix.
 // Fix round 13: `globDenyEntriesOf` (file-rules.ts) -- the PAIRED regex+fixedPrefix form the
 // read-deny-keep-in-place fix needs (`GlobDenyEntry`'s own header explains why the unpaired
-// `regexes`/`globFixedPrefixes` arrays above cannot answer this) -- read-side only, claude's own `fR`
-// is a read-deny-specific concern.
+// `regexes`/`globFixedPrefixes` arrays above cannot answer this) -- read-side only, keeping
+// read-denied paths in place is a read-deny-specific concern.
 function computeDenyPaths(ctx: ToolExecutionContext): DenyPaths {
   return sharedComputeDenyPaths(ctx);
 }
@@ -197,9 +197,9 @@ function buildRunCommandOptions(
    * `AbortSignal` to give it, so an interrupted turn abandoned the await and the command kept
    * running. Threading `ctx.signal` here is the entire fix.
    *
-   * FOREGROUND ONLY (review r1 finding 2, controller ruling): `runBackground` strips this field. The
-   * pin's `ShellCommand.background()` drops its abort listeners, so a turn interrupt never kills a
-   * backgrounded command -- it ends by its own exit, a TaskStop, or the session's teardown
+   * FOREGROUND ONLY (review r1 finding 2, controller ruling): `runBackground` strips this field. On
+   * the pinned claude binary a turn interrupt does not kill a backgrounded command either, so it never
+   * kills one here: a backgrounded command -- it ends by its own exit, a TaskStop, or the session's teardown
    * (`stopSessionShellTasks`, background-task-runtime.ts).
    */
   signal?: AbortSignal;
@@ -337,7 +337,7 @@ function formatSandboxAnnotation(posture: string, sandboxOverrideRequested: bool
   return `[sandbox: ${posture}${overrideNote}]`;
 }
 
-// Task-frames parity (2026-09-17 contract §4 "Summary wording", pin `CMe`): the EXACT pinned
+// Task-frames parity (2026-09-17 contract §4 "Summary wording"): the EXACT pinned
 // strings for a background bash task's own task_notification.summary -- measured directly on the
 // pinned binary, not paraphrased.
 //

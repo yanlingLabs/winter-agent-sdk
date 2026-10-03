@@ -61,8 +61,8 @@ type ParsedInput = { ok: true; input: WebSearchInput } | { ok: false; error: str
 export const MAX_DOMAIN_LIST_ENTRIES = 1000;
 
 // AN EXPLICIT EMPTY ARRAY (`allowed_domains: []`) collapses to "absent", same as an array whose every
-// entry is blank. Whether claude's own code treats a truthy-but-empty array the same way is unprovable
-// from the binary (no observed call exercises it); this reading is the more defensible one (an empty
+// entry is blank. Whether claude treats a truthy-but-empty array the same way is unobserved (no
+// observed call exercises it); this reading is the more defensible one (an empty
 // list filters nothing, so it is indistinguishable in EFFECT from not having named the field at all),
 // but it is a judgement call, not a transcription.
 //

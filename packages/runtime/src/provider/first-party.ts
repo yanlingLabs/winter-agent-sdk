@@ -3,7 +3,7 @@
 //
 //   - the lean-prompt rule (the Agent tool's listing line, both web tools' descriptions);
 //   - the provider-conditional web tool SCHEMAS (claude's own dialect bytes vs the portable shape);
-//   - the Explore model cap (claude's `_Ut`);
+//   - the Explore subagent's model cap;
 //   - `AccountInfo.apiProvider: "firstParty"` (`session-provider.ts`, whose map is pinned against this
 //     set by its own test).
 //

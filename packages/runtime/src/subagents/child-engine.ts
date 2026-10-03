@@ -909,15 +909,15 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       let lastAssistantText = "";
       let generationSettled = false;
       // Contract §8: the activity text of the most recent RECORDED tool call (every tool_use except
-      // the structured-output tool), sticky across messages exactly like the pin's tracker
-      // `lastActivity` -- `undefined` when that call's tool has no activity text.
+      // the structured-output tool), sticky across messages like claude's own last-activity text --
+      // `undefined` when that call's tool has no activity text.
       let lastRecordedActivity: string | undefined;
       const activityContext = { cwd: config.cwd, home: env["HOME"] ?? homedir() };
       // Task-frames parity (contract §4): the SAME counting `task_progress`/the final
       // `task_notification.usage` both use. `latestUsage` is the LAST turn's own reported usage
-      // (never accumulated -- the pin's own formula reads only the latest message's input/cache
-      // counters); `cumulativeOutputTokens` sums every turn's `output_tokens`, because the pin's
-      // formula is explicit that the OUTPUT half accumulates while the input half does not. Both are
+      // (never accumulated -- contract §4's formula reads only the latest message's input/cache
+      // counters); `cumulativeOutputTokens` sums every turn's `output_tokens`, because that formula is
+      // explicit that the OUTPUT half accumulates while the input half does not. Both are
       // updated by `childAccountant.record()` below, which fires synchronously inside the nested
       // `runEngine()` call BEFORE it writes the corresponding assistant frame onto `channel.runtime.
       // output` -- so by the time this generation's own pump (the `for await` loop further down)

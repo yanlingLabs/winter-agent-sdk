@@ -9,7 +9,7 @@
 // other. The minimal prompt carries none of it (R5-9 caps it at tool-calling guidance), which is
 // the other reason this block cannot be preset-only: a default session has auto-memory too.
 //
-// SDK 0.0.16 Lane C (P16-5): WHERE EACH HALF GOES NOW, as in claude 0.3.250. The GUIDANCE (with the
+// SDK 0.0.16 Lane C (P16-5): WHERE EACH HALF GOES NOW, as in claude. The GUIDANCE (with the
 // directory) is the system prompt's `# auto memory` section, in the dynamic half; the INDEX is one
 // entry of the index-0 userContext's `claudeMd` value, labelled as auto-memory
 // (context/assembler.ts). Both are built once per session context: an edit to MEMORY.md is seen after
@@ -78,7 +78,7 @@ export function renderAutoMemorySection(memoryDir: string, instructionsFile: str
   return `${AUTO_MEMORY_HEADING}\n\n${memoryGuidance(memoryDir, instructionsFile)}`;
 }
 
-/** `excludeDynamicSections`: the same guidance as the userContext value under the key `auto memory` (claude's `jEe` strips the heading). */
+/** `excludeDynamicSections`: the same guidance as the userContext value under the key `auto memory`, without its heading. */
 export function renderAutoMemoryContextValue(memoryDir: string, instructionsFile: string = WINTER_BRAND.instructionsFile): string {
   return memoryGuidance(memoryDir, instructionsFile);
 }

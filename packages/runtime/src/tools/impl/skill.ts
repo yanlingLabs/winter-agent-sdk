@@ -103,14 +103,12 @@ export const skillExecutor: ToolExecutor = {
       // throws must not turn a successful skill load into a failed tool call.
     }
 
-    // claude's own header, verbatim (claude-code source: `skills/loadSkillsDir.ts`'s
-    // `getPromptForCommand`, the plugin loader and `SkillTool.ts` for remote skills all prefix
-    // `Base directory for this skill: ${baseDir}\n\n` to the body). Without it a skill that points at
+    // claude's own header: every loaded skill's content (user, plugin and remote skills alike) is
+    // prefixed with `Base directory for this skill: ${baseDir}\n\n`. Without it a skill that points at
     // its own supporting files ("see root-cause-tracing.md in this directory") leaves the model
     // guessing where "this directory" is. The directory is the one the SKILL.md was READ from --
-    // `dirname` of the path discovery recorded, never realpath'd, exactly as claude's `baseDir` is
-    // `join(basePath, entry.name)`: a host that hands skills over through a symlinked view gets the
-    // view's path, which is the path the model can use.
+    // `dirname` of the path discovery recorded, never realpath'd, as in claude: a host that hands
+    // skills over through a symlinked view gets the view's path, which is the path the model can use.
     return { output: `Base directory for this skill: ${dirname(loaded.path)}\n\n${loaded.body}` };
   },
 };

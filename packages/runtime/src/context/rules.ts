@@ -18,7 +18,7 @@
 // starting with `..` never matches, for either tier.
 //
 // FRONTMATTER. `parseFrontmatter` (imported from subagents/definitions.ts, WS-21 §6.3 item 2 fix
-// round 2: now Bun.YAML.parse under claude's own pinned regex/retry split, not a hand-rolled scanner
+// round 2: now Bun.YAML.parse-backed with one lenient retry, not a hand-rolled scanner
 // -- that file's own header has the detail) is the SHARED extraction step; `paths:` accepts either a
 // real YAML list (`[a/**, b/**]`), a bracketed comma STRING, or a bare comma string, exactly
 // `splitList`'s sibling logic in that file accepts for `tools:`/`skills:`. A rule file with no

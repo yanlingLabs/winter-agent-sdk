@@ -478,7 +478,7 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
     allowedExts = exts;
   }
 
-  // Fix round 10, item B: trim FIRST, matching claude's own `ht` -- see write.ts's identical comment.
+  // Fix round 10, item B: trim FIRST, as claude does -- see write.ts's identical comment.
   const scanRoot = input.path !== undefined ? resolve(ctx.cwd, input.path.trim()) : ctx.cwd;
   let candidateFiles: string[];
   try {

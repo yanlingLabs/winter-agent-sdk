@@ -121,9 +121,10 @@ export function resolveExecutionPath(input: ResolveExecutionPathInput): Executio
   const sandboxOverrideRequested = input.dangerouslyDisableSandbox === true;
   if (input.settings.enabled === false) return { posture: "config-disabled", sandboxOverrideRequested };
   // `allowUnsandboxedCommands: false` IGNORES the override (dist-session fixes, lane C C3): the
-  // command runs sandboxed exactly as claude's shouldUseSandbox runs it ("Don't sandbox if explicitly
-  // overridden AND unsandboxed commands are allowed by policy"), and the request is still recorded on
-  // the result. It used to honour the override whatever the policy said.
+  // command runs sandboxed, as claude runs it when unsandboxed commands are disallowed by policy (the
+  // override only takes a command out of the sandbox when the policy allows unsandboxed commands), and
+  // the request is still recorded on the result. It used to honour the override whatever the policy
+  // said.
   if (sandboxOverrideRequested && input.settings.allowUnsandboxedCommands !== false) return { posture: "override-requested", sandboxOverrideRequested };
   const isExcluded = input.settings.excludedCommands?.includes(input.command) === true;
   if (isExcluded && input.settings.allowUnsandboxedCommands === true) {
@@ -184,7 +185,7 @@ export interface RunCommandOptions {
   denyWritePaths?: string[];
   denyReadPaths?: string[];
   /**
-   * Fix round 11 (claude's `Li`/`Rt`, dump byte 15365905/15282610): glob-shaped `denyWritePaths`/
+   * Fix round 11: glob-shaped `denyWritePaths`/
    * `denyReadPaths` entries, PRE-CONVERTED to SBPL regex source by the caller (`permissions/
    * file-rules.ts`'s `splitDenyPathsByGlobShape`) -- this module stays glob-grammar-free, exactly
    * like `denyWritePaths`/`denyReadPaths` themselves are already resolved, absolute paths by the
@@ -193,7 +194,7 @@ export interface RunCommandOptions {
   denyWriteRegexes?: string[];
   denyReadRegexes?: string[];
   /**
-   * Fix round 12 ("Important" item, claude's own `Ch`/`ed`): the ancestor-rename-bypass fix -- each
+   * Fix round 12: the ancestor-rename-bypass fix -- each
    * glob-shaped `denyWritePaths`/`denyReadPaths` entry's OWN canonicalized fixed-prefix directory
    * (see `SeatbeltProfileInput.denyWriteGlobFixedPrefixes`'s own header). Same "caller pre-resolves,
    * this module stays glob-grammar-free" posture as `denyWriteRegexes`/`denyReadRegexes` above.
@@ -201,10 +202,9 @@ export interface RunCommandOptions {
   denyWriteGlobFixedPrefixes?: string[];
   denyReadGlobFixedPrefixes?: string[];
   /**
-   * Fix round 13 ("Important" item 1, claude's own `fR`): the read-deny-keep-in-place fix -- each
-   * glob-shaped `denyReadPaths` entry, PAIRED with its own fixed prefix (see
-   * `SeatbeltProfileInput.denyReadGlobEntries`'s own header). Read-only -- claude's own `fR` is a
-   * read-deny-specific concern.
+   * Fix round 13: the read-deny-keep-in-place fix -- each glob-shaped `denyReadPaths` entry, PAIRED
+   * with its own fixed prefix (see `SeatbeltProfileInput.denyReadGlobEntries`'s own header).
+   * Read-side only -- keeping read-denied paths in place is a read-deny-specific concern.
    */
   denyReadGlobEntries?: GlobDenyEntry[];
   /**

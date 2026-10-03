@@ -76,7 +76,7 @@ export interface BackgroundTaskHandle {
   startedAt: number;
   /**
    * Task-frames parity (contract §1/§2): only meaningful for a `local_agent`/`local_bash` row (the
-   * two wire kinds the pin's own `register()` puts the flag on at all) -- `undefined` for every other
+   * two wire kinds claude's `task_started` carries the flag on at all) -- `undefined` for every other
    * kind (workflow, monitor_ws), which never carry it on `task_started` either. `false` marks a
    * FOREGROUND row: excluded from `listRunningTasks()`'s own `background_tasks_changed` listing
    * (§1's `"isBackgrounded" in task && task.isBackgrounded === false` rule). A foreground BASH row
@@ -102,14 +102,14 @@ export interface BackgroundTaskHandle {
   /**
    * The spawning engine's own agent key (`ToolExecutionContext.agentId`) -- absent for a task the
    * TOP-LEVEL session started. Read only by `stopSessionShellTasks` below (engine teardown), which is
-   * what makes a subagent's teardown stop the shells THAT subagent started and nothing else (the
-   * pin's own `killShellTasksForAgent` on agent exit).
+   * what makes a subagent's teardown stop the shells THAT subagent started and nothing else (claude
+   * likewise stops an agent's own shell tasks when that agent exits).
    */
   ownerAgentId?: string;
   /**
    * Contract §1's `ambient` (a row that runs for the session rather than for a request). NOTHING sets
    * it today -- it exists because the print-mode background WAIT excludes an ambient `monitor_ws` row
-   * (claude's own `Mtn`), and a filter written against a field nobody can set would be a filter that
+   * (as claude's does), and a filter written against a field nobody can set would be a filter that
    * silently means nothing the day someone does set it.
    */
   ambient?: boolean;
@@ -122,7 +122,7 @@ export interface TaskUsage {
 }
 
 const tasks = new Map<string, BackgroundTaskHandle>();
-// Task-frames parity (contract §1, "Ik"): the once-per-id notification claim. A SEPARATE set from
+// Task-frames parity (contract §1): the once-per-id notification claim. A SEPARATE set from
 // `tasks` itself (rather than a field on the handle) so `emitTaskNotification` can guard a bare
 // `{taskId, emitter}` pick as well as a live row.
 //
@@ -369,7 +369,7 @@ export interface TaskNotificationEmission {
    * (`subagents/notification-queue.ts`). Three cases, and the default is the interesting one:
    *
    *  - ABSENT -- derived from the row: a BACKGROUND row gets the shell/monitor document, carrying the
-   *    same pinned `summary` the frame carries (claude's `AMe` uses one text on both surfaces), and a
+   *    same pinned `summary` the frame carries (claude uses one text on both surfaces), and a
    *    FOREGROUND row (`isBackgrounded === false`) gets NONE, because the model is already being
    *    handed that task's result as its own `tool_result`.
    *  - a STRING -- this exact document (the agent/workflow/TaskStop shapes, whose XML says more than
@@ -380,7 +380,7 @@ export interface TaskNotificationEmission {
 }
 
 /**
- * §1's `Ik`: `task_notification` is sent at most once per task id, ever -- a second attempt (the
+ * Contract §1: `task_notification` is sent at most once per task id, ever -- a second attempt (the
  * process's own natural-exit handler racing a TaskStop that already finalized the row, or a
  * foreground caller notifying after `removeTask`) is a silent no-op. The ONE place every
  * `task_notification` this package emits goes through, whether reached via `updateTask`'s own
@@ -551,7 +551,7 @@ export function removeTask(taskId: string): BackgroundTaskHandle | undefined {
   return task;
 }
 
-// --- The pinned kill wording (contract §4 "Summary wording", pin `CMe`) -------------------------
+// --- The pinned kill wording (contract §4 "Summary wording") -------------------------------------
 //
 // ONE place for the "this task was killed" summary, shared by every door that kills a task: TaskStop
 // (task-stop.ts), a background command's own exit handler when its process was killed rather than
@@ -585,10 +585,10 @@ export function resolveBackgroundOutcome(result: Pick<RunCommandResult, "exitCod
 
 /**
  * Review r1 finding 2 (controller ruling): a BACKGROUND shell no longer dies with the turn that
- * started it -- the pin's `ShellCommand.background()` drops its abort listeners, so only its own
- * exit, a TaskStop, or the session going away ends it. This is the "session going away" door: the
+ * started it -- in claude a backgrounded shell no longer listens for the turn's abort, so only its
+ * own exit, a TaskStop, or the session going away ends it. This is the "session going away" door: the
  * engine's teardown calls it for its own `sessionId`, and for a subagent engine its own `agentId`
- * (the pin's `killShellTasksForAgent` on agent exit). Each still-running background shell row
+ * (claude stops an agent's shell tasks when that agent exits). Each still-running background shell row
  * (`bash`, Monitor's `monitor`/`monitor_ws` halves) the caller owns is finalized through the ONE
  * update door -- `task_updated {killed}` then the kill-worded notification -- and THEN killed, the
  * same order TaskStop uses so the process's own exit handler finds a terminal row and stays silent.
@@ -615,9 +615,9 @@ export function stopSessionShellTasks(owner: { sessionId: string; agentId?: stri
 
 /**
  * SDK 0.0.16 Lane N: every still-running BACKGROUND row of one session (foreground rows excluded, as
- * everywhere else). This is what a closed-input session waits on before it tears down -- the pin's own
- * `sge(appState).filter(kf && …)`. An AMBIENT `monitor_ws` row is excluded: it runs for the session,
- * not for a request, so waiting on it would mean never exiting (claude's `Mtn`).
+ * everywhere else). This is what a closed-input session waits on before it tears down, as claude's
+ * print mode does. An AMBIENT `monitor_ws` row is excluded: it runs for the session, not for a
+ * request, so waiting on it would mean never exiting.
  */
 export function listSessionRunningTasks(owner: { sessionId: string; agentId?: string }): readonly BackgroundTaskHandle[] {
   return listRunningTasks().filter((task) => {
@@ -629,7 +629,7 @@ export function listSessionRunningTasks(owner: { sessionId: string; agentId?: st
 }
 
 /**
- * Lane N: the print-mode WIND-DOWN sweep (claude's `$u`), reached only after the wait ceiling and its
+ * Lane N: the print-mode WIND-DOWN sweep, reached only after the wait ceiling and its
  * grace have both passed. Unlike `stopSessionShellTasks` (the teardown door, shells only) this covers
  * EVERY kind: a shell is killed, and an agent/workflow row is finalized as stopped -- which, through
  * the one update door, both emits its `task_updated`/`task_notification` pair and enqueues the

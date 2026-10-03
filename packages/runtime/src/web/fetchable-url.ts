@@ -57,7 +57,7 @@ export function fetchTimeUrlRefusal(url: URL): UnfetchableUrlReason | undefined 
  *
  * The question the permission layer asks. It takes an already-parsed URL, so an UNPARSEABLE input is
  * outside this predicate entirely: such a call names no host, so no rule could be suggested or saved
- * for it, and its own refusal (`validateInput`'s parse-failure sentence) is a different text.
+ * for it, and its own refusal (the input-validation parse-failure sentence) is a different text.
  */
 export function isCertainlyUnfetchableUrl(url: URL): UnfetchableUrlReason | undefined {
   return fetchTimeUrlRefusal(upgradeToHttps(url));
