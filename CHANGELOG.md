@@ -4,7 +4,14 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
-## 0.0.42
+## 0.0.43
+
+0.0.42 was tagged but never published: its release CI failed on Linux, where corpora recorded on macOS
+differed for host-dependent inputs (case-insensitive volumes, macOS's `/private` symlinks, the home
+directory's parent) and under a newer Bun's YAML parser. 0.0.43 ships the same code. Those rows are now
+asserted on darwin only, normalised, or keyed by Bun version. All overlays were recorded from 0.0.41.
+Old and new were compared on Linux under Bun 1.3.14 and 1.4.2, with zero differences. CI and the
+release workflow now pin Bun 1.4.2.
 
 ### Clean-room rewrite of helpers that mirrored claude's internals. No behaviour change.
 
