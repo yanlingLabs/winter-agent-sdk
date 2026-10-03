@@ -354,7 +354,7 @@ function escapeRegexLiteralPath(path: string): string {
 // match only); or the resolved path is a proper DEEPER descendant of the original (or its
 // private-alias form) -- i.e. realpath only added detail, never collapsed the path upward into
 // something shorter, a top-level directory, or the filesystem root outright.
-function isSuspiciousRealpathResolution(original: string, resolved: string): boolean {
+export function isSuspiciousRealpathResolution(original: string, resolved: string): boolean {
   const r = normalize(original);
   const o = normalize(resolved);
   if (o === r) return false;
