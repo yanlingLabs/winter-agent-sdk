@@ -1,30 +1,15 @@
-// CLAUDE'S "PREAPPROVED HOSTS" LIST FOR `WebFetch` -- extracted, never retyped, from the pinned
-// claude 2.1.250 binary (`@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.250`'s `claude` executable).
+// THE "PREAPPROVED HOSTS" LIST FOR `WebFetch` -- the documentation hosts claude treats as
+// preapproved: a fetch of one needs no permission prompt, and its content may be passed through as
+// markdown instead of going through the digest model.
 //
-// EXTRACTION METHOD (reproducible): `LC_ALL=C grep -a -b -o 'developer\.mozilla\.org' <binary>`
-// found two byte offsets (71095476 and 159474768); a handful of other known members
-// (`react.dev`, `nextjs.org`, `bun.sh`, `modelcontextprotocol.io`, `git-scm.com`) were grepped the
-// same way and clustered tightly around the SECOND offset (159474621..159476142), confirming it as
-// the real literal (the first offset was an unrelated string table). `dd if=<binary> bs=1
-// skip=159473800 count=3200` over that window, decoded as latin1 (the binary is UTF-8-safe ASCII in
-// this region), landed exactly on the source line:
-//
-//   var c7t=new Set([...92 string literals...]),{HOSTNAME_ONLY:u7t,PATH_PREFIXES:d7t}=(()=>{...})();
-//   function wX(e,t){ if(u7t.has(e))return!0; let r=d7t.get(e); if(r){
-//     if(/%(25)*(2f|5c|2e)/i.test(t))return!1;
-//     for(let o of r)if(t===o||t.startsWith(o+"/"))return!0 } return!1 }
-//
-// `wX(hostname, pathname)` is the checkPermissions-side matcher; this module is its faithful copy.
-// MEASURED, matching the extraction doc's own count exactly: 92 literals, 91 DISTINCT
-// (`learn.microsoft.com` is listed twice in the source array), 9 path-scoped.
+// An entry is either a bare hostname (exact match, no subdomains) or a hostname plus a path prefix
+// (the prefix itself or any `/`-bounded child of it, with percent-encoded slashes, backslashes and
+// dots refused). 92 entries, 91 distinct (`learn.microsoft.com` is listed twice), 9 path-scoped.
 //
 // This module registers no tool and imports nothing from `tools/`, so a permissions lane (auto-allow
 // after deny+ask, WS-06/A4) and this tool's own executor both import it with no impl-isolation risk.
 
-/**
- * The 92 literals exactly as they appear in `c7t`'s source order (duplicate `learn.microsoft.com`
- * included) -- kept verbatim so a future re-extraction diffs cleanly against this array.
- */
+/** The 92 entries, duplicate `learn.microsoft.com` included. */
 export const PREAPPROVED_HOST_ENTRIES: readonly string[] = [
   "platform.claude.com",
   "code.claude.com",
@@ -120,39 +105,50 @@ export const PREAPPROVED_HOST_ENTRIES: readonly string[] = [
   "httpd.apache.org",
 ];
 
-/** `c7t`'s own `HOSTNAME_ONLY` half: entries with no `/`, as an exact-match set. */
+/** Whether `hostname` + `pathname` (raw strings) fall under a preapproved entry. */
+export function isPreapprovedHost(hostname: string, pathname: string): boolean {
+  if (HOSTNAME_ONLY.has(hostname)) return true;
+  const prefixes = PATH_PREFIXES.get(hostname);
+  if (prefixes === undefined) return false;
+  if (isTraversalEncoded(pathname)) return false;
+  return prefixes.some((prefix) => underPrefix(pathname, prefix));
+}
+
+// Hosts listed with no path: every path on them is preapproved.
 const HOSTNAME_ONLY = new Set<string>();
-/** `c7t`'s own `PATH_PREFIXES` half: hostname -> every path prefix registered for it. */
+// Hosts listed with one or more path prefixes, each prefix keeping its leading `/`, in listing order.
 const PATH_PREFIXES = new Map<string, string[]>();
 for (const entry of PREAPPROVED_HOST_ENTRIES) {
   const slash = entry.indexOf("/");
   if (slash === -1) {
     HOSTNAME_ONLY.add(entry);
-  } else {
-    const host = entry.slice(0, slash);
-    const prefix = entry.slice(slash); // keeps the leading "/"
-    const existing = PATH_PREFIXES.get(host);
-    if (existing) existing.push(prefix);
-    else PATH_PREFIXES.set(host, [prefix]);
+    continue;
   }
+  const host = entry.slice(0, slash);
+  const prefix = entry.slice(slash);
+  const list = PATH_PREFIXES.get(host);
+  if (list === undefined) PATH_PREFIXES.set(host, [prefix]);
+  else if (!list.includes(prefix)) list.push(prefix);
 }
 
-/** claude's own encoded-slash/backslash/dot guard on the PATH half, verbatim (`/%(25)*(2f|5c|2e)/i`). */
-const ENCODED_TRAVERSAL = /%(25)*(2f|5c|2e)/i;
+// A percent-encoded slash, backslash or dot, possibly with its `%` itself re-encoded any number of
+// times (`%2f`, `%252F`, `%25252e`, ...). A path-scoped match refuses these, since a server may decode
+// them into a path that escapes the scope.
+const ENCODED_TRAVERSAL = /%(?:25)*(?:2f|5c|2e)/i;
 
-/**
- * `wX(hostname, pathname)`, verbatim: an EXACT hostname match (no subdomains) against the
- * hostname-only half, OR a hostname with a registered path prefix whose pathname is that prefix or a
- * `/`-bounded child of it -- rejected outright when the raw pathname contains an encoded slash,
- * backslash or dot (`%2f`, `%5c`, `%2e`, doubly-encoded or not), which is exactly the traversal class
- * that would otherwise let `/docs%2f..%2fadmin` read as a legitimate child of `/docs`.
- */
-export function isPreapprovedHost(hostname: string, pathname: string): boolean {
-  if (HOSTNAME_ONLY.has(hostname)) return true;
-  const prefixes = PATH_PREFIXES.get(hostname);
-  if (prefixes === undefined) return false;
-  if (ENCODED_TRAVERSAL.test(pathname)) return false;
-  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+function isTraversalEncoded(pathname: string): boolean {
+  return ENCODED_TRAVERSAL.test(pathname);
+}
+
+// The prefix itself, or anything below it on a `/` boundary.
+function underPrefix(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
+// `host`, `host` with one leading `www.` removed, and that with `www.` put back -- duplicates dropped.
+function wwwVariants(host: string): string[] {
+  const bare = host.startsWith("www.") ? host.slice(4) : host;
+  return [...new Set([host, bare, `www.${bare}`])];
 }
 
 /** `isPreapprovedHost`, taking the URL directly. A URL that fails to parse is never preapproved. */
@@ -171,56 +167,34 @@ export interface PreapprovedMatch {
   pathPrefix?: string;
 }
 
-/** The scope's own host, that host with a leading `www.` stripped, and that stripped form with `www.` re-added -- the SAME three-way set `staysWithinScope` (below) already applies, deduplicated. */
-function candidateHosts(hostname: string): readonly string[] {
-  const stripped = hostname.startsWith("www.") ? hostname.slice(4) : hostname;
-  return [...new Set([hostname, stripped, `www.${stripped}`])];
-}
-
 /**
- * Security review round 2, minor: this was EXACT-hostname-only, while `staysWithinScope` (below)
- * already applied the three-way `[host, stripped, "www."+stripped]` match -- half of one fix. The
- * gap is not cosmetic: a redirect chain `claude.com/docs/a` -> `www.claude.com/docs/a` (eligible,
- * `staysWithinScope` says so) -> `www.claude.com/other` recomputes THIS function fresh at the top of
- * the SECOND hop, on hostname `www.claude.com` -- which `PATH_PREFIXES` only ever keys by
- * `claude.com`, so the old exact match returned `undefined` for it. An `undefined` scope makes
- * `isEligibleAutoFollow`'s own `scope !== undefined && ...` check SHORT-CIRCUIT to "no restriction
- * at all," so the THIRD hop (genuinely outside `/docs`) was auto-followed, not refused -- and because
- * `claude.com/docs/a` (the ORIGINAL input URL) is still preapproved, that off-scope content got
- * permissive guidelines and was eligible for the verbatim markdown passthrough. Matching hosts the
- * same three-way way `staysWithinScope` does closes it: hop 2 now still resolves a scope (matched via
- * the `claude.com` entry), and `staysWithinScope` correctly refuses hop 3's `/other` path.
+ * The preapproved scope `url` falls under, matching its host, that host without a leading `www.`,
+ * and that stripped form with `www.` re-added (security review round 2: an exact-host-only match let
+ * a redirect chain `claude.com/docs/a` -> `www.claude.com/docs/a` -> `www.claude.com/other` lose its
+ * scope at the second hop, so the third, off-scope hop was auto-followed).
  */
 export function preapprovedScopeOf(url: URL): PreapprovedMatch | undefined {
-  const { pathname } = url;
-  for (const host of candidateHosts(url.hostname)) {
-    if (HOSTNAME_ONLY.has(host)) return { host };
-    const prefixes = PATH_PREFIXES.get(host);
+  const pathname = url.pathname;
+  for (const candidate of wwwVariants(url.hostname)) {
+    if (HOSTNAME_ONLY.has(candidate)) return { host: candidate };
+    const prefixes = PATH_PREFIXES.get(candidate);
     if (prefixes === undefined) continue;
-    if (ENCODED_TRAVERSAL.test(pathname)) return undefined;
-    const prefix = prefixes.find((p) => pathname === p || pathname.startsWith(`${p}/`));
-    if (prefix !== undefined) return { host, pathPrefix: prefix };
+    if (isTraversalEncoded(pathname)) return undefined;
+    const prefix = prefixes.find((p) => underPrefix(pathname, p));
+    if (prefix !== undefined) return { host: candidate, pathPrefix: prefix };
   }
   return undefined;
 }
 
 /**
  * Whether `url` still falls under the SAME preapproved scope `from` matched -- used by the redirect
- * walk's "not leaving a preapproved path scope" gate.
- *
- * HOST comparison is the same three-way test claude's own code runs (security review corrections
- * §4.8, measured): `[host, stripped, "www."+stripped]`, i.e. the scope's own host, that host with a
- * leading `www.` stripped, and that stripped form with `www.` re-added -- so a scope matched on
- * `claude.com/docs` still covers a redirect to `www.claude.com/docs/x`, and one matched on
- * `www.example.com/docs` still covers a redirect to `example.com/docs/x`. An EXACT match only (this
- * lane's earlier version) refused a same-site www-variant redirect claude itself follows.
+ * walk's "not leaving a preapproved path scope" gate. The host may be the scope's own host, that host
+ * without a leading `www.`, or that with `www.` re-added (claude follows a same-site www-variant
+ * redirect -- security review corrections §4.8).
  */
 export function staysWithinScope(from: PreapprovedMatch, url: URL): boolean {
-  const stripped = from.host.startsWith("www.") ? from.host.slice(4) : from.host;
-  const acceptableHosts = new Set([from.host, stripped, `www.${stripped}`]);
-  if (!acceptableHosts.has(url.hostname)) return false;
-  if (from.pathPrefix === undefined) return true; // a hostname-only scope covers the whole host
-  const { pathname } = url;
-  if (ENCODED_TRAVERSAL.test(pathname)) return false;
-  return pathname === from.pathPrefix || pathname.startsWith(`${from.pathPrefix}/`);
+  if (!wwwVariants(from.host).includes(url.hostname)) return false;
+  if (from.pathPrefix === undefined) return true;
+  if (isTraversalEncoded(url.pathname)) return false;
+  return underPrefix(url.pathname, from.pathPrefix);
 }
