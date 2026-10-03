@@ -726,6 +726,12 @@ const FS_CHAIN_QUERIES = [
   "case/Dir",
   "./dir",
   "dir/../outside",
+  // `..`/`.` after a link or a missing name, and a name below a file: which ancestor counts as resolved.
+  "dangling/../x",
+  "dangling/./x",
+  "missing/../x",
+  "dir/file/x",
+  "dir/file/..",
 ];
 
 const PLUGIN_ROOTS = ["plugin", "plugin/", "PLUGIN", "plugin/agents", "missing-plugin", "link-to-dir"];
@@ -774,6 +780,18 @@ const FS_GLOBS = [
   "*/x",
   "d?r/x",
   "dir/sub/[!a]*",
+  // Globstar tokens next to literal text spelled like the sandbox regex's globstar markers.
+  "dir/__GLOBSTAR__*",
+  "dir/__GLOBSTAR_SLASH__*",
+  "dir/___GLOBSTAR__*",
+  "dir/__GLOBSTAR**",
+  "dir/__GLOBSTAR_**",
+  "dir/__GLOBSTAR_SLASH**/x",
+  "dir/__GLOBSTAR__GLOBSTAR_SLASH__*",
+  "dir/**GLOBSTAR__",
+  "dir/***/x",
+  "dir/*****/x",
+  "dir/a]b[c[d*",
 ];
 
 /** Replaces the fixture root, and then its parent directory, with fixed names in every string of `value`. */

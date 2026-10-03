@@ -36,6 +36,8 @@
   },
   "chain:dangling": "<ROOT>/missing/leaf",
   "chain:dangling-rel": "<TMP>/nowhere/x",
+  "chain:dangling/../x": "<ROOT>/x",
+  "chain:dangling/./x": "<ROOT>/missing/leaf/x",
   "chain:dangling/child": "<ROOT>/missing/leaf/child",
   "chain:dchain1": "<ROOT>/missing-end",
   "chain:dchain1/x": "<ROOT>/missing-end/x",
@@ -45,6 +47,8 @@
   "chain:dir-link-dangling-chain": "<ROOT>/missing-end/child",
   "chain:dir/../outside": "<ROOT>/outside",
   "chain:dir/file": "<ROOT>/dir/file",
+  "chain:dir/file/..": "<ROOT>/dir",
+  "chain:dir/file/x": "<ROOT>/dir/file/x",
   "chain:dir/inner-link": "<ROOT>/dir/file",
   "chain:dir/missing": "<ROOT>/dir/missing",
   "chain:dir/missing/deeper": "<ROOT>/dir/missing/deeper",
@@ -71,6 +75,7 @@
   "chain:loop-a/x": {
    "$u": 1
   },
+  "chain:missing/../x": "<ROOT>/x",
   "chain:nothing-here": "<ROOT>/nothing-here",
   "chain:nothing-here/at/all": "<ROOT>/nothing-here/at/all",
   "chain:plugin/dangling-out": "<ROOT>/outside/missing",
@@ -253,6 +258,63 @@
     ]
    }
   },
+  "glob:dir/*****/x": {
+   "entries": [
+    {
+     "fixedPrefix": "<ROOT>/dir",
+     "regex": "^<ROOT>/dir/.*[^/]*(.*/)?x(/.*)?$"
+    }
+   ],
+   "recursive": "^<ROOT>/dir/.*[^/]*(.*/)?x(/.*)?$",
+   "regex": "^<ROOT>/dir/.*[^/]*(.*/)?x$",
+   "split": {
+    "globFixedPrefixes": [
+     "<ROOT>/dir"
+    ],
+    "paths": [],
+    "regexes": [
+     "^<ROOT>/dir/.*[^/]*(.*/)?x(/.*)?$"
+    ]
+   }
+  },
+  "glob:dir/***/x": {
+   "entries": [
+    {
+     "fixedPrefix": "<ROOT>/dir",
+     "regex": "^<ROOT>/dir/[^/]*(.*/)?x(/.*)?$"
+    }
+   ],
+   "recursive": "^<ROOT>/dir/[^/]*(.*/)?x(/.*)?$",
+   "regex": "^<ROOT>/dir/[^/]*(.*/)?x$",
+   "split": {
+    "globFixedPrefixes": [
+     "<ROOT>/dir"
+    ],
+    "paths": [],
+    "regexes": [
+     "^<ROOT>/dir/[^/]*(.*/)?x(/.*)?$"
+    ]
+   }
+  },
+  "glob:dir/**GLOBSTAR__": {
+   "entries": [
+    {
+     "fixedPrefix": "<ROOT>/dir",
+     "regex": "^<ROOT>/dir/.*GLOBSTAR__(/.*)?$"
+    }
+   ],
+   "recursive": "^<ROOT>/dir/.*GLOBSTAR__(/.*)?$",
+   "regex": "^<ROOT>/dir/.*GLOBSTAR__$",
+   "split": {
+    "globFixedPrefixes": [
+     "<ROOT>/dir"
+    ],
+    "paths": [],
+    "regexes": [
+     "^<ROOT>/dir/.*GLOBSTAR__(/.*)?$"
+    ]
+   }
+  },
   "glob:dir/[s]ub/*": {
    "entries": [
     {
@@ -269,6 +331,158 @@
     "paths": [],
     "regexes": [
      "^<ROOT>/dir/sub/[^/]*(/.*)?$"
+    ]
+   }
+  },
+  "glob:dir/__GLOBSTAR**": {
+   "entries": [
+    {
+     "fixedPrefix": "<ROOT>/dir",
+     "regex": "^<ROOT>/dir/.*GLOBSTAR__(/.*)?$"
+    }
+   ],
+   "recursive": "^<ROOT>/dir/.*GLOBSTAR__(/.*)?$",
+   "regex": "^<ROOT>/dir/.*GLOBSTAR__$",
+   "split": {
+    "globFixedPrefixes": [
+     "<ROOT>/dir"
+    ],
+    "paths": [],
+    "regexes": [
+     "^<ROOT>/dir/.*GLOBSTAR__(/.*)?$"
+    ]
+   }
+  },
+  "glob:dir/__GLOBSTAR_**": {
+   "entries": [
+    {
+     "fixedPrefix": "<ROOT>/dir",
+     "regex": "^<ROOT>/dir/.*_GLOBSTAR__(/.*)?$"
+    }
+   ],
+   "recursive": "^<ROOT>/dir/.*_GLOBSTAR__(/.*)?$",
+   "regex": "^<ROOT>/dir/.*_GLOBSTAR__$",
+   "split": {
+    "globFixedPrefixes": [
+     "<ROOT>/dir"
+    ],
+    "paths": [],
+    "regexes": [
+     "^<ROOT>/dir/.*_GLOBSTAR__(/.*)?$"
+    ]
+   }
+  },
+  "glob:dir/__GLOBSTAR_SLASH**/x": {
+   "entries": [
+    {
+     "fixedPrefix": "<ROOT>/dir",
+     "regex": "^<ROOT>/dir/(.*/)?GLOBSTAR_SLASH__x(/.*)?$"
+    }
+   ],
+   "recursive": "^<ROOT>/dir/(.*/)?GLOBSTAR_SLASH__x(/.*)?$",
+   "regex": "^<ROOT>/dir/(.*/)?GLOBSTAR_SLASH__x$",
+   "split": {
+    "globFixedPrefixes": [
+     "<ROOT>/dir"
+    ],
+    "paths": [],
+    "regexes": [
+     "^<ROOT>/dir/(.*/)?GLOBSTAR_SLASH__x(/.*)?$"
+    ]
+   }
+  },
+  "glob:dir/__GLOBSTAR_SLASH__*": {
+   "entries": [
+    {
+     "fixedPrefix": "<ROOT>/dir",
+     "regex": "^<ROOT>/dir/(.*/)?[^/]*(/.*)?$"
+    }
+   ],
+   "recursive": "^<ROOT>/dir/(.*/)?[^/]*(/.*)?$",
+   "regex": "^<ROOT>/dir/(.*/)?[^/]*$",
+   "split": {
+    "globFixedPrefixes": [
+     "<ROOT>/dir"
+    ],
+    "paths": [],
+    "regexes": [
+     "^<ROOT>/dir/(.*/)?[^/]*(/.*)?$"
+    ]
+   }
+  },
+  "glob:dir/__GLOBSTAR__*": {
+   "entries": [
+    {
+     "fixedPrefix": "<ROOT>/dir",
+     "regex": "^<ROOT>/dir/.*[^/]*(/.*)?$"
+    }
+   ],
+   "recursive": "^<ROOT>/dir/.*[^/]*(/.*)?$",
+   "regex": "^<ROOT>/dir/.*[^/]*$",
+   "split": {
+    "globFixedPrefixes": [
+     "<ROOT>/dir"
+    ],
+    "paths": [],
+    "regexes": [
+     "^<ROOT>/dir/.*[^/]*(/.*)?$"
+    ]
+   }
+  },
+  "glob:dir/__GLOBSTAR__GLOBSTAR_SLASH__*": {
+   "entries": [
+    {
+     "fixedPrefix": "<ROOT>/dir",
+     "regex": "^<ROOT>/dir/__GLOBSTAR(.*/)?[^/]*(/.*)?$"
+    }
+   ],
+   "recursive": "^<ROOT>/dir/__GLOBSTAR(.*/)?[^/]*(/.*)?$",
+   "regex": "^<ROOT>/dir/__GLOBSTAR(.*/)?[^/]*$",
+   "split": {
+    "globFixedPrefixes": [
+     "<ROOT>/dir"
+    ],
+    "paths": [],
+    "regexes": [
+     "^<ROOT>/dir/__GLOBSTAR(.*/)?[^/]*(/.*)?$"
+    ]
+   }
+  },
+  "glob:dir/___GLOBSTAR__*": {
+   "entries": [
+    {
+     "fixedPrefix": "<ROOT>/dir",
+     "regex": "^<ROOT>/dir/_.*[^/]*(/.*)?$"
+    }
+   ],
+   "recursive": "^<ROOT>/dir/_.*[^/]*(/.*)?$",
+   "regex": "^<ROOT>/dir/_.*[^/]*$",
+   "split": {
+    "globFixedPrefixes": [
+     "<ROOT>/dir"
+    ],
+    "paths": [],
+    "regexes": [
+     "^<ROOT>/dir/_.*[^/]*(/.*)?$"
+    ]
+   }
+  },
+  "glob:dir/a]b[c[d*": {
+   "entries": [
+    {
+     "fixedPrefix": "<ROOT>/dir",
+     "regex": "^<ROOT>/dir/a]b\\[c[d[^/]*(/.*)?$"
+    }
+   ],
+   "recursive": "^<ROOT>/dir/a]b\\[c[d[^/]*(/.*)?$",
+   "regex": "^<ROOT>/dir/a]b\\[c[d[^/]*$",
+   "split": {
+    "globFixedPrefixes": [
+     "<ROOT>/dir"
+    ],
+    "paths": [],
+    "regexes": [
+     "^<ROOT>/dir/a]b\\[c[d[^/]*(/.*)?$"
     ]
    }
   },
@@ -599,6 +813,8 @@
   },
   "suspicious-resolution:dangling": true,
   "suspicious-resolution:dangling-rel": true,
+  "suspicious-resolution:dangling/../x": false,
+  "suspicious-resolution:dangling/./x": true,
   "suspicious-resolution:dangling/child": true,
   "suspicious-resolution:dchain1": true,
   "suspicious-resolution:dchain1/x": true,
@@ -608,6 +824,8 @@
   "suspicious-resolution:dir-link-dangling-chain": true,
   "suspicious-resolution:dir/../outside": false,
   "suspicious-resolution:dir/file": false,
+  "suspicious-resolution:dir/file/..": false,
+  "suspicious-resolution:dir/file/x": false,
   "suspicious-resolution:dir/inner-link": true,
   "suspicious-resolution:dir/missing": false,
   "suspicious-resolution:dir/missing/deeper": false,
@@ -634,6 +852,7 @@
   "suspicious-resolution:loop-a/x": {
    "$u": 1
   },
+  "suspicious-resolution:missing/../x": false,
   "suspicious-resolution:nothing-here": false,
   "suspicious-resolution:nothing-here/at/all": false,
   "suspicious-resolution:plugin/dangling-out": true,
