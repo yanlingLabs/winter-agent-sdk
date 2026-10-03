@@ -213,171 +213,156 @@ function splitCommand(prompt: string): { name: string; args: string } {
   return { name, args };
 }
 
-// Fix round 9 (promoted to full parity): claude's OWN substituter is `zE` (dump-confirmed, byte
-// offset 18048328 of the pinned 2.1.250 dump; NOT the plain `e.replaceAll("$ARGUMENTS", args)` round
-// 7 ported, which was itself an accurate reading of the SIMPLE case but not the whole function).
-// Every `zE` call site this dump reaches for a slash command / skill body passes its own `r`
-// (append-when-no-placeholder) argument as literal `!0` (true), so that flag is not exposed as a
-// parameter here -- it is simply this function's behaviour, matching every real caller.
-//
-// The ported source, verbatim (`yF`="￿", `kW`="￾" -- two Unicode noncharacters used only
-// as this call's own internal markers, cleared from the input up front and stripped at the end):
-//   function zE(e,t,r=!0,o=[],u){
-//     if(t===void 0||t===null)return e;
-//     e=e.replaceAll(yF,"�").replaceAll(kW,"�");
-//     let p=(M)=>{
-//       let D=(M??"").replaceAll(yF,"�").replaceAll(kW,"�");
-//       return kW+(u?u(D):D).replaceAll("$",yF)+kW
-//     },
-//     g=Ren(t),
-//     T=o.map((M,D)=>({name:M,i:D})).filter((M)=>Boolean(M.name)).sort((M,D)=>D.name.length-M.name.length),
-//     E=["\\d","ARGUMENTS",...T.map(({name:M})=>`${Tu(M)}(?![\\[\\w])`)].join("|");
-//     e=e.replace(new RegExp(`(?<!\\\\)\\\\\\$(?=${E})`,"g"),yF);
-//     let R=!1;
-//     for(let{name:M,i:D}of T)
-//       e=e.replace(new RegExp(`\\$${Tu(M)}(?![\\[\\w])`,"g"),()=>(R=!0,p(g[D])));
-//     e=e.replace(/\$ARGUMENTS\[(\d+)\]/g,(M,D)=>{
-//       let N=parseInt(D,10);
-//       if(g[N]===void 0)return yF+M.slice(1);
-//       return R=!0,p(g[N])
-//     });
-//     e=e.replace(/\$(\d+)(?!\w)/g,(M,D)=>{
-//       let N=parseInt(D,10);
-//       if(g[N]===void 0)return M;
-//       return R=!0,p(g[N])
-//     });
-//     e=e.replaceAll("$ARGUMENTS",()=>(R=!0,p(t)));
-//     if(!R&&r&&t)e=e+`\nARGUMENTS: ${p(t)}`;
-//     return e.replaceAll(yF,"$").replaceAll(kW,"")
-//   }
-//
-// `Tu` (dump-confirmed at byte offset 11028957: `t.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")`) is
-// exactly `permissions/grammar.ts`'s own `escapeRegExpLiteral`, reused rather than duplicated.
-//
-// `Ren`/`g` (`t`'s own word split, for `$0`/`$1`/`$ARGUMENTS[n]` indexing) is, at its base,
-// `pu(t)`: a REAL tree-sitter bash parse of the args text, walked down to one simple command's own
-// argument words (`bSe`), with variable-assignment prefixes skipped and collection stopping at the
-// first compound-operator boundary (`;`/`&&`/`||`/`|`/`&`/a redirect) -- falling back to a plain
-// `t.split(/\s+/)` only when that parse fails or `t` is over a 10,000-character cap. Winter ships no
-// tree-sitter bash grammar; `shellWords(t).map(w=>w.word)` (this module's own bash-style quote
-// removal + whitespace split, already used and tested elsewhere in this codebase) is the stand-in.
-// DISCLOSED DIVERGENCE, not silent: `shellWords` treats the WHOLE args text as one flat word
-// sequence and never stops early at a compound-operator character or skips a leading `FOO=bar`
-// assignment the way claude's shell-aware split does -- for ordinary, free-form text typed after a
-// slash command (the overwhelming real case), the two splits agree; they diverge only for args text
-// that is ITSELF shell-syntax-shaped (e.g. args containing a literal `;` or a leading `X=1`), which
-// this port does not attempt to replicate without a real shell grammar.
-//
-// `T`/named args (`$<name>`, declared via claude's own skill-frontmatter `arguments:` field, read
-// through `Oee`) is a REAL claude 2.1.250 mechanism, ported here as the `namedArgs` parameter so the
-// SUBSTITUTION MECHANICS are complete -- but NO Winter frontmatter parser (`skills/frontmatter.ts`,
-// this module's own `parseCommandFile`) reads an `arguments:` key yet, so every call site below
-// passes `namedArgs: []` today. Wiring that frontmatter field through is a separate, materially
-// larger change (new key, new type field, new tests for the parsers themselves) and is recorded as a
-// WS-21 follow-up, not attempted in this commit.
-//
-// WHY THE SENTINELS: the four substitution passes below (named args, `$ARGUMENTS[n]`, `$n`, plain
-// `$ARGUMENTS`) run as four SEPARATE, sequential `.replace`/`.replaceAll` calls, each scanning the
-// WHOLE current body -- so a value inserted by an EARLIER pass is visible to every LATER pass' own
-// regex. `protect()` (claude's `p`) defends against exactly that, two ways: every literal `$` in a
-// substituted value becomes the `yF` marker (never a real `$`, so it can never look like the START of
-// a LATER pass' own token -- the `$ARGUMENTS_JSON`-inside-`$ARGUMENTS` class of bug round 7 fixed
-// elsewhere, avoided here structurally rather than by scan order); and the value is WRAPPED in `kW`
-// on both sides, a word-boundary spacer for the `(?!\w)`/`(?![\[\w])` negative lookaheads THIS same
-// function's OWN passes use -- without it, `zE("$1$ARGUMENTS[0]","a b")` would insert "a" directly
-// after "$1" with no boundary. The pass order is `$ARGUMENTS[n]` THEN `$n` (see this function's own
-// body below), so `$ARGUMENTS[0]` substitutes FIRST, inserting its `kW`-wrapped value between "$1"
-// and where "a" would otherwise sit; the `$n` pass runs SECOND and sees that `kW` (not a word
-// character) immediately after "$1", so its own `(?!\w)` lookahead succeeds and "$1" substitutes
-// correctly too. Without the wrap, the `$n` pass would instead see "$1" immediately followed by "a"
-// (a word character) and refuse to match at all, leaving a literal "$1" in the output. SEE THE TEST
-// for the concrete case. Both markers are stripped to `$`/`""` only at the very end, after every
-// pass has run.
-const ARG_DOLLAR_SENTINEL = "￿";
-const ARG_BOUNDARY_SENTINEL = "￾";
-
-function protectSubstitutedValue(value: string | undefined): string {
-  const cleaned = (value ?? "").replaceAll(ARG_DOLLAR_SENTINEL, "�").replaceAll(ARG_BOUNDARY_SENTINEL, "�");
-  return ARG_BOUNDARY_SENTINEL + cleaned.replaceAll("$", ARG_DOLLAR_SENTINEL) + ARG_BOUNDARY_SENTINEL;
-}
-
-/**
- * `zE`, ported. `namedArgs` is `o` (see this section's header -- always `[]` from every call site in
- * this codebase today; no Winter frontmatter parser declares one yet).
- */
+/** Expand `$ARGUMENTS`, `$ARGUMENTS[n]`, `$n`, `$<namedArg>` and `\$` escapes in a `/name args` body (args are appended when nothing matched). `namedArgs` is not yet wired from frontmatter (WS-21 follow-up). */
 export function substituteArguments(body: string, args: string, namedArgs: readonly string[] = []): string {
-  let out = body.replaceAll(ARG_DOLLAR_SENTINEL, "�").replaceAll(ARG_BOUNDARY_SENTINEL, "�");
+  const text = cleanNoncharacters(body);
+  const wholeArgs = cleanNoncharacters(args);
+  const words = shellWords(args).map((w) => cleanNoncharacters(w.word));
 
-  const words = shellWords(args).map((w) => w.word);
+  // Declared names keep their original position (an empty name is dropped but still occupies its
+  // slot); longest names are matched first so a name never loses its text to a shorter prefix of it.
+  // `Array.prototype.sort` is stable, so equal lengths keep declaration order.
   const named = namedArgs
-    .map((name, i) => ({ name, i }))
+    .map((name, position) => ({ name, position }))
     .filter((n) => n.name.length > 0)
-    .sort((a, b) => b.name.length - a.name.length); // longest name first -- a shorter name must never pre-empt a longer one it is a prefix of
+    .sort((a, b) => b.name.length - a.name.length);
 
-  const escapeGroup = ["\\d", "ARGUMENTS", ...named.map(({ name }) => `${escapeRegExpLiteral(name)}(?![\\[\\w])`)].join("|");
-  // `\$ARGUMENTS`, `\$0`..`\$9`, `\$<namedArg>`: a backslash-escaped token is neutralized before any
-  // substitution pass runs. The backslash itself must not ALSO be escaped (`(?<!\\)`) -- `\\$ARGUMENTS`
-  // (an escaped backslash followed by a REAL token) still substitutes, keeping both backslashes.
-  out = out.replace(new RegExp(`(?<!\\\\)\\\\\\$(?=${escapeGroup})`, "g"), ARG_DOLLAR_SENTINEL);
+  // Recognition runs one kind at a time, in priority order. Each match claims its characters, and a
+  // later kind may only match wholly unclaimed text. Replacements are collected and applied at the
+  // end, so inserted values are never scanned.
+  const claimed = new Uint8Array(text.length);
+  const replacements: Array<{ start: number; end: number; value: string }> = [];
+  let substitutions = 0;
 
-  let substituted = false;
+  const isFree = (start: number, end: number): boolean => {
+    for (let k = start; k < end; k++) if (claimed[k]) return false;
+    return true;
+  };
+  const claim = (start: number, end: number, value: string): void => {
+    claimed.fill(1, start, end);
+    replacements.push({ start, end, value });
+  };
+  // "Followed by" looks at the cleaned body itself; the end of the body is neither a word char nor `[`.
+  const endsCleanly = (at: number): boolean => at >= text.length || (text[at] !== "[" && !isWordChar(text.charCodeAt(at)));
 
-  for (const { name, i } of named) {
-    out = out.replace(new RegExp(`\\$${escapeRegExpLiteral(name)}(?![\\[\\w])`, "g"), () => {
-      substituted = true;
-      return protectSubstitutedValue(words[i]);
-    });
+  // 1. Escapes: `\$` (not preceded by another backslash) before a digit, `ARGUMENTS`, or a declared
+  //    name that ends cleanly. The pair becomes a literal `$`.
+  for (let i = text.indexOf("\\$"); i !== -1; i = text.indexOf("\\$", i + 1)) {
+    if (i > 0 && text[i - 1] === "\\") continue;
+    const after = i + 2;
+    const escapes =
+      isDigit(text.charCodeAt(after)) ||
+      text.startsWith("ARGUMENTS", after) ||
+      named.some((n) => text.startsWith(n.name, after) && endsCleanly(after + n.name.length));
+    if (escapes) {
+      claim(i, after, "$");
+      i = after - 1; // the next search starts at `after`
+    }
   }
 
-  // $ARGUMENTS[n] -- indexed into the shell-word split, 0-based. Runs BEFORE plain $ARGUMENTS: that
-  // token is a literal PREFIX of this one, so the order is load-bearing (round 7's own lesson, here
-  // structural rather than incidental). Out of range: the leading "$" is sentinel-protected (so the
-  // later plain-$ARGUMENTS pass can never re-match it) and the rest of the match text survives as
-  // literal -- `substituted` is NOT set.
-  out = out.replace(/\$ARGUMENTS\[(\d+)\]/g, (whole, digits: string) => {
-    const idx = Number.parseInt(digits, 10);
-    if (words[idx] === undefined) return ARG_DOLLAR_SENTINEL + whole.slice(1);
-    substituted = true;
-    return protectSubstitutedValue(words[idx]);
-  });
+  // 2. Named tokens, longest name first.
+  for (const { name, position } of named) {
+    const needle = "$" + name;
+    for (let i = text.indexOf(needle); i !== -1; ) {
+      const end = i + needle.length;
+      if (isFree(i, end) && endsCleanly(end)) {
+        claim(i, end, words[position] ?? "");
+        substitutions++;
+        i = text.indexOf(needle, end);
+      } else {
+        i = text.indexOf(needle, i + 1);
+      }
+    }
+  }
 
-  // $0, $1, ... -- the SAME 0-based word array (claude's own indexing; not traditional shell $1=first
-  // arg). Out of range: left completely unchanged, no sentinel needed (nothing later matches a bare digit run).
-  out = out.replace(/\$(\d+)(?!\w)/g, (whole, digits: string) => {
-    const idx = Number.parseInt(digits, 10);
-    if (words[idx] === undefined) return whole;
-    substituted = true;
-    return protectSubstitutedValue(words[idx]);
-  });
+  // 3. Indexed tokens `$ARGUMENTS[<digits>]`. Out of range stays literal but is still claimed.
+  const INDEXED_PREFIX = "$ARGUMENTS[";
+  for (let i = text.indexOf(INDEXED_PREFIX); i !== -1; ) {
+    let j = i + INDEXED_PREFIX.length;
+    while (isDigit(text.charCodeAt(j))) j++;
+    const digitsStart = i + INDEXED_PREFIX.length;
+    if (j > digitsStart && text[j] === "]" && isFree(i, j + 1)) {
+      const index = Number(text.slice(digitsStart, j));
+      const word = index < words.length ? words[index] : undefined;
+      if (word !== undefined) {
+        claim(i, j + 1, word);
+        substitutions++;
+      } else {
+        claim(i, j + 1, text.slice(i, j + 1));
+      }
+      i = text.indexOf(INDEXED_PREFIX, j + 1);
+    } else {
+      i = text.indexOf(INDEXED_PREFIX, i + 1);
+    }
+  }
 
-  // Plain $ARGUMENTS -- the WHOLE raw args string, not word-split. A replacer FUNCTION, not a plain
-  // string: `String.replaceAll(pattern, replacement)` with a STRING replacement expands `$$`, `$&`,
-  // `` $` ``, `$'` and `$<n>` inside that replacement text -- args containing a literal `$$` or `$&`
-  // would otherwise corrupt the substitution. A function replacer's return value is inserted verbatim.
-  out = out.replaceAll("$ARGUMENTS", () => {
-    substituted = true;
-    return protectSubstitutedValue(args);
-  });
+  // 4. Positional tokens: `$` plus the maximal digit run, which must not be followed by a word char.
+  for (let i = text.indexOf("$"); i !== -1; ) {
+    let j = i + 1;
+    while (isDigit(text.charCodeAt(j))) j++;
+    if (j > i + 1 && !isWordChar(text.charCodeAt(j)) && isFree(i, j)) {
+      const index = Number(text.slice(i + 1, j));
+      const word = index < words.length ? words[index] : undefined;
+      if (word !== undefined) {
+        claim(i, j, word);
+        substitutions++;
+      }
+      // Out of range: left as written and unclaimed (no later kind can start with a digit run).
+      i = text.indexOf("$", j);
+    } else {
+      i = text.indexOf("$", i + 1);
+    }
+  }
 
-  // Nothing recognized a placeholder anywhere in the body, args is non-empty: append it, exactly as
-  // claude's own two real call sites always do (`r` is `!0`/true at both). `args` empty is falsy, so
-  // an unadorned `/command` with no trailing text still leaves a placeholder-free body untouched.
-  if (!substituted && args) out = `${out}\nARGUMENTS: ${protectSubstitutedValue(args)}`;
+  // 5. Plain `$ARGUMENTS`, with no boundary check: the whole args.
+  const PLAIN = "$ARGUMENTS";
+  for (let i = text.indexOf(PLAIN); i !== -1; ) {
+    const end = i + PLAIN.length;
+    if (isFree(i, end)) {
+      claim(i, end, wholeArgs);
+      substitutions++;
+      i = text.indexOf(PLAIN, end);
+    } else {
+      i = text.indexOf(PLAIN, i + 1);
+    }
+  }
 
-  return out.replaceAll(ARG_DOLLAR_SENTINEL, "$").replaceAll(ARG_BOUNDARY_SENTINEL, "");
+  replacements.sort((a, b) => a.start - b.start);
+  let out = "";
+  let cursor = 0;
+  for (const r of replacements) {
+    out += text.slice(cursor, r.start) + r.value;
+    cursor = r.end;
+  }
+  out += text.slice(cursor);
+
+  if (substitutions === 0 && args.length > 0) out += "\nARGUMENTS: " + wholeArgs;
+  return out;
+}
+
+/** Replace the two noncharacters U+FFFE and U+FFFF with U+FFFD. */
+function cleanNoncharacters(s: string): string {
+  return s.replace(/[￾￿]/g, "�");
+}
+
+function isDigit(code: number): boolean {
+  return code >= 48 && code <= 57;
+}
+
+/** ASCII word character: letters, digits and underscore. `NaN` (past the end) is not one. */
+function isWordChar(code: number): boolean {
+  return isDigit(code) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95;
 }
 
 /**
  * The workflow-invoke-line substitution ONLY (fix round 7). `workflows/store.ts`'s
- * `buildWorkflowSkillPrompt` writes a static body whose invoke line embeds the raw args value INSIDE
- * its own hand-written quotes (`args: $ARGUMENTS_JSON`), and that value needs `"`/`\` escaping the
- * way claude's own `S(e)` does it -- dump-confirmed at `createWorkflowCommand`'s `getPromptForCommand`,
- * `a=e?\`{ name: ${i}, args: ${S(e)} }\`:...\`, and controller-confirmed `S` is `JSON.stringify`
- * (chunk export at dump ~269598). This function is DELIBERATELY SEPARATE from `substituteArguments`
- * (never merged into it again): only a synthetic, workflow-backed skill body should ever have
- * `$ARGUMENTS_JSON` recognised as a token at all; every other command/skill body must see claude's
- * plain single-token behaviour, `$ARGUMENTS_JSON` included -- since claude itself would leave that
- * text's `_JSON` suffix untouched.
+ * `buildWorkflowSkillPrompt` writes a static body whose invoke line carries the args as
+ * `args: $ARGUMENTS_JSON`, and that value must arrive as a JSON string literal (quotes and
+ * backslashes escaped) -- the same quoting claude uses for a workflow command's `args`. This function
+ * is DELIBERATELY SEPARATE from `substituteArguments` (never merged into it again): only a synthetic,
+ * workflow-backed skill body should ever have `$ARGUMENTS_JSON` recognised as a token at all; every
+ * other command/skill body gets the ordinary substitution, where `$ARGUMENTS_JSON` is just
+ * `$ARGUMENTS` followed by the literal text `_JSON`.
  *
  * A single left-to-right scan, not two `.split().join()` passes: `JSON.stringify(args)` can itself
  * contain the literal substring `$ARGUMENTS` (e.g. `args = "please pass $ARGUMENTS through"` stringifies
@@ -571,7 +556,7 @@ export class FilesystemCommandResolver implements CommandResolver {
       // answered", the same thing an unknown `/name` means, and the prompt is used verbatim.
       if (!loaded) return { kind: "none" };
       // Fix round 7: ONLY a synthetic (workflow-backed) skill body recognises `$ARGUMENTS_JSON`. An
-      // ordinary, on-disk skill gets claude's own plain substitution, `$ARGUMENTS_JSON` included as
+      // ordinary, on-disk skill gets the ordinary substitution, `$ARGUMENTS_JSON` included as
       // literal text if that is what its body happens to contain.
       const substitute = loaded.isSynthetic ? substituteWorkflowArguments : substituteArguments;
       return { kind: "expand", text: substitute(loaded.body, args), source: loaded.path };
