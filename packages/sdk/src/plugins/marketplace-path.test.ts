@@ -35,7 +35,7 @@ describe("resolveMarketplacePluginPath -- security: a source/pluginRoot pair can
   test("a plugin whose resolved location shares only a STRING prefix with the base (a sibling directory) is refused", () => {
     // A naive `resolved.startsWith(base)` check would wrongly accept this; the containment check
     // requires the base followed by a path separator (or the base itself).
-    expect(resolveMarketplacePluginPath("/marketplace", undefined, "../marketplace-evil/x")).toBeUndefined();
+    expect(resolveMarketplacePluginPath("/marketplace", undefined, "./../marketplace-evil/x")).toBeUndefined();
   });
 
   test("a '..' that stays INSIDE the base after resolution is allowed; one that leaves it is not", () => {

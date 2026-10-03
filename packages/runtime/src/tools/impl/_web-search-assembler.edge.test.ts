@@ -1,7 +1,7 @@
 // Edge cases of the WebSearch output assembler: the stream walk's buffering and flush rule, and the
 // render's exact layout (raw string items, the links JSON, the header query, the reminder footer).
 import { describe, expect, test } from "bun:test";
-import { assembleWebSearchOutputCapped, flushWebSearchStream, renderWebSearchToolResult, renderWebSearchToolResultCapped, type WebSearchResultItem, type WebSearchStreamEvent } from "./_web-search-assembler.ts";
+import { assembleWebSearchOutput, assembleWebSearchOutputCapped, flushWebSearchStream, renderWebSearchToolResult, renderWebSearchToolResultCapped, type WebSearchResultItem, type WebSearchStreamEvent } from "./_web-search-assembler.ts";
 
 const REMINDER = "REMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.";
 
@@ -72,5 +72,14 @@ describe("the capped render", () => {
   test("a cap below the zero-item floor still returns the zero-item render", () => {
     expect(renderWebSearchToolResultCapped("q", ["a"], 5)).toBe(renderWebSearchToolResult("q", []));
     expect(assembleWebSearchOutputCapped("q", [{ type: "text", text: "a" }], 5)).toBe(renderWebSearchToolResult("q", []));
+  });
+});
+
+describe("an event of an unknown type", () => {
+  test("is an error item, like a failed search: pending text is flushed first and the item is `Web search error: <code>`", () => {
+    const unknown = (extra: Record<string, unknown>): WebSearchStreamEvent => ({ type: "mystery", ...extra }) as unknown as WebSearchStreamEvent;
+    expect(flushWebSearchStream([{ type: "text", text: " before " }, unknown({ code: "boom" }), { type: "text", text: "after" }])).toEqual(["before", "Web search error: boom", "after"]);
+    expect(flushWebSearchStream([unknown({})])).toEqual(["Web search error: undefined"]);
+    expect(assembleWebSearchOutput("q", [unknown({ code: "x" })])).toBe(renderWebSearchToolResult("q", ["Web search error: x"]));
   });
 });

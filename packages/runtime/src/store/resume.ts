@@ -342,8 +342,9 @@ export function recoverParallelToolResults(chain: readonly DialectEntry[], pool:
   };
   const openCallsOf = (entry: DialectEntry): Set<string> => new Set(callIdsOf(entry).filter((id) => !satisfied.has(id)));
 
-  // Insertions keyed by the chain index of the entry they follow.
-  const insertAfter = new Map<number, DialectEntry[]>();
+  // Insertions keyed by the uuid of the entry they follow; they go after EVERY chain entry carrying
+  // that uuid (a chain can hold the same entry more than once, e.g. via a repeated preserved uuid).
+  const insertAfter = new Map<string, DialectEntry[]>();
   const lastIndex = chain.length - 1;
   let index = 0;
   while (index <= lastIndex) {
@@ -386,13 +387,13 @@ export function recoverParallelToolResults(chain: readonly DialectEntry[], pool:
     }
 
     const spliced = [...siblings, ...memberResults, ...siblingResults];
-    if (spliced.length > 0) insertAfter.set(end, spliced);
+    if (spliced.length > 0) insertAfter.set(chain[end]!.uuid, spliced);
   }
 
   const out: DialectEntry[] = [];
-  for (let i = 0; i < chain.length; i++) {
-    out.push(chain[i]!);
-    const extra = insertAfter.get(i);
+  for (const entry of chain) {
+    out.push(entry);
+    const extra = insertAfter.get(entry.uuid);
     if (extra !== undefined) out.push(...extra);
   }
   return out;

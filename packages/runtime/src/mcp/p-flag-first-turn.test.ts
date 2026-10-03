@@ -50,6 +50,12 @@ describe("MCP first-turn wait (WS-09 §2 / §12 Q5, fix round 19)", () => {
     expect(firstTurnMcpWaitDeadlineMs({ explicitServers: { a: {} }, envConfig: env })).toBe(30000);
   });
 
+  test("an Array value that carries `type: \"sdk\"` is read by its type like any other object: the short wait", () => {
+    const arrayWithType = Object.assign([], { type: "sdk" });
+    expect(firstTurnMcpWaitDeadlineMs({ explicitServers: { a: arrayWithType }, envConfig: env })).toBe(2000);
+    expect(firstTurnMcpWaitDeadlineMs({ explicitServers: { a: [] }, envConfig: env })).toBe(30000);
+  });
+
   test("only the exact lowercase `sdk` type is in-process", () => {
     expect(firstTurnMcpWaitDeadlineMs({ explicitServers: { a: { type: "SDK" } }, envConfig: env })).toBe(30000);
     expect(firstTurnMcpWaitDeadlineMs({ explicitServers: { a: { type: " sdk" } }, envConfig: env })).toBe(30000);

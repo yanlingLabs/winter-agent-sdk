@@ -45,9 +45,12 @@ export function flushWebSearchStream(events: readonly WebSearchStreamEvent[]): W
         flush();
         items.push({ content: event.hits.map((hit) => ({ title: hit.title, url: hit.url })) });
         break;
-      case "search_error":
+      default:
+        // `search_error`, and any event of a type this walk does not know: both are error items,
+        // rendered from the event's own `code` (an unknown event with no `code` renders it as
+        // `undefined`, as the template does).
         flush();
-        items.push(`Web search error: ${event.code}`);
+        items.push(`Web search error: ${String((event as { code?: unknown }).code)}`);
         break;
     }
   }

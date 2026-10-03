@@ -630,6 +630,31 @@ describe("F2 (fix round 23): a claude parallel tool batch rebuilds with every ca
     ]);
   });
 
+  test("recovered results are spliced after EVERY chain entry carrying the batch's last uuid (a uuid repeated in preservedMessages)", () => {
+    const call = (uuid: string, parentUuid: string | null): DialectEntry => ({
+      type: "assistant",
+      uuid,
+      parentUuid,
+      message: { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }] },
+    });
+    const entries: DialectEntry[] = [
+      { type: "user", uuid: "a0", parentUuid: null, message: { role: "user", content: "start" } },
+      call("X", "a0"),
+      { type: "user", uuid: "R1", parentUuid: "X", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] } },
+      { type: "system", subtype: "compact_boundary", uuid: "B", parentUuid: null, compactMetadata: { trigger: "auto", preTokens: 1, preservedMessages: { uuids: ["X", "X"] } } },
+      { type: "user", uuid: "S", parentUuid: "B", isCompactSummary: true, message: { role: "user", content: "SUMMARY" } },
+      { type: "user", uuid: "U", parentUuid: "S", message: { role: "user", content: "next" } },
+    ];
+    expect(shapeOf(rebuildProviderMessages(entries))).toEqual([
+      "user:SUMMARY",
+      "assistant:use:t1",
+      "tool:result:t1",
+      "assistant:use:t1",
+      "tool:result:t1",
+      "user:next",
+    ]);
+  });
+
   // claude yields a concurrency-safe batch's results in COMPLETION order, and the next turn chains
   // onto the last message yielded. When the FIRST call finishes last, the next turn chains through the
   // first call's result, and the later call ENTRIES -- not just their results -- are off the walk.

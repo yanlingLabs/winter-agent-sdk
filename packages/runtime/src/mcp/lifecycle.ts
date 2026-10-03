@@ -640,9 +640,10 @@ export function firstTurnMcpWaitDeadlineMs(opts: {
   const servers = opts.explicitServers;
   if (servers !== undefined && servers !== null) {
     for (const config of Object.values(servers)) {
-      // Only an in-process server (an object whose `type` is exactly "sdk") keeps the short wait;
-      // anything else -- including malformed values -- counts as a server worth waiting for.
-      const inProcess = typeof config === "object" && config !== null && !Array.isArray(config) && (config as { type?: unknown }).type === "sdk";
+      // Only an in-process server (an object value whose `type` is exactly "sdk") keeps the short wait;
+      // anything else -- including malformed values -- counts as a server worth waiting for. An array
+      // that carries a `type` property of "sdk" is still an object with that type, so it counts.
+      const inProcess = typeof config === "object" && config !== null && (config as { type?: unknown }).type === "sdk";
       if (!inProcess) return opts.envConfig.timeoutMs;
     }
   }

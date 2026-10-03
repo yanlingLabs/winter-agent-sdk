@@ -281,7 +281,9 @@ export function renderWorkflowNotification(input: WorkflowNotificationInput): st
   if (nonEmpty(input.result)) body += `\n<result>${xmlEscape(input.result)}</result>`;
   if (input.failures !== undefined && input.failures.length > 0) body += `\n<failures>${xmlEscape(input.failures.join("\n"))}</failures>`;
   if (input.usage !== undefined || input.agentCount !== undefined) {
-    const usage = input.usage ?? { totalTokens: 0, toolUses: 0, durationMs: 0 };
+    // A usage object missing a counter renders that counter as 0, never as "undefined".
+    const given: Partial<NotificationUsage> = input.usage ?? {};
+    const usage: NotificationUsage = { totalTokens: given.totalTokens ?? 0, toolUses: given.toolUses ?? 0, durationMs: given.durationMs ?? 0 };
     body += `\n<usage><agent_count>${String(input.agentCount ?? 0)}</agent_count>${usageCounters(usage)}</usage>`;
   }
 

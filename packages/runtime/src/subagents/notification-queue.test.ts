@@ -13,6 +13,7 @@ import {
   renderMonitorEventNotification,
   renderTaskStopNotification,
   renderWorkflowNotification,
+  type NotificationUsage,
   withNotificationPreamble,
   xmlEscape,
   taskNotificationAttachment,
@@ -104,6 +105,15 @@ describe("per-kind documents", () => {
     expect(xml).toContain("<result>{}</result>");
     expect(xml).toContain("<usage><agent_count>3</agent_count><subagent_tokens>100</subagent_tokens><tool_uses>7</tool_uses><duration_ms>42</duration_ms></usage>");
     expect(renderWorkflowNotification({ taskId: "w1", status: "failed", name: "fanout", error: "script threw", failures: ["a: x", "b: y"] })).toContain("<failures>a: x\nb: y</failures>");
+  });
+});
+
+describe("workflow usage with a missing counter", () => {
+  test("a counter the usage object lacks renders 0, never `undefined`", () => {
+    const partial = { totalTokens: 5 } as unknown as NotificationUsage;
+    const xml = renderWorkflowNotification({ taskId: "w1", status: "completed", name: "fanout", agentCount: 2, usage: partial });
+    expect(xml).toContain("<usage><agent_count>2</agent_count><subagent_tokens>5</subagent_tokens><tool_uses>0</tool_uses><duration_ms>0</duration_ms></usage>");
+    expect(xml).not.toContain("undefined");
   });
 });
 
