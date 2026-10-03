@@ -4,6 +4,37 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.41
+
+### A host can declare some of its in-process tools concurrency-safe without making them read-only
+
+0.0.40 ran a round's calls at the same time only when that was provably safe: the readers, the web tools,
+`Agent`, read-only `Bash`, and an MCP tool its server lists `readOnlyHint: true`. A host tool that starts
+its own independent work elsewhere (Winter's `SpawnSession`, which creates a whole new session) is not
+read-only, so it was a barrier: three spawns of one round ran one after another, while claude runs several
+`Agent` calls of a round at once.
+
+- **`McpSdkServerConfig.concurrentTools?: string[]`** (a Winter extension, beside `toolLanes`): the
+  server's own tool names whose calls may run BESIDE the round's other concurrent calls (up to 10 at once,
+  `MAX_TOOL_CONCURRENCY`), exactly like a read-only tool's. Several calls of such a tool in one round run at
+  the same time. Only an in-process (`sdk`) server may declare it: the host vouches for its own tools.
+- **A scheduling statement only.** It lands on the tool's descriptor as `concurrencySafe` (never in
+  `annotations`), and `schedulingForCall` is its only reader. The tool is NOT read-only anywhere else: plan
+  mode, permission evaluation, the hook input's `winter_mcp_server.read_only_hint` and `canUseTool`'s
+  `mcpServer.readOnlyHint` all read the server's own `readOnlyHint`, exactly as before.
+- **A lane is stricter.** A tool named in both `toolLanes` and `concurrentTools` is in its lane. An entry
+  that is not a string, or names no tool of the server, is ignored; a value that is not an array declares
+  nothing.
+- Each call still has its own checks first, one at a time in call order (hook stop, permission, any card),
+  its own result frame the moment it finishes, and its own cancel (`control_cancel_request`) on an
+  interrupt, as for every concurrent call since 0.0.40.
+
+Tests: the scheduler (declared, lane wins, undeclared, malformed, a declared tool listed
+`readOnlyHint: false`, no read-only identity), an engine round (two declared calls overlap; an undeclared
+call of the same server is a barrier), and both topologies, a spawned `winter` process and an embedded
+Worker (two declared calls that each wait for the other to START both finish "together"; the undeclared
+call after them waits for both).
+
 ## 0.0.40
 
 ### Tool calls run at the same time when that is safe, and each result reaches the host as it finishes
