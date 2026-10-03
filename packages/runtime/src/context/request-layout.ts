@@ -1,26 +1,26 @@
-// SDK 0.0.16 Lane C (P16-5): the LIVE REQUEST'S LAYOUT -- claude 0.3.250's, byte for byte.
+// SDK 0.0.16 Lane C (P16-5): the LIVE REQUEST'S LAYOUT, in the shape claude's own requests have.
 //
-// Captured against the pinned binary (a loopback fake recording every request body), then traced in
-// its bundled source. Three things decide the shape of a claude request, and this module ports each:
+// Captured against the pinned binary (a loopback fake recording every request body). Three things
+// decide the shape of a request, and this module reproduces each:
 //
-//  1. USER CONTEXT (`mbt`). The per-session context map -- `claudeMd`, then `currentDate` -- is
-//     rendered as ONE meta `user` message prepended at INDEX 0 of every request, ahead of all
-//     history. It is never stored in the history and never persisted; it is rebuilt from the
-//     session's memoized map on every request, so its bytes are identical from turn to turn.
+//  1. USER CONTEXT. The per-session context map -- `claudeMd`, then `currentDate` -- is rendered as
+//     ONE meta `user` message prepended at INDEX 0 of every request, ahead of all history. It is
+//     never stored in the history and never persisted; it is rebuilt from the session's memoized map
+//     on every request, so its bytes are identical from turn to turn.
 //
-//  2. SYSTEM CONTEXT (`pbt` + `VEe`). The `gitStatus` snapshot is appended to the system prompt as
-//     a final `key: value` part, and the prompt is split into cache blocks: the static prefix
-//     (`global`) and everything after the dynamic boundary, systemContext included (`org`).
+//  2. SYSTEM CONTEXT. The `gitStatus` snapshot is appended to the system prompt as a final
+//     `key: value` part, and the prompt is split into cache blocks: the static prefix (`global`) and
+//     everything after the dynamic boundary, systemContext included (`org`).
 //
-//  3. MESSAGE NORMALIZATION (`normalizeMessagesForAPI`, the default -- flag-off -- path):
-//       a. ATTACHMENT REORDER (`SJn`): attachment messages bubble UP until they reach an assistant
-//          message or a user message that begins with a `tool_result`, and land right after it;
-//          any that reach the top stay at the top (above the index-0 context too).
-//       b. MERGE: consecutive user-role messages become one. An ordinary user message joins with
-//          `Noe` (the previous last text block gets a trailing "\n" when the next starts with text);
-//          an attachment joins with `mIt` (no newline; SMOOSHED into a trailing string-content
-//          `tool_result` when every block it adds is text -- `IMe`, trimmed and "\n\n"-joined).
-//          Either way `tool_result` blocks are hoisted to the front (`$It`).
+//  3. MESSAGE NORMALIZATION:
+//       a. ATTACHMENT REORDER: attachment messages move UP until they reach an assistant message or a
+//          user message that begins with a `tool_result`, and land right after it; any that reach
+//          the top stay at the top (above the index-0 context too).
+//       b. MERGE: consecutive user-role messages become one. An ordinary user message joining the
+//          previous one gives the previous last text block a trailing "\n" when the next starts with
+//          text; an attachment joins with no newline, and is folded INTO a trailing string-content
+//          `tool_result` when every block it adds is text (trimmed, "\n\n"-joined). Either way
+//          `tool_result` blocks come first in the merged turn.
 //     The result for turn 1 is the single wire message
 //       [agent listing, skill listing, ..., <index-0 context>+"\n", <prompt>]
 //     and every later request repeats that message byte-identically.
@@ -40,9 +40,9 @@ const USER_CONTEXT_PREAMBLE = "As you answer the user's questions, you can use t
 const USER_CONTEXT_POSTSCRIPT = "      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.";
 
 /**
- * claude's `mbt` text for a userContext map, or `undefined` when the map is empty (claude then
- * prepends nothing). Exactly one trailing newline; the second one the wire shows comes from the
- * merge with the prompt (`Noe`).
+ * The index-0 context text for a userContext map, or `undefined` when the map is empty (nothing is
+ * then prepended). Exactly one trailing newline; the second one the wire shows comes from the merge
+ * with the prompt.
  */
 export function renderUserContext(entries: readonly ContextEntry[]): string | undefined {
   if (entries.length === 0) return undefined;
@@ -50,17 +50,17 @@ export function renderUserContext(entries: readonly ContextEntry[]): string | un
   return `<system-reminder>\n${USER_CONTEXT_PREAMBLE}\n${body}\n\n${USER_CONTEXT_POSTSCRIPT}\n</system-reminder>\n`;
 }
 
-/** claude's `pbt` systemContext part: `key: value` lines. `undefined` when there are none. */
+/** The systemContext part: `key: value` lines. `undefined` when there are none. */
 export function renderSystemContext(entries: readonly ContextEntry[]): string | undefined {
   if (entries.length === 0) return undefined;
   return entries.map(([key, value]) => `${key}: ${value}`).join("\n");
 }
 
 /**
- * claude's `VEe` for Winter's two halves. With a dynamic boundary (Winter's authored prompt, the
+ * The cache-block split for Winter's two halves. With a dynamic boundary (Winter's authored prompt, the
  * preset, or a caller array that names one) the static half is one `global` block and the dynamic
  * half -- systemContext appended last -- one `org` block. Without a boundary (a caller string, or a
- * caller array with none) everything is one `org` block. Empty parts are dropped (`filter(Boolean)`).
+ * caller array with none) everything is one `org` block. Empty parts are dropped.
  */
 export function buildSystemBlocks(input: { staticParts: readonly string[]; dynamicParts: readonly string[]; systemContext?: string; hasBoundary: boolean }): SystemPromptBlock[] {
   const nonEmpty = (parts: readonly (string | undefined)[]): string[] => parts.filter((p): p is string => p !== undefined && p.length > 0);
@@ -93,123 +93,120 @@ function isUserRole(message: ProviderMessage): boolean {
   return message.role !== "assistant" && message.role !== "system";
 }
 
-/** claude's `SJn` stopping point: an assistant message, or a user message whose FIRST block is a `tool_result`. */
+/** Whether an attachment climbing the history stops right after this message. */
 function isReorderStop(message: ProviderMessage): boolean {
   if (message.role === "assistant") return true;
-  return Array.isArray(message.content) && message.content[0]?.type === "tool_result";
+  if (typeof message.content === "string") return false;
+  const first = message.content[0];
+  return first !== undefined && first.type === "tool_result";
 }
 
 /**
- * claude's `SJn` (reorderAttachmentsForAPI). WS-23: `stays` names attachments that keep their HISTORY
- * position instead of bubbling up -- a system-role reminder must follow the user turn that triggered
- * it, which is exactly where the engine appended it.
+ * Moves attachment messages up the history (see the module header). WS-23: `stays` names attachments
+ * that keep their HISTORY position instead of moving -- a system-role reminder must follow the user
+ * turn that triggered it, which is exactly where the engine appended it.
  */
 export function reorderAttachments(messages: readonly ProviderMessage[], stays: (message: ProviderMessage) => boolean = () => false): ProviderMessage[] {
   if (!messages.some((m) => m.meta !== undefined)) return [...messages];
-  const reversed: ProviderMessage[] = [];
-  const pending: ProviderMessage[] = [];
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]!;
-    if (m.meta !== undefined && !stays(m)) {
-      pending.push(m);
+  // Attachments that climb to the very top, then one group per fixed message: the fixed message
+  // followed by every moving attachment that settles right after it (only stops ever collect any).
+  const top: ProviderMessage[] = [];
+  const groups: { fixed: ProviderMessage; moved: ProviderMessage[] }[] = [];
+  let landing: ProviderMessage[] = top;
+  for (const message of messages) {
+    const moving = message.meta !== undefined && !stays(message);
+    if (moving) {
+      landing.push(message);
       continue;
     }
-    if (isReorderStop(m) && pending.length > 0) {
-      for (const a of pending) reversed.push(a);
-      reversed.push(m);
-      pending.length = 0;
-    } else {
-      reversed.push(m);
-    }
+    const group = { fixed: message, moved: [] as ProviderMessage[] };
+    groups.push(group);
+    if (isReorderStop(message)) landing = group.moved;
   }
-  for (const a of pending) reversed.push(a);
-  return reversed.reverse();
+  const out: ProviderMessage[] = [...top];
+  for (const group of groups) out.push(group.fixed, ...group.moved);
+  return out;
 }
 
-/** claude's `$It`: `tool_result` blocks first, everything else after, each in order. */
+/** A merged turn's blocks with every `tool_result` first. */
 function hoistToolResults(blocks: ContentBlock[]): ContentBlock[] {
-  const results: ContentBlock[] = [];
-  const rest: ContentBlock[] = [];
-  for (const b of blocks) (b.type === "tool_result" ? results : rest).push(b);
+  const results = blocks.filter((b) => b.type === "tool_result");
+  const rest = blocks.filter((b) => b.type !== "tool_result");
   return [...results, ...rest];
 }
 
-/** claude's `NJn` (an ordinary user message joining the previous one). */
+/** An ordinary user message's blocks joining the previous user-role message's. */
 function joinUserBlocks(prev: ContentBlock[], next: ContentBlock[]): ContentBlock[] {
   const last = prev[prev.length - 1];
   const first = next[0];
-  if (last?.type === "text" && first?.type === "text") return [...prev.slice(0, -1), { ...last, text: `${last.text}\n` }, ...next];
+  if (last !== undefined && last.type === "text" && first !== undefined && first.type === "text") {
+    return [...prev.slice(0, -1), { ...last, text: `${last.text}\n` }, ...next];
+  }
   return [...prev, ...next];
 }
 
+const SMOOSH_EXEMPT_TAG = "<system-reminder>\n";
+const SMOOSH_EXEMPT_BODIES = ["<system>authentic event nonces for this delivery: ", "<event "] as const;
+
 /**
- * claude's `NMe`: a reminder that must never be folded into a tool result (its poll-event
- * deliveries). Ported literally; Winter produces neither prefix today, so this only keeps a
- * claude-written transcript's shape intact on resume.
+ * A reminder that must never be folded into a tool result (event deliveries). Winter produces
+ * neither prefix today; this only keeps a claude-written transcript's shape intact on resume.
  */
 export function isSmooshExempt(text: string): boolean {
-  if (!text.startsWith("<system-reminder>\n")) return false;
-  const inner = text.slice(18);
-  return inner.startsWith("<system>authentic event nonces for this delivery: ") || inner.startsWith("<event ");
+  if (!text.startsWith(SMOOSH_EXEMPT_TAG)) return false;
+  const rest = text.slice(SMOOSH_EXEMPT_TAG.length);
+  return SMOOSH_EXEMPT_BODIES.some((prefix) => rest.startsWith(prefix));
 }
 
 type ToolResultBlock = Extract<ContentBlock, { type: "tool_result" }>;
 type TextBlock = Extract<ContentBlock, { type: "text" }>;
 
 /**
- * claude's `IMe`: fold trailing text blocks INTO a tool result. `null` when the result carries a
- * `tool_reference` (claude refuses to fold into those).
+ * Folds trailing text blocks INTO a tool result. `null` when the result cannot take them (it carries
+ * a `tool_reference`, or -- WS-23 -- it loaded tools).
  */
 export function foldTextIntoToolResult(result: ToolResultBlock, texts: TextBlock[]): ToolResultBlock | null {
   if (texts.length === 0) return result;
   const content = result.content;
   if (Array.isArray(content) && content.some((b) => b.type === "tool_reference")) return null;
-  // WS-23 (midconv, live gate): Winter's engine never holds `tool_reference` blocks -- it holds
-  // `loadedTools`, which the Anthropic adapter turns into them -- so the check above alone never fires
-  // for Winter's own results. A result that loaded tools refuses the fold the same way.
-  if ((result.loadedTools?.length ?? 0) > 0) return null;
+  if (Array.isArray(result.loadedTools) && result.loadedTools.length > 0) return null;
   if (typeof content === "string") {
-    const joined = [content.trim(), ...texts.map((t) => t.text.trim())].filter((s) => s.length > 0).join("\n\n");
-    return { ...result, content: joined };
+    const pieces = [content.trim(), ...texts.map((t) => t.text.trim())].filter((piece) => piece.length > 0);
+    return { ...result, content: pieces.join("\n\n") };
   }
-  const merged: ContentBlock[] = [];
+  // Array content: adjacent text runs collapse into one fresh text block; any other block splits runs.
+  const folded: ContentBlock[] = [];
   for (const block of [...content, ...texts]) {
     if (block.type !== "text") {
-      merged.push(block);
+      folded.push(block);
       continue;
     }
     const trimmed = block.text.trim();
     if (trimmed.length === 0) continue;
-    const tail = merged[merged.length - 1];
-    if (tail?.type === "text") merged[merged.length - 1] = { ...tail, text: `${tail.text}\n\n${trimmed}` };
-    else merged.push({ type: "text", text: trimmed });
+    const tail = folded[folded.length - 1];
+    if (tail !== undefined && tail.type === "text") folded[folded.length - 1] = { type: "text", text: `${tail.text}\n\n${trimmed}` };
+    else folded.push({ type: "text", text: trimmed });
   }
-  return { ...result, content: merged };
+  return { ...result, content: folded };
 }
 
-/** claude's `$Jn` on its default (flag-off) path: an attachment joining the previous user message. */
+/** An attachment's blocks joining the previous user-role message's (WS-23: never into a result that loaded tools). */
 function joinAttachmentBlocks(prev: ContentBlock[], next: ContentBlock[]): ContentBlock[] {
   const last = prev[prev.length - 1];
-  if (last?.type !== "tool_result") return [...prev, ...next];
-  // WS-23 (midconv, live gate): never into a ToolSearch result that loaded tools. Its `loadedTools` become
-  // `tool_reference` blocks on a deferred-loading row, and a result carrying those must carry nothing
-  // else (the API's 400 "Tool definitions/code execution functions cannot be mixed with other content").
-  // claude's own `IMe` refuses to fold into a reference-carrying result for the same reason; the
-  // attachment stays a text block after the result, in the same user message.
-  if ((last.loadedTools?.length ?? 0) > 0) return [...prev, ...next];
+  if (last === undefined || last.type !== "tool_result") return [...prev, ...next];
+  // A result that loaded tools carries nothing else; the attachment stays its own block.
+  if (Array.isArray(last.loadedTools) && last.loadedTools.length > 0) return [...prev, ...next];
   if (next.some((b) => b.type === "text" && isSmooshExempt(b.text))) return [...prev, ...next];
   if (typeof last.content === "string" && next.every((b) => b.type === "text")) {
-    // `IMe` with string content never returns null, and the text-only filter it applies to an
-    // errored result is a no-op here because every added block is already text.
-    const folded = foldTextIntoToolResult(last, next as TextBlock[]) ?? last;
-    return [...prev.slice(0, -1), folded];
+    const folded = foldTextIntoToolResult(last, next as TextBlock[]);
+    return [...prev.slice(0, -1), folded ?? last];
   }
   return [...prev, ...next];
 }
 
 /**
  * The live request's message list: `history` with the index-0 context prepended, attachments
- * reordered and consecutive user-role messages merged, exactly as the pinned binary builds it.
+ * reordered and consecutive user-role messages merged, in the layout claude's requests have.
  * Never mutates `history`. Assistant messages pass through untouched (their own merge is the
  * adapters' business, as before).
  */
@@ -309,9 +306,9 @@ export function buildRequestMessages(history: readonly ProviderMessage[], userCo
 // for its turn (`perTurnEffort`), and the markers are a pure function of those annotations, the frozen
 // top-level value and the live level -- so turn N+1 re-derives turn N's markers byte-identically, and a
 // resumed session (whose rebuilt messages carry the same two fields off the transcript) derives them at
-// the same positions. That is claude's own resume rule (its bundle's `Gyo`/`lRt`: each user message
-// takes the effort of the assistant reply after it, `perTurnEffort ?? effort`, and a marker is emitted
-// only where the level changes), applied to live requests too so there is one code path.
+// the same positions. claude's resumed sessions behave the same way (each user message takes the
+// effort of the assistant reply after it, `perTurnEffort ?? effort`, and a marker appears only where
+// the level changes); Winter applies that rule to live requests too, so there is one code path.
 //
 // DIVERGENCE FROM claude 2.1.282, deliberate: claude attaches the effort to the system message it sends
 // AFTER the user message (its `# Environment` turn), and on the same request also moves the top-level
@@ -503,8 +500,8 @@ export function unregisterSessionContextReload(sessionId: string, agentId?: stri
 
 /**
  * EXPLICIT RELOAD: drop a live session's memoized userContext/systemContext so its next request
- * re-reads the instructions files, the memory index and the git snapshot (claude does the same on a
- * `reload_claude_md`-style request). `false` when no such session is running.
+ * re-reads the instructions files, the memory index and the git snapshot (claude re-reads them on an
+ * explicit reload too). `false` when no such session is running.
  */
 export function reloadSessionContext(sessionId: string, agentId?: string): boolean {
   const clear = contextReloaders.get(layoutKey(sessionId, agentId));

@@ -1,21 +1,18 @@
 // WS-21 §6.3 item 4 (F17): `@import` expansion, claude's tier rule.
 //
-// TOKEN GRAMMAR ported from the pinned reference's `extractIncludePathsFromTokens` (leaked source,
-// `src/utils/claudemd.ts`): `@path`, `@./path`, `@~/path` or `@/path`, a run of non-whitespace
-// characters with `\ ` as an escaped space, a trailing `#fragment` stripped before resolution. A
-// BARE `@path` (no `./` prefix) is relative, identically to `@./path` -- the reference's own
-// doc comment says so verbatim. NOT REBUILT FROM MEMORY: the regex and the path-shape validity
-// check below are the reference's, adapted (Winter has no `marked`/YAML dependency anywhere in this
-// workspace -- subagents/definitions.ts's header states the same "no new dependency" constraint --
-// so code-span/code-block skipping is done with a small hand-rolled scanner instead of a markdown
-// lexer, never by guessing the token grammar itself).
+// TOKEN GRAMMAR (claude's documented `@path` import syntax): `@path`, `@./path`, `@~/path` or
+// `@/path`, a run of non-whitespace characters with `\ ` as an escaped space, a trailing `#fragment`
+// stripped before resolution. A BARE `@path` (no `./` prefix) is relative, identically to `@./path`.
+// Code-span/code-block skipping is done with a small hand-rolled scanner rather than a markdown lexer
+// (Winter has no `marked` dependency anywhere in this workspace -- subagents/definitions.ts's header
+// states the same "no new dependency" constraint).
 //
-// WHAT DIFFERS FROM THE REFERENCE, deliberately: claude's own importer adds each included file as a
-// SEPARATE context entry ahead of the including file and never touches the `@path` text in place.
-// This function does an INLINE EXPANSION instead (the brief's own interface: one `content` string
-// out), because winter-md.ts's `WinterMdBlock`/rules.ts's `LoadedRule` are both already "one string
-// per file" shapes with no second-entry channel to grow one into. The net effect the model sees is
-// the same: the referenced content is present, once, reachable from the importing file.
+// WHAT DIFFERS FROM claude, deliberately: claude adds each included file as a SEPARATE context entry
+// ahead of the including file and never touches the `@path` text in place. This function does an
+// INLINE EXPANSION instead (the brief's own interface: one `content` string out), because
+// winter-md.ts's `WinterMdBlock`/rules.ts's `LoadedRule` are both already "one string per file"
+// shapes with no second-entry channel to grow one into. The net effect the model sees is the same:
+// the referenced content is present, once, reachable from the importing file.
 //
 // TIER SCOPE (F17, pinned): a USER-tier file follows an `@import` ANYWHERE (`includeExternal`,
 // unrestricted). A PROJECT or LOCAL file follows one only when the resolved target is inside
@@ -51,21 +48,35 @@ export interface ExpandImportsResult {
 
 const DEFAULT_MAX_DEPTH = 5;
 
-// (leading whitespace-or-start, the raw "@token" text after the "@"). A run of non-whitespace,
-// non-backslash characters, or an escaped space (`\ `) -- ported verbatim from the reference.
-const IMPORT_TOKEN_RE = /(^|\s)@((?:[^\s\\]|\\ )+)/g;
+/**
+ * A fresh global pattern for `@` import tokens: group 1 is what precedes the `@` (the start of the
+ * text, or one whitespace character), group 2 the raw token text after the `@`.
+ */
+function importTokenPattern(): RegExp {
+  // `^` without the `m` flag is the start of the scanned text only; a token at a later line start is
+  // matched through the newline before it. A token unit is any non-whitespace, non-backslash
+  // character, or a backslash-escaped space.
+  return /(^|\s)@((?:[^\s\\]|\\ )+)/g;
+}
 
-/** claude's own path-shape gate, ported verbatim: `@path`, `@./path`, `@~/path`, `@/path` (never bare `@/`), or a bare relative path that doesn't start with punctuation. */
-function isValidImportPath(path: string): boolean {
-  if (path.startsWith("./") || path.startsWith("~/")) return true;
-  if (path.startsWith("/") && path !== "/") return true;
-  return !path.startsWith("@") && !/^[#%^&*()]/.test(path) && /^[a-zA-Z0-9._-]/.test(path);
+/** The first characters a bare relative import path may start with. */
+const BARE_IMPORT_START = /^[A-Za-z0-9._-]/;
+
+/** The import path a raw token names (fragment cut, escaped spaces restored), or `undefined` when it is not a valid import. */
+function importTokenPath(rawToken: string): string | undefined {
+  const hash = rawToken.indexOf("#");
+  const withoutFragment = hash === -1 ? rawToken : rawToken.slice(0, hash);
+  if (withoutFragment.length === 0) return undefined;
+  const path = withoutFragment.replaceAll("\\ ", " ");
+  if (path.startsWith("./") || path.startsWith("~/")) return path;
+  if (path.startsWith("/")) return path === "/" ? undefined : path;
+  return BARE_IMPORT_START.test(path) ? path : undefined;
 }
 
 function resolveImportPath(token: string, containingFileDir: string): string {
   if (token.startsWith("~/")) return resolve(homedir(), token.slice(2));
   if (token.startsWith("/")) return resolve(token);
-  return resolve(containingFileDir, token); // "./x" or a bare relative "x" -- claude treats them alike
+  return resolve(containingFileDir, token); // "./x" or a bare relative "x" -- both relative to the file
 }
 
 /**
@@ -174,13 +185,9 @@ function expandTextRun(text: string, containingFileDir: string, depth: number, c
 }
 
 function replaceImportTokens(text: string, containingFileDir: string, depth: number, ctx: ExpandCtx): string {
-  return text.replace(IMPORT_TOKEN_RE, (full: string, leading: string, rawToken: string) => {
-    let token = rawToken;
-    const hashIndex = token.indexOf("#");
-    if (hashIndex !== -1) token = token.slice(0, hashIndex);
-    if (token.length === 0) return full; // "@#fragment" alone -- nothing to import
-    token = token.replace(/\\ /g, " ");
-    if (!isValidImportPath(token)) return full;
+  return text.replace(importTokenPattern(), (full: string, leading: string, rawToken: string) => {
+    const token = importTokenPath(rawToken);
+    if (token === undefined) return full; // not an import: literal text stays
 
     const resolvedPath = resolveImportPath(token, containingFileDir);
 

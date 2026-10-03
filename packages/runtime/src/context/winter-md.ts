@@ -233,9 +233,8 @@ export function discoverWinterMd(input: WinterMdInput): WinterMdBlock[] {
 
 // --- the claudeMd value (SDK 0.0.16, P16-5) ----------------------------------------------------------
 //
-// claude 0.3.250's `THt`, ported: the fixed header, then one `Contents of <path><label>:` entry per
-// file (content trimmed), joined by blank lines. The header and the labels are claude's own strings
-// (the brief's ruling); the paths are Winter's own files.
+// The fixed header, then one `Contents of <path><label>:` entry per file. The header and the labels
+// are claude's interface strings (the brief's ruling); the paths are Winter's own files.
 
 export const INSTRUCTIONS_CONTEXT_HEADER =
   "Codebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written.";
@@ -257,7 +256,8 @@ export interface InstructionsContextFile {
 
 /** The `claudeMd` userContext value, or `undefined` when no file has content (the key is then omitted). */
 export function renderInstructionsContext(files: readonly InstructionsContextFile[]): string | undefined {
-  const entries = files.filter((f) => f.content.length > 0).map((f) => `Contents of ${f.path}${INSTRUCTIONS_CONTEXT_LABELS[f.kind]}:\n\n${f.content.trim()}`);
+  // Only a truly empty file is skipped; a whitespace-only one still gets its (empty) entry.
+  const entries = files.filter((file) => file.content !== "").map((file) => `Contents of ${file.path}${INSTRUCTIONS_CONTEXT_LABELS[file.kind]}:\n\n${file.content.trim()}`);
   if (entries.length === 0) return undefined;
   return `${INSTRUCTIONS_CONTEXT_HEADER}\n\n${entries.join("\n\n")}`;
 }
