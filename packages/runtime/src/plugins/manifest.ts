@@ -52,67 +52,44 @@ export interface PluginManifest {
   mcpServers?: Record<string, unknown>;
   /**
    * WS-21 fix round 4 (minors, M-3's last bullet): custom workflow source path(s), REPLACING the
-   * default `workflows/` directory rather than adding to it -- confirmed by content search against
-   * the installed claude CLI binary (`opt/homebrew/Caskroom/claude-code@latest`, 2.1.280; the pinned
-   * 2.1.250 was unavailable locally, so this is the closest available build, cited by content, not
-   * by offset): `if(j.workflows){let jn=Array.isArray(j.workflows)?j.workflows:[j.workflows],
-   * qn=await Tb(jn,e,j.name,n,"workflows","Workflow","specified in manifest but",M,B,!1,h);if
-   * (qn.length>0)ve.workflowsPaths=qn}`, and the default directory is populated only through a
-   * SEPARATE `Lt=!j.workflows&&Be` gate a few lines above -- `Lt` is false whenever `j.workflows` is
-   * present at all, regardless of whether any entry resolves. Each entry may name a DIRECTORY
-   * (scanned the same way as the default one) or a single FILE (the SAME `Tb` call site passes
-   * `requireDirectory:!1` for `workflows`, unlike the `!0` it passes for `skills`, which is the
-   * fourth-from-last argument and the one place the two calls differ). `plugins/loader.ts`'s
-   * `resolveManifestComponentOverride` (fix round 5's own generalisation) is where this is resolved
-   * into `PluginBundle.workflowsPaths`.
+   * default `workflows/` directory rather than adding to it, as claude does: the default directory is
+   * not read whenever the key is present at all, regardless of whether any entry resolves. Each entry
+   * may name a DIRECTORY (scanned the same way as the default one) or a single FILE.
+   * `plugins/loader.ts`'s `resolveManifestComponentOverride` (fix round 5's own generalisation) is
+   * where this is resolved into `PluginBundle.workflowsPaths`.
    */
   workflows?: string | string[];
   /**
    * WS-21 fix round 5: the same custom-path-override shape as `workflows` above, for the built-in
-   * `agents/` component -- content-search confirmed against the installed claude CLI binary
-   * (2.1.280): `if(pt)ve.agentsPath=$t;if(j.agents){let jn=Array.isArray(j.agents)?j.agents:
-   * [j.agents],qn=await Tb(jn,e,j.name,n,"agents","Agent","specified in manifest but",M,B,!1,h);if
-   * (qn.length>0)ve.agentsPaths=qn}` -- `pt=!j.agents&&Fe` shadows the default directory on the
-   * key's mere presence, the identical `!j.X&&Y` shape `workflows`' own `Lt` gate has. The CONSUMER
-   * side (dump-confirmed separately, a different chunk of the same binary) stat()s each entry and
-   * branches directory-vs-file: `M.agentsPaths.map(async(he)=>{let ve=await stat(he);if(ve.
-   * isDirectory()){...scan the dir...}else if(...){...one file...}})` -- ported as
-   * `scanPluginAgentsOverride`.
+   * `agents/` component -- the key's mere presence shadows the default directory, and each entry is a
+   * directory (scanned like the default one) or a single agent file. `plugins/loader.ts`'s
+   * `scanPluginAgentsOverride` reads the entries.
    */
   agents?: string | string[];
   /**
    * WS-21 fix round 5: the same custom-path-override shape as `workflows`/`agents`, for `commands`
-   * -- PLUS an inline `{<name>: {source?: string; content?: string}}` object-map form claude's own
-   * `eqt` also accepts (content-search confirmed against the installed claude CLI binary, 2.1.280),
-   * letting a manifest embed a command's text directly instead of pointing at a file. Winter does
-   * NOT port the inline form this round (`plugins/loader.ts`'s `resolveCommandsManifestOverride` has
-   * the full disclosed-scope note); it is typed here only so a manifest using it is not silently
-   * miscast, and so the shadow-on-presence check still fires for it.
+   * -- PLUS an inline `{<name>: {source?: string; content?: string}}` object-map form claude also
+   * accepts, letting a manifest embed a command's text directly instead of pointing at a file. Winter
+   * does NOT support the inline form yet (`plugins/loader.ts`'s `resolveCommandsManifestOverride`
+   * warns about it); it is typed here only so a manifest using it is not silently miscast, and so the
+   * shadow-on-presence check still fires for it.
    */
   commands?: string | string[] | Record<string, { source?: string; content?: string }>;
   /**
-   * WS-21 fix round 5: `skills` is a manifest custom-path override too, but content-search confirmed
-   * against the installed claude CLI binary (2.1.280) shows a DIFFERENT precedence than every other
-   * component here -- ADDITIVE, not shadow-on-presence. The builder's own gate (`_t=Le`, no `!j.
-   * skills` negation, unlike `commands`' `ht=!j.commands&&Me`/`agents`' `pt=!j.agents&&Fe`/
-   * `workflows`' `Lt=!j.workflows&&Be`) sets the default `ve.skillsPath` REGARDLESS of whether
-   * `j.skills` is also present; the CONSUMER (a separate chunk of the same binary) confirms it:
-   * `if(h.skillsPath){...load the default...}if(h.skillsPaths){...ALSO load every override entry...}`
-   * -- both run, never either/or. Consistent with this: `skills` is ABSENT from the
-   * `folder-shadowed-by-manifest` tuple list (`["commands",...],["agents",...],["outputStyles",...],
-   * ["themes",...]` -- no `"skills"` entry), so no shadow warning is possible for it.
-   * `plugins/loader.ts`'s `scanPluginSkillsOverride` is where this is resolved and merged.
+   * WS-21 fix round 5: `skills` is a manifest custom-path override too, but with a DIFFERENT
+   * precedence than every other component here -- ADDITIVE, not shadow-on-presence: claude loads the
+   * default `skills/` directory AND every override entry, never either/or, and never reports the
+   * default skills folder as shadowed. Each entry must be a directory (a parent of skill
+   * directories). `plugins/loader.ts`'s `resolvePluginSkills` is where this is resolved and merged.
    */
   skills?: string | string[];
   /**
    * WS-21 fix round 5: the same custom-path-override shape as `agents`/`workflows` (shadow-on-
-   * presence, `requireDirectory:false`) for `output-styles` -- content-search confirmed against the
-   * installed claude CLI binary (2.1.280): `gt=j.outputStyles` (note the CAMEL-CASE manifest key,
-   * unlike the kebab-case default DIRECTORY name `output-styles/`), `Rt=!gt&&He` shadows the default
-   * on presence, and `if(gt){...Tb(...,"output-styles","Output style",...,!1,...);if(qn.length>0)
-   * ve.outputStylesPaths=qn}`. Resolved LAZILY (unlike commands/agents/skills, which are eagerly
-   * scanned at load time): `context/output-styles.ts`'s `PluginOutputStyleSource.outputStylesPaths`
-   * is where a `<plugin>:<style>` lookup actually reads it.
+   * presence, a bare file allowed) for `output-styles` -- note the CAMEL-CASE manifest key, unlike
+   * the kebab-case default DIRECTORY name `output-styles/`. Resolved LAZILY (unlike
+   * commands/agents/skills, which are eagerly scanned at load time):
+   * `context/output-styles.ts`'s `PluginOutputStyleSource.outputStylesPaths` is where a
+   * `<plugin>:<style>` lookup actually reads it.
    */
   outputStyles?: string | string[];
   [key: string]: unknown;

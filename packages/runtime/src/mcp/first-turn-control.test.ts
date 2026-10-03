@@ -1,6 +1,6 @@
 // WS-24 (engine lane, item 3): control requests are answered DURING the first-turn MCP wait.
 //
-// The wait (claude's `km`, see mcp/lifecycle.ts's `firstTurnMcpWaitDeadlineMs`) used to run before the
+// The wait (see mcp/lifecycle.ts's `firstTurnMcpWaitDeadlineMs`) used to run before the
 // engine's input pump started, so every control request queued behind it -- up to MCP_TIMEOUT behind a
 // hung explicit server. The pump now reads while the servers connect; a user message still waits for them.
 import { describe, expect, test } from "bun:test";

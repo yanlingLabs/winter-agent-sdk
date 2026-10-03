@@ -1,5 +1,5 @@
 // Contract §8 (2026-09-17 addendum): the per-tool ACTIVITY TEXT an agent's `task_progress.description`
-// carries -- the pin's own `getActivityDescription`, re-derived rule by rule from the contract table
+// carries -- the same activity text claude shows, derived rule by rule from the contract table
 // (never copied). The child engine computes it from each recorded `tool_use` block's input
 // (child-engine.ts's `observe()`), and `tools/impl/agent.ts` falls back to the task description when
 // this returns `undefined`.

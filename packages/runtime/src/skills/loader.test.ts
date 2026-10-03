@@ -1,5 +1,5 @@
-// WS-21 §6.3 item 1 (F6, F7): the skill loader must follow symlinked skill directories, exactly as
-// claude does (`entry.isDirectory() || entry.isSymbolicLink()`). A dangling link is skipped silently,
+// WS-21 §6.3 item 1 (F6, F7): the skill loader must follow symlinked skill directories, as claude
+// does. A dangling link is skipped silently,
 // the same way a subdirectory with no SKILL.md is skipped silently today.
 import { describe, test, expect, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 describe("scanSkillRoot: symlinked entries (WS-21 §6.3 item 1)", () => {
-  test("a symlinked skill directory loads like a real one (claude: isDirectory() || isSymbolicLink())", () => {
+  test("a symlinked skill directory loads like a real one", () => {
     const root = mkTemp("skills-");
     const real = mkTemp("real-");
     mkdirSync(join(real, "linked-skill"));

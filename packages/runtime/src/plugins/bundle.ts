@@ -85,12 +85,10 @@ export interface PluginBundle {
    * WS-21 fix round 4 (minors, M-3's last bullet): the manifest's own `workflows` key (`string |
    * string[]`, `manifest.ts`'s own citation), resolved to absolute paths that exist and do not
    * escape the plugin root -- present iff the manifest declares the key AND at least one entry
-   * resolved (the pinned binary's own `if(qn.length>0)ve.workflowsPaths=qn`, manifest.ts's
-   * citation). REPLACES `workflowsPath` rather than adding to it, and the replacement fires on the
-   * key's mere PRESENCE, not on whether anything resolved (the pinned binary's `Lt` gate is
-   * `!j.workflows&&...`, checked independently of `qn.length`): a plugin whose every declared entry
-   * is invalid ends up with NEITHER field set, exactly as claude leaves it with no workflows source
-   * at all rather than silently falling back to the shadowed default directory. Each entry may be a
+   * resolved. REPLACES `workflowsPath` rather than adding to it, and the replacement fires on the
+   * key's mere PRESENCE, not on whether anything resolved: a plugin whose every declared entry is
+   * invalid ends up with NEITHER field set, exactly as claude leaves it with no workflows source at
+   * all rather than silently falling back to the shadowed default directory. Each entry may be a
    * directory or a single workflow file.
    */
   workflowsPaths?: string[];

@@ -82,14 +82,11 @@ describe("resolveWorkflowByName -- `.winter/workflows/<name>.js` (WS-11 §1.3)",
 });
 
 // WS-21 §6.3 item 1, corrected in the batch-2 fix round: `PluginBundle.workflowsPath` was resolved
-// by L1b's loader but had no consumer. Naming/loading now matches the PINNED BINARY exactly (claude
-// CLI 2.1.250 / agent-sdk 0.3.250 -- confirmed via its own disassembled workflow-discovery module,
-// not claude-code-reference, which has no "workflows" concept at all): a plugin workflow's identity
-// is `${pluginName}:${meta.name}`, where `meta.name` is the SCRIPT'S OWN parsed meta block (via
+// by L1b's loader but had no consumer. Naming/loading now matches claude: a plugin workflow's
+// identity is `<pluginName>:<meta.name>`, where `meta.name` is the SCRIPT'S OWN parsed meta block (via
 // `parseWorkflowMeta`, this file's own `SCRIPT` fixture declares `meta.name: "build"`) -- NEVER the
-// filename, the same way claude's `v()` builds `` `${plugin}:${r.meta.name}` `` after a lightweight,
-// non-executing meta parse (`Kp(e, {validateBody: false})`), not a filename join. A file whose meta
-// fails to parse is silently skipped (claude's own "has invalid meta ... skipping"), not an error.
+// filename. A file whose meta fails to parse is silently skipped (claude warns "has invalid meta ...
+// skipping"), not an error.
 // DELIBERATELY UNGATED by `trustedWorkspace` (a plugin is loaded because the host/user already
 // decided to, matching every other plugin resource in this codebase).
 describe("resolveWorkflowByName -- plugin workflows (WS-21 §6.3 item 1, batch-2 fix round: meta.name identity)", () => {
@@ -188,7 +185,7 @@ describe("resolveWorkflowByName / listWorkflowsForListing -- a plugin's workflow
     expect(resolved.source_kind).toBe("plugin");
   });
 
-  test("a workflowsPaths entry may be a BARE FILE, not only a directory -- claude's own Tb call passes requireDirectory:false for workflows", () => {
+  test("a workflowsPaths entry may be a BARE FILE, not only a directory -- claude accepts a file there too", () => {
     const dir = mkdtempSync(join(tmpdir(), "winter-wf-override-file-"));
     const file = join(dir, "one-workflow.js");
     writeFileSync(file, SCRIPT);
@@ -235,21 +232,21 @@ describe("resolveWorkflowByName / listWorkflowsForListing -- a plugin's workflow
   });
 });
 
-// SV-5 fix round 3 (M-3 + I-4 + the user-tier bullet): dump-confirmed against claude's own
-// `h()`/`D()`/`M()`/`b()`/`k()` workflow-discovery functions (claude CLI 2.1.250 / agent-sdk 0.3.250).
+// SV-5 fix round 3 (M-3 + I-4 + the user-tier bullet): case sensitivity, the size cap, duplicate
+// names within a directory, the user tier and source gating, each matching claude's discovery.
 describe("resolveWorkflowByName -- fix round 3: case sensitivity, size cap, duplicate override, user tier, settingSources (M-3 / I-4)", () => {
   function scriptNamed(name: string, description = "d"): string {
     return `export const meta = { name: "${name}", description: "${description}" };\nreturn 1;`;
   }
 
-  test("`.js` is matched CASE-SENSITIVELY -- a `.JS` file is never discovered, matching claude's un-lower-cased `endsWith(\".js\")`", () => {
+  test("`.js` is matched CASE-SENSITIVELY -- a `.JS` file is never discovered, as in claude", () => {
     const cwd = project();
     writeFileSync(join(cwd, ".winter", "workflows", "Weird.JS"), scriptNamed("shouty"));
     const resolved = resolveWorkflowByName("shouty", { cwd, trustedWorkspace: true });
     expect(resolved.ok).toBe(false);
   });
 
-  test("a script over the pinned 524288-byte cap is silently skipped, like an unreadable file", () => {
+  test("a script over the 524288-byte cap is silently skipped, like an unreadable file", () => {
     const cwd = project();
     const oversize = `${scriptNamed("huge")}\n// ${"x".repeat(600_000)}`;
     writeFileSync(join(cwd, ".winter", "workflows", "huge.js"), oversize);
@@ -264,7 +261,7 @@ describe("resolveWorkflowByName -- fix round 3: case sensitivity, size cap, dupl
     expect(resolved.ok).toBe(true);
   });
 
-  test("a duplicate meta.name within one directory: the LATER file in sorted order overrides the earlier one (claude's own `k`/`S`)", () => {
+  test("a duplicate meta.name within one directory: the LATER file in sorted order overrides the earlier one", () => {
     const cwd = project();
     writeFileSync(join(cwd, ".winter", "workflows", "a-first.js"), `export const meta = { name: "dup", description: "first" };\nreturn "first";`);
     writeFileSync(join(cwd, ".winter", "workflows", "z-last.js"), `export const meta = { name: "dup", description: "last" };\nreturn "last";`);
@@ -458,8 +455,8 @@ describe("persistWorkflowScript -- capture (3)'s durable location, and P5-B's ca
   });
 });
 
-// Fix round 4 (I-E, the router same-view test): claude's own m() carries whenToUse and phases
-// alongside name/description for every discovered workflow -- listWorkflowsForListing must carry
+// Fix round 4 (I-E, the router same-view test): claude's workflow command carries whenToUse and
+// phases alongside name/description for every discovered workflow -- listWorkflowsForListing must carry
 // them through too, so a synthetic skill prompt (buildWorkflowSkillPrompt) can include them.
 describe("listWorkflowsForListing -- I-E: whenToUse and phases carried through", () => {
   test("a workflow declaring whenToUse and phases has both in its listing entry", () => {
@@ -516,7 +513,7 @@ describe("buildWorkflowSkillPrompt -- I-E: the Winter-authored synthetic skill p
   // PRIMITIVE level -- store.test.ts's own end-to-end coverage (via the real command resolver) is in
   // production-wiring.test.ts, since building a real FilesystemCommandResolver is that file's job.
   //
-  // Fix round 6 (a promoted minor, the re-review against the pinned 2.1.250 dump): the token is
+  // Fix round 6 (a promoted minor): the token is
   // `$ARGUMENTS_JSON` (substitutes with `JSON.stringify(args)`, already quoted), not the raw
   // `$ARGUMENTS` inside hand-written quotes round 5 shipped -- superseding this test's own round-5
   // string, disclosed as such.
@@ -527,11 +524,11 @@ describe("buildWorkflowSkillPrompt -- I-E: the Winter-authored synthetic skill p
     expect(prompt).not.toContain('args: "$ARGUMENTS"'); // the round-5 shape, superseded
   });
 
-  test("the prompt text is WINTER-AUTHORED -- it does not reproduce claude's own dump wording", () => {
+  test("the prompt text is WINTER-AUTHORED -- it does not reuse claude's own prompt wording", () => {
     const prompt = buildWorkflowSkillPrompt({ name: "x", description: "d", source: "project", path: "/x/x.js" });
-    // A loose sanity check: the pinned binary's own progressMessage string ("running dynamic
-    // workflow") is never reproduced verbatim, matching the ruling that prompt CONTENT stays
-    // Winter's own wording even where interface strings may ship verbatim elsewhere.
+    // A loose sanity check: claude's progress message for a workflow command ("running dynamic
+    // workflow") does not appear, matching the ruling that prompt CONTENT stays Winter's own wording
+    // even where interface strings may ship verbatim elsewhere.
     expect(prompt).not.toContain("running dynamic workflow");
   });
 });

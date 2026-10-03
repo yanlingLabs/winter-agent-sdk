@@ -462,7 +462,7 @@ describe("WS-21: settingsEnv (per-tier env filter) and config.storeHome/pluginCa
 // the engine) since both fixes are wiring-boundary facts: whether the passed-in `env` object was
 // mutated, and whether the settings view the session runs on actually had `apiKeyHelper` filtered.
 describe("WS-21 §6.3 item 5 (fix round 1): settingsEnv reaches the child env, and host-managed filters apiKeyHelper", () => {
-  test("settingsEnv is applied to the SAME env object the caller passed in, like claude's own Object.assign(process.env, filtered)", async () => {
+  test("settingsEnv is applied to the SAME env object the caller passed in, as claude applies filtered tier env to its own process env", async () => {
     writeSettings(home, { env: { OPENAI_BASE_URL: "http://mirror.example", FOO: "bar" } });
     const env: Record<string, string | undefined> = {};
     const wiring = await buildProductionWiring({
@@ -591,8 +591,8 @@ describe("WS-21 §6.3 item 3 (durable-write audit, fix round 2): the checkpoint 
 
 // Fix round 17, add-on A: the router's same-view escape-table row, measured the router's way (was a
 // permission asked? did `sp ` get written?) through the REAL engine and the real Write tool -- plus the
-// check that row cannot make: WHERE the write landed. claude's permission step sees `ht(file_path)`
-// (trimmed; evaluator.test.ts's add-on A block has the dump trail), and so does its Write, so an
+// check that row cannot make: WHERE the write landed. claude's permission step sees the TRIMMED
+// `file_path` (evaluator.test.ts's add-on A block), and so does its Write, so an
 // escaped trailing-space deny rule protects a name no Write call can reach: the call is allowed and
 // writes `<root>/sp`. The unescaped rule meets the trimmed path and denies. Neither ever asks.
 describe("fix round 17 add-on A: the escape-table trailing-space row through the real engine", () => {
@@ -641,8 +641,8 @@ describe("fix round 17 add-on A: the escape-table trailing-space row through the
 // Fix round 19 (the R.3 live gate, BLOCKING): a stdio MCP server declared in the RUN FOLDER's
 // `.winter.json` connected, but its tools never reached the model on any turn. Driven end to end --
 // the real `--run` protocol, a real spawned server (mcp/transports/__fixtures__/ping-server.ts), the
-// run folder as WINTER_HOME -- because both halves of the fix live on this path: claude's first-turn
-// MCP wait (`km`, dump byte 34109614) so `system/init` and turn 1 carry a server that connects within
+// run folder as WINTER_HOME -- because both halves of the fix live on this path: a first-turn MCP
+// wait, as claude has, so `system/init` and turn 1 carry a server that connects within
 // the deadline, and a tool list rebuilt from the live registry every turn so a later connect lands on
 // the next one.
 describe("fix round 19: run-folder MCP servers' tools are offered to the model", () => {
@@ -738,11 +738,10 @@ describe("fix round 19: run-folder MCP servers' tools are offered to the model",
   );
 
   // Fix round 20 (the round-19 re-review): claude's SDK path waits up to 2000 ms for pending servers
-  // before its FIRST turn (`km`, dump byte 34109614, awaited at 34017496) and builds `system/init`
-  // inside the query after that wait (33881679). So a server that connects within the wait is listed
-  // `connected` in init and offered on turn 1; a slower one is `pending` at init, and a turn-1 call to
-  // its tool is refused as claude refuses a tool it did not offer (`IQ`, 18510407:
-  // `<tool_use_error>Error: No such tool available: <name>…</tool_use_error>`), then offered on turn 2.
+  // before its FIRST turn and builds `system/init` after that wait. So a server that connects within
+  // the wait is listed `connected` in init and offered on turn 1; a slower one is `pending` at init,
+  // and a turn-1 call to its tool is refused as claude refuses a tool it did not offer
+  // (`<tool_use_error>Error: No such tool available: <name>…</tool_use_error>`), then offered on turn 2.
   // The fixture runs under node (pingFixtureCommand), which starts in well under a second.
   test(
     "a server that connects within the 2 s first-turn wait (~800 ms): init lists it connected, turn 1 offers and calls it",
@@ -1304,16 +1303,16 @@ describe("NEW-1: a settings tier's own `error` becomes a wiring warning", () => 
   });
 });
 
-// Fix round 10, item A: `sue` (grammar.ts's `validatePermissionRuleString`), applied at settings
-// LOAD, here -- `buildSettingsRuleSeed`'s one call site reading `permissions.{allow,deny,ask}` from
-// a raw settings object, mirroring claude's own `io`. An invalid entry never becomes an active
-// rule; the warning is claude's own text, verbatim (no Winter tier/path prefix, per the
-// controller's own "the same text" ruling).
-describe("SV-... fix round 10, item A: an invalid settings.json permission rule is skipped with claude's own warning text", () => {
+// Fix round 10, item A: the settings-load rule validator (grammar.ts's `validatePermissionRuleString`),
+// applied at settings LOAD, here -- `buildSettingsRuleSeed`'s one call site reading
+// `permissions.{allow,deny,ask}` from a raw settings object. An invalid entry never becomes an active
+// rule; the warning is claude's text (no Winter tier/path prefix, per the controller's own "the same
+// text" ruling).
+describe("SV-... fix round 10, item A: an invalid settings.json permission rule is skipped with claude's warning text", () => {
   test("Bash() on allow is skipped -- would otherwise widen to the whole tool", async () => {
     writeSettings(home, { permissions: { allow: ["Bash()"] } });
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-sue-allow", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
+      config: { sessionId: "s-rule-check-allow", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -1328,7 +1327,7 @@ describe("SV-... fix round 10, item A: an invalid settings.json permission rule 
   test("WebSearch() on deny is skipped -- would otherwise deny the whole tool with no scope", async () => {
     writeSettings(home, { permissions: { deny: ["WebSearch()"] } });
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-sue-deny", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
+      config: { sessionId: "s-rule-check-deny", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -1343,7 +1342,7 @@ describe("SV-... fix round 10, item A: an invalid settings.json permission rule 
   test("mcp__s__x() is skipped -- an MCP rule names its scope entirely in the tool-name string, never in parens", async () => {
     writeSettings(home, { permissions: { allow: ["mcp__s__x()"] } });
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-sue-mcp", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
+      config: { sessionId: "s-rule-check-mcp", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -1358,7 +1357,7 @@ describe("SV-... fix round 10, item A: an invalid settings.json permission rule 
   test("an invalid rule never poisons its OWN or a SIBLING valid rule in the same file -- only the bad entry is dropped", async () => {
     writeSettings(home, { permissions: { deny: ["Bash()", "Read(secrets/**)"] } });
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-sue-sibling", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
+      config: { sessionId: "s-rule-check-sibling", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -1372,13 +1371,13 @@ describe("SV-... fix round 10, item A: an invalid settings.json permission rule 
     }
   });
 
-  // Fix round 17 (R.3 M-3): claude's `io` (dump byte 12279316 region) warns on a non-string entry in
-  // `permissions.{allow,deny,ask}` -- `Non-string value in ${s} array was removed`, one warning per
-  // entry -- where Winter dropped it silently.
-  test("fix round 17: a non-string permissions entry is removed WITH claude's io warning, one per entry, and the string siblings survive", async () => {
+  // Fix round 17 (R.3 M-3): claude warns on a non-string entry in `permissions.{allow,deny,ask}` --
+  // `Non-string value in <key> array was removed`, one warning per entry -- where Winter dropped it
+  // silently.
+  test("fix round 17: a non-string permissions entry is removed WITH the non-string warning, one per entry, and the string siblings survive", async () => {
     writeSettings(home, { permissions: { allow: ["Read(ok/**)", 42, null], deny: [{ tool: "Bash" }], ask: [true] } });
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-io-nonstring", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+      config: { sessionId: "s-nonstring-entry", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -1392,10 +1391,10 @@ describe("SV-... fix round 10, item A: an invalid settings.json permission rule 
     }
   });
 
-  test("a well-formed rule produces no sue warning at all", async () => {
+  test("a well-formed rule produces no invalid-rule warning at all", async () => {
     writeSettings(home, { permissions: { deny: ["Read(secrets/**)"] } });
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-sue-clean", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
+      config: { sessionId: "s-rule-check-clean", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -1407,11 +1406,11 @@ describe("SV-... fix round 10, item A: an invalid settings.json permission rule 
     }
   });
 
-  // Ruling: `sue` applies ONLY at settings-file load. A rule reaching the runtime through a
-  // DIFFERENT door -- here, an Options-supplied disallowedTools-style string parsed by
-  // `parseRule` directly (round 9's own jr-ported Tool() fold) -- must be UNAFFECTED: `Tool()`
-  // still folds to bare-equivalent there, exactly as round 9 shipped it.
-  test("outside settings.json, parseRule's own jr-ported Tool() fold is untouched -- sue never runs for a non-settings rule string", () => {
+  // Ruling: the settings-load validator applies ONLY at settings-file load. A rule reaching the
+  // runtime through a DIFFERENT door -- here, an Options-supplied disallowedTools-style string parsed
+  // by `parseRule` directly (round 9's Tool() fold) -- must be UNAFFECTED: `Tool()` still folds to
+  // bare-equivalent there, exactly as round 9 shipped it.
+  test("outside settings.json, parseRule's own Tool() fold is untouched -- the settings-load validator never runs for a non-settings rule string", () => {
     const rule = parseRule("Bash()");
     expect(rule.specifier).toEqual({ kind: "wildcardAll" });
     expect(rule.isBareEquivalent).toBe(true);
@@ -2325,8 +2324,8 @@ describe("SV-5: plugin/project/user workflows are listed in all three init surfa
     }
   });
 
-  // Fix round 6 (a promoted minor, the re-review against the pinned 2.1.250 dump): the args value
-  // must be ESCAPED the way claude's own S(e) does it -- end to end, through the REAL command
+  // Fix round 6 (a promoted minor): the args value must be ESCAPED (a `"` and a `\` each take a
+  // backslash) so the invoke line's own quoting holds -- end to end, through the REAL command
   // resolver, with a literal " and \ in the typed args (the ruling's own named test case).
   test("fix round 6: a workflow invoked with a quote and a backslash in its args escapes them, not breaking the invoke line's own quoting", async () => {
     const pluginDir = join(home, "plugin-src", "sv-plugin-escape");
@@ -2674,12 +2673,11 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
     }
   });
 
-  // Fix round 11 ("important" item, claude's own TFt/bl): a SINGLE-`/`-anchored pattern now anchors
-  // to its settings SOURCE's own root instead of staying inert -- `buildSettingsRuleSeed` (this
-  // module) now populates `SourcedRuleEntry.sourceDir` per TIER (`user` -> `winterHome`, every other
-  // tier -> `cwd`, matching claude's own `xXn`/`Wyt`, NOT `dirname(tier.path)` -- see
-  // `buildSettingsRuleSeed`'s own header for the dump citation and why `dirname` was wrong for a
-  // project/local tier specifically), and `deriveSandboxPathsFromRules` threads it through to
+  // Fix round 11 ("important" item): a SINGLE-`/`-anchored pattern now anchors to its settings
+  // SOURCE's own root instead of staying inert -- `buildSettingsRuleSeed` (this module) now populates
+  // `SourcedRuleEntry.sourceDir` per TIER (`user` -> `winterHome`, every other tier -> `cwd`, NOT
+  // `dirname(tier.path)` -- see `buildSettingsRuleSeed`'s own header for why `dirname` was wrong for
+  // a project/local tier specifically), and `deriveSandboxPathsFromRules` threads it through to
   // `resolveFileRuleAbsoluteGlobText`. `home` here is this test's own `writeSettings` target AND the
   // `winterHome` passed to `buildProductionWiring`, so this fixture alone cannot distinguish "anchors
   // to winterHome" from "anchors to dirname(<home>/settings.json)" -- the PROJECT-tier fixture right
@@ -2699,8 +2697,8 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
     }
   });
 
-  // The discriminating fixture: a PROJECT-tier `/`-anchored rule must anchor to `cwd` itself (claude's
-  // own `case"projectSettings":return A(t.cwd)`), never to `<cwd>/.winter` (the project settings
+  // The discriminating fixture: a PROJECT-tier `/`-anchored rule must anchor to `cwd` itself, never
+  // to `<cwd>/.winter` (the project settings
   // FILE's own containing directory) -- a `dirname(tier.path)`-based first draft got this WRONG
   // (advisor-caught: it would have anchored `Edit(/src/**)` to `<cwd>/.winter/src`, a directory that
   // does not exist and that no project author means).
@@ -2748,9 +2746,8 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
   });
 
   // Fix round 17 (R.3 I-1, a WS-21 regression): a `~/` rule anchors at the OS home, as the
-  // evaluator's own `~` resolution does (engine.ts's `permissionHome = homedir()`) and as claude does:
-  // its rule-to-path conversion (`OWe`/`TFt`) leaves `~/` alone and its sandbox normaliser (`Cv`, dump
-  // byte 15283956, through `fv`) expands it to the OS home. Under the router `winterHome` is the
+  // evaluator's own `~` resolution does (engine.ts's `permissionHome = homedir()`) and as claude does
+  // (a `~/` rule's sandbox path is under the OS home). Under the router `winterHome` is the
   // per-run folder, so anchoring there fenced `<run folder>/.aws` and left the real `~/.aws` open.
   // Strings only: nothing here touches the real home.
   test("fix round 17 (I-1): a ~/-anchored Read(...) or Edit(...) deny resolves under os.homedir(), never under the run folder", async () => {
@@ -2882,7 +2879,7 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
     }
   });
 
-  // Fix round 11 (claude's Li/Rt, dump byte 15365905/15282610): the controller's own explicit test
+  // Fix round 11 (glob-shaped deny entries enforced as regexes): the controller's own explicit test
   // shape -- "a real darwin-gated sandbox-exec: an Edit(**/.env) deny blocks tee sub/.env, and a
   // denyWrite glob blocks a matching write." Two separate scenarios below: a RULE-derived glob deny
   // (deriveSandboxPathsFromRules no longer drops it), and a settings.json-CONFIGURED glob deny (the
@@ -2921,7 +2918,7 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
           // write.regexes) -- this inline reproduction predates round 12's denyWriteGlobFixedPrefixes
           // field and never threaded it. CORRECTED disclosure (an earlier version of this comment was
           // WRONG, caught by re-verifying against the actual rendered profile rather than assumed):
-          // `Ch`'s own GLOB branch (buildAncestorRenameBypassBlock) never gave `sub/.env` its own
+          // The ancestor-rename block's GLOB branch (buildAncestorRenameBypassBlock) never gave `sub/.env` its own
           // explicit unlink/create protection at all -- for a glob-shaped entry it emits ONLY a
           // `(literal <fixedPrefix>)` (protecting the prefix DIRECTORY's own identity against a
           // rename-shuffle), never a `(subpath ...)` covering the glob-matched files themselves. What
@@ -3012,7 +3009,7 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
     }
   });
 
-  // Fix round 12 ("Important" item, claude's own Ch/ed): the ancestor-rename-bypass fix, the
+  // Fix round 12 ("Important" item): the ancestor-rename-bypass fix, the
   // controller's own explicit test shape -- "a real darwin-gated sandbox-exec spawn in which the mv
   // sequence is blocked." Renaming a DENIED path's own ancestor out of the way (mv a b), writing
   // inside where it used to be (now reachable as b/...), then renaming it back (mv b a) is exactly
@@ -3079,27 +3076,27 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
     }
   });
 
-  // Fix round 13 ("Important" item 1, claude's own fR): the controller's own explicit test shape --
+  // Fix round 13 ("Important" item 1): the controller's own explicit test shape --
   // "mv .env x is blocked when .env is read-denied and cwd is writable."
   //
-  // Investigated empirically (a genuine finding, not assumed): round 12's OWN `Ch`-port, called on
-  // `denyReadPaths` too (mirroring claude's own `pR` calling `Ch` on its read-deny list), ALREADY
-  // adds `.env`'s own recursive clause to the SAME `file-write-unlink`/`file-write-create` deny set
-  // UNCONDITIONALLY -- confirmed by re-running this exact scenario against round 11's own (pre-Ch)
-  // profile.ts (the bypass succeeds, exitCode 0) versus round 12's own committed profile.ts (already
-  // blocked, exitCode 1, BEFORE any round-13 code exists at all). So THIS specific fixture does not,
-  // on its own, discriminate round 13's own new code from round 12's -- it is still the controller's
-  // own named regression test, kept for that reason, and it still needs to keep passing. The fixture
-  // that DOES discriminate round 13's own distinct contribution -- claude's `fR` gates on "is this
-  // ancestor/prefix itself inside a write root" (`Ch` has no such gate, firing unconditionally) and
-  // carves a NESTED write root back out of an outer read-deny's own unlink protection (`Ch` has no
-  // carve-out mechanism at all) -- is the very next test below.
+  // Investigated empirically (a genuine finding, not assumed): round 12's ancestor-rename block,
+  // applied to `denyReadPaths` too, ALREADY adds `.env`'s own recursive clause to the SAME
+  // `file-write-unlink`/`file-write-create` deny set UNCONDITIONALLY -- confirmed by re-running this
+  // exact scenario against round 11's own profile.ts (the bypass succeeds, exitCode 0) versus round
+  // 12's own committed profile.ts (already blocked, exitCode 1, BEFORE any round-13 code exists at
+  // all). So THIS specific fixture does not, on its own, discriminate round 13's own new code from
+  // round 12's -- it is still the controller's own named regression test, kept for that reason, and
+  // it still needs to keep passing. The fixture that DOES discriminate round 13's own distinct
+  // contribution -- the read-deny unlink protection applies only where the path or its prefix is
+  // itself inside a write root (the ancestor-rename block has no such gate, firing unconditionally),
+  // and a NESTED write root is carved back out of an outer read-deny's own unlink protection (the
+  // ancestor-rename block has no carve-out at all) -- is the very next test below.
   test.skipIf(process.platform !== "darwin")("end to end: mv .env x is blocked by a real sandboxed Bash command when .env is read-denied and cwd is writable", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "winter-r13-fr-scratch-"));
+    const scratch = mkdtempSync(join(tmpdir(), "winter-r13-readdeny-scratch-"));
     try {
       writeSettings(home, { permissions: { deny: [`Read(//${scratch.slice(1)}/.env)`] } });
       const wiring = await buildProductionWiring({
-        config: { sessionId: "s-r13-fr-e2e", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+        config: { sessionId: "s-r13-readdeny-e2e", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
         env: {},
         winterHome: home,
       });
@@ -3152,13 +3149,13 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
     }
   });
 
-  // Fix round 14 (CRITICAL item 1, claude's own pR's own trailing re-permit): the controller's own
-  // explicit test shape -- "cp .env.example .env is allowed" when .env is read-denied and ABSENT
-  // (creating it, unlike the test above's mv onto an EXISTING .env). Round 12's own Ch-port denied
-  // this too (Ch fires unconditionally, with no distinction between creating a fresh file at a
-  // read-denied path and unlinking/renaming an existing one) -- claude's own pR restores exactly this
-  // distinction via its own trailing re-permit: file-write-create is re-allowed, file-write-unlink
-  // stays denied (via fR, round 13, for an EXISTING read-denied path).
+  // Fix round 14 (CRITICAL item 1, the read-deny write re-permit): the controller's own explicit test
+  // shape -- "cp .env.example .env is allowed" when .env is read-denied and ABSENT (creating it,
+  // unlike the test above's mv onto an EXISTING .env). Round 12's ancestor-rename block denied this
+  // too (it fires unconditionally, with no distinction between creating a fresh file at a
+  // read-denied path and unlinking/renaming an existing one); the re-permit that follows the
+  // read-deny rules restores that distinction: file-write-create is re-allowed, file-write-unlink
+  // stays denied (round 13's protection, for an EXISTING read-denied path).
   //
   // The DISCRIMINATING proof that file-write-create is genuinely, fully re-allowed uses `printf`, not
   // `cp` itself -- a genuine, empirically-investigated finding (real sandbox-exec, not assumed): `cp`'s
@@ -3172,16 +3169,15 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
   // left NOTHING on disk). `printf`/`echo`/`/bin/echo` never probe their destination this way, so they
   // round-trip fully -- the test below pins BOTH: the discriminating `printf` write succeeds
   // completely, and `cp` itself is left at its OWN OBSERVED outcome (content created, non-zero exit),
-  // never silently asserted away. Not claude-verified either direction: claude's own `pR` denies
-  // `file-read*` the identical blanket way (`Cs("deny",["file-read*"],u,t)`), so `cp .env.example .env`
-  // "allowed" on claude was very likely a code-reading inference about `file-write-create` alone, not
-  // a measured `cp` invocation -- flagged for the controller rather than assumed either way.
+  // never silently asserted away. Not measured on claude in either direction: whether
+  // `cp .env.example .env` succeeds there was never run, so the "allowed" in the test shape is about
+  // `file-write-create` alone -- flagged for the controller rather than assumed either way.
   test.skipIf(process.platform !== "darwin")("end to end: file-write-create is genuinely re-allowed for a read-denied-but-absent .env -- a printf write round-trips fully; cp's own residual fstat-on-destination gap (pre-existing, unrelated to this fix, not cp-specific) is pinned as observed, not asserted away", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "winter-r14-pr-create-scratch-"));
+    const scratch = mkdtempSync(join(tmpdir(), "winter-r14-create-scratch-"));
     try {
       writeSettings(home, { permissions: { deny: [`Read(//${scratch.slice(1)}/.env)`] } });
       const wiring = await buildProductionWiring({
-        config: { sessionId: "s-r14-pr-create-e2e", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
+        config: { sessionId: "s-r14-create-e2e", cwd, model: "winter-test/echo", settingSources: ["user"] } as unknown as RuntimeConfig,
         env: {},
         winterHome: home,
       });
@@ -3215,7 +3211,7 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
         expect(existsSync(envPath)).toBe(true); // file-write-create succeeded
 
         // Control: .env now EXISTS (even though cp itself reported failure) and is still protected
-        // from unlink/rename (fR, round 13) -- creation being allowed never reopened deletion of an
+        // from unlink/rename (round 13) -- creation being allowed never reopened deletion of an
         // existing read-denied file.
         const movedPath = join(scratch, "x");
         const stillDenied = await runCommand({ ...runOpts, command: `mv ${JSON.stringify(envPath)} ${JSON.stringify(movedPath)}` });
@@ -3244,17 +3240,16 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
 
   // RESOLVED (round 14, CRITICAL item 1): round 13's own first draft of this test asserted the
   // OPPOSITE outcome (nested write root writable) and failed against a REAL sandbox-exec, because
-  // claude's own `Ch` (round 12) has NO carve-out mechanism of its own -- called on the SAME
-  // `denyReadPaths` list `fR` is, it rendered an EARLIER, UNCONDITIONAL `(deny file-write-unlink
-  // file-write-create (subpath <deniedDir>) ...)` clause with no exemption for the nested write root,
-  // and round 12's own port of `pR` never carried `pR`'s OWN trailing re-permit -- so nothing after
-  // `Ch` ever re-opened it. Round 14 ports that missing re-permit (`buildReadDenyWritePermitBlock`,
-  // sandbox/profile.ts), and a real sandbox-exec run now confirms it restores exactly the outcome
-  // `fR`'s own carve-out was always independently correct about: the nested write root is writable
-  // again. Re-verified here, not assumed -- this is the SAME fixture round 13 used to disclose the
+  // round 12's ancestor-rename block has NO carve-out mechanism of its own -- applied to the SAME
+  // `denyReadPaths` list as round 13's protection, it rendered an EARLIER, UNCONDITIONAL `(deny
+  // file-write-unlink file-write-create (subpath <deniedDir>) ...)` clause with no exemption for the
+  // nested write root, and nothing after it re-opened it. Round 14 adds the re-permit
+  // (`buildReadDenyWritePermitBlock`, sandbox/profile.ts), and a real sandbox-exec run now confirms it
+  // restores exactly the outcome round 13's carve-out was always independently correct about: the
+  // nested write root is writable again. Re-verified here, not assumed -- this is the SAME fixture round 13 used to disclose the
   // limitation, now asserting the opposite, RE-MEASURED outcome.
-  test.skipIf(process.platform !== "darwin")("end to end: a write root NESTED inside a read-denied directory is writable again (round 14's own pR-tail re-permit resolves round 13's disclosed Ch-shadowing finding)", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "winter-r14-fr-carveout-scratch-"));
+  test.skipIf(process.platform !== "darwin")("end to end: a write root NESTED inside a read-denied directory is writable again (round 14's read-deny write re-permit resolves round 13's disclosed ancestor-block shadowing finding)", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "winter-r14-carveout-scratch-"));
     try {
       const deniedDir = join(scratch, "denied");
       const nestedWriteRoot = join(deniedDir, "build");
@@ -3301,15 +3296,15 @@ describe("fix round 10, item C: Edit/Read permission rules contribute to the san
   });
 });
 
-// Fix round 15 (CRITICAL, claude's own cR): claude's write profile ALWAYS adds cR(e)'s own
-// default-protected entries to the write denies, with no opt-in flag -- Winter's profile had none of
+// Fix round 15 (CRITICAL, default write protections): claude's write sandbox ALWAYS denies writes to a
+// set of default-protected entries, with no opt-in flag -- Winter's profile had none of
 // these, so a sandboxed Bash command could plant a git hook, set core.fsmonitor in .git/config, or
 // add an .mcp.json server, all of which run again OUTSIDE the sandbox on the session's next turn. The
 // controller's own explicit test shape: five real, darwin-gated sandbox-exec commands, each blocked,
 // plus a plain file write in the cwd that must still work.
-describe("fix round 15: claude's own cR -- default write protections, unconditional, no opt-in flag", () => {
+describe("fix round 15: default write protections, unconditional, no opt-in flag", () => {
   function freshScratch(): string {
-    return mkdtempSync(join(tmpdir(), "winter-r15-cr-scratch-"));
+    return mkdtempSync(join(tmpdir(), "winter-r15-defaults-scratch-"));
   }
 
   test.skipIf(process.platform !== "darwin")("end to end: cp x .git/hooks/pre-commit is blocked -- no git hook can be planted", async () => {
@@ -3434,8 +3429,8 @@ describe("fix round 15: claude's own cR -- default write protections, unconditio
     }
   });
 
-  // Fix round 17 (R.3 C-1 part 2b): `.winter` itself is now IN Ch's ancestor fence (a literal, as
-  // `.claude` is on claude -- buildDefaultWriteProtectionEntries' own header), so the sandbox can no
+  // Fix round 17 (R.3 C-1 part 2b): `.winter` itself is now IN the ancestor-rename fence (a literal, as
+  // `.claude` is on claude -- see `buildDefaultWriteProtectionBlock` in sandbox/profile.ts), so the sandbox can no
   // longer create it fresh; the project's `.winter/` is created before the sandboxed command, as a
   // real project has it. Inside it, a memory directory and file stay writable -- the protection is
   // the named folders (commands/agents/skills/rules/output-styles, mcp.json), never the whole dir.
@@ -3481,10 +3476,9 @@ describe("fix round 15: claude's own cR -- default write protections, unconditio
   });
 });
 
-// Fix round 16, item 1 (over-deny correction, CRITICAL): claude renders each cR glob entry as
-// `ri(Cv(w))`, and `Cv` unconditionally joins a relative glob onto `process.cwd()` BEFORE treating it
-// as a glob at all -- so claude's own rule for `.git/hooks` is `^/cwd/(.*/)?\.git/hooks/.*(/.*)?$`,
-// ANCHORED at cwd. Round 15's own rendering left it unanchored (no real fixed prefix was ever
+// Fix round 16, item 1 (over-deny correction, CRITICAL): a default-protection glob such as
+// `.git/hooks` is relative, and it is anchored at the cwd -- it protects `<cwd>/**/.git/hooks/**`,
+// not the pattern in every writable root. Round 15's own rendering left it unanchored (no real fixed prefix was ever
 // computed), denying the pattern in EVERY writable root -- `git clone <url> "$TMPDIR/x"`, writing
 // `.git/hooks` under a DIFFERENT writable root entirely, failed on Winter and succeeds on claude.
 describe("fix round 16, item 1: default write protection globs are ANCHORED at cwd, not everywhere", () => {
@@ -3553,8 +3547,7 @@ describe("fix round 16, item 1: default write protection globs are ANCHORED at c
   });
 });
 
-// Fix round 16, item 2 (claude's own `ag()`, dump-verified: `function ag(){return
-// pe?.filesystem?.allowGitConfig??!1}`): `sandbox.filesystem.allowGitConfig` in settings.json is the
+// Fix round 16, item 2: `sandbox.filesystem.allowGitConfig` in settings.json (default false) is the
 // ONE door for `allowGitConfigWrites` -- round 15 added the plumbing (`SeatbeltProfileInput`/
 // `RunCommandOptions`) but nothing set it. Wired through both `computeDenyPaths` callers
 // (tools/impl/bash.ts, monitor.ts), each reading `ctx.sandboxSettings.filesystem?.allowGitConfig`

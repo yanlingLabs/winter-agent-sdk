@@ -1,5 +1,5 @@
-// SDK 0.0.16 Lane C (P16-5/P16-6): PERSISTED ATTACHMENTS -- claude 0.3.250's `type: "attachment"`
-// transcript entries, and the one place their model-facing text is rendered.
+// SDK 0.0.16 Lane C (P16-5/P16-6): PERSISTED ATTACHMENTS -- claude's `type: "attachment"` transcript
+// entries, and the one place their model-facing text is rendered.
 //
 // WHAT AN ATTACHMENT IS. claude runs an attachment scan at the start of every turn and after every
 // tool round; whatever it produces is appended to the conversation as its own transcript entry
@@ -21,9 +21,9 @@
 // `EngineOptions.attachmentProducers`; nothing here is specific to the three types this lane ships.
 //
 // TEXTS. Every string below is a short one-line functional string (a header, a wrapper, a label) and
-// matches the pinned binary EXACTLY (spawn-surface-scope R-S10), traced from its attachment renderer:
-// the agent-listing section headers, the ambient sentence, the concurrency sentence, the skill-listing
-// header and the date-change line.
+// is claude's own interface text, unchanged (spawn-surface-scope R-S10): the agent-listing section
+// headers, the ambient sentence, the concurrency sentence, the skill-listing header and the
+// date-change line.
 import { DEFAULT_PLANS_DIRECTORY } from "@yanlinglabs/winter-agent-sdk";
 import type { ProviderMessage } from "../engine.ts";
 import { neutralizeReminderTags } from "./injection.ts";
@@ -39,7 +39,7 @@ export interface AttachmentPayload {
   [key: string]: unknown;
 }
 
-/** claude's `agent_listing_delta` (`s1t`): what the Agent tool can spawn, as a delta over what the history already announced. */
+/** claude's `agent_listing_delta`: what the Agent tool can spawn, as a delta over what the history already announced. */
 export interface AgentListingDeltaAttachment extends AttachmentPayload {
   type: "agent_listing_delta";
   addedTypes: string[];
@@ -49,7 +49,7 @@ export interface AgentListingDeltaAttachment extends AttachmentPayload {
   showConcurrencyNote: boolean;
 }
 
-/** claude's `skill_listing` (`Urn`): the skills not yet sent this session. `names` seeds the sent set on resume. */
+/** claude's `skill_listing`: the skills not yet sent this session. `names` seeds the sent set on resume. */
 export interface SkillListingAttachment extends AttachmentPayload {
   type: "skill_listing";
   content: string;
@@ -58,7 +58,7 @@ export interface SkillListingAttachment extends AttachmentPayload {
   names: string[];
 }
 
-/** claude's `date_change` (`alr`): the local date moved past the one the session's context was built with. */
+/** claude's `date_change`: the local date moved past the one the session's context was built with. */
 export interface DateChangeAttachment extends AttachmentPayload {
   type: "date_change";
   newDate: string;
@@ -104,14 +104,14 @@ export interface DeferredToolsDeltaAttachment extends AttachmentPayload {
   removedNames: string[];
 }
 
-/** claude's own two headers for `deferred_tools_delta` (`utils/messages.ts`), verbatim. */
+/** The two `deferred_tools_delta` headers (claude's interface text, unchanged). */
 export const DEFERRED_TOOLS_ADDED_HEADER = "The following deferred tools are now available via ToolSearch:";
 export const DEFERRED_TOOLS_REMOVED_HEADER = "The following deferred tools are no longer available (their MCP server disconnected). Do not search for them — ToolSearch will return no match:";
 
 export const AGENT_LISTING_INITIAL_HEADER = "Available agent types for the Agent tool:";
 export const AGENT_LISTING_ADDED_HEADER = "New agent types are now available for the Agent tool:";
 export const AGENT_LISTING_REMOVED_HEADER = "The following agent types are no longer available:";
-/** claude's `s$`: appended after a "no longer available" section. */
+/** Appended after a "no longer available" section. */
 export const AMBIENT_CONTEXT_SENTENCE = "This is ambient context — do not narrate it to the user unless they ask or it is directly relevant to their request.";
 /** Appended to the INITIAL listing only, when `showConcurrencyNote` is set. */
 export const AGENT_CONCURRENCY_SENTENCE = "When you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently.";
@@ -129,12 +129,12 @@ export function dateChangeText(newDate: string): string {
  */
 export const PLAN_MODE_EXITED_TEXT = "Plan mode has ended. The write restriction is lifted.";
 
-/** claude's attachment wrapper (`Qa`). Nothing is added around it and nothing after it. */
+/** The attachment wrapper. Nothing is added around it and nothing after it. */
 export function wrapSystemReminder(body: string): string {
   return `<system-reminder>\n${body}\n</system-reminder>`;
 }
 
-/** claude's `Hc`: a field that should be a string array, read defensively (a resumed transcript is untrusted JSON). */
+/** A field that should be a string array, read defensively (a resumed transcript is untrusted JSON). */
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 }
@@ -146,10 +146,8 @@ export type AttachmentRenderer = (attachment: AttachmentPayload) => string | und
  * SDK 0.0.16 Lane N: `wrap: false` for the ONE attachment family claude does not wrap. Its
  * `queued_command` attachments (a task notification delivered mid-turn) are rendered as a BARE user
  * text block carrying their own `[SYSTEM NOTIFICATION - NOT USER INPUT]` preamble instead of the
- * `<system-reminder>` envelope every other attachment type gets (traced in the pinned binary: the
- * queued-command branch of its request builder calls its origin-aware renderer directly, never the
- * reminder wrapper). Defaults to `true`, so every type registered before this option existed is
- * unchanged.
+ * `<system-reminder>` envelope every other attachment type gets (as claude's requests show them).
+ * Defaults to `true`, so every type registered before this option existed is unchanged.
  */
 export interface AttachmentRendererOptions {
   wrap?: boolean;
@@ -181,22 +179,21 @@ export function isSystemRoleAttachment(attachment: AttachmentPayload): boolean {
   return renderers.get(attachment.type)?.systemRole === true;
 }
 
+// Renders an `agent_listing_delta` payload's sections (see the spec for the exact layout).
 registerAttachmentRenderer("agent_listing_delta", (a) => {
   const addedLines = stringArray(a["addedLines"]);
   const addedTypes = stringArray(a["addedTypes"]);
   const removedTypes = stringArray(a["removedTypes"]);
+  const initial = a["isInitial"] === true;
   const sections: string[] = [];
   const hasAdded = addedLines.length > 0 && addedTypes.length > 0;
-  if (hasAdded) sections.push(`${a["isInitial"] === true ? AGENT_LISTING_INITIAL_HEADER : AGENT_LISTING_ADDED_HEADER}\n${addedLines.join("\n")}`);
+  if (hasAdded) sections.push(`${initial ? AGENT_LISTING_INITIAL_HEADER : AGENT_LISTING_ADDED_HEADER}\n${addedLines.join("\n")}`);
   if (removedTypes.length > 0) {
-    sections.push(`${AGENT_LISTING_REMOVED_HEADER}\n${removedTypes.map((t) => `- ${t}`).join("\n")}`);
+    sections.push(`${AGENT_LISTING_REMOVED_HEADER}\n${removedTypes.map((name) => `- ${name}`).join("\n")}`);
     sections.push(AMBIENT_CONTEXT_SENTENCE);
   }
-  if (hasAdded && a["isInitial"] === true && a["showConcurrencyNote"] === true) sections.push(AGENT_CONCURRENCY_SENTENCE);
-  if (sections.length === 0) return undefined;
-  // The lines fold in a project/user/plugin definition's `description` verbatim, so a literal
-  // `<system-reminder>` tag inside one is neutralised -- it cannot close this wrapper early.
-  return neutralizeReminderTags(sections.join("\n\n"));
+  if (hasAdded && initial && a["showConcurrencyNote"] === true) sections.push(AGENT_CONCURRENCY_SENTENCE);
+  return sections.length === 0 ? undefined : neutralizeReminderTags(sections.join("\n\n"));
 });
 
 registerAttachmentRenderer("deferred_tools_delta", (a) => {
@@ -210,7 +207,7 @@ registerAttachmentRenderer("deferred_tools_delta", (a) => {
 });
 
 /**
- * claude's fold for `deferred_tools_delta`: the deferred tool names the history has announced and not
+ * The fold for `deferred_tools_delta`: the deferred tool names the history has announced and not
  * since withdrawn. A delta's `addedNames` count only when it carries `addedLines` (as the agent fold).
  */
 export function announcedDeferredTools(messages: readonly ProviderMessage[]): Set<string> {
@@ -308,7 +305,7 @@ export function isAttachmentMessage(message: ProviderMessage): message is Provid
   return message.meta !== undefined;
 }
 
-/** Every attachment payload in `messages`, in order. The engine's history IS claude's post-compaction slice (`Ml`). */
+/** Every attachment payload in `messages`, in order. The engine's history is already the post-compaction slice. */
 export function attachmentsIn(messages: readonly ProviderMessage[]): AttachmentPayload[] {
   const out: AttachmentPayload[] = [];
   for (const m of messages) if (m.meta !== undefined) out.push(m.meta.attachment);
@@ -317,21 +314,19 @@ export function attachmentsIn(messages: readonly ProviderMessage[]): AttachmentP
 
 // --- the folds ------------------------------------------------------------------------------------
 
-/**
- * claude's `s1t` fold: the agent types the history has already announced. A delta's `addedTypes`
- * count only when it carries an `addedLines` array (claude's own guard); `removedTypes` always remove.
- */
+/** The agent types the history has already announced (and not since withdrawn). */
 export function announcedAgentTypes(messages: readonly ProviderMessage[]): Set<string> {
   const announced = new Set<string>();
   for (const a of attachmentsIn(messages)) {
     if (a.type !== "agent_listing_delta") continue;
-    if (Array.isArray(a["addedLines"])) for (const t of stringArray(a["addedTypes"])) announced.add(t);
-    for (const t of stringArray(a["removedTypes"])) announced.delete(t);
+    // Additions count only from a delta that also carries its lines.
+    if (Array.isArray(a["addedLines"])) for (const type of stringArray(a["addedTypes"])) announced.add(type);
+    for (const type of stringArray(a["removedTypes"])) announced.delete(type);
   }
   return announced;
 }
 
-/** claude's `alr` fold: whether a `date_change` for `date` is already in the history. */
+/** Whether a `date_change` for `date` is already in the history. */
 export function dateChangeAnnounced(messages: readonly ProviderMessage[], date: string): boolean {
   return attachmentsIn(messages).some((a) => a.type === "date_change" && a["newDate"] === date);
 }
@@ -348,23 +343,20 @@ export function lastPlanModeState(messages: readonly ProviderMessage[]): "entere
   return last !== undefined && last["state"] === "entered" ? "entered" : "exited";
 }
 
-/**
- * claude's `vlr` resume seed for the skill listing: the names every persisted `skill_listing` sent,
- * and whether a legacy entry without `names` asks the next listing to be suppressed (claude's
- * `suppressNext`).
- */
+/** The skill-listing resume seed: the names persisted listings already sent, and whether to suppress the next listing. */
 export function skillListingResumeSeed(messages: readonly ProviderMessage[]): { names: string[]; suppressNext: boolean } {
   const names: string[] = [];
   let suppressNext = false;
   for (const a of attachmentsIn(messages)) {
     if (a.type !== "skill_listing") continue;
+    // A listing without a `names` array cannot say what it sent, so the next listing is suppressed.
     if (Array.isArray(a["names"])) names.push(...stringArray(a["names"]));
     else suppressNext = true;
   }
   return { names, suppressNext };
 }
 
-/** claude's `tcn`: the LOCAL calendar date, `YYYY-MM-DD`. */
+/** The LOCAL calendar date, `YYYY-MM-DD`. */
 export function localDateString(now: Date = new Date()): string {
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, "0");

@@ -131,7 +131,7 @@ describe("TaskStop executor", () => {
     expect(changed!.tasks.map((t) => t.task_id)).not.toContain("t1");
   });
 
-  // Task-frames parity (2026-09-17 contract §4 "Summary wording", pin `CMe`): the pinned "killed"
+  // Task-frames parity (2026-09-17 contract §4 "Summary wording"): the pinned "killed"
   // strings for bash and Monitor's command half; a kind with no pinned kill wording (agent) keeps
   // this file's own established generic phrasing.
   test("the pinned kill-notification summary wording, per kind", async () => {

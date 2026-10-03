@@ -74,7 +74,7 @@ describe("Write -- new files have no precondition", () => {
     }
   });
 
-  // Fix round 10, item B: claude's own `ht` trims a path argument before resolving it -- "the check
+  // Fix round 10, item B: claude trims a path argument before resolving it -- "the check
   // and the write must never disagree" (the permission-check side, permissions/paths.ts's
   // `resolveTargetPath`, gets the identical fix). A model-supplied `file_path` with surrounding
   // whitespace now writes to the TRIMMED path, matching what a deny rule checks.

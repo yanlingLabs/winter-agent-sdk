@@ -78,7 +78,7 @@ export const WEB_FETCH_MAX_REDIRECTS = 10;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const RETRY_AFTER_RE = /^[0-9]{1,6}$/;
 
-/** claude's own `I_e(code)`: a FIXED table lookup, never the wire's own (server-controlled) reason phrase -- see the module header, finding M1. */
+/** The standard reason phrase for `status` from a FIXED table, never the wire's own (server-controlled) reason phrase, as claude does -- see the module header, finding M1. */
 export function reasonPhrase(status: number): string {
   return STATUS_CODES[status] ?? "Unknown Status";
 }
@@ -120,12 +120,12 @@ export async function defaultResolveHost(hostname: string): Promise<readonly str
 }
 
 /**
- * `validateInput`'s own parse-failure text -- WITH the `Error: ` prefix (fidelity #2).
+ * The input-validation parse-failure text -- WITH the `Error: ` prefix (fidelity #2).
  *
- * A real string in claude's binary that NO input can reach there: claude validates a call against the
- * tool's input schema (`url: format uri`) BEFORE the tool's own validation, so an unparseable URL is
- * refused by the schema (`InputValidationError: [...] "Invalid URL"`) and anything the schema lets
- * through also parses here. This runtime has no schema-validation step in front of its executors, so
+ * claude's own text for this case, which in claude itself no input reaches: claude validates a call
+ * against the tool's input schema (`url: format uri`) BEFORE the tool's own validation, so an
+ * unparseable URL is refused by the schema (`InputValidationError: [...] "Invalid URL"`) and anything
+ * the schema lets through also parses here. This runtime has no schema-validation step in front of its executors, so
  * the same text IS reachable, as the backstop for exactly the inputs claude's schema refuses. It
  * stops being reachable the day such a step exists.
  */
@@ -478,9 +478,8 @@ export async function performWebFetch(inputUrl: string, prompt: string, opts: We
 
   // COUNTS REDIRECTS FOLLOWED, not total requests: the initial request is never itself a "hop," so
   // this permits the initial fetch PLUS up to `WEB_FETCH_MAX_REDIRECTS` eligible redirects (11 total
-  // requests in the worst case) before refusing an 11th -- MEASURED against the binary (fidelity #9):
-  // `if(o>10) throw` with `o` incremented per followed hop, i.e. exactly this shape. The 60 s timeout
-  // is PER HOP in claude too (fidelity #9) -- not a shared total budget, by design.
+  // requests in the worst case) before refusing an 11th, the same limit claude applies (fidelity #9).
+  // The 60 s timeout is PER HOP in claude too (fidelity #9) -- not a shared total budget, by design.
   let redirectsFollowed = 0;
   for (;;) {
     const fv = validateFetchTimeUrl(current);

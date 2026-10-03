@@ -173,7 +173,7 @@ describe("context/winter-md.ts -- the parent-walk boundary is the WORKTREE tople
   });
 });
 
-describe("context/winter-md.ts -- the claudeMd value (claude's THt)", () => {
+describe("context/winter-md.ts -- the claudeMd value", () => {
   test("header, then `Contents of <path> (<label>):` entries with trimmed content, in the given order", () => {
     expect(
       renderInstructionsContext([

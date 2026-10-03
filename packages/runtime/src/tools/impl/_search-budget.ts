@@ -53,7 +53,7 @@ export interface WebSearchBudgetReservation {
 /**
  * Reserves ONE WebSearch call against `sessionId`'s budget -- called BEFORE the search runs, so a
  * call that is never reserved (an input-validation failure, a wiring gap) never counts against it,
- * matching claude's own `validateInput`-before-`call` ordering.
+ * matching claude, which validates a call's input before running it.
  *
  * `ok: false` leaves the counter UNCHANGED: the 201st call and the 202nd both read "200 of 200", not
  * "201 of 200" -- the refusal is a repeatable fact about the session, not an escalating one.

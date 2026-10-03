@@ -8,17 +8,16 @@
 // performs is the per-invocation persistence below, which is keyed by runId and is not a name store
 // at all.
 //
-// USER-LEVEL STORE (SV-5, fix round 3, M-3's last bullet -- WS-11 §11 OQ2 CLOSED): the pinned
-// binary's own workflow-discovery module (claude CLI 2.1.250 / agent-sdk 0.3.250) reads a THIRD tier
-// through its storage backend at `{namespace:"userConfigDir", dir:"workflows"}`, tagged
-// `source:"userSettings"` and merged with the project tier before plugin/builtin. For the Winter leg
-// this is `<winterHome>/workflows` -- the SAME root `skills/store.ts`'s own user tier already reads
+// USER-LEVEL STORE (SV-5, fix round 3, M-3's last bullet -- WS-11 §11 OQ2 CLOSED): claude reads a
+// THIRD tier of workflows from the user config directory's `workflows/` folder, as user settings,
+// merged with the project tier before plugin/builtin. For the Winter leg this is
+// `<winterHome>/workflows` -- the SAME root `skills/store.ts`'s own user tier already reads
 // (`join(opts.winterHome, "skills")`), i.e. the RUN folder per SV-1/SV-2's rule, not
 // `WINTER_STORE_HOME` -- never the OS home directory Norma's old `<normaHome>/workflows` convention
-// named (WS-01 still forbids inventing a name; this one is dump-confirmed, not invented). Gated by
-// `settingSources` ("user" ∈ settingSources), NOT by `trustedWorkspace` -- claude's own `yo`
-// ("userSettings") check carries no trust condition, matching skills' "source gating, not trust
-// gating" rule (skills/store.ts's own header) rather than the project tier's R4-7 trust gate.
+// named (WS-01 still forbids inventing a name; this one is claude's, not invented). Gated by
+// `settingSources` ("user" ∈ settingSources), NOT by `trustedWorkspace` -- claude's user tier
+// carries no trust condition, matching skills' "source gating, not trust gating" rule
+// (skills/store.ts's own header) rather than the project tier's R4-7 trust gate.
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
@@ -129,11 +128,9 @@ export function listBuiltinWorkflows(): string[] {
 }
 
 /**
- * Fix round 3 (M-3): the pinned binary's own oversize skip -- `var xh=524288` in the same chunk as
- * the plugin workflow loader (dump-confirmed by content search; `"Plugin workflow ${o}: not a
- * regular file or exceeds ${xh} bytes — skipping"` / `"Workflow ${l} exceeds ${xh} bytes —
- * skipping"`). A file over this size is treated exactly like an unreadable one: silently skipped,
- * never a hard error for the whole directory scan.
+ * Fix round 3 (M-3): the oversize skip -- claude skips a workflow script larger than 524288 bytes
+ * (512 KiB) with an "exceeds 524288 bytes — skipping" warning. A file over this size is treated
+ * exactly like an unreadable one: silently skipped, never a hard error for the whole directory scan.
  */
 const WORKFLOW_SCRIPT_MAX_BYTES = 524288;
 
@@ -145,14 +142,11 @@ function sourcesAllow(settingSources: readonly SettingSource[] | undefined, tier
 export function resolveWorkflowByName(name: string, opts: ResolveWorkflowByNameOptions): ResolvedWorkflowSource {
   // WS-21 §6.3 item 1, CORRECTED in the batch-2 fix round: a `<plugin>:<name>` qualified name -- the
   // SAME grammar every other plugin-namespaced identity in this codebase uses (skills, commands,
-  // output styles), and CONFIRMED as claude's own real convention via the pinned binary's own
-  // disassembled workflow-discovery module (claude CLI 2.1.250 / agent-sdk 0.3.250; NOT
-  // claude-code-reference, which has no "workflows" concept at all): a plugin workflow's `v()`
-  // loader builds `` `${pluginName}:${r.meta.name}` `` after a lightweight, non-executing meta parse
-  // (`Kp(e, {validateBody: false})` -- Winter's own `parseWorkflowMeta`'s identical job), and the
-  // resolver (`aUe(name, ...)`) does a flat `.find(d => d.name === name)` against that baked-in
-  // string. Checked BEFORE `WORKFLOW_NAME_RE` (which has no `:` in its own alphabet, so a qualified
-  // name would otherwise be refused outright as "invalid").
+  // output styles), and claude's own convention for plugin workflows: a plugin workflow is named
+  // `<plugin>:<meta.name>`, where `meta.name` comes from a non-executing read of the script's meta
+  // block (Winter's `parseWorkflowMeta` does that job), and a name resolves only by exact match on
+  // that qualified string. Checked BEFORE `WORKFLOW_NAME_RE` (which has no `:` in its own alphabet,
+  // so a qualified name would otherwise be refused outright as "invalid").
   const qualified = /^([A-Za-z0-9_-]+):([A-Za-z0-9_-]+)$/.exec(name);
   if (qualified !== null) {
     const [, pluginName, metaName] = qualified;
@@ -175,10 +169,9 @@ export function resolveWorkflowByName(name: string, opts: ResolveWorkflowByNameO
   if (typeof builtin === "string") return { ok: true, source: builtin, path: undefined, source_kind: "builtin" };
 
   // SV-5 (batch-2, second round -- the router same-view test): CORRECTED from a direct `<name>.js`
-  // join to the SAME directory-scan-by-meta.name resolution the plugin branch above uses. Measured
-  // on the pinned binary's own project-tier workflow discovery (a filesystem walk feeding the exact
-  // same `name: p.meta.name` shape the plugin loader's `v()` produces): identity is ALWAYS the
-  // script's own declared `meta.name`, never its filename, for every tier, not only plugins.
+  // join to the SAME directory-scan-by-meta.name resolution the plugin branch above uses. As in
+  // claude, identity is ALWAYS the script's own declared `meta.name`, never its filename, for every
+  // tier, not only plugins.
   const workflowsDir = projectWorkflowsDir(opts.brand);
   const projectEligible = opts.trustedWorkspace && sourcesAllow(opts.settingSources, "project");
   if (projectEligible) {
@@ -186,8 +179,8 @@ export function resolveWorkflowByName(name: string, opts: ResolveWorkflowByNameO
     if (found !== undefined) return { ok: true, source: found.source, path: found.path, source_kind: "project" };
   }
   // Fix round 3 (M-3's last bullet): the user tier, source-gated like skills' own user tier, never
-  // trust-gated (this file's header). Bare-name PRECEDENCE matches claude's own `b()`/`k()` merge: a
-  // project workflow overrides a user one of the same `meta.name` -- checked here BEFORE the user
+  // trust-gated (this file's header). Bare-name PRECEDENCE matches claude's: a project workflow
+  // overrides a user one of the same `meta.name` -- checked here BEFORE the user
   // tier, so on a collision the project copy above already returned and this is never reached.
   const userEligible = sourcesAllow(opts.settingSources, "user") && opts.winterHome !== undefined;
   if (userEligible) {
@@ -212,21 +205,17 @@ export function resolveWorkflowByName(name: string, opts: ResolveWorkflowByNameO
 // (parsed via `parseWorkflowMeta`, never executed), not its filename -- the only way to find "the
 // file whose declared identity is this name" is to check every candidate, mirroring
 // `parsePluginStyleFile`'s identical shape for output styles. A file whose meta fails to parse, is
-// not a regular file, or exceeds `WORKFLOW_SCRIPT_MAX_BYTES` is silently skipped (the pinned
-// binary's own "has invalid meta ... skipping" / "exceeds ... bytes ... skipping"), never a hard
-// error for the whole directory. Shared by resolution above and `listWorkflowsForListing` below, so
+// not a regular file, or exceeds `WORKFLOW_SCRIPT_MAX_BYTES` is silently skipped (claude likewise
+// skips such a file with a warning), never a hard error for the whole directory. Shared by resolution above and `listWorkflowsForListing` below, so
 // they can never disagree about which file answers to which name.
 //
-// M-3: matched CASE-SENSITIVELY (`.endsWith(".js")`, not lower-cased -- claude's own `h()`/`D()`
-// check `l.name.endsWith(".js")`/`r.name.endsWith(".js")` with no case-folding). On a duplicate
-// `meta.name` within one directory, the LATER file in sorted order overrides the earlier one
-// (claude's own `k`/`S`: `"Workflow ... would override ... but does not parse — keeping the ...
-// copy"`), returned as a `Map` so a later `.set()` for the same key replaces the value -- a
-// SIMPLIFICATION of claude's own rule, disclosed in the lane report: claude additionally gates the
-// override on a full-script-validity check (`bLn`) before letting the later file win, keeping the
-// earlier one when the later fails; Winter's meta parser deliberately never executes or fully
-// validates a script BODY (security rationale, meta.ts's own header), so there is no equivalent
-// validity oracle to gate on here -- the later file always wins.
+// M-3: matched CASE-SENSITIVELY (a `.JS` file is not a workflow, as in claude). On a duplicate
+// `meta.name` within one directory, the LATER file in sorted order overrides the earlier one,
+// returned as a `Map` so a later `.set()` for the same key replaces the value -- a SIMPLIFICATION of
+// claude's rule, disclosed in the lane report: claude keeps the earlier copy when the later one does
+// not parse as a whole script; Winter's meta parser deliberately never executes or fully validates a
+// script BODY (security rationale, meta.ts's own header), so there is no equivalent validity oracle
+// to gate on here -- the later file always wins.
 interface DiscoveredWorkflowFile {
   name: string;
   description: string;
@@ -314,26 +303,23 @@ export interface WorkflowListingEntry {
   source: "project" | "user" | "plugin";
   /** The script's real filesystem path -- carried through so a caller building a `SkillMeta`-shaped synthetic entry (production-wiring.ts) never has to invent one. */
   path: string;
-  /** Fix round 4 (I-E): carried through for a synthetic skill/command prompt's own structure -- claude's own `m()` includes both alongside name/description. */
+  /** Fix round 4 (I-E): carried through for a synthetic skill/command prompt's own structure -- claude's workflow command carries both alongside name/description. */
   whenToUse?: string;
   phases?: WorkflowMetaPhase[];
 }
 
 /**
- * SV-5 (batch-2, second round, extended in fix round 3) -- the router same-view test: the pinned
- * binary lists EVERY discovered workflow (user + project + plugin; built-in excluded, the pinned
- * binary's own `d()`/`Ru()` gate that separately and Winter ships none -- see `BUILTIN_WORKFLOWS`)
- * in the init `skills`/`slash_commands` fields and the model-facing Skill listing, named
- * `<plugin>:<meta.name>` for a plugin workflow or bare `<meta.name>` for a user/project one --
- * `getWorkflowCommands` in the pinned binary's own workflow-discovery module maps its FULL discovery
- * result through a `{type:"prompt", name: o.name, description: o.description, ...}` projection,
- * `o.name` already being the qualified/bare identity discovery assigned. `production-wiring.ts` is
- * the one caller, folding this into all three listing surfaces.
+ * SV-5 (batch-2, second round, extended in fix round 3) -- the router same-view test: claude lists
+ * EVERY discovered workflow (user + project + plugin; built-ins are handled separately, and Winter
+ * ships none -- see `BUILTIN_WORKFLOWS`) in the init `skills`/`slash_commands` fields and the
+ * model-facing Skill listing, as a prompt-type command named `<plugin>:<meta.name>` for a plugin
+ * workflow or bare `<meta.name>` for a user/project one, with the workflow's description.
+ * `production-wiring.ts` is the one caller, folding this into all three listing surfaces.
  *
- * ORDER matches claude's own final merge in `j()`/`QX()`: plugin entries first (builtins would lead,
- * but Winter has none to list), then user+project merged and name-sorted -- a project entry
- * overriding a user entry of the same name the same way resolution above does, so listing and
- * resolution can never disagree about which tier's copy is "the" workflow of that name.
+ * ORDER matches claude's listing: plugin entries first (builtins would lead, but Winter has none to
+ * list), then user+project merged and name-sorted -- a project entry overriding a user entry of the
+ * same name the same way resolution above does, so listing and resolution can never disagree about
+ * which tier's copy is "the" workflow of that name.
  */
 export function listWorkflowsForListing(opts: WorkflowDiscoveryOptions): WorkflowListingEntry[] {
   const out: WorkflowListingEntry[] = [];
@@ -368,20 +354,18 @@ export function listWorkflowsForListing(opts: WorkflowDiscoveryOptions): Workflo
 }
 
 /**
- * Fix round 4 (I-E, the router same-view test): claude's own `m()` (dump-confirmed) turns every
- * discovered workflow into a `{type:"prompt", kind:"workflow", ...}` command whose PROMPT runs the
- * named workflow and carries the description, `whenToUse` and phases, ending with an instruction to
- * invoke the Workflow tool by name. `SkillMeta` has no dedicated "workflow" shape, so this builds the
+ * Fix round 4 (I-E, the router same-view test): claude offers every discovered workflow as a
+ * prompt-type command whose PROMPT runs the named workflow and carries the description, `whenToUse`
+ * and phases, ending with an instruction to invoke the Workflow tool by name. `SkillMeta` has no dedicated "workflow" shape, so this builds the
  * BODY TEXT `SkillIndex`'s own synthetic-entry seam (`SkillIndexOptions.syntheticSkills`) stores for
  * `Skill("<name>")` to return -- the WS-11 §2.3 contract ("invocation inserts the resolved skill
  * instructions into the main conversation") applied to a workflow instead of a SKILL.md body.
  *
  * THE PROMPT TEXT IS WINTER-AUTHORED, per the user's own ruling that prompts stay Winter's own
  * wording while INTERFACE strings (a field name, a listing label, an error message) may ship
- * verbatim from the pinned binary -- this is prompt content the model reads and acts on, not an
- * interface string, so it is worded fresh here rather than reproduced from the dump. The
- * STRUCTURE claude's own `m()` carries (name, description, `whenToUse`, phases, then the invoke
- * instruction) is preserved; the wording is not claude's.
+ * verbatim -- this is prompt content the model reads and acts on, not an interface string, so it is
+ * worded fresh here. The prompt carries name, description, `whenToUse`, phases, then the invoke
+ * instruction; the wording is Winter's own.
  *
  * Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): `/plugin:name some args` must
  * carry `some args` into the invoke line as `Workflow({ name, args })`, matching claude. This
@@ -396,15 +380,12 @@ export function listWorkflowsForListing(opts: WorkflowDiscoveryOptions): Workflo
  * a bare `/name` with nothing after it, where the tokens substitute to `""`/`'""'`) recognises it
  * does not apply and falls back to the first, unconditional line instead.
  *
- * Fix round 6 (a promoted minor, the re-review against the pinned 2.1.250 dump): the args value must
- * be ESCAPED the way claude's own `S(e)` does, matching `createWorkflowCommand`'s
- * `getPromptForCommand` (dump-confirmed: `a=e?\`{ name: ${i}, args: ${S(e)} }\`:...\`, i=S(o.name)`
- * -- inferred to be JSON-string-quoting from the call-site shape: applied to a plain, always-defined
- * string, used with no additional quotes around it). Using the RAW `$ARGUMENTS` token inside
- * hand-written quotes (round 5's own shape) would let a literal `"` or `\` in the typed args break
- * out of the quoted literal. `$ARGUMENTS_JSON` (`commands/resolver.ts`'s new second token) substitutes
- * with `JSON.stringify(args)` instead -- already quoted and escaped -- so this line writes NO quotes
- * of its own around it.
+ * Fix round 6 (a promoted minor): the args value must arrive as a JSON string literal (quoted,
+ * with `"` and `\` escaped), as claude passes a workflow command's args. Using the RAW `$ARGUMENTS`
+ * token inside hand-written quotes (round 5's own shape) would let a literal `"` or `\` in the typed
+ * args break out of the quoted literal. `$ARGUMENTS_JSON` (`commands/resolver.ts`'s new second
+ * token) substitutes with `JSON.stringify(args)` instead -- already quoted and escaped -- so this
+ * line writes NO quotes of its own around it.
  */
 export function buildWorkflowSkillPrompt(entry: WorkflowListingEntry): string {
   const lines: string[] = [`This skill runs the "${entry.name}" workflow.`, "", entry.description];

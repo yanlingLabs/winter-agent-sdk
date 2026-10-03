@@ -55,19 +55,17 @@ describe("parseFrontmatter", () => {
     expect(result.body).toBe(raw);
   });
 
-  // WS-21 §6.3 item 2 (fix-round-2): parseFrontmatter now matches claude's own pinned split
-  // (FRONTMATTER_REGEX + Bun.YAML.parse + the quoteProblematicValues retry, ported verbatim from
-  // claude-code-reference @ 6f6f12b's src/utils/frontmatterParser.ts) instead of a hand-rolled
-  // line-by-line key:value scanner. The hand-rolled parser's old "a line it doesn't recognize is
-  // skipped" leniency is GONE: a malformed frontmatter BLOCK (invalid YAML throughout) now loses the
-  // whole block, matching what claude's own two-attempt parse/retry does with the same input --
+  // WS-21 §6.3 item 2 (fix-round-2): parseFrontmatter reads the block as real YAML (Bun.YAML.parse,
+  // with one quote-and-detab retry) instead of a hand-rolled line-by-line key:value scanner. The old
+  // "a line it doesn't recognize is skipped" leniency is GONE: a malformed frontmatter BLOCK (invalid
+  // YAML that the retry cannot rescue) loses the whole block, as claude does with the same input --
   // never a partial, guessed-at result.
   test("a malformed frontmatter block (invalid YAML) loses the whole block -- no per-line leniency", () => {
     const raw = ["---", "description: ok", "not a valid key line at all !!", "model: opus", "---", "body"].join("\n");
     expect(parseFrontmatter(raw).attrs).toEqual({});
   });
 
-  test("the closing fence need not be on its own line -- claude's regex is lazy, not line-based", () => {
+  test("the closing fence need not be on its own line -- the fence match is lazy, not line-based", () => {
     const result = parseFrontmatter("---\nname: x\n---body");
     expect(result.attrs).toEqual({ name: "x" });
     expect(result.body).toBe("body");
@@ -103,12 +101,9 @@ describe("parseFrontmatter", () => {
     expect(parseFrontmatter(raw).attrs["tools"]).toEqual(["Read", "Grep"]);
   });
 
-  // WS-21 §6.3 item 2 (batch-2 fix round): the PINNED BINARY (claude CLI 2.1.250 inside agent-sdk
-  // 0.3.250 -- the authority for claude behaviour; claude-code-reference @ 6f6f12b is an OLDER,
-  // unobfuscated snapshot and is NOT what ships) strips exactly ONE leading U+FEFF before matching
-  // the fence (its own `gE(e) = e.charCodeAt(0)===65279 ? e.slice(1) : e`, called before `fR`). A
-  // SINGLE leading BOM therefore parses fine; a DOUBLE BOM has one stripped and one left, which
-  // still defeats `^---` -- so double BOM still reads as no frontmatter, single BOM does not.
+  // WS-21 §6.3 item 2 (batch-2 fix round): exactly ONE leading U+FEFF is ignored before the fence is
+  // looked for. A SINGLE leading BOM therefore parses fine; a DOUBLE BOM has one ignored and one left,
+  // which still defeats the fence -- so double BOM reads as no frontmatter, single BOM does not.
   test("a single leading BOM is stripped and the frontmatter still parses, matching claude", () => {
     const singleBom = "﻿---\nname: x\n---\nbody";
     const result = parseFrontmatter(singleBom);
@@ -120,138 +115,77 @@ describe("parseFrontmatter", () => {
     const doubleBom = "﻿﻿---\nname: x\n---\nbody";
     const result = parseFrontmatter(doubleBom);
     expect(result.attrs).toEqual({});
-    // Fix round 3 (M-1): the BOM-strip exists ONLY to let the fence's `^` anchor see past a leading
-    // BOM -- a file with no frontmatter at all (this one: the residual second BOM still defeats the
-    // fence) is never parsed, so nothing should have touched its bytes. `body` is the ORIGINAL `raw`
-    // text, BOTH BOMs still in front, exactly as claude's own `$o` returns it.
+    // Fix round 3 (M-1): the BOM is ignored ONLY for finding the fence -- a file with no frontmatter
+    // at all (this one: the residual second BOM still defeats the fence) is returned untouched. `body`
+    // is the ORIGINAL `raw` text, BOTH BOMs still in front.
     expect(result.body).toBe(doubleBom);
   });
 
-  // WS-21 §6.3 item 2 (batch-2 fix round): the pinned binary's retry, `kdn(e)`, is
-  // `M(e).replace(/^\t+/gm, r => "  ".repeat(r.length))` -- quote-loose-values (M, Winter's own
-  // `quoteProblematicValues`) FIRST, THEN a per-line leading-tab detab (2 spaces per tab) on the
-  // QUOTED result, before the reparse attempt. YAML forbids tab indentation, so a hand-authored file
-  // edited with tabs would otherwise lose its whole frontmatter block to the first parse failure.
+  // WS-21 §6.3 item 2 (batch-2 fix round): the retry quotes loose values FIRST, THEN turns each line's
+  // leading tabs into two spaces per tab, before the reparse attempt. YAML forbids tab indentation,
+  // so a hand-authored file edited with tabs would otherwise lose its whole frontmatter block to the
+  // first parse failure.
   test("tab-indented frontmatter (invalid YAML) is recovered by the retry's detab step", () => {
     // A folded PLAIN scalar continuation line, indented with a tab -- YAML rejects tab indentation
     // outright on the first pass. Deliberately NOT a `|`/`>` block scalar: both indicator characters
-    // are themselves in YAML_SPECIAL_CHARS, so quoteProblematicValues would quote the bare `|`/`>`
-    // token first and break the block scalar a different way -- a genuine, pinned-binary-accurate
-    // quirk (confirmed present verbatim in the strings dump too), not something this test is about.
+    // count as "loose" for the retry's quoting, so the bare `|`/`>` token would be quoted first and the
+    // block scalar broken a different way -- a real quirk of the retry, not something this test is about.
     const raw = "---\ndescription: hello\n\tworld\n---\nbody";
     const result = parseFrontmatter(raw);
     expect(result.attrs["description"]).toBe("hello world");
   });
 });
 
-// WS-21 §6.3 item 2 (batch-2 fix round): a differential harness against the PINNED BINARY's own
-// frontmatter module (claude CLI 2.1.250 / agent-sdk 0.3.250 -- searched by substring in its own
-// strings dump, not trusted from claude-code-reference @ 6f6f12b, an older unobfuscated snapshot
-// that is NOT what ships). `claudeReference` below is FRONTMATTER_REGEX + the BOM strip (`gE`) +
-// Bun.YAML.parse + the retry's quote-then-detab (`kdn`) -- every regex/behaviour here was confirmed
-// present, verbatim, in the pinned binary's strings (`^---\s*\n([\s\S]*?)---\s*\n?`,
-// `[{}[\]*&#!|>%@\`]|: `, `^([a-zA-Z_-]+):\s+(.+)$` all appear as literal string constants in the
-// dump; the BOM/tab operations are numeric/regex-literal facts a strings-only extraction cannot
-// itself display -- see this fix round's report for how those two were confirmed). For every shape,
-// Winter's `parseFrontmatter` must find the SAME keys claude would -- the coordinator's own stated bar.
-function claudeReference(raw: string): { attrs: Record<string, unknown>; body: string } {
-  const FRONTMATTER_REGEX = /^---\s*\n([\s\S]*?)---\s*\n?/;
-  const YAML_SPECIAL_CHARS = /[{}[\]*&#!|>%@`]|: /;
-  const quoteProblematicValues = (text: string): string =>
-    text
-      .split("\n")
-      .map((line) => {
-        const m = /^([a-zA-Z_-]+):\s+(.+)$/.exec(line);
-        if (!m) return line;
-        const key = m[1]!;
-        const value = m[2]!;
-        // Fix round 3 (I-2): pinned `M`'s own array-passthrough clause, checked BEFORE the quoted-
-        // string check -- see definitions.ts's identical comment for the exact dump citation. This
-        // reference was missing it too, so the differential below compared Winter to itself.
-        if (value.startsWith("[") && value.endsWith("]")) {
-          try {
-            if (Array.isArray(Bun.YAML.parse(value))) return line;
-          } catch {
-            /* not valid YAML on its own -- fall through */
-          }
-        }
-        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) return line;
-        if (YAML_SPECIAL_CHARS.test(value)) return `${key}: "${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-        return line;
-      })
-      .join("\n");
-  // Pinned binary's kdn(e) = M(e).replace(/^\t+/gm, r => "  ".repeat(r.length)) -- quote first, detab second.
-  const quoteAndDetab = (text: string): string => quoteProblematicValues(text).replace(/^\t+/gm, (m) => "  ".repeat(m.length));
-  // Pinned binary's gE(e): strips exactly one leading U+FEFF before the fence is ever matched.
-  const stripped = raw.charCodeAt(0) === 65279 ? raw.slice(1) : raw;
-  const match = FRONTMATTER_REGEX.exec(stripped);
-  // Fix round 3 (M-1): pinned `$o` returns the ORIGINAL text as the body when there is no fence --
-  // see definitions.ts's identical comment.
-  if (!match) return { attrs: {}, body: raw };
-  const frontmatterText = match[1] ?? "";
-  const body = stripped.slice(match[0].length);
-  let attrs: Record<string, unknown> = {};
-  try {
-    const parsed = Bun.YAML.parse(frontmatterText) as unknown;
-    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) attrs = parsed as Record<string, unknown>;
-  } catch {
-    try {
-      const parsed = Bun.YAML.parse(quoteAndDetab(frontmatterText)) as unknown;
-      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) attrs = parsed as Record<string, unknown>;
-    } catch {
-      /* both attempts failed -- attrs stays {}, matching the pinned binary's own silent degrade */
-    }
-  }
-  return { attrs, body };
-}
-
-describe("parseFrontmatter vs. the pinned binary's own frontmatter module (differential, WS-21 §6.3 item 2)", () => {
-  const shapes: { label: string; raw: string }[] = [
-    { label: "plain", raw: ["---", "name: x", "description: d", "---", "body"].join("\n") },
-    { label: "CRLF", raw: "---\r\nname: x\r\ndescription: d\r\n---\r\nbody" },
-    { label: "no frontmatter", raw: "just a prompt" },
-    { label: "unterminated (no closing --- anywhere)", raw: "---\nname: x\nthe rest" },
-    { label: "closing not on its own line", raw: "---\nname: x\n---body" },
-    { label: "block scalar", raw: "---\ndescription: |\n  multi\n  line\n---\nbody" },
-    { label: "trailing comment", raw: "---\nname: foo # comment\n---\nbody" },
-    { label: "typed number", raw: "---\nname: 123\n---\nbody" },
-    { label: "typed boolean", raw: "---\ndescription: true\n---\nbody" },
-    { label: "empty scalar", raw: "---\nname: x\nmodel:\n---\nbody" },
-    { label: "mid-value colon", raw: "---\nname: x\ndescription: Use when: foo\n---\nbody" },
-    { label: "inline list", raw: "---\nname: x\ntools: [Read, Grep]\n---\nbody" },
-    { label: "malformed block", raw: "---\nname: x\nnot valid !!\n---\nbody" },
-    { label: "single BOM", raw: "﻿---\nname: x\n---\nbody" },
-    { label: "double BOM", raw: "﻿﻿---\nname: x\n---\nbody" },
-    { label: "tab-indented continuation (recovered by the retry's detab)", raw: "---\ndescription: hello\n\tworld\n---\nbody" },
-    // Fix round 3 (I-2): a mid-value colon forces the retry (first-pass Bun.YAML.parse fails on
-    // `description: Use when: foo`), and the retry's per-line quoting must not also mangle the
-    // UNRELATED already-valid inline array on `tools` -- `[` is itself a YAML_SPECIAL_CHARS member.
-    { label: "retry-triggering mid-value colon alongside an inline array with an embedded comma", raw: '---\nname: x\ndescription: Use when: foo\ntools: ["Bash(git add, commit)", Read]\n---\nbody' },
-    // Fix round 3 (M-1): no fence at all -- the body must be the ORIGINAL text, BOM included, never
-    // the BOM-stripped intermediate (which exists only to let the fence regex see past a BOM).
-    { label: "leading BOM with no frontmatter fence at all", raw: "﻿just a prompt, no fence" },
+// WS-21 §6.3 item 2: recorded answers for a fixed set of shapes (attrs AND body), the named lead rows
+// of the recorded corpus (`definitions.corpus.test.ts`, `__corpus__/frontmatter.json`).
+describe("parseFrontmatter: recorded shapes", () => {
+  const shapes: { label: string; raw: string; attrs: Record<string, unknown>; body: string }[] = [
+    { label: "plain", raw: "---\nname: x\ndescription: d\n---\nbody", attrs: { name: "x", description: "d" }, body: "body" },
+    { label: "CRLF", raw: "---\r\nname: x\r\ndescription: d\r\n---\r\nbody", attrs: { name: "x", description: "d" }, body: "body" },
+    { label: "no frontmatter", raw: "just a prompt", attrs: {}, body: "just a prompt" },
+    { label: "unterminated (no closing --- anywhere)", raw: "---\nname: x\nthe rest", attrs: {}, body: "---\nname: x\nthe rest" },
+    { label: "closing not on its own line", raw: "---\nname: x\n---body", attrs: { name: "x" }, body: "body" },
+    { label: "block scalar", raw: "---\ndescription: |\n  multi\n  line\n---\nbody", attrs: { description: "multi\nline\n" }, body: "body" },
+    { label: "trailing comment", raw: "---\nname: foo # comment\n---\nbody", attrs: { name: "foo" }, body: "body" },
+    { label: "typed number", raw: "---\nname: 123\n---\nbody", attrs: { name: 123 }, body: "body" },
+    { label: "typed boolean", raw: "---\ndescription: true\n---\nbody", attrs: { description: true }, body: "body" },
+    { label: "empty scalar", raw: "---\nname: x\nmodel:\n---\nbody", attrs: { name: "x", model: null }, body: "body" },
+    { label: "mid-value colon", raw: "---\nname: x\ndescription: Use when: foo\n---\nbody", attrs: { name: "x", description: "Use when: foo" }, body: "body" },
+    { label: "inline list", raw: "---\nname: x\ntools: [Read, Grep]\n---\nbody", attrs: { name: "x", tools: ["Read", "Grep"] }, body: "body" },
+    { label: "malformed block", raw: "---\nname: x\nnot valid !!\n---\nbody", attrs: {}, body: "body" },
+    { label: "single BOM", raw: "\uFEFF---\nname: x\n---\nbody", attrs: { name: "x" }, body: "body" },
+    { label: "double BOM", raw: "\uFEFF\uFEFF---\nname: x\n---\nbody", attrs: {}, body: "\uFEFF\uFEFF---\nname: x\n---\nbody" },
+    { label: "tab-indented continuation (recovered by the retry's detab)", raw: "---\ndescription: hello\n\tworld\n---\nbody", attrs: { description: "hello world" }, body: "body" },
+    // A mid-value colon forces the retry, and the retry's per-line quoting must not also mangle the
+    // UNRELATED already-valid inline array on `tools` -- `[` is itself a "loose" character.
+    {
+      label: "retry-triggering mid-value colon alongside an inline array with an embedded comma",
+      raw: '---\nname: x\ndescription: Use when: foo\ntools: ["Bash(git add, commit)", Read]\n---\nbody',
+      attrs: { name: "x", description: "Use when: foo", tools: ["Bash(git add, commit)", "Read"] },
+      body: "body",
+    },
+    // No fence at all -- the body is the ORIGINAL text, BOM included.
+    { label: "leading BOM with no frontmatter fence at all", raw: "\uFEFFjust a prompt, no fence", attrs: {}, body: "\uFEFFjust a prompt, no fence" },
   ];
-  for (const { label, raw } of shapes) {
-    test(`${label}: same keys as claude`, () => {
-      const winter = parseFrontmatter(raw);
-      const claude = claudeReference(raw);
-      expect(Object.keys(winter.attrs).sort()).toEqual(Object.keys(claude.attrs).sort());
-      expect(winter.attrs).toEqual(claude.attrs);
-      expect(winter.body).toBe(claude.body);
+  for (const { label, raw, attrs, body } of shapes) {
+    test(`${label}: recorded attrs and body`, () => {
+      const result = parseFrontmatter(raw);
+      expect(Object.keys(result.attrs).sort()).toEqual(Object.keys(attrs).sort());
+      expect(result.attrs).toEqual(attrs);
+      expect(result.body).toBe(body);
     });
   }
 
   test("I-2: an inline array survives the retry as a REAL array, not a string torn apart on its own embedded comma", () => {
     const raw = '---\nname: x\ndescription: Use when: foo\ntools: ["Bash(git add, commit)", Read]\n---\nbody';
-    const winter = parseFrontmatter(raw);
-    expect(winter.attrs["tools"]).toEqual(["Bash(git add, commit)", "Read"]);
+    expect(parseFrontmatter(raw).attrs["tools"]).toEqual(["Bash(git add, commit)", "Read"]);
   });
 
-  test("M-1: with no fence, the body is the ORIGINAL text byte-for-byte -- the BOM is never stripped from it", () => {
-    const raw = "﻿just a prompt, no fence";
-    const winter = parseFrontmatter(raw);
-    expect(winter.body).toBe(raw);
-    expect(winter.body.charCodeAt(0)).toBe(65279);
+  test("M-1: with no fence, the body is the ORIGINAL text, unchanged -- the BOM is never stripped from it", () => {
+    const raw = "\uFEFFjust a prompt, no fence";
+    const result = parseFrontmatter(raw);
+    expect(result.body).toBe(raw);
+    expect(result.body.charCodeAt(0)).toBe(65279);
   });
 });
 

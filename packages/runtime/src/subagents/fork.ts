@@ -22,14 +22,14 @@
 //
 // --- The d2 correction over r3a §2's own "(1) a CLONE... ALL BLOCKS KEPT" claim --------------------
 //
-// Ground truth captured against the pinned binary (d2-report.md, 2026-09-17): when the parent batches
+// Ground truth captured against the official runtime (d2-report.md, 2026-09-17): when the parent batches
 // TWO fork calls in one assistant message, EACH fork's own clone keeps ONLY ITS OWN tool_use block --
 // the sibling's tool_use (and every other block the original message carried) is dropped, not kept.
 // Sibling forks are therefore identical up to the Winter-authored boilerplate TEXT (a constant), never
 // at the tool_use/tool_result block itself (which necessarily differs: a different id, and often a
 // different `input.prompt`, per fork). This file's own conformance oracle,
 // `packages/conformance/src/official/fork-request-bytes-differential.test.ts` (Lane D2), asserts this
-// exact shape against the real pinned binary; build to IT, not to r3a §2's original (superseded) text.
+// exact shape against the real official runtime; build to IT, not to r3a §2's original (superseded) text.
 import type { ContentBlock, ProviderMessage } from "../engine.ts";
 import type { ChildInheritance } from "./child-handle.ts";
 
@@ -66,24 +66,21 @@ const FORK_BOILERPLATE = [
 ].join("\n");
 
 /**
- * A worktree fork's own extra note (claude's `_Fn(e,t)`, `e` the parent's own cwd, `t` the
- * worktree root): the inherited transcript still names the PARENT's own working directory in every
- * path it mentions, but this fork is running in an isolated worktree of its own.
+ * A worktree fork's own extra note (given the parent's own cwd and the worktree root): the inherited
+ * transcript still names the PARENT's own working directory in every path it mentions, but this fork
+ * is running in an isolated worktree of its own.
  *
- * VERIFIED against the pinned 0.3.250 binary's own decompiled source (`_Fn`'s call site,
- * `if(We&&wn)vr.push(Pe({content:_Fn(te(),wn.worktreePath)}))`): claude pushes this as its OWN,
- * SEPARATE transcript entry, AFTER `yFn`'s own `[clone, tool_result+directive]` pair -- never folded
- * into the directive text block itself. `buildForkDirectiveText` below appends it AFTER
+ * claude adds this note as its OWN, SEPARATE transcript entry, AFTER the `[clone, tool_result +
+ * directive]` pair -- never before the directive. `buildForkDirectiveText` below appends it AFTER
  * `"Your directive: "` for the same reason (`child-engine.ts`'s `startGeneration` delivers exactly
  * ONE live user turn to seed a generation -- see this file's own header for why that single turn
- * still reproduces claude's OWN wire-level merge of `tool_result` + directive text; a genuinely
- * separate THIRD transcript entry, positioned after a turn the live-frame mechanism hasn't sent yet,
- * has no channel to ride on without deeper engine surgery this lane does not own). DISCLOSED:
- * Winter's own transcript therefore holds ONE fewer entry here than claude's for a worktree fork,
- * and the note's ORDER (now after the directive) is verified, while its EXACT WIRE placement
- * (a byte-separate message vs. a folded paragraph) is not -- claude's own message-merge algorithm
- * (the same one `context/request-layout.ts` ports) may or may not also collapse `p` and this note
- * into one wire message the way Winter's does; unverified either way.
+ * still reproduces claude's wire-level merge of `tool_result` + directive text; a genuinely separate
+ * THIRD transcript entry, positioned after a turn the live-frame mechanism hasn't sent yet, has no
+ * channel to ride on without deeper engine surgery this lane does not own). DISCLOSED: Winter's own
+ * transcript therefore holds ONE fewer entry here than claude's for a worktree fork, and while the
+ * note's ORDER (after the directive) matches, its EXACT WIRE placement (a separate message vs. a
+ * folded paragraph) is unverified -- claude's message merge (the behaviour `context/request-layout.ts`
+ * reproduces) may or may not also fold this note into the same wire message the way Winter's does.
  */
 function worktreeNote(parentRoot: string, worktreeRoot: string): string {
   return `You've inherited the conversation above from the parent session, which was working in ${parentRoot}. You are now running in an isolated git worktree at ${worktreeRoot} -- the same repository, a separate working copy. Any path the inherited transcript names is relative to the PARENT's own directory; translate it onto this worktree's root before you use it, and re-read a file here before editing it, since it may already differ from what the transcript shows. Your own changes stay in this worktree and never touch the parent's files.`;
@@ -111,106 +108,62 @@ export function buildForkDirectiveText(input: ForkDirectiveInput): string {
   return input.worktree !== undefined ? `${directive}\n\n${worktreeNote(input.worktree.parentRoot, input.worktree.worktreeRoot)}` : directive;
 }
 
-function isToolUseBlock(block: ContentBlock): block is Extract<ContentBlock, { type: "tool_use" }> {
-  return block.type === "tool_use";
-}
-function isToolResultBlock(block: ContentBlock): block is Extract<ContentBlock, { type: "tool_result" }> {
-  return block.type === "tool_result";
-}
-
-/** Every `tool_use` id any message in `messages` answers (a `tool_result` naming it, anywhere). */
-function answeredToolUseIds(messages: readonly ProviderMessage[]): Set<string> {
-  const answered = new Set<string>();
-  for (const m of messages) {
-    if (typeof m.content === "string") continue;
-    for (const block of m.content) if (isToolResultBlock(block)) answered.add(block.tool_use_id);
-  }
-  return answered;
-}
-
 /**
- * claude's `ern`: drop every assistant message carrying a `tool_use` block with no answering
- * `tool_result` ANYWHERE in the list -- ported generally (a scan over every message, not "assume it
- * is only ever the last one"), even though in practice engine.ts's own round-loop invariant means the
- * in-flight message IS always last at fork time (this round's own tool_results are filed only after
- * every call, including this spawn, returns -- so nothing EARLIER in a live history can be
- * unanswered). A general filter is the more literal, more robust reading of "drop any assistant
- * message with an unresolved tool_use", and costs nothing extra.
- */
-function dropUnansweredAssistantMessages(messages: readonly ProviderMessage[]): { filtered: ProviderMessage[]; dropped: ProviderMessage[] } {
-  const answered = answeredToolUseIds(messages);
-  const filtered: ProviderMessage[] = [];
-  const dropped: ProviderMessage[] = [];
-  for (const m of messages) {
-    if (m.role !== "assistant" || typeof m.content === "string") {
-      filtered.push(m);
-      continue;
-    }
-    const toolUses = m.content.filter(isToolUseBlock);
-    const hasUnanswered = toolUses.some((call) => !answered.has(call.id));
-    (hasUnanswered ? dropped : filtered).push(m);
-  }
-  return { filtered, dropped };
-}
-
-/**
- * The clone (d2-report.md's own corrected shape): a NEW message carrying ONLY the one `tool_use`
- * block whose id is `forkToolUseId` -- every other block the original in-flight message carried
- * (a sibling's own tool_use, any accompanying text/thinking) is dropped, per the conformance oracle's
- * own pinned `cloneBlocks.length === 1`.
- *
- * `origin` is kept (which provider/model produced the ORIGINAL round -- still true of the clone, a
- * fact about where this tool_use came from, not about the clone's own freshness) but `nativeState`
- * and `uuid` are NOT: `nativeState` is opaque, adapter-owned continuation state for a REPLAYED
- * message (its own doc: "the ONLY sink is the provider-state sidecar") -- a clone that answers only
- * ONE of the native chain's own tool_use entries while the native state still names every sibling
- * call would desync a family whose adapter replays native items (the OpenAI Responses family) rather
- * than reconstructing wire messages from `content` alone. `uuid` is dropped because this is
- * genuinely a NEW message in the child's own transcript, never a replay of the parent's -- the pin's
- * own "(1)... new uuid" (r3a §2), which this file honours by simply never copying the old one
- * (the child's own transcript writer mints a fresh one when it persists this message, same as any
- * other fresh assistant entry).
- */
-function cloneWithOwnToolUse(original: ProviderMessage, ownToolUse: Extract<ContentBlock, { type: "tool_use" }>): ProviderMessage {
-  return {
-    role: "assistant",
-    content: [ownToolUse],
-    ...(original.origin !== undefined ? { origin: original.origin } : {}),
-  };
-}
-
-/**
- * `child-engine.ts`'s own `initialMessages` for a fork: the parent's history with every unanswered
- * assistant message dropped, then a clone of THIS fork's own in-flight call (only its own tool_use
- * block), then a placeholder `tool_result` answering it.
+ * `child-engine.ts`'s own `initialMessages` for a fork: the parent's history with every assistant
+ * message that carries an unanswered `tool_use` dropped, then a clone of THIS fork's own in-flight
+ * call (only its own tool_use block, keeping the source message's `origin`, never its `nativeState` or
+ * `uuid`), then a placeholder `tool_result` answering it.
  *
  * `forkToolUseId` is `SpawnChildRequest.parentToolUseId` -- the model's own `tool_use` block id for
  * THIS Agent(fork) call (`tools/impl/agent.ts`'s own `ctx.toolUseId`), which is exactly what
  * distinguishes two sibling forks batched in the same assistant message from one another.
- *
- * No-ops (returns `inherit.messages` filtered, with nothing appended) when no dropped message
- * actually carries a tool_use block matching `forkToolUseId` -- a defensive shape for a hand-built
- * `ChildInheritance` (every test double that predates this lane) or `inherit.messages === undefined`
- * (every non-fork child; `buildChildInheritance` never sets `messages` for one), returning `[]`.
  */
 export function buildForkInitialMessages(inherit: Pick<ChildInheritance, "messages">, forkToolUseId: string): ProviderMessage[] {
-  if (inherit.messages === undefined) return [];
-  const { filtered, dropped } = dropUnansweredAssistantMessages(inherit.messages);
-  let ownToolUse: Extract<ContentBlock, { type: "tool_use" }> | undefined;
-  let sourceMessage: ProviderMessage | undefined;
-  for (const m of dropped) {
-    if (typeof m.content === "string") continue;
-    const match = m.content.filter(isToolUseBlock).find((call) => call.id === forkToolUseId);
+  const messages = inherit.messages;
+  if (messages === undefined) return [];
+
+  // Every call id that has a result somewhere in the history, whatever the result's role or position.
+  const answered = new Set<string>();
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if (block.type === "tool_result") answered.add(block.tool_use_id);
+    }
+  }
+
+  // An assistant message is dropped when any of its calls is still waiting for a result; a provider
+  // would refuse the dangling call. Everything else is kept as the same object, in order.
+  const kept: ProviderMessage[] = [];
+  const dropped: ProviderMessage[] = [];
+  for (const message of messages) {
+    const hasUnanswered =
+      message.role === "assistant" && Array.isArray(message.content) && message.content.some((block) => block.type === "tool_use" && !answered.has(block.id));
+    (hasUnanswered ? dropped : kept).push(message);
+  }
+
+  // The fork's own call: the first matching block of the first dropped message that carries it.
+  let source: ProviderMessage | undefined;
+  let call: ContentBlock | undefined;
+  for (const message of dropped) {
+    const blocks = message.content as ContentBlock[];
+    const match = blocks.find((block) => block.type === "tool_use" && block.id === forkToolUseId);
     if (match !== undefined) {
-      ownToolUse = match;
-      sourceMessage = m;
+      source = message;
+      call = match;
       break;
     }
   }
-  if (ownToolUse === undefined || sourceMessage === undefined) return filtered;
-  const clone = cloneWithOwnToolUse(sourceMessage, ownToolUse);
-  const toolResult: ProviderMessage = { role: "tool", content: [{ type: "tool_result", tool_use_id: forkToolUseId, content: FORK_PLACEHOLDER_TOOL_RESULT }] };
-  return [...filtered, clone, toolResult];
+  if (source === undefined || call === undefined) return kept;
+
+  // A one-block copy of just this fork's call (siblings, text and per-message state left out), then
+  // the placeholder result that answers it.
+  const clone: ProviderMessage = { role: "assistant", content: [call] };
+  if (source.origin !== undefined) clone.origin = source.origin;
+  const placeholder: ProviderMessage = {
+    role: "tool",
+    content: [{ type: "tool_result", tool_use_id: forkToolUseId, content: FORK_PLACEHOLDER_TOOL_RESULT }],
+  };
+  return [...kept, clone, placeholder];
 }
 
 export function isForkRequest(req: { fork?: true }): boolean {

@@ -200,9 +200,9 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
     expect(bundle.manifestPath).toBeUndefined(); // still manifestless -- hooks.json needs no manifest
   });
 
-  // Fix round 3 (M-5), CORRECTED: claude's own manifest schema describes the manifest `hooks` field
-  // as ADDITIVE to hooks/hooks.json ("in addition to those in hooks/hooks.json, if it exists",
-  // dump-confirmed), never a fallback -- superseding this test's pre-fix-round-3 name and premise.
+  // Fix round 3 (M-5), CORRECTED: claude's manifest schema documents the manifest `hooks` field as
+  // ADDITIVE to hooks/hooks.json ("in addition to those in hooks/hooks.json, if it exists"), never a
+  // fallback -- superseding this test's pre-fix-round-3 name and premise.
   test("M-5: hooks/hooks.json AND a manifest-embedded `hooks` block are BOTH loaded -- per-event entries concatenate", () => {
     const parent = mkTemp("winter-plugin-hooks-both-");
     const root = join(parent, "hooked-both");
@@ -216,7 +216,7 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
     });
   });
 
-  test("M-5: a manifest `hooks` ARRAY of event-maps merges every element (claude's own xs schema accepts an array)", () => {
+  test("M-5: a manifest `hooks` ARRAY of event-maps merges every element (claude's manifest schema accepts an array)", () => {
     const parent = mkTemp("winter-plugin-hooks-array-");
     const root = join(parent, "hooked-array");
     mkdirSync(root, { recursive: true });
@@ -299,7 +299,7 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
     expect(loadPlugins([{ type: "local", path: root }]).bundles[0]!.hooks).toEqual(fromManifest);
   });
 
-  test('M-5: a hooks.json with no "hooks" key (the old, WRONG flat-map shape) yields no hooks from it AND a warning, matching claude\'s own hook-load-failed', () => {
+  test('M-5: a hooks.json with no "hooks" key (the old, WRONG flat-map shape) yields no hooks from it AND a warning, as claude reports a hook-load failure', () => {
     const parent = mkTemp("winter-plugin-hooks-unwrapped-");
     const root = join(parent, "hooked-unwrapped");
     mkdirSync(root, { recursive: true });
@@ -367,9 +367,8 @@ describe("loadPlugins: aggregation with resolved absolute paths", () => {
   });
 });
 
-// Fix round 4 (minors, M-3's last bullet): a manifest `workflows` override -- content-search
-// confirmed against the installed claude CLI binary (`manifest.ts`'s own citation for the exact
-// source, since the pinned 2.1.250 build was unavailable locally). This block is `loadPlugins`'s
+// Fix round 4 (minors, M-3's last bullet): a manifest `workflows` override (`manifest.ts`'s
+// `PluginManifest.workflows` describes the behaviour). This block is `loadPlugins`'s
 // own build-time resolution (escaping, existence, string vs array, the default-dir shadow);
 // `workflows/store.test.ts` covers the consumption side (`discoverWorkflowsAt`).
 describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3's last bullet)", () => {
@@ -383,9 +382,8 @@ describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3
     const bundle = result.bundles[0]!;
     expect(bundle.workflowsPaths).toEqual([resolve(root, "custom-workflows")]);
     expect(bundle.workflowsPath).toBeUndefined(); // ...but is shadowed, not merged in
-    // Advisor catch: claude's own D.push({type:"folder-shadowed-by-manifest",...}) diagnostic --
-    // the plugin author is TOLD their workflows/ folder is being ignored, not left to notice by its
-    // absence from a listing.
+    // Advisor catch: claude's own `folder-shadowed-by-manifest` diagnostic -- the plugin author is
+    // TOLD their workflows/ folder is being ignored, not left to notice by its absence from a listing.
     expect(result.manifestPathWarnings).toHaveLength(1);
     expect(result.manifestPathWarnings[0]).toContain("workflows/");
     expect(result.manifestPathWarnings[0]).toContain("not auto-loaded");
@@ -401,10 +399,10 @@ describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3
     expect(result.manifestPathWarnings).toEqual([]);
   });
 
-  // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): round 4 omitted claude's own
-  // `O1t` suppression -- an author who explicitly re-lists the default directory alongside (or
-  // instead of) a custom path is not silently losing it, so no shadow warning should fire.
-  test("O1t: no folder-shadowed-by-manifest warning when the override names the default directory itself", () => {
+  // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): round 4 omitted the notice's
+  // suppression -- an author who explicitly re-lists the default directory alongside (or instead of)
+  // a custom path is not silently losing it, so no shadow warning should fire.
+  test("suppression: no folder-shadowed-by-manifest warning when the override names the default directory itself", () => {
     const parent = mkTemp("winter-plugin-workflows-self-named-");
     const root = join(parent, "wf-plugin");
     mkdirSync(join(root, "workflows"), { recursive: true });
@@ -414,7 +412,7 @@ describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3
     expect(result.bundles[0]!.workflowsPaths).toEqual([resolve(root, "workflows")]);
   });
 
-  test("O1t: naming the default directory as ONE of several entries also suppresses the warning", () => {
+  test("suppression: naming the default directory as ONE of several entries also suppresses the warning", () => {
     const parent = mkTemp("winter-plugin-workflows-self-named-array-");
     const root = join(parent, "wf-plugin");
     mkdirSync(join(root, "workflows"), { recursive: true });
@@ -464,11 +462,11 @@ describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3
     expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
   });
 
-  // Fix round 6 (a promoted minor, the re-review against the pinned 2.1.250 dump): a name starting
-  // with ".." (the coordinator's own example, "..x/agents") must be REFUSED as a plugin component
-  // path, matching claude's own nV (a naive startsWith("..") check, not a segment-aware one) --
-  // end to end, at the loader level, not only at resolvesWithinPluginRoot's own unit level.
-  test("fix round 6: a workflows override entry starting with '..' (e.g. '..x/agents') is refused, matching claude's own nV", () => {
+  // Fix round 6 (a promoted minor): a name starting with ".." (the coordinator's own example,
+  // "..x/agents") must be REFUSED as a plugin component path, as claude refuses it (any relative path
+  // beginning with "..", not only a ".." segment) -- end to end, at the loader level, not only at
+  // resolvesWithinPluginRoot's own unit level.
+  test("fix round 6: a workflows override entry starting with '..' (e.g. '..x/agents') is refused, as claude refuses it", () => {
     const parent = mkTemp("winter-plugin-workflows-dotdot-prefix-");
     const root = join(parent, "wf-plugin");
     mkdirSync(join(root, "..x", "agents"), { recursive: true });
@@ -524,9 +522,8 @@ describe("loadPlugins: a manifest `workflows` override (fix round 4, minors: M-3
   });
 });
 
-// Fix round 5: a manifest `agents` override -- content-search confirmed against the installed claude
-// CLI binary (2.1.280), the closest available build (the pinned 2.1.250 was unavailable locally).
-// Same shape as `workflows` (shadow-on-presence, requireDirectory:false, the O1t suppression), but
+// Fix round 5: a manifest `agents` override.
+// Same shape as `workflows` (shadow-on-presence, requireDirectory:false, the self-reference suppression), but
 // EAGERLY scanned into `PluginBundle.agents` (a parsed Record) rather than exposed as a raw path.
 describe("loadPlugins: a manifest `agents` override (fix round 5)", () => {
   function agentFile(name: string, description = "d"): string {
@@ -567,7 +564,7 @@ describe("loadPlugins: a manifest `agents` override (fix round 5)", () => {
     expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
   });
 
-  test("folder-shadowed-by-manifest fires when the override drops an existing default directory, and O1t suppresses it when the override names the default directory itself", () => {
+  test("folder-shadowed-by-manifest fires when the override drops an existing default directory, and is suppressed when the override names the default directory itself", () => {
     const parent = mkTemp("winter-plugin-agents-shadow-");
     const root = join(parent, "ag-plugin");
     write(join(root, "agents", "default-agent.md"), agentFile("default-agent"));
@@ -634,7 +631,7 @@ describe("loadPlugins: a manifest `commands` override (fix round 5)", () => {
     expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
   });
 
-  test("folder-shadowed-by-manifest fires when the override drops an existing default directory, and O1t suppresses it when the override names the default directory itself", () => {
+  test("folder-shadowed-by-manifest fires when the override drops an existing default directory, and is suppressed when the override names the default directory itself", () => {
     const parent = mkTemp("winter-plugin-commands-shadow-");
     const root = join(parent, "cmd-plugin");
     write(join(root, "commands", "default-cmd.md"), commandFile());
@@ -654,7 +651,7 @@ describe("loadPlugins: a manifest `commands` override (fix round 5)", () => {
   });
 
   // The advisor's own catch: an inline {name:{source|content}} manifest value still SHADOWS the
-  // default directory (claude's own `j.commands` truthy check does not distinguish the two shapes),
+  // default directory (claude shadows it whenever the key is present, whichever shape it has),
   // but Winter does not load it -- disclosed with a loud warning rather than silently disagreeing
   // with claude about whether the plugin's commands loaded at all.
   test("an INLINE {name: {source|content}} manifest value shadows the default directory but loads nothing, with a disclosed warning", () => {
@@ -665,7 +662,7 @@ describe("loadPlugins: a manifest `commands` override (fix round 5)", () => {
     const result = loadPlugins([{ type: "local", path: root }]);
     expect(result.bundles[0]!.commands).toEqual([]); // shadowed -- the default directory's command is NOT loaded
     // TWO warnings fire, and both are correct: the inline-form-unsupported notice, AND the ordinary
-    // folder-shadowed-by-manifest notice (the resolved override set is empty, so O1t's own
+    // folder-shadowed-by-manifest notice (the resolved override set is empty, so the self-reference
     // suppression does not apply -- nothing in it names the default directory).
     expect(result.manifestPathWarnings).toHaveLength(2);
     const inlineWarning = result.manifestPathWarnings.find((w) => w.includes("inline"));
@@ -683,7 +680,7 @@ describe("loadPlugins: a manifest `commands` override (fix round 5)", () => {
 
 // Fix round 5: a manifest `skills` override -- ADDITIVE, not shadow-on-presence, the advisor's own
 // correction to the "workflows-style" assumption the round's initial plan made (`PluginManifest.
-// skills`'s own header has the full dump evidence for both the builder and consumer sides).
+// skills`'s own header describes the behaviour).
 describe("loadPlugins: a manifest `skills` override (fix round 5, ADDITIVE not shadowing)", () => {
   function skillFile(description = "d"): string {
     return `---\ndescription: ${description}\n---\n\nSKILL BODY`;
@@ -735,7 +732,7 @@ describe("loadPlugins: a manifest `skills` override (fix round 5, ADDITIVE not s
     expect(result.manifestPathWarnings[0]).toContain("point to its parent directory instead");
   });
 
-  test("no folder-shadowed-by-manifest warning is EVER possible for skills -- it is absent from that tuple list", () => {
+  test("no folder-shadowed-by-manifest warning is EVER possible for skills -- they never shadow", () => {
     const parent = mkTemp("winter-plugin-skills-no-shadow-warning-");
     const root = join(parent, "sk-plugin");
     write(join(root, "skills", "default-skill", "SKILL.md"), skillFile());
@@ -789,7 +786,7 @@ describe("loadPlugins: a manifest `outputStyles` override (fix round 5)", () => 
     expect(result.manifestPathWarnings[0]).toContain("escapes the plugin directory");
   });
 
-  test("folder-shadowed-by-manifest fires (naming the CAMEL-CASE manifest key), and O1t suppresses it when the override names the default directory itself", () => {
+  test("folder-shadowed-by-manifest fires (naming the CAMEL-CASE manifest key), and is suppressed when the override names the default directory itself", () => {
     const parent = mkTemp("winter-plugin-styles-shadow-");
     const root = join(parent, "st-plugin");
     mkdirSync(join(root, "output-styles"), { recursive: true });
@@ -819,10 +816,9 @@ describe("loadPlugins: a manifest `outputStyles` override (fix round 5)", () => 
 });
 
 // Fix round 5, item 2 of the ruling: a manifest `hooks` entry that is a bare STRING (a relative path
-// to a further hooks file). Content-search confirmed against the installed claude CLI binary
-// (2.1.280): the string-entry branch calls the SAME `I1t` reader hooks/hooks.json itself uses (so
-// the referenced file is WRAPPED, `{"hooks": {...}}`, not a bare event-map) and the SAME `E$`/`ZP`
-// fence every other manifest custom-path override uses; additive with hooks/hooks.json.
+// to a further hooks file): the referenced file is read the way hooks/hooks.json itself is (WRAPPED,
+// `{"hooks": {...}}`, not a bare event-map), behind the same containment fence every other manifest
+// custom-path override uses; additive with hooks/hooks.json.
 describe("loadPlugins: a manifest `hooks` STRING entry -- a path to a further hooks file (fix round 5)", () => {
   test("a bare STRING (not inside an array) loads and merges, additively with hooks/hooks.json", () => {
     const parent = mkTemp("winter-plugin-hooks-string-bare-");

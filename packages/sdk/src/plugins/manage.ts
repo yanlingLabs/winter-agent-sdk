@@ -4,46 +4,31 @@
 // CLI's implementation (a future `winter plugin` verb calls it), never a runtime behaviour. It
 // writes the same files, in the same way, as claude's own CLI.
 //
-// EVIDENCE (measured against the pinned `claude` binary, v0.3.250 / CLI 2.1.250, the same build the
-// spec's F15/F17 cite -- `@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.250`'s `claude` executable,
-// read with the embedded-JS `grep`/offset technique the spec's own facts were measured with):
+// THE FILE FORMATS (claude's own on-disk formats under its plugins root, F15/F17):
 //
 //   - `installed_plugins.json` is a V2 document, `{version: 2, plugins: {<key>: [<record>, …]}}` --
-//     an ARRAY of records per key (one per scope a plugin is installed at), not a single record.
-//     Confirmed by the binary's own V1->V2 converter: `function Soe(e){let t={};for(let[r,o]of
-//     Object.entries(e.plugins)){let u=AM(r,o.version);t[r]=[{scope:"user",installPath:u,
-//     version:o.version,installedAt:o.installedAt,lastUpdated:o.lastUpdated,
-//     gitCommitSha:o.gitCommitSha}]}return{version:2,plugins:t}}` -- V1 held one record per key
-//     (implicitly `scope:"user"`), and upgrading to V2 wraps it in a one-element array. The per-
-//     record zod schema (same binary) declares `scope: enum(["managed","user","project","local"])`,
-//     `installPath`, `version?`, `installedAt?`, `lastUpdated?`, `gitCommitSha?`. This module writes
-//     the subset the WS-21 lane brief's `InstalledPlugin` needs: `scope`, `installPath`, `version?`,
-//     `installedAt?`, `lastUpdated?`.
-//   - the compound key is `"<name>@<marketplace>"` when a marketplace is named, confirmed by the
-//     same binary's zod transform: `.transform((e)=>e.marketplace?\`${e.name}@${e.marketplace}\`:
-//     e.name)`.
+//     an ARRAY of records per key (one per scope a plugin is installed at), not a single record. The
+//     older V1 layout held one record per key (implicitly `scope: "user"`); V2 wraps it in a
+//     one-element array. A record carries `scope` (`"managed"`, `"user"`, `"project"` or `"local"`),
+//     `installPath`, and optionally `version`, `installedAt`, `lastUpdated` and `gitCommitSha`. This
+//     module writes the subset the WS-21 lane brief's `InstalledPlugin` needs: `scope`,
+//     `installPath`, `version?`, `installedAt?`, `lastUpdated?`.
+//   - the compound key is `"<name>@<marketplace>"` when a marketplace is named, else the bare name.
 //   - `known_marketplaces.json` is an object keyed by marketplace NAME, each value
-//     `{source, installLocation, lastUpdated, autoUpdate}` -- confirmed by the binary's own seed-
-//     sync code: ``o.push([T,{source:E.source,installLocation:R,lastUpdated:E.lastUpdated,
-//     autoUpdate:!1}])``. `source` is itself a discriminated object (`{source:"directory",path}` /
-//     `{source:"git",url,…}` / `{source:"github",repo,…}` / `{source:"url",url,…}`, from the same
-//     binary's marketplace-add zod union, `mJn=new Set(["url","github","git","npm","file",
-//     "directory","skills-dir","hostPattern","pathPattern","settings"])`); this module supports the
-//     four kinds the WS-21 lane brief's `MarketplaceInfo.kind` names.
-//   - `known_marketplaces.json` is written under a lock (the binary passes `{lockfilePath:
-//     \`${r}.lock\`, retries:{retries:5,minTimeout:100,maxTimeout:1000}, onCompromised}` to a
-//     `proper-lockfile`-shaped call), and a lock that cannot be acquired is a LOGGED, NON-FATAL
-//     degrade -- the write proceeds anyway (`"Failed to acquire known_marketplaces.json lock,
-//     writing without it"`). This module's own lock (below) matches that shape: bounded retries,
-//     then proceed regardless.
+//     `{source, installLocation, lastUpdated, autoUpdate}`. `source` is itself a discriminated object
+//     (`{source:"directory",path}` / `{source:"git",url,…}` / `{source:"github",repo,…}` /
+//     `{source:"url",url,…}`, among other kinds claude knows); this module supports the four kinds the
+//     WS-21 lane brief's `MarketplaceInfo.kind` names.
+//   - `known_marketplaces.json` is written under a lock at `<file>.lock`, and a lock that cannot be
+//     acquired is a LOGGED, NON-FATAL degrade -- the write proceeds anyway (claude logs `"Failed to
+//     acquire known_marketplaces.json lock, writing without it"`). This module's own lock (below)
+//     matches that shape: bounded retries, then proceed regardless.
 //   - `installed_plugins.json` has NO such lock -- the WS-21 lane brief states its write discipline
 //     directly (temp file `<f>.tmp.<8hex>` opened `wx`, then `rename`; EXDEV/EPERM/EEXIST/EBUSY fall
-//     back to an in-place write), matching the binary's own temp-name regexes for this family of
-//     files (`^[0-9]+\.tmp\.[0-9a-f]{8}$`, `\.tmp[.~][0-9a-f]{8}$`).
-//   - a directory marketplace's manifest lives at `.claude-plugin/marketplace.json`
-//     (`F("directory")` source: `{source:"directory",path:"Local directory containing
-//     .claude-plugin/marketplace.json"}`) and is READ IN PLACE, nothing copied (F15/§5.2). Its
-//     top-level shape (same binary, the manifest's own zod object): `{$schema?, name, version?,
+//     back to an in-place write).
+//   - a directory marketplace's manifest lives at `.claude-plugin/marketplace.json` (claude describes
+//     a directory source as a "Local directory containing .claude-plugin/marketplace.json") and is
+//     READ IN PLACE, nothing copied (F15/§5.2). Its top-level shape: `{$schema?, name, version?,
 //     description?, owner, plugins: [...], forceRemoveDeletedPlugins?, metadata?:{pluginRoot?}}`.
 //     A plugin entry's `source` may be a bare STRING -- "Path to the plugin root, relative to the
 //     marketplace root (the directory containing .claude-plugin/, not .claude-plugin/ itself)" --
@@ -224,12 +209,11 @@ async function readInstalledPluginsFile(o: PluginManagerOptions): Promise<Instal
 // --- known_marketplaces.json: written under a `.lock`, bounded retries, degrade-not-refuse (F15) --
 //
 // A DIRECTORY lock (`mkdir`/`rmdir`), not a file (`open wx`) -- deliberately, for cross-runtime
-// interop. §2.2 has BOTH runtimes writing this same `sdk/plugins/known_marketplaces.json`, and the
-// pinned binary's own call (this file's header) passes `proper-lockfile`-shaped options
-// (`lockfilePath`, `retries:{retries,minTimeout,maxTimeout}`, `onCompromised`) -- and
-// `proper-lockfile` itself locks with `fs.mkdir`/`fs.rmdir`, not a plain file, because a directory
-// create/remove pair is what it uses to detect and reclaim a STALE lock (by the lock directory's own
-// mtime) across process crashes. A file-based lock here would be invisible to claude's own stale-
+// interop. §2.2 has BOTH runtimes writing this same `sdk/plugins/known_marketplaces.json`, and
+// claude's lock at `<file>.lock` is a DIRECTORY (the `proper-lockfile` convention: created with
+// `mkdir`, removed with `rmdir`), because a directory create/remove pair is what lets a STALE lock be
+// detected and reclaimed (by the lock directory's own mtime) across process crashes. A file-based
+// lock here would be invisible to claude's own stale-
 // lock reclaim (its `rmdir` on a `.lock` that is actually a FILE fails `ENOTDIR`, so a Winter crash
 // holding the lock would wedge claude's own marketplace writes forever); matching the primitive is
 // what makes a crash mid-lock recoverable by EITHER runtime.
@@ -253,7 +237,7 @@ async function withMarketplacesLock<T>(path: string, fn: () => Promise<T>): Prom
       await new Promise((r) => setTimeout(r, MARKETPLACES_LOCK_RETRY_DELAY_MS));
     }
   }
-  // Claude's own measured fallback: a lock nobody could acquire is logged and the write proceeds
+  // Claude's own fallback: a lock nobody could acquire is logged and the write proceeds
   // anyway, never a hang and never a refusal. This module has no logger of its own to hand a host,
   // so the degrade is silent here; a host wiring this in can wrap it to log the `acquired: false`
   // case if it wants claude's own log line.

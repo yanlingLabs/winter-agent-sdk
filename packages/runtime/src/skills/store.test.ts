@@ -408,8 +408,8 @@ describe("SkillIndex: the lazy-body contract (WS-11 §2.1 -- bodies are never bu
 });
 
 // Fix round 4 (I-E, the router same-view test): a workflow registered as a SYNTHETIC skill, so
-// Skill("<name>") can invoke it -- claude's own m() turns every discovered workflow into exactly
-// this shape. The body is supplied directly (no SKILL.md a workflow script's identity could point a
+// Skill("<name>") can invoke it -- claude likewise offers every discovered workflow as a
+// prompt-type command. The body is supplied directly (no SKILL.md a workflow script's identity could point a
 // disk read at), and goes through the SAME discover()/build() pipeline (name jail, precedence,
 // project-tier aliasing) as every other entry.
 describe("I-E: synthetic (workflow-backed) skill entries", () => {

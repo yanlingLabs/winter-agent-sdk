@@ -278,10 +278,8 @@ export function mapChatMessages(messages: readonly ProviderMessageLike[], replay
       // transcript carries the batch as N one-call assistant messages followed by N results. This
       // wire requires every assistant `tool_calls` message to be followed DIRECTLY by its `tool`
       // replies, so the unmerged batch was refused outright on the first turn after a claude ->
-      // Winter switch (and every later turn resent it). claude merges the same entries back into one
-      // API message before sending: its normaliser's `case"assistant"` (claude 2.1.250 dump offset
-      // 19882077) folds an assistant into the earlier output message of the same `message.id`
-      // through `mergeAssistantMessages` (19884969). This history carries no message id; adjacency --
+      // Winter switch (and every later turn resent it). claude sends one API message per response
+      // (the entries sharing a `message.id`). This history carries no message id; adjacency --
       // nothing, not a tool reply and not a user message, between the two -- is what marks one
       // response's entries here, and it is the same rule every other serializer in this package
       // already applies (adjacent same-role messages merge). Text, calls and replayed reasoning are

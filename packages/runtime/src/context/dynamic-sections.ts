@@ -1,24 +1,24 @@
-// SDK 0.0.16 Lane C (P16-5): the session's `# Environment` section, in claude 0.3.250's shape.
+// SDK 0.0.16 Lane C (P16-5): the session's `# Environment` section, in the shape claude's own
+// requests carry.
 //
 // Replaces 0.0.15's `## Current session` block. claude splits what that block carried three ways,
 // and so does Winter now:
 //   - cwd / git-repo flag / platform / shell / OS version / the model -> this `# Environment`
-//     section, in the DYNAMIC half of the system prompt (claude's `env_info_simple`, `mHn`);
+//     section, in the DYNAMIC half of the system prompt;
 //   - the date -> the userContext `currentDate` entry (context/assembler.ts), so the system prompt
 //     stays byte-stable across midnight and a `date_change` attachment announces the new day;
 //   - the memory directory -> the `# auto memory` section (context/memory.ts).
 // The git summary it used to carry is the systemContext `gitStatus` snapshot now
 // (context/git-status.ts), appended to the system prompt last.
 //
-// SHAPE, from the pinned binary: a `# Environment` heading, the fixed lead-in line (with its
+// SHAPE (as seen in a captured request): a `# Environment` heading, the fixed lead-in line (with its
 // trailing space), then ` - `-bulleted facts; an array fact (the additional working directories)
 // nests one level deeper. The PRODUCT lines at the end are Winter's own wording (claude's describe
 // its own CLI and model family).
 //
 // `excludeDynamicSections` splits the section the way claude does: the model/product half is
-// session-independent enough to stay in the cacheable STATIC half (`fHn`), and the machine half
-// moves into the index-0 userContext under the key `Environment` (`gHn`, with its heading stripped by
-// `jEe`).
+// session-independent enough to stay in the cacheable STATIC half, and the machine half moves into
+// the index-0 userContext under the key `Environment`, without its heading.
 
 export const ENVIRONMENT_HEADING = "# Environment";
 export const ENVIRONMENT_LEAD_IN = "You have been invoked in the following environment: ";
@@ -30,7 +30,7 @@ export interface EnvironmentInput {
   cwd: string;
   isGitRepo: boolean;
   platform: string;
-  /** The raw `$SHELL` value; reduced to `zsh` / `bash` the way claude reduces it. */
+  /** The raw `$SHELL` value; reduced to `zsh` / `bash` (see `shellName`). */
   shell: string;
   /** `<os type> <os release>`, e.g. `Darwin 25.6.0`. */
   osVersion: string;
@@ -43,17 +43,22 @@ export interface EnvironmentInput {
   knowledgeCutoff?: string;
 }
 
-/** claude's `GEe`: the shell as `zsh`, `bash`, the raw value, or `unknown`. */
+/** The shell name shown on the ` - Shell:` line. */
 export function shellName(raw: string): string {
-  const shell = raw.trim().length > 0 ? raw : "unknown";
-  if (shell.includes("zsh")) return "zsh";
-  if (shell.includes("bash")) return "bash";
-  return shell;
+  if (raw.trim().length === 0) return "unknown";
+  if (raw.includes("zsh")) return "zsh";
+  if (raw.includes("bash")) return "bash";
+  return raw;
 }
 
-/** claude's `Sf`, exactly: ` - <fact>`, and each member of a nested array as `  - <item>`. */
+/** Renders facts as ` - ` bullet lines (nested arrays one level deeper). */
 function bullets(items: ReadonlyArray<string | readonly string[]>): string[] {
-  return items.flatMap((item) => (typeof item === "string" ? [` - ${item}`] : item.map((sub) => `  - ${sub}`)));
+  const lines: string[] = [];
+  for (const item of items) {
+    if (typeof item === "string") lines.push(` - ${item}`);
+    else for (const member of item) lines.push(`  - ${member}`);
+  }
+  return lines;
 }
 
 function modelLines(input: Pick<EnvironmentInput, "model" | "modelDisplayName" | "knowledgeCutoff">): string[] {
@@ -81,18 +86,18 @@ function machineFacts(input: EnvironmentInput): Array<string | readonly string[]
   ];
 }
 
-/** The whole section for the system prompt's dynamic half (claude's `mHn`). */
+/** The whole section for the system prompt's dynamic half. */
 export function renderEnvironmentSection(input: EnvironmentInput): string {
   return [ENVIRONMENT_HEADING, ENVIRONMENT_LEAD_IN, ...bullets([...machineFacts(input), ...modelLines(input), WINTER_PRODUCT_LINE])].join("\n");
 }
 
-/** `excludeDynamicSections`, static half (claude's `fHn`): the model and product lines only. */
+/** `excludeDynamicSections`, static half: the model and product lines only. */
 export function renderStaticEnvironmentSection(input: Pick<EnvironmentInput, "model" | "modelDisplayName" | "knowledgeCutoff">): string {
   return [ENVIRONMENT_HEADING, ...bullets([...modelLines(input), WINTER_PRODUCT_LINE])].join("\n");
 }
 
 /**
- * `excludeDynamicSections`, userContext half (claude's `gHn` through `jEe`): the machine facts under
+ * `excludeDynamicSections`, userContext half: the machine facts under
  * the lead-in, WITHOUT the heading -- the heading's text becomes the userContext key `Environment`.
  */
 export function renderEnvironmentContextValue(input: EnvironmentInput): string {

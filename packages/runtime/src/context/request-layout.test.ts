@@ -27,7 +27,7 @@ const LISTING = attachmentMessage({ type: "agent_listing_delta", addedTypes: ["a
 const SKILLS = attachmentMessage({ type: "skill_listing", content: "- s: S.", skillCount: 1, isInitial: true, names: ["s"] })!;
 const DATE = attachmentMessage({ type: "date_change", newDate: "2026-09-18" })!;
 
-describe("the index-0 context message (claude's mbt)", () => {
+describe("the index-0 context message", () => {
   test("exact bytes and key order, one trailing newline", () => {
     expect(renderUserContext(CTX_ENTRIES)).toBe(
       "<system-reminder>\nAs you answer the user's questions, you can use the following context:\n" +
@@ -44,7 +44,7 @@ describe("the index-0 context message (claude's mbt)", () => {
   });
 });
 
-describe("the systemContext part and cache blocks (claude's pbt / VEe)", () => {
+describe("the systemContext part and cache blocks", () => {
   test("`key: value` lines", () => {
     expect(renderSystemContext([["gitStatus", "This is a snapshot.\n\nCurrent branch: main"]])).toBe("gitStatus: This is a snapshot.\n\nCurrent branch: main");
     expect(renderSystemContext([])).toBeUndefined();
@@ -64,7 +64,7 @@ describe("the systemContext part and cache blocks (claude's pbt / VEe)", () => {
   });
 });
 
-describe("attachment reorder (claude's SJn)", () => {
+describe("attachment reorder", () => {
   test("attachments after the first prompt bubble to the very top, above the index-0 context", () => {
     const ctx: ProviderMessage = { role: "user", content: "CTX", isMeta: true };
     const prompt: ProviderMessage = { role: "user", content: "P" };
@@ -84,7 +84,7 @@ describe("attachment reorder (claude's SJn)", () => {
   });
 });
 
-describe("the merged request (claude's Noe / mIt / IMe)", () => {
+describe("the merged request", () => {
   test("turn 1 is ONE user message: attachments, the context + newline, the prompt", () => {
     const history: ProviderMessage[] = [{ role: "user", content: "FIRST" }, LISTING, SKILLS];
     const ctx = renderUserContext(CTX_ENTRIES)!;
@@ -94,9 +94,9 @@ describe("the merged request (claude's Noe / mIt / IMe)", () => {
         role: "user",
         content: [
           { type: "text", text: LISTING.content as string },
-          // An attachment joining an attachment adds nothing between them (mIt).
+          // An attachment joining an attachment adds nothing between them.
           { type: "text", text: `${SKILLS.content as string}\n` },
-          // ...an ordinary message joining one adds a newline to the previous text (Noe) -- which is why
+          // ...an ordinary message joining one adds a newline to the previous text -- which is why
           // the captured context block ends with TWO newlines.
           { type: "text", text: `${ctx}\n` },
           { type: "text", text: "FIRST" },

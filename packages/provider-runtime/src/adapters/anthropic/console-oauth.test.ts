@@ -8,9 +8,8 @@
 // stubs, lives in `console-broker.test.ts`; this file now proves only what survives of the OLD one.
 //
 // THE DERIVATION RECORD STAYS. `packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6b.md`
-// §2 and `derived-p6b.ts` are UNCHANGED as history (the doc's §2 header now says RETIRED, dated) --
-// every field this file used to assert was genuinely read out of the pinned artifact, and nothing
-// here disputes that. What changed is which of those fields still ship: `betaHeader` is the only one
+// §2 and `derived-p6b.ts` are UNCHANGED as history (the doc's §2 header now says RETIRED, dated).
+// What changed is which of those fields still ship: `betaHeader` is the only one
 // with a live consumer (`messages.ts`'s bearer arm), so it is the only one still gated against the
 // derivation table below.
 import { describe, expect, test } from "bun:test";

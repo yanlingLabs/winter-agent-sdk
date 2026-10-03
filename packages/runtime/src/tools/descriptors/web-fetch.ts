@@ -52,7 +52,7 @@ Usage notes:
   - For GitHub URLs, prefer using the gh CLI via Bash instead (e.g., gh pr view, gh issue view, gh api).
 `;
 
-/** claude's own `leanPrompt(model)` gate, applied to WebFetch's description exactly as `sessionLeanModel` applies it to the Agent tool's `whenToUseLean`. */
+/** claude's lean-prompt gate (lean vs full text per model), applied to WebFetch's description exactly as `sessionLeanModel` applies it to the Agent tool's `whenToUseLean`. */
 export function webFetchDescriptionFor(leanModel: boolean): string {
   return leanModel ? WEB_FETCH_DESCRIPTION_LEAN : WEB_FETCH_DESCRIPTION_FULL;
 }

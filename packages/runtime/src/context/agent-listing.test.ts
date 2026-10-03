@@ -1,6 +1,6 @@
-// SDK 0.0.16 Lane C: the `agent_listing_delta` attachment (R3a §3), ported from claude 0.3.250's
-// `SSn` / `hrt` / `s1t` and its attachment renderer. Expected texts are the pinned binary's own,
-// including the captured initial listing's line shapes (`(Tools: *)`, declared-order "except").
+// SDK 0.0.16 Lane C: the `agent_listing_delta` attachment (R3a §3) -- the tool spec, the listing
+// line, the delta and its rendering. Expected texts are claude's interface strings, including the
+// captured initial listing's line shapes (`(Tools: *)`, declared-order "except").
 import { describe, expect, test } from "bun:test";
 import type { ProviderMessage } from "../engine.ts";
 import { computeAgentListingDelta, renderAgentListingLine, renderAgentToolSpec, type AgentListingEntry } from "./agent-listing.ts";
@@ -19,7 +19,7 @@ function announce(history: ProviderMessage[], available: AgentListingEntry[]): s
   return message.content as string;
 }
 
-describe("the tool spec and line (claude's SSn / hrt)", () => {
+describe("the tool spec and line", () => {
   test("`[\"*\"]` renders `*`, exactly as the captured listing shows it", () => {
     expect(renderAgentToolSpec({ tools: ["*"] })).toBe("*");
   });
@@ -43,7 +43,7 @@ describe("the tool spec and line (claude's SSn / hrt)", () => {
   });
 });
 
-describe("the delta fold (claude's s1t)", () => {
+describe("the delta fold", () => {
   test("the initial listing: sorted by localeCompare, the concurrency sentence, claude's exact text", () => {
     const history: ProviderMessage[] = [{ role: "user", content: "hi" }];
     const text = announce(history, [GP, EXPLORE, CUSTOM]);
@@ -89,7 +89,7 @@ describe("the delta fold (claude's s1t)", () => {
     announce(history, [GP, CUSTOM, EXPLORE]);
     const text = announce(history, [GP]);
     expect(text).toBe(`<system-reminder>\nThe following agent types are no longer available:\n- Explore\n- custom-agent\n\n${AMBIENT_CONTEXT_SENTENCE}\n</system-reminder>`);
-    // Removed names sort by code unit ("E" < "c"), as claude's default `sort()` does.
+    // Removed names sort by code unit ("E" < "c"), not by locale.
     expect(history[history.length - 1]!.meta!.attachment["removedTypes"]).toEqual(["Explore", "custom-agent"]);
     // ...and the fold now counts them as gone.
     expect(computeAgentListingDelta([GP], history)).toBeUndefined();
@@ -117,7 +117,7 @@ describe("the delta fold (claude's s1t)", () => {
     expect(computeAgentListingDelta([], [])).toBeUndefined();
   });
 
-  test("a delta whose addedLines is not an array does not count its types (claude's guard)", () => {
+  test("a delta whose addedLines is not an array does not count its types", () => {
     const history: ProviderMessage[] = [{ role: "user", content: "x", meta: { attachment: { type: "agent_listing_delta", addedTypes: ["general-purpose"], removedTypes: [] } } }];
     expect(computeAgentListingDelta([GP], history)?.isInitial).toBe(true);
   });

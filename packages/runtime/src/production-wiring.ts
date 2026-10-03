@@ -274,23 +274,16 @@ export function buildSettingsRuleSeed(
     const permissions = (tier.values as Record<string, unknown> | undefined)?.["permissions"];
     if (typeof permissions !== "object" || permissions === null || Array.isArray(permissions)) continue;
     const block = permissions as Record<string, unknown>;
-    // Fix round 11 ("important" item, claude's own TFt, dump byte 15441060): this tier's OWN
-    // settings-SOURCE root, for a SINGLE-`/`-anchored pattern's root (SourcedRuleEntry.sourceDir's
-    // own header has the full rationale + the controller's own "inert under the router" scoping).
+    // Fix round 11 ("important" item): this tier's OWN settings-SOURCE root, for a
+    // SINGLE-`/`-anchored pattern's root (SourcedRuleEntry.sourceDir's own header has the full
+    // rationale + the controller's own "inert under the router" scoping).
     //
-    // NOT `dirname(tier.path)` -- an advisor-caught correction to a first draft that used exactly
-    // that (byte-verified as wrong once chased down): claude's own `xXn`/`Wyt` (dump byte 12292708/
-    // 12290572, reached from `TFt`'s own caller `OWe(e,t){return TFt(e,IDe(t))}`, `IDe(e){return
-    // xXn(e,v())}`) is:
-    //   `function xXn(e,t){return e==="localSettings"?A(t.cwd):Wyt(e,t)}`
-    //   `function Wyt(e,t){switch(e){case"userSettings":return A(ge());case"policySettings":
-    //   case"projectSettings":return A(t.cwd);case"localSettings":return JB(t.cwd,t.canonicalGitRoot);
-    //   case"flagSettings":return t.flagPath?wo(A(t.flagPath)):A(t.cwd)}}`
-    // i.e. EVERY tier except userSettings resolves to the session's own `cwd` DIRECTLY -- never to
-    // the settings FILE's own containing directory. `dirname(tier.path)` for Winter's own project/
-    // local tier (`<cwd>/.winter/settings.json`) would have anchored `Edit(/src/**)` to
-    // `<cwd>/.winter/src`, not `<cwd>/src` -- wrong on claude and not what a project author means.
-    // `userSettings` resolves to `ge()` (the OS home) -- `opts.home` below.
+    // The rule: the user tier anchors at `opts.home` (the caller passes the winter home); EVERY other
+    // tier -- project, local, managed -- anchors at the session's own `cwd` DIRECTLY, never at the
+    // settings FILE's own containing directory. A first draft used `dirname(tier.path)` (an
+    // advisor-caught correction): for Winter's own project/local tier (`<cwd>/.winter/settings.json`)
+    // that anchored `Edit(/src/**)` to `<cwd>/.winter/src`, not `<cwd>/src` -- not what a project
+    // author means.
     const sourceDir = tier.source === "user" ? opts?.home : opts?.cwd;
     for (const [key, behavior] of [
       ["deny", "deny"],
@@ -299,28 +292,27 @@ export function buildSettingsRuleSeed(
     ] as const) {
       const rawEntries: unknown[] = Array.isArray(block[key]) ? (block[key] as unknown[]) : [];
       for (const raw of rawEntries) {
-        // Fix round 17 (R.3 M-3): claude's `io` (dump byte 12279316 region) removes a non-string entry
-        // WITH a warning -- `Non-string value in ${s} array was removed`, one per entry -- before
-        // `sue` ever runs; Winter used to drop it silently (`stringArray`).
+        // Fix round 17 (R.3 M-3): a non-string entry is removed WITH a warning -- `Non-string value in
+        // ${key} array was removed`, one per entry, the same text claude prints -- before the rule
+        // validator runs; Winter used to drop it silently (`stringArray`).
         if (typeof raw !== "string") {
           warnings.push(`Non-string value in ${key} array was removed`);
           continue;
         }
-        // Fix round 10, item A: `sue`, ported (grammar.ts's `validatePermissionRuleString`) --
-        // claude's OWN settings-load validator, applied here because THIS is Winter's one call
-        // site that reads `permissions.{allow,deny,ask}` from a raw settings object, mirroring
-        // `io` being claude's one call site that does. An invalid entry is DROPPED, never becoming
-        // an active rule at all -- claude's own text, verbatim, no Winter-added tier/path prefix
-        // (the controller's own ruling: "the same text"), so a Winter operator sees the identical
-        // warning a claude user would for the identical settings.json. A rule arriving through any
-        // OTHER door (Options, canUseTool, a plugin's own permissions block) never reaches this
-        // check -- `parseRule`'s own `jr`-ported grammar (round 8/9) is unaffected.
+        // Fix round 10, item A: the settings-load rule validator (grammar.ts's
+        // `validatePermissionRuleString`), applied here because THIS is Winter's one call site that
+        // reads `permissions.{allow,deny,ask}` from a raw settings object -- validation at settings
+        // load, as claude does it. An invalid entry is DROPPED, never becoming an active rule at all,
+        // with claude's warning text and no Winter-added tier/path prefix (the controller's own
+        // ruling: "the same text"), so a Winter operator sees the identical warning a claude user
+        // would for the identical settings.json. A rule arriving through any OTHER door (Options,
+        // canUseTool, a plugin's own permissions block) never reaches this check -- `parseRule`'s own
+        // grammar (round 8/9) is unaffected.
         const validation = validatePermissionRuleString(raw, behavior);
         if (!validation.valid) {
-          // Claude's own text is a template literal with `raw` interpolated NAKED between literal
-          // quote marks (`` `Invalid permission rule "${c}" was skipped: ...` ``) -- not
-          // JSON.stringify'd -- so a rule string containing its own `"` embeds verbatim, unescaped,
-          // exactly as it does on claude. Matched here for byte-identical text, not merely the same shape.
+          // The rule string sits NAKED between literal quote marks -- not JSON.stringify'd -- so a rule
+          // containing its own `"` appears unescaped, as claude prints it. Byte-identical text, not
+          // merely the same shape.
           const message = `Invalid permission rule "${raw}" was skipped: ${validation.error}${validation.suggestion !== undefined ? `. ${validation.suggestion}` : ""}`;
           warnings.push(message);
           continue;
@@ -409,14 +401,15 @@ export function buildSettingsRuleSeed(
  *
  * ALLOW entries: unchanged from round 10 -- `resolveFileRuleAbsolutePath` (file-rules.ts), which
  * returns `undefined` (silently skipped) for an inert `/`-anchored pattern OR a genuinely glob-shaped
- * one, matching claude's own `Jm` write-allow-only short-circuit (that function's own header).
+ * one -- a write-allow entry that is not a plain path contributes nothing, as on claude (that
+ * function's own header).
  *
  * DENY entries (round 11): `resolveFileRuleAbsoluteGlobText` instead -- it does NOT drop a
  * glob-shaped pattern, returning the absolute text with any remaining glob characters intact. A
  * glob-shaped result lands in the SAME `denyWrite`/`denyRead` set as a plain one; the caller
  * (`resolvedConfig`'s own construction, below) splits glob-shaped entries out into a `(regex ...)`
- * SBPL clause instead of a `(subpath ...)` one, per the controller's own ruling -- "port `Li` and
- * claude's glob-to-regex conversion for DENY entries." Still `undefined`-skipped for the one
+ * SBPL clause instead of a `(subpath ...)` one, per the controller's own ruling: a glob-shaped DENY
+ * entry is enforced as a regex, not dropped. Still `undefined`-skipped for the one
  * genuinely-inert case (a `/`-anchored pattern with no resolvable settings-source root).
  *
  * De-duplicated, but NOT yet unioned with `settings.json`'s own explicit `sandbox.filesystem.*` keys
@@ -429,8 +422,8 @@ function deriveSandboxPathsFromRules(entries: readonly SourcedRuleEntry[], opts:
   for (const entry of entries) {
     const specifier = entry.rule.specifier;
     if (specifier?.kind !== "pattern") continue;
-    // Fix round 11 ("important" item, claude's own TFt): a `/`-anchored pattern's own settings-
-    // source root, when `buildSettingsRuleSeed` populated one for this entry.
+    // Fix round 11 ("important" item): a `/`-anchored pattern's own settings-source root, when
+    // `buildSettingsRuleSeed` populated one for this entry.
     const entryOpts = entry.sourceDir !== undefined ? { ...opts, sourceDir: entry.sourceDir } : opts;
     if (entry.rule.toolName === "Edit" && entry.behavior === "allow") {
       const path = resolveFileRuleAbsolutePath(specifier.source, entryOpts);
@@ -644,7 +637,7 @@ export interface ProductionWiring {
    * WS-21 §3.4.4 step 4 / §6.3 item 6: every settings tier's `env` block, claude's per-tier filters
    * applied (`settings/env-filter.ts`), merged HIGHEST-PRECEDENCE-WINS. APPLIED by this function
    * (fix round 1, item 5): `Object.assign(env, settingsEnv)` after every settings read, which reaches a
-   * tool spawn's process env the way claude's own `Object.assign(process.env, filtered)` does -- in
+   * tool spawn's process env, as claude applies each tier's filtered env to its own process env -- in
    * production `env` IS `process.env`, and each test passes its own isolated object. Also exposed here
    * so a caller (and this file's tests) can see exactly which variables were applied.
    */
@@ -777,9 +770,8 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   const storeHomeEnv = env[storeHomeEnvName(brand)];
   const storeHome = config.storeHome ?? (isUnset(storeHomeEnv) ? undefined : storeHomeEnv);
   // Fix round 4 (minors, M-6 sibling): the SAME blank-is-unset rule, for the sibling this module's
-  // own M-6 fix (above) did not also cover -- claude's own `pi()` (the plugin-cache-dir reader) is
-  // `if(e)`, which is falsy on `""` exactly like `isUnset` treats it, so `WINTER_PLUGIN_CACHE_DIR=""`
-  // must fall through to "no shared plugin cache" (`pluginsRoot`'s own `?? join(storeHome ??
+  // own M-6 fix (above) did not also cover -- claude treats an empty plugin-cache-dir variable as
+  // unset, exactly like `isUnset` does, so `WINTER_PLUGIN_CACHE_DIR=""` must fall through to "no shared plugin cache" (`pluginsRoot`'s own `?? join(storeHome ??
   // winterHome, "plugins")` fallback below), never resolve to a relative empty-string path.
   const pluginCacheDirEnv = env[pluginCacheDirEnvName(brand)];
   const pluginCacheDir = config.pluginCacheDir ?? (isUnset(pluginCacheDirEnv) ? undefined : pluginCacheDirEnv);
@@ -808,9 +800,9 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     // engine.ts) reads exactly this field, so the two cannot disagree.
     ...(config.trustedWorkspace !== undefined ? { trustedWorkspace: config.trustedWorkspace } : {}),
     // SV-11 (WS-21 fix round 9, security): the host's own `RuntimeConfig.sandbox` occupies the
-    // `flag` tier for this ONE key -- claude's own architecture (dump-confirmed: its SDK `Options`
-    // reads through the identical settings-tier machinery as `flagSettings`/`policySettings`) puts
-    // the host-supplied sandbox config at exactly this precedence position, above every
+    // `flag` tier for this ONE key -- as on claude, where the SDK's `Options` take part in settings
+    // resolution as the flag tier, the host-supplied sandbox config sits at exactly this precedence
+    // position, above every
     // settings.json tier but below `managed`. Before this, `config.sandbox` never reached
     // `resolveSettingsDetailed` at all, and `settings.json`'s own `sandbox` block had no consumer
     // anywhere in this module -- `engine.ts`'s `config.sandbox ?? DEFAULT_SANDBOX_SETTINGS` read
@@ -905,12 +897,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       ...(b.workflowsPath !== undefined ? { workflowsPath: b.workflowsPath } : {}),
       ...(b.workflowsPaths !== undefined ? { workflowsPaths: b.workflowsPaths } : {}),
     }));
-  // SV-5 (the router same-view test, real claude 2.1.250): claude's `getWorkflowCommands` folds
-  // EVERY discovered workflow (plugin + project + user) into the SAME `{type:"prompt", ...}` shape
-  // as a markdown slash command / "user-invocable" skill, and that shape feeds the init `skills`,
-  // init `slash_commands` AND the model-facing Skill listing alike -- a plugin workflow named
-  // `sv-flow` in plugin `sv-plugin` is listed as `sv-plugin:sv-flow` in all three, never under its
-  // filename, and the fixture proved Winter listed it in NONE of them. `workflows/store.ts`'s
+  // SV-5 (the router same-view test, real claude 2.1.250): claude lists EVERY discovered workflow
+  // (plugin + project + user) the way it lists a markdown slash command / "user-invocable" skill --
+  // in the init `skills`, init `slash_commands` AND the model-facing Skill listing alike: a plugin
+  // workflow named `sv-flow` in plugin `sv-plugin` is listed as `sv-plugin:sv-flow` in all three,
+  // never under its filename, and the fixture proved Winter listed it in NONE of them. `workflows/store.ts`'s
   // `listWorkflowsForListing` is the ONE discovery read all three surfaces share (`workflows/
   // store.ts`'s own header: this file resolves the user tier for the FIRST time, closing WS-11 §11
   // OQ2). Computed HERE, before `skillIndex` below, because fix round 4 (I-E) registers each
@@ -924,10 +915,9 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     ...(settingSources !== undefined ? { settingSources } : {}),
     ...(pluginWorkflows.length > 0 ? { pluginWorkflows } : {}),
   });
-  // Fix round 4 (I-E, the router same-view test): claude's own `m()` (dump-confirmed) turns every
-  // discovered workflow into a `{type:"prompt", kind:"workflow", ...}` command whose prompt RUNS the
-  // workflow -- so `Skill("<name>")` and the slash-command surface both work, not merely list the
-  // name. Each becomes a SYNTHETIC skill entry, registered into the real SkillIndex below (never a
+  // Fix round 4 (I-E, the router same-view test): on claude every discovered workflow is a prompt
+  // command whose prompt RUNS the workflow -- so `Skill("<name>")` and the slash-command surface both
+  // work, not merely list the name. Each becomes a SYNTHETIC skill entry, registered into the real SkillIndex below (never a
   // parallel splice past it): `buildWorkflowSkillPrompt`'s own header has the full "Winter-authored
   // prompt, claude's own structure" reasoning.
   const workflowSyntheticSkills = workflowListing.map((w) => ({
@@ -947,7 +937,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   for (const rejection of plugins.agentFileRejections) {
     warnings.push(`plugin agent file "${rejection.filePath}" was rejected: ${rejection.reason} -- add "name:" and "description:" frontmatter to fix.`);
   }
-  // Fix round 3 (M-5): claude's own `hook-load-failed` diagnostic -- a malformed hooks.json (parses,
+  // Fix round 3 (M-5): the `hook-load-failed` diagnostic, as on claude -- a malformed hooks.json (parses,
   // but carries no "hooks" key) is a warning here too, the same "the plugin still loads, this just
   // names the broken file" shape as the agent-file rejections immediately above.
   for (const warning of plugins.hookFileWarnings) warnings.push(warning);
@@ -1174,10 +1164,9 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
         })
       : undefined;
 
-  // SV-5 (the router same-view test, real claude 2.1.250): claude's `getWorkflowCommands` folds
-  // EVERY discovered workflow (plugin + project + user) into the SAME `{type:"prompt", ...}` shape
-  // as a markdown slash command / "user-invocable" skill, and that shape feeds the init `skills`,
-  // init `slash_commands` AND the model-facing Skill listing alike -- a plugin workflow named
+  // SV-5 (the router same-view test, real claude 2.1.250): claude lists EVERY discovered workflow
+  // (plugin + project + user) the way it lists a markdown slash command / "user-invocable" skill, in
+  // the init `skills`, init `slash_commands` AND the model-facing Skill listing alike.
   // (14) THE INIT FRAME's four P5 fields.
   //
   // `slash_commands` comes from `slashCommandNames(resolver, cwd)` -- which ALREADY includes the
@@ -1623,9 +1612,9 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     // builder, which sees only settings.
     allowDangerouslySkipPermissions: config.allowDangerouslySkipPermissions === true,
     disableBypassPermissionsMode: config.permissions?.disableBypassPermissionsMode === true,
-    // Fix round 11 ("important" item, claude's own TFt): the two roots a `/`-anchored rule's own
-    // settings-source tier can resolve to (`sourceDir` computation's own header, above, has claude's
-    // xXn/Wyt dump citation) -- cwd for every tier except user, home for user.
+    // Fix round 11 ("important" item): the two roots a `/`-anchored rule's own settings-source tier
+    // can resolve to (the `sourceDir` computation's own header, above) -- cwd for every tier except
+    // user, this `home` for user.
     cwd: config.cwd,
     home: winterHome,
   });
@@ -1649,7 +1638,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     }
   }
   // WS-21 §6.3 item 6, fix round 1 (item 5): claude applies each enabled tier's FILTERED env to
-  // its own process env at startup (`Object.assign(process.env, filtered)`) -- `settingsEnv` was
+  // its own process env at startup -- `settingsEnv` was
   // computed and exposed on `ProductionWiring` but never actually APPLIED anywhere, so a tool
   // spawn (Bash) never saw it. Applied to `env` here, not to the global `process.env` directly:
   // in PRODUCTION `env` IS `process.env` (`main.ts` calls `buildProductionWiring({..., env:
@@ -1686,13 +1675,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // sandbox view -- see `deriveSandboxPathsFromRules`'s own header for the exact rule-to-key mapping
   // and the glob-shaped-entry disclosure. Fix round 17 (R.3 I-1): `home` is the OS home, never
   // `winterHome`. A `~/` rule means the user's real home on every other path in this codebase -- the
-  // evaluator resolves `~` against `homedir()` (engine.ts's `permissionHome`) -- and on claude: its
-  // rule-to-path conversion (`OWe`/`TFt`, dump byte 15441060) leaves `~/` alone and its sandbox
-  // normaliser (`Cv`, dump byte 15283956) expands it through `fv` (15283691) to `Za()`, which is
-  // `os.homedir` (`import{homedir as Za}from"os"`, 15282085). Under the router
+  // evaluator resolves `~` against `homedir()` (engine.ts's `permissionHome`) -- and claude fences a
+  // `~/` rule's path at the OS home too. Under the router
   // `winterHome` is the per-run folder, so the old value fenced `<run folder>/.aws` and left `~/.aws`
   // open. A `/`-anchored rule's user-tier root is a separate value -- `buildSettingsRuleSeed`'s
-  // `sourceDir = winterHome`, claude's `Wyt` `userSettings` case -- and is unchanged.
+  // `sourceDir`, which is `winterHome` for the user tier -- and is unchanged.
   const ruleSandboxPaths = deriveSandboxPathsFromRules(settingsRules.entries, { cwd: config.cwd, home: homedir() });
   const mergedSandboxFilesystem = {
     allowWrite: unionStrings(effective.sandbox?.filesystem?.allowWrite, ruleSandboxPaths.allowWrite),

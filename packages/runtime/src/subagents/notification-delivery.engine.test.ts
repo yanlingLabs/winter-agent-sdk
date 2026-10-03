@@ -402,7 +402,7 @@ describe("the input-closed hold", () => {
     const { kinds } = await driveClosedInput({
       sessionId,
       // 1 ms: the wait makes no progress once the turn ends, so the ceiling blows on the next poll and
-      // the pin's own "deadline = now" branch sweeps without waiting out the 5 s grace.
+      // the "deadline already passed" case sweeps without waiting out the 5 s grace.
       env: { WINTER_PRINT_BG_WAIT_CEILING_MS: "1" },
       script: () => ({ kind: "text", text: "ok" }),
     });
@@ -590,7 +590,7 @@ describe("the input-closed hold", () => {
   });
 });
 
-// --- session_state_changed (env-gated, exactly as the pin gates it) --------------------------------
+// --- session_state_changed (env-gated, as claude gates it) ----------------------------------------
 describe("session_state_changed", () => {
   async function stateFrames(env?: Record<string, string | undefined>): Promise<string[]> {
     const frames: WinterFrame[] = [];

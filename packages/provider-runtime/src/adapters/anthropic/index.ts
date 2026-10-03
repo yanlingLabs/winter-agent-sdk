@@ -14,12 +14,11 @@ export {
   toWireMessages,
 } from "./messages.ts";
 export type { AnthropicAdapterOptions, EffortMapping } from "./messages.ts";
-// D20 (RETIRED 2026-09-13, P10a-1): the derived-PKCE Console OAuth login (Claude Code's own private
-// client id, re-implemented) is gone for good -- `console-oauth.ts`'s banner has the full account.
-// What remains from that file is the credential-naming helper and the `anthropic-beta` value
+// D20 (RETIRED 2026-09-13, P10a-1): the PKCE Console OAuth login is gone for good --
+// `console-oauth.ts`'s banner has the full account. What remains from that file is the credential-naming helper and the `anthropic-beta` value
 // `messages.ts` still sends alongside an `oauth`-kind Anthropic credential's bearer. See
 // `packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6b.md` §2 (headed RETIRED) for the
-// full derivation record that login once shipped.
+// record of what that login once shipped.
 export { ANTHROPIC_CONSOLE_ACCOUNT_ID, ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, CONSOLE_BEARER, anthropicCredentialRef } from "./console-oauth.ts";
 // D20, host-brokered (P10a-1 AMENDMENT, 2026-09-13; corrected Lane S round 2): Console sign-in
 // through Anthropic's OWN `ant` broker binary (`auth login`/`auth logout`/`auth print-credentials`)

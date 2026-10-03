@@ -5637,9 +5637,8 @@ describe("spawn-surface parity (L2b): engine wiring", () => {
 
 // Fix round 19 (the R.3 live gate, BLOCKING): an MCP server's tools that register AFTER startup
 // never reached the model -- `providerToolSpecs()` read a partition frozen at startup, before any
-// stdio server had connected. claude rebuilds each turn's tools from live state (`runHeadless`,
-// dump byte 34017501: `let Dr=p(),…` read fresh per dequeued command; `system/init` built per query
-// from that turn's tools, `zi` 33869605). The partition is now re-derived from the live registry.
+// stdio server had connected. claude offers each turn the tools of the servers connected by then,
+// and that turn's `system/init` lists them. The partition is now re-derived from the live registry.
 describe("fix round 19: tools an MCP server registers after startup reach the next turn's request", () => {
   test("a server that connects between turns: turn 1's request lacks its tool, turn 2's carries it", async () => {
     const SERVER = "r19late";
@@ -5691,9 +5690,9 @@ describe("fix round 19: tools an MCP server registers after startup reach the ne
 
 // Fix round 19, add-on C (from the R.3 live gate; treated as blocking): execution re-checks a tool's
 // exposure instead of trusting that the model only calls what it was offered. claude runs a call only
-// if its name resolves in the tools THIS query was offered (`IQ`, dump byte 18510312: `g=Zr(o.options.
-// tools,p,o.options.toolAliases)`; a miss answers `<tool_use_error>Error: No such tool available: ${p}
-// ${hint}</tool_use_error>` with `is_error:true`). Each case records whether the executor ran.
+// if its name (or an alias of it) is among the tools THIS request offered; a miss answers
+// `<tool_use_error>Error: No such tool available: <name><hint></tool_use_error>` with `is_error: true`.
+// Each case records whether the executor ran.
 // Measured before the fix: (1) EXECUTED -- the Critical; (2) was refused by the permission pipeline
 // ("Denied by permission rule", a `permission_denied` frame); (3) and (4) by the availability check.
 // (2)-(4) never ran and keep those pinned channels; (1) is now refused in claude's shape.

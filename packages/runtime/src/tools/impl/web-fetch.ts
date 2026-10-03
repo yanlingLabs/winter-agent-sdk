@@ -27,7 +27,7 @@
 //      fixed sentence instead of forwarding it, same as every other message on this file already is
 //      Winter-authored rather than server- or provider-supplied.
 //   Fidelity #2/#6/#10 (corrections §4 of the extraction notes): the `new URL()` parse-failure text
-//      carries the `Error: ` prefix claude's own `validateInput` uses (the FETCH-TIME rejects, a
+//      carries the `Error: ` prefix claude's own input validation uses (the FETCH-TIME rejects, a
 //      DIFFERENT bare `Invalid URL` text, live in `_web-fetch-net.ts`); the domain-block text has NO
 //      trailing period; only `text/html` converts (not `application/xhtml+xml`, which is `text`).
 //   Minor: the binary save now writes `0o600`/`flag:"wx"` and is bounded per session (a looping model
@@ -410,7 +410,7 @@ export function createWebFetchExecutor(deps: WebFetchExecutorDeps = {}): ToolExe
     const policy = effectivePolicyFor(normalizePrivateAddressPolicy(runtime.web.fetch.privateAddressPolicy), originalUrl.hostname, ctx);
 
     // Fidelity #6 (corrections §4.6): no trailing period -- claude's own `Claude Code is unable to
-    // fetch from ${host}` has none, measured directly in the binary.
+    // fetch from ${host}` has none.
     if (isDomainBlocked(originalUrl.hostname, blockedDomains)) {
       return { output: `${brand} is unable to fetch from ${originalUrl.hostname}`, isError: true };
     }

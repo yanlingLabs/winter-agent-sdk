@@ -157,7 +157,7 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       expect(ctx.readState.lookup(join(dir, "rel.txt"))?.complete).toBe(true);
     });
 
-    // Fix round 10, item B: claude's own `ht` trims a path argument before resolving it -- "the
+    // Fix round 10, item B: claude trims a path argument before resolving it -- "the
     // check and the write must never disagree" (permissions/paths.ts's `resolveTargetPath` gets the
     // identical fix). A model-supplied `file_path` with surrounding whitespace reads the TRIMMED
     // path, and readState is keyed by that same trimmed, resolved path.

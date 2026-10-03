@@ -79,7 +79,7 @@ interface ListingLine {
 }
 
 /** Parses the `- <type>: <description> (Tools: <spec>)` lines out of a listing block -- the FORMAT
- *  claude authors, per R3a's `hrt` renderer; description text is expected to differ between the two
+ *  claude's listing uses, per R3a; description text is expected to differ between the two
  *  runtimes (each authors its own copy) so it is captured but never compared for equality. */
 function parseListingLines(blockText: string): ListingLine[] {
   const out: ListingLine[] = [];

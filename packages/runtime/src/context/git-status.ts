@@ -1,15 +1,16 @@
-// SDK 0.0.16 Lane C (P16-5): the systemContext `gitStatus` snapshot, in claude 0.3.250's shape.
+// SDK 0.0.16 Lane C (P16-5): the systemContext `gitStatus` snapshot, in the shape claude's own
+// requests carry.
 //
-// claude's `aHe`, ported: five git reads in parallel, joined into blank-line-separated parts --
+// Five git reads in parallel, joined into blank-line-separated parts --
 //   <snapshot caveat>                       (Winter's own wording)
 //   Current branch: <branch>
 //   Main branch (you will usually use this for PRs): <main>
 //   Git user: <user.name>                  (only when set)
-//   Status:\n<git status --short, or (clean)>   (cut at 2 000 characters, with claude's hint line)
+//   Status:\n<git status --short, or (clean)>   (cut at 2 000 characters, with the hint line)
 //   Recent commits:\n<git log --oneline -n 5>
 // A directory that is not a git work tree has NO gitStatus at all. A single git read that fails
-// contributes an empty string (claude's reads never throw on a non-zero exit); only an unexpected
-// failure drops the whole snapshot.
+// contributes an empty string (a non-zero exit is not an error here); only an unexpected failure
+// drops the whole snapshot.
 //
 // The ENGINE calls this once per session context (memoized, cleared by compaction) and appends the
 // result to the system prompt as the final `gitStatus: <text>` part. Whether it is wanted at all is
@@ -24,10 +25,9 @@ export const GIT_STATUS_CAVEAT = "This git status was captured when the session 
 /** The shell tool the truncation hint names (Winter's advertised name is claude's). */
 const BASH_TOOL_NAME = "Bash";
 
-/** claude's `hde`. */
+/** Where the short status is cut. */
 export const GIT_STATUS_MAX_CHARS = 2000;
 
-const MAIN_BRANCH_CANDIDATES = ["main", "master"] as const;
 const GIT_TIMEOUT_MS = 10_000;
 
 interface GitResult {
@@ -46,21 +46,35 @@ function runGit(cwd: string, args: readonly string[], env?: GitEnv): Promise<Git
   });
 }
 
-/** claude's `$a`: the checked-out branch, `HEAD` when detached or unknown. */
+/** The checked-out branch for the `Current branch:` line. */
 async function currentBranch(cwd: string, env: GitEnv): Promise<string> {
+  // git's own abbreviation of HEAD: the short branch name, or `HEAD` when detached. An unborn branch
+  // makes the query fail, which also reads as `HEAD`.
   const { code, stdout } = await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"], env);
-  return code === 0 ? stdout.trim() || "HEAD" : "HEAD";
+  const name = stdout.trim();
+  return code === 0 && name.length > 0 ? name : "HEAD";
 }
 
-/** claude's `$S`: origin's HEAD when it resolves, else the first of main/master origin has, else `main`. */
+/** Whether `refs/remotes/origin/<name>` exists locally. */
+async function originRefExists(cwd: string, name: string, env: GitEnv): Promise<boolean> {
+  const { code } = await runGit(cwd, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${name}`], env);
+  return code === 0;
+}
+
+/** Tried in order when origin/HEAD names no usable branch. */
+const FALLBACK_MAIN_BRANCHES = ["main", "master"] as const;
+
+/** The branch named on the `Main branch ...:` line. */
 async function mainBranch(cwd: string, env: GitEnv): Promise<string> {
-  const head = await runGit(cwd, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], env);
+  // origin/HEAD's target first -- only when origin actually has that branch.
+  const head = await runGit(cwd, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], env);
   if (head.code === 0) {
-    const name = head.stdout.trim().replace(/^origin\//, "");
-    if (name.length > 0 && (await runGit(cwd, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${name}`], env)).code === 0) return name;
+    let name = head.stdout.trim();
+    if (name.startsWith("origin/")) name = name.slice("origin/".length);
+    if (name.length > 0 && (await originRefExists(cwd, name, env))) return name;
   }
-  for (const candidate of MAIN_BRANCH_CANDIDATES) {
-    if ((await runGit(cwd, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${candidate}`], env)).code === 0) return candidate;
+  for (const candidate of FALLBACK_MAIN_BRANCHES) {
+    if (await originRefExists(cwd, candidate, env)) return candidate;
   }
   return "main";
 }
@@ -106,7 +120,7 @@ export async function computeGitStatus(cwd: string, env?: Record<string, string 
 /**
  * The kill switch (claude's `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS`, Winter's `<PREFIX>DISABLE_GIT_INSTRUCTIONS`)
  * over the `includeGitInstructions` setting (default true). An explicit env value wins either way,
- * as claude's `VU` does: a truthy value disables, a falsy one ("0"/"false"/"no"/"off") enables.
+ * as claude's does: a truthy value disables, a falsy one ("0"/"false"/"no"/"off") enables.
  */
 export function gitInstructionsEnabled(envValue: string | undefined, includeGitInstructions: unknown): boolean {
   const raw = envValue?.trim().toLowerCase();

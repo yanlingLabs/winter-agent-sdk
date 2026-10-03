@@ -140,7 +140,7 @@ const writeExecutor: ToolExecutor = {
     const parsed = parseInput(rawInput);
     if (!parsed) return errorResult("Write requires string fields 'file_path' and 'content'");
 
-    // Fix round 10, item B: trim FIRST, matching claude's own `ht` (dump-confirmed, `let r=t.trim()`)
+    // Fix round 10, item B: trim FIRST, as claude does with a path argument before resolving it
     // -- the check (permissions/paths.ts's `resolveTargetPath`, same fix) and the write must never
     // disagree, or an unescaped trailing-space deny rule would protect a DIFFERENT path than the one
     // this tool actually writes.

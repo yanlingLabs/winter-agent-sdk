@@ -16,7 +16,7 @@ export const WEB_SEARCH_CANONICAL_NAME = "WebSearch";
 
 // --- The month, rendered exactly as claude's own template computes it -----------------------------
 
-/** `new Date().toLocaleString("en-US",{month:"long",year:"numeric"})`, e.g. "September 2026" -- claude's own `${t}`. */
+/** The current month and year in US English, e.g. "September 2026" -- the month claude's description names. */
 export function currentMonthYear(now: () => Date = () => new Date()): string {
   return now().toLocaleString("en-US", { month: "long", year: "numeric" });
 }

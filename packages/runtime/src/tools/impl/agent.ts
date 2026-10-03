@@ -134,7 +134,7 @@ function finalizeAgentTask(taskId: string, parentToolUseId: string, outputPath: 
       outputFile: outputPath,
       toolUseId: parentToolUseId,
       ...(usage !== undefined ? { usage } : {}),
-      // SDK 0.0.16 Lane N: the MODEL-facing document (claude's `vP`). A FOREGROUND agent gets none --
+      // SDK 0.0.16 Lane N: the MODEL-facing agent notification document. A FOREGROUND agent gets none --
       // this tool call's own return value already carries the child's result to the model. A
       // BACKGROUND one gets the summary the pin builds from the DESCRIPTION (`Agent "<desc>"
       // finished`), with the child's report text in `<result>` -- deliberately not the frame's own

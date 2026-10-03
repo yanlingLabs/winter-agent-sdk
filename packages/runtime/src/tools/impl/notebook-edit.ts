@@ -144,7 +144,7 @@ const notebookEditExecutor: ToolExecutor = {
       return errorResult(`edit_mode:'${parsed.edit_mode}' requires 'cell_id'`);
     }
 
-    // Fix round 10, item B: trim FIRST, matching claude's own `ht` -- see write.ts's identical comment.
+    // Fix round 10, item B: trim FIRST, as claude does -- see write.ts's identical comment.
     const resolvedPath = resolve(ctx.cwd, parsed.notebook_path.trim());
 
     try {

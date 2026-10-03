@@ -444,12 +444,12 @@ export function toWireMessages(messages: ProviderMessageLike[], opts: { referabl
 // claude 0.3.250 marks prompt-cache breakpoints in two places, and this adapter mirrors both:
 //   - SYSTEM: the prompt goes as text blocks, and every block whose cache scope is not `null` carries
 //     `cache_control: {type: "ephemeral"}`.
-//   - MESSAGES: the LAST message's LAST content block carries the same marker (claude's
-//     `addCacheBreakpoints` on the final message), so the byte-stable conversation prefix -- the
+//   - MESSAGES: the LAST message's LAST content block carries the same marker (as in claude's
+//     captured requests), so the byte-stable conversation prefix -- the
 //     index-0 context, the persisted attachments, every earlier turn -- is read from cache.
 //
 // `scope: "global"` is NOT sent. claude adds it only when its own first-party global-cache beta is
-// negotiated (its `Tce()` gate); without that beta the pinned binary itself sends a plain
+// negotiated; without that beta the pinned binary itself sends a plain
 // `{type: "ephemeral"}` on both blocks (captured against a loopback endpoint), which is what this
 // adapter sends. Disclosed deviation: Winter does not negotiate that beta.
 //
@@ -1060,8 +1060,8 @@ function assertPerMessageEffort(req: TurnRequest, descriptor: WinterModelDescrip
  * the body carries `output_config`.
  *
  * The DOCUMENTED value (`mid-conversation-output-config-2026-07-01`), read off the row's evidence.
- * claude 2.1.282 sends the older alias `per-turn-control-2026-07-01` (its binary maps
- * `per_message_effort` to it, and the loopback capture shows it on the wire); the effort page names
+ * claude 2.1.282 sends the older alias `per-turn-control-2026-07-01` (the loopback capture shows it
+ * on the wire); the effort page names
  * only the new value, so Winter sends that one and does not depend on an undocumented alias.
  */
 export function perMessageEffortBetaFor(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined): string | undefined {

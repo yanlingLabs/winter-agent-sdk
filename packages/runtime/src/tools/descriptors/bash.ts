@@ -4,14 +4,14 @@
 // THE SANDBOX SECTION (dist-session fixes E3, 2026-09-22). A model that is not told its shell has no
 // network tells the user `curl` works and then watches every first network attempt fail inside the
 // sandbox. claude's Bash tool carries a "command sandbox" section for exactly this. The strings below
-// are claude's own INTERFACE strings, shipped verbatim per the project owner's ruling -- from the
-// pinned 0.3.250 binary's `## <Bash> command sandbox` builder plus ONE line from claude's Bash prompt
-// SOURCE -- WITH THESE DEVIATIONS, each because the claude text would be false for Winter:
-//   - the restrictions block carries only the NETWORK line, and that line is the prompt source's
-//     `networkConfig` rendering (`Network: {"allowedHosts":[]}`, an allowlist admitting nothing). The
-//     pinned builder renders only `deniedHosts`/`allowUnixSockets` and leans on a filtering-proxy
-//     sentence; Winter's Seatbelt profile denies the network outright (`resolveNetworkPosture`), so
-//     the empty allowlist is the only claude-authored string that states what the model was missing;
+// are claude's own INTERFACE strings (its Bash tool description's `## Bash command sandbox` section),
+// shipped verbatim per the project owner's ruling -- WITH THESE DEVIATIONS, each because the claude
+// text would be false for Winter:
+//   - the restrictions block carries only the NETWORK line, in claude's `Network: {"allowedHosts":[]}`
+//     form (an allowlist admitting nothing). claude's own section lists denied hosts / Unix sockets
+//     and leans on a filtering-proxy sentence; Winter's Seatbelt profile denies the network outright
+//     (`resolveNetworkPosture`), so the empty allowlist is the only claude-authored string that states
+//     what the model was missing;
 //   - claude's FILESYSTEM line (`{read:{denyOnly},write:{allowOnly,denyWithinAllow}}`) is OMITTED. Its
 //     truthful content is per CALL, not per session: the writable roots follow the call's own `cwd`,
 //     the session's bounded roots (which EnterWorktree and added directories move), `$TMPDIR`, the
@@ -23,11 +23,11 @@
 //     sentence names a `/sandbox` command Winter does not have;
 //   - the "Network egress goes through a filtering proxy ... `<sandbox_violations>` block" bullet is
 //     DROPPED: there is no proxy and no violations block.
-// Under `sandbox.allowUnsandboxedCommands: false` the override guidance is replaced by the pinned
-// builder's own "disabled by policy" bullets, verbatim -- true there, because the runtime then IGNORES
-// the flag and runs the command sandboxed (`sandbox/spawn.ts`, claude's shouldUseSandbox).
+// Under `sandbox.allowUnsandboxedCommands: false` the override guidance is replaced by claude's own
+// "disabled by policy" bullets, verbatim -- true there, because the runtime then IGNORES the flag and
+// runs the command sandboxed (`sandbox/spawn.ts`), as claude does.
 //
-// The override bullet is the pinned binary's "This goes through the permission gate", WITHOUT its
+// The override bullet is claude's "This goes through the permission gate", WITHOUT its
 // parenthetical "(a user prompt, or the auto-mode classifier when auto mode is active)": an escape is
 // decided by the permission gate as claude decides it -- an allow rule or bypass runs it, dontAsk
 // denies it -- but one nothing sanctioned goes to the PermissionRequest hook and the host's
@@ -62,7 +62,7 @@ export interface BashSandboxFacts {
   unsandboxedAllowed?: boolean;
 }
 
-/** claude's `prependBullets`: a top-level item is ` - item`, a nested one `  - item`. */
+/** claude's bullet format: a top-level item is ` - item`, a nested one `  - item`. */
 function bullets(items: Array<string | string[]>): string[] {
   return items.flatMap((item) => (Array.isArray(item) ? item.map((sub) => `  - ${sub}`) : [` - ${item}`]));
 }

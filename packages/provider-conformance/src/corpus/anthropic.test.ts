@@ -699,8 +699,8 @@ describe("D20: Anthropic Console OAuth on the wire (RETIRED login/self-refresh; 
     await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
       await foldTurn(adapter, { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "hi" }] }, testContext(fake.url, { credentials: store, authRef: ref }));
       const turn = fake.requests.at(-1)!;
-      // A Bearer, and NOT an api key: the artifact's own auth builder is a ternary between exactly
-      // these two shapes, and it never sends both (derived-shapes-p6b.md §2.5).
+      // A Bearer, and NOT an api key: the two auth shapes are exclusive, and a request never carries
+      // both (derived-shapes-p6b.md §2.5).
       expect(turn.headers["authorization"]).toBe("Bearer ***");
       expect(turn.headers["x-api-key"]).toBeUndefined();
       // The OAuth beta rides as a PROTOCOL header (R6-L): every endpoint speaking this dialect
@@ -847,7 +847,7 @@ describe("D20: Anthropic Console OAuth on the wire (RETIRED login/self-refresh; 
       await foldTurn(adapter, { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "hi" }] }, testContext(fake.url, { credentials: store, authRef: ref }));
       const turn = fake.requests.at(-1)!;
       expect(turn.headers["user-agent"]).toBe(winterUserAgent());
-      // The corpus pin the brief asks for. The pinned artifact carries a SECOND beta,
+      // The corpus pin the brief asks for. claude's own requests can carry a SECOND beta,
       // `claude-code-20250219`, which names its own product; Winter sends the `oauth_auth` one and
       // never that. Checked across every header of every request, not just the two we set, because
       // the way a product identity arrives is on a header nobody was looking at.

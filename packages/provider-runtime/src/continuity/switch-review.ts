@@ -32,7 +32,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 // --- boundary-cut lineage (mirrors resume.ts's ancestryChain + last-boundary cut) ------------------
 
-interface Node {
+export interface Node {
   uuid: string;
   parentUuid: string | null;
   type: string;
@@ -75,92 +75,93 @@ function toNodes(entries: SessionStoreEntry[]): Node[] {
   return nodes;
 }
 
-/**
- * F2 (WS-21 fix round 23): `runtime/src/store/resume.ts`'s `recoverParallelToolResults`, redeclared
- * (provider-runtime must never import the runtime package -- this file's own rule, above) so the
- * warning's "N completed tool results" counts exactly what the Winter leg's rebuild carries.
- *
- * claude writes a PARALLEL batch as one one-block `assistant` entry per call, chained one after
- * another, and parents each call's result on ITS OWN call's entry; it yields a concurrency-safe
- * batch's results in completion order (`getCompletedResults`, claude 2.1.250 dump offset 18548003)
- * and chains the next turn onto the last one. So the single parentUuid chain from the leaf holds one
- * result, and when an earlier call finished last, not even the later call entries. claude's own
- * reader splices both back in after its walk (`Cer`, 20061141). Here as there: for each run of
- * consecutive chain `assistant` entries that does not end the chain, the off-chain sibling call
- * entries (parented on a member or another sibling) and the off-chain results parented on any of
- * them that answer a call nothing on the chain answers yet are inserted right after the run's last
- * entry -- siblings first, then results in call order. A sibling comes back only when every call it
- * carries is then answered. resume.ts's header comment has the full reasoning and the deliberate
- * differences from `Cer` (grouped by the run and matched by `tool_use_id`, never by `message.id`).
- */
-function recoverParallelToolResults(chain: Node[], pool: Node[]): Node[] {
+/** A parallel tool batch's off-chain call entries and results, spliced back into `chain` (F2). */
+export function recoverParallelToolResults(chain: Node[], pool: Node[]): Node[] {
   const onChain = new Set(chain.map((n) => n.uuid));
+
+  // Only off-chain nodes with a parent can be put back; results are filed under their parent.
   const resultsByParent = new Map<string, Node[]>();
-  const offChainAssistants: Node[] = [];
-  for (const n of pool) {
-    if (onChain.has(n.uuid) || n.parentUuid === null) continue;
-    if (n.type === "assistant" && !n.apiError) offChainAssistants.push(n);
-    if (n.toolResultIds.length === 0) continue;
-    const siblings = resultsByParent.get(n.parentUuid);
-    if (siblings !== undefined) siblings.push(n);
-    else resultsByParent.set(n.parentUuid, [n]);
-  }
-  if (resultsByParent.size === 0 && offChainAssistants.length === 0) return chain;
-
-  const answered = new Set(chain.flatMap((n) => n.toolResultIds));
-  const recovered = new Set<string>();
-  const resultsFor = (parentUuid: string, open: readonly string[]): { results: Node[]; ids: Set<string> } => {
-    const results: Node[] = [];
-    const ids = new Set<string>();
-    for (const candidate of resultsByParent.get(parentUuid) ?? []) {
-      if (recovered.has(candidate.uuid)) continue;
-      if (!candidate.toolResultIds.some((id) => open.includes(id) && !ids.has(id))) continue;
-      results.push(candidate);
-      for (const id of candidate.toolResultIds) ids.add(id);
+  const candidates: Node[] = [];
+  for (const node of pool) {
+    if (onChain.has(node.uuid) || node.parentUuid === null) continue;
+    if (node.toolResultIds.length > 0) {
+      const group = resultsByParent.get(node.parentUuid);
+      if (group === undefined) resultsByParent.set(node.parentUuid, [node]);
+      else group.push(node);
     }
-    return { results, ids };
-  };
-  const take = (results: readonly Node[], ids: ReadonlySet<string>): void => {
-    for (const r of results) recovered.add(r.uuid);
-    for (const id of ids) answered.add(id);
-  };
+    if (node.type === "assistant" && !node.apiError) candidates.push(node);
+  }
+  if (resultsByParent.size === 0 && candidates.length === 0) return chain;
 
-  const inserts = new Map<string, Node[]>();
-  for (let start = 0; start < chain.length; ) {
+  const answered = new Set<string>();
+  for (const node of chain) for (const id of node.toolResultIds) answered.add(id);
+  const recovered = new Set<string>();
+
+  // Results under `parent` answering an id in `open` that no earlier pick of this collection covers.
+  const collect = (parent: string, open: Set<string>): { taken: Node[]; covered: Set<string> } => {
+    const taken: Node[] = [];
+    const covered = new Set<string>();
+    for (const result of resultsByParent.get(parent) ?? []) {
+      if (recovered.has(result.uuid)) continue;
+      if (!result.toolResultIds.some((id) => open.has(id) && !covered.has(id))) continue;
+      taken.push(result);
+      for (const id of result.toolResultIds) covered.add(id);
+    }
+    return { taken, covered };
+  };
+  const unanswered = (node: Node): Set<string> => new Set(node.toolUseIds.filter((id) => !answered.has(id)));
+
+  const insertions = new Map<number, Node[]>();
+  const last = chain.length - 1;
+  for (let start = 0; start <= last; ) {
     if (chain[start]!.type !== "assistant") {
       start++;
       continue;
     }
     let end = start;
-    while (end + 1 < chain.length && chain[end + 1]!.type === "assistant") end++;
-    if (end < chain.length - 1) {
-      const memberResults: Node[] = [];
-      for (let k = start; k <= end; k++) {
-        const member = chain[k]!;
-        const { results, ids } = resultsFor(member.uuid, member.toolUseIds.filter((id) => !answered.has(id)));
-        take(results, ids);
-        memberResults.push(...results);
-      }
-      const reachable = new Set(chain.slice(start, end + 1).map((n) => n.uuid));
-      const siblings: Node[] = [];
-      const siblingResults: Node[] = [];
-      for (const candidate of offChainAssistants) {
-        if (candidate.parentUuid === null || !reachable.has(candidate.parentUuid) || recovered.has(candidate.uuid)) continue;
-        reachable.add(candidate.uuid);
-        const { results, ids } = resultsFor(candidate.uuid, candidate.toolUseIds.filter((id) => !answered.has(id)));
-        if (!candidate.toolUseIds.every((id) => answered.has(id) || ids.has(id))) continue;
-        recovered.add(candidate.uuid);
-        take(results, ids);
-        siblings.push(candidate);
-        siblingResults.push(...results);
-      }
-      const found = [...siblings, ...memberResults, ...siblingResults];
-      if (found.length > 0) inserts.set(chain[end]!.uuid, found);
-    }
+    while (end < last && chain[end + 1]!.type === "assistant") end++;
+    const run = chain.slice(start, end + 1);
     start = end + 1;
+    // Nothing is ever placed after the chain's final node.
+    if (end === last) continue;
+
+    const memberResults: Node[] = [];
+    for (const member of run) {
+      const { taken, covered } = collect(member.uuid, unanswered(member));
+      for (const n of taken) recovered.add(n.uuid);
+      for (const id of covered) answered.add(id);
+      memberResults.push(...taken);
+    }
+
+    // One pass over the candidates: a reached candidate makes its own children reachable even when
+    // it is itself rejected, but only for candidates later in pool order.
+    const reachable = new Set(run.map((n) => n.uuid));
+    const siblings: Node[] = [];
+    const siblingResults: Node[] = [];
+    for (const candidate of candidates) {
+      if (candidate.parentUuid === null || !reachable.has(candidate.parentUuid) || recovered.has(candidate.uuid)) continue;
+      reachable.add(candidate.uuid);
+      const { taken, covered } = collect(candidate.uuid, unanswered(candidate));
+      if (!candidate.toolUseIds.every((id) => answered.has(id) || covered.has(id))) continue;
+      recovered.add(candidate.uuid);
+      for (const n of taken) recovered.add(n.uuid);
+      for (const id of covered) answered.add(id);
+      siblings.push(candidate);
+      siblingResults.push(...taken);
+    }
+
+    const inserted = [...siblings, ...memberResults, ...siblingResults];
+    if (inserted.length > 0) insertions.set(end, inserted);
   }
-  if (inserts.size === 0) return chain;
-  return chain.flatMap((n) => [n, ...(inserts.get(n.uuid) ?? [])]);
+
+  if (insertions.size === 0) return chain;
+  const out: Node[] = [];
+  chain.forEach((node, i) => {
+    out.push(node);
+    const extra = insertions.get(i);
+    if (extra !== undefined) out.push(...extra);
+  });
+  return out;
 }
 
 function isBoundary(n: Node): boolean {

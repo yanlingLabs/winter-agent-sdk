@@ -128,7 +128,7 @@ describe("skill_listing (claude's session state)", () => {
     expect(skillEntry).toEqual({ type: "skill_listing", content: "- gamma: Gamma.", skillCount: 1, isInitial: false, names: ["gamma"] });
   });
 
-  test("a legacy persisted listing without names suppresses the next listing (claude's suppressNext)", async () => {
+  test("a legacy persisted listing without names suppresses the next listing", async () => {
     const legacy: ProviderMessage = { role: "user", content: "<system-reminder>\nold\n</system-reminder>", meta: { attachment: { type: "skill_listing", content: "- alpha" } } };
     const requests = await run({ prompts: ["next"], engine: { initialMessages: [{ role: "user", content: "earlier" }, legacy, { role: "assistant", content: "r" }], skillListing: [{ name: "alpha", description: "A.", source: "project" }] } });
     expect(count(requests[0]!, SKILLS_HEADER)).toBe(0);
@@ -178,7 +178,7 @@ describe("compaction", () => {
   });
 });
 
-describe("date_change (claude's alr)", () => {
+describe("date_change", () => {
   test("announced once when the local date moves past the context's date; the context keeps its date until compaction", async () => {
     let now = new Date(2026, 8, 17, 23, 59);
     const requests = await run({

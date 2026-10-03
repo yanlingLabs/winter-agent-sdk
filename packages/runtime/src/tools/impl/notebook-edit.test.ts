@@ -223,7 +223,7 @@ describe("NotebookEdit -- the read-before-edit ladder gates the target", () => {
     }
   });
 
-  // Fix round 10, item B: claude's own `ht` trims a path argument before resolving it -- see
+  // Fix round 10, item B: claude trims a path argument before resolving it -- see
   // write.test.ts's identical fixture. A model-supplied `notebook_path` with surrounding whitespace
   // edits the TRIMMED path.
   test("fix round 10, item B: a notebook_path with surrounding whitespace is trimmed before resolution", async () => {

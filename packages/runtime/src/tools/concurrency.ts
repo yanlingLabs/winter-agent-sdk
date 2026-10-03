@@ -1,4 +1,4 @@
-// SDK 0.0.40: how each call of a tool round is SCHEDULED (claude's `isConcurrencySafe` rule, plus lanes).
+// SDK 0.0.40: how each call of a tool round is SCHEDULED (claude's concurrency-safety rule, plus lanes).
 //
 // The engine walks a round's calls in call order. Each call is one of:
 //   - CONCURRENT: it runs beside the round's other concurrent and lane calls, up to `MAX_TOOL_CONCURRENCY`

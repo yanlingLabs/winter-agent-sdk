@@ -5,10 +5,10 @@
 // every first network attempt (gh, curl) failed inside the sandbox before a `dangerouslyDisableSandbox`
 // retry -- the Bash tool's description said nothing about the sandbox, its network posture or the
 // override. claude's Bash tool carries a "command sandbox" section for exactly this; these tests pin
-// that Winter now advertises claude's own text (the pinned 0.3.250 binary's strings plus the
-// `Network: {"allowedHosts":[]}` line from claude's prompt SOURCE, with the deviations the descriptor's
-// header lists) for a sandboxed session, rendered from the session's REAL sandbox posture, and nothing
-// that is false for Winter.
+// that Winter now advertises claude's own text (its Bash command-sandbox section, including the
+// `Network: {"allowedHosts":[]}` line, with the deviations the descriptor's header lists) for a
+// sandboxed session, rendered from the session's REAL sandbox posture, and nothing that is false for
+// Winter.
 import { describe, expect, test } from "bun:test";
 import type { RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { runEngine, type Provider, type ProviderRequest } from "../engine.ts";

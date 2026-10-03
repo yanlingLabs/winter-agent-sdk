@@ -21,8 +21,8 @@
 //
 // PROMPTS ARE WINTER-AUTHORED (R-S3): every body below follows research §A1's OWN SUMMARY of a
 // claude built-in's structure, rules and approximate length -- never a transcription of the real
-// text (none of which is in the research file, and this lane's own brief forbids going looking for
-// it in the pinned binary or the leaked reference).
+// text (none of which is in the research file, and this lane's own brief forbids sourcing it from
+// anywhere else).
 import { WINTER_BRAND, envName, type BrandProfile, type RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
 import { BUBBLE_PERMISSION_MODE } from "../permissions/policy-state.ts";
 
@@ -296,7 +296,7 @@ export function resolveBuiltinAgents(opts?: { env?: Record<string, string | unde
       tools: ["*"],
       maxTurns: 200,
       model: "inherit",
-      // SDK 0.0.16 (P16-7): claude's own fork definition (`Ex`) carries `permissionMode: "bubble"` --
+      // SDK 0.0.16 (P16-7): claude's fork definition carries `permissionMode: "bubble"` --
       // no longer left unset. `BUBBLE_PERMISSION_MODE` is NOT a member of `PERMISSION_MODES`
       // (`permissions/policy-state.ts`'s own closed 6-value union, read exhaustively elsewhere) and
       // is never widened into one; `engine.ts`'s `buildChildInheritance` recognizes this exact

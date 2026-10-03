@@ -3,25 +3,24 @@ import { resolve as resolvePath, dirname, isAbsolute } from "node:path";
 import { execFileSync } from "node:child_process";
 import { transcriptProjectKey } from "./project-key.ts";
 
-// The pinned consumer NFC-normalizes the resolved path on macOS before deriving a key (its own
-// realpath/resolve chain applies this unconditionally on darwin, ahead of the sanitizer). Without
-// it, an NFD-decomposed path (a precomposed letter expressed as base + combining mark — a form
+// On macOS the resolved path is NFC-normalized before a key is derived, ahead of the sanitizer, as
+// the official runtime's keys are. Without it, an NFD-decomposed path (a precomposed letter expressed as base + combining mark — a form
 // some macOS filesystem APIs can hand back) and its NFC-precomposed equivalent sanitize to
 // DIFFERENT lengths, because a combining mark is its own non-alnum character. Two spellings of
-// "the same path" would then produce different keys, defeating cross-runtime compatibility. Winter
-// mirrors this exactly: darwin-only, matching the pinned consumer's own platform gate.
+// "the same path" would then produce different keys, defeating cross-runtime compatibility.
+// Darwin-only.
 function platformNormalize(p: string): string {
   return process.platform === "darwin" ? p.normalize("NFC") : p;
 }
 
-// resolve(relative-or-absolute) -> realpath (best effort) -> platform normalize. Mirrors the
-// pinned consumer's own cwd-resolution chain that feeds its project-key function.
+// resolve(relative-or-absolute) -> realpath (best effort) -> platform normalize: the canonical cwd a
+// project key is derived from.
 function resolveCanonical(raw: string): string {
   const resolved = resolvePath(raw);
   try {
     return platformNormalize(realpathSync(resolved));
   } catch {
-    return platformNormalize(resolved); // best-effort fallback — matches the pinned consumer
+    return platformNormalize(resolved); // best-effort fallback: an unresolvable path keys as resolved
   }
 }
 

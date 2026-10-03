@@ -53,7 +53,7 @@ function formatResult(message: string, taskId: string, taskKind: BackgroundTaskK
   return JSON.stringify({ message, task_id: taskId, task_type: wireTaskType(taskKind), ...(command !== undefined ? { command } : {}) });
 }
 
-// Task-frames parity (2026-09-17 contract §4 "Summary wording", pin `CMe`): the kill wording now
+// Task-frames parity (2026-09-17 contract §4 "Summary wording"): the kill wording now
 // lives in ONE place, `killedTaskSummary` (background-task-runtime.ts), shared with the background
 // exit handlers and the engine's teardown sweep -- and, for an agent, with the child's own settle()
 // text (review r1 finding 4: a TaskStop and a parent abort must not describe one event two ways).
@@ -90,9 +90,9 @@ const taskStopExecutor: ToolExecutor = {
     // Review r1 finding 4: no `usage` here on purpose -- `notifyTerminal` defaults it from the row's
     // own `usage()` accessor, which an agent row carries (agent.ts).
     // SDK 0.0.16 Lane N: the MODEL-facing document names the ACTOR, which only this door knows -- the
-    // model called TaskStop, so the actor is the assistant (claude's `killedBy: "parent"`). An AGENT
-    // row takes the agent shape (claude's `vP` with a killed status, carrying the child's usage);
-    // every other kind takes claude's `gnt`: `Task "<description>" was stopped by <who>`. A FOREGROUND
+    // model called TaskStop, so the actor is the assistant (stopped by the "parent"). An AGENT row
+    // takes the agent notification shape (with a stopped status, carrying the child's usage); every
+    // other kind takes the plain stop notice: `Task "<description>" was stopped by <who>`. A FOREGROUND
     // row gets none (the awaiting tool call reports the stop to the model itself).
     const modelNotification =
       task.isBackgrounded === false
