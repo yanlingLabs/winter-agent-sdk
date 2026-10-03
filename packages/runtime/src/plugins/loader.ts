@@ -46,9 +46,8 @@ export interface LoadPluginsResult {
   agentFileRejections: AgentDefinitionRejection[];
   /**
    * Fix round 3 (M-5): a `hooks/hooks.json` that exists, parses as an object, but carries no
-   * top-level `"hooks"` key -- claude's own `hook-load-failed` diagnostic (`hooks.json must have
-   * \`hooks\` (the hook matchers) or \`modules\` (hooks modules), or both`, dump-confirmed). The
-   * plugin itself still loads (a malformed hooks file is not a whole-plugin rejection, matching
+   * top-level `"hooks"` key -- claude reports the same file as a hook-load failure (`hooks.json must
+   * have \`hooks\` (the hook matchers) or \`modules\` (hooks modules), or both`). The plugin itself still loads (a malformed hooks file is not a whole-plugin rejection, matching
    * `agentFileRejections`'s own precedent immediately above), so this is the one channel that ever
    * names it. `production-wiring.ts` folds these into the same `warnings` list.
    */
@@ -58,7 +57,7 @@ export interface LoadPluginsResult {
    * `workflowsPathWarnings` -- ONE fold site, one channel, for every manifest custom-path override
    * this loader resolves, not a parallel field per component): a manifest `workflows`/`agents`/
    * `output-styles`/`commands`/`skills` entry that could not be used -- not a string, escapes the
-   * plugin directory (lexically OR through a symlink -- fix round 5's own Aoe/KGe port), does not
+   * plugin directory (lexically OR through a symlink -- fix round 5's realpath fence), does not
    * exist, or (skills only) is a file where a directory is required -- plus a
    * `folder-shadowed-by-manifest` notice when an override silently drops an existing default
    * directory. Named per-plugin, per-entry, on the SAME "recoverable, not a whole-plugin rejection"
@@ -146,9 +145,8 @@ function isFileEntry(dir: string, e: Dirent): boolean {
 
 /**
  * ONE "parent of skill directories" scan -- shared by the default `skills/` directory and, fix
- * round 5, every entry a manifest `skills` override names (each an EQUALLY-shaped parent directory,
- * content-search confirmed against the installed claude CLI binary, 2.1.280: the consumer calls the
- * IDENTICAL scan function on the default `skillsPath` and on each `skillsPaths` entry).
+ * round 5, every entry a manifest `skills` override names (each an equally-shaped parent directory,
+ * scanned exactly the way the default one is).
  */
 function scanPluginSkillsAt(skillsParentDir: string, pluginName: string): PluginSkillEntry[] {
   let dirs: string[];
@@ -182,28 +180,41 @@ function scanPluginSkillsAt(skillsParentDir: string, pluginName: string): Plugin
   return out;
 }
 
-/**
- * Fix round 5: a manifest `skills` override, resolved and merged ADDITIVELY with the default
- * `skills/` directory -- see `PluginManifest.skills`'s own header for the dump evidence that skills
- * is the one component here that does NOT shadow. `requireDirectory: true` (claude's own `Tb` call
- * for `skills` is the one place it passes `!0`, unlike every other component's `!1` -- a skill is
- * inherently a directory containing `SKILL.md`, never a bare file). A name collision between the
- * default directory and an override entry -- or between two override entries -- keeps the LAST
- * occurrence, matching the "later wins" convention this round's own agents/commands overrides
- * already use; claude's own builder additionally excludes an override entry that resolves to
- * EXACTLY the default directory before assigning `skillsPaths` at all (`gr===qn`, dump-confirmed),
- * a pure double-scan optimisation this port skips: the eventual name-level dedup below produces the
- * identical final list either way, since re-scanning the same directory twice yields the same
- * entries.
- */
-function resolvePluginSkills(root: string, pluginName: string, declared: PluginManifest["skills"], warnings: string[]): PluginSkillEntry[] {
-  const defaultSkills = scanPluginSkillsAt(join(root, "skills"), pluginName);
-  const overridePaths = resolveManifestComponentOverride(root, pluginName, "skills", declared, true, warnings);
-  if (overridePaths === undefined) return defaultSkills;
-  const overrideSkills = overridePaths.flatMap((path) => scanPluginSkillsAt(path, pluginName));
-  const byName = new Map<string, PluginSkillEntry>();
-  for (const entry of [...defaultSkills, ...overrideSkills]) byName.set(entry.name, entry);
+/** Merge entries by `name`: each name stays where it first appeared but carries its last entry. */
+function dedupeByName<T extends { name: string }>(entries: readonly T[]): T[] {
+  const byName = new Map<string, T>();
+  for (const entry of entries) byName.set(entry.name, entry);
   return [...byName.values()];
+}
+
+/** `realpathSync`, or the path unchanged when it cannot be resolved (missing file, broken link, ...). */
+function realPathOr(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * Whether a manifest `commands` value uses the inline `{name: {source|content}}` map form. Only the
+ * first value of the map is inspected.
+ */
+function isInlineCommandsMap(declared: unknown): boolean {
+  if (typeof declared !== "object" || declared === null || Array.isArray(declared)) return false;
+  const first: unknown = Object.values(declared)[0];
+  if (typeof first !== "object" || first === null) return false;
+  return "source" in first || "content" in first;
+}
+
+/** A manifest `skills` override, merged additively with the default `skills/` directory (spec: plugin-manifest-paths.md). */
+function resolvePluginSkills(root: string, pluginName: string, declared: PluginManifest["skills"], warnings: string[]): PluginSkillEntry[] {
+  const defaults = scanPluginSkillsAt(join(root, "skills"), pluginName);
+  const override = resolveManifestComponentOverride(root, pluginName, "skills", declared, true, warnings);
+  if (override === undefined) return defaults;
+  const all: PluginSkillEntry[] = [...defaults];
+  for (const dir of override) all.push(...scanPluginSkillsAt(dir, pluginName));
+  return dedupeByName(all);
 }
 
 /**
@@ -253,48 +264,27 @@ function scanPluginCommands(root: string, pluginName: string): PluginCommandEntr
   return scanPluginCommandsDir(join(root, "commands"), pluginName);
 }
 
-/**
- * Fix round 5: a manifest `commands` override's own array of paths (the PLAIN string/string[] shape
- * `commands` shares with `workflows`/`agents`/`output-styles` -- NOT the inline `{name:{source|
- * content}}` object-map form, which `resolveCommandsManifestOverride` below intercepts before this
- * is ever reached). Each entry a directory (scanned like the default) or a single file (one
- * command), matching the confirmed consumer shape (content search against the installed claude CLI
- * binary): `w.commandsPaths.map(async(j)=>{let stat=await fs.stat(j);if(stat.isDirectory()){...scan
- * the dir...}else if(stat.isFile()){...one file...}})`. A later entry's SAME command name overrides
- * an earlier one (deduped by name, mirroring `scanPluginAgentsOverride`'s own convention).
- */
+/** A manifest `commands` override's resolved paths, each a directory or a single command file (spec: plugin-manifest-paths.md). */
 function scanPluginCommandsOverride(paths: readonly string[], pluginName: string): PluginCommandEntry[] {
-  const byName = new Map<string, PluginCommandEntry>();
+  const all: PluginCommandEntry[] = [];
   for (const path of paths) {
     let isDir: boolean;
     try {
       isDir = statSync(path).isDirectory();
     } catch {
-      continue;
+      continue; // vanished since it was resolved -- nothing to load
     }
     if (isDir) {
-      for (const entry of scanPluginCommandsDir(path, pluginName)) byName.set(entry.name, entry);
+      all.push(...scanPluginCommandsDir(path, pluginName));
     } else {
       const entry = scanPluginCommandFile(path, pluginName);
-      if (entry !== undefined) byName.set(entry.name, entry);
+      if (entry !== undefined) all.push(entry);
     }
   }
-  return [...byName.values()];
+  return dedupeByName(all);
 }
 
-/**
- * Fix round 5, the disclosed scope decision for commands' own richer manifest shape: claude's `eqt`
- * ALSO accepts an inline `{<name>: {source?, content?}}` object map (dump-confirmed, content search:
- * `typeof n==="object"&&!Array.isArray(n)&&Ee&&typeof Ee==="object"&&(("source"in Ee)||("content"in
- * Ee))`), letting a manifest embed a command's TEXT directly rather than pointing at a file on disk.
- * This is a materially separate, larger mechanism than the plain path-array override every other
- * component shares (a per-entry metadata map, an inline-content registration path, its own merge
- * mode) -- not ported this round; the ruling's own `nk(...)`-style citation is the plain-paths shape.
- * SHADOW still fires (claude's own `j.commands` truthy check does not distinguish the two shapes),
- * with a LOUD warning naming the gap, so a plugin author sees why their default commands/ directory
- * stopped loading rather than the two runtimes silently disagreeing about it ("behave as one" per
- * this round's own ruling).
- */
+/** A manifest `commands` value: the plain path form, or the unsupported inline object-map form (spec: plugin-manifest-paths.md). */
 function resolveCommandsManifestOverride(
   root: string,
   pluginName: string,
@@ -302,14 +292,11 @@ function resolveCommandsManifestOverride(
   warnings: string[],
 ): string[] | undefined {
   if (declared === undefined) return undefined;
-  if (!Array.isArray(declared) && typeof declared === "object" && declared !== null) {
-    const firstValue = Object.values(declared)[0];
-    if (firstValue !== null && typeof firstValue === "object" && ("source" in (firstValue as object) || "content" in (firstValue as object))) {
-      warnings.push(
-        `plugin "${pluginName}"'s manifest "commands" uses the inline {name: {source|content}} form, which Winter does not support yet -- no commands were loaded from it (the default commands/ directory is still shadowed, matching claude's own behaviour whenever the key is present)`,
-      );
-      return [];
-    }
+  if (isInlineCommandsMap(declared)) {
+    warnings.push(
+      `plugin "${pluginName}"'s manifest "commands" uses the inline {name: {source|content}} form, which Winter does not support yet -- no commands were loaded from it (the default commands/ directory is still shadowed, matching claude's own behaviour whenever the key is present)`,
+    );
+    return [];
   }
   return resolveManifestComponentOverride(root, pluginName, "commands", declared as string | string[], false, warnings);
 }
@@ -376,33 +363,27 @@ function scanPluginAgents(root: string, pluginName: string): ScannedAgents {
   return scanPluginAgentsDir(join(root, "agents"), pluginName);
 }
 
-/**
- * Fix round 5: a manifest `agents` override's own array of paths -- each entry a DIRECTORY (scanned
- * the same way the default `agents/` directory is) or a single FILE (one agent), mirroring the
- * default-vs-file branch the real consumer takes (dump-confirmed by content search against the
- * installed claude CLI binary: `M.agentsPaths.map(...){let stat=await fs.stat(entry);if(stat.
- * isDirectory()){...scan the dir...}else if(...){...one file...}}`). A later entry's SAME agent name
- * overrides an earlier one, matching the default directory scan's own within-directory precedent.
- */
+/** A manifest `agents` override's resolved paths, each a directory or a single agent file (spec: plugin-manifest-paths.md). */
 function scanPluginAgentsOverride(paths: readonly string[], pluginName: string): ScannedAgents {
-  const out: Record<string, PluginAgentDefinition> = {};
+  const agents: Record<string, PluginAgentDefinition> = {};
   const rejected: AgentDefinitionRejection[] = [];
   for (const path of paths) {
     let isDir: boolean;
     try {
       isDir = statSync(path).isDirectory();
     } catch {
-      continue; // vanished between resolution and this scan -- silently skipped, like the resolver's own unreadable-file posture
+      continue;
     }
     if (isDir) {
       const scanned = scanPluginAgentsDir(path, pluginName);
-      Object.assign(out, scanned.agents);
+      // Plain assignment: a name seen earlier keeps its key position but takes the newer definition.
+      for (const [name, def] of Object.entries(scanned.agents)) agents[name] = def;
       rejected.push(...scanned.rejected);
     } else {
-      scanPluginAgentFile(path, pluginName, out, rejected);
+      scanPluginAgentFile(path, pluginName, agents, rejected);
     }
   }
-  return { agents: out, rejected };
+  return { agents, rejected };
 }
 
 /** Manifest `mcpServers` merged over any root MCP config file. The MANIFEST wins a name collision. */
@@ -454,9 +435,8 @@ function collectMcpServers(root: string, manifest: PluginManifest | undefined): 
  * (`{"hooks": {<Event>: [...]}, "modules"?: [...] }`) -- Winter has no modules concept, so only the
  * `"hooks"` key is extracted. Generalised in fix round 5 from the pre-round-5 `readPluginHooksJson`
  * (which only ever read `<root>/hooks/hooks.json`) so the SAME reader serves a manifest `hooks`
- * STRING entry too: claude's own consumer runs the identical `I1t` on both (dump-confirmed by
- * content search against the installed claude CLI binary, 2.1.280) -- a manifest-referenced hooks
- * file is WRAPPED the same way `hooks/hooks.json` itself is, not a bare event-map.
+ * STRING entry too: a manifest-referenced hooks file is WRAPPED the same way `hooks/hooks.json`
+ * itself is, not a bare event-map.
  */
 function readHooksFile(path: string, pluginName: string, sourceLabel: string, warnings: string[]): unknown {
   try {
@@ -465,10 +445,10 @@ function readHooksFile(path: string, pluginName: string, sourceLabel: string, wa
     if (!isPlainObject(parsed)) return undefined;
     const inner = parsed["hooks"];
     if (isPlainObject(inner)) return inner;
-    // Fix round 3 (M-5): claude's own `hook-load-failed` -- a well-formed JSON document with no
-    // `"hooks"` key (and, per its own schema, no `"modules"` key either -- Winter has no modules
-    // concept to check, so a bare-object-without-"hooks" is the one shape this codebase can detect)
-    // is a warning, not a silent no-op.
+    // Fix round 3 (M-5): a well-formed JSON document with no `"hooks"` key (claude also accepts a
+    // `"modules"` key there -- Winter has no modules concept to check, so a bare-object-without-
+    // "hooks" is the one shape this codebase can detect) is a warning, not a silent no-op, as it is
+    // a hook-load failure in claude.
     warnings.push(`plugin "${pluginName}"'s ${sourceLabel} has no "hooks" key -- check that the file follows the required schema ({"hooks": {<Event>: [...]}})`);
     return undefined;
   } catch {
@@ -482,8 +462,8 @@ function readPluginHooksJson(root: string, pluginName: string, warnings: string[
 
 /**
  * Fix round 3 (M-5): the manifest's own `hooks` field is ADDITIVE to `hooks/hooks.json`, never a
- * fallback for it -- claude's own manifest schema (`xs`, dump-confirmed) describes every one of its
- * three accepted shapes as "in addition to those in hooks/hooks.json, if it exists": a bare event-map
+ * fallback for it -- claude's manifest schema documents every one of its three accepted shapes as
+ * "in addition to those in hooks/hooks.json, if it exists": a bare event-map
  * object, an ARRAY of such objects, or a STRING path to a further hooks file. Per-event entries
  * CONCATENATE across every source, hooks.json's own entries first.
  *
@@ -494,44 +474,22 @@ function readPluginHooksJson(root: string, pluginName: string, warnings: string[
  * from that element today, exactly as it did before this fix (manifest.hooks was not read at all
  * unless hooks.json was absent).
  */
-/**
- * Fix round 5: resolves every STRING element of a manifest `hooks` value (a bare string, or a
- * string mixed into an array alongside object entries) into a hooks-object, read the SAME wrapped
- * way `hooks/hooks.json` itself is (`readHooksFile`'s own header has the citation). Uses the SAME
- * traversal fence every other manifest custom-path override uses (`resolvesWithinPluginRoot`) --
- * content-search confirmed against the installed claude CLI binary (2.1.280): the string-entry
- * branch calls the identical `E$`/`ZP` resolve-and-check pair `Tb` itself is built on.
- *
- * Two claude-specific de-duplication rules, ported: an entry that resolves to EXACTLY the default
- * `hooks/hooks.json` file is skipped (it already loads on its own; re-listing it must not double-
- * merge its own hooks) -- SILENT on claude's own side (a log line, never pushed to its errors
- * collection) and kept silent here for the identical reason: it is not a problem, it is the author
- * naming a file that was always going to load anyway. Two STRING entries resolving to the SAME
- * file are also de-duplicated, but Winter always WARNS for it (`manifestPathWarnings`) rather than
- * porting claude's own conditional-on-an-internal-flag escalation, whose exact trigger the dump
- * excerpt does not name -- a disclosed simplification toward "always tell the author," the safer
- * direction for a warning channel.
- */
+/** The STRING elements of a manifest `hooks` value: paths to further hooks files (spec: plugin-manifest-hooks-entries.md). */
 function resolveManifestHooksStringEntries(root: string, pluginName: string, declared: unknown, warnings: { paths: string[]; content: string[] }): unknown[] {
-  const entries = Array.isArray(declared) ? declared : declared !== undefined ? [declared] : [];
-  const defaultHooksJsonPath = resolve(join(root, "hooks", "hooks.json"));
-  const defaultHooksJsonReal = (() => {
-    try {
-      return realpathSync(defaultHooksJsonPath);
-    } catch {
-      return defaultHooksJsonPath;
-    }
-  })();
-  const seenReal = new Set<string>();
-  const results: unknown[] = [];
+  const entries: unknown[] = declared === undefined ? [] : Array.isArray(declared) ? declared : [declared];
+  const standardPath = resolve(join(root, "hooks", "hooks.json"));
+  const standardIdentity = realPathOr(standardPath);
+  const accepted = new Set<string>();
+  const out: unknown[] = [];
   for (const entry of entries) {
-    if (typeof entry !== "string" || entry.length === 0) continue; // a non-string element is the OBJECT shape, handled by the caller's own fold pass, not here
+    // Object elements are folded by the caller; other non-strings and "" contribute nothing.
+    if (typeof entry !== "string" || entry === "") continue;
     const full = resolve(root, entry);
     if (!resolvesWithinPluginRoot(full, root)) {
       warnings.paths.push(`plugin "${pluginName}"'s manifest "hooks" entry "${entry}" escapes the plugin directory -- ignoring it`);
       continue;
     }
-    let isFile: boolean;
+    let isFile = false;
     try {
       isFile = statSync(full).isFile();
     } catch {
@@ -541,23 +499,18 @@ function resolveManifestHooksStringEntries(root: string, pluginName: string, dec
       warnings.paths.push(`plugin "${pluginName}"'s manifest "hooks" entry "${entry}" was not found at ${full} -- ignoring it`);
       continue;
     }
-    const real = (() => {
-      try {
-        return realpathSync(full);
-      } catch {
-        return full;
-      }
-    })();
-    if (real === defaultHooksJsonReal) continue; // names the standard hooks/hooks.json, which loads on its own -- silent, not a problem (claude's own posture)
-    if (seenReal.has(real)) {
+    const real = realPathOr(full);
+    // The standard hooks/hooks.json is already loaded on its own; naming it again is a silent no-op.
+    if (real === standardIdentity) continue;
+    if (accepted.has(real)) {
       warnings.paths.push(`plugin "${pluginName}"'s manifest "hooks" entry "${entry}" duplicates another entry (both resolve to ${real}) -- loaded once`);
       continue;
     }
-    seenReal.add(real);
-    const hooksObject = readHooksFile(full, pluginName, `manifest "hooks" entry "${entry}"`, warnings.content);
-    if (hooksObject !== undefined) results.push(hooksObject);
+    accepted.add(real);
+    const hooks = readHooksFile(full, pluginName, `manifest "hooks" entry "${entry}"`, warnings.content);
+    if (hooks !== undefined) out.push(hooks);
   }
-  return results;
+  return out;
 }
 
 function mergeHookSources(
@@ -629,30 +582,9 @@ function componentDirIfPresent(root: string, dir: string): string | undefined {
 }
 
 /**
- * WS-21 fix round 4/5 (minors, M-3's last bullet, generalised in round 5): a plugin manifest's own
- * custom-path override for ONE component -- the array-of-paths shape `workflows`/`agents`/
- * `output-styles`/the plain-array half of `commands` all share (claude's own `Tb`, dump-confirmed:
- * every one of these four call sites differs only in `componentKey`/label text and the
- * `requireDirectory` argument). `skills` has its own ADDITIVE variant (`resolveSkillsOverride`,
- * below -- round 5's re-review N-1/N-2 sibling advisor catch: skills does NOT shadow the default
- * directory, confirmed by `_t=Le` carrying no `!j.skills` negation unlike every other component's
- * `!j.X&&Y` gate, and by `skills` being ABSENT from the `folder-shadowed-by-manifest` tuple list).
- * `commands`' own inline `{name:{source|content}}` object-map form is a materially separate, larger
- * mechanism -- see `loadPlugins`'s own commands call site for the disclosed scope decision.
- *
- * `undefined` means the manifest declares no override at all (the caller falls back to the default
- * directory); an array (possibly empty) means it DOES, so the default directory is SHADOWED
- * regardless of how many entries survive validation.
- *
- * Each declared entry is resolved against the plugin root and kept only if it both stays within the
- * plugin directory -- REALPATH-aware (`resolvesWithinPluginRoot`, fix round 5's own Aoe/KGe port,
- * `permissions/file-rules.ts`; closes a round-4 gap where a manifest-declared relative path was
- * checked only LEXICALLY, letting a symlink planted inside the plugin root but resolving outside it
- * through) -- and exists on disk. `requireDirectory` mirrors claude's own `Tb`'s tenth argument:
- * `false` for workflows/agents/output-styles (a bare file is a valid single-entry override), and this
- * function is never called for skills (see above). An entry that fails a check is dropped with a
- * warning (`manifestPathWarnings`) rather than failing the whole plugin, on the same "recoverable,
- * not a whole-plugin rejection" footing `hookFileWarnings` already established.
+ * A manifest custom-path override for ONE component: `undefined` when the key is absent, else the
+ * entries that resolved (an array, possibly empty, which shadows the default directory for every
+ * component but skills). Spec: plugin-manifest-paths.md.
  */
 function resolveManifestComponentOverride(
   root: string,
@@ -663,58 +595,43 @@ function resolveManifestComponentOverride(
   warnings: string[],
 ): string[] | undefined {
   if (declared === undefined) return undefined;
-  const entries = Array.isArray(declared) ? declared : [declared];
-  const resolved: string[] = [];
+  // Manifest values are untrusted JSON: a non-array value of any type is treated as one entry.
+  const entries: unknown[] = Array.isArray(declared) ? declared : [declared];
+  const label = `plugin "${pluginName}"'s manifest "${componentKey}"`;
+  const kept: string[] = [];
   for (const entry of entries) {
-    if (typeof entry !== "string" || entry.length === 0) {
-      warnings.push(`plugin "${pluginName}"'s manifest "${componentKey}" entry ${JSON.stringify(entry)} is not a non-empty string -- ignoring it`);
+    if (typeof entry !== "string" || entry === "") {
+      warnings.push(`${label} entry ${JSON.stringify(entry)} is not a non-empty string -- ignoring it`);
       continue;
     }
     const full = resolve(root, entry);
     if (!resolvesWithinPluginRoot(full, root)) {
-      warnings.push(`plugin "${pluginName}"'s manifest "${componentKey}" path "${entry}" escapes the plugin directory -- ignoring it`);
+      warnings.push(`${label} path "${entry}" escapes the plugin directory -- ignoring it`);
       continue;
     }
-    let stat: ReturnType<typeof statSync> | undefined;
+    let isDir: boolean;
     try {
-      stat = statSync(full);
+      isDir = statSync(full).isDirectory();
     } catch {
-      stat = undefined;
-    }
-    if (stat === undefined) {
-      warnings.push(`plugin "${pluginName}"'s manifest "${componentKey}" path "${entry}" was not found at ${full} -- ignoring it`);
+      warnings.push(`${label} path "${entry}" was not found at ${full} -- ignoring it`);
       continue;
     }
-    if (requireDirectory && !stat.isDirectory()) {
-      // Claude's own `Tb` gives `skills` a SPECIFIC hint when the file is literally `SKILL.md` --
-      // "path is a file; skills entries must be directories containing SKILL.md — point to the
-      // parent directory ... instead" (dump-confirmed) -- the single author mistake this check
-      // exists to catch (a manifest entry pointing AT the file rather than at its containing
-      // directory). Ported only for `componentKey === "skills"`, the one caller this round passes
-      // `requireDirectory: true` for at all.
-      const skillHint = componentKey === "skills" && basename(entry).toLowerCase() === "skill.md" ? ` -- point to its parent directory instead` : "";
-      warnings.push(
-        `plugin "${pluginName}"'s manifest "${componentKey}" path "${entry}" is a file, not a directory${componentKey === "skills" ? " (skills entries must be directories containing SKILL.md)" : ""}${skillHint} -- ignoring it`,
-      );
+    if (requireDirectory && !isDir) {
+      const isSkills = componentKey === "skills";
+      const why = isSkills ? " (skills entries must be directories containing SKILL.md)" : "";
+      const hint = isSkills && basename(entry).toLowerCase() === "skill.md" ? " -- point to its parent directory instead" : "";
+      warnings.push(`${label} path "${entry}" is a file, not a directory${why}${hint} -- ignoring it`);
       continue;
     }
-    resolved.push(full);
+    kept.push(full);
   }
-  return resolved;
+  return kept;
 }
 
-/**
- * `O1t`'s own suppression check, dump-confirmed: a `folder-shadowed-by-manifest` warning does NOT
- * fire when the override's own resolved entries already include the default directory itself (an
- * author who explicitly re-lists `./workflows` alongside a custom path is not silently losing it --
- * round 5's own promoted minor: "the 'workflows folder is shadowed' warning fires even when the
- * manifest's `workflows` names `./workflows` itself"). Matches `O1t`'s own `(resolved+sep).
- * startsWith(default+sep)` test, which also catches an entry pointing INSIDE the default directory,
- * not only an exact match.
- */
+/** Whether an override's resolved entries already include the default directory, which suppresses the folder-shadowed notice (spec: plugin-manifest-paths.md). */
 function manifestOverrideIncludesDefaultDir(resolvedEntries: readonly string[], defaultDirPath: string): boolean {
-  const normalizedDefault = defaultDirPath + sep;
-  return resolvedEntries.some((entry) => (entry + sep).startsWith(normalizedDefault));
+  const beneath = defaultDirPath + sep;
+  return resolvedEntries.some((entry) => entry === defaultDirPath || entry.startsWith(beneath));
 }
 
 /** The `folder-shadowed-by-manifest` warning itself, shared by every component that can shadow a default directory (workflows/agents/output-styles/commands -- never skills, which is additive). */
@@ -800,14 +717,14 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
     const skipMcpDiscovery = config.skipMcpDiscovery === true;
     const mcp = skipMcpDiscovery ? { servers: {} } : collectMcpServers(root, manifest);
     // Fix round 3 (M-5), CORRECTED: `hooks/hooks.json` (claude's own file) and a manifest-embedded
-    // `hooks` block are ADDITIVE, not either/or -- claude loads BOTH (its own manifest schema
-    // describes the manifest field as "in addition to those in hooks/hooks.json, if it exists",
-    // dump-confirmed). The pre-fix-round-3 `??` fallback silently dropped a manifest's own hooks
-    // whenever a hooks.json ALSO existed.
+    // `hooks` block are ADDITIVE, not either/or -- claude loads BOTH (its manifest schema documents
+    // the manifest field as "in addition to those in hooks/hooks.json, if it exists"). The
+    // pre-fix-round-3 `??` fallback silently dropped a manifest's own hooks whenever a hooks.json
+    // ALSO existed.
     const hooks = mergeHookSources(root, name, readPluginHooksJson(root, name, hookFileWarnings), manifest?.hooks, manifestPathWarnings, hookFileWarnings);
     // Fix round 5: a manifest `agents` override SHADOWS the default `agents/` directory (the SAME
-    // gate/warning shape workflows already has, `!j.agents&&Fe` dump-confirmed) -- `requireDirectory:
-    // false` since claude's own `Tb` call for `agents` accepts a bare file.
+    // gate/warning shape workflows already has) -- `requireDirectory: false`, since a bare agent file
+    // is a valid entry.
     const agentsOverridePaths = resolveManifestComponentOverride(root, name, "agents", manifest?.agents, false, manifestPathWarnings);
     const scannedAgents = agentsOverridePaths === undefined ? scanPluginAgents(root, name) : scanPluginAgentsOverride(agentsOverridePaths, name);
     agentFileRejections.push(...scannedAgents.rejected);
@@ -847,22 +764,19 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
     // Fix round 4/5 (minors, M-3's last bullet): a manifest `workflows` override SHADOWS the default
     // directory the moment the key is present, regardless of how many of its entries resolve --
     // `resolveManifestComponentOverride`'s own header has the citation for why this checks
-    // `!== undefined` rather than `.length > 0`. `requireDirectory: false` -- claude's own `Tb` call
-    // for `workflows` accepts a bare file.
+    // `!== undefined` rather than `.length > 0`. `requireDirectory: false` -- a bare workflow file
+    // is a valid entry.
     const workflowsOverride = resolveManifestComponentOverride(root, name, "workflows", manifest?.workflows, false, manifestPathWarnings);
     const workflowsPath = workflowsOverride === undefined ? componentDirIfPresent(root, "workflows") : undefined;
-    // Fix round 4 (minors, M-3's last bullet), advisor catch: claude's own `Tb` call site is guarded
-    // by `if(j.workflows&&Be){...D.push({type:"folder-shadowed-by-manifest",...})}` a few lines
-    // above the citation `resolveManifestComponentOverride`'s own header quotes -- a warning fires
-    // whenever the override key is present AND the default directory ALSO exists on disk, telling the
-    // plugin author their `workflows/` folder is being ignored rather than leaving them to notice by
-    // its absence from the listing. Checked independently of whether any override entry resolved (the
-    // same `!== undefined` reasoning `workflowsPath`'s own suppression above already uses).
+    // Fix round 4 (minors, M-3's last bullet), advisor catch: claude tells the plugin author when the
+    // override key is present AND the default directory ALSO exists on disk (a
+    // `folder-shadowed-by-manifest` notice) rather than leaving them to notice the folder's absence
+    // from the listing. Checked independently of whether any override entry resolved (the same
+    // `!== undefined` reasoning `workflowsPath`'s own suppression above already uses).
     //
-    // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): round 4 omitted `O1t`'s own
-    // suppression -- the warning must NOT fire when the override's own resolved entries already
-    // include the default `workflows/` directory itself (an author who explicitly re-lists
-    // `./workflows` alongside a custom path is not silently losing it).
+    // Fix round 5 (promoted minor, the re-review of 57e7fef..20b623e): the notice must NOT fire when
+    // the override's own resolved entries already include the default `workflows/` directory itself
+    // (an author who explicitly re-lists `./workflows` alongside a custom path is not losing it).
     const defaultWorkflowsDir = join(root, "workflows");
     if (
       workflowsOverride !== undefined &&
