@@ -3430,7 +3430,7 @@ describe("fix round 15: default write protections, unconditional, no opt-in flag
   });
 
   // Fix round 17 (R.3 C-1 part 2b): `.winter` itself is now IN the ancestor-rename fence (a literal, as
-  // `.claude` is on claude -- buildDefaultWriteProtectionEntries' own header), so the sandbox can no
+  // `.claude` is on claude -- see `buildDefaultWriteProtectionBlock` in sandbox/profile.ts), so the sandbox can no
   // longer create it fresh; the project's `.winter/` is created before the sandboxed command, as a
   // real project has it. Inside it, a memory directory and file stay writable -- the protection is
   // the named folders (commands/agents/skills/rules/output-styles, mcp.json), never the whole dir.

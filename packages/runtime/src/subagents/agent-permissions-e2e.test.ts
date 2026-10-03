@@ -169,7 +169,7 @@ describe("SDK 0.0.16 Lane P (R3b §4): allowedAgentTypes survives the real spawn
 // --- The Explore model cap, end to end -------------------------------------------------------------
 
 // A minimal, hand-built "family" -- resolves a tier NAME to a fixed fake key on the SAME
-// providerId as `contextModelKey`'s own identity, so `claudeTierMatches` (engine.ts) can compare
+// providerId as `contextModelKey`'s own identity, so the Explore cap (engine.ts's `exploreModelCap`) can compare
 // `resolution.modelKey === modelKey` without any real catalog. `unknown-slot` is never exercised
 // by these tests (this lane's own cap logic only ever asks for "haiku"/"sonnet"/"opus").
 function fakeAnthropicResolveSlot(tierKeys: Record<"haiku" | "sonnet" | "opus", string>): (requested: string, currentModelKey: string | undefined) => SlotProviderResolution {
