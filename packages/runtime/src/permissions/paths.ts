@@ -530,55 +530,73 @@ export function resolveRealTarget(path: string): string {
 // back the link's own name, losing the fact it was ever a symlink. Not a replacement for it --
 // `resolveRealTarget` stays right for its common case, a not-yet-existing write target.
 //
-// Behaviour, in at most 40 resolution steps (after which it gives up, returning `undefined` -- so a
-// symlink loop gives up too). Each step, with `current` starting as `path`:
-//   1. if `realpathSync(current)` succeeds, that is the answer;
-//   2. otherwise find the deepest ancestor of `current` that `realpathSync` resolves, walking up with
-//      `path.dirname` and remembering each name passed (`path.basename`); if `dirname` stops changing
-//      before any ancestor resolves, give up (`undefined`);
-//   3. the first name below that real ancestor is the first unresolvable entry. If it is not a
-//      symlink (`readlinkSync` fails), the answer is the real ancestor joined (`path.join`) with all
-//      the remembered names;
-//   4. if it is a symlink, its stored target is resolved against the entry's directory
-//      (`path.resolve`), the remaining remembered names are joined back on (`path.join`), and that is
-//      `current` for the next step.
+// Behaviour: a path that `realpathSync` resolves is answered with its realpath. Otherwise the path is
+// split at its DEEPEST ancestor that resolves (resolution is not monotone along the chain, because
+// realpath folds `..` lexically, so the nearest success is wanted, not the first one from the root):
+// that ancestor's realpath, plus the names below it. If the first of those names is a symlink, its
+// stored target (taken relative to that realpath; an empty target means the directory itself) replaces
+// it and the whole procedure starts again on the rebuilt path; if it is not, the realpath and the names
+// joined back together are the answer. Only links followed this way count against a budget of
+// `MAX_HAND_FOLLOWED_LINKS`; following the last one gives up (`undefined`) without looking further, as
+// does a path none of whose ancestors resolve. Filesystem errors never escape.
 export function resolveSymlinkTargetChain(path: string): string | undefined {
-  let current = path;
-  for (let step = 0; step < MAX_SYMLINK_CHAIN_STEPS; step++) {
-    const whole = tryRealpath(current);
-    if (whole !== undefined) return whole;
+  return followChainFrom(path, MAX_HAND_FOLLOWED_LINKS);
+}
 
-    // Walk up to the deepest ancestor that resolves, remembering the names passed (nearest the
-    // ancestor first once the walk is done).
-    const below: string[] = [];
-    let dir = current;
-    let realAncestor: string | undefined;
-    while (realAncestor === undefined) {
-      const parent = dirname(dir);
-      if (parent === dir) return undefined;
-      below.unshift(basename(dir));
-      dir = parent;
-      realAncestor = tryRealpath(dir);
-    }
+const MAX_HAND_FOLLOWED_LINKS = 40;
 
-    const [firstName, ...rest] = below as [string, ...string[]];
-    const entry = join(realAncestor, firstName);
-    let linkTarget: string;
-    try {
-      linkTarget = readlinkSync(entry);
-    } catch {
-      return join(realAncestor, ...below);
-    }
-    current = join(resolve(realAncestor, linkTarget), ...rest);
+function followChainFrom(current: string, followsLeft: number): string | undefined {
+  const real = realpathOrUndefined(current);
+  if (real !== undefined) return real;
+  const split = splitAtDeepestResolvableAncestor(current);
+  if (split === undefined) return undefined;
+  const { realAncestor, nextName, remainingNames } = split;
+  const linkTarget = readlinkOrUndefined(join(realAncestor, nextName));
+  if (linkTarget === undefined) return join(realAncestor, nextName, ...remainingNames);
+  if (followsLeft <= 1) return undefined;
+  return followChainFrom(join(resolve(realAncestor, linkTarget), ...remainingNames), followsLeft - 1);
+}
+
+interface AncestorSplit {
+  /** The realpath of the deepest ancestor that resolves. */
+  realAncestor: string;
+  /** The name directly below that ancestor on the way to the path. */
+  nextName: string;
+  /** The names after `nextName`, root-to-leaf, ending with the path's own basename (empty when `nextName` is it). */
+  remainingNames: string[];
+}
+
+/**
+ * `path`'s lineage is `path` itself followed by each successive `dirname` up to (and including, once)
+ * the value that is its own `dirname`. The split is taken at the first lineage member after `path`
+ * that `realpathSync` resolves; the basenames of the members before it, reversed, are the names below.
+ */
+function splitAtDeepestResolvableAncestor(path: string): AncestorSplit | undefined {
+  const lineage = [path];
+  for (let parent = dirname(path); parent !== lineage[lineage.length - 1]; parent = dirname(parent)) {
+    lineage.push(parent);
+  }
+  for (let depth = 1; depth < lineage.length; depth++) {
+    const realAncestor = realpathOrUndefined(lineage[depth]!);
+    if (realAncestor === undefined) continue;
+    const leafward = lineage.slice(0, depth).map((member) => basename(member));
+    return { realAncestor, nextName: leafward[depth - 1]!, remainingNames: leafward.slice(0, depth - 1).reverse() };
   }
   return undefined;
 }
 
-const MAX_SYMLINK_CHAIN_STEPS = 40;
-
-function tryRealpath(p: string): string | undefined {
+function realpathOrUndefined(path: string): string | undefined {
   try {
-    return realpathSync(p);
+    return realpathSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The link's stored target (possibly `""`), or `undefined` when `path` is not a readable symlink. */
+function readlinkOrUndefined(path: string): string | undefined {
+  try {
+    return readlinkSync(path);
   } catch {
     return undefined;
   }
