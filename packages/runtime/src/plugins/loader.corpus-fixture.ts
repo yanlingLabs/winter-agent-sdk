@@ -14,7 +14,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { loadPlugins } from "./loader.ts";
-import { WINTER_PLUGIN_MANIFEST_DIR } from "./manifest.ts";
+import { CLAUDE_PLUGIN_MANIFEST_DIR, PLUGIN_MANIFEST_FILE, WINTER_PLUGIN_MANIFEST_DIR } from "./manifest.ts";
 
 export interface PluginLayout {
   dirs?: string[];
@@ -66,4 +66,48 @@ export function runLayout(layout: PluginLayout, load: LoadPluginsFn = loadPlugin
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+}
+
+/** The names the loader itself looks for on disk. */
+const LOADER_FIXED_NAMES = ["SKILL.md", "skills", "commands", "agents", "output-styles", "workflows", "hooks", "hooks.json", ".mcp.json", WINTER_PLUGIN_MANIFEST_DIR, CLAUDE_PLUGIN_MANIFEST_DIR, PLUGIN_MANIFEST_FILE];
+
+/**
+ * Whether a layout's result can depend on the file system folding case: some two distinct names it
+ * involves -- a path segment of a created directory, file or link, a link target, any string (or key)
+ * of the manifest, or a name the loader looks for -- differ only in case (`Skill.MD` beside the
+ * loader's `SKILL.md`, a manifest's `./Commands` beside `commands/`). On a case-insensitive volume
+ * (macOS, where the corpus was recorded) such names find each other; on a case-sensitive one they do
+ * not. Deliberately coarse: it compares single segments, so it may flag a layout whose answer would
+ * not in fact change, never miss one that would.
+ */
+export function dependsOnCaseFolding(layout: PluginLayout): boolean {
+  const names = new Set<string>(LOADER_FIXED_NAMES);
+  const addPath = (path: string): void => {
+    for (const segment of path.split(/[\\/]+/)) if (segment !== "" && segment !== "." && segment !== "..") names.add(segment);
+  };
+  const addManifest = (value: unknown): void => {
+    if (typeof value === "string") addPath(value);
+    else if (Array.isArray(value)) value.forEach(addManifest);
+    else if (value !== null && typeof value === "object") {
+      for (const [key, inner] of Object.entries(value)) {
+        addPath(key);
+        addManifest(inner);
+      }
+    }
+  };
+  for (const d of layout.dirs ?? []) addPath(d);
+  for (const f of Object.keys(layout.files ?? {})) addPath(f);
+  for (const [link, target] of Object.entries(layout.links ?? {})) {
+    addPath(link);
+    addPath(target);
+  }
+  addManifest(layout.manifest);
+  const byFolded = new Map<string, string>();
+  for (const name of names) {
+    const folded = name.toLowerCase();
+    const seen = byFolded.get(folded);
+    if (seen !== undefined && seen !== name) return true;
+    byFolded.set(folded, name);
+  }
+  return false;
 }

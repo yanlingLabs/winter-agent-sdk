@@ -337,9 +337,12 @@ describe("isPathWithinRoot: a plain path-prefix test", () => {
 });
 
 describe("canonicalizeTrustedSymlinkPath", () => {
-  test("rewrites a real system prefix to its short symlink spelling", () => {
+  // Only a pair the host really has as a symlink is rewritten; `/tmp` -> `/private/tmp` is macOS's.
+  test.skipIf(process.platform !== "darwin")("rewrites a real system prefix to its short symlink spelling (macOS)", () => {
     expect(canonicalizeTrustedSymlinkPath("/private/tmp/x")).toBe("/tmp/x");
     expect(canonicalizeTrustedSymlinkPath("/private/tmp")).toBe("/tmp");
+  });
+  test("leaves a name that only starts like a real system prefix, and any other path, alone", () => {
     expect(canonicalizeTrustedSymlinkPath("/private/tmpx")).toBe("/private/tmpx");
     expect(canonicalizeTrustedSymlinkPath("/w/x")).toBe("/w/x");
   });

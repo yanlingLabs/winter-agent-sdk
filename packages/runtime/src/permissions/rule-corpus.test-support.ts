@@ -17,9 +17,9 @@
 //     time, stored in the fixture because those files keep changing) and RANDOM inputs from a seeded
 //     generator: one short digest per input is recorded.
 //   - EXHAUSTIVE enumerations over a small alphabet: one digest per section is recorded.
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 // ---------------------------------------------------------------------------------------------
 // The surface under test
@@ -824,6 +824,115 @@ export function fsOutputs(m: CorpusModules, fixture: FsFixture): Record<string, 
     );
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Answers that depend on the host (the corpus was recorded on macOS)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The real directories `canonicalizeTrustedSymlinkPath` may rewrite to a short alias. It rewrites one
+ * only when the host really has that alias as a symlink to it: macOS has `/tmp`, `/var` and `/etc` ->
+ * `/private/...`; a merged-`/usr` Linux has `/bin`, `/lib` and `/sbin` -> `/usr/...` instead. So the
+ * `trustedAlias` answer for a path at or below one of these depends on the host.
+ */
+export const TRUSTED_SYMLINK_REAL_DIRECTORIES: readonly string[] = ["/private/tmp", "/private/var", "/private/etc", "/usr/bin", "/usr/lib", "/usr/sbin"];
+
+/** Whether `canonicalizeTrustedSymlinkPath(path)` can answer differently from host to host (the implementation's own prefix test). */
+export function reachesTrustedSymlinkDirectory(path: string): boolean {
+  return TRUSTED_SYMLINK_REAL_DIRECTORIES.some((real) => path === real || path.startsWith(real + "/"));
+}
+
+/** The pairs macOS, where the corpus was recorded, really has as symlinks (its `/bin`, `/lib`, `/sbin` are real directories). */
+const RECORDING_HOST_TRUSTED_SYMLINKS: readonly { real: string; alias: string }[] = [
+  { real: "/private/tmp", alias: "/tmp" },
+  { real: "/private/var", alias: "/var" },
+  { real: "/private/etc", alias: "/etc" },
+];
+
+/** The `trustedAlias` answer the recording host gives for `path`, so a recorded digest can be checked on another host. */
+export function trustedAliasOnRecordingHost(path: string): string {
+  for (const { real, alias } of RECORDING_HOST_TRUSTED_SYMLINKS) {
+    if (path === real) return alias;
+    if (path.startsWith(real + "/")) return alias + path.slice(real.length);
+  }
+  return path;
+}
+
+/**
+ * `pathOutput` as the recording host would give it: off that host, a path at or below a trusted real
+ * directory gets the recording host's `trustedAlias` in place of this host's, so every other answer
+ * for it is still compared.
+ */
+export function pathOutputAsOnRecordingHost(m: CorpusModules, path: string, onRecordingHost: boolean): unknown {
+  const output = pathOutput(m, path);
+  if (onRecordingHost || !reachesTrustedSymlinkDirectory(path)) return output;
+  return { ...(output as Record<string, unknown>), trustedAlias: trustedAliasOnRecordingHost(path) };
+}
+
+/** The fixture-relative paths a filesystem key names (`plugin:<root>:<candidate>` names two). */
+function fsKeyPaths(key: string): string[] {
+  const [kind, ...rest] = key.split(":");
+  if (kind === "plugin") return [rest[0]!, rest.slice(1).join(":")];
+  return [rest.join(":")];
+}
+
+/**
+ * Why a filesystem-fixture answer depends on the host, walking each path the key names through the
+ * real fixture tree: `"case-folding"` when a name is not in its directory as spelled but is in another
+ * case (found on a case-insensitive volume such as macOS's default one, not on a case-sensitive one);
+ * `"host-root"` when the walk goes below a link pointing outside the fixture's temp directory (`to-root`
+ * -> `/`), where the host's own directories answer (`/etc` is `/private/etc` on macOS). `undefined`
+ * otherwise.
+ */
+export function hostDependenceOfFsKey(root: string, key: string): "case-folding" | "host-root" | undefined {
+  for (const path of fsKeyPaths(key)) {
+    let dir = root;
+    const segments = path.split("/").filter((s) => s !== "" && s !== ".");
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i]!;
+      if (segment === "..") {
+        dir = dirname(dir);
+        continue;
+      }
+      let names: string[];
+      try {
+        names = readdirSync(dir);
+      } catch {
+        break;
+      }
+      if (!names.includes(segment)) {
+        if (names.some((name) => name.toLowerCase() === segment.toLowerCase())) return "case-folding";
+        break;
+      }
+      const next = join(dir, segment);
+      const stat = lstatSync(next);
+      if (stat.isSymbolicLink()) {
+        // Outside the fixture's own temp directory, which every answer already spells `<TMP>`.
+        const tmp = dirname(root);
+        const target = resolve(dir, readlinkSync(next));
+        const outside = target !== tmp && !target.startsWith(tmp + "/");
+        if (outside && i < segments.length - 1) return "host-root";
+      }
+      dir = next;
+    }
+  }
+  return undefined;
+}
+
+/** Every recorded filesystem key whose answer depends on the host, with the reason; built on a fresh fixture. */
+export function hostDependentFsKeys(keys: readonly string[]): Map<string, "case-folding" | "host-root"> {
+  const fixture = buildFsFixture();
+  try {
+    const out = new Map<string, "case-folding" | "host-root">();
+    for (const key of keys) {
+      const why = hostDependenceOfFsKey(fixture.root, key);
+      if (why !== undefined) out.set(key, why);
+    }
+    return out;
+  } finally {
+    fixture.dispose();
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
