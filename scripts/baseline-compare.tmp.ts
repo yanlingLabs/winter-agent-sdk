@@ -122,7 +122,7 @@ console.log(`bun ${Bun.version} on ${process.platform}, home ${homedir()}`);
   const oldExpand = (await load(OLD, "context/imports.ts")).expandImports;
   const newExpand = (await load(NEW, "context/imports.ts")).expandImports;
   const rows = json("context/__corpus__/import-tokens.json") as Array<{ content: string; expected: unknown }>;
-  const input = (content: string) => ({ content, filePath: "/cleanroom-imports-corpus/dir/WINTER.md", tier: "project", projectRoot: "/cleanroom-imports-corpus/elsewhere-root" });
+  const input = (content: string) => ({ content, filePath: "/cleanroom-imports-corpus/dir/NOTES.md", tier: "project", projectRoot: "/cleanroom-imports-corpus/elsewhere-root" });
   const home = homedir();
   const oldVsNew: unknown[] = [];
   const vsRec: unknown[] = [];
