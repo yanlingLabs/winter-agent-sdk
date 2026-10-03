@@ -43,11 +43,11 @@ export interface SandboxFilesystemSettings {
   allowRead?: string[];
   denyRead?: string[];
   /**
-   * Fix round 16, item 2 (claude's own `ag()`, dump-verified: `function ag(){return
-   * pe?.filesystem?.allowGitConfig??!1}`): `sandbox.filesystem.allowGitConfig` in settings.json --
-   * the ONE settings-facing door for `SeatbeltProfileInput.allowGitConfigWrites`/
-   * `RunCommandOptions.allowGitConfigWrites`, which this module and spawn.ts already had (round 15)
-   * but nothing set. Wired through `tools/impl/{bash,monitor}.ts`'s own options-builders (each reads
+   * Fix round 16, item 2: `sandbox.filesystem.allowGitConfig` in settings.json (default false) -- when
+   * true, a sandboxed command may write `.git/config`. The ONE settings-facing door for
+   * `SeatbeltProfileInput.allowGitConfigWrites`/`RunCommandOptions.allowGitConfigWrites`, which this
+   * module and spawn.ts already had (round 15) but nothing set. Wired through
+   * `tools/impl/{bash,monitor}.ts`'s own options-builders (each reads
    * `ctx.sandboxSettings.filesystem?.allowGitConfig` directly) -- `buildSeatbeltProfile` itself never
    * reads this field; it is CONSUMED at the caller boundary (spawn.ts's own `allowGitConfigWrites`
    * param), matching every other filesystem key's own "settings shape carries it, a caller resolves
@@ -177,384 +177,198 @@ export function canonicalizePath(p: string): string {
 // canonicalization, rather than a second, independently-maintained copy.
 const canon = canonicalizePath;
 
+// Clause renderers shared by the blocks below.
+const subpathClause = (p: string): string => `(subpath "${sbplString(p)}")`;
+const literalClause = (p: string): string => `(literal "${sbplString(p)}")`;
+const regexClause = (source: string): string => `(regex #"${escapeSbplRegexDelimiter(source)}")`;
+
 /**
- * Fix round 12 ("Important" item, claude's own `Ch`, dump byte 15368116, pinned 2.1.250,
- * ground-truth byte-slice-verified against the SAME chunk as `mR`/`pR`/`ed`): the ancestor-rename-
- * bypass fix, ported as one function both the write-deny call site and the read-deny call site use
- * (`mR`/`pR` each call claude's own `Ch` with their own deny list; ported here as two call sites
- * sharing one implementation rather than two hand-copies).
- *
- * For every plain denied path: adds `(subpath "<canon(path)>")` (claude's own `ri(u)`, the SAME
- * recursive clause shape `denyWriteRules`/`denyReadRules` already render for the ORDINARY
- * `file-write*`/`file-read*` deny -- claude's own `Ch` adds it a SECOND time here, for these two
- * specific operations, rather than relying on `file-write*`'s own wildcard to already cover them;
- * ported faithfully rather than "optimized away" on an unverified redundancy assumption) and a
- * `(literal "<ancestor>")` for every ancestor directory of it (`ancestorDirectoriesOf`, claude's `ed`).
- *
- * For every glob-shaped denied path's own fixed prefix (`globFixedPrefixes`, already canonicalized
- * and already `/`-filtered by `splitDenyPathsByGlobShape`): adds `(literal "<prefix>")` itself (claude's
- * own `if(p!=="/")r.add(literal p)`) plus a `(literal "<ancestor>")` for every ancestor of THAT.
- *
- * Returns `""` (no block at all) when there is nothing to deny -- matching claude's own `Cs`
- * (`if(r.size===0)return[]`), so a session with no denies emits byte-identical output to before this
- * fix.
+ * Collects clauses for one multi-line block, keeping each distinct clause once at the position it was
+ * first added, and renders them under a header: two-space indented lines, the closing `)` on the last
+ * one. An empty collection renders as "" so the caller's slot is left blank.
  */
+class ClauseBlock {
+  private readonly seen = new Set<string>();
+  private readonly clauses: string[] = [];
+
+  add(clause: string): void {
+    if (this.seen.has(clause)) return;
+    this.seen.add(clause);
+    this.clauses.push(clause);
+  }
+
+  render(header: string): string {
+    if (this.clauses.length === 0) return "";
+    const lines = this.clauses.map((c) => `  ${c}`);
+    lines[lines.length - 1] += ")";
+    return [header, ...lines].join("\n");
+  }
+}
+
+/** Fix round 12: the ancestor-rename fence -- denies create/unlink of each denied path and of every directory above it. */
 function buildAncestorRenameBypassBlock(plainDenyPaths: readonly string[], globFixedPrefixes: readonly string[]): string {
-  const clauses = new Set<string>();
-  for (const path of plainDenyPaths) {
-    const canonical = canon(path);
-    clauses.add(`(subpath "${sbplString(canonical)}")`);
-    for (const ancestor of ancestorDirectoriesOf(canonical)) clauses.add(`(literal "${sbplString(ancestor)}")`);
+  const block = new ClauseBlock();
+  // A plain denied path: the path itself (and everything below it), then each enclosing directory.
+  for (const entry of plainDenyPaths) {
+    const path = canon(entry);
+    block.add(subpathClause(path));
+    for (const dir of ancestorDirectoriesOf(path)) block.add(literalClause(dir));
   }
+  // A glob's fixed prefix arrives already resolved by the caller and is used exactly as given: the
+  // prefix directory itself, then each enclosing directory.
   for (const prefix of globFixedPrefixes) {
-    clauses.add(`(literal "${sbplString(prefix)}")`);
-    for (const ancestor of ancestorDirectoriesOf(prefix)) clauses.add(`(literal "${sbplString(ancestor)}")`);
+    block.add(literalClause(prefix));
+    for (const dir of ancestorDirectoriesOf(prefix)) block.add(literalClause(dir));
   }
-  if (clauses.size === 0) return "";
-  return [`(deny file-write-unlink file-write-create`, ...[...clauses].map((c) => `  ${c}`)].join("\n") + ")";
+  return block.render("(deny file-write-unlink file-write-create");
 }
 
-/**
- * Fix round 14 (CRITICAL item 1, claude's own `pR`'s own trailing re-permit -- dump-verified in the
- * SAME chunk as `Ch`/`mR`/`fR`/`Li`/`Cs` from rounds 11-13, content-search-confirmed against the
- * pinned 2.1.250 dump, not trusted from any coordinator-cited byte offset alone): `pR` does NOT end
- * with its own call to `Ch` -- round 12's own port stopped there. `pR`'s own LAST TWO LINES,
- * immediately following `r.push(...Ch(e.denies.map((A)=>A.path),t))`, are:
- *   `let w=new Set(e.writeRoots.map((A)=>Li(A.path)));`
- *   `return r.push(...Cs("allow",["file-write-unlink","file-write-create"],w,t)),r`
- * -- an EXPLICIT `(allow file-write-unlink file-write-create (subpath <each write root>))` re-permit,
- * one clause per write root, emitted RIGHT AFTER `Ch`'s own read-side ancestor-rename-bypass deny
- * (`denyReadAncestorRenameBlock`, above) and BEFORE `mR`/`fR`.
- *
- * Without it (round 12's own gap, and what production-wiring.test.ts's real sandbox-exec runs
- * proved): `Ch`'s own read-side block denies `file-write-unlink`/`file-write-create` on every
- * read-denied path UNCONDITIONALLY -- it has no carve-out of its own -- and round 13's own empirical
- * finding (this codebase's own controlled sandbox-exec experiments, `buildReadDenyKeepInPlaceBlock`'s
- * own header) is that Seatbelt does NOT let a LATER, broader `(allow file-write* (subpath <root>))`
- * override an EARLIER, narrower, explicitly-named `(deny file-write-unlink file-write-create ...)`
- * for the SAME target -- only an explicitly-named ALLOW of the identical operations does. So with
- * `Ch` alone, `cp .env.example .env` (creating `.env`, which the read-deny protects) was blocked even
- * though claude allows it, and a legitimate write root nested inside a read-denied directory stayed
- * unwritable even though `fR`'s own carve-out (round 13) is independently correct in isolation.
- *
- * This block restores claude's own net result: `Ch` denies unconditionally, THIS re-permit re-allows
- * `file-write-unlink`/`file-write-create` on every ordinary write root (an EXPLICIT, same-named
- * allow, so it wins over `Ch`'s own explicit deny under the SAME last-explicit-match-wins rule that
- * made `Ch` win over the plain `file-write*` allow in the first place), and `fR` (emitted later still,
- * round 13) narrows it back down for the one case that still needs protection -- an EXISTING
- * read-denied path's own unlink/rename -- while `fR`'s own `require-not` carve-out leaves a nested
- * write root's OWN re-permit from this block intact. Net: no delete or rename of a read-denied path,
- * creation allowed, and a write root nested inside a read-denied directory is writable again -- this
- * is ALSO the exact fix for round 13's own disclosed "nested write root shadowed by Ch" finding
- * (`buildReadDenyKeepInPlaceBlock`'s own header, above): `fR`'s carve-out was never broken, `Ch`'s
- * own missing re-permit was simply what left nothing for it to narrow back down from.
- *
- * Reuses the SAME canonicalized `roots` array (cwd + writableRoots) the write-allow block already
- * builds below -- claude's own `w=new Set(e.writeRoots.map((A)=>Li(A.path)))` is exactly that set.
- * Returns `""` when there is nothing to permit (`writableRoots.length === 0`), matching claude's own
- * `Cs`'s `if(r.size===0)return[]` -- structurally unreachable in practice (`roots` always includes
- * `cwd`), kept for the same "no set, no clause" discipline every other block in this module follows.
- *
- * DISCLOSED, NOT dump-confirmed either way: this block fires on the Winter side whenever there is a
- * write-roots set at all -- i.e. unconditionally in practice. Claude's own call site (dump byte
- * 15376527) gates `pR`'s ENTIRE first argument on a truthy outer `e` (`let X=e?uR(e,t?.allowOnly):
- * void 0`, then `B.push(...pR(X,F))`), and `fR` is called only `if(X)` too -- but `uR(e,t)` (dump byte
- * 15366505: `{denies:(e.denyOnly||[]).map(zu),allows:(e.allowWithinDeny||[]).map(zu),writeRoots:
- * (t||[]).map(zu)}`) builds a non-null OBJECT from `e` regardless of whether `e.denyOnly`/
- * `e.allowWithinDeny` are themselves EMPTY arrays -- so `X`'s truthiness turns on whether that OUTER
- * `e` (a read-restriction config object, one level up, its own producer not traced) exists for this
- * session at ALL, not on whether there are any ACTUAL denyRead entries. Left an open question for a
- * future round rather than assumed either way; Winter's own unconditional posture is, AT WORST, wider
- * than claude's real one in some unmeasured case, never narrower -- and `WRITE_OPS_SURVIVING_READ_DENY_REPERMIT`
- * below means that width costs nothing observable to Winter's OWN write-protection floors either way.
- */
+/** Fix round 14: re-allows create/unlink inside every write root, after the read-side fence. */
 function buildReadDenyWritePermitBlock(writableRoots: readonly string[]): string {
-  if (writableRoots.length === 0) return "";
-  const clauses = new Set(writableRoots.map((r) => `(subpath "${sbplString(r)}")`));
-  return [`(allow file-write-unlink file-write-create`, ...[...clauses].map((c) => `  ${c}`)].join("\n") + ")";
+  const block = new ClauseBlock();
+  for (const root of writableRoots) block.add(subpathClause(root));
+  return block.render("(allow file-write-unlink file-write-create");
 }
 
-// DISCLOSED, NOT ported (flagged for a future ruling, out of round 14's own scope): `pR`'s own body
-// (dump byte 15368389, full transcription verified) has a THIRD line this port still does not carry,
-// between the read-allow/deny stages and `Ch`'s own call: `if(e.denies.length>0)r.push("(allow
-// file-read-metadata","  (vnode-type DIRECTORY))")` -- a BLANKET `(allow file-read-metadata (vnode-type
-// DIRECTORY))`, gated only on "are there any denyRead entries at all," never path-scoped. It would not
-// have closed the `touch`/`cp` gap `WRITE_OPS_SURVIVING_READ_DENY_REPERMIT`'s own header discloses
-// (that gap is about a denied FILE's own metadata, not directory metadata), so it is unrelated to this
-// round's own fix -- but it IS a real, unported piece of claude's own `pR`, left for a deliberate
-// ruling rather than added unasked: loosening what `file-read-metadata` reaches on a read-denied
-// session is its own security-relevant surface, not implied by "port pR's trailing re-permit."
+// Not emitted, deliberately: a blanket `(allow file-read-metadata (vnode-type DIRECTORY))` for sessions
+// with read denies. It would not close any gap this profile has (the `touch`/`cp` case
+// `WRITE_OPS_SURVIVING_READ_DENY_REPERMIT`'s header discusses concerns a denied FILE's own metadata),
+// and widening what metadata reads reach on a read-denied session is a security-relevant change that
+// needs its own ruling.
 
-/**
- * Fix round 14 (Winter-specific hardening, NOT itself a claude port -- empirically discovered and
- * verified while implementing `buildReadDenyWritePermitBlock` above, disclosed prominently rather
- * than smoothed over): `pR`'s own trailing re-permit is a BLANKET, UNCONDITIONAL
- * `(allow file-write-unlink file-write-create (subpath <every write root>))`, ported faithfully per
- * the controller's own explicit instruction. Real `sandbox-exec` runs proved this is not merely
- * "narrower than a later wildcard deny wins" (round 13's own finding, about an EARLIER explicit deny
- * surviving a LATER broad `file-write*` allow) -- it runs the OTHER direction too: an EARLIER
- * EXPLICIT `file-write-unlink`/`file-write-create` ALLOW is not overridden by a LATER, broader
- * `(deny file-write* ...)` for the SAME target either. Seatbelt appears to give a clause naming
- * `file-write-unlink`/`file-write-create` explicitly priority over one that only reaches those
- * operations via the `file-write*` wildcard, independent of which clause is textually first or last.
- *
- * Every OTHER Winter-owned write-protection floor in this module that used only the `file-write*`
- * wildcard was therefore silently punched through for CREATE and UNLINK/RENAME specifically (never
- * for `file-write-data`, `file-write-mode`, etc., which this re-permit never names) by this ONE new
- * block: the control-plane carve-outs (WS-12 §5.2's own "the seatbelt is the only enforcement point
- * left" floor -- verified empirically: `mkdir -p .winter && echo '{}' > .winter/permissions.local.json`
- * and `rm .winter/settings.json` both SUCCEEDED against the unpatched fix), the checkpoint/backup
- * store write-deny (T8 rider 25's own identical floor), and a GLOB-shaped `denyWrite` entry (a plain
- * `denyWritePaths` entry was already safe -- `Ch`'s own write-side ancestor-rename block, round 12,
- * already emits an explicit `(subpath <path>)` deny for it; `Ch`'s own GLOB branch, by contrast, only
- * ever emits a `(literal <fixedPrefix>)` -- protecting the prefix DIRECTORY's own identity against a
- * rename-shuffle, never the glob-matched files themselves).
- *
- * The fix, verified against real `sandbox-exec` (a `(deny file-write* file-write-unlink
- * file-write-create (regex ...))` clause DOES win back the CREATE it needs to, confirmed by a direct
- * before/after run rather than assumed): every one of those floors now names
- * `file-write-unlink`/`file-write-create` EXPLICITLY, alongside the `file-write*` wildcard it already
- * carried (for the OTHER write operations the wildcard alone still covers correctly) -- this constant
- * is that shared operation-name list, applied wherever `file-write*` ALONE previously appeared on a
- * deny this round's own re-permit could otherwise reach. `fR` (`buildReadDenyKeepInPlaceBlock`) is
- * deliberately NOT touched here: it already names `file-write-unlink` explicitly (never `create`, by
- * claude's own design -- see that function's own header), so it was never in the affected set.
- */
 /** The runtime's image working directory under the winter/store home (tools/image-prep.ts) -- write-denied to the shell. */
 export const IMAGE_PREP_DIRNAME = "image-prep";
 
+/**
+ * Fix round 14 (Winter hardening, found with real `sandbox-exec` runs while adding
+ * `buildReadDenyWritePermitBlock`): that block is a blanket
+ * `(allow file-write-unlink file-write-create (subpath <every write root>))`. Seatbelt gives a clause
+ * that names `file-write-unlink`/`file-write-create` EXPLICITLY priority over one that reaches those
+ * operations only through the `file-write*` wildcard, whichever comes first or last in the file -- so an
+ * EARLIER explicit allow is not overridden by a LATER `(deny file-write* ...)` for the same target.
+ *
+ * Every Winter write-protection floor that used only the `file-write*` wildcard was therefore punched
+ * through for CREATE and UNLINK/RENAME (never for `file-write-data`, `file-write-mode`, etc., which the
+ * re-permit does not name): the control-plane carve-outs (WS-12 §5.2's "the seatbelt is the only
+ * enforcement point left" floor -- measured: `mkdir -p .winter && echo '{}' > .winter/permissions.local.json`
+ * and `rm .winter/settings.json` both SUCCEEDED against the unpatched profile), the checkpoint/backup
+ * store write-deny (T8 rider 25), and a GLOB-shaped `denyWrite` entry (a plain `denyWritePaths` entry
+ * was already safe: the write-side ancestor-rename fence names it explicitly; the fence's glob half only
+ * names the fixed-prefix DIRECTORY, never the glob-matched files).
+ *
+ * The fix, verified against real `sandbox-exec` (a `(deny file-write* file-write-unlink
+ * file-write-create (regex ...))` clause DOES win back the CREATE it needs): every one of those floors
+ * names `file-write-unlink`/`file-write-create` EXPLICITLY alongside the `file-write*` wildcard -- this
+ * constant is that shared operation list. The keep-in-place block (`buildReadDenyKeepInPlaceBlock`)
+ * already names `file-write-unlink` explicitly and never `create` (it must allow creating a read-denied
+ * path's name, only not removing an existing one), so it is not in the affected set.
+ */
 const WRITE_OPS_SURVIVING_READ_DENY_REPERMIT = "file-write* file-write-unlink file-write-create";
 
 /**
- * Fix round 15 (CRITICAL, claude's own `cR`, dump byte 15365486, ground-truth byte-slice-verified,
- * full body transcribed): claude's write profile ALWAYS adds `cR(e)`'s own default-protected
- * entries to the write denies -- `mR`'s own combined deny list is `p=[...denyWithinAllow,...cR(r)]`,
- * fed to `Ch(p,t)` -- with no opt-in flag to forget. Winter's profile had none of these: a sandboxed
- * Bash command could plant a git hook, set `core.fsmonitor` in `.git/config`, or add an `.mcp.json`
- * server, all of which run again OUTSIDE the sandbox on the session's next turn.
+ * Fix round 15: the default write protections. A sandboxed Bash command must not be able to plant
+ * something that runs again OUTSIDE the sandbox on a later turn -- a git hook, `core.fsmonitor` in
+ * `.git/config`, an `.mcp.json` server, a shell rc file -- so these entries are denied unconditionally,
+ * with no opt-in flag to forget (`.git/config` alone can be exempted, `allowGitConfigWrites`).
  *
- * `Do` (dump byte 15282344): `[".gitconfig",".gitmodules",".bashrc",".bash_profile",".zshrc",
- * ".zprofile",".profile",".ripgreprc",".mcp.json"]` -- nine bare shell/git/mcp config filenames, NOT
- * case-folded (unlike this module's own `<projectDir>`/`settings.json` control-plane regexes) -- claude's
- * own `Po`/`Cv` never case-fold these either, per the dump; a case-insensitive-volume bypass is a
- * shared, pre-existing property of claude's own design, not a Winter regression or invented laxity.
+ * Nine bare shell/git/MCP config filenames, matched case-sensitively (unlike this module's own
+ * `<projectDir>`/`settings.json` control-plane regexes, which are case-folded).
  */
 const DEFAULT_PROTECTED_FILES = [".gitconfig", ".gitmodules", ".bashrc", ".bash_profile", ".zshrc", ".zprofile", ".profile", ".ripgreprc", ".mcp.json"] as const;
 
 /**
- * `qa()` (dump byte 15282484): `function qa(){return[...dv.filter((e)=>e!==".git"),".claude/commands",
- * ".claude/agents"]}` where `dv=[".git",".vscode",".idea"]` -- i.e. `[".vscode",".idea",
- * ".claude/commands",".claude/agents"]`. `.claude/commands`/`.claude/agents` are kept VERBATIM
- * (controller's own branding ruling: blocking writes into a repo's `.claude/` is harmless, and WS-21
- * wants that dir untouched anyway) -- Winter's OWN `brand.projectDirName` equivalents
- * (`<projectDir>/commands`, `<projectDir>/agents`) are ADDED separately by
- * `buildDefaultWriteProtectionEntries` below, never substituted for claude's own literal spelling, so
- * a rebranded product's own dot-dir is covered too.
+ * Editor and agent folders protected recursively. `.claude/commands`/`.claude/agents` keep claude's
+ * literal spelling (blocking writes into a repo's `.claude/` is harmless, and WS-21 wants that dir
+ * untouched anyway); the brand's own `<projectDir>` equivalents are covered separately
+ * (`PROJECT_DIR_PROTECTED_KINDS`), never substituted for this spelling, so a rebranded product's dot-dir
+ * is covered too.
  */
 const DEFAULT_PROTECTED_DIRS = [".vscode", ".idea", ".claude/commands", ".claude/agents"] as const;
 
 /**
- * The directories under Winter's own `brand.projectDirName` that get `qa()`'s treatment:
- * `commands`/`agents` (round 15, the direct mapping of claude's `.claude/commands`/`.claude/agents`)
- * and, fix round 17 (R.3 C-1 part 2b, spec §7.2), `skills`/`rules`/`output-styles`.
+ * The directories under the brand's own `projectDirName` that are protected the same way:
+ * `commands`/`agents` (round 15, the counterpart of `.claude/commands`/`.claude/agents`) and, fix round
+ * 17 (R.3 C-1 part 2b, spec §7.2), `skills`/`rules`/`output-styles` -- the trusted project's
+ * `<projectDir>/{skills,commands,rules,output-styles}/**` load into every future session.
  */
 const PROJECT_DIR_PROTECTED_KINDS = ["commands", "agents", "skills", "rules", "output-styles"] as const;
 
-/**
- * Fix round 16 (over-deny correction; supersedes round 15's own `unanchoredEntryRegex`, which was
- * WRONG -- see below): renders claude's own globstar-prefixed pattern (two asterisks, a slash, the
- * entry name, for a directory a trailing slash-globstar too) the way claude ACTUALLY does, not the
- * way its own literal source text looks in isolation. claude's `mR` renders every `cR`-derived entry
- * via `ri(Cv(w))` (dump-verified, round 12's own `ri`/`Cv` citations): `Cv` (dump byte 15283956)
- * canonicalizes ANY relative path by unconditionally joining it onto `process.cwd()` FIRST (`let
- * t=process.cwd();...else if(!In.isAbsolute(e))r=In.resolve(t,e)`) -- the two-asterisk-slash-prefixed
- * `.git/hooks` pattern is relative (does not start with `/`), so `Cv` turns it into
- * `<cwd>` + that same two-asterisk-slash prefix + `.git/hooks` BEFORE it is ever treated as a glob at
- * all. Only THEN does `Cv`'s own glob-fixed-prefix canonicalization run, and by that point the fixed
- * prefix is `<cwd>` itself (a REAL, canonicalizable filesystem path), not empty. Round 15's own
- * reading -- "the first glob character is the pattern's own first character, so there is nothing to
- * canonicalize" -- was wrong: it looked at the pattern in isolation and never accounted for `Cv`'s
- * own unconditional cwd-join happening BEFORE the glob-shape analysis. The observable consequence,
- * confirmed against real `sandbox-exec`: Winter's round-15 rendering denied the pattern EVERYWHERE
- * (every writable root, not just cwd), so `git clone <url> "$TMPDIR/x"` -- writing `.git/hooks` under
- * a DIFFERENT writable root entirely -- failed on Winter and succeeds on claude.
- *
- * The fix: build the SAME absolute glob text `Cv` would (`<cwd>` + the two-asterisk-slash prefix +
- * `<entry>`, with a trailing slash-globstar too for a directory) and reuse
- * `recursiveGlobToSbplRegexSource` (file-rules.ts) -- the SAME primitive every OTHER glob-shaped deny
- * in this module already goes through, which is claude's own `Po`/`td` (dump-verified in
- * file-rules.ts's own header): it now correctly canonicalizes `<cwd>` as the fixed prefix via
- * `resolveRealTarget`/`ko`, anchors the regex with `^`, and widens with the SAME `(/.*)?$` recursive
- * suffix `ri`'s own `td` call always applies -- so `entry`'s own file-vs-directory distinction in the
- * SOURCE TEXT (whether a trailing slash-globstar is appended before this call) is preserved for
- * fidelity to claude's own literal `cR` text, even though `recursiveGlobToSbplRegexSource`'s own
- * unconditional trailing widening makes the two forms render equivalently either way.
- */
-function cwdAnchoredEntryRegex(cwd: string, entry: string, recursive: boolean): string {
-  const absoluteGlob = join(cwd, "**", entry) + (recursive ? "/**" : "");
-  return recursiveGlobToSbplRegexSource(absoluteGlob);
-}
-
-/**
- * Every entry gets TWO forms, matching `cR`'s own `r.push(a),r.push(b)` pairing exactly: a PLAIN
- * path anchored at `cwd` (claude has no multi-root concept -- `process.cwd()` is `cR`'s own ONLY
- * anchor; Winter's own `writableRoots` are NOT separately covered here, matching claude's own
- * single-cwd anchor exactly -- port what's measured, not what a multi-root architecture COULD want),
- * and a cwd-ANCHORED any-depth regex (`cwdAnchoredEntryRegex`, round 16: `<cwd>/**` + the entry, so
- * it reaches the entry at any depth under cwd, never under a sibling writable root).
- *
- * `.git/hooks` is always protected, both ways; `.git/config` is too, UNLESS `allowGitConfigWrites`
- * -- claude's own `cR(e=false)` / `mR`'s own `r=false` default parameter, threaded here as
- * `SeatbeltProfileInput.allowGitConfigWrites` (absent = false = protected, matching claude's own
- * default; round 16 wired it from `sandbox.filesystem.allowGitConfig`, claude's `ag()`).
- *
- * Winter's own brand-derived entries (`<projectDir>/mcp.json`, and the `<projectDir>/{commands,
- * agents,skills,rules,output-styles}` directories) sit beside claude's literal `.claude/commands`/
- * `.claude/agents`. Fix round 17 (R.3 C-1 part 2b): `skills`, `rules` and `output-styles` join
- * `commands`/`agents` -- ruled the Winter mapping of claude's `.claude/{commands,agents}` protection
- * (`qa()`, dump byte 15282484) onto Winter's project folder, required by spec §7.2 (the trusted
- * project's `<projectDir>/{skills,commands,rules,output-styles}/**`), not a new feature. Round 3 had
- * parked this ("the SDK seatbelt regex deny for `<projectDir>/<kind>`"); it is unparked here.
- *
- * Fix round 17 also retires rounds 15/16's `chPlainPaths` exclusion: EVERY plain entry, Winter's own
- * included, goes to `Ch` (`buildDefaultWriteProtectionBlock`), exactly as claude's `mR` calls
- * `Ch(p,t)` on its whole `cR` list (dump byte 15369065). `<cwd>/<projectDir>` is therefore a
- * `(literal …)` in the ancestor fence, as `<cwd>/.claude` is on claude, which is what stops renaming
- * `<projectDir>` away, planting `skills/x/SKILL.md` under the new name and renaming it back (the R.3
- * reviewer's `bracket3.ts` shape). The accepted consequence: a sandboxed command can no longer create
- * or remove `<projectDir>` itself. A file inside an existing `<projectDir>` is unaffected --
- * `deny.darwin.test.ts`'s carve-out fixture (the one round 16 found this would break) now creates the
- * project folder before its sandboxed command, and still proves the carve-out filename-specific.
- * Winter's own memory directory lives under `storeHome` by default (`context/memory-key.ts`'s
- * `memoryDirFor`), not under `<cwd>/<projectDir>`.
- */
-function buildDefaultWriteProtectionEntries(cwd: string, brand: SandboxBrand, allowGitConfigWrites: boolean): { plainPaths: string[]; regexes: string[] } {
-  const plainPaths: string[] = [];
-  const regexes: string[] = [];
-  for (const f of DEFAULT_PROTECTED_FILES) {
-    plainPaths.push(join(cwd, f));
-    regexes.push(cwdAnchoredEntryRegex(cwd, f, false));
-  }
-  const winterMcpJson = join(brand.projectDirName, "mcp.json");
-  plainPaths.push(join(cwd, winterMcpJson));
-  regexes.push(cwdAnchoredEntryRegex(cwd, winterMcpJson, false));
-  for (const d of DEFAULT_PROTECTED_DIRS) {
-    plainPaths.push(join(cwd, d));
-    regexes.push(cwdAnchoredEntryRegex(cwd, d, true));
-  }
-  for (const kind of PROJECT_DIR_PROTECTED_KINDS) {
-    const d = join(brand.projectDirName, kind);
-    plainPaths.push(join(cwd, d));
-    regexes.push(cwdAnchoredEntryRegex(cwd, d, true));
-  }
-  plainPaths.push(join(cwd, ".git", "hooks"));
-  regexes.push(cwdAnchoredEntryRegex(cwd, ".git/hooks", true));
-  if (!allowGitConfigWrites) {
-    plainPaths.push(join(cwd, ".git", "config"));
-    regexes.push(cwdAnchoredEntryRegex(cwd, ".git/config", false));
-  }
-  return { plainPaths, regexes };
-}
-
-/**
- * The FULL rendered block: every entry from `buildDefaultWriteProtectionEntries` above, denied with
- * the WIDENED operation list (`WRITE_OPS_SURVIVING_READ_DENY_REPERMIT`) so round 14's own read-deny
- * re-permit cannot punch through this floor either -- the identical reasoning that constant's own
- * header already carries, applied to a NEW deny source rather than the caller-configured
- * `denyWritePaths`/`denyWriteRegexes`. Kept as its OWN, separate block (not merged into
- * `input.denyWritePaths`/`denyWriteRegexes` themselves) so this unconditional, claude-mandated floor
- * never depends on -- or gets confused with -- a caller's own optional configuration.
- *
- * Every plain path is ALSO fed into `Ch` (`buildAncestorRenameBypassBlock`, round 12), so an ancestor
- * of e.g. `<cwd>/.git/hooks` or `<cwd>/.winter/skills` cannot be renamed out of the way and back to
- * slip a write past this floor -- matching claude's own `mR`, which calls `Ch(p,t)` on the SAME
- * combined `p=[...denyWithinAllow,...cR(r)]` list. Fix round 17 feeds Winter's own brand entries too
- * (see `buildDefaultWriteProtectionEntries`'s own header). `Ch`'s own glob branch is NOT fed the regex
- * half here (`cwdAnchoredEntryRegex`'s own output, round 16) -- `Ch` wants a canonicalized
- * FIXED-PREFIX DIRECTORY string (`Rh`'s own output on claude's side), not a compiled regex, and `cwd`
- * itself is already independently protected via the plain-path half; the regex clause's own survival
- * against the re-permit comes entirely from the widened operation list on its own deny clause,
- * exactly like every other glob-shaped deny in this module.
- */
+/** Fix rounds 15-17: the default write protections, anchored at cwd (plain and any-depth forms, plus their ancestor-rename fence). */
 function buildDefaultWriteProtectionBlock(cwd: string, brand: SandboxBrand, allowGitConfigWrites: boolean): string {
-  const { plainPaths, regexes } = buildDefaultWriteProtectionEntries(cwd, brand, allowGitConfigWrites);
-  const plainDenyClauses = plainPaths.map((p) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (subpath "${sbplString(canon(p))}"))`).join("\n");
-  const regexDenyClauses = regexes.map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (regex #"${escapeSbplRegexDelimiter(r)}"))`).join("\n");
-  const ancestorFence = buildAncestorRenameBypassBlock(plainPaths, []);
-  return [plainDenyClauses, regexDenyClauses, ancestorFence].filter((s) => s.length > 0).join("\n");
+  const proj = brand.projectDirName;
+  // Each protected entry is a path relative to cwd; a directory entry also covers everything below it.
+  const entries: { rel: string; isDir: boolean }[] = [
+    ...DEFAULT_PROTECTED_FILES.map((rel) => ({ rel, isDir: false })),
+    { rel: `${proj}/mcp.json`, isDir: false },
+    ...DEFAULT_PROTECTED_DIRS.map((rel) => ({ rel, isDir: true })),
+    ...PROJECT_DIR_PROTECTED_KINDS.map((kind) => ({ rel: `${proj}/${kind}`, isDir: true })),
+    { rel: ".git/hooks", isDir: true },
+    ...(allowGitConfigWrites ? [] : [{ rel: ".git/config", isDir: false }]),
+  ];
+
+  const plainPaths = entries.map((e) => join(cwd, e.rel));
+  // The any-depth form: the same name anywhere under cwd (a nested repository, a sub-project).
+  const regexSources = entries.map((e) => {
+    const anyDepth = join(cwd, "**", e.rel);
+    return recursiveGlobToSbplRegexSource(e.isDir ? `${anyDepth}/**` : anyDepth);
+  });
+
+  const lines = [
+    ...plainPaths.map((p) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} ${subpathClause(canon(p))})`),
+    ...regexSources.map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} ${regexClause(r)})`),
+    buildAncestorRenameBypassBlock(plainPaths, []),
+  ];
+  return lines.join("\n");
 }
 
-// A STRICT "is candidate a proper descendant of root" check -- claude's own `Sc` (dump byte 15366000
-// region, ground-truth-verified in round 11's own reading), reduced to its plain-path form: Winter's
-// write roots and glob-fixed-prefix denies are never themselves glob-shaped (round 10's own `Jm`
-// finding -- a glob-shaped ALLOW/writeRoot entry is dropped entirely, never reaches this module), so
-// `Sc`'s own `vh`-neutralized glob-text branch is structurally unreachable here and not ported.
-// Deliberately EXCLUDES equality (`candidate === root`) -- matches `Sc`'s own `r!==t` check exactly;
-// `fR`'s own skip-condition for a glob entry (below) is the one place claude's OWN code ALSO checks
-// equality, ported as its own separate inline condition rather than folded into this helper.
+/** True when `candidate` lies strictly inside `root` (equality excluded). */
 function isProperDescendantOf(candidate: string, root: string): boolean {
-  return root === "/" ? candidate !== "/" && candidate.startsWith("/") : candidate !== root && candidate.startsWith(root + "/");
+  if (root === "/") return candidate !== "/" && candidate.startsWith("/");
+  return candidate !== root && candidate.startsWith(`${root}/`);
 }
 
 /**
- * Fix round 13 ("Important" item 1, claude's own `fR`, dump byte 15367091, pinned 2.1.250,
- * ground-truth byte-slice-verified in the SAME chunk as `Ch`/`mR`/`pR`/`dR`/`Li`/`ri` from rounds
- * 11/12): "keep read-denied paths inside write roots in place" -- see
- * `SeatbeltProfileInput.denyReadGlobEntries`'s own header for the full rationale. `writableRoots`
- * here is the SAME canonicalized `roots` array (cwd + writableRoots) `buildSeatbeltProfile`'s own
- * write-allow block already builds -- reused, not re-derived.
- *
- * Scope note (disclosed, not silently narrowed): claude's own `fR` ALSO carves allow-within-deny
- * ("allowRead") entries out of the resulting deny clause (`A(N)`'s own `[...o,...u]`, `o` being the
- * allow list) -- Winter has no SBPL rendering for `allowRead` at all yet (round 10's own disclosed
- * gap, `SeatbeltProfileInput.denyWriteRegexes`'s sibling `allowRead` field, "fails closed: an
- * unenforced allowRead simply leaves the outer denyRead in effect"). This port carves out only
- * NESTED WRITE ROOTS (the `u`/`writeRoots` half of claude's own `[...o,...u]`), which Winter DOES
- * have -- the `allowRead` half stays part of that SAME pre-existing gap, not a new one.
- *
- * RESOLVED (round 14, CRITICAL item 1 -- see `buildReadDenyWritePermitBlock`'s own header): round 13
- * found, empirically, that the nested-write-root carve-out this function builds was, in the CURRENT
- * combined profile, shadowed by `Ch` (round 12, `buildAncestorRenameBypassBlock`, called on the SAME
- * `denyReadPaths` list) whenever both cover the identical denied path -- `Ch` has NO carve-out
- * mechanism of its own and its own EARLIER, unconditional deny covered the nested write root too,
- * with no exemption, and THAT clause was what a real sandbox-exec test observed deciding the outcome.
- * The root cause was never a bug in `fR` (isolated testing, at the time, already confirmed this
- * function's own carve-out clause was correctly generated and independently functional) -- it was
- * that Winter's round-12 port of claude's own `pR` stopped at its `Ch` call and never carried `pR`'s
- * own TRAILING lines, an explicit `(allow file-write-unlink file-write-create <every write root>)`
- * re-permit emitted right after `Ch`. With that re-permit now in place (`buildReadDenyWritePermitBlock`,
- * called from `buildSeatbeltProfile` immediately after `Ch`'s own read-side block), a real sandbox-exec
- * run confirms the nested write root is writable again -- production-wiring.test.ts's own round-13
- * fixture, once asserting the disclosed-limitation outcome, now asserts the restored one, re-verified
- * against real `sandbox-exec`, not assumed.
+ * Wraps a base clause so it does not apply inside any of the carve-out directories (write roots nested
+ * inside a denied path stay fully usable). No carve-outs leaves the base clause unchanged.
  */
+function withCarveOuts(base: string, carveOuts: readonly string[]): string {
+  if (carveOuts.length === 0) return base;
+  const exclusions = carveOuts.map((x) => `(require-not ${subpathClause(x)})`).join(" ");
+  return `(require-all ${base} ${exclusions})`;
+}
+
+/** Fix round 13: denies unlinking (and so renaming away) read-denied paths that sit inside a write root. */
 function buildReadDenyKeepInPlaceBlock(plainDenyReadPaths: readonly string[], globDenyReadEntries: readonly GlobDenyEntry[], writableRoots: readonly string[]): string {
   if (writableRoots.length === 0) return "";
-  const isUnderAnyWriteRoot = (path: string): boolean => writableRoots.some((root) => isProperDescendantOf(path, root));
-  const nestedWriteRootCarveOuts = (deniedPath: string): string[] => writableRoots.filter((root) => isProperDescendantOf(root, deniedPath)).map((root) => `(subpath "${sbplString(root)}")`);
-  const withCarveOuts = (base: string, carveOuts: readonly string[]): string => (carveOuts.length === 0 ? base : `(require-all ${base} ${carveOuts.map((c) => `(require-not ${c})`).join(" ")})`);
-  const addAncestorLiterals = (clauses: Set<string>, ancestors: readonly string[]): void => {
-    for (const ancestor of ancestors) if (isUnderAnyWriteRoot(ancestor)) clauses.add(`(literal "${sbplString(ancestor)}")`);
-  };
+  const insideSomeRoot = (p: string): boolean => writableRoots.some((root) => isProperDescendantOf(p, root));
+  const block = new ClauseBlock();
 
-  const clauses = new Set<string>();
-  for (const rawPath of plainDenyReadPaths) {
-    const path = canon(rawPath);
-    if (!isUnderAnyWriteRoot(path)) continue; // claude's own w(N) -- nothing to "keep in place" outside a write root
-    clauses.add(withCarveOuts(`(subpath "${sbplString(path)}")`, nestedWriteRootCarveOuts(path)));
-    addAncestorLiterals(clauses, ancestorDirectoriesOf(path));
+  for (const entry of plainDenyReadPaths) {
+    const path = canon(entry);
+    if (!insideSomeRoot(path)) continue;
+    const nestedRoots = writableRoots.filter((root) => isProperDescendantOf(root, path));
+    block.add(withCarveOuts(subpathClause(path), nestedRoots));
+    for (const dir of ancestorDirectoriesOf(path)) {
+      if (insideSomeRoot(dir)) block.add(literalClause(dir));
+    }
   }
-  for (const entry of globDenyReadEntries) {
-    // claude's own skip-condition (the ONE place equality is ALSO checked, unlike w() above).
-    const relatesToAWriteRoot = writableRoots.some((root) => entry.fixedPrefix === root || isProperDescendantOf(entry.fixedPrefix, root) || isProperDescendantOf(root, entry.fixedPrefix));
-    if (!relatesToAWriteRoot) continue;
-    const regex = new RegExp(entry.regex);
-    const carveOuts = writableRoots.filter((root) => regex.test(root)).map((root) => `(subpath "${sbplString(root)}")`);
-    clauses.add(withCarveOuts(`(regex #"${escapeSbplRegexDelimiter(entry.regex)}")`, carveOuts));
-    if (entry.fixedPrefix !== "/") addAncestorLiterals(clauses, [entry.fixedPrefix, ...ancestorDirectoriesOf(entry.fixedPrefix)]);
+
+  for (const { regex, fixedPrefix } of globDenyReadEntries) {
+    const prefix = fixedPrefix;
+    const relates = writableRoots.some((root) => prefix === root || isProperDescendantOf(prefix, root) || isProperDescendantOf(root, prefix));
+    if (!relates) continue;
+    // Only compiled for an entry that relates to a root; an invalid pattern propagates its SyntaxError.
+    const compiled = new RegExp(regex);
+    const matchedRoots = writableRoots.filter((root) => compiled.test(root));
+    block.add(withCarveOuts(regexClause(regex), matchedRoots));
+    if (prefix !== "/") {
+      for (const dir of [prefix, ...ancestorDirectoriesOf(prefix)]) {
+        if (insideSomeRoot(dir)) block.add(literalClause(dir));
+      }
+    }
   }
-  if (clauses.size === 0) return "";
-  return [`(deny file-write-unlink`, ...[...clauses].map((c) => `  ${c}`)].join("\n") + ")";
+
+  return block.render("(deny file-write-unlink");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -583,7 +397,7 @@ const CONTROL_PLANE_FILES = ["permissions.local.json", "settings.json", "setting
  * ESCAPE FIRST, FOLD SECOND, per character: a letter becomes `[Xx]`, and everything else is escaped
  * exactly as `sbplRegexLiteral` escapes it (the brand grammar admits `-` and, for a dot-dir, the
  * leading `.` -- which MUST be escaped or it matches any character). Applied to Winter's own dot-dir
- * it renders `\.[Ww][Ii][Nn][Tt][Ee][Rr]`, byte for byte what the constant it replaces spelled, so
+ * it renders `\.[Ww][Ii][Nn][Tt][Ee][Rr]`, exactly what the constant it replaces spelled, so
  * the rendered profile is unchanged under `WINTER_BRAND` (a test diffs the whole profile text).
  *
  * Exported so the deny suite can assert the rendering directly rather than by reading the profile.
@@ -652,8 +466,8 @@ const providerStateReadDenyRegex = (winterRootRegexSafe: string): string =>
  * (`globalConfigFileName(brand)`, `<homeDirName>.json`: claude's `.claude.json` in shape, spec §6.3
  * item 3), and `(subpath …)` denies on `agents/` and `plugins/` -- the self-grant surface spec §7.1's
  * write table lists for the home. Every clause uses `WRITE_OPS_SURVIVING_READ_DENY_REPERMIT`, so round
- * 14's read-deny re-permit cannot punch through it (that constant's own header). Not a claude port:
- * claude's own config dir is outside its sandbox's write roots unless a user makes it one; this is
+ * 14's read-deny re-permit cannot punch through it (that constant's own header). Winter's own floor:
+ * claude's config dir is outside its sandbox's write roots unless a user makes it one; this is
  * Winter's standing "the seatbelt is the only enforcement point left for a shell-invoked write to the
  * control plane" floor (WS-12 §5.2), carried onto the homes WS-21 introduced.
  */
@@ -665,14 +479,14 @@ function buildHomeSelfGrantFloor(anchors: readonly (string | undefined)[], brand
     ...files.map((f) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (literal "${sbplString(join(root, f))}"))`),
     ...dirs.map((d) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (subpath "${sbplString(join(root, d))}"))`),
   ]);
-  // Fix round 18 (the R.3 re-review of round 17): every floor path ALSO feeds `Ch`'s ancestor-rename
-  // fence (`buildAncestorRenameBypassBlock`), exactly as claude's `mR` (dump byte 15369065) hands its
-  // whole deny list to `Ch` (15368116): each path's own subpath, plus every ancestor as a
-  // `(literal …)`, denied `file-write-unlink`/`file-write-create`. Without it the floor named the files
-  // but not the home folder holding them, so `mv <home> <home>2 && echo … > <home>2/settings.json &&
-  // mv <home>2 <home>` rewrote the settings file (measured, the reviewer's `sdkhome-rename.ts`: exit 0).
-  // The consequence, as for any `Ch`-fenced path: a sandboxed command cannot create, remove or rename
-  // `winterHome`/`storeHome` or any of their ancestors; files inside them are unaffected.
+  // Fix round 18 (the R.3 re-review of round 17): every floor path ALSO feeds the ancestor-rename
+  // fence (`buildAncestorRenameBypassBlock`), like every other deny list in this profile: each path's
+  // own subpath, plus every ancestor as a `(literal …)`, denied `file-write-unlink`/`file-write-create`.
+  // Without it the floor named the files but not the home folder holding them, so `mv <home> <home>2 &&
+  // echo … > <home>2/settings.json && mv <home>2 <home>` rewrote the settings file (measured, the
+  // reviewer's `sdkhome-rename.ts`: exit 0). The consequence, as for any fenced path: a sandboxed command
+  // cannot create, remove or rename `winterHome`/`storeHome` or any of their ancestors; files inside them
+  // are unaffected.
   const fence = buildAncestorRenameBypassBlock(roots.flatMap((root) => [...files, ...dirs].map((name) => join(root, name))), []);
   return [...denies, fence].filter((s) => s.length > 0).join("\n");
 }
@@ -691,46 +505,42 @@ export interface SeatbeltProfileInput {
   /** WS-12 §5.3: filesystem.denyRead, layered AFTER the read-allow block (last-match-wins). */
   denyReadPaths?: string[];
   /**
-   * Fix round 11 (claude's `Li`/`Rt`, dump byte 15365905/15282610, pinned 2.1.250): glob-shaped
-   * deny entries, PRE-CONVERTED by the caller to SBPL regex SOURCE TEXT (`permissions/file-rules.ts`'s
-   * `globToSbplRegexSource`/`recursiveGlobToSbplRegexSource`/`splitDenyPathsByGlobShape`) -- this
-   * module has no glob grammar of its own (mirrors `denyWritePaths`/`denyReadPaths`'s own "already
-   * resolved by the caller" posture) and only quotes/renders. Claude's own macOS sandbox profile
-   * builder renders a glob-shaped deny as `(regex ...)` and a plain one as `(subpath ...)` (`Li`); a
-   * `subpath` deny alone -- Winter's pre-round-11 posture -- silently drops a glob-shaped Edit deny
-   * (e.g. a globstar-anchored `.env` pattern) or `denyWrite` entry from the sandbox layer entirely
-   * (the PERMISSION-RULE layer still enforced it for a recognized tool call; a bash-invoked
-   * `tee`/`cp` bypassing that layer did not).
+   * Fix round 11: glob-shaped deny entries, PRE-CONVERTED by the caller to SBPL regex SOURCE TEXT
+   * (`permissions/file-rules.ts`'s `globToSbplRegexSource`/`recursiveGlobToSbplRegexSource`/
+   * `splitDenyPathsByGlobShape`) -- this module has no glob grammar of its own (mirrors
+   * `denyWritePaths`/`denyReadPaths`'s own "already resolved by the caller" posture) and only
+   * quotes/renders. A glob-shaped deny renders as `(regex ...)` and a plain one as `(subpath ...)`, as
+   * claude's macOS sandbox does; a `subpath` deny alone -- Winter's pre-round-11 posture -- silently
+   * dropped a glob-shaped Edit deny (e.g. a globstar-anchored `.env` pattern) or `denyWrite` entry from
+   * the sandbox layer entirely (the PERMISSION-RULE layer still enforced it for a recognized tool call;
+   * a bash-invoked `tee`/`cp` bypassing that layer did not).
    */
   denyWriteRegexes?: string[];
   denyReadRegexes?: string[];
   /**
-   * Fix round 12 ("Important" item, claude's own `Ch`/`ed`/`mR`/`pR`, dump byte 15368116/15367994/
-   * 15369065/15368380, pinned 2.1.250): the ancestor-rename-bypass fix. `denyWriteGlobFixedPrefixes`/
-   * `denyReadGlobFixedPrefixes` are the CANONICALIZED fixed-prefix directory of each glob-shaped
-   * denyWrite/denyRead entry (`permissions/file-rules.ts`'s `splitDenyPathsByGlobShape`, its own
-   * `globFixedPrefixes` output) -- this module has no glob grammar of its own, mirrors the other
-   * caller-pre-resolved fields above. Combined with `denyWritePaths`/`denyReadPaths` (the PLAIN
-   * entries, reused directly -- no new field needed for those), `buildAncestorRenameBypassBlock`
-   * below builds a `(deny file-write-unlink file-write-create ...)` clause naming every ANCESTOR of
-   * each denied path/glob-fixed-prefix, PLUS the fixed prefix itself, so a sandboxed `mv <ancestor>
-   * <elsewhere> && <write inside where it used to be> && mv <elsewhere> <ancestor>` cannot rename an
-   * ancestor of a denied path out of the way (and back) to slip a write past the deny.
+   * Fix round 12: the ancestor-rename fence. `denyWriteGlobFixedPrefixes`/`denyReadGlobFixedPrefixes`
+   * are the CANONICALIZED fixed-prefix directory of each glob-shaped denyWrite/denyRead entry
+   * (`permissions/file-rules.ts`'s `splitDenyPathsByGlobShape`, its own `globFixedPrefixes` output) --
+   * this module has no glob grammar of its own, mirrors the other caller-pre-resolved fields above.
+   * Combined with `denyWritePaths`/`denyReadPaths` (the PLAIN entries, reused directly),
+   * `buildAncestorRenameBypassBlock` builds a `(deny file-write-unlink file-write-create ...)` clause
+   * naming every ANCESTOR of each denied path/glob-fixed-prefix, PLUS the fixed prefix itself, so a
+   * sandboxed `mv <ancestor> <elsewhere> && <write inside where it used to be> && mv <elsewhere>
+   * <ancestor>` cannot rename an ancestor of a denied path out of the way (and back) to slip a write
+   * past the deny.
    */
   denyWriteGlobFixedPrefixes?: string[];
   denyReadGlobFixedPrefixes?: string[];
   /**
-   * Fix round 13 ("Important" item 1, claude's own `fR`, dump byte 15367091): "keep read-denied
-   * paths inside write roots in place." Winter's read-deny/write-allow sections previously composed
-   * exactly the way claude's OWN `mR`/`pR` alone would -- last-match-wins, and the write-allow
-   * (`(allow file-write* (subpath <root>))`) is emitted AFTER the read-deny section, so it silently
-   * overrides any read-deny's own implicit protection against being UNLINKED (renamed away): with
-   * `Read(.env)` denied and cwd writable, a sandboxed `mv .env x && cat x` renamed the read-denied
-   * file to a new, non-denied name and read the secret through it. claude closes this with a THIRD
-   * section, `fR`, emitted AFTER the write-allow block: for each read-denied path (or glob-shaped
-   * entry, `denyReadGlobEntries` below) that sits inside a write root, denies `file-write-unlink` on
-   * its own recursive clause (minus any write root nested INSIDE it, carved back out) and on every
-   * one of its ancestor directories that is ALSO inside a write root.
+   * Fix round 13: "keep read-denied paths inside write roots in place." The write-allow block
+   * (`(allow file-write* (subpath <root>))`) is emitted AFTER the read-deny section and, last match
+   * winning, overrode a read-deny's implicit protection against being UNLINKED (renamed away): with
+   * `Read(.env)` denied and cwd writable, a sandboxed `mv .env x && cat x` renamed the read-denied file
+   * to a new, non-denied name and read the secret through it. claude closes this too. A third section,
+   * emitted AFTER the write-allow block (`buildReadDenyKeepInPlaceBlock`), denies `file-write-unlink`
+   * for each read-denied path (or glob-shaped entry, this field) that sits inside a write root -- minus
+   * any write root nested INSIDE it, carved back out -- and for each of its ancestor directories that is
+   * ALSO inside a write root. Each entry pairs the glob's regex with its own fixed prefix.
    */
   denyReadGlobEntries?: GlobDenyEntry[];
   /** Resolved network posture -- see resolveNetworkPosture's own header for why this is a plain boolean here. */
@@ -791,12 +601,11 @@ export interface SeatbeltProfileInput {
    */
   brand?: SandboxBrand;
   /**
-   * Fix round 15 (claude's own `cR(e=false)` / `mR`'s own `r=false` default parameter): when true,
-   * `.git/config` is NOT added to the default write-protected entries (`buildDefaultWriteProtectionBlock`
-   * above) -- every OTHER default protection (shell/tool config files, editor/agent dot-dirs,
-   * `.git/hooks`) is unaffected; this flag only ever gates `.git/config`, matching `cR`'s own `!e`
-   * guard exactly. Omitted = `false` = protected, matching claude's own default. No caller sets this
-   * true yet -- kept for parity since claude's own signature carries the knob.
+   * Fix round 15: when true, `.git/config` is NOT among the default write-protected entries
+   * (`buildDefaultWriteProtectionBlock`) -- every OTHER default protection (shell/tool config files,
+   * editor/agent dot-dirs, `.git/hooks`) is unaffected; this flag only ever gates `.git/config`.
+   * Omitted = `false` = protected, claude's default too. Set from `sandbox.filesystem.allowGitConfig`
+   * (round 16).
    */
   allowGitConfigWrites?: boolean;
 }
@@ -865,12 +674,11 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   const denyWriteRules = (input.denyWritePaths ?? []).map((p) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (subpath "${sbplString(canon(p))}"))`).join("\n");
   const denyReadRules = (input.denyReadPaths ?? []).map((p) => `(deny file-read* (subpath "${sbplString(canon(p))}"))`).join("\n");
 
-  // Fix round 11: the GLOB-shaped siblings of the two rules just above (claude's own `Li`/`Rt`,
-  // dump byte 15365905/15282610) -- `(regex #"...")` rather than `(subpath ...)`, since SBPL's
-  // `subpath` operator has no glob grammar of its own and would otherwise treat e.g. `**/.env`
-  // as a LITERAL directory name (matching nothing real). The caller has already converted these to
-  // regex SOURCE TEXT (`permissions/file-rules.ts`'s `splitDenyPathsByGlobShape`, the recursive form
-  // -- "and everything under it," matching `subpath`'s own implicit recursive semantics).
+  // Fix round 11: the GLOB-shaped siblings of the two rules just above -- `(regex #"...")` rather than
+  // `(subpath ...)`, since SBPL's `subpath` operator has no glob grammar of its own and would otherwise
+  // treat e.g. `**/.env` as a LITERAL directory name (matching nothing real). The caller has already
+  // converted these to regex SOURCE TEXT (`permissions/file-rules.ts`'s `splitDenyPathsByGlobShape`, the
+  // recursive form -- "and everything under it," matching `subpath`'s own implicit recursive semantics).
   //
   // Deliberately NOT `sbplString()`-quoted -- discovered empirically (a real darwin sandbox-exec
   // test went GREEN for the `subpath` siblings but silently failed to block for these until this was
@@ -883,39 +691,32 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // backslash-doubling at all -- only the outer `#"..."` quote character itself needs escaping, which
   // `escapeSbplRegexDelimiter` (below) does and nothing else.
   //
-  // Deliberately NOT `canon()`-ed HERE -- unlike the plain-path rules above, there is no real
-  // filesystem path in the REGEX TEXT ITSELF to canonicalize (it is already a compiled regex pattern,
-  // wildcards included). The glob's own fixed PREFIX IS canonicalized, through a real symlink, guarded
-  // by claude's own `ko` -- one level upstream, before conversion (`permissions/file-rules.ts`'s
-  // `canonicalizeGlobFixedPrefix`/`isSuspiciousRealpathResolution`; fix round 11 + round 12's own
-  // disclosure correction -- claude's `Cv` DOES perform real, `ko`-guarded symlink resolution here,
-  // this codebase's round-11 disclosure claiming otherwise was wrong, corrected in file-rules.ts's own
-  // header).
+  // Deliberately NOT `canon()`-ed HERE -- there is no real filesystem path in the REGEX TEXT ITSELF to
+  // canonicalize (it is already a compiled regex pattern, wildcards included). The glob's own fixed
+  // PREFIX IS canonicalized, through a real symlink and guarded against suspicious resolutions, one
+  // level upstream before conversion (`permissions/file-rules.ts`'s `canonicalizeGlobFixedPrefix`/
+  // `isSuspiciousRealpathResolution`).
   const denyWriteRegexRules = (input.denyWriteRegexes ?? []).map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (regex #"${escapeSbplRegexDelimiter(r)}"))`).join("\n");
   const denyReadRegexRules = (input.denyReadRegexes ?? []).map((r) => `(deny file-read* (regex #"${escapeSbplRegexDelimiter(r)}"))`).join("\n");
 
-  // Fix round 12 ("Important" item, claude's own `Ch`/`ed`): the ancestor-rename-bypass fix. For
-  // EVERY write-denied path (plain OR glob-shaped) and EVERY read-denied path, additionally deny
-  // `file-write-unlink`/`file-write-create` on the denied path itself (or a glob's own fixed prefix)
-  // and on every ANCESTOR directory of it -- so a sandboxed `mv <ancestor> <elsewhere> && echo x >
-  // <where the ancestor used to be>/... && mv <elsewhere> <ancestor>` cannot rename an ancestor out
-  // of the way (and back) to slip a write past the deny. claude's own `mR` (write profile) and `pR`
-  // (read profile) each call `Ch` with their OWN deny list -- ported as two independent blocks below,
-  // matching that structure exactly rather than merging them into one.
+  // Fix round 12: the ancestor-rename fence. For EVERY write-denied path (plain OR glob-shaped) and
+  // EVERY read-denied path, additionally deny `file-write-unlink`/`file-write-create` on the denied path
+  // itself (or a glob's own fixed prefix) and on every ANCESTOR directory of it -- so a sandboxed
+  // `mv <ancestor> <elsewhere> && echo x > <where the ancestor used to be>/... && mv <elsewhere>
+  // <ancestor>` cannot rename an ancestor out of the way (and back) to slip a write past the deny. The
+  // write side and the read side each get their own block, built from their own deny lists.
   const denyWriteAncestorRenameBlock = buildAncestorRenameBypassBlock(input.denyWritePaths ?? [], input.denyWriteGlobFixedPrefixes ?? []);
   const denyReadAncestorRenameBlock = buildAncestorRenameBypassBlock(input.denyReadPaths ?? [], input.denyReadGlobFixedPrefixes ?? []);
 
-  // Fix round 14 (CRITICAL item 1, claude's own `pR`'s own trailing re-permit): see
-  // `buildReadDenyWritePermitBlock`'s own header for the full rationale. Reuses the SAME
-  // canonicalized `roots` array the write-allow block below builds.
+  // Fix round 14: the write-root create/unlink re-permit -- see `WRITE_OPS_SURVIVING_READ_DENY_REPERMIT`'s
+  // header. Reuses the SAME canonicalized `roots` array the write-allow block below builds.
   const denyReadWritePermitBlock = buildReadDenyWritePermitBlock(roots);
 
-  // Fix round 15 (CRITICAL, claude's own `cR`): see `buildDefaultWriteProtectionBlock`'s own header
-  // for the full rationale.
+  // Fix round 15: the default write protections -- see `DEFAULT_PROTECTED_FILES`'s header.
   const defaultWriteProtectionBlock = buildDefaultWriteProtectionBlock(input.cwd, brand, input.allowGitConfigWrites ?? false);
 
-  // Fix round 13 ("Important" item 1, claude's own fR): emitted AFTER the write-allow block (`roots`/
-  // `writeRules`, above) -- see `buildReadDenyKeepInPlaceBlock`'s own header for the full rationale.
+  // Fix round 13: emitted AFTER the write-allow block (`roots`/`writeRules`, above) -- see
+  // `SeatbeltProfileInput.denyReadGlobEntries`'s header for the rationale.
   const denyReadKeepInPlaceBlock = buildReadDenyKeepInPlaceBlock(input.denyReadPaths ?? [], input.denyReadGlobEntries ?? [], roots);
 
   // WS-12 §2: "the sole baseline read denial is <home>/<homeDirName>/run" -- a subpath deny (not a
