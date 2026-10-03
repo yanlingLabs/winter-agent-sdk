@@ -39,7 +39,7 @@ describe("buildSkillListing: the pinned defaults", () => {
 });
 
 describe("buildSkillListing: `skillListingMaxDescChars` (sdk.d.ts:5499)", () => {
-  test("an over-long description is cut to the cap and marked -- claude's `xkn`: cap - 1 characters plus the ellipsis", () => {
+  test("an over-long description is cut to the cap and marked: cap - 1 characters plus the ellipsis", () => {
     const listing = buildSkillListing([meta("long", "x".repeat(50))], { maxDescChars: 10, contextWindowTokens: 200_000 });
     expect(listing[0]!.description).toBe("x".repeat(9) + LISTING_TRUNCATION_SUFFIX);
     expect(listing[0]!.description).toHaveLength(10);
@@ -64,7 +64,7 @@ describe("buildSkillListing: `skillListingBudgetFraction` (sdk.d.ts:5503)", () =
     expect(skillListingBudgetChars({ contextWindowTokens: 200_000, budgetFraction: 0.01 })).toBe(200_000 * 0.01 * SKILL_LISTING_CHARS_PER_TOKEN);
   });
 
-  test("over budget, EVERY skill stays listed and descriptions are restored in precedence order while they fit (claude's `Rot`)", () => {
+  test("over budget, EVERY skill stays listed and descriptions are restored in precedence order while they fit", () => {
     // Full lines: 27 + 27 + 29 + 2 separators = 85 > 50. Names only: 5 + 5 + 7 + 2 = 19, leaving 31;
     // `one` costs 22 more and fits, then 9 is left and neither 22-char description does.
     const skills = [meta("one", "1".repeat(20)), meta("two", "2".repeat(20)), meta("three", "3".repeat(20))];

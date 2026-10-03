@@ -3698,11 +3698,9 @@ describe("fix round 20, item 2: a subagent's own object-form MCP server stays th
 
 // Fix round 21 (the round-20 re-review): the visible-server scope stopped one level down, and the
 // parent's ToolSearch had no scope at all. claude offers EVERY descendant the session's MCP tools plus
-// its caller's own: the Agent tool builds a spawned agent's pool as `JP($n, Y2(yr.mcp.tools.concat(pn)))`
-// (dump byte 18016381), `yr.mcp.tools` being the session's MCP tools and `pn = E.options.tools.filter(uy)`
-// (18011928) the calling agent's own MCP tools; `runAgent` then adds the agent's frontmatter tools
-// (`[...Jn, ...fo]`, `zar`, 17889428). And claude's ToolSearch searches only the calling agent's own
-// tools (`x = refreshTools?.() ?? tools`, 15619044).
+// its caller's own: a spawned agent's pool is the session's MCP tools plus the calling agent's own MCP
+// tools, and then the agent's own frontmatter tools are added. And claude's ToolSearch searches only
+// the calling agent's own tools.
 describe("fix round 21: the MCP server scope reaches every descendant, and ToolSearch honours it", () => {
   const CHILD_TOOL = "mcp__childsrv__shout";
   const PARENT_TOOL = "mcp__parentsrv__hello";

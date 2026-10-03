@@ -109,7 +109,7 @@ describe("Glob (Phase 3, Lane A, Task 4)", () => {
     expect(result.output).toBe(join(dir, "sub", "x.txt"));
   });
 
-  // Fix round 10, item B: claude's own `ht` trims a path argument before resolving it -- see
+  // Fix round 10, item B: claude trims a path argument before resolving it -- see
   // write.test.ts's identical fixture. A model-supplied `path` with surrounding whitespace scopes
   // the scan to the TRIMMED subdirectory.
   test("fix round 10, item B: a path with surrounding whitespace is trimmed before resolution", async () => {

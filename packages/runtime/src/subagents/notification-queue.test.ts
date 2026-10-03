@@ -26,7 +26,7 @@ import {
 } from "./notification-queue.ts";
 import { renderAttachment } from "../context/attachments.ts";
 
-describe("the <task-notification> document (claude's `cu`)", () => {
+describe("the <task-notification> document", () => {
   test("tag ORDER is task-id, tool-use-id, task-type, output-file, status, summary", () => {
     const xml = renderTaskNotification({ summary: "s", status: "completed", outputFile: "/o", taskType: "remote_agent", toolUseId: "toolu_1", taskId: "t1" });
     expect(xml).toBe(["<task-notification>", "<task-id>t1</task-id>", "<tool-use-id>toolu_1</tool-use-id>", "<task-type>remote_agent</task-type>", "<output-file>/o</output-file>", "<status>completed</status>", "<summary>s</summary>", "</task-notification>"].join("\n"));
@@ -40,7 +40,7 @@ describe("the <task-notification> document (claude's `cu`)", () => {
     expect(renderTaskNotification({ taskId: "t", body: "\n<event>x</event>", trailing: "\nhint" })).toBe("<task-notification>\n<task-id>t</task-id>\n<event>x</event>\n</task-notification>\nhint");
   });
 
-  test("xmlEscape is claude's `Ut`: &, < and > only", () => {
+  test("xmlEscape escapes &, < and > only", () => {
     expect(xmlEscape(`a & b <c> "d"`)).toBe(`a &amp; b &lt;c&gt; "d"`);
   });
 });
@@ -56,8 +56,8 @@ describe("per-kind documents", () => {
       finalMessage: "child done, nothing found",
       usage: { totalTokens: 9, toolUses: 0, durationMs: 17 },
     });
-    // The tag list, byte for byte against the capture. The pin does NOT escape quotes (`Ut` covers
-    // & < > only), so the summary's own quotes ride verbatim.
+    // The tag list, exactly as captured. Quotes are NOT escaped (the escape covers & < > only), so the
+    // summary's own quotes pass through unchanged.
     expect(xml.startsWith('<task-notification>\n<task-id>ad2b4f5005019ae57</task-id>\n<tool-use-id>toolu_bgspawn1</tool-use-id>\n<output-file>/tasks/ad2b4f5005019ae57.output</output-file>\n<status>completed</status>\n<summary>Agent "bg probe" finished</summary>\n<note>')).toBe(true);
     expect(xml).toContain("<result>child done, nothing found</result>");
     expect(xml).toContain("<usage><subagent_tokens>9</subagent_tokens><tool_uses>0</tool_uses><duration_ms>17</duration_ms></usage>");
@@ -84,7 +84,7 @@ describe("per-kind documents", () => {
     expect(renderTaskStopNotification({ taskId: "t", description: "d", stoppedBy: "user" })).toContain("<status>stopped</status>");
   });
 
-  test("shell notification carries no body and reuses the FRAME's own pinned summary", () => {
+  test("shell notification carries no body and reuses the FRAME's own summary", () => {
     const xml = renderShellNotification({ taskId: "t1", toolUseId: "toolu_b", outputFile: "/t1.output", status: "completed", summary: 'Background command "build" completed (exit code 0)' });
     expect(xml).toBe('<task-notification>\n<task-id>t1</task-id>\n<tool-use-id>toolu_b</tool-use-id>\n<output-file>/t1.output</output-file>\n<status>completed</status>\n<summary>Background command "build" completed (exit code 0)</summary>\n</task-notification>');
   });
@@ -120,7 +120,7 @@ describe("the anti-injection preamble", () => {
     expect(withNotificationPreamble(xml, { inHumanTurn: true })).toBe(`${NOTIFICATION_PREAMBLE_IN_HUMAN_TURN}${xml}`);
   });
 
-  test("an already-wrapped value is never double-wrapped (claude's `Mpt` guard)", () => {
+  test("an already-wrapped value is never double-wrapped", () => {
     const once = withNotificationPreamble("<task-notification>\n</task-notification>");
     expect(withNotificationPreamble(once)).toBe(once);
   });
@@ -174,7 +174,7 @@ describe("the per-session queue", () => {
     expect(q.drainFor("agent-1").map((e) => e.value)).toEqual(["child-work"]);
   });
 
-  test("an entry for an agent with NO live engine belongs to the main thread (claude's `Loe`)", () => {
+  test("an entry for an agent with NO live engine belongs to the main thread", () => {
     const q = new SessionNotificationQueue();
     q.enqueue({ value: "orphan", agentId: "gone", priority: "next" });
     expect(q.peekMain()?.value).toBe("orphan");

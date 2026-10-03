@@ -198,7 +198,7 @@ describe("domain floor", () => {
     expect(provider.requests).toHaveLength(0);
   });
 
-  test("the message has NO trailing period (security review corrections §4.6, measured against the binary)", async () => {
+  test("the message has NO trailing period (security review corrections §4.6)", async () => {
     const provider = recordingProvider([{ kind: "text", text: "should not run" }]);
     const runtime = fakeRuntime(provider, { blockedDomains: ["127.0.0.1"] });
     const ctx = makeCtx({ sessionId: "s-floor-period" });

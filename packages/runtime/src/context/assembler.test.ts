@@ -173,7 +173,7 @@ describe("assembler -- excludeDynamicSections", () => {
     expect(out.system).toContain(WINTER_CODE_PRESET);
     expect(out.system).not.toContain(cwd);
     expect(out.system).not.toContain(AUTO_MEMORY_HEADING);
-    // The model/product half stays, in the STATIC half (claude's MGn).
+    // The model/product half stays, in the STATIC half.
     expect(out.systemParts!.staticParts.at(-1)).toContain("You are powered by the model m-1.");
     const entries = userContext({ config: cfg({ systemPrompt: sp }) });
     expect(entries.map(([k]) => k)).toEqual(["currentDate", "Environment", "auto memory"]);
@@ -446,7 +446,7 @@ describe("assembler -- output styles, and the byte-identical-when-unset invarian
   });
 
   // Fix round 4 (I-F), replacing this test's pre-fix-round-4 premise: claude drops ONLY the base
-  // prompt's coding-instructions section (dump ~276873), never the whole authored region --
+  // prompt's coding-instructions section, never the whole authored region --
   // `review-L1a-fix3-findings.md`'s I-F. `not.toContain(WINTER_CODE_PRESET)` alone would still pass
   // once ANY byte of the preset is missing, so this asserts the shape directly: the cut section is
   // gone, and every other section -- safety floor included -- is still there verbatim.
@@ -491,8 +491,8 @@ describe("assembler -- output styles, and the byte-identical-when-unset invarian
     expect(out.system).not.toContain("## Task execution");
   });
 
-  // Advisor catch: claude's own gate (`M===null||M.keepCodingInstructions===!0`) tests only whether
-  // the STYLE OBJECT exists, never whether its body is non-empty -- `assembler.ts`'s own
+  // Advisor catch: the drop is decided by whether a STYLE OBJECT exists (and does not explicitly
+  // keep the section), never by whether its body is non-empty -- `assembler.ts`'s own
   // `dropCodingInstructions` computation deliberately does not require `styleBody !== undefined`.
   // An empty-bodied keyless style therefore still cuts the section even though it contributes
   // nothing to the dynamic half; a resolver that gated the drop on `styleBody` (the pre-fix-round-4
@@ -740,7 +740,7 @@ describe("rider 22 / P5-G: a project-tier style may APPEND but not DELETE, and s
 // --- Spawn-surface parity (research §A1 Explore/Plan field table): omitProjectContext -------------
 
 describe("assembler -- omitProjectContext (RuntimeAgentDefinition.omitProjectContext's assembler-side effect)", () => {
-  test("drops the whole claudeMd entry -- the instructions files AND the memory index (claude's omitClaudeMd)", () => {
+  test("drops the whole claudeMd entry -- the instructions files AND the memory index", () => {
     writeFileSync(join(cwd, WINTER_MD_BASENAME), "PROJECT RULES", "utf8");
     const memDir = memoryDirFor({ cwd, home, env: {} });
     mkdirSync(memDir, { recursive: true });

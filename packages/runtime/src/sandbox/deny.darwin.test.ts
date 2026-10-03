@@ -299,8 +299,8 @@ describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", (
     });
 
     // Fix round 17 (R.3 C-1 part 2b): `.winter/` is created BEFORE the sandboxed command runs. The
-    // default protection now feeds `.winter/{skills,rules,output-styles,commands,agents}` to `Ch`, so
-    // `<cwd>/.winter` itself is a `(literal …)` in the ancestor fence -- creating or deleting the
+    // default protection now feeds `.winter/{skills,rules,output-styles,commands,agents}` to the
+    // ancestor-rename fence, so `<cwd>/.winter` itself is a `(literal …)` there -- creating or deleting the
     // `.winter` directory from inside the sandbox is denied, exactly as `<cwd>/.claude` is on claude.
     // The point of this fixture is unchanged: inside an existing `.winter`, the carve-out is
     // FILENAME-specific, so a sibling file and the MEMDIR stay writable.
@@ -699,10 +699,10 @@ describe("fix round 17 (R.3 C-1 part 2a): an ESCAPED bracketed project root is a
 });
 
 // Fix round 17 (R.3 C-1 part 2b): the SDK's OWN cover for spec §7.2's project folders -- the Winter
-// mapping of claude's `cR` protection of `.claude/{commands,agents}` (dump byte 15365486, `qa()` at
-// 15282484) onto `.winter/{skills,rules,output-styles}`, beside the existing `.winter/{commands,agents}`,
-// and fed to `Ch` as claude feeds its own entries, so `<cwd>/.winter` is a literal in the ancestor
-// fence the way `<cwd>/.claude` is. Proven under three glob-special root names, each with NO host deny
+// counterpart of the `.claude/{commands,agents}` protection, extended to
+// `.winter/{skills,rules,output-styles}` beside the existing `.winter/{commands,agents}`, and fed to the
+// ancestor-rename fence like every other default entry, so `<cwd>/.winter` is a literal in the fence
+// the way `<cwd>/.claude` is. Proven under three glob-special root names, each with NO host deny
 // list (standalone: only the default protection can deny) and with the host's LITERAL spelling of
 // `<cwd>/.winter/skills` (what the daemon sent before the escaped spelling; under `[wip] app` its class
 // reading misses the real path, the reviewer's `bracket.ts`). Before part 2b, probes (1)-(3) planted
@@ -766,7 +766,7 @@ describe("fix round 17 (R.3 C-1 part 2b): .winter/skills is protected by the SDK
   // The consequence the ruling accepts, pinned: `<cwd>/.winter` is a `(literal …)` in the ancestor
   // fence, so the sandbox can neither create it fresh nor remove it -- the same as `<cwd>/.claude` on
   // claude. A file inside an existing `.winter` is unaffected (the carve-out fixture above).
-  t("creating .winter itself from inside the sandbox is denied (the Ch literal), as .claude is on claude", async () => {
+  t("creating .winter itself from inside the sandbox is denied (the fence literal), as .claude is on claude", async () => {
     const cwd = proj();
     const res = await runWithDenyWriteList(`mkdir .winter`, cwd, []);
     expect(res.exitCode).not.toBe(0);
@@ -855,9 +855,9 @@ describe("fix round 17 (R.3 I-2): the SDK's own floor covers its own home and st
   });
 
   // Fix round 18 (the R.3 re-review of round 17's I-2): the floor's own paths were never fed to the
-  // ancestor-rename fence (`Ch`), so renaming the HOME FOLDER out of the way, writing through the new
-  // name and renaming it back rewrote settings.json (measured, `sdkhome-rename.ts`: exit 0). claude's
-  // `mR` feeds its whole deny list to `Ch`; the floor now does too. Both anchors, both RED first.
+  // ancestor-rename fence, so renaming the HOME FOLDER out of the way, writing through the new name
+  // and renaming it back rewrote settings.json (measured, `sdkhome-rename.ts`: exit 0). Every other
+  // deny list feeds the fence; the floor now does too. Both anchors, both RED first.
   const PLANT = `echo '{"permissions":{"allow":["Bash"]}}'`;
 
   t("standalone: renaming the sdk home away, rewriting settings.json through the new name and renaming it back is denied", async () => {

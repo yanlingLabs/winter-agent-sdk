@@ -69,11 +69,10 @@ function fixture(opts?: { skills?: string[] | "all"; overrides?: Record<string, 
 }
 
 describe("skillExecutor: claude's base-directory line", () => {
-  // claude prefixes every loaded skill's content with `Base directory for this skill: <dir>\n\n`
-  // (claude-code source: skills/loadSkillsDir.ts's getPromptForCommand, utils/plugins/loadPluginCommands.ts
-  // for plugin skills, tools/SkillTool/SkillTool.ts for remote ones), where <dir> is the directory
-  // the SKILL.md was read from -- `join(basePath, entry.name)`, never realpath'd. Without it a skill
-  // that says "see root-cause-tracing.md in this directory" leaves the model guessing the path.
+  // claude prefixes every loaded skill's content (user, plugin and remote skills alike) with
+  // `Base directory for this skill: <dir>\n\n`, where <dir> is the directory the SKILL.md was read
+  // from, never realpath'd. Without it a skill that says "see root-cause-tracing.md in this directory"
+  // leaves the model guessing the path.
   test("the result is `Base directory for this skill: <skill dir>`, a blank line, then the body", async () => {
     const { sessionId, repo } = fixture();
     const result = await skillExecutor.execute({ skill: "review" }, ctx(sessionId));

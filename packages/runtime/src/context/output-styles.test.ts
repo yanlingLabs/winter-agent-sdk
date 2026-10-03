@@ -112,9 +112,8 @@ describe("context/output-styles.ts -- file discovery, precedence and the source 
   });
 
   // Fix round 3 (M-4), a disclosed behaviour change: `keep-coding-instructions` ABSENT now means
-  // "replace" (keepCodingInstructions: false), the inverse of the pre-fix-round-3 default -- pinned
-  // consumer `M===null||M.keepCodingInstructions===!0` keeps the base prompt only for NO style or
-  // an EXPLICIT `true`.
+  // "replace" (keepCodingInstructions: false), the inverse of the pre-fix-round-3 default -- claude
+  // keeps the base prompt only for NO style or an EXPLICIT `true`.
   test("M-4: keep-coding-instructions ABSENT now defaults to false (was true pre-fix-round-3)", () => {
     writeStyle(userDir(), "nokey", "---\ndescription: d\n---\nBODY\n");
     expect(resolveOutputStyle("nokey", { cwd, home })!.keepCodingInstructions).toBe(false);
@@ -192,9 +191,9 @@ describe("context/output-styles.ts -- a PROJECT-tier style may add to the prompt
 
 // WS-21 §6.3 item 1 (fix round 2): plugin output styles, named as claude names one --
 // `<plugin>:<style>`, where `<style>` is the file's OWN frontmatter `name:` when present, else the
-// filename stem (loadPluginOutputStyles.ts, the pinned reference -- the one place in this file that
-// lets a declared name win, since a plugin style's identity is always namespaced under the
-// installed plugin's own name and can never impersonate a neighbour).
+// filename stem (the one place in this file that lets a declared name win, since a plugin style's
+// identity is always namespaced under the installed plugin's own name and can never impersonate a
+// neighbour).
 describe("context/output-styles.ts -- plugin styles (WS-21 §6.3 item 1)", () => {
   let pluginDir: string;
   beforeEach(() => {
@@ -243,7 +242,7 @@ describe("context/output-styles.ts -- plugin styles (WS-21 §6.3 item 1)", () =>
     expect(resolveOutputStyle("mypkg:concise", { cwd: "/x", home: "/x" })).toBeNull();
   });
 
-  // Fix round 3 (I-3): an absent description now excerpts the BODY (claude's own `jJ`), not a fixed
+  // Fix round 3 (I-3): an absent description now excerpts the BODY (as claude does), not a fixed
   // label -- superseding this test's pre-fix-round-3 name and expectation.
   test("an absent description excerpts the body's first non-blank line (I-3)", () => {
     writeStyle(pluginDir, "nodesc", "---\nkeep-coding-instructions: true\n---\nbody\n");
@@ -252,7 +251,7 @@ describe("context/output-styles.ts -- plugin styles (WS-21 §6.3 item 1)", () =>
   });
 
   // Fix round 4 (minors): the fallback label had an extra "the" this test pinned as correct --
-  // claude's own wording (dump-confirmed) has none. Superseding this test's pre-fix-round-4 string.
+  // claude's wording has none. Superseding this test's pre-fix-round-4 string.
   test("I-3/minors: an absent description AND an entirely blank body falls back to the fixed label, claude's exact wording", () => {
     writeStyle(pluginDir, "blank", "---\nkeep-coding-instructions: true\n---\n\n\n");
     const style = resolveOutputStyle("mypkg:blank", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPath: pluginDir }] })!;
@@ -343,7 +342,7 @@ describe("context/output-styles.ts -- outputStylesPaths (fix round 5, a manifest
     expect(style?.body).toContain("Be concise.");
   });
 
-  test("an outputStylesPaths entry may be a BARE FILE, not only a directory -- claude's own Tb call passes requireDirectory:false for output-styles", () => {
+  test("an outputStylesPaths entry may be a BARE FILE, not only a directory -- as claude accepts for a plugin's output styles", () => {
     const file = join(overrideDir, "one-style.md");
     writeFileSync(file, "---\ndescription: d\n---\nBe terse.\n");
     const style = resolveOutputStyle("mypkg:one-style", { cwd: "/x", home: "/x", pluginOutputStyles: [{ name: "mypkg", outputStylesPaths: [file] }] });

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { PREAPPROVED_HOST_ENTRIES, isPreapprovedHost, isPreapprovedUrl, preapprovedScopeOf, staysWithinScope } from "./preapproved-hosts.ts";
 
-describe("the extracted preapproved-host list", () => {
-  test("measured: 92 literals, 91 distinct, 9 path-scoped", () => {
+describe("the preapproved-host list", () => {
+  test("92 entries, 91 distinct, 9 path-scoped", () => {
     expect(PREAPPROVED_HOST_ENTRIES.length).toBe(92);
     expect(new Set(PREAPPROVED_HOST_ENTRIES).size).toBe(91);
     expect(PREAPPROVED_HOST_ENTRIES.filter((e) => e.includes("/")).length).toBe(9);
@@ -76,7 +76,7 @@ describe("preapprovedScopeOf / staysWithinScope", () => {
     expect(preapprovedScopeOf(new URL("https://example.com/"))).toBeUndefined();
   });
 
-  test("a www-variant of the scope's own host still counts -- security review corrections §4.8, measured against the binary", () => {
+  test("a www-variant of the scope's own host still counts -- security review corrections §4.8", () => {
     // claude.com/docs -> www.claude.com/docs/x IS followed by claude (the corrected fact); the
     // reviewer's own probe.
     const scope = preapprovedScopeOf(new URL("https://claude.com/docs"));

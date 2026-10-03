@@ -89,7 +89,7 @@ describe("resolveWinterHome", () => {
   });
 });
 
-describe("transcriptProjectKey — exact CC project-key algorithm", () => {
+describe("transcriptProjectKey — the project-key format", () => {
   test("WS-05 §3.1 worked example shape (slashes -> dashes, space -> dash, case preserved)", () => {
     // Same shape as the spec's own worked example, with a placeholder username in place of a
     // real one (this repo is public — no personal identity strings in committed fixtures).
@@ -120,7 +120,7 @@ describe("transcriptProjectKey — exact CC project-key algorithm", () => {
     expect(transcriptProjectKey(p).length).toBe(64);
   });
 
-  test("a 65-char sanitized path is capped to exactly 64: prefix + '-' + the vendor's base-36 hash of the ORIGINAL path", () => {
+  test("a 65-char sanitized path is capped to exactly 64: prefix + '-' + a base-36 hash of the ORIGINAL path", () => {
     const p = "/" + "a".repeat(64);
     const key = transcriptProjectKey(p);
     expect(key.length).toBe(64);
@@ -131,8 +131,7 @@ describe("transcriptProjectKey — exact CC project-key algorithm", () => {
 
   test("the 927-char fixture caps to its new 64-char literal", () => {
     // Path-shaped (not all-alnum) so this fixture can only pass if the hash is computed over the
-    // ORIGINAL pre-sanitize string, not the sanitized/truncated one — the exact detail the
-    // ephemeral inspection recovered (task-6-report.md).
+    // ORIGINAL pre-sanitize string, not the sanitized/truncated one.
     const longRaw = "/Users/alice/code/" + Array.from({ length: 20 }, (_, i) => `segment-${i}-of-a-very-long-nested-project-path`).join("/");
     expect(longRaw.length).toBe(927);
     const expected = "-Users-alice-code-segment-0-of-a-very-long-nested-project-nxhjqo";

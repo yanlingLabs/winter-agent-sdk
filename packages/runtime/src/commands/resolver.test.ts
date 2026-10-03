@@ -446,11 +446,10 @@ describe("m2: a command file may not claim a qualified `<plugin>:<name>` identit
 
 // Fix round 7 (a same-day correction of round 6): round 6 put `$ARGUMENTS_JSON` into the SHARED
 // `substituteArguments`, called for every command file and every skill body -- making it a
-// universally-recognised token in ordinary user content claude would never touch. Claude's own
-// mechanism (dump-confirmed at ~275427, the pinned 2.1.250 dump) is a single `e.replaceAll(
-// "$ARGUMENTS", args)` and nothing else. `substituteArguments` is reverted to exactly that; the
-// JSON-escaping behaviour moves to the new, separate `substituteWorkflowArguments` below, used only
-// for synthetic (workflow-backed) skill bodies (`commands/resolver.ts`'s `resolve()`).
+// universally-recognised token in ordinary user content claude would never touch. In an ordinary
+// body `$ARGUMENTS_JSON` is just `$ARGUMENTS` followed by the literal text `_JSON`. The
+// JSON-escaping behaviour lives in the separate `substituteWorkflowArguments` below, used only for
+// synthetic (workflow-backed) skill bodies (`commands/resolver.ts`'s `resolve()`).
 describe("substituteArguments -- fix round 7, claude parity restored ($ARGUMENTS_JSON is NOT a token here)", () => {
   test("the plain $ARGUMENTS token substitutes raw, unescaped, exactly as R5-14 pinned it", () => {
     expect(substituteArguments("args: $ARGUMENTS", 'he said "hi"')).toBe('args: he said "hi"');
@@ -469,25 +468,22 @@ describe("substituteArguments -- fix round 7, claude parity restored ($ARGUMENTS
   });
 });
 
-// Fix round 9 (promoted to full parity): claude's own substituter is `zE` (dump-confirmed, byte
-// offset 18048328 of the pinned 2.1.250 dump), not the plain single-token `replaceAll` round 7
-// ported -- see resolver.ts's own header for the full ported source, the `Ren`/`shellWords`
-// divergence disclosure, and why the two sentinel markers exist. Every case here was verified
-// directly against the ported function before being written as a fixture (not asserted from the
-// dump reading alone).
-describe("substituteArguments -- fix round 9, the full zE port ($ARGUMENTS[n], $n, escapes, named args, append)", () => {
+// Fix round 9 (full parity): the substituter handles more than the single `$ARGUMENTS` token --
+// indexed and positional words of the args, backslash escapes, named arguments, and the
+// "ARGUMENTS: <args>" append. resolver.edge.test.ts and resolver.corpus.test.ts cover the edges.
+describe("substituteArguments -- fix round 9 ($ARGUMENTS[n], $n, escapes, named args, append)", () => {
   test("$ARGUMENTS[n] indexes into the shell-word split, 0-based", () => {
     expect(substituteArguments("first: $ARGUMENTS[0], second: $ARGUMENTS[1]", "a b")).toBe("first: a, second: b");
   });
 
   test("an out-of-range $ARGUMENTS[n] is left as literal text -- and is NOT then re-caught by the later plain $ARGUMENTS pass, since $ARGUMENTS[5] contains $ARGUMENTS as a literal prefix", () => {
     // Also demonstrates the append behaviour (below): nothing substituted anywhere, and args is
-    // non-empty, so it is appended -- exactly as claude's own zE does for a body with no recognized
-    // placeholder ANYWHERE, not merely a body with none AT ALL.
+    // non-empty, so it is appended -- the append happens for a body with no SUCCESSFUL placeholder
+    // anywhere, not merely a body with none at all.
     expect(substituteArguments("val: $ARGUMENTS[5] end", "a b")).toBe("val: $ARGUMENTS[5] end\nARGUMENTS: a b");
   });
 
-  test("$0, $1, ... are the SAME 0-based word array -- claude's own indexing, not shell's traditional $1-is-first-arg", () => {
+  test("$0, $1, ... are the SAME 0-based word array -- not shell's traditional $1-is-first-arg", () => {
     expect(substituteArguments("$0 then $1", "x y")).toBe("x then y");
   });
 
@@ -503,11 +499,11 @@ describe("substituteArguments -- fix round 9, the full zE port ($ARGUMENTS[n], $
     expect(substituteArguments("\\\\$ARGUMENTS", "z")).toBe("\\\\z");
   });
 
-  test("the word-boundary sentinel: $1$ARGUMENTS[0] with args 'a b' gives 'ba', not '$1a' -- $ARGUMENTS[0] substitutes FIRST (pass order), and its kW-wrapped value is what lets the LATER $n pass's own negative lookahead still see a non-word character right after '$1'", () => {
+  test("adjacent tokens: $1$ARGUMENTS[0] with args 'a b' gives 'ba', not '$1a' -- an inserted value never counts as a word character after the positional token before it", () => {
     expect(substituteArguments("$1$ARGUMENTS[0]", "a b")).toBe("ba");
   });
 
-  test("args with no recognized placeholder anywhere in the body are appended, exactly as claude's own zE does at every real slash-command call site (r is always true there)", () => {
+  test("args with no recognized placeholder anywhere in the body are appended", () => {
     expect(substituteArguments("no placeholder here", "some args")).toBe("no placeholder here\nARGUMENTS: some args");
   });
 
@@ -523,7 +519,7 @@ describe("substituteArguments -- fix round 9, the full zE port ($ARGUMENTS[n], $
     expect(substituteArguments("$ARGUMENTS", "cost $$5 and $& x")).toBe("cost $$5 and $& x");
   });
 
-  test("named args (the namedArgs parameter -- no Winter frontmatter parser populates this yet, see resolver.ts's own header)", () => {
+  test("named args (the namedArgs parameter -- no Winter frontmatter parser populates this yet)", () => {
     expect(substituteArguments("hello $name!", "world", ["name"])).toBe("hello world!");
   });
 
@@ -537,9 +533,8 @@ describe("substituteArguments -- fix round 9, the full zE port ($ARGUMENTS[n], $
 });
 
 // Fix round 6 (originally), re-scoped in round 7: `$ARGUMENTS_JSON` substitutes with
-// `JSON.stringify(args)`, matching claude's own `S(e)` escaping (dump-confirmed at
-// `createWorkflowCommand`'s `getPromptForCommand`; controller-confirmed `S` is `JSON.stringify`,
-// chunk export at dump ~269598) -- but ONLY through `substituteWorkflowArguments`, the function
+// `JSON.stringify(args)` -- a JSON string literal, the quoting claude uses for a workflow command's
+// args -- but ONLY through `substituteWorkflowArguments`, the function
 // `resolve()` now routes a synthetic (workflow-backed) skill body through. It is never merged back
 // into the shared `substituteArguments`.
 describe("substituteWorkflowArguments -- fix round 6/7, $ARGUMENTS_JSON (JSON.stringify-escaped args), scoped to workflow bodies", () => {

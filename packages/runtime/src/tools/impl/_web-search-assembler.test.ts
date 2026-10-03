@@ -1,4 +1,4 @@
-// Hand-built fixtures mirroring the research file's own "Output assembly" rules, one test per rule.
+// Hand-built fixtures for the WebSearch output-assembly rules, one test per rule.
 // This is the module a later differential test diffs against a real `claude` binary -- see
 // `_web-search-assembler.ts`'s own header for the one interpretive choice (FLUSH_EMPTY_TEXT) these
 // fixtures pin explicitly rather than leaving implicit.

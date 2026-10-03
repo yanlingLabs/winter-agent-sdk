@@ -63,9 +63,9 @@ describe("buildSeatbeltProfile", () => {
   test("empty writableRoots yields exactly cwd as the sole writable root", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, writableRoots: [], allowNetwork: false });
-    // Fix round 14: the SAME root also appears in the pR-tail re-permit's own `(subpath ...)` clause
+    // Fix round 14: the SAME root also appears in the write-root re-permit's own `(subpath ...)` clause
     // (buildReadDenyWritePermitBlock). Fix round 15: cwd's OWN default-write-protection entries
-    // (buildDefaultWriteProtectionBlock, claude's own cR) also live under cwd, so a whole-profile
+    // (buildDefaultWriteProtectionBlock) also live under cwd, so a whole-profile
     // subpath scan now finds many DISTINCT nested paths too -- scoped to the ORDINARY write-ALLOW
     // block specifically (`(allow file-write*\n  ...)`), which is this assertion's own actual intent
     // ("exactly cwd as the sole writable root"), not a scan of the whole profile.
@@ -141,7 +141,7 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
   });
 
   // Fix round 17 (R.3 C-1 part 2b): `.winter/rules` is now a protected folder (spec §7.2) and `.winter`
-  // itself sits in Ch's create/unlink fence -- but the CONTROL-PLANE carve-out is still
+  // itself sits in the ancestor-rename create/unlink fence -- but the CONTROL-PLANE carve-out is still
   // filename-specific: no `file-write*` literal names `.winter` itself, and nothing names the MEMDIR.
   test("the carve-out stays FILENAME-specific -- no file-write* literal on .winter itself, nothing at all on .winter/memory (the MEMDIR)", () => {
     const cwd = realTmp();
@@ -165,11 +165,10 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     expect(p).toContain(String.raw`(deny file-write* file-write-unlink file-write-create (regex #"/\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Pp][Ee][Rr][Mm][Ii][Ss][Ss][Ii][Oo][Nn][Ss]\.[Ll][Oo][Cc][Aa][Ll]\.[Jj][Ss][Oo][Nn]$"))`);
     expect(p).toContain(String.raw`(deny file-write* file-write-unlink file-write-create (regex #"/\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Jj][Ss][Oo][Nn]$"))`);
     expect(p).toContain(String.raw`(deny file-write* file-write-unlink file-write-create (regex #"/\.[Ww][Ii][Nn][Tt][Ee][Rr]/[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]\.[Ll][Oo][Cc][Aa][Ll]\.[Jj][Ss][Oo][Nn]$"))`);
-    // Fix round 15: scoped to the CASE-FOLDED (`[Ww]`-style) regex denies specifically -- claude's
-    // own cR (buildDefaultWriteProtectionBlock) also contributes regex denies with the SAME widened
-    // op-list prefix now, unconditionally, but its own entries are NOT case-folded (see that
-    // function's own header: claude's Do/qa() are never case-folded either), so they never match
-    // this pattern.
+    // Fix round 15: scoped to the CASE-FOLDED (`[Ww]`-style) regex denies specifically -- the default
+    // write protections (buildDefaultWriteProtectionBlock) also contribute regex denies with the SAME
+    // widened op-list prefix now, unconditionally, but their entries are NOT case-folded, so they never
+    // match this pattern.
     const regexDenyCount = [...p.matchAll(/\(deny file-write\* file-write-unlink file-write-create \(regex #"\/\\\.\[/g)].length;
     expect(regexDenyCount).toBe(3);
     expect(p).not.toContain("|"); // SBPL alternation marker never appears anywhere
@@ -198,7 +197,7 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "",
     "", // fix round 11: denyReadRegexRules, always-interpolated and empty here (no glob-shaped denyRead entries)
     "", // fix round 12: denyReadAncestorRenameBlock, always-interpolated and empty here (no denyRead entries at all)
-    "(allow file-write-unlink file-write-create", // fix round 14: pR's own trailing re-permit -- unconditional, one clause per write root
+    "(allow file-write-unlink file-write-create", // fix round 14: the write-root re-permit -- unconditional, one clause per write root
     "  (subpath \"/work\")",
     "  (subpath \"/work/a\"))",
     "(deny file-read* (subpath \"/Users/x/.winter/run\"))",
@@ -211,13 +210,12 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "",
     "", // fix round 11: denyWriteRegexRules, always-interpolated and empty here (no glob-shaped denyWrite entries)
     "", // fix round 12: denyWriteAncestorRenameBlock, always-interpolated and empty here (no denyWrite entries at all)
-    // fix round 15 (CRITICAL, claude's own cR): buildDefaultWriteProtectionBlock -- unconditional,
-    // claude's own Do (9 filenames + Winter's own .winter/mcp.json), qa() (.vscode/.idea/.claude's
+    // fix round 15 (CRITICAL): buildDefaultWriteProtectionBlock -- unconditional: 9 shell/git/MCP
+    // config filenames + Winter's own .winter/mcp.json, the editor/agent folders (.vscode/.idea/.claude's
     // commands+agents + Winter's own .winter/{commands,agents,skills,rules,output-styles}), and
     // .git/hooks + .git/config (no allowGitConfigWrites here), each as a plain cwd-anchored subpath
     // deny AND a cwd-anchored any-depth regex deny (round 16), both with the widened
-    // (survives-the-re-permit) operation list, plus the
-    // plain half's own Ch ancestor-rename-bypass fence -- see that function's own header.
+    // (survives-the-re-permit) operation list, plus the plain half's own ancestor-rename fence.
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.gitconfig\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.gitmodules\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.bashrc\"))",
@@ -240,10 +238,9 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.winter/output-styles\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.git/hooks\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/work/.git/config\"))",
-    // Fix round 16 (over-deny correction): each glob-shaped entry is now ANCHORED at cwd (claude's
-    // own Cv unconditionally joins a relative glob onto process.cwd() before treating it as a glob
-    // at all -- see cwdAnchoredEntryRegex's own header), not left as a bare, matches-everywhere
-    // pattern.
+    // Fix round 16 (over-deny correction): each glob-shaped entry is now ANCHORED at cwd, not left as a
+    // bare, matches-everywhere pattern (which also blocked a `.git/hooks` write under a sibling writable
+    // root, e.g. `git clone <url> "$TMPDIR/x"`).
     "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.gitconfig(/.*)?$\"))",
     "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.gitmodules(/.*)?$\"))",
     "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.bashrc(/.*)?$\"))",
@@ -266,8 +263,7 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.git/hooks/.*(/.*)?$\"))",
     "(deny file-write* file-write-unlink file-write-create (regex #\"^/work/(.*/)?\\.git/config(/.*)?$\"))",
     // Fix round 17 (R.3 C-1 part 2b): EVERY default-protected entry, Winter's own .winter/* included,
-    // feeds Ch's ancestor fence (claude's mR calls Ch on its whole cR list), so "/work/.winter" is a
-    // literal here, as "/work/.claude" is -- see buildDefaultWriteProtectionEntries' own header.
+    // feeds the ancestor-rename fence, so "/work/.winter" is a literal here, as "/work/.claude" is.
     "(deny file-write-unlink file-write-create",
     "  (subpath \"/work/.gitconfig\")",
     "  (literal \"/work\")",
@@ -309,7 +305,7 @@ describe("buildSeatbeltProfile: control-plane file carve-out (WS-12 §5.2, verba
     "(deny file-write* file-write-unlink file-write-create (literal \"/Users/x/custom-root/.winter.json\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/Users/x/custom-root/agents\"))",
     "(deny file-write* file-write-unlink file-write-create (subpath \"/Users/x/custom-root/plugins\"))",
-    // fix round 18: the floor's paths feed Ch's ancestor-rename fence (claude's mR -> Ch on its whole list)
+    // fix round 18: the floor's paths feed the ancestor-rename fence too
     "(deny file-write-unlink file-write-create",
     "  (subpath \"/Users/x/custom-root/settings.json\")",
     "  (literal \"/Users/x/custom-root\")",
@@ -433,8 +429,8 @@ describe("buildSeatbeltProfile: denyWrite/denyRead layers (WS-12 §5.3, new)", (
   });
 
   // Fix round 15: the ORIGINAL version of this test asserted no `file-write*`-shaped subpath deny at
-  // all with nothing configured -- no longer true. claude's own cR (buildDefaultWriteProtectionBlock)
-  // ALWAYS contributes many such denies now, regardless of any user configuration. Re-scoped to what
+  // all with nothing configured -- no longer true. The default protections (buildDefaultWriteProtectionBlock)
+  // ALWAYS contribute many such denies now, regardless of any user configuration. Re-scoped to what
   // this test actually means: a user-configured denyWrite path that was never passed never appears.
   test("no USER-configured denyWritePaths never surfaces a subpath deny for an arbitrary, unconfigured path", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false });
@@ -442,10 +438,10 @@ describe("buildSeatbeltProfile: denyWrite/denyRead layers (WS-12 §5.3, new)", (
   });
 });
 
-// Fix round 12 ("Important" item, claude's own `Ch`/`ed`, dump byte 15368116/15367994): the
-// ancestor-rename-bypass fix -- for every write/read-denied path, ALSO deny file-write-unlink/
-// file-write-create on every ancestor directory of it, and on a glob's own fixed prefix.
-describe("buildSeatbeltProfile: the ancestor-rename-bypass fix (claude's Ch/ed)", () => {
+// Fix round 12: the ancestor-rename-bypass fix -- for every write/read-denied path, ALSO deny
+// file-write-unlink/file-write-create on every ancestor directory of it, and on a glob's own fixed
+// prefix.
+describe("buildSeatbeltProfile: the ancestor-rename-bypass fix", () => {
   test("a plain denyWritePaths entry denies unlink/create on every one of its own ancestors", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, denyWritePaths: ["/work/proj/secrets"] });
     expect(p).toContain("(deny file-write-unlink file-write-create");
@@ -454,7 +450,7 @@ describe("buildSeatbeltProfile: the ancestor-rename-bypass fix (claude's Ch/ed)"
     expect(p).not.toContain('(literal "/")');
   });
 
-  test("the block ALSO includes the denied path's own recursive (subpath ...) clause -- claude's own Ch adds it a second time, for these two specific operations", () => {
+  test("the block ALSO includes the denied path's own recursive (subpath ...) clause, a second time, for these two specific operations", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, denyWritePaths: ["/work/proj/secrets"] });
     const idx = p.indexOf("(deny file-write-unlink file-write-create");
     expect(idx).toBeGreaterThanOrEqual(0);
@@ -472,12 +468,12 @@ describe("buildSeatbeltProfile: the ancestor-rename-bypass fix (claude's Ch/ed)"
     expect(p).toContain('(literal "/work")');
   });
 
-  test("denyReadPaths get their OWN, separate ancestor-rename-bypass block, unlink/create too (claude's pR calls the SAME Ch on its own read-deny list)", () => {
+  test("denyReadPaths get their OWN, separate ancestor-rename-bypass block, unlink/create too", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, denyReadPaths: ["/secret/data"] });
     const blocks = [...p.matchAll(/\(deny file-write-unlink file-write-create/g)];
-    // Fix round 15: ALWAYS +1 now -- buildDefaultWriteProtectionBlock (claude's own cR) feeds its OWN
-    // plain, cwd-anchored entries into Ch unconditionally, on every profile, regardless of what (if
-    // anything) the caller configured. This test's own read-deny Ch block is the SECOND one.
+    // Fix round 15: ALWAYS +1 now -- buildDefaultWriteProtectionBlock feeds its OWN plain,
+    // cwd-anchored entries into the fence unconditionally, on every profile, regardless of what (if
+    // anything) the caller configured. This test's own read-deny fence is the SECOND one.
     expect(blocks.length).toBe(2);
     expect(p).toContain('(literal "/secret")');
   });
@@ -485,51 +481,44 @@ describe("buildSeatbeltProfile: the ancestor-rename-bypass fix (claude's Ch/ed)"
   test("both write and read denies each get their own block when both are configured", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, denyWritePaths: ["/w/secret"], denyReadPaths: ["/r/secret"] });
     const blocks = [...p.matchAll(/\(deny file-write-unlink file-write-create/g)];
-    // Fix round 15: +1 for buildDefaultWriteProtectionBlock's own unconditional Ch block (see above).
+    // Fix round 15: +1 for buildDefaultWriteProtectionBlock's own unconditional fence (see above).
     expect(blocks.length).toBe(3);
   });
 
-  test("no USER-configured denyWrite/denyRead emits exactly ONE ancestor-rename-bypass DENY block -- claude's own cR's default protections, not a user-configured one", () => {
+  test("no USER-configured denyWrite/denyRead emits exactly ONE ancestor-rename-bypass DENY block -- the default protections', not a user-configured one", () => {
     const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false });
     // Fix round 14: bare "file-write-unlink"/"file-write-create" substrings are no longer absent from
-    // an otherwise-plain profile -- Winter's own port of pR's trailing re-permit
-    // (buildReadDenyWritePermitBlock) is UNCONDITIONAL on the Winter side (fires whenever there is a
-    // write-roots set at all, which is nearly always -- cwd alone qualifies). DISCLOSED, not
-    // dump-confirmed: claude's own call site (dump byte 15376527) gates pR's ENTIRE first argument on
-    // a truthy outer `e` (`let X=e?uR(e,t?.allowOnly):void 0`) whose own producer was not traced --
-    // `uR(e,t)` itself (dump byte 15366505) builds `{denies,allows,writeRoots}` from `e.denyOnly||[]`
-    // etc regardless of whether those arrays are EMPTY, so claude's own gate is "does a read-restriction
-    // config object exist for this session at all," not "are there any actual denyRead entries" -- an
-    // open question left for a future round rather than assumed either way.
+    // an otherwise-plain profile -- the write-root re-permit (buildReadDenyWritePermitBlock) is
+    // UNCONDITIONAL (it fires whenever there is a write-roots set at all, which is always -- cwd alone
+    // qualifies).
     //
-    // Fix round 15: this test's own ORIGINAL intent ("Ch never fires with nothing denied") no longer
-    // holds even for the DENY form specifically -- claude's own cR (buildDefaultWriteProtectionBlock)
-    // feeds ITS OWN plain, cwd-anchored entries into Ch unconditionally, regardless of any USER
-    // configuration. Re-scoped to what remains true: with no user-configured denyWrite/denyRead,
-    // there is exactly the ONE Ch block cR's own defaults contribute, never a SECOND one from a
-    // user-side denyWritePaths/denyReadPaths that was never configured.
+    // Fix round 15: this test's own ORIGINAL intent ("the fence never fires with nothing denied") no
+    // longer holds even for the DENY form specifically -- the default protections
+    // (buildDefaultWriteProtectionBlock) feed their OWN plain, cwd-anchored entries into the fence
+    // unconditionally, regardless of any USER configuration. Re-scoped to what remains true: with no
+    // user-configured denyWrite/denyRead, there is exactly the ONE fence the defaults contribute, never
+    // a SECOND one from a user-side denyWritePaths/denyReadPaths that was never configured.
     const blocks = [...p.matchAll(/\(deny file-write-unlink file-write-create/g)];
     expect(blocks.length).toBe(1);
   });
 
-  // Fix round 14 (CRITICAL item 1, claude's own pR's own trailing re-permit): the new block this
-  // block's own header describes -- see buildReadDenyWritePermitBlock's own header for the full
-  // rationale (dump-verified alongside Ch/mR/fR/Li/Cs).
-  describe("the pR trailing re-permit (claude's own pR, round 14)", () => {
-    test("is emitted, unconditionally, one (subpath ...) clause per write root, right after Ch's own read-side block", () => {
+  // Fix round 14 (CRITICAL item 1): the write-root create/unlink re-permit -- see
+  // WRITE_OPS_SURVIVING_READ_DENY_REPERMIT's header in profile.ts for the rationale.
+  describe("the write-root create/unlink re-permit (round 14)", () => {
+    test("is emitted, unconditionally, one (subpath ...) clause per write root, right after the read-side fence", () => {
       const p = buildSeatbeltProfile({ cwd: "/work/proj", writableRoots: ["/work/other"], allowNetwork: false });
       const permitIdx = p.indexOf("(allow file-write-unlink file-write-create");
       expect(permitIdx).toBeGreaterThanOrEqual(0);
       expect(p.indexOf('(subpath "/work/proj")', permitIdx)).toBeGreaterThan(permitIdx);
       expect(p.indexOf('(subpath "/work/other")', permitIdx)).toBeGreaterThan(permitIdx);
-      // Right after Ch's own read-side block (even when that block is empty, as here) and strictly
+      // Right after the read-side fence (even when that block is empty, as here) and strictly
       // before the ordinary write-allow block -- the SAME template position `denyReadAncestorRenameBlock`
       // occupies, one slot earlier.
       const writeAllowIdx = p.indexOf("(allow file-write*");
       expect(permitIdx).toBeLessThan(writeAllowIdx);
     });
 
-    test("still fires when a read-deny is ALSO configured, positioned after Ch's own (non-empty) deny this time", () => {
+    test("still fires when a read-deny is ALSO configured, positioned after the (non-empty) read-side fence this time", () => {
       const p = buildSeatbeltProfile({ cwd: "/work/proj", allowNetwork: false, denyReadPaths: ["/work/proj/.env"] });
       const chIdx = p.indexOf("(deny file-write-unlink file-write-create");
       const permitIdx = p.indexOf("(allow file-write-unlink file-write-create");
@@ -539,11 +528,11 @@ describe("buildSeatbeltProfile: the ancestor-rename-bypass fix (claude's Ch/ed)"
   });
 });
 
-// Fix round 13 ("Important" item 1, claude's own `fR`, dump byte 15367091): "keep read-denied paths
-// inside write roots in place" -- a read-denied path sitting inside a writable root previously lost
-// its own protection to the write-allow block (last-match-wins): `mv .env x && cat x` renamed the
-// read-denied file to a non-denied name and read it through there.
-describe("buildSeatbeltProfile: read-deny-keep-in-place (claude's fR)", () => {
+// Fix round 13: "keep read-denied paths inside write roots in place" -- a read-denied path sitting
+// inside a writable root previously lost its own protection to the write-allow block
+// (last-match-wins): `mv .env x && cat x` renamed the read-denied file to a non-denied name and read it
+// through there.
+describe("buildSeatbeltProfile: read-deny-keep-in-place", () => {
   // Isolates JUST this round's own block from the rest of the profile -- round 12's OWN, DIFFERENT
   // ancestor-rename-bypass block (`(deny file-write-unlink file-write-create ...)`) also names
   // ancestor directories as `(literal ...)` entries, unconditionally (it has no "is this ancestor
@@ -573,9 +562,9 @@ describe("buildSeatbeltProfile: read-deny-keep-in-place (claude's fR)", () => {
   });
 
   // The denied path's own ancestors are `(literal ...)`-listed ONLY when THEY are themselves under a
-  // write root (claude's own `w(N)`, a PROPER-descendant check that excludes equality) -- the denied
-  // path's immediate parent (`/work/proj/sub`) qualifies, but cwd itself (`/work/proj`, the write
-  // root it EQUALS) and anything above it do not, matching claude's own `Ch`/`fR` exactly.
+  // write root (a PROPER-descendant check that excludes equality) -- the denied path's immediate parent
+  // (`/work/proj/sub`) qualifies, but cwd itself (`/work/proj`, the write root it EQUALS) and anything
+  // above it do not.
   test("the denied path's own ancestors are listed as literals, but only the ones that are THEMSELVES properly nested inside a write root", () => {
     const p = buildSeatbeltProfile({ cwd: "/work/proj", allowNetwork: false, denyReadPaths: ["/work/proj/sub/.env"] });
     const block = readDenyKeepInPlaceBlockOf(p);
@@ -598,10 +587,10 @@ describe("buildSeatbeltProfile: read-deny-keep-in-place (claude's fR)", () => {
     expect(block).toContain('(require-not (subpath "/work/proj/denied/build"))');
   });
 
-  // The glob's own fixed prefix EQUALS the sole write root here (both "/work/proj") -- per claude's
-  // own w(N), the prefix itself is excluded from the literal set for the identical "equals, not a
-  // proper descendant" reason the plain-path test above documents; the block still renders (the
-  // skip-condition, which DOES include equality, is a separate check from w()).
+  // The glob's own fixed prefix EQUALS the sole write root here (both "/work/proj") -- the prefix
+  // itself is excluded from the literal set for the identical "equals, not a proper descendant" reason
+  // the plain-path test above documents; the block still renders (whether a glob entry relates to a
+  // write root at all DOES count equality -- a separate check from the literal filter).
   test("a glob-shaped read-deny under a write root ALSO gets the block, via its own recursive regex clause", () => {
     const p = buildSeatbeltProfile({
       cwd: "/work/proj",
@@ -693,13 +682,12 @@ describe("buildSeatbeltProfile: baseline <home>/.winter/file-history WRITE denia
   });
 });
 
-// Fix round 15 (CRITICAL, claude's own cR/Do/qa(), dump byte 15365486/15282344/15282484): claude's
-// write profile ALWAYS adds cR(e)'s own default-protected entries to the write denies (mR: p=[
-// ...denyWithinAllow,...cR(r)], then Ch(p)) -- shell rc/config files, editor/agent dot-dirs, and
-// .git/hooks + .git/config, each at cwd's own top level AND at any depth (an unanchored glob), with
-// no opt-in flag to forget. Winter's profile had none of these.
-describe("buildSeatbeltProfile: default write protections (claude's own cR, round 15)", () => {
-  test("every Do filename is denied at cwd's own top level, with the widened (survives-the-re-permit) operation list", () => {
+// Fix round 15 (CRITICAL): like claude's, Winter's write profile ALWAYS denies a fixed set of
+// default-protected entries -- shell rc/config files, editor/agent dot-dirs, and .git/hooks +
+// .git/config, each at cwd's own top level AND at any depth under cwd, with no opt-in flag to forget.
+// Winter's profile had none of these.
+describe("buildSeatbeltProfile: default write protections (round 15)", () => {
+  test("every protected filename is denied at cwd's own top level, with the widened (survives-the-re-permit) operation list", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
     for (const f of [".gitconfig", ".gitmodules", ".bashrc", ".bash_profile", ".zshrc", ".zprofile", ".profile", ".ripgreprc", ".mcp.json"]) {
@@ -707,11 +695,10 @@ describe("buildSeatbeltProfile: default write protections (claude's own cR, roun
     }
   });
 
-  // Fix round 16 (over-deny correction): claude's own `Cv` unconditionally joins a relative glob onto
-  // `process.cwd()` BEFORE treating it as a glob at all -- see `cwdAnchoredEntryRegex`'s own header.
-  // So the SAME name is ALSO denied at any depth, but ANCHORED at cwd, not everywhere -- a sibling
-  // writable root (e.g. a `git clone` destination under $TMPDIR) is unaffected.
-  test("every Do filename is ALSO denied at any depth, but ANCHORED at cwd -- not everywhere", () => {
+  // Fix round 16 (over-deny correction): the SAME name is ALSO denied at any depth, but ANCHORED at
+  // cwd, not everywhere -- a sibling writable root (e.g. a `git clone` destination under $TMPDIR) is
+  // unaffected, as it is on claude.
+  test("every protected filename is ALSO denied at any depth, but ANCHORED at cwd -- not everywhere", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
     expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (regex #"${recursiveGlobToSbplRegexSource(join(cwd, "**", ".gitconfig"))}"))`);
@@ -720,7 +707,7 @@ describe("buildSeatbeltProfile: default write protections (claude's own cR, roun
     expect(p).not.toContain('(regex #"/\\.gitconfig$")');
   });
 
-  test("qa()'s own dot-dirs (.vscode, .idea, .claude/commands, .claude/agents) are denied recursively, both ways, ANCHORED at cwd", () => {
+  test("the protected dot-dirs (.vscode, .idea, .claude/commands, .claude/agents) are denied recursively, both ways, ANCHORED at cwd", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
     for (const d of [".vscode", ".idea", ".claude/commands", ".claude/agents"]) {
@@ -737,8 +724,8 @@ describe("buildSeatbeltProfile: default write protections (claude's own cR, roun
     expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(cwd, ".winter", "mcp.json")}"))`);
   });
 
-  // Fix round 17 (R.3 C-1 part 2b): spec §7.2's protected project folders, the Winter mapping of
-  // claude's `.claude/{commands,agents}` (`qa()`), both forms, anchored at cwd like every cR entry.
+  // Fix round 17 (R.3 C-1 part 2b): spec §7.2's protected project folders, the Winter counterpart of
+  // `.claude/{commands,agents}`, both forms, anchored at cwd like every default entry.
   test("fix round 17: .winter/skills, .winter/rules and .winter/output-styles are protected both ways, beside commands/agents", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
@@ -778,12 +765,12 @@ describe("buildSeatbeltProfile: default write protections (claude's own cR, roun
     expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (regex #"${recursiveGlobToSbplRegexSource(join(cwd, "**", ".git", "config"))}"))`);
   });
 
-  test("allowGitConfigWrites: true (claude's own cR(e=true)) drops the .git/config protection, and ONLY that one", () => {
+  test("allowGitConfigWrites: true drops the .git/config protection, and ONLY that one", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false, allowGitConfigWrites: true });
     expect(p).not.toContain(join(cwd, ".git", "config") + '"))');
     expect(p).not.toContain(recursiveGlobToSbplRegexSource(join(cwd, "**", ".git", "config")));
-    // .git/hooks is unaffected -- the flag only ever gates .git/config, matching cR's own `!e` guard.
+    // .git/hooks is unaffected -- the flag only ever gates .git/config.
     expect(p).toContain(`(deny file-write* file-write-unlink file-write-create (subpath "${join(cwd, ".git", "hooks")}"))`);
   });
 
@@ -796,21 +783,20 @@ describe("buildSeatbeltProfile: default write protections (claude's own cR, roun
     expect(p).not.toContain(recursiveGlobToSbplRegexSource(join(sibling, "**", ".git", "hooks") + "/**"));
   });
 
-  test("the plain, cwd-anchored entries ALSO get Ch's own ancestor-rename-bypass fence", () => {
+  test("the plain, cwd-anchored entries ALSO get the ancestor-rename-bypass fence", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
-    // Ch's own ancestor-literal for cwd's OWN parent directory -- proves these entries were fed
+    // The fence's ancestor-literal for cwd's OWN parent directory -- proves these entries were fed
     // into buildAncestorRenameBypassBlock, not just rendered as an ordinary deny.
     const cwdParent = cwd.slice(0, cwd.lastIndexOf("/"));
     expect(p).toContain(`(literal "${cwdParent}")`);
   });
 
   // Fix round 17 (R.3 C-1 part 2b, supersedes rounds 15/16's exclusion): every default-protected
-  // entry, Winter's own `.winter/*` included, is fed to Ch -- claude's `mR` calls `Ch(p,t)` on its
-  // whole `cR` list, and the ruling maps `.claude/{commands,agents}` onto `.winter/*`. So
-  // `<cwd>/.winter` is a literal in the ancestor fence, as `<cwd>/.claude` is on claude, and the
-  // `mv .winter .w2 && … && mv .w2 .winter` rename cannot plant a skill.
-  test("fix round 17: Winter's OWN .winter dir IS in Ch's ancestor fence now, like .claude and .git", () => {
+  // entry, Winter's own `.winter/*` included, is fed to the ancestor-rename fence, and the ruling maps
+  // `.claude/{commands,agents}` onto `.winter/*`. So `<cwd>/.winter` is a literal in the fence, as
+  // `<cwd>/.claude` is, and the `mv .winter .w2 && … && mv .w2 .winter` rename cannot plant a skill.
+  test("fix round 17: Winter's OWN .winter dir IS in the ancestor fence now, like .claude and .git", () => {
     const cwd = realTmp();
     const p = buildSeatbeltProfile({ cwd, allowNetwork: false });
     expect(p).toContain(`  (literal "${join(cwd, ".winter")}")`);
@@ -867,10 +853,9 @@ describe("buildSeatbeltProfile: the home self-grant floor on winterHome and stor
     expect(p).not.toContain(".winter.json");
   });
 
-  // Fix round 18: the floor's paths feed Ch's ancestor fence, as claude's mR feeds its whole list --
-  // each path's own subpath plus every ancestor as a literal, so the home folder cannot be renamed out
-  // of the way and back.
-  test("fix round 18: the floor's paths feed Ch's ancestor-rename fence -- the home folder and its ancestors become literals", () => {
+  // Fix round 18: the floor's paths feed the ancestor-rename fence -- each path's own subpath plus
+  // every ancestor as a literal, so the home folder cannot be renamed out of the way and back.
+  test("fix round 18: the floor's paths feed the ancestor-rename fence -- the home folder and its ancestors become literals", () => {
     const home = realTmp();
     const runFolder = join(home, ".winter", "cache", "run", "r1");
     const store = join(home, ".winter", "sdk");

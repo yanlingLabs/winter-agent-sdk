@@ -91,9 +91,9 @@ describe("buildMonitorRunCommandOptions (C1 -- filesystem deny/allow layers actu
     expect("denyReadPaths" in options).toBe(false);
   });
 
-  // Fix round 16, item 2 (claude's own `ag()`): `sandbox.filesystem.allowGitConfig` is read straight
-  // off `ctx.sandboxSettings.filesystem` and threaded onto `allowGitConfigWrites` -- mirrors
-  // bash.ts's own identical fix; see that file's own test for the full dump citation.
+  // Fix round 16, item 2: `sandbox.filesystem.allowGitConfig` is read straight off
+  // `ctx.sandboxSettings.filesystem` and threaded onto `allowGitConfigWrites` -- mirrors bash.ts's own
+  // identical fix (see that file's own test).
   test("ctx.sandboxSettings.filesystem.allowGitConfig reaches allowGitConfigWrites", () => {
     const ctx = fakeCtx({ sandboxSettings: { filesystem: { allowGitConfig: true } } });
     const options = buildMonitorRunCommandOptions(ctx);
@@ -395,7 +395,7 @@ describe("connectMonitorWs (real local server)", () => {
   });
 
   // Task-frames parity (2026-09-17 contract §2/§5): the ws half is a DIFFERENT wire task_type than
-  // the command half (`monitor_ws`, never `local_bash`) and, per §1's own register() field list,
+  // the command half (`monitor_ws`, never `local_bash`) and, per §1's own field list,
   // never carries `is_backgrounded` at all -- the flag exists only for `local_agent`/`local_bash`
   // rows. `background_tasks_changed`'s own entry shape has no `is_backgrounded` field to begin with
   // (frames.ts), so this is specifically about `task_started`.

@@ -1,5 +1,5 @@
-// SDK 0.0.16 Lane C: the `# Environment` section, in claude 0.3.250's `env_info_simple` shape (the
-// captured request's section, with Winter's product line in place of claude's).
+// SDK 0.0.16 Lane C: the `# Environment` section, in the shape a captured claude request shows (with
+// Winter's product line in place of claude's).
 import { describe, expect, test } from "bun:test";
 import { renderEnvironmentContextValue, renderEnvironmentSection, renderStaticEnvironmentSection, shellName, WINTER_PRODUCT_LINE } from "./dynamic-sections.ts";
 

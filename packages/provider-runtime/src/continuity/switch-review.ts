@@ -32,7 +32,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 // --- boundary-cut lineage (mirrors resume.ts's ancestryChain + last-boundary cut) ------------------
 
-interface Node {
+export interface Node {
   uuid: string;
   parentUuid: string | null;
   type: string;
@@ -93,7 +93,7 @@ function toNodes(entries: SessionStoreEntry[]): Node[] {
  * carries is then answered. resume.ts's header comment has the full reasoning and the deliberate
  * differences from `Cer` (grouped by the run and matched by `tool_use_id`, never by `message.id`).
  */
-function recoverParallelToolResults(chain: Node[], pool: Node[]): Node[] {
+export function recoverParallelToolResults(chain: Node[], pool: Node[]): Node[] {
   const onChain = new Set(chain.map((n) => n.uuid));
   const resultsByParent = new Map<string, Node[]>();
   const offChainAssistants: Node[] = [];

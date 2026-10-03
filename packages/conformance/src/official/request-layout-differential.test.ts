@@ -3,7 +3,7 @@
 // through the SAME two-turn conversation (a live, open-stdin session on both sides -- no tool
 // calls, plain text replies) and compares the first and second model requests' STRUCTURE:
 //
-//   - is the per-session context (claude's `userContext`/`mbt` format) its OWN block/message at
+//   - is the per-session context (the user-context reminder block) its OWN block/message at
 //     index 0, distinct from the user's own prompt text, or string-concatenated into it;
 //   - the `# <key>` set that block carries;
 //   - the system prompt's block count and cache-scope markers;
@@ -41,7 +41,7 @@ const TURN2_TEXT = "turn two text";
 const REPLY1 = "first reply";
 const REPLY2 = "second reply";
 
-// The literal preamble claude's own userContext wrapper (`mbt`) opens with -- see R4 §A. Used to
+// The literal preamble claude's user-context block opens with -- see R4 §A. Used to
 // FIND the userContext block among index-0's other content blocks (agent listing, skill listing,
 // total_tokens...), never to assert its exact bytes (this is a structure test).
 const USER_CONTEXT_PREAMBLE = "As you answer the user's questions, you can use the following context:";

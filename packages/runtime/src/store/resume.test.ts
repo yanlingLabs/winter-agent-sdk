@@ -630,11 +630,10 @@ describe("F2 (fix round 23): a claude parallel tool batch rebuilds with every ca
     ]);
   });
 
-  // claude yields a concurrency-safe batch's results in COMPLETION order (`getCompletedResults`, dump
-  // 18548003, skips an executing concurrency-safe tool instead of waiting for it), and the next turn
-  // chains onto the last message yielded. When the FIRST call finishes last, the next turn chains
-  // through the first call's result, and the later call ENTRIES -- not just their results -- are off
-  // the walk. claude's `Cer` recovers those sibling entries too.
+  // claude yields a concurrency-safe batch's results in COMPLETION order, and the next turn chains
+  // onto the last message yielded. When the FIRST call finishes last, the next turn chains through the
+  // first call's result, and the later call ENTRIES -- not just their results -- are off the walk.
+  // claude's reader recovers those sibling entries too.
   function chainedThroughFirstCall(): SessionStoreEntry[] {
     return claudeParallelBatch().map((e) => (e.uuid === "ba33ce5b" ? { ...e, parentUuid: "f2-att-s2" } : e));
   }
@@ -649,7 +648,7 @@ describe("F2 (fix round 23): a claude parallel tool batch rebuilds with every ca
       // The later call entries come back right after the batch's last entry on the walk...
       "assistant:use:toolu_f2_search",
       "assistant:use:toolu_f2_mcp",
-      // ...then their results, ahead of the on-walk result -- claude's `Cer` splice order.
+      // ...then their results, ahead of the on-walk result -- the same splice order claude's reader uses.
       "tool:result:toolu_f2_search",
       "tool:result:toolu_f2_mcp",
       "tool:result:toolu_f2_skill",

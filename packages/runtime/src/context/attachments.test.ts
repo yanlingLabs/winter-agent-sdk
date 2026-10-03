@@ -1,4 +1,4 @@
-// SDK 0.0.16 Lane C: the persisted-attachment renderers and folds. Texts are the pinned binary's.
+// SDK 0.0.16 Lane C: the persisted-attachment renderers and folds. Texts are claude's interface strings.
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_PLANS_DIRECTORY } from "@yanlinglabs/winter-agent-sdk";
 import type { ProviderMessage } from "../engine.ts";

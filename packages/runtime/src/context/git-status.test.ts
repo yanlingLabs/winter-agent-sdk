@@ -1,5 +1,5 @@
-// SDK 0.0.16 Lane C: the systemContext `gitStatus` snapshot, in claude 0.3.250's `aHe` shape
-// (captured: "Current branch: trunk\n\nMain branch (you will usually use this for PRs): main\n\n
+// SDK 0.0.16 Lane C: the systemContext `gitStatus` snapshot, in the shape a captured claude request
+// shows (captured: "Current branch: trunk\n\nMain branch (you will usually use this for PRs): main\n\n
 // Git user: …\n\nStatus:\n?? b.txt\n\nRecent commits:\n<sha> first commit subject").
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

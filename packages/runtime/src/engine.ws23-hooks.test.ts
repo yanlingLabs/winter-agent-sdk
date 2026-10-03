@@ -140,7 +140,7 @@ describe("WS-23 additionalContext reaches the model, at the conversation tail, n
     const afterCompaction = requests[requests.length - 1]!.messages.map((m) => textOf(m.content)).join("\n");
     expect(afterCompaction).toContain("SessionStart:compact hook additional context: ctx for compact");
     // Merged into the same leading user message as the summary (the request layout bubbles an
-    // attachment to the top of the history when nothing precedes it -- claude's `SJn`).
+    // attachment to the top of the history when nothing precedes it, as claude does).
     expect(afterCompaction).toContain("SUMMARY");
     expect(afterCompaction.split("ctx for compact").length - 1).toBe(1);
   });

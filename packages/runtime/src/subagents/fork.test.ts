@@ -147,9 +147,8 @@ describe("buildForkDirectiveText (Winter-authored boilerplate + claude's own 'Yo
     expect(aPrefix.length).toBeGreaterThan(0);
   });
 
-  // VERIFIED against the pinned 0.3.250 binary's own decompiled source (`_Fn`'s call site: claude
-  // pushes the worktree note as its OWN transcript entry AFTER `yFn`'s own [clone, tool_result+
-  // directive] pair -- never before the directive). `buildForkDirectiveText` places it after
+  // claude adds the worktree note as its OWN transcript entry AFTER the [clone, tool_result + directive]
+  // pair -- never before the directive. `buildForkDirectiveText` places it after
   // "Your directive: <prompt>" for the same reason -- see `worktreeNote`'s own header for the
   // disclosed gap (a genuinely separate wire message vs. this folded paragraph).
   test("a worktree fork's text names both the parent's root and the worktree root, AFTER the directive (verified ordering, not before it)", () => {

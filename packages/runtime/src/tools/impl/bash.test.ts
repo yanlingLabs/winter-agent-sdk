@@ -159,8 +159,7 @@ describe("buildRunCommandOptions (C1 -- filesystem deny/allow layers actually re
     expect(options.dangerouslyDisableSandbox).toBe(true);
   });
 
-  // Fix round 16, item 2 (claude's own `ag()`, dump-verified: `function ag(){return
-  // pe?.filesystem?.allowGitConfig??!1}`): `sandbox.filesystem.allowGitConfig` is read straight off
+  // Fix round 16, item 2: `sandbox.filesystem.allowGitConfig` (default false) is read straight off
   // `ctx.sandboxSettings.filesystem` and threaded onto `allowGitConfigWrites` -- round 15 added the
   // field on `RunCommandOptions`/`SeatbeltProfileInput` but nothing ever set it.
   test("ctx.sandboxSettings.filesystem.allowGitConfig reaches allowGitConfigWrites", () => {
@@ -682,7 +681,7 @@ describe("Bash executor (real sandboxed spawn)", () => {
       expect(notif.tool_use_id).toBe("call-42");
     });
 
-    // Task-frames parity: the exact pinned strings, verbatim (pin `CMe`).
+    // Task-frames parity: the exact pinned strings, verbatim (measured on the pinned binary).
     t("the pinned notification summary wording: completed and failed", async () => {
       const okFrames: BackgroundTaskMessage[] = [];
       const okCtx = fakeCtx({ emitFrame: (f) => okFrames.push(f) });
@@ -733,8 +732,8 @@ describe("Bash executor (real sandboxed spawn)", () => {
       expect(notif.status).toBe("failed");
     });
 
-    // Review r1 finding 2 (controller ruling): a backgrounded command drops the turn's abort -- the
-    // pin's ShellCommand.background() removes its abort listeners.
+    // Review r1 finding 2 (controller ruling): a backgrounded command drops the turn's abort -- on the
+    // pinned claude binary a turn interrupt does not kill a backgrounded command either.
     t("a turn abort does NOT kill a background command; it ends by its own exit", async () => {
       const frames: BackgroundTaskMessage[] = [];
       const controller = new AbortController();

@@ -2933,7 +2933,7 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
 }
 
 // WS-21 fix round 22: FIXTURE_CWD is the live checkout, and a session in a git work tree folds a
-// `gitStatus` snapshot of it into its system prompt (context/git-status.ts, claude's `aHe`: branch,
+// `gitStatus` snapshot of it into its system prompt (context/git-status.ts, as claude does: branch,
 // `git status --short`, the last five commits). Each leg takes its OWN snapshot when its session
 // starts, so a commit, or a file appearing or vanishing anywhere in the checkout, between leg A and
 // leg B changed leg B's prompt -- and with it the scripted provider's synthetic `usage`
