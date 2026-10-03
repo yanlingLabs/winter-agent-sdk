@@ -33,7 +33,7 @@
 // an audit message cites, never the allow/deny/ask verdict, which depends on whether SOME rule in
 // the group matched.
 import { realpathSync } from "node:fs";
-import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 import ignoreFactory from "ignore";
 import { resolveRealTarget } from "./paths.ts";
 
@@ -237,40 +237,32 @@ function escapeRegexLiteralPath(path: string): string {
 
 /**
  * Whether a realpath result for a glob's fixed prefix should be REJECTED (and the prefix kept as
- * written). Both paths are first normalised (`path.normalize`); call them `original` and `resolved`.
+ * written). Both sides are first tidied with POSIX `normalize` (which keeps a trailing slash).
  *
- * Trusted (false) when the resolution only adds detail:
- *   - `resolved` equals `original`;
- *   - `original` starts `/tmp/` or `/var/` and `resolved` is `original` with `/private` prepended;
- *   - `resolved` starts with `original + "/"`, or -- when `original` starts `/tmp/` or `/var/` --
- *     with that `/private` form of `original` followed by `/`;
- * provided none of the rejections below applies first.
- *
- * Rejected (true), checked after the first two trusted cases and before the third:
- *   - `resolved` is `/`, or has at most one non-empty segment;
- *   - `original` starts with `resolved + "/"` (the resolution climbed to an ancestor), or the
- *     `/private` form of `original` does;
- *   - anything else not trusted above (a sibling, an unrelated path).
- * All prefix tests are plain string tests (`"/" + "/"` is `"//"`, which nothing starts with).
+ * The written path stands for one or two acceptable spellings: itself, and, when it lies under
+ * `/tmp/` or `/var/`, the same path under `/private` (macOS's real location for both). A resolution
+ * is trusted only when it is one of those spellings, or sits strictly BELOW one of them, and is not
+ * also shallow (the root, `.`, or a single top-level name) or an ancestor of one of them. Anything
+ * else -- climbing up, moving sideways, landing somewhere unrelated -- is rejected. Plain string
+ * comparisons only; no case folding, no filesystem access.
  */
 export function isSuspiciousRealpathResolution(original: string, resolved: string): boolean {
-  const from = normalize(original);
-  const to = normalize(resolved);
-  // The `/private` spelling of `from`, which exists only for the two macOS aliases.
-  const privateForm = from.startsWith("/tmp/") || from.startsWith("/var/") ? "/private" + from : undefined;
+  const written = normalize(original);
+  const landed = normalize(resolved);
+  const spellings = acceptableSpellingsOf(written);
 
-  if (to === from) return false;
-  if (privateForm !== undefined && to === privateForm) return false;
+  if (spellings.includes(landed)) return false;
 
-  if (to === "/") return true;
-  if (to.split("/").filter((segment) => segment !== "").length <= 1) return true;
-  const toDir = to + "/";
-  if (from.startsWith(toDir)) return true;
-  if (privateForm !== undefined && privateForm.startsWith(toDir)) return true;
+  const shallow = landed.split("/").filter((segment) => segment !== "").length <= 1;
+  const climbedAbove = spellings.some((spelling) => spelling.startsWith(landed + "/"));
+  const wentBelow = spellings.some((spelling) => landed.startsWith(spelling + "/"));
+  return shallow || climbedAbove || !wentBelow;
+}
 
-  if (to.startsWith(from + "/")) return false;
-  if (privateForm !== undefined && to.startsWith(privateForm + "/")) return false;
-  return true;
+/** A normalised path plus, for one under `/tmp/` or `/var/`, its `/private`-prefixed real spelling. */
+function acceptableSpellingsOf(path: string): string[] {
+  const aliased = path.startsWith("/tmp/") || path.startsWith("/var/");
+  return aliased ? [path, "/private" + path] : [path];
 }
 
 /**
@@ -323,43 +315,85 @@ export function ancestorDirectoriesOf(path: string): string[] {
   }
 }
 
-// (A line comment rather than a `/** */` block: the text below contains the two characters that
-// would end a block comment.)
-//
 // Converts glob text to a POSIX extended-regex source anchored with `^...$`, for an SBPL
-// `(regex #"...")` clause:
-//   1. each of `. ^ $ + { } ( ) | \` is preceded by a backslash (the glob characters `* ? [ ]` are
-//      not -- a `[...]` class is already regex syntax);
-//   2. then the FIRST `[` that has no `]` anywhere after it gets a backslash too (only that one), so
-//      a malformed class cannot make an invalid regex;
-//   3. then, scanning left to right without overlap, every `**` immediately followed by `/` becomes a
-//      group matching zero or more whole segments, `(.*/)?`; in a run of three or more stars before a
-//      `/`, it is the LAST two stars that form that `**/`;
-//   4. then every remaining `**` (left to right, without overlap) becomes `.*`;
-//   5. then every remaining `*` becomes `[^/]*`, and every `?` becomes `[^/]`.
-// The `**/` and `**` forms are marked with the placeholder texts `__GLOBSTAR_SLASH__` and
-// `__GLOBSTAR__` and only expanded once steps 4 and 5 are done, so the `.`, `*` and `?` they expand
-// to are never re-read -- and so those two placeholder texts, if they appear literally in the input,
-// expand the same way. (Steps 3-5 apply to every `*` and `?`, backslash before them or not.)
+// `(regex #"...")` clause, in one left-to-right pass:
+//   - regex metacharacters (and a backslash, which escapes nothing in the glob) are backslashed;
+//     `?` is one non-`/` character; brackets pass through as class syntax, except the single `[`
+//     that no later `]` could close, which becomes a literal `\[`;
+//   - a run of stars becomes "within a segment" (`[^/]*`, one star) and "anything" (`.*`, a pair)
+//     pieces, pairs first; when two or more stars are directly followed by `/`, the last pair and
+//     that `/` instead mean "any number of whole directories" (`(.*/)?`);
+//   - a stretch made only of the characters `_ABGHLORST` and pair/directory pieces is gathered and
+//     rendered as a whole from its SPELLING, in which a pair reads `__GLOBSTAR__` and a directory
+//     piece `__GLOBSTAR_SLASH__` (see `renderWordRun`). This reproduces a long-standing quirk: those
+//     two texts expand wherever they appear in such a stretch, typed or produced.
 function globToAnchoredRegex(glob: string): string {
-  // 1. Regex metacharacters that are not glob syntax.
-  let text = glob.replace(/[.^$+{}()|\\]/g, "\\$&");
-  // 2. The first `[` with no `]` after it (every later `[` has none either, so only the first is touched).
-  const lastClose = text.lastIndexOf("]");
-  const unclosed = text.indexOf("[", lastClose + 1);
-  if (unclosed !== -1) text = text.slice(0, unclosed) + "\\" + text.slice(unclosed);
-  // 3-4. Globstars, as placeholders. A left-to-right non-overlapping `**/` search leaves the last two
-  // stars of a longer run to form it.
-  text = text.replace(/\*\*\//g, GLOBSTAR_SLASH_PLACEHOLDER).replace(/\*\*/g, GLOBSTAR_PLACEHOLDER);
-  // 5. Single-segment wildcards.
-  text = text.replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]");
-  // Expand the placeholders last, so their expansions are never re-read.
-  text = text.split(GLOBSTAR_SLASH_PLACEHOLDER).join("(.*/)?").split(GLOBSTAR_PLACEHOLDER).join(".*");
-  return "^" + text + "$";
+  const literalBracketAt = glob.indexOf("[", glob.lastIndexOf("]") + 1);
+  let body = "";
+  let wordRun = "";
+  const emit = (rendered: string): void => {
+    if (wordRun !== "") {
+      body += renderWordRun(wordRun);
+      wordRun = "";
+    }
+    body += rendered;
+  };
+
+  let i = 0;
+  while (i < glob.length) {
+    const ch = glob.charAt(i);
+    if (ch === "*") {
+      let runEnd = i;
+      while (glob.charAt(runEnd) === "*") runEnd++;
+      let stars = runEnd - i;
+      const intoDirectory = stars >= 2 && glob.charAt(runEnd) === "/";
+      if (intoDirectory) stars -= 2;
+      for (let pair = 0; pair < Math.floor(stars / 2); pair++) wordRun += GLOBSTAR_SPELLING;
+      if (stars % 2 === 1) emit(SINGLE_SEGMENT_REGEX);
+      if (intoDirectory) wordRun += GLOBSTAR_SLASH_SPELLING;
+      i = intoDirectory ? runEnd + 1 : runEnd;
+      continue;
+    }
+    if (WORD_RUN_CHARACTERS.has(ch)) wordRun += ch;
+    else emit(renderGlobCharacter(ch, i === literalBracketAt));
+    i++;
+  }
+  emit("");
+  return "^" + body + "$";
 }
 
-const GLOBSTAR_SLASH_PLACEHOLDER = "__GLOBSTAR_SLASH__";
-const GLOBSTAR_PLACEHOLDER = "__GLOBSTAR__";
+const SINGLE_SEGMENT_REGEX = "[^/]*";
+const GLOBSTAR_SPELLING = "__GLOBSTAR__";
+const GLOBSTAR_SLASH_SPELLING = "__GLOBSTAR_SLASH__";
+/** Every character of the two spellings above; none is a regex metacharacter. */
+const WORD_RUN_CHARACTERS = new Set(GLOBSTAR_SPELLING + GLOBSTAR_SLASH_SPELLING);
+const ESCAPED_REGEX_CHARACTERS = new Set(".^$+{}()|\\");
+
+/** One glob character outside any star run and outside the word-run alphabet, as regex text. */
+function renderGlobCharacter(ch: string, isLiteralBracket: boolean): string {
+  if (ESCAPED_REGEX_CHARACTERS.has(ch)) return "\\" + ch;
+  if (ch === "?") return "[^/]";
+  if (ch === "[" && isLiteralBracket) return "\\[";
+  return ch;
+}
+
+// Renders a word run from its spelling: every `__GLOBSTAR_SLASH__` (leftmost first, never
+// overlapping, searched over the WHOLE spelling) becomes `(.*/)?`; within each stretch left between
+// those, every `__GLOBSTAR__` (same search) becomes `.*`; everything else stays as written.
+function renderWordRun(spelling: string): string {
+  return expandOccurrences(spelling, GLOBSTAR_SLASH_SPELLING, "(.*/)?", (stretch) => expandOccurrences(stretch, GLOBSTAR_SPELLING, ".*", (plain) => plain));
+}
+
+/** Scans `text` for non-overlapping `needle`s, leftmost first; each becomes `expansion`, and the text between them is passed through `between`. */
+function expandOccurrences(text: string, needle: string, expansion: string, between: (stretch: string) => string): string {
+  let out = "";
+  let from = 0;
+  for (let hit = text.indexOf(needle); hit !== -1; hit = text.indexOf(needle, from)) {
+    out += between(text.slice(from, hit)) + expansion;
+    from = hit + needle.length;
+  }
+  return out + between(text.slice(from));
+}
 
 /**
  * An absolute glob as a whole-path SBPL regex. The fixed prefix is canonicalised first
@@ -448,28 +482,43 @@ export function globDenyEntriesOf(paths: readonly string[]): GlobDenyEntry[] {
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Normalises a root-relative pattern before it reaches `ignore()`:
- *   1. every run of two or more `/` becomes one `/`;
- *   2. if the result is nothing but whitespace (`\s`, which includes the byte-order mark U+FEFF),
- *      optionally followed by exactly `/**`, it is returned as it is;
- *   3. otherwise a LEADING byte-order mark is removed -- and if the character after it is `!` or `#`,
- *      a backslash is put before that character, so it is matched as text instead of acting as a
- *      gitignore negation/comment;
- *   4. then, if the text (still) starts with a byte-order mark -- possible only when the input started
- *      with two of them -- that mark is replaced by the one-character class `[﻿]`.
+ * Normalises a root-relative pattern before it reaches `ignore()`.
+ *
+ * Every run of slashes collapses to one. Then a leading byte-order mark (U+FEFF) is dealt with, one
+ * level deep, so it can neither vanish in a way that promotes the next character to a gitignore
+ * directive nor linger as an invisible first character:
+ *   - a pattern that is only whitespace (JS `\s`, which includes the BOM), optionally ending in
+ *     exactly `/**`, is left as it is;
+ *   - a BOM followed by `!` or `#` becomes a backslash, so the directive character stays literal;
+ *   - two BOMs become a one-character class holding a BOM (`[<BOM>]`), keeping the second literal;
+ *   - a lone BOM before anything else is dropped.
+ * A pattern with no leading BOM is returned after the slash collapse alone.
  */
 export function normalizeFileRulePattern(relativePattern: string): string {
-  let text = relativePattern.replace(/\/{2,}/g, "/");
-  if (/^\s*(?:\/\*\*)?$/.test(text)) return text;
-  if (text.startsWith(BYTE_ORDER_MARK)) {
-    text = text.slice(1);
-    if (text.startsWith("!") || text.startsWith("#")) text = "\\" + text;
+  const collapsed = relativePattern.replace(/\/{2,}/g, "/");
+  switch (leadingBomTreatment(collapsed)) {
+    case "keep":
+      return collapsed;
+    case "escape-directive":
+      return "\\" + collapsed.slice(1);
+    case "bracket-second-bom":
+      return `[${BYTE_ORDER_MARK}]` + collapsed.slice(2);
+    case "drop":
+      return collapsed.slice(1);
   }
-  if (text.startsWith(BYTE_ORDER_MARK)) text = "[" + BYTE_ORDER_MARK + "]" + text.slice(1);
-  return text;
 }
 
 const BYTE_ORDER_MARK = "﻿";
+
+type LeadingBomTreatment = "keep" | "escape-directive" | "bracket-second-bom" | "drop";
+
+/** How `normalizeFileRulePattern` must treat the (slash-collapsed) pattern's first character. */
+function leadingBomTreatment(pattern: string): LeadingBomTreatment {
+  if (/^\s*(?:\/\*\*)?$/.test(pattern) || !pattern.startsWith(BYTE_ORDER_MARK)) return "keep";
+  const next = pattern.charAt(1);
+  if (next === "!" || next === "#") return "escape-directive";
+  return next === BYTE_ORDER_MARK ? "bracket-second-bom" : "drop";
+}
 
 /**
  * The trailing-`/**` rewrite, which differs by direction:
