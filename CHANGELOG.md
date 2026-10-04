@@ -4,6 +4,43 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.44
+
+### A message sent while a turn runs is folded into that turn
+
+A host prompt that arrives while the top-level engine is running a turn no longer waits for the turn to
+end. After the next tool round, just before the next request, it is folded into the running turn as a
+`queued_command` attachment: "The user sent a new message while you were working: …". The turn absorbs
+it and produces one `result`, not two. Subagent engines never fold.
+
+- **Host signal.** When it folds, the runtime writes
+  `{ type: "system", subtype: "host_input_folded", count, uuid, session_id }` (`SDKHostInputFoldedMessage`).
+  It is written only after the folded attachment is stored. It means: the host's `count` earliest pushed
+  prompts that had not yet started a turn were absorbed, and will never produce a `result` of their own.
+  **Hosts that count one `result` per pushed prompt must read this frame.**
+- **When it does not fold.** A prompt still pending when the turn ends runs as its own next turn, with its
+  own `result`. Folding also waits when a budget stop, an interrupt or a hook stop ends the turn before the
+  next request; that prompt then runs as its own turn too. Auto-compaction runs first, and the folded
+  message lands word for word after the summary.
+- **`UserPromptSubmit` runs for each folded prompt**, in order. If it blocks one, the fold ends there: that
+  prompt and everything after it run as their own turns, where the hook judges them as usual.
+  Context the hook adds rides right after that prompt's attachment.
+- **Commands stop the fold.** `/compact`, or a `/name` the command resolver expands, is never folded. It
+  and everything after it run as their own turns. Plain text starting with `/` (a path) folds.
+- **New control: `Query.clearQueuedInput(): Promise<{ cleared: number }>`** (`clear_queued_input`). It
+  drops every pending prompt that has neither started a turn nor been folded, and answers how many it
+  dropped. An older runtime rejects it with `WinterRpcError` `unknown_subtype`; hosts must catch that.
+  `interrupt` is unchanged: it keeps pending prompts, and they run afterwards.
+
+Deviations from claude, recorded in `engine.ts`: prompts left pending at turn end are not batched into
+one turn (one turn and one `result` each); `UserPromptSubmit` runs for folded prompts; the clear drops
+every pending prompt rather than one by id; streaming prompts are strings only, so there is no `now`/`later`
+priority.
+
+Adopted claude transcripts holding claude's own typed-prompt `queued_command` entries now render them
+on resume (a one-time change to the cached prefix). Their image-carrying form still drops, because
+attachments here carry text only.
+
 ## 0.0.43
 
 0.0.42 was tagged but never published: its release CI failed on Linux, where corpora recorded on macOS
