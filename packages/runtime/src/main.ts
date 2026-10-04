@@ -11,7 +11,8 @@
 // `require.resolve` at runtime — none of those survive being bundled into a single-file `$bunfs`
 // executable. Every import below is a static, literal specifier resolved at BUILD time; nothing
 // here touches the filesystem to find its own code.
-import { SDK_VERSION } from "@yanlinglabs/winter-agent-sdk";
+import { fstatSync } from "node:fs";
+import { SDK_VERSION, WINTER_BRAND, envName, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 // WS-23: the whole session -- config parse, store resolution, production wiring, child-engine factory,
 // roster restore, runEngine -- lives in `runEmbeddedSession`, which an embedded host also runs (one per
 // Worker). This file hands it the REAL process: argv, `process.env`, stdin, stdout, stderr. One body,
@@ -124,33 +125,79 @@ function installShutdownSignalHandlers(): void {
 // turn would keep spending tokens and running tools with no one supervising it.
 //
 // THE SIGNAL is the parent pid changing, not stdin EOF. EOF alone cannot tell the two cases apart: a
-// print-mode host closes stdin right after its prompt and still wants the turn finished, and a host may
-// pipe stdin from a file. When a process's parent dies, the kernel re-parents it (to launchd/init, pid
-// 1, or to the nearest subreaper on Linux), so `process.ppid` (read live, one `getppid()` each time)
-// stops being the pid it was at startup. Polled every `PARENT_WATCH_INTERVAL_MS` -- a single cheap
-// syscall -- on macOS and Linux alike; no platform API (`PR_SET_PDEATHSIG` is Linux-only, a kqueue
-// `NOTE_EXIT` watch macOS-only) is needed for that. Not armed when the runtime starts with pid 1 as its
-// parent: then there is no parent whose death could be seen this way.
+// print-mode host closes stdin right after its prompt and still wants the turn finished. When a
+// process's parent dies, the kernel re-parents it (to launchd/init, pid 1, or to the nearest subreaper
+// on Linux), so `process.ppid` (read live, one `getppid()` each time) stops being the host's pid. It is
+// checked once at startup and then every `PARENT_WATCH_INTERVAL_MS` -- a single cheap syscall -- on
+// macOS and Linux alike; no platform API (`PR_SET_PDEATHSIG` is Linux-only, a kqueue `NOTE_EXIT` watch
+// macOS-only) is needed for that.
 //
-// THE STOP: first, synchronously, SIGKILL every process group this process started -- background tasks
-// AND the foreground ones the process-group ledger knows (a running Bash command, a stdio MCP server, a
-// hook) -- so nothing it spawned outlives it whatever happens next. Then the engine's own hard stop
-// (`EngineOptions.abortSignal`, through `runEmbeddedSession`'s signal): the turn ends interrupted, waiting
-// input is dropped, the background wait stops, and the session tears down. If that has not finished
-// within `PARENT_GONE_GRACE_MS`, the process exits anyway. Background agents run in this process, so
-// they end with it. Writes to the dead parent's pipe are expected to fail from here on and are ignored.
-// Exit code 129 (128 + SIGHUP, the conventional "the controlling side hung up"); nobody is left to read it.
+// WHICH PID IS THE HOST: the SDK's own spawn (`defaultSpawn`) states it in `<PREFIX>HOST_PID` (the
+// brand's env prefix, `WINTER_HOST_PID` by default), so a host that died while the runtime was still
+// loading -- when `process.ppid` may already be 1 -- is caught at the first check. The variable is
+// removed from this process's environment at once, so nothing the session spawns inherits it. Without
+// it (another spawner) the parent at startup is taken as the host.
+//
+// ARMED ONLY WHEN A HOST IS DRIVING THE SESSION: stdin is a pipe or a socket. A runtime reading its
+// input from a FILE or a terminal was started on purpose to outlive whatever launched it -- `nohup
+// winter … < in.ndjson > out.ndjson &`, cron, `setsid … &`, a forking service manager -- and its
+// launcher exiting must not stop it. Not armed either when the host would be pid 1 (nothing to see
+// die), or when `<PREFIX>DISABLE_PARENT_WATCH=1` opts out. One more reason to opt out: on macOS a
+// debugger attaching (`PT_ATTACH`) temporarily re-parents the process to the debugger, which this
+// watcher cannot tell from the host dying.
+//
+// THE STOP, when a turn is RUNNING: first, synchronously, SIGKILL every process group this process
+// started -- background tasks AND the foreground ones the process-group ledger knows (a running Bash
+// command, a stdio MCP server, a hook) -- so nothing it spawned outlives it whatever happens next. Then
+// the engine's own hard stop (`EngineOptions.abortSignal`, through `runEmbeddedSession`'s signal): the
+// turn ends interrupted, waiting input is dropped, the background wait stops, and the session tears
+// down. If that has not finished within `PARENT_GONE_GRACE_MS`, the process exits anyway.
+//
+// WHEN NO TURN IS RUNNING (between turns, or already tearing down -- a host that read its last result
+// and exited): the same, except that HOOK process groups are spared and there is no 1 s deadline, so a
+// `SessionEnd` command hook still runs to completion, bounded by its own timeout; the process exits as
+// soon as the teardown is done (`PARENT_GONE_IDLE_BACKSTOP_MS` is only a backstop for a teardown that
+// never ends).
+//
+// Background agents run in this process, so they end with it. Writes to the dead parent's pipe are
+// expected to fail from here on and are ignored. Exit code 129 (128 + SIGHUP, the conventional "the
+// controlling side hung up"); nobody is left to read it.
 const PARENT_WATCH_INTERVAL_MS = 250;
 const PARENT_GONE_GRACE_MS = 1_000;
+const PARENT_GONE_IDLE_BACKSTOP_MS = 65_000;
 const PARENT_GONE_EXIT_CODE = 129;
 
-function killEveryProcessGroup(): void {
+/** The session's env prefix, read from the config on argv (the brand rides it); the default brand's otherwise. */
+function sessionEnvPrefix(argv: readonly string[]): Pick<BrandProfile, "envPrefix"> {
+  const at = argv.indexOf("--config-json");
+  try {
+    const brand = (JSON.parse(argv[at + 1] ?? "") as { brand?: { envPrefix?: unknown } }).brand;
+    if (typeof brand?.envPrefix === "string") return { envPrefix: brand.envPrefix };
+  } catch {
+    /* a malformed config fails later, with its own message */
+  }
+  return DEFAULT_BRAND_PREFIX;
+}
+const DEFAULT_BRAND_PREFIX: Pick<BrandProfile, "envPrefix"> = WINTER_BRAND;
+
+/** Whether stdin is a pipe or a socket -- a host is writing it -- rather than a file or a terminal. */
+function stdinFromHost(): boolean {
+  try {
+    const stat = fstatSync(0);
+    return stat.isFIFO() || stat.isSocket();
+  } catch {
+    return false;
+  }
+}
+
+function killEveryProcessGroup(opts?: { spareHooks?: boolean }): void {
   try {
     killAllTaskProcessGroups();
   } catch {
     /* a stop path must never itself throw */
   }
-  for (const { pgid } of liveProcessGroups()) {
+  for (const { pgid, kind } of liveProcessGroups()) {
+    if (opts?.spareHooks === true && kind === "hook") continue;
     try {
       process.kill(-pgid, "SIGKILL");
     } catch {
@@ -159,32 +206,48 @@ function killEveryProcessGroup(): void {
   }
 }
 
-/** Calls `onGone` once, when this process's parent is no longer the one it started with. */
-function watchParent(onGone: () => void): void {
-  const parent = process.ppid;
-  if (!Number.isInteger(parent) || parent <= 1) return;
+/**
+ * Arms the watcher (see the header above). `phase` is the session's live phase (`running` while a
+ * turn runs); `stop` is aborted when the host is gone.
+ */
+function stopOnParentDeath(argv: readonly string[], phase: () => "running" | "idle" | "ending", stop: AbortController): void {
+  const prefix = sessionEnvPrefix(argv);
+  const hostPidVar = envName(prefix, "HOST_PID");
+  const stated = Number(process.env[hostPidVar]);
+  delete process.env[hostPidVar];
+  if (process.env[envName(prefix, "DISABLE_PARENT_WATCH")] === "1") return;
+  if (!stdinFromHost()) return;
+  const host = Number.isInteger(stated) && stated > 1 ? stated : process.ppid;
+  if (!Number.isInteger(host) || host <= 1) return;
+  const onGone = (): void => {
+    const ignore = (): void => {};
+    process.stdout.on("error", ignore);
+    process.stderr.on("error", ignore);
+    const midTurn = phase() === "running";
+    killEveryProcessGroup({ spareHooks: !midTurn });
+    stop.abort();
+    const deadline = setTimeout(
+      () => {
+        killEveryProcessGroup();
+        process.exit(PARENT_GONE_EXIT_CODE);
+      },
+      midTurn ? PARENT_GONE_GRACE_MS : PARENT_GONE_IDLE_BACKSTOP_MS,
+    );
+    deadline.unref?.();
+  };
+  if (process.ppid !== host) {
+    // Already gone while this process was loading. Deferred one tick, so the session's own wiring
+    // below still runs and the stop reaches it through the same door.
+    setTimeout(onGone, 0);
+    return;
+  }
   const timer = setInterval(() => {
-    if (process.ppid === parent) return;
+    if (process.ppid === host) return;
     clearInterval(timer);
     onGone();
   }, PARENT_WATCH_INTERVAL_MS);
   // Never what keeps the process alive: a session that is over exits as before.
   timer.unref?.();
-}
-
-function stopOnParentDeath(stop: AbortController): void {
-  watchParent(() => {
-    const ignore = (): void => {};
-    process.stdout.on("error", ignore);
-    process.stderr.on("error", ignore);
-    killEveryProcessGroup();
-    stop.abort();
-    const deadline = setTimeout(() => {
-      killEveryProcessGroup();
-      process.exit(PARENT_GONE_EXIT_CODE);
-    }, PARENT_GONE_GRACE_MS);
-    deadline.unref?.();
-  });
 }
 
 // --- P9a-6: the `--version` door -------------------------------------------------------------------
@@ -226,7 +289,8 @@ if (process.argv.includes(WORKFLOW_WORKER_ARGV_FLAG)) {
 installShutdownSignalHandlers();
 // The parent's death stops the session, mid-turn included (see `stopOnParentDeath`).
 const parentGone = new AbortController();
-stopOnParentDeath(parentGone);
+let sessionPhase: "running" | "idle" | "ending" = "idle";
+stopOnParentDeath(process.argv, () => sessionPhase, parentGone);
 // Task 8's persistence default, the production provider inputs, the child-engine factory and the
 // fatal-line-then-exit-1 path all live in `runEmbeddedSession` now (see embedded.ts). stdout is the
 // frame stream exclusively; every diagnostic goes to stderr (WS-04 §2/§6).
@@ -241,5 +305,8 @@ const code = await runEmbeddedSession({
     process.stderr.write(chunk);
   },
   signal: parentGone.signal,
+  onSessionPhase: (phase) => {
+    sessionPhase = phase;
+  },
 });
 process.exit(parentGone.signal.aborted ? PARENT_GONE_EXIT_CODE : code);

@@ -30,6 +30,14 @@ export interface SpawnRuntimeOptions {
   cwd: string;
   env: Record<string, string>;
   signal?: AbortSignal;
+  /**
+   * The env variable (`<brand prefix>HOST_PID`) in which `defaultSpawn` tells the runtime which pid is
+   * its host -- this process, the one it spawns directly -- so the runtime can stop when the host dies,
+   * even if that happens while it is still starting. Set by `query()`. A custom spawner that does NOT
+   * start the runtime as its own direct child (a container, a VM, a remote runtime) must leave it
+   * unused: the runtime would see that pid is not its parent and stop.
+   */
+  hostPidEnv?: string;
 }
 
 export type SpawnClaudeCodeProcess = (opts: SpawnRuntimeOptions) => SpawnedRuntimeProcess;
@@ -95,7 +103,8 @@ export function defaultSpawn(opts: SpawnRuntimeOptions): SpawnedRuntimeProcess {
   // custom spawnClaudeCodeProcess hook still receives the field and may choose to honor it itself.
   const child = spawn(opts.command, opts.args, {
     cwd: opts.cwd,
-    env: opts.env,
+    // The runtime's parent is THIS process: say so (see `SpawnRuntimeOptions.hostPidEnv`).
+    env: opts.hostPidEnv !== undefined ? { ...opts.env, [opts.hostPidEnv]: String(process.pid) } : opts.env,
     stdio: ["pipe", "pipe", "pipe"],
   });
 

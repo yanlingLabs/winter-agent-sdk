@@ -1605,6 +1605,12 @@ export interface EngineOptions {
    * exactly when a dead host's session needs it (its stdin closed when it died).
    */
   abortSignal?: AbortSignal;
+  /**
+   * Told when the session's phase changes: `running` when a turn starts, `idle` when it ends, `ending`
+   * once the last turn is over and the session is tearing down (`SessionEnd` hooks, MCP shutdown).
+   * main.ts reads it to decide how hard to stop when the host dies (a teardown is let finish).
+   */
+  onSessionPhase?: (phase: "running" | "idle" | "ending") => void;
   // Phase 4 Task 3 (RULING P4-A): the "provider predicate seam defaulting per the catalog carry" the
   // brief names -- WS-13's own provider capability catalog (which surface would compute this for
   // real, per WS-09 §8.1's "Winter models these as provider-capability predicates in the catalog")
@@ -2583,6 +2589,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     output,
     provider,
     abortSignal,
+    onSessionPhase,
     tools: providedTools,
     unregisteredToolExecutor,
     store,
@@ -6094,8 +6101,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     userFramesEnded = true;
     userFrames.end();
   };
-  /** Set by the session HARD STOP (`EngineOptions.abortSignal`): no notification starts a turn after it. */
+  /** Set by the session HARD STOP (`EngineOptions.abortSignal`): no notification and no turn starts after it. */
   let sessionHardStopped = false;
+  let announceHardStop!: () => void;
+  /** Settles at the hard stop: the turn loop stops waiting on anything it was waiting for (a host-requested compaction). */
+  const hardStopped = new Promise<void>((resolve) => {
+    announceHardStop = resolve;
+  });
   function pumpNotifications(): void {
     if (turnActive || userFramesEnded || sessionHardStopped || config.agentId !== undefined) return;
     const [next] = notifications.drainFor(undefined, { limit: 1 });
@@ -6194,6 +6206,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     turnActive = false;
     turnStartedByNotification = false;
     turnsCompleted++;
+    onSessionPhase?.("idle");
     pumpNotifications();
     signalBackgroundWait();
     // A session whose input is still OPEN is idle the moment its turn ends. With the input closed the
@@ -7069,6 +7082,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // instead of holding the session open for a background agent.
   const hardStop = (): void => {
     sessionHardStopped = true;
+    announceHardStop();
     facetInputEnded = true;
     sessionAborted = true;
     userFrames.remove(new Set(userFrames.pending()));
@@ -9018,8 +9032,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   }
 
   for await (const userFrame of userFrames) {
-    // WS-23 (decision 5): a host-requested compaction finishes before any turn starts.
-    if (controlCompaction !== undefined) await controlCompaction;
+    // WS-23 (decision 5): a host-requested compaction finishes before any turn starts -- unless the
+    // session is hard-stopped meanwhile. The compaction has no abort of its own; the loop just stops
+    // waiting for it (the session is ending, so nothing reads its outcome).
+    if (controlCompaction !== undefined) await Promise.race([controlCompaction, hardStopped]);
+    // A frame this loop had already taken when the session was hard-stopped never starts a turn.
+    if (sessionHardStopped) break;
     // SDK 0.0.16 Lane N. `turnActive` gates `pumpNotifications` (one notification turn at a time, and
     // never one that would race a host turn); `turnStartedByNotification` is what makes this an
     // UNSOLICITED turn rather than a host one -- it decides the second `system/init` frame below, the
@@ -9027,6 +9045,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // gets (`scanAttachments`).
     turnActive = true;
     emitSessionState("running");
+    onSessionPhase?.("running");
     turnStartedByNotification = (userFrame as { taskNotification?: unknown }).taskNotification === true;
     // I1 (fix wave, whole-branch review): a REAL host envelope starting a turn clears the
     // session-level abort flag. Before this, ONE interrupted turn set `sessionAborted = true` for the
@@ -9035,7 +9054,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // start and complete an entirely ordinary later turn. A task-notification envelope deliberately
     // does NOT reset it: it is not the host asking for another turn, and resetting there would
     // silently un-abort a session whose end the host already asked for.
-    if (!turnStartedByNotification) sessionAborted = false;
+    if (!turnStartedByNotification && !sessionHardStopped) sessionAborted = false;
     if (turnStartedByNotification) {
       // Captured from the pinned binary: an unsolicited turn opens with its own `system/init`, then
       // the assistant stream, then its own `result`. A host that renders turns off this stream needs
@@ -10804,6 +10823,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   }
   flushHeldResults();
   emitSessionState("idle");
+  onSessionPhase?.("ending");
 
   // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "teardown" — fired HERE, after the turn loop has
   // fully drained but strictly BEFORE `stopReading()` below, so the pump (still alive at this exact

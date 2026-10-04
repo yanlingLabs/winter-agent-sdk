@@ -69,6 +69,8 @@ export interface EmbeddedSessionOptions {
   signal?: AbortSignal;
   /** The workflow worker's spawn command for this session (see `setHostWorkflowWorkerCommand`). */
   workflowWorkerCommand?: WorkerCommand;
+  /** Passed to the engine (`EngineOptions.onSessionPhase`): running / idle / ending. */
+  onSessionPhase?: (phase: "running" | "idle" | "ending") => void;
 }
 
 // Same argv contract as `testing.ts`'s inMemoryProcess: find the flag by NAME, never by position --
@@ -306,6 +308,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
         // The same abort, straight to the engine as well: the frames above reach it only while the input
         // is still open, and a host whose input has already ended (or died) still needs the session to stop.
         ...(signal !== undefined ? { abortSignal: signal } : {}),
+        ...(opts.onSessionPhase !== undefined ? { onSessionPhase: opts.onSessionPhase } : {}),
         provider,
         // P3 fix round 1 (RULING P3-C): no `tools` -- runEngine builds its registry-backed default.
         // `unregisteredToolExecutor: stubExecutor` keeps the scripted test doubles' non-WS-06 names

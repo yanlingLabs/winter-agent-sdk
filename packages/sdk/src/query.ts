@@ -1033,6 +1033,8 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     // without it (every production host) passes `options.env` through untouched.
     env: withTestKeychainRedirect(options.env) ?? (process.env as Record<string, string>),
     ...(options.abortController ? { signal: options.abortController.signal } : {}),
+    // Read by `defaultSpawn` only (the runtime's parent is then this process): see `SpawnRuntimeOptions.hostPidEnv`.
+    hostPidEnv: envName(brand, "HOST_PID"),
   };
   // An ALREADY-ABORTED signal spawns nothing: a caller that aborted before asking (and may never read
   // the Query) must not be left with a live runtime child. The Query still behaves exactly as if the
