@@ -704,10 +704,11 @@ export interface SDKSessionStateChangedMessage {
 /**
  * WINTER-ONLY: host input was FOLDED into the running turn.
  *
- * A `user` input the host sends while a turn is running waits; at the turn's next tool round the
- * runtime hands it to the model inside that same turn (after the round's tool results, before the next
- * request), as claude does with a message typed while it works. This frame goes out at that moment,
- * before the next request's frames.
+ * A `user` input the host sends while a turn is running waits; once a tool round has ended, just
+ * before the next request, the runtime hands it to the model inside that same turn (after the round's
+ * tool results), as claude does with a message typed while it works. This frame goes out once the
+ * folded inputs are persisted, before the next request's frames. An interrupt (or another stop) that
+ * lands before the fold leaves the inputs pending; they then run as their own turns.
  *
  * THE CONTRACT: `count` of the host's EARLIEST sent inputs that had not yet started a turn were absorbed
  * into the running turn, and none of them will ever produce a `result` of its own -- the running turn's

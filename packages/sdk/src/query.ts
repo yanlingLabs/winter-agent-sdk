@@ -204,7 +204,9 @@ export interface Query extends AsyncGenerator<SdkMessage> {
    * iterable has not yielded yet has not been sent, so it is not touched.
    *
    * Rides Winter's own `clear_queued_input` control subtype. claude can cancel one queued input by id;
-   * this clears them all.
+   * this clears them all. A runtime older than this control answers `unknown_subtype`, and the promise
+   * REJECTS with a `WinterRpcError` carrying that code -- a host that may drive an older runtime must
+   * catch it (nothing was cleared).
    *
    * OPTIONAL on the interface for the same reason as `compact` (a host's structural `Query` doubles keep
    * type-checking); every `Query` this package returns has it.

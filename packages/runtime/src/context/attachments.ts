@@ -286,10 +286,10 @@ registerAttachmentRenderer(
 );
 
 /**
- * A host message folded into the RUNNING turn (the engine's tool-round scan): the user sent it while
- * the model was working, and it reaches the model right after that round's tool results instead of
- * waiting for a turn of its own. Stored as claude's own `queued_command` entry for a typed prompt
- * (`commandMode: "prompt"`, no `origin`), so a resumed session rebuilds the same history.
+ * A host message folded into the RUNNING turn (the engine's `foldPendingHostInput`): the user sent it
+ * while the model was working, and it reaches the model right after the turn's last tool results
+ * instead of waiting for a turn of its own. Stored as claude's own `queued_command` entry for a typed
+ * prompt (`commandMode: "prompt"`, no `origin`), so a resumed session rebuilds the same history.
  */
 export interface QueuedPromptAttachment extends AttachmentPayload {
   type: "queued_command";
@@ -305,9 +305,17 @@ export function queuedPromptAttachment(prompt: string): QueuedPromptAttachment {
   return { type: "queued_command", prompt, commandMode: "prompt" };
 }
 
-// Renders ONLY the shape the engine writes. Any other `queued_command` (another command mode, or one
-// carrying an `origin` -- a transcript another writer produced) renders to nothing, exactly as it did
-// before this renderer existed, so nothing else read back on resume changes.
+// Renders the shape the engine writes: a string `prompt`, `commandMode: "prompt"`, no `origin`. claude
+// writes that SAME shape for a message its user typed mid-turn, so a session adopted from claude's
+// transcript now gets those messages back on resume, where before this renderer they were dropped -- a
+// one-time change of the rebuilt history (and of its cached prefix) on that session's first resume.
+// Every other `queued_command` renders to nothing, as before: another command mode (claude's task
+// notifications are delivered through Winter's own attachment), one carrying an `origin` (not the
+// user's own words), and one whose `prompt` is a block ARRAY (claude's form for a message with pasted
+// images). The array stays dropped because an attachment here is TEXT ONLY -- a renderer returns a
+// string, and the request layout folds a text attachment into the tool result -- so its image blocks
+// have nowhere to go, and rendering only its text would hand the model a message with its images
+// silently missing.
 registerAttachmentRenderer("queued_command", (a) => {
   const prompt = a["prompt"];
   if (a["commandMode"] !== "prompt" || a["origin"] !== undefined || typeof prompt !== "string") return undefined;

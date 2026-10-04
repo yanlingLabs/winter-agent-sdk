@@ -5912,47 +5912,128 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // --- Host input that arrives while a turn runs ----------------------------------------------------
   //
   // A host `user` frame that arrives mid-turn waits in `userFrames` like any other. Until the turn
-  // ends it is still PENDING: it has not started a turn, and `userFrames` has not handed it out. At
-  // every tool round of the top-level engine, the pending host inputs are folded INTO the running turn
-  // (`takeFoldableHostInputs`, read by `scanAttachments("tool-round")`): each becomes a `queued_command`
-  // attachment right after that round's tool results, the model sees it before its next request, and
-  // the turn's one `result` covers it -- the folded input never gets a `result` of its own. The host is
+  // ends it is still PENDING: it has not started a turn, and `userFrames` has not handed it out. Once a
+  // tool round of the top-level engine has ended, the pending host inputs are folded INTO the running
+  // turn (`foldPendingHostInput`, called at the top of the round loop just before the next request is
+  // built -- after the budget check, an auto-compaction and a hook stop have each had their chance to
+  // end the turn first): each becomes a `queued_command` attachment after that round's tool results
+  // (and after a compaction summary, verbatim), the model sees it in the very next request, and the
+  // turn's one `result` covers it -- the folded input never gets a `result` of its own. The host is
   // told how many were folded (`system/host_input_folded`), so it can pair its own pushes with results.
-  // A turn that ends with no further tool round folds nothing: what is still pending then starts its
-  // own turn(s), one per input, in the order the host sent them, exactly as before.
+  // A turn that ends with no further request folds nothing: what is still pending then starts its own
+  // turn(s), one per input, in the order the host sent them, exactly as before.
   //
   // RECORDED DEVIATIONS from claude:
   //   - Unfolded inputs: claude batches every prompt still queued at a turn's end into ONE new turn.
   //     Winter keeps one turn (and one `result`) per input, which is what a host that counts results
   //     against its pushes relies on.
   //   - Commands: claude leaves a queued slash command out of the fold and folds the prompts behind it.
-  //     Winter stops at the first `/command` instead (it runs as its own turn, where it is resolved), so
-  //     what is folded is always the EARLIEST pending inputs -- the host contract.
+  //     Winter stops at the first REAL command (`/compact`, or a `/name` the command resolver expands)
+  //     instead -- it runs as its own turn, where it is resolved -- so what is folded is always the
+  //     EARLIEST pending inputs, the host contract. Text that merely starts with `/` (a path) folds.
+  //   - `UserPromptSubmit`: claude does not run it for a folded message. Winter runs it for each input,
+  //     in order, before folding it, so a hook that blocks or adds context is never bypassed by sending
+  //     a message mid-turn. A block (or `continue: false`) ends the fold AT that input: it and everything
+  //     behind it stay pending and run as their own turns, where the hook judges it again like any
+  //     prompt (so the hook fires twice for it). Context a hook adds rides right after that input's
+  //     attachment, as it rides right after a prompt.
   //   - Priority: the SDK's streaming prompt is a string per item, so every host input has claude's
   //     default priority (`next`). There is no `now`/`later` input shape to honour.
   //   - Clearing: claude cancels one queued input by id; `clear_queued_input` drops every pending one.
-  // Like claude, a folded input fires no `UserPromptSubmit` hook and writes no `user` transcript entry:
-  // its attachment entry is its only record. Subagent engines never fold (their input is never a host's).
-  // One edge, shared with claude: a fold followed by a stop before the next request (an interrupt
-  // landing at that moment, `maxBudgetUsd`, a hook stop) leaves the input in the history unseen by that
-  // turn; the next turn's model reads it there.
+  // Like claude, a folded input writes no `user` transcript entry: its attachment entry is its only
+  // record. Subagent engines never fold (their input is never a host's).
+  //
+  // THE ONE WINDOW LEFT: an input is claimed only if the turn has not been interrupted by then, but an
+  // interrupt that lands after the claim -- while the attachment is being written, or while the request
+  // is being assembled -- ends the turn before the request goes out. The input is then in the history
+  // (and was signalled folded) without that turn's model having answered it; the next turn's model
+  // reads it there.
   //
   // Only frames the PUMP wrote are host input: a task-notification turn (`pumpNotifications`) and a
   // message another session delivered (the messaging self-peer) also ride `userFrames`, and are never
   // folded, never cleared and never counted.
   const hostInputFrames = new WeakSet<UserFrame>();
-  /** Takes (out of `userFrames`) the earliest pending host inputs the running turn may absorb, oldest first. */
-  const takeFoldableHostInputs = (): UserFrame[] => {
-    const taken: UserFrame[] = [];
-    for (const frame of userFrames.pending()) {
-      if (!hostInputFrames.has(frame)) continue;
-      // A command is resolved only when it starts its own turn (`/compact` is a built-in, `/name` may
-      // expand), so it ends the fold: nothing behind it may jump ahead of it.
-      if (resolveBuiltinCommand(frame.text) !== undefined || looksLikeCommand(frame.text)) break;
-      taken.push(frame);
+  /** Whether `text` is a command its own turn would resolve -- such an input ends a fold. A resolver that fails counts as a command. */
+  const endsFold = async (text: string): Promise<boolean> => {
+    if (resolveBuiltinCommand(text) !== undefined) return true;
+    if (!looksLikeCommand(text) || commandResolver === undefined) return false;
+    try {
+      return (await commandResolver.resolve(text, config.cwd)).kind !== "none";
+    } catch {
+      return true;
     }
-    if (taken.length > 0) userFrames.remove(new Set(taken));
-    return taken;
+  };
+  /** Writes one folded input's attachment; `false` when the store refused it (the input is then not folded). */
+  const recordFoldedInput = async (attachment: AttachmentPayload): Promise<boolean> => {
+    if (store?.recordAttachmentEntry === undefined) return true;
+    try {
+      await store.recordAttachmentEntry(attachment);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  /**
+   * Folds the earliest pending host inputs into the running turn (see the header above). Called only
+   * on the top-level engine, once a tool round has ended, just before the next request is built.
+   */
+  const foldPendingHostInput = async (signal: AbortSignal): Promise<void> => {
+    // 1. Decide the prefix: stop at a real command, a hook block, a hook stop or an interrupt.
+    const accepted: Array<{ frame: UserFrame; composite: HookComposite }> = [];
+    for (const frame of userFrames.pending()) {
+      if (signal.aborted) return;
+      if (!hostInputFrames.has(frame)) continue;
+      if (await endsFold(frame.text)) break;
+      let composite: HookComposite;
+      try {
+        composite = await fireObservationalHook("UserPromptSubmit", { payload: { prompt: frame.text } });
+      } catch {
+        break; // an unanswerable hook never lets an input past it: its own turn runs the hook again
+      }
+      if (contextStrings(composite.blockReasons).length > 0 || composite.preventContinuation !== undefined) break;
+      accepted.push({ frame, composite });
+    }
+    // 2. Claim, as late as possible: not after an interrupt, and only what is still pending (a
+    // `clear_queued_input` may have run while the hooks did).
+    if (accepted.length === 0 || signal.aborted) return;
+    const stillPending = new Set(userFrames.pending());
+    const claimed: typeof accepted = [];
+    for (const entry of accepted) {
+      if (!stillPending.has(entry.frame)) break;
+      claimed.push(entry);
+    }
+    if (claimed.length === 0) return;
+    userFrames.remove(new Set(claimed.map((c) => c.frame)));
+    // 3. Persist, then add to the history, one input at a time and in order. An input whose attachment
+    // the store refused is NOT folded: it and everything behind it go back to the head of the pending
+    // input, so a resume can never lose a message the host was told was folded.
+    let folded = 0;
+    for (const [index, { frame, composite }] of claimed.entries()) {
+      const attachment = queuedPromptAttachment(frame.text);
+      if (!(await recordFoldedInput(attachment))) {
+        userFrames.restore(claimed.slice(index).map((c) => c.frame));
+        break;
+      }
+      const message = attachmentMessage(attachment);
+      if (message !== undefined) messages.push(message);
+      for (const notice of contextStrings(composite.systemMessages)) emitHookNotice(notice);
+      const context = hookAdditionalContextAttachment("UserPromptSubmit", contextStrings(composite.extraContext));
+      if (context !== undefined) {
+        const contextMessage = attachmentMessage(context);
+        if (contextMessage !== undefined) {
+          messages.push(contextMessage);
+          await recordAttachment(context);
+        }
+      }
+      folded++;
+    }
+    // 4. Only now, with every folded input on disk, tell the host.
+    if (folded === 0) return;
+    try {
+      output.write({ type: "data", message: { type: "system", subtype: "host_input_folded", count: folded, uuid: randomUUID(), session_id: config.sessionId } });
+    } catch {
+      /* a closed sink must not cost the model the message it was already handed */
+    }
   };
   /** `clear_queued_input`: drops every pending host input; answers how many. */
   const clearPendingHostInputs = (): number => userFrames.remove(new Set(userFrames.pending().filter((frame) => hostInputFrames.has(frame))));
@@ -8116,21 +8197,6 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // scans deliberately do NOT drain: a notification that arrives while the engine is idle starts
     // its own turn (`pumpNotifications`), and draining it at turn start instead would silently
     // attach it to whatever the host asked next.
-    if (phase === "tool-round" && config.agentId === undefined) {
-      // Host input sent while this turn ran (see `takeFoldableHostInputs`): one attachment per input,
-      // in the order sent, AHEAD of the task notifications below -- the user's own words before
-      // background machinery, as claude's queue orders a typed prompt before a notification. The host
-      // hears about the fold now, before the next request goes out.
-      const folded = takeFoldableHostInputs();
-      if (folded.length > 0) {
-        for (const frame of folded) produced.push(queuedPromptAttachment(frame.text));
-        try {
-          output.write({ type: "data", message: { type: "system", subtype: "host_input_folded", count: folded.length, uuid: randomUUID(), session_id: config.sessionId } });
-        } catch {
-          /* a closed sink must not cost the model the message it was already handed */
-        }
-      }
-    }
     if (phase === "tool-round") {
       // `inHumanTurn` is what picks between claude's two anti-injection preambles: inside a turn the
       // HOST started, the user's own message is real input and the preamble says so; inside a turn a
@@ -9232,6 +9298,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       api_error_status: status,
     });
 
+    // Set when a tool round ends, consumed at the top of the next round (the host-input fold's gate).
+    let toolRoundEnded = false;
     roundLoop: while (true) {
       // WS-27 (review I-1): interrupted while waiting for a reconnecting MCP server -- no request goes out.
       if (interruptedAwaitingMcp) {
@@ -9270,6 +9338,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         finalResult = takeHookStopResult();
         break roundLoop;
       }
+      // Host input sent while this turn ran is folded in HERE, once a tool round has ended: after the
+      // budget check, an auto-compaction and a hook stop above (any of which ends or rewrites the turn
+      // first), and just before the request that will carry it -- see `foldPendingHostInput`.
+      const foldAfterToolRound = toolRoundEnded;
+      toolRoundEnded = false;
 
       let turn: ProviderTurn;
       // WS-23: whether THIS generation carried per-message effort markers -- read by the catch's
@@ -9289,6 +9362,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // A mid-turn compaction cleared the session context; this rebuilds it (same envelope input).
         const context = await ensureSessionContext(assembled, envelopeInput);
         const effortPlan = planEffort();
+        if (foldAfterToolRound && config.agentId === undefined) await foldPendingHostInput(turnAbort.signal);
         // WS-23 (midconv): the tool plan FIRST -- it may append the epoch's entries to the history the
         // outbound messages are built from.
         const toolPlan = await planToolsForRequest();
@@ -10617,6 +10691,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // definition, a new skill, midnight) is announced right after these tool results, and the
       // request builder folds it into them.
       await scanAttachments("tool-round");
+      toolRoundEnded = true;
       // loop back for the next provider.generate() call
     }
 

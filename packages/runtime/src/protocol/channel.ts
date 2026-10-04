@@ -15,6 +15,8 @@ export class Queue<T> implements AsyncIterable<T> {
   pending(): T[] { return [...this.buf]; }
   /** Drops these values if they are still waiting to be read (one already read is untouched); answers how many were dropped. */
   remove(values: ReadonlySet<T>): number { const before = this.buf.length; this.buf = this.buf.filter((v) => !values.has(v)); return before - this.buf.length; }
+  /** Puts values taken with `remove` back at the HEAD, in order (they were the oldest). For a reader that is mid-item, never one waiting on `write`. */
+  restore(values: readonly T[]) { this.buf.unshift(...values); }
   async *[Symbol.asyncIterator]() {
     while (true) {
       if (this.buf.length) { yield this.buf.shift()!; continue; }
