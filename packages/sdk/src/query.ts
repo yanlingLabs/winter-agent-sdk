@@ -197,6 +197,20 @@ export interface Query extends AsyncGenerator<SdkMessage> {
    */
   reconnectMcpServer?(serverName: string): Promise<void>;
   /**
+   * WINTER-ONLY, additive: drop every input this query sent that is still WAITING -- it has neither
+   * started a turn nor been folded into the running one (`system/host_input_folded`) -- and resolve with
+   * how many were dropped. A dropped input never runs and never gets a `result`. Nothing else changes:
+   * the running turn keeps running, and queued task notifications stay queued. An item the prompt
+   * iterable has not yielded yet has not been sent, so it is not touched.
+   *
+   * Rides Winter's own `clear_queued_input` control subtype. claude can cancel one queued input by id;
+   * this clears them all.
+   *
+   * OPTIONAL on the interface for the same reason as `compact` (a host's structural `Query` doubles keep
+   * type-checking); every `Query` this package returns has it.
+   */
+  clearQueuedInput?(): Promise<{ cleared: number }>;
+  /**
    * Phase 6 Task 10 (derived-shapes-p6 item (d), `sdk.d.ts:2566`): the models this session may select.
    *
    * A BARE ARRAY — no envelope, no default marker, no "current model" field; the current model is read
@@ -1557,6 +1571,13 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // reconnect fails or leaves the server failed/needs-auth -- "throws on failure", as pinned.
   gen.reconnectMcpServer = async (serverName: string) => {
     await sendControlRequest("mcp_reconnect", { serverName });
+  };
+  // Winter's own `clear_queued_input` (payload-free). Written after every prompt item already sent, so
+  // the runtime sees those first; a malformed answer reads as nothing cleared.
+  gen.clearQueuedInput = async () => {
+    const payload = await sendControlRequest("clear_queued_input", undefined);
+    const cleared = typeof payload === "object" && payload !== null ? (payload as { cleared?: unknown }).cleared : undefined;
+    return { cleared: typeof cleared === "number" ? cleared : 0 };
   };
   // Phase 6 Task 10: the pinned payload-free `list_models` (`sdk.d.ts:3855`) and Winter's own
   // `account_info`. A malformed/absent runtime payload degrades to an empty answer rather than a

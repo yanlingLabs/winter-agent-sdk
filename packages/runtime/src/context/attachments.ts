@@ -285,6 +285,35 @@ registerAttachmentRenderer(
   { wrap: false },
 );
 
+/**
+ * A host message folded into the RUNNING turn (the engine's tool-round scan): the user sent it while
+ * the model was working, and it reaches the model right after that round's tool results instead of
+ * waiting for a turn of its own. Stored as claude's own `queued_command` entry for a typed prompt
+ * (`commandMode: "prompt"`, no `origin`), so a resumed session rebuilds the same history.
+ */
+export interface QueuedPromptAttachment extends AttachmentPayload {
+  type: "queued_command";
+  prompt: string;
+  commandMode: "prompt";
+}
+
+/** The two fixed lines around a folded message (claude's interface text, unchanged). */
+export const QUEUED_PROMPT_HEADER = "The user sent a new message while you were working:";
+export const QUEUED_PROMPT_FOOTER = "IMPORTANT: After completing your current task, you MUST address the user's message above. Do not ignore it.";
+
+export function queuedPromptAttachment(prompt: string): QueuedPromptAttachment {
+  return { type: "queued_command", prompt, commandMode: "prompt" };
+}
+
+// Renders ONLY the shape the engine writes. Any other `queued_command` (another command mode, or one
+// carrying an `origin` -- a transcript another writer produced) renders to nothing, exactly as it did
+// before this renderer existed, so nothing else read back on resume changes.
+registerAttachmentRenderer("queued_command", (a) => {
+  const prompt = a["prompt"];
+  if (a["commandMode"] !== "prompt" || a["origin"] !== undefined || typeof prompt !== "string") return undefined;
+  return `${QUEUED_PROMPT_HEADER}\n${neutralizeReminderTags(prompt)}\n\n${QUEUED_PROMPT_FOOTER}`;
+});
+
 /** The wrapped model-facing text for an attachment, or `undefined` when there is none (an unknown type included). */
 export function renderAttachment(attachment: AttachmentPayload): string | undefined {
   const renderer = renderers.get(attachment.type);

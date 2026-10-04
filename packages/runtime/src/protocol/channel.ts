@@ -11,6 +11,10 @@ export class Queue<T> implements AsyncIterable<T> {
   private buf: T[] = []; private resolvers: Array<(r: IteratorResult<T>) => void> = []; private ended = false;
   write(v: T) { const r = this.resolvers.shift(); if (r) r({ value: v, done: false }); else this.buf.push(v); }
   end() { this.ended = true; for (const r of this.resolvers.splice(0)) r({ value: undefined as never, done: true }); }
+  /** The values written but not yet read, oldest first. A copy: changing it changes nothing here. */
+  pending(): T[] { return [...this.buf]; }
+  /** Drops these values if they are still waiting to be read (one already read is untouched); answers how many were dropped. */
+  remove(values: ReadonlySet<T>): number { const before = this.buf.length; this.buf = this.buf.filter((v) => !values.has(v)); return before - this.buf.length; }
   async *[Symbol.asyncIterator]() {
     while (true) {
       if (this.buf.length) { yield this.buf.shift()!; continue; }

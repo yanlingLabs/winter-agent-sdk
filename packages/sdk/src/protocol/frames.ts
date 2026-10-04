@@ -702,6 +702,28 @@ export interface SDKSessionStateChangedMessage {
 }
 
 /**
+ * WINTER-ONLY: host input was FOLDED into the running turn.
+ *
+ * A `user` input the host sends while a turn is running waits; at the turn's next tool round the
+ * runtime hands it to the model inside that same turn (after the round's tool results, before the next
+ * request), as claude does with a message typed while it works. This frame goes out at that moment,
+ * before the next request's frames.
+ *
+ * THE CONTRACT: `count` of the host's EARLIEST sent inputs that had not yet started a turn were absorbed
+ * into the running turn, and none of them will ever produce a `result` of its own -- the running turn's
+ * one `result` covers them. An input still waiting when a turn ends is not folded: it starts its own
+ * turn, with its own `result`, in the order sent. Only the top-level session folds; a subagent never
+ * does. `Query.clearQueuedInput()` drops the inputs still waiting.
+ */
+export interface SDKHostInputFoldedMessage {
+  type: "system";
+  subtype: "host_input_folded";
+  count: number;
+  uuid: string;
+  session_id: string;
+}
+
+/**
  * WS-23: claude 2.1.282's `SDKInformationalMessage` -- "generic text banner emitted by the loop --
  * non-error status lines, hook feedback (e.g. a UserPromptSubmit hook's block reason)". Winter had no
  * text-notice frame at all; this is the one a hook's `systemMessage`, a blocked prompt's reason and a
@@ -762,6 +784,7 @@ export type SdkMessage =
   | SDKCompactBoundaryMessage
   | SDKSessionStateChangedMessage
   | SDKInformationalMessage
+  | SDKHostInputFoldedMessage
   | BackgroundTaskMessage
   // Phase 6 Task 3: the provider-facing family. Listed BEFORE the open catch-all at the end of this
   // union so each stays independently discriminable on `type`/`subtype`.

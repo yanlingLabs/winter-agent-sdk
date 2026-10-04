@@ -210,6 +210,7 @@ import {
   dateChangeAnnounced,
   lastPlanModeState,
   localDateString,
+  queuedPromptAttachment,
   skillListingResumeSeed,
   type AttachmentPayload,
   type DateChangeAttachment,
@@ -5908,6 +5909,54 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
 
   const userFrames = new Queue<UserFrame>();
 
+  // --- Host input that arrives while a turn runs ----------------------------------------------------
+  //
+  // A host `user` frame that arrives mid-turn waits in `userFrames` like any other. Until the turn
+  // ends it is still PENDING: it has not started a turn, and `userFrames` has not handed it out. At
+  // every tool round of the top-level engine, the pending host inputs are folded INTO the running turn
+  // (`takeFoldableHostInputs`, read by `scanAttachments("tool-round")`): each becomes a `queued_command`
+  // attachment right after that round's tool results, the model sees it before its next request, and
+  // the turn's one `result` covers it -- the folded input never gets a `result` of its own. The host is
+  // told how many were folded (`system/host_input_folded`), so it can pair its own pushes with results.
+  // A turn that ends with no further tool round folds nothing: what is still pending then starts its
+  // own turn(s), one per input, in the order the host sent them, exactly as before.
+  //
+  // RECORDED DEVIATIONS from claude:
+  //   - Unfolded inputs: claude batches every prompt still queued at a turn's end into ONE new turn.
+  //     Winter keeps one turn (and one `result`) per input, which is what a host that counts results
+  //     against its pushes relies on.
+  //   - Commands: claude leaves a queued slash command out of the fold and folds the prompts behind it.
+  //     Winter stops at the first `/command` instead (it runs as its own turn, where it is resolved), so
+  //     what is folded is always the EARLIEST pending inputs -- the host contract.
+  //   - Priority: the SDK's streaming prompt is a string per item, so every host input has claude's
+  //     default priority (`next`). There is no `now`/`later` input shape to honour.
+  //   - Clearing: claude cancels one queued input by id; `clear_queued_input` drops every pending one.
+  // Like claude, a folded input fires no `UserPromptSubmit` hook and writes no `user` transcript entry:
+  // its attachment entry is its only record. Subagent engines never fold (their input is never a host's).
+  // One edge, shared with claude: a fold followed by a stop before the next request (an interrupt
+  // landing at that moment, `maxBudgetUsd`, a hook stop) leaves the input in the history unseen by that
+  // turn; the next turn's model reads it there.
+  //
+  // Only frames the PUMP wrote are host input: a task-notification turn (`pumpNotifications`) and a
+  // message another session delivered (the messaging self-peer) also ride `userFrames`, and are never
+  // folded, never cleared and never counted.
+  const hostInputFrames = new WeakSet<UserFrame>();
+  /** Takes (out of `userFrames`) the earliest pending host inputs the running turn may absorb, oldest first. */
+  const takeFoldableHostInputs = (): UserFrame[] => {
+    const taken: UserFrame[] = [];
+    for (const frame of userFrames.pending()) {
+      if (!hostInputFrames.has(frame)) continue;
+      // A command is resolved only when it starts its own turn (`/compact` is a built-in, `/name` may
+      // expand), so it ends the fold: nothing behind it may jump ahead of it.
+      if (resolveBuiltinCommand(frame.text) !== undefined || looksLikeCommand(frame.text)) break;
+      taken.push(frame);
+    }
+    if (taken.length > 0) userFrames.remove(new Set(taken));
+    return taken;
+  };
+  /** `clear_queued_input`: drops every pending host input; answers how many. */
+  const clearPendingHostInputs = (): number => userFrames.remove(new Set(userFrames.pending().filter((frame) => hostInputFrames.has(frame))));
+
   // --- SDK 0.0.16 Lane N: background completions reaching the MODEL ------------------------------
   //
   // `subagents/notification-queue.ts` holds this session's queue; every background producer enqueues
@@ -6299,6 +6348,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         const frame = outcome.result.value;
 
         if (frame.type === "user") {
+          hostInputFrames.add(frame as UserFrame);
           userFrames.write(frame as UserFrame);
           continue;
         }
@@ -6490,6 +6540,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
               .finally(() => {
                 controlCompaction = undefined;
               });
+            continue;
+          }
+          // --- `clear_queued_input` ---------------------------------------------------------------
+          //
+          // WINTER-ONLY. Drops every host input that is still pending -- it has neither started a turn
+          // nor been folded into one -- and answers how many. Handled here, in frame order, so every
+          // `user` frame the host wrote before this request is already pending when it runs. Touches
+          // nothing else: not the running turn, not a queued task notification, not a message another
+          // session delivered. (claude cancels one queued input by id; Winter clears them all.)
+          if (cf.subtype === "clear_queued_input") {
+            output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { cleared: clearPendingHostInputs() } });
             continue;
           }
           // --- Phase 6 Task 10 (R6-I): `list_models` and `account_info` ---------------------------
@@ -8055,6 +8116,21 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // scans deliberately do NOT drain: a notification that arrives while the engine is idle starts
     // its own turn (`pumpNotifications`), and draining it at turn start instead would silently
     // attach it to whatever the host asked next.
+    if (phase === "tool-round" && config.agentId === undefined) {
+      // Host input sent while this turn ran (see `takeFoldableHostInputs`): one attachment per input,
+      // in the order sent, AHEAD of the task notifications below -- the user's own words before
+      // background machinery, as claude's queue orders a typed prompt before a notification. The host
+      // hears about the fold now, before the next request goes out.
+      const folded = takeFoldableHostInputs();
+      if (folded.length > 0) {
+        for (const frame of folded) produced.push(queuedPromptAttachment(frame.text));
+        try {
+          output.write({ type: "data", message: { type: "system", subtype: "host_input_folded", count: folded.length, uuid: randomUUID(), session_id: config.sessionId } });
+        } catch {
+          /* a closed sink must not cost the model the message it was already handed */
+        }
+      }
+    }
     if (phase === "tool-round") {
       // `inHumanTurn` is what picks between claude's two anti-injection preambles: inside a turn the
       // HOST started, the user's own message is real input and the preamble says so; inside a turn a

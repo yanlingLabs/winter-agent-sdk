@@ -154,6 +154,8 @@ export type {
   SDKSessionStateChangedMessage,
   // WS-23: the text-notice frame (a hook's systemMessage, a blocked prompt's reason).
   SDKInformationalMessage,
+  // Winter-only: host input folded into the running turn (`Query.clearQueuedInput()` is its other half).
+  SDKHostInputFoldedMessage,
   // Phase 6 Task 3 (R6-5/R6-D, derived-shapes-p6.md items (a)/(b)): the provider-facing frame family
   // plus the Winter-DECLARED wire vocabularies it carries. Named on the barrel because a host that
   // renders live tokens must be able to discriminate `stream_event` and reach inside `event`, and
