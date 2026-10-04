@@ -1595,6 +1595,16 @@ export interface EngineOptions {
   // dialect.ts's own resolveEngineSession `env` parameter precedent ("every caller states explicitly
   // which environment governs" env-derived resolution) one level up.
   env?: Record<string, string | undefined>;
+  /**
+   * A HARD STOP for the whole session, for the case no frame can carry one any more: the host itself
+   * is gone (the spawned binary's parent died -- main.ts watches for it) or an embedded host is
+   * tearing the session down. Once aborted: no further input is taken, the running turn ends
+   * interrupted, input still waiting to start a turn is dropped, every runtime->host request still
+   * waiting for an answer is rejected, and the background wait stops -- so `runEngine` returns
+   * promptly. Unlike an `interrupt` frame it works after the input stream has already ended, which is
+   * exactly when a dead host's session needs it (its stdin closed when it died).
+   */
+  abortSignal?: AbortSignal;
   // Phase 4 Task 3 (RULING P4-A): the "provider predicate seam defaulting per the catalog carry" the
   // brief names -- WS-13's own provider capability catalog (which surface would compute this for
   // real, per WS-09 §8.1's "Winter models these as provider-capability predicates in the catalog")
@@ -2572,6 +2582,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     input,
     output,
     provider,
+    abortSignal,
     tools: providedTools,
     unregisteredToolExecutor,
     store,
@@ -6083,8 +6094,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     userFramesEnded = true;
     userFrames.end();
   };
+  /** Set by the session HARD STOP (`EngineOptions.abortSignal`): no notification starts a turn after it. */
+  let sessionHardStopped = false;
   function pumpNotifications(): void {
-    if (turnActive || userFramesEnded || config.agentId !== undefined) return;
+    if (turnActive || userFramesEnded || sessionHardStopped || config.agentId !== undefined) return;
     const [next] = notifications.drainFor(undefined, { limit: 1 });
     if (next === undefined) return;
     // PRE-CLAIMED: a second enqueue landing before the loop picks this frame up must not write a
@@ -7045,6 +7058,27 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       bridge.rejectAllPending(new Error("winter: input ended before this control request could be answered"));
     }
   })();
+
+  // --- The session HARD STOP (`EngineOptions.abortSignal`) -------------------------------------------
+  //
+  // What an `interrupt` frame plus `end_input` do, minus the frames: the host that would send them is
+  // gone (and its stdin with it, so the pump may already have stopped reading). The input closes; any
+  // input still waiting to start a turn is dropped, so nothing new starts; the running turn is
+  // interrupted (its tools' process groups die through the turn's abort signal); a runtime->host
+  // request nobody can answer is rejected; and the session-level abort makes the background wait stop
+  // instead of holding the session open for a background agent.
+  const hardStop = (): void => {
+    sessionHardStopped = true;
+    facetInputEnded = true;
+    sessionAborted = true;
+    userFrames.remove(new Set(userFrames.pending()));
+    requestInputEnd();
+    interruptCurrentTurn.current?.();
+    signalBackgroundWait();
+    bridge.rejectAllPending(new Error("winter: the session was stopped before this control request could be answered"));
+  };
+  if (abortSignal?.aborted === true) hardStop();
+  else abortSignal?.addEventListener("abort", hardStop, { once: true });
 
   // --- The first-turn MCP wait (fix round 19/20; moved here in WS-24) ---------------------------------
   //

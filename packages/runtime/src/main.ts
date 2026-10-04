@@ -29,6 +29,7 @@ import { workflowWorkerMain, WORKFLOW_WORKER_ARGV_FLAG } from "./workflows/subpr
 // installShutdownSignalHandlers's own header below for why this needs its OWN synchronous, frame-free
 // door rather than reusing engine.ts's ordinary teardown sweep.
 import { killAllTaskProcessGroups } from "./tools/impl/background-task-runtime.ts";
+import { liveProcessGroups } from "./process-groups.ts";
 
 // stdin as text chunks for `runEmbeddedSession`, which owns the framing (the one shared codec). The
 // try/catch mirrors packages/sdk/src/transport.ts's textChunks: a raw low-level stream error (e.g.
@@ -114,6 +115,78 @@ function installShutdownSignalHandlers(): void {
   }
 }
 
+// --- The parent's death is a HARD STOP, even mid-turn -------------------------------------------------
+//
+// A spawned runtime is driven by its parent (the host) over stdin/stdout. When the host dies -- killed,
+// crashed -- nobody reads the stream any more, but a session in the middle of a turn would otherwise
+// finish it: the engine treats stdin EOF as "no more input, finish the in-flight turn" (WS-04 §6),
+// which is right for a host that closes its input on purpose and wrong for one that is gone. A real
+// turn would keep spending tokens and running tools with no one supervising it.
+//
+// THE SIGNAL is the parent pid changing, not stdin EOF. EOF alone cannot tell the two cases apart: a
+// print-mode host closes stdin right after its prompt and still wants the turn finished, and a host may
+// pipe stdin from a file. When a process's parent dies, the kernel re-parents it (to launchd/init, pid
+// 1, or to the nearest subreaper on Linux), so `process.ppid` (read live, one `getppid()` each time)
+// stops being the pid it was at startup. Polled every `PARENT_WATCH_INTERVAL_MS` -- a single cheap
+// syscall -- on macOS and Linux alike; no platform API (`PR_SET_PDEATHSIG` is Linux-only, a kqueue
+// `NOTE_EXIT` watch macOS-only) is needed for that. Not armed when the runtime starts with pid 1 as its
+// parent: then there is no parent whose death could be seen this way.
+//
+// THE STOP: first, synchronously, SIGKILL every process group this process started -- background tasks
+// AND the foreground ones the process-group ledger knows (a running Bash command, a stdio MCP server, a
+// hook) -- so nothing it spawned outlives it whatever happens next. Then the engine's own hard stop
+// (`EngineOptions.abortSignal`, through `runEmbeddedSession`'s signal): the turn ends interrupted, waiting
+// input is dropped, the background wait stops, and the session tears down. If that has not finished
+// within `PARENT_GONE_GRACE_MS`, the process exits anyway. Background agents run in this process, so
+// they end with it. Writes to the dead parent's pipe are expected to fail from here on and are ignored.
+// Exit code 129 (128 + SIGHUP, the conventional "the controlling side hung up"); nobody is left to read it.
+const PARENT_WATCH_INTERVAL_MS = 250;
+const PARENT_GONE_GRACE_MS = 1_000;
+const PARENT_GONE_EXIT_CODE = 129;
+
+function killEveryProcessGroup(): void {
+  try {
+    killAllTaskProcessGroups();
+  } catch {
+    /* a stop path must never itself throw */
+  }
+  for (const { pgid } of liveProcessGroups()) {
+    try {
+      process.kill(-pgid, "SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+/** Calls `onGone` once, when this process's parent is no longer the one it started with. */
+function watchParent(onGone: () => void): void {
+  const parent = process.ppid;
+  if (!Number.isInteger(parent) || parent <= 1) return;
+  const timer = setInterval(() => {
+    if (process.ppid === parent) return;
+    clearInterval(timer);
+    onGone();
+  }, PARENT_WATCH_INTERVAL_MS);
+  // Never what keeps the process alive: a session that is over exits as before.
+  timer.unref?.();
+}
+
+function stopOnParentDeath(stop: AbortController): void {
+  watchParent(() => {
+    const ignore = (): void => {};
+    process.stdout.on("error", ignore);
+    process.stderr.on("error", ignore);
+    killEveryProcessGroup();
+    stop.abort();
+    const deadline = setTimeout(() => {
+      killEveryProcessGroup();
+      process.exit(PARENT_GONE_EXIT_CODE);
+    }, PARENT_GONE_GRACE_MS);
+    deadline.unref?.();
+  });
+}
+
 // --- P9a-6: the `--version` door -------------------------------------------------------------------
 //
 // Checked FIRST -- before the `__workflow-worker` dispatch below and before `parseConfigFromArgv` --
@@ -151,6 +224,9 @@ if (process.argv.includes(WORKFLOW_WORKER_ARGV_FLAG)) {
 // arrive at any point in this process's lifetime, including before `runEngine` itself even starts
 // (session resolution, provider wiring), so the handler must be live from the very first line.
 installShutdownSignalHandlers();
+// The parent's death stops the session, mid-turn included (see `stopOnParentDeath`).
+const parentGone = new AbortController();
+stopOnParentDeath(parentGone);
 // Task 8's persistence default, the production provider inputs, the child-engine factory and the
 // fatal-line-then-exit-1 path all live in `runEmbeddedSession` now (see embedded.ts). stdout is the
 // frame stream exclusively; every diagnostic goes to stderr (WS-04 §2/§6).
@@ -164,5 +240,6 @@ const code = await runEmbeddedSession({
   writeErr: (chunk) => {
     process.stderr.write(chunk);
   },
+  signal: parentGone.signal,
 });
-process.exit(code);
+process.exit(parentGone.signal.aborted ? PARENT_GONE_EXIT_CODE : code);

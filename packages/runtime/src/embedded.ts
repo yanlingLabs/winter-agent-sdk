@@ -303,6 +303,9 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
         ...wiring.engineOptions,
         input: frameSource(opts.input, aborted),
         output,
+        // The same abort, straight to the engine as well: the frames above reach it only while the input
+        // is still open, and a host whose input has already ended (or died) still needs the session to stop.
+        ...(signal !== undefined ? { abortSignal: signal } : {}),
         provider,
         // P3 fix round 1 (RULING P3-C): no `tools` -- runEngine builds its registry-backed default.
         // `unregisteredToolExecutor: stubExecutor` keeps the scripted test doubles' non-WS-06 names
