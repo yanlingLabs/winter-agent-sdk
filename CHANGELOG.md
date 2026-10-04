@@ -4,6 +4,31 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.45
+
+### A spawned runtime stops when its host dies, even mid-turn
+
+Before, a `winter` runtime in the middle of a turn kept running when its host died. It was re-parented to
+launchd or init and went on spending tokens and running tools until the turn ended. Now the runtime
+checks its parent every 250 ms. When the host is gone, it kills every process group it started
+(background tasks, running Bash commands, stdio MCP servers, hooks), stops the turn, and exits within a
+second with code 129.
+
+- **Which runs it watches.** The watch is armed only when a host drives the session, meaning stdin is a
+  pipe or a socket. A run fed from a file or a terminal is never watched. That covers detached batch runs
+  (`nohup … &`, cron, `setsid`, systemd `Type=forking`). Set `WINTER_DISABLE_PARENT_WATCH=1` to opt out;
+  a debugger attaching on macOS re-parents the process and could otherwise trip it.
+- **Host identity.** `query()`'s spawn passes `WINTER_HOST_PID`, so a host that dies while the runtime is
+  still starting up is noticed too. A runtime launched without it falls back to the parent pid it sees at
+  startup.
+- **Unchanged.** Stdin closing on its own never counts as the host dying. Print mode, `end_input` and
+  piped files behave as before. A `SessionEnd` hook that is still running after the last turn is left to
+  finish.
+- **New `EngineOptions.abortSignal`.** It hard-stops an engine whose input has already ended: it closes
+  input, drops prompts still waiting, interrupts the turn and returns. The embedded host now passes its own
+  abort signal here, so an embedded abort drops queued prompts instead of starting a turn it would cut
+  short.
+
 ## 0.0.44
 
 ### A message sent while a turn runs is folded into that turn
