@@ -64,6 +64,16 @@ async function drain(source: AsyncIterable<WinterFrame>): Promise<WinterFrame[]>
   return out;
 }
 
+// Reads up to and including the next terminal `result`. A test whose next prompt follows this sends it
+// BETWEEN turns: a prompt the host sends while a turn still runs is folded into that turn at its next
+// tool round instead of starting its own (host-input-fold.engine.test.ts).
+async function readThroughResult(source: AsyncIterable<WinterFrame>, out: WinterFrame[]): Promise<void> {
+  for await (const f of source) {
+    out.push(f);
+    if (f.type === "data" && (f as { message: SdkMessage }).message.type === "result") return;
+  }
+}
+
 function dataMessages(frames: WinterFrame[]): SdkMessage[] {
   return frames.filter((f) => f.type === "data").map((f) => (f as { message: SdkMessage }).message);
 }
@@ -398,11 +408,14 @@ test("Ruling P1-F: maxTurns accumulates across the whole run, not per envelope â
     tools: countingExecutor,
   });
 
+  // Envelope 2 is sent once envelope 1 has its result: two envelopes, never a fold.
+  const frames: WinterFrame[] = [];
   host.output.write({ type: "user", text: "first" });
+  await readThroughResult(host.input, frames);
   host.output.write({ type: "user", text: "second" });
   host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
 
-  const frames = await drain(host.input);
+  frames.push(...(await drain(host.input)));
   await done;
 
   const msgs = dataMessages(frames);
@@ -2464,6 +2477,8 @@ test("Finding 3: multiple denials within the SAME turn all accumulate, in call o
     }
   }
 
+  // Turn 2 is sent once turn 1 has its result: two turns, never a fold.
+  await readThroughResult(host.input, seen);
   host.output.write({ type: "user", text: "again" });
   host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
 

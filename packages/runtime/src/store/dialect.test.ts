@@ -467,10 +467,19 @@ describe("engine wiring (temp WINTER_HOME, in-memory leg)", () => {
 
       const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], provider, stubExecutor, { WINTER_HOME: home });
       proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
-      proc.stdin.write(encodeFrame({ type: "user", text: "thanks" }));
-      proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
-
-      await drainAll(proc);
+      // "thanks" is sent once "go" has its result -- BETWEEN turns, so it is its own envelope (sent while
+      // the turn still ran, it would be folded into that turn at its tool round).
+      let carry = "";
+      let sentSecond = false;
+      for await (const chunk of proc.stdout) {
+        const split = splitFrames(chunk, carry);
+        carry = split.carry;
+        if (!sentSecond && split.frames.some((f) => f.type === "data" && (f as { message: { type: string } }).message.type === "result")) {
+          sentSecond = true;
+          proc.stdin.write(encodeFrame({ type: "user", text: "thanks" }));
+          proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+        }
+      }
       await proc.exited;
 
       const projectKey = compatibilityKeys(cwd).transcriptProjectKey;

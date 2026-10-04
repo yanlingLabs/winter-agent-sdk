@@ -55,12 +55,20 @@ async function run(opts: {
     tools: stubExecutor,
     ...opts.engine,
   });
-  for (const text of opts.prompts) host.output.write({ type: "user", text });
-  host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+  // Each prompt after the first is sent once the previous one has its result -- BETWEEN turns, so every
+  // prompt is its own turn (one sent while a turn runs would be folded into it at its next tool round).
+  let sent = 0;
+  const sendNext = (): void => {
+    if (sent >= opts.prompts.length) return;
+    host.output.write({ type: "user", text: opts.prompts[sent++]! });
+    if (sent === opts.prompts.length) host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+  };
+  sendNext();
   const hookCalls: HookCall[] = [];
   const frames: WinterFrame[] = [];
   for await (const f of host.input) {
     frames.push(f);
+    if (f.type === "data" && (f as { message: SdkMessage }).message.type === "result") sendNext();
     if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "hook") {
       const cf = f as ControlRequestFrame;
       const p = cf.payload as { event: string; toolName?: string; payload?: Record<string, unknown> };
