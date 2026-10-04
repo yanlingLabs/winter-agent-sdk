@@ -64,6 +64,7 @@ async function run(spawner: Spawner, home: string, followUps: string[], whileHel
   const server = holdServer();
   const firstResult = deferred();
   const messages: Array<Record<string, unknown>> = [];
+  const foldCounts: number[] = [];
   let q!: Query;
   async function* prompt(): AsyncGenerator<string> {
     yield "CALL mcp__t__hold {}";
@@ -89,11 +90,16 @@ async function run(spawner: Spawner, home: string, followUps: string[], whileHel
     },
   });
   for await (const message of q) {
+    // A consumer narrows on the frame with no cast: `count` is a number here.
+    if (message.type === "system" && message.subtype === "host_input_folded") {
+      const folded: SDKHostInputFoldedMessage = message;
+      foldCounts.push(folded.count);
+    }
     const m = message as unknown as Record<string, unknown>;
     messages.push(m);
     if (m["type"] === "result") firstResult.resolve();
   }
-  return messages;
+  return { messages, foldCounts };
 }
 
 const folds = (messages: Array<Record<string, unknown>>): SDKHostInputFoldedMessage[] =>
@@ -103,9 +109,10 @@ const results = (messages: Array<Record<string, unknown>>) => messages.filter((m
 describe.each(TOPOLOGIES)("host input sent mid-turn, through %s", (_label, makeSpawner) => {
   test("is folded into the running turn: one host_input_folded {count: 2}, ONE result", async () => {
     const home = tempDir("home");
-    const messages = await run(makeSpawner(home), home, ["first follow-up", "second follow-up"], async (q) => {
+    const { messages, foldCounts } = await run(makeSpawner(home), home, ["first follow-up", "second follow-up"], async (q) => {
       await q.supportedModels(); // its ack proves both follow-ups are already pending
     });
+    expect(foldCounts).toEqual([2]);
     const signals = folds(messages);
     expect(signals).toHaveLength(1);
     expect(signals[0]!.count).toBe(2);
@@ -120,9 +127,10 @@ describe.each(TOPOLOGIES)("host input sent mid-turn, through %s", (_label, makeS
   test("clearQueuedInput() drops what is waiting, answers how many, and the dropped inputs never run", async () => {
     const home = tempDir("home");
     let cleared: { cleared: number } | undefined;
-    const messages = await run(makeSpawner(home), home, ["dropped one", "dropped two"], async (q) => {
+    const { messages, foldCounts } = await run(makeSpawner(home), home, ["dropped one", "dropped two"], async (q) => {
       cleared = await q.clearQueuedInput!();
     });
+    expect(foldCounts).toEqual([]);
     expect(cleared).toEqual({ cleared: 2 });
     expect(folds(messages)).toHaveLength(0);
     expect(results(messages)).toHaveLength(1);
