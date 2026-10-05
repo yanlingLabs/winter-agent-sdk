@@ -4,6 +4,64 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.47
+
+### Reasoning streams to the host live, for every provider
+
+Before, a host saw a model's reasoning only once, complete, at the end of a generation
+(`system/reasoning_summary`), and only for foreign summaries. Raw exposed reasoning (DeepSeek-style
+`reasoning_content`) reached no host at all. Now every reasoning block streams as it happens, on one new
+Winter-only frame, for every provider family, Anthropic included. A host needs no dialect knowledge to
+show that the model is thinking. This follows the user's 2026-10-05 ruling, "everything that streams
+should stream", which supersedes R6-8's "the summary reaches the host once, complete" rule.
+
+- **New frame `system/reasoning_progress`** (`SDKReasoningProgressMessage`):
+  `{ block_id, phase: "start" | "delta" | "end", kind: "summary" | "update" | "exposed" | "hidden", text?, part?, provider, model, parent_tool_use_id, uuid, session_id }`.
+  Each block gets one `start`, zero or more `delta`s and exactly one `end`. The `end` also comes when the
+  stream ends, fails or is interrupted. On an interrupt, the session's own open blocks end before the
+  interrupted turn's `result`, and the abandoned stream reports nothing more. A subagent's blocks end
+  too, but their `end` frames come through the subagent's stream and may arrive after that `result`.
+  `block_id` is unique within the session. `text` rides `delta` only. `part` numbers a block's parts: each
+  distinct OpenAI `summary_index` or `content_index` gets its own number, in order of first appearance,
+  and the host joins parts with a blank line.
+- **`kind`** is what the block is so far. A block that opens before any readable text (a Responses
+  item, an Anthropic or Bedrock block) is `hidden`, and becomes `summary`, `update` or `exposed` on its
+  first non-empty delta; an empty delta changes nothing. The host keeps the last kind, which the `end`
+  repeats.
+- **Per family.** Responses (OpenAI, codex-oauth, xAI): a reasoning item opens at `output_item.added` and
+  closes at `.done`, with summary deltas carrying their part number. An encrypted-only item stays
+  `hidden`. Chat Completions: a run of `reasoning_content` / `reasoning` deltas is one `exposed` block,
+  closed when the answer begins (a chunk carrying both the last reasoning and the first answer text
+  still makes one block). Gemini: a run of thought parts is one `summary` block, with no part numbers.
+  Bedrock: a reasoning block is `summary` where a summary was asked for, else `hidden`. Anthropic: each
+  thinking block opens `hidden` under every `display` (an empty block can come back under any of them)
+  and streams its `thinking_delta` text; `redacted_thinking` stays `hidden`.
+- **Opaque material never rides it.** Signatures, encrypted content and redacted data stay in native
+  state. The frame is not gated on `includePartialMessages` (like `thinking_tokens`). A subagent's frames
+  carry its `parent_tool_use_id`, and its text crosses only under `forwardSubagentText`: without it, its
+  blocks still open, change kind and close, with no `text`.
+- **Unchanged.** The complete `system/reasoning_summary` frame is still sent once per generation. The
+  persisted thinking blocks and the provider-state sidecar are untouched.
+- **Adapters** emit a new observational `ProviderEvent`, `reasoning_progress`, beside their existing
+  reasoning events. The runtime's fold maps it to the sink's new `onReasoningProgress` and enforces the
+  one-start-one-end rule.
+
+### Claude's progress updates (`display: "updates"`)
+
+On the Claude rows that write progress updates between tool calls (Fable 5.1, Opus 5.5, Sonnet 5.5 and
+Fable 5, on both `anthropic` and `console`), an asked-for summary is now requested as
+`thinking.display: "updates"` instead of `"summarized"`, with the beta header
+`thinking-display-updates-2026-08-18`. Reasoning blocks then come back empty (a `hidden` block), and each
+progress note comes back as readable text (an `update` block). The header comes from the request body
+itself, so the value and the header always travel together, on token counts too. Opus 5 and Sonnet 5 keep
+`"summarized"`. Changing `display` costs one prompt-cache miss on an existing session.
+
+- Catalog: those eight rows' `reasoning.summaryRequest` now lists `"updates"`, cited to
+  https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05).
+  Fable 5 had no `summaryRequest` at all, so it now sends `thinking: {type: "adaptive", display: "updates"}`
+  where it sent no `thinking` field before. The catalog has no Mythos 5.1 row and no Claude 5.x row on
+  Bedrock or Vertex, so nothing else changes.
+
 ## 0.0.46
 
 0.0.45 was tagged but never published. Its release job runs the tests on Linux after restoring the
