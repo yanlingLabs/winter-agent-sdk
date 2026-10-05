@@ -1,4 +1,5 @@
-// 0.0.47: Claude's `display: "updates"` and the adapter's live `reasoning_progress` events, on the WIRE.
+// 0.0.47: Claude's `display` choice and the adapter's live `reasoning_progress` events, on the WIRE.
+// 0.0.48: the rows prefer `"summarized"`; `"updates"` is exercised on a synthetic updates-only row.
 //
 // A loopback server this file owns answers with the Messages SSE shapes the thinking page documents
 // (https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates, read 2026-10-05),
@@ -80,7 +81,26 @@ function ctx(url: string): ProviderContext {
   };
 }
 
-const catalog = loadCatalog();
+/**
+ * The compiled catalog plus ONE synthetic row: `claude-opus-5-5`'s own row under another id, its
+ * evidence listing `"updates"` WITHOUT `"summarized"`. Since 0.0.48 no real row asks for `"updates"`
+ * (user ruling 2026-10-05: they prefer `"summarized"`), and this row is what keeps the updates path --
+ * the value, its beta header and the `update` classification -- tested for a row flipped back later.
+ */
+const UPDATES_ONLY = "claude-updates-only";
+const catalog = (() => {
+  const compiled = loadCatalog();
+  const base = compiled.models.find((m) => m.key === "anthropic/claude-opus-5-5")!;
+  const summaryRequest = base.reasoning!.summaryRequest!;
+  const updatesOnly = {
+    ...base,
+    key: `anthropic/${UPDATES_ONLY}`,
+    upstreamId: UPDATES_ONLY,
+    aliases: [],
+    reasoning: { ...base.reasoning!, summaryRequest: { ...summaryRequest, value: { field: "thinking.display", values: ["updates", "omitted"] } } },
+  };
+  return { ...compiled, models: [...compiled.models, updatesOnly] };
+})();
 const adapter = () => createAnthropicMessagesAdapter({ catalog, retry: { maxRetries: 0, random: () => 0, sleep: async () => {} } });
 const request = (model: string, over: Partial<TurnRequest> = {}): TurnRequest => ({ model, messages: [{ role: "user", content: "hi" }], ...over });
 const thinkingOf = (model: string, over: Partial<TurnRequest> = {}, providerId = "anthropic") =>
@@ -94,34 +114,55 @@ async function collect(url: string, req: TurnRequest): Promise<ProviderEvent[]> 
 
 const progressOf = (events: ProviderEvent[]) => events.filter((e): e is Extract<ProviderEvent, { type: "reasoning_progress" }> => e.type === "reasoning_progress");
 
-describe('`display: "updates"` on the rows that write progress updates', () => {
-  // The docs' list: Fable 5.1, Mythos 5.1, Opus 5.5, Sonnet 5.5 and Fable 5. The catalog carries no
-  // Mythos row; each of the other four exists on both the API-key and the Console provider.
+describe('which `display` is asked for: `"summarized"` wherever the evidence lists it (0.0.48)', () => {
+  // The rows whose evidence ALSO lists "updates" (the docs' progress-update models: Fable 5.1, Opus 5.5,
+  // Sonnet 5.5 and Fable 5; the catalog has no Mythos row), on both the API-key and the Console provider.
   const updatesRows = ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5"];
 
-  test("an asked-for summary is requested as `updates` on those rows, on both providers -- and `summarized` on the Claude 5 rows without updates", () => {
+  test('an asked-for summary is `"summarized"` on every Claude 5.x row, those listing "updates" included -- on both providers', () => {
     for (const providerId of ["anthropic", "console"]) {
-      for (const model of updatesRows) expect([providerId, model, thinkingOf(model, { requestSummary: true }, providerId)?.["display"]]).toEqual([providerId, model, "updates"]);
+      for (const model of updatesRows) {
+        const row = findDescriptor(catalog, providerId, model)!;
+        // The capability stays recorded...
+        expect([model, row.reasoning?.summaryRequest?.value.values]).toEqual([model, ["summarized", "omitted", "updates"]]);
+        // ...and is not what is asked for. Fable 5 is always-on, so its field is sent even unasked-for thinking.
+        expect([providerId, model, thinkingOf(model, { requestSummary: true }, providerId)]).toEqual([providerId, model, expect.objectContaining({ type: "adaptive", display: "summarized" })]);
+      }
       // These two are not always-on: thinking rides only when asked for, and then with `summarized`.
       for (const model of ["claude-opus-5", "claude-sonnet-5"]) expect([providerId, model, thinkingOf(model, { requestSummary: true, thinking: { type: "adaptive" } }, providerId)?.["display"]]).toEqual([providerId, model, "summarized"]);
     }
   });
 
+  test('Claude Opus 4.7 / 4.8, whose default is "omitted", now ask for "summarized" when thinking is on', () => {
+    for (const providerId of ["anthropic", "console"]) {
+      for (const model of ["claude-opus-4.7", "claude-opus-4.8"]) {
+        expect([providerId, model, thinkingOf(model, { requestSummary: true, thinking: { type: "adaptive" } }, providerId)?.["display"]]).toEqual([providerId, model, "summarized"]);
+        // Not always-on: no thinking asked for, no field at all.
+        expect([providerId, model, thinkingOf(model, { requestSummary: true }, providerId)]).toEqual([providerId, model, undefined]);
+      }
+    }
+  });
+
+  test('a row listing "updates" WITHOUT "summarized" still gets `"updates"`', () => {
+    expect(thinkingOf(UPDATES_ONLY, { requestSummary: true })?.["display"]).toBe("updates");
+  });
+
   test("nothing is asked for when no summary is asked for -- the row keeps its own default", () => {
-    for (const model of updatesRows) expect([model, thinkingOf(model)?.["display"]]).toEqual([model, undefined]);
+    for (const model of [...updatesRows, UPDATES_ONLY]) expect([model, thinkingOf(model)?.["display"]]).toEqual([model, undefined]);
   });
 
   test("the beta header and the value are ONE decision: present exactly when the body says `updates`, on the turn AND the token count", async () => {
     const s = start(messageStart + ending);
+    await collect(s.url, request(UPDATES_ONLY, { requestSummary: true }));
     await collect(s.url, request("claude-opus-5-5", { requestSummary: true }));
-    await collect(s.url, request("claude-sonnet-5", { requestSummary: true, thinking: { type: "adaptive" } }));
-    await collect(s.url, request("claude-opus-5-5"));
+    await collect(s.url, request(UPDATES_ONLY));
+    await adapter().countTokens!(request(UPDATES_ONLY, { requestSummary: true }), ctx(s.url));
     await adapter().countTokens!(request("claude-opus-5-5", { requestSummary: true }), ctx(s.url));
     const betas = s.requests.map((r) => (r.headers["anthropic-beta"] ?? "").split(",").filter((b) => b.length > 0));
     const display = s.requests.map((r) => (r.body["thinking"] as { display?: unknown } | undefined)?.display);
-    expect(display).toEqual(["updates", "summarized", undefined, "updates"]);
-    expect(betas.map((b) => b.includes(THINKING_DISPLAY_UPDATES_BETA))).toEqual([true, false, false, true]);
-    expect(s.requests[3]!.path).toBe("/v1/messages/count_tokens");
+    expect(display).toEqual(["updates", "summarized", undefined, "updates", "summarized"]);
+    expect(betas.map((b) => b.includes(THINKING_DISPLAY_UPDATES_BETA))).toEqual([true, false, false, true, false]);
+    expect(s.requests.slice(3).map((r) => r.path)).toEqual(["/v1/messages/count_tokens", "/v1/messages/count_tokens"]);
   });
 
   test("`thinkingDisplayUpdatesBetaFor` reads the body alone", () => {
@@ -142,7 +183,8 @@ describe("the live reasoning stream: what each thinking block is", () => {
         toolUse(2) +
         ending,
     );
-    const events = await collect(s.url, request("claude-opus-5-5", { requestSummary: true }));
+    const events = await collect(s.url, request(UPDATES_ONLY, { requestSummary: true }));
+    expect(s.requests[0]!.body["thinking"]).toMatchObject({ display: "updates" });
     expect(progressOf(events)).toEqual([
       { type: "reasoning_progress", block: "block:0", phase: "start", kind: "hidden" },
       { type: "reasoning_progress", block: "block:0", phase: "end", kind: "hidden" },

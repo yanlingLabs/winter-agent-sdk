@@ -870,13 +870,17 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
   // `{type:"adaptive"}` with nothing attached to it, a wire change with no purpose: no display (no
   // evidence for one) and no block_binding (checked separately below).
   const summaryRequest = reasoning?.summaryRequest?.value;
-  // 0.0.47: `"updates"` (beta) where the row's own evidence lists it, else `"summarized"`. The two are
-  // either/or per request: under `"updates"` reasoning blocks come back EMPTY and only the progress
-  // notes the model writes between tool calls carry text
-  // (https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates, read 2026-10-05),
-  // which is what a host shows while the model works. Its beta header is derived from the body
-  // (`thinkingDisplayUpdatesBetaFor`), so the value never reaches the wire without it.
-  const displayValue = summaryRequest?.field === "thinking.display" ? (summaryRequest.values.includes("updates") ? "updates" : summaryRequest.values.includes("summarized") ? "summarized" : undefined) : undefined;
+  // `"summarized"` wherever the row's evidence lists it; `"updates"` (beta) only for a row that lists
+  // `"updates"` WITHOUT `"summarized"`. The two are either/or per request: under `"updates"` reasoning
+  // blocks come back EMPTY and only the progress notes the model writes between tool calls carry text
+  // (https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates, read 2026-10-05).
+  // 0.0.47 preferred `"updates"`; user ruling 2026-10-05 (0.0.48) reversed that after live tests: Claude
+  // 5.x wrote no progress update in five tool-using turns, while summarized thinking narrates what it is
+  // doing. The rows keep `"updates"` in their evidence, so the capability stays recorded and this
+  // branch, the beta pairing (`thinkingDisplayUpdatesBetaFor`, derived from the body so the value never
+  // reaches the wire without its header) and the `update` classification all stay live for a row that
+  // lists it alone.
+  const displayValue = summaryRequest?.field === "thinking.display" ? (summaryRequest.values.includes("summarized") ? "summarized" : summaryRequest.values.includes("updates") ? "updates" : undefined) : undefined;
   const canAttachDisplay = req.requestSummary === true && displayValue !== undefined;
 
   // TWO of the THREE "send an otherwise-omitted field anyway" cases (doc comment above; the third is

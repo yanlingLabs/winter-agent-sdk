@@ -15779,7 +15779,7 @@
             ]
           },
           "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"summarized\" wherever this list carries it (user ruling 2026-10-05, 0.0.48: live tests saw no progress update in five tool-using turns under \"updates\", while summarized thinking narrates what the model is doing); \"updates\" stays recorded, and is requested only by a row that lists it without \"summarized\". Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
           "confidence": "declared",
           "observedAt": "2026-10-05T00:00:00Z"
         },
@@ -15966,7 +15966,7 @@
             ]
           },
           "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"summarized\" wherever this list carries it (user ruling 2026-10-05, 0.0.48: live tests saw no progress update in five tool-using turns under \"updates\", while summarized thinking narrates what the model is doing); \"updates\" stays recorded, and is requested only by a row that lists it without \"summarized\". Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
           "confidence": "declared",
           "observedAt": "2026-10-05T00:00:00Z"
         },
@@ -16648,6 +16648,26 @@
         ],
         "continuation": "opaque-provider-state",
         "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — \"the text in a thinking block is a summary of Claude's reasoning\" and \"what you see is never the raw chain of thought\".",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinking.display",
+            "values": [
+              "summarized",
+              "omitted"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\" (\"thinking blocks contain summarized thinking text\") and \"omitted\", which is \"the default on ... Claude Opus 4.8, Claude Opus 4.7\": without asking for \"summarized\" this model's thinking streams empty. \"updates\" is not listed: the progress-updates section names no Claude 4.x model.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "effortRequest": {
           "value": {
             "field": "output_config.effort"
@@ -16790,6 +16810,26 @@
         ],
         "continuation": "opaque-provider-state",
         "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — \"the text in a thinking block is a summary of Claude's reasoning\" and \"what you see is never the raw chain of thought\".",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinking.display",
+            "values": [
+              "summarized",
+              "omitted"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\" (\"thinking blocks contain summarized thinking text\") and \"omitted\", which is \"the default on ... Claude Opus 4.8, Claude Opus 4.7\": without asking for \"summarized\" this model's thinking streams empty. \"updates\" is not listed: the progress-updates section names no Claude 4.x model.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "effortRequest": {
           "value": {
             "field": "output_config.effort"
@@ -17193,7 +17233,7 @@
             ]
           },
           "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"summarized\" wherever this list carries it (user ruling 2026-10-05, 0.0.48: live tests saw no progress update in five tool-using turns under \"updates\", while summarized thinking narrates what the model is doing); \"updates\" stays recorded, and is requested only by a row that lists it without \"summarized\". Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
           "confidence": "declared",
           "observedAt": "2026-10-05T00:00:00Z"
         },
@@ -17863,7 +17903,7 @@
             ]
           },
           "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"summarized\" wherever this list carries it (user ruling 2026-10-05, 0.0.48: live tests saw no progress update in five tool-using turns under \"updates\", while summarized thinking narrates what the model is doing); \"updates\" stays recorded, and is requested only by a row that lists it without \"summarized\". Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
           "confidence": "declared",
           "observedAt": "2026-10-05T00:00:00Z"
         },
@@ -18598,6 +18638,27 @@
           "observedAt": "2026-09-19T00:00:00Z"
         },
         "efforts": [],
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "concise",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed`. Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -19103,6 +19164,26 @@
           "high"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -19179,6 +19260,26 @@
           "high"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -19256,6 +19357,26 @@
           "high"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -19333,6 +19454,26 @@
           "high"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -19406,6 +19547,26 @@
           "high"
         ],
         "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -19483,6 +19644,26 @@
           "high"
         ],
         "defaultEffort": "none",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -19558,6 +19739,26 @@
           "medium",
           "high"
         ],
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -19633,6 +19834,26 @@
           "high",
           "xhigh"
         ],
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -19708,6 +19929,26 @@
           "medium",
           "high"
         ],
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -19785,6 +20026,26 @@
           "high"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -19861,6 +20122,26 @@
           "high"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -19936,6 +20217,26 @@
           "high"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -20014,6 +20315,26 @@
           "xhigh"
         ],
         "defaultEffort": "none",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -20092,6 +20413,26 @@
           "xhigh"
         ],
         "defaultEffort": "none",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -20170,6 +20511,26 @@
           "xhigh"
         ],
         "defaultEffort": "none",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -20240,6 +20601,26 @@
           "xhigh"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -20318,6 +20699,26 @@
           "xhigh"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -20397,6 +20798,26 @@
           "max"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -20476,6 +20897,26 @@
           "max"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -20555,6 +20996,26 @@
           "max"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed` (\"gpt-5 series do not support concise\", so `concise` is not listed). Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -21203,6 +21664,27 @@
           "observedAt": "2026-09-19T00:00:00Z"
         },
         "efforts": [],
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "concise",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed`. Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -21419,6 +21901,27 @@
           "high"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"you can use the reasoning summary parameter to receive summaries of the model's chain of thought reasoning\"; extracting raw reasoning any other way is not supported.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "concise",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning (read 2026-10-05) — \"When using the latest reasoning models with the Responses API you can use the reasoning summary parameter\"; the page's API and feature support table marks Reasoning summary as supported for this model. Values from the page's example, `auto`, `concise` or `detailed`. Responses API only: the adapter's Chat Completions leg sends no `reasoning.summary`. Not supported with multi-agent orchestration, which Winter does not enable.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -33498,7 +34001,7 @@
             ]
           },
           "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"summarized\" wherever this list carries it (user ruling 2026-10-05, 0.0.48: live tests saw no progress update in five tool-using turns under \"updates\", while summarized thinking narrates what the model is doing); \"updates\" stays recorded, and is requested only by a row that lists it without \"summarized\". Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
           "confidence": "declared",
           "observedAt": "2026-10-05T00:00:00Z"
         },
@@ -33685,7 +34188,7 @@
             ]
           },
           "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"summarized\" wherever this list carries it (user ruling 2026-10-05, 0.0.48: live tests saw no progress update in five tool-using turns under \"updates\", while summarized thinking narrates what the model is doing); \"updates\" stays recorded, and is requested only by a row that lists it without \"summarized\". Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
           "confidence": "declared",
           "observedAt": "2026-10-05T00:00:00Z"
         },
@@ -34367,6 +34870,26 @@
         ],
         "continuation": "opaque-provider-state",
         "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — \"the text in a thinking block is a summary of Claude's reasoning\" and \"what you see is never the raw chain of thought\".",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinking.display",
+            "values": [
+              "summarized",
+              "omitted"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\" (\"thinking blocks contain summarized thinking text\") and \"omitted\", which is \"the default on ... Claude Opus 4.8, Claude Opus 4.7\": without asking for \"summarized\" this model's thinking streams empty. \"updates\" is not listed: the progress-updates section names no Claude 4.x model.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "effortRequest": {
           "value": {
             "field": "output_config.effort"
@@ -34509,6 +35032,26 @@
         ],
         "continuation": "opaque-provider-state",
         "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — \"the text in a thinking block is a summary of Claude's reasoning\" and \"what you see is never the raw chain of thought\".",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinking.display",
+            "values": [
+              "summarized",
+              "omitted"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\" (\"thinking blocks contain summarized thinking text\") and \"omitted\", which is \"the default on ... Claude Opus 4.8, Claude Opus 4.7\": without asking for \"summarized\" this model's thinking streams empty. \"updates\" is not listed: the progress-updates section names no Claude 4.x model.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "effortRequest": {
           "value": {
             "field": "output_config.effort"
@@ -34912,7 +35455,7 @@
             ]
           },
           "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"summarized\" wherever this list carries it (user ruling 2026-10-05, 0.0.48: live tests saw no progress update in five tool-using turns under \"updates\", while summarized thinking narrates what the model is doing); \"updates\" stays recorded, and is requested only by a row that lists it without \"summarized\". Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
           "confidence": "declared",
           "observedAt": "2026-10-05T00:00:00Z"
         },
@@ -35568,7 +36111,7 @@
             ]
           },
           "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"summarized\" wherever this list carries it (user ruling 2026-10-05, 0.0.48: live tests saw no progress update in five tool-using turns under \"updates\", while summarized thinking narrates what the model is doing); \"updates\" stays recorded, and is requested only by a row that lists it without \"summarized\". Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
           "confidence": "declared",
           "observedAt": "2026-10-05T00:00:00Z"
         },
@@ -51257,7 +51800,26 @@
           "high"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://ai.google.dev/api/generate-content (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"Indicates whether to include thoughts in the response. If true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `google/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -51377,6 +51939,25 @@
           "medium",
           "high"
         ],
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://ai.google.dev/api/generate-content (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"Indicates whether to include thoughts in the response. If true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `google/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "opaque-provider-state"
       },
       "pricing": {
@@ -51498,7 +52079,26 @@
           "high"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://ai.google.dev/api/generate-content (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"Indicates whether to include thoughts in the response. If true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `google/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -51621,7 +52221,26 @@
           "high"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://ai.google.dev/api/generate-content (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"Indicates whether to include thoughts in the response. If true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `google/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -51734,6 +52353,25 @@
           "medium",
           "high"
         ],
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://ai.google.dev/api/generate-content (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"Indicates whether to include thoughts in the response. If true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `google/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "opaque-provider-state"
       },
       "pricing": {
@@ -51848,7 +52486,26 @@
           "high"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://ai.google.dev/api/generate-content (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"Indicates whether to include thoughts in the response. If true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `google/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -51962,7 +52619,26 @@
           "high"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://ai.google.dev/api/generate-content (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"Indicates whether to include thoughts in the response. If true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `google/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -52076,7 +52752,26 @@
           "high"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://ai.google.dev/api/generate-content (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"Indicates whether to include thoughts in the response. If true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `google/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -73267,6 +73962,25 @@
           "medium",
           "high"
         ],
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "pricing": {
@@ -73353,6 +74067,25 @@
           "high"
         ],
         "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "pricing": {
@@ -73442,6 +74175,25 @@
           "high"
         ],
         "defaultEffort": "none",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "pricing": {
@@ -73533,6 +74285,25 @@
           "xhigh"
         ],
         "defaultEffort": "none",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "pricing": {
@@ -73620,6 +74391,25 @@
           "high",
           "xhigh"
         ],
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "pricing": {
@@ -73707,6 +74497,25 @@
           "high",
           "xhigh"
         ],
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "pricing": {
@@ -73810,7 +74619,26 @@
           "xhigh"
         ],
         "continuation": "none",
-        "defaultEffort": "none"
+        "defaultEffort": "none",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -73950,7 +74778,26 @@
           "xhigh"
         ],
         "continuation": "none",
-        "defaultEffort": "none"
+        "defaultEffort": "none",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -74090,7 +74937,26 @@
           "xhigh"
         ],
         "continuation": "none",
-        "defaultEffort": "none"
+        "defaultEffort": "none",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -74206,7 +75072,26 @@
           "xhigh"
         ],
         "continuation": "none",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -74338,7 +75223,26 @@
           "xhigh"
         ],
         "continuation": "none",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -74461,7 +75365,26 @@
           "xhigh"
         ],
         "continuation": "none",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -74601,7 +75524,26 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -74743,7 +75685,26 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -74885,7 +75846,26 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -75027,7 +76007,26 @@
           "max"
         ],
         "continuation": "opaque-provider-state",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -75721,6 +76720,25 @@
           "medium",
           "high"
         ],
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — summary content appears \"in the `summary` array in the `reasoning` output item\" and is \"not included unless you explicitly opt in\"; the raw chain is never returned. Paired with `summaryRequest`, as on the `codex-oauth` and `openai/o4-mini` rows.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning (read 2026-10-05) — reasoning summaries are opt-in on the Responses API through `reasoning.summary`: \"To access the most detailed summarizer available for a model, set the value of this parameter to `auto`.\" Only `auto` is recorded: the guide says summarizer support differs per model, and `auto` is the value it gives for every one. The same field on the same wire as `codex-oauth/gpt-5.6-*` and `openai/o4-mini`. The guide also notes an organization \"may need to complete organization verification\" for summaries.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "pricing": {
@@ -101115,6 +102133,25 @@
           "observedAt": "2026-09-19T00:00:00Z"
         },
         "efforts": [],
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"If true, the model will include its thoughts in the response ... If this is true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `vertex/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -101187,6 +102224,25 @@
           "observedAt": "2026-09-19T00:00:00Z"
         },
         "efforts": [],
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"If true, the model will include its thoughts in the response ... If this is true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `vertex/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -101372,6 +102428,25 @@
           "high"
         ],
         "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"If true, the model will include its thoughts in the response ... If this is true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `vertex/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -101459,6 +102534,25 @@
           "high"
         ],
         "defaultEffort": "minimal",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"If true, the model will include its thoughts in the response ... If this is true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `vertex/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -101545,6 +102639,25 @@
           "high"
         ],
         "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"If true, the model will include its thoughts in the response ... If this is true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `vertex/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -101623,6 +102736,25 @@
           "high"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"If true, the model will include its thoughts in the response ... If this is true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `vertex/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -101701,6 +102833,25 @@
           "high"
         ],
         "defaultEffort": "minimal",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"If true, the model will include its thoughts in the response ... If this is true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `vertex/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -101779,6 +102930,25 @@
           "high"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"If true, the model will include its thoughts in the response ... If this is true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `vertex/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -101856,6 +103026,25 @@
           "high"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"If true, the model will include its thoughts in the response ... If this is true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `vertex/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -101933,6 +103122,25 @@
           "high"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"If true, the model will include its thoughts in the response ... If this is true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `vertex/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],
@@ -102012,6 +103220,25 @@
           "high"
         ],
         "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — thought summaries \"display intermediate reasoning steps\"; summary parts are marked `thought: true` and the underlying chain is not exposed.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerationConfig (read 2026-10-05) — `ThinkingConfig.includeThoughts`: \"If true, the model will include its thoughts in the response ... If this is true, thoughts are returned only when available.\"; https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking (read 2026-10-05) — \"Thought summaries are supported in Gemini 2.5 and later models\", and this model is in that page's thinking list. The field is a BOOLEAN, recorded as its single enabling spelling, as on `vertex/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "continuation": "none"
       },
       "unsupportedParameters": [],

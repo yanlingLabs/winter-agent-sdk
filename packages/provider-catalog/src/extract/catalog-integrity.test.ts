@@ -1153,6 +1153,9 @@ describe("review round 1 — the three Importants, pinned where they broke", () 
       const expected: Record<string, string> = {
         "anthropic-messages": "thinking.display",
         "openai-responses": "reasoning.summary",
+        // 0.0.48: Azure's adapter routes a reasoning model to the Responses API, whose summary control it
+        // documents as the same `reasoning.summary` (azure-openai rows' own sourceRef).
+        "azure-openai": "reasoning.summary",
         "google-generate-content": "thinkingConfig.includeThoughts",
       };
       const protocol = ADAPTER_PROTOCOL[catalog.providers.find((p) => p.id === model.providerId)!.adapterId]!;
