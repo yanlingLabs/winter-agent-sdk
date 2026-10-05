@@ -4,6 +4,72 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.48
+
+### Claude asks for summarized thinking again, not progress updates
+
+0.0.47 moved eight Claude rows to `thinking.display: "updates"`. Live tests then showed Claude 5.x wrote
+no progress update at all in five tool-using turns under it, while summarized thinking narrates what the
+model is doing ("I should check the project files…"), which a host can turn into a title. By user ruling
+(2026-10-05), those rows ask for `"summarized"` again: `anthropic/` and `console/` × Fable 5.1, Opus 5.5,
+Sonnet 5.5 and Fable 5. Fable 5, which is always-on, sends `thinking: {type: "adaptive", display: "summarized"}`.
+No `thinking-display-updates-2026-08-18` header is sent for them any more.
+
+- **The capability stays.** The rows' evidence still lists `"updates"`. The adapter now prefers
+  `"summarized"` whenever a row's evidence lists it, and asks for `"updates"` only for a row that lists
+  it without `"summarized"`. The beta pairing (the header derived from the body) and the `update`
+  classification are unchanged, so a row can be flipped back by its evidence alone.
+
+### Readable reasoning is requested wherever the provider can return it
+
+Every reasoning model now asks for a readable summary where its provider's API documents one, so its
+thinking streams to the host as `system/reasoning_progress` text instead of an empty `hidden` block. An
+adapter asks only where the row's own `reasoning.summaryRequest` evidence says how, so this is catalog
+evidence (paired with `readableState: "summary"`, the catalog's convention), cited to each provider's
+docs, read 2026-10-05:
+
+- **OpenAI API** (17 rows: GPT-5 through 5.6 including pro and codex variants, and o3): `reasoning.summary:
+  "auto"`, the value OpenAI's reasoning guide gives for every model. Before, only o4-mini and the GPT-6
+  rows asked. The `codex-oauth` twins already did. o3-mini is left without: no summarizer is documented
+  for it.
+- **An organization not verified for summaries keeps working.** OpenAI's guide says an organization "may
+  need to complete organization verification" for summaries; an unverified one is refused with a 400
+  saying "Your organization must be verified to generate reasoning summaries". On every Responses
+  provider (OpenAI, Azure, codex-oauth, xAI), a request refused that way before its first byte is
+  retried once at once without `reasoning.summary`, and the turn runs without readable reasoning. That
+  refusal is the account's, so it is remembered per connection (provider, endpoint, model) for an hour,
+  and later turns send no summary and pay no failed request; after the hour the summary is asked for
+  again, so an organization verified meanwhile gets it back with no restart. Any OTHER 400 naming
+  `param: "reasoning.summary"` (a value the model does not take) is also retried once without it, but
+  never remembered, so a catalog mistake stays visible on every turn. Each is logged once per connection
+  as `provider.reasoning_summary_dropped` (reason `reasoning_summary_refused` or
+  `reasoning_summary_value_refused`), naming the provider and model only. Any other 400 is not retried,
+  and a refusal arriving after the stream has begun is never replayed.
+- **No summary at effort `none`.** A turn at reasoning effort `"none"` asks for no summary: the model does
+  not reason, so there is nothing to summarize.
+- **Azure OpenAI** (23 rows): `reasoning.summary` on the Responses leg, for every model Azure's support
+  table marks with reasoning summaries (`auto`; the gpt-5 series lists no `concise`). Left without: o1,
+  o3-mini and o3-pro (marked unsupported), the GPT-6 rows (their table has no summary row), and
+  gpt-chat-latest, gpt-oss-* and o1-mini (not in either table). The adapter routes by the profile's
+  `apiVersion`: the preview version takes the Responses path, which sends it; the classic deployment path
+  is Chat Completions, which sends no summary field.
+- **Gemini API** (8 rows) and **Vertex** (11 rows): `thinkingConfig.includeThoughts: true` on every Gemini
+  2.5+ row ("Thought summaries are supported in Gemini 2.5 and later models"; "If true, thoughts are
+  returned only when available"). Gemma 4 is left without: it is in neither thinking list.
+- **Claude Opus 4.7 and 4.8** (`anthropic`, `console`): `display: "summarized"`, since their default is
+  `"omitted"`. Opus/Sonnet 4.5 and 4.6 already return summarized thinking by default. Fable 5's rows,
+  which asked for a summary without saying it is readable, gain `readableState: "summary"` too.
+- **Unchanged, by evidence.** xAI: only grok-4.7 is documented as returning reasoning summaries, and it
+  already asked. `xai-oauth` speaks Chat Completions, where any reasoning text arrives as `exposed`.
+  Chat Completions providers: exposed reasoning (`reasoning_content` / `reasoning`) needs no request and
+  nothing gates it off. Anthropic-dialect third parties (`deepseek-anthropic`, `zai-anthropic`, …): their
+  thinking blocks already stream as text whenever the model writes it; `display` is Anthropic's own
+  field and is not sent to them. Bedrock: the only reasoning rows are two Nova rows with no documented
+  summary.
+- The integrity test's summary-field map gains `azure-openai` (`reasoning.summary`), and a new
+  conformance test pins every reasoning row of these families that asks for nothing, each with its
+  reason.
+
 ## 0.0.47
 
 ### Reasoning streams to the host live, for every provider
