@@ -44,7 +44,7 @@ import {
   identityFor,
   imageDataUrl,
   isEncryptedContentRejection,
-  isReasoningSummaryRejection,
+  reasoningSummaryRejection,
   makeRetryPolicy,
   mapEffortAgainst,
   openStream,
@@ -1194,7 +1194,7 @@ export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: Abor
   // again -- every later request would otherwise pay one failed 400 first.
   const summaryKey = reasoningSummaryKey(plan);
   let body = withoutKnownUndecryptable(plan.body);
-  if (SUMMARY_REFUSED.has(summaryKey)) body = withoutReasoningSummary(body) ?? body;
+  if (summaryRefusedRecently(summaryKey)) body = withoutReasoningSummary(body) ?? body;
   let droppedReplay = false;
   let droppedSummary = false;
   for (;;) {
@@ -1233,17 +1233,27 @@ export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: Abor
       // than failing outright; the stored state is untouched, so a later request replays it again.
       // Never twice: `droppedReplay` ends the loop on the next refusal of any kind.
       //
-      // 0.0.48: likewise ONE retry without `reasoning.summary` when the endpoint refused it (an
-      // organization not verified for reasoning summaries). Pre-stream for the same reason, so nothing is
-      // replayed; the turn runs without readable reasoning rather than failing on every request. The
-      // refusal is remembered for this connection and model for the life of the process, logged once.
-      if (!droppedSummary && isReasoningSummaryRejection(err)) {
+      // 0.0.48: likewise ONE retry without `reasoning.summary` when the endpoint refused it. Pre-stream
+      // for the same reason, so nothing is replayed; the turn runs without readable reasoning rather than
+      // failing. An organization not verified for summaries (`"verification"`) is a fact about the
+      // ACCOUNT: remembered for this connection and model for `SUMMARY_REFUSAL_TTL_MS`, so later turns pay
+      // no failed request, and logged once per key. A refused VALUE (`"value"`: the model does not take
+      // the value the catalog chose) is a catalog mistake: worked around for this request only, never
+      // remembered, so it stays visible on every turn, and logged once per key under its own reason.
+      const summaryRefusal = droppedSummary ? undefined : reasoningSummaryRejection(err);
+      if (summaryRefusal !== undefined) {
         const stripped = withoutReasoningSummary(body);
         if (stripped !== undefined) {
           droppedSummary = true;
           body = stripped;
-          if (rememberSummaryRefused(summaryKey)) {
-            plan.ctx.log({ kind: "provider.reasoning_summary_dropped", providerId: plan.ctx.connection.providerId, model: plan.model, detail: { reason: "reasoning_summary_refused" } });
+          const firstTime = summaryRefusal === "verification" ? rememberSummaryRefused(summaryKey) : firstValueRefusal(summaryKey);
+          if (firstTime) {
+            plan.ctx.log({
+              kind: "provider.reasoning_summary_dropped",
+              providerId: plan.ctx.connection.providerId,
+              model: plan.model,
+              detail: { reason: summaryRefusal === "verification" ? "reasoning_summary_refused" : "reasoning_summary_value_refused" },
+            });
           }
           continue;
         }
@@ -1345,29 +1355,54 @@ function withoutKnownUndecryptable(body: string): string {
 }
 
 /**
- * 0.0.48: the connections (provider, endpoint URL, model) whose endpoint refused `reasoning.summary`,
- * remembered for the process and bounded (oldest forgotten first). The URL is part of the key because
- * the refusal is the ACCOUNT's (an unverified organization): two Azure resources, or an API key and a
- * proxy, can answer differently for the same model.
+ * 0.0.48: the connections (provider, endpoint URL, model) whose ACCOUNT was refused reasoning summaries
+ * (an organization not verified for them), each until its expiry -- bounded, oldest forgotten first.
+ * The URL is part of the key because the refusal is the account's: two Azure resources, or an API key
+ * and a proxy, can answer differently for the same model. The TTL means a user who verifies their
+ * organization mid-process gets summaries back within the hour, with no restart.
  */
-const SUMMARY_REFUSED = new Set<string>();
+export const SUMMARY_REFUSAL_TTL_MS = 60 * 60 * 1000;
+const SUMMARY_REFUSED = new Map<string, number>();
 const SUMMARY_REFUSED_MAX = 1_024;
+/** Value refusals already logged, per key: a log line, never a memory (the request still asks each turn). */
+const SUMMARY_VALUE_LOGGED = new Set<string>();
+let summaryClock: () => number = () => Date.now();
 
 function reasoningSummaryKey(plan: ResponsesTurnPlan): string {
   return `${plan.ctx.connection.providerId}\u0000${plan.url}\u0000${plan.model}`;
 }
 
-/** Records a refusal; true when the key is new (the one time it is logged). */
+/** Whether this key's account was refused summaries and the refusal has not yet expired. */
+function summaryRefusedRecently(key: string): boolean {
+  const expiresAt = SUMMARY_REFUSED.get(key);
+  if (expiresAt === undefined) return false;
+  if (summaryClock() < expiresAt) return true;
+  SUMMARY_REFUSED.delete(key);
+  return false;
+}
+
+/** Records an account refusal; true when the key had none in force (the time it is logged). */
 function rememberSummaryRefused(key: string): boolean {
-  if (SUMMARY_REFUSED.has(key)) return false;
-  SUMMARY_REFUSED.add(key);
-  if (SUMMARY_REFUSED.size > SUMMARY_REFUSED_MAX) SUMMARY_REFUSED.delete(SUMMARY_REFUSED.values().next().value!);
+  const fresh = !summaryRefusedRecently(key);
+  SUMMARY_REFUSED.delete(key);
+  SUMMARY_REFUSED.set(key, summaryClock() + SUMMARY_REFUSAL_TTL_MS);
+  if (SUMMARY_REFUSED.size > SUMMARY_REFUSED_MAX) SUMMARY_REFUSED.delete(SUMMARY_REFUSED.keys().next().value!);
+  return fresh;
+}
+
+/** True the first time a value refusal is seen for a key (the one time it is logged). */
+function firstValueRefusal(key: string): boolean {
+  if (SUMMARY_VALUE_LOGGED.has(key)) return false;
+  SUMMARY_VALUE_LOGGED.add(key);
+  if (SUMMARY_VALUE_LOGGED.size > SUMMARY_REFUSED_MAX) SUMMARY_VALUE_LOGGED.delete(SUMMARY_VALUE_LOGGED.values().next().value!);
   return true;
 }
 
-/** Test-only: forgets every remembered refusal, so one test's memory never leaks into another's. */
-export function resetReasoningSummaryRefusalsForTest(): void {
+/** Test-only: forgets every remembered refusal and restores the real clock, so tests never leak into each other. */
+export function resetReasoningSummaryRefusalsForTest(clock?: () => number): void {
   SUMMARY_REFUSED.clear();
+  SUMMARY_VALUE_LOGGED.clear();
+  summaryClock = clock ?? (() => Date.now());
 }
 
 /**

@@ -1,13 +1,13 @@
 // 0.0.48: an endpoint that refuses `reasoning.summary` (an OpenAI organization not verified for
 // reasoning summaries) costs ONE failed request per connection and model, not one per turn: the turn is
-// retried once without the summary, pre-stream, and the refusal is remembered for the process.
+// retried once without the summary, pre-stream, and an ACCOUNT refusal is remembered for an hour.
 //
 // On the WIRE: a loopback server this file owns answers each request from a script, and every case
 // asserts what the server received and what the adapter yielded. Hermetic: 127.0.0.1:0 only.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { serve } from "bun";
-import { createResponsesAdapter, resetReasoningSummaryRefusalsForTest } from "./responses.ts";
-import { httpErrorFrom, isReasoningSummaryRejection } from "./shared.ts";
+import { SUMMARY_REFUSAL_TTL_MS, createResponsesAdapter, resetReasoningSummaryRefusalsForTest } from "./responses.ts";
+import { httpErrorFrom, reasoningSummaryRejection, resolveReasoning } from "./shared.ts";
 import { FAST_RETRY, descriptor, testContext } from "./testing.ts";
 import type { ProviderEvent } from "../../types.ts";
 
@@ -78,22 +78,37 @@ async function turn(url: string, model: string, logs: Array<{ kind: string; prov
 
 const reasoningOf = (body: Record<string, unknown>) => body["reasoning"];
 
-describe("recognising the refusal: narrow, typed, read off the full body", () => {
-  const classify = async (status: number, body: string) => isReasoningSummaryRejection(await httpErrorFrom(new Response(body, { status })));
+/** A refusal of the VALUE the catalog chose -- the field is named, the account is fine. */
+const VALUE_REFUSAL = JSON.stringify({ error: { message: "Unsupported value: 'auto' is not supported with the 'gpt-5.5' model.", type: "invalid_request_error", param: "reasoning.summary", code: "unsupported_value" } });
+const valueRefused: Answer = { status: 400, body: VALUE_REFUSAL };
 
-  test("the organization-verification refusal is one, by its `param` or by its message", async () => {
-    expect(await classify(400, VERIFICATION_REFUSAL)).toBe(true);
+describe("recognising the refusal: narrow, typed, read off the full body", () => {
+  const classify = async (status: number, body: string) => reasoningSummaryRejection(await httpErrorFrom(new Response(body, { status })));
+
+  test("the organization-verification refusal is the ACCOUNT's, by its message -- with or without the `param`", async () => {
+    expect(await classify(400, VERIFICATION_REFUSAL)).toBe("verification");
     // A proxy that drops `param` still carries the message.
-    expect(await classify(400, JSON.stringify({ error: { message: "Your organization must be verified to generate reasoning summaries.", type: "invalid_request_error", param: null, code: null } }))).toBe(true);
-    // Any refusal of the field itself (a value the model does not take).
-    expect(await classify(400, JSON.stringify({ error: { message: "Unsupported value: 'concise' is not supported with this model.", type: "invalid_request_error", param: "reasoning.summary", code: "unsupported_value" } }))).toBe(true);
+    expect(await classify(400, JSON.stringify({ error: { message: "Your organization must be verified to generate reasoning summaries.", type: "invalid_request_error", param: null, code: null } }))).toBe("verification");
   });
 
-  test("nothing else is: another field, a stray mention of summaries, a non-JSON body, another status", async () => {
-    expect(await classify(400, JSON.stringify({ error: { message: "Unsupported value: 'minimal'", type: "invalid_request_error", param: "reasoning.effort", code: "unsupported_value" } }))).toBe(false);
-    expect(await classify(400, JSON.stringify({ error: { message: "The reasoning summary of your request was too long.", type: "invalid_request_error", param: "input", code: null } }))).toBe(false);
-    expect(await classify(400, "Your organization must be verified to generate reasoning summaries.")).toBe(false);
-    expect(await classify(403, VERIFICATION_REFUSAL)).toBe(false);
+  test("any other refusal naming `reasoning.summary` is a refused VALUE", async () => {
+    expect(await classify(400, VALUE_REFUSAL)).toBe("value");
+  });
+
+  test("nothing else is either: another field, a stray mention of summaries, a non-JSON body, another status", async () => {
+    expect(await classify(400, JSON.stringify({ error: { message: "Unsupported value: 'minimal'", type: "invalid_request_error", param: "reasoning.effort", code: "unsupported_value" } }))).toBeUndefined();
+    expect(await classify(400, JSON.stringify({ error: { message: "The reasoning summary of your request was too long.", type: "invalid_request_error", param: "input", code: null } }))).toBeUndefined();
+    expect(await classify(400, "Your organization must be verified to generate reasoning summaries.")).toBeUndefined();
+    expect(await classify(403, VERIFICATION_REFUSAL)).toBeUndefined();
+  });
+});
+
+describe("no summary is asked for at effort `none`", () => {
+  test("`resolveReasoning` drops it there, and only there", () => {
+    const row = descriptor({ key: "openai/gpt-5.5", upstreamId: "gpt-5.5", efforts: ["none", "low", "medium"], readableState: "summary", summaryValues: ["auto"] });
+    const plan = (effort: "none" | "low") => resolveReasoning({ model: "gpt-5.5", messages: [], effort: effort as never, requestSummary: true }, row);
+    expect(plan("none").summary).toBeUndefined();
+    expect(plan("low").summary).toBe("auto");
   });
 });
 
@@ -117,6 +132,34 @@ describe("the retry and its memory", () => {
     await turn(s.url, "gpt-5.5", logs);
     await turn(s.url, "gpt-5.5", logs);
     await turn(s.url, "gpt-5.4", logs);
+    expect(s.bodies.map(reasoningOf)).toEqual([{ effort: "medium", summary: "auto" }, { effort: "medium" }, { effort: "medium" }, { effort: "medium", summary: "auto" }]);
+    expect(logs.filter((l) => l.kind === "provider.reasoning_summary_dropped")).toHaveLength(1);
+  });
+
+  test("a refused VALUE is retried without the summary on EVERY turn -- never remembered, logged once under its own reason", async () => {
+    const s = start((i) => (i % 2 === 0 ? valueRefused : ok));
+    const logs: Array<{ kind: string; providerId: string; model?: string }> = [];
+    await turn(s.url, "gpt-5.5", logs);
+    const events = await turn(s.url, "gpt-5.5", logs);
+    // Each turn asks again, is refused, and runs without: the catalog mistake stays visible on the wire.
+    expect(s.bodies.map(reasoningOf)).toEqual([{ effort: "medium", summary: "auto" }, { effort: "medium" }, { effort: "medium", summary: "auto" }, { effort: "medium" }]);
+    expect(events.at(-1)).toEqual({ type: "done", stopReason: "end_turn" });
+    expect(logs.filter((l) => l.kind === "provider.reasoning_summary_dropped")).toEqual([
+      { kind: "provider.reasoning_summary_dropped", providerId: "openai", model: "gpt-5.5", detail: { reason: "reasoning_summary_value_refused" } } as never,
+    ]);
+  });
+
+  test("the account refusal EXPIRES: within the hour no summary is sent; after it the summary is asked for again", async () => {
+    let now = 1_000_000;
+    resetReasoningSummaryRefusalsForTest(() => now);
+    const s = start((i) => (i === 0 ? refused : ok));
+    const logs: Array<{ kind: string; providerId: string; model?: string }> = [];
+    await turn(s.url, "gpt-5.5", logs);
+    now += SUMMARY_REFUSAL_TTL_MS - 1;
+    await turn(s.url, "gpt-5.5", logs);
+    now += 2;
+    // The user verified their organization meanwhile: the summary is back, with no restart.
+    await turn(s.url, "gpt-5.5", logs);
     expect(s.bodies.map(reasoningOf)).toEqual([{ effort: "medium", summary: "auto" }, { effort: "medium" }, { effort: "medium" }, { effort: "medium", summary: "auto" }]);
     expect(logs.filter((l) => l.kind === "provider.reasoning_summary_dropped")).toHaveLength(1);
   });

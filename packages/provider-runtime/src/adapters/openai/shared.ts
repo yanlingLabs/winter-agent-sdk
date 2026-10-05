@@ -475,8 +475,10 @@ export function resolveReasoning(req: TurnRequest, descriptor: WinterModelDescri
   // which values the model accepts. Guessing a value is how a request 400s on a model that has the
   // field but not that member.
   const summaryEvidence = reasoningEvidence?.summaryRequest?.value;
+  // 0.0.48: and never at effort `"none"` -- the model does not reason, so there is nothing to summarize,
+  // and whether an endpoint accepts the pair is unverified.
   const summary =
-    req.requestSummary === true && reasoningRequested && summaryEvidence !== undefined && summaryEvidence.field === "reasoning.summary" && summaryEvidence.values.length > 0
+    req.requestSummary === true && reasoningRequested && effort !== "none" && summaryEvidence !== undefined && summaryEvidence.field === "reasoning.summary" && summaryEvidence.values.length > 0
       ? summaryEvidence.values[0]
       : undefined;
 
@@ -822,7 +824,8 @@ export async function httpErrorFrom(response: Response): Promise<ProviderRequest
   const body = await response.text().catch(() => "");
   const error = new ProviderRequestError(normalizeHttpError(response.status, response.headers, body));
   if (isEncryptedContentRefusal(response.status, body)) ENCRYPTED_CONTENT_REFUSALS.add(error);
-  if (isReasoningSummaryRefusal(response.status, body)) REASONING_SUMMARY_REFUSALS.add(error);
+  const summaryRefusal = reasoningSummaryRefusal(response.status, body);
+  if (summaryRefusal !== undefined) REASONING_SUMMARY_REFUSALS.set(error, summaryRefusal);
   return error;
 }
 
@@ -845,37 +848,47 @@ export function isEncryptedContentRejection(err: unknown): boolean {
 }
 
 /**
- * 0.0.48: the endpoint refused the request's `reasoning.summary`. OpenAI answers an organization that
- * is not verified for reasoning summaries with a 400 in its standard error envelope, naming the field
- * (`"param": "reasoning.summary"`) and saying why ("Your organization must be verified to generate
- * reasoning summaries..."); the reasoning guide warns of it ("you may need to complete organization
- * verification", https://developers.openai.com/api/docs/guides/reasoning, read 2026-10-05). Azure, xAI
- * and the codex backend speak the same envelope.
+ * 0.0.48: the endpoint refused the request's `reasoning.summary`, in one of two ways:
  *
- * NARROW, like the encrypted-content match above: a 400 whose PARSED envelope names `reasoning.summary`
- * as its `param`, or whose message is the organization-verification refusal for reasoning summaries.
- * Nothing else -- an unrelated 400 that merely mentions a summary somewhere does not match. Read off the
- * FULL body while it is in hand; the body is never logged and the error keeps only its capped message.
+ *   - `"verification"`: the ACCOUNT may not have summaries -- OpenAI answers an organization that is not
+ *     verified for reasoning summaries with a 400 whose message says so ("Your organization must be
+ *     verified to generate reasoning summaries..."; the reasoning guide warns of it, "you may need to
+ *     complete organization verification", https://developers.openai.com/api/docs/guides/reasoning,
+ *     read 2026-10-05). A fact about the account, so the turn driver remembers it for a while;
+ *   - `"value"`: any OTHER 400 whose error envelope names `param: "reasoning.summary"` -- the model does
+ *     not take the value the catalog chose ("Unsupported value: 'auto' ..."). A catalog mistake, so it is
+ *     worked around per request but never remembered, and stays visible.
+ *
+ * Azure, xAI and the codex backend speak the same envelope. NARROW, like the encrypted-content match
+ * above: an unrelated 400 that merely mentions a summary somewhere is neither. Read off the FULL body
+ * while it is in hand; the body is never logged and the error keeps only its capped message.
  */
-const REASONING_SUMMARY_REFUSALS = new WeakSet<Error>();
+export type ReasoningSummaryRefusal = "verification" | "value";
 
-function isReasoningSummaryRefusal(status: number, body: string): boolean {
-  if (status !== 400) return false;
+const REASONING_SUMMARY_REFUSALS = new WeakMap<Error, ReasoningSummaryRefusal>();
+
+function reasoningSummaryRefusal(status: number, body: string): ReasoningSummaryRefusal | undefined {
+  if (status !== 400) return undefined;
   let envelope: unknown;
   try {
     envelope = JSON.parse(body);
   } catch {
-    return false;
+    return undefined;
   }
   const error = envelope !== null && typeof envelope === "object" ? (envelope as { error?: unknown }).error : undefined;
-  if (error === null || typeof error !== "object") return false;
+  if (error === null || typeof error !== "object") return undefined;
   const { param, message } = error as { param?: unknown; message?: unknown };
-  if (param === "reasoning.summary") return true;
-  return typeof message === "string" && /organi[sz]ation must be verified/i.test(message) && /reasoning summar/i.test(message);
+  if (typeof message === "string" && /organi[sz]ation must be verified/i.test(message) && /reasoning summar/i.test(message)) return "verification";
+  return param === "reasoning.summary" ? "value" : undefined;
+}
+
+/** How the endpoint refused `reasoning.summary`, or `undefined` when the error is anything else. */
+export function reasoningSummaryRejection(err: unknown): ReasoningSummaryRefusal | undefined {
+  return err instanceof Error ? REASONING_SUMMARY_REFUSALS.get(err) : undefined;
 }
 
 export function isReasoningSummaryRejection(err: unknown): boolean {
-  return err instanceof Error && REASONING_SUMMARY_REFUSALS.has(err);
+  return reasoningSummaryRejection(err) !== undefined;
 }
 
 /** Turns anything thrown during a turn into the `error` event the fold converts to a `ProviderTurnError`. */

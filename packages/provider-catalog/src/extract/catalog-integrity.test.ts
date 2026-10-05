@@ -1153,8 +1153,10 @@ describe("review round 1 — the three Importants, pinned where they broke", () 
       const expected: Record<string, string> = {
         "anthropic-messages": "thinking.display",
         "openai-responses": "reasoning.summary",
-        // 0.0.48: Azure's adapter routes a reasoning model to the Responses API, whose summary control it
-        // documents as the same `reasoning.summary` (azure-openai rows' own sourceRef).
+        // 0.0.48: Azure documents the same `reasoning.summary` on its Responses API (the azure-openai rows'
+        // own sourceRef). The adapter routes by the profile's `apiVersion` (`azureRouting`, azure.ts):
+        // the preview version takes the Responses path, which sends it; the classic deployment path is
+        // Chat Completions, which sends no summary.
         "azure-openai": "reasoning.summary",
         "google-generate-content": "thinkingConfig.includeThoughts",
       };

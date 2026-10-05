@@ -723,6 +723,13 @@
         ],
         "continuation": "opaque-provider-state",
         "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — \"the text in a thinking block is a summary of Claude's reasoning\" and \"what you see is never the raw chain of thought\". Paired with `summaryRequest`, the catalog's convention: a summary this row can ask for is a readable summary.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "summaryRequest": {
           "value": {
             "field": "thinking.display",
@@ -8691,6 +8698,13 @@
         ],
         "continuation": "opaque-provider-state",
         "defaultEffort": "high",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — \"the text in a thinking block is a summary of Claude's reasoning\" and \"what you see is never the raw chain of thought\". Paired with `summaryRequest`, the catalog's convention: a summary this row can ask for is a readable summary.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "summaryRequest": {
           "value": {
             "field": "thinking.display",
