@@ -679,6 +679,12 @@ interface ReasoningAccumulator {
 class ConverseFold {
   private readonly tools = new Map<number, { id: string; name: string }>();
   private readonly reasoning = new Map<number, ReasoningAccumulator>();
+  /**
+   * 0.0.47: the reasoning blocks whose live `reasoning_progress` block is open, by content-block index.
+   * Bedrock's `contentBlockStart` names no reasoning block, so one opens at its first `reasoningContent`
+   * delta and closes at its `contentBlockStop` (or, defensively, at `messageStop`).
+   */
+  private readonly openReasoning = new Set<number>();
   private stop: "end_turn" | "tool_use" | "max_tokens" | "aborted" | "refusal" | undefined;
   sawMessageStop = false;
 
@@ -735,12 +741,21 @@ class ConverseFold {
         }
         if (delta.reasoningContent !== undefined) {
           const acc = this.reasoning.get(index) ?? { text: "", signature: "", redactedContent: "" };
+          // 0.0.47: the block's live twin opens `hidden`; it becomes a `summary` only on the same
+          // evidence the summary delta below needs. A redacted block stays hidden to its close.
+          if (!this.reasoning.has(index) && !this.openReasoning.has(index)) {
+            this.openReasoning.add(index);
+            out.push({ type: "reasoning_progress", block: `reasoning:${index}`, phase: "start", kind: "hidden" });
+          }
           if (typeof delta.reasoningContent.text === "string") {
             acc.text += delta.reasoningContent.text;
             // Gated on the SEAM's own request, which `adapterAsProvider` sets from the descriptor's
             // `readableState` evidence. Without it, reasoning text reaches the sidecar and nothing
             // else — surfacing it would be a claim about the model that no evidence supports.
-            if (this.wantsSummary) out.push({ type: "thinking_summary_delta", text: delta.reasoningContent.text });
+            if (this.wantsSummary) {
+              out.push({ type: "thinking_summary_delta", text: delta.reasoningContent.text });
+              out.push({ type: "reasoning_progress", block: `reasoning:${index}`, phase: "delta", kind: "summary", text: delta.reasoningContent.text });
+            }
           }
           // NEVER emitted as an event, in either case: a signature is replay material and
           // `redactedContent` is encrypted by the provider. Both reach `native_state` alone.
@@ -755,11 +770,13 @@ class ConverseFold {
         const index = typeof payload.contentBlockIndex === "number" ? payload.contentBlockIndex : 0;
         const tool = this.tools.get(index);
         if (tool !== undefined) out.push({ type: "tool_call_end", id: tool.id });
+        this.closeReasoning(index, out);
         break;
       }
 
       case "messageStop": {
         this.sawMessageStop = true;
+        for (const open of [...this.openReasoning]) this.closeReasoning(open, out);
         this.stop = ConverseFold.mapStopReason(payload.stopReason);
         // THE COMPLETING EVENT, and the only place native state is captured. An earlier copy would
         // persist a continuation object the provider had not finished minting, and the failure would
@@ -789,6 +806,12 @@ class ConverseFold {
         break;
     }
     return out;
+  }
+
+  /** 0.0.47: closes a reasoning block's live twin, once. */
+  private closeReasoning(index: number, out: ProviderEvent[]): void {
+    if (!this.openReasoning.delete(index)) return;
+    out.push({ type: "reasoning_progress", block: `reasoning:${index}`, phase: "end", kind: "hidden" });
   }
 
   /** The complete replay object: Bedrock's own `reasoningContent` blocks, in block order, exactly as they were minted. */
@@ -1216,6 +1239,7 @@ function* replayConverseResponse(parsed: Record<string, unknown>, fold: Converse
       if (typeof reasoning.reasoningText?.signature === "string") delta.signature = reasoning.reasoningText.signature;
       if (typeof reasoning.redactedContent === "string") delta.redactedContent = reasoning.redactedContent;
       yield* fold.handle("contentBlockDelta", { contentBlockIndex: index, delta: { reasoningContent: delta } }, model);
+      yield* fold.handle("contentBlockStop", { contentBlockIndex: index }, model);
     }
     index++;
   }

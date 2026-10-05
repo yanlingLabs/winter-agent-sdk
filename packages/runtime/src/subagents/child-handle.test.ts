@@ -80,6 +80,9 @@ describe("transformChildFrame (WS-10 §4)", () => {
       { type: "system", subtype: "informational", content: "SubagentStop blocked", level: "warning", prevent_continuation: true, session_id: "c1", uuid: "u2" },
       { type: "system", subtype: "continuity_warning", warning: "reasoning_state_unsaved", detail: "x", session_id: "c1", uuid: "u3" },
       { type: "system", subtype: "model_switch", reason: "fallback", from_model: "a", to_model: "b", provider: "p", session_id: "c1", uuid: "u4" },
+      // 0.0.47: the child's live reasoning -- its own `null` is overwritten, like a grandchild's id, and it
+      // is NOT gated on forwardSubagentText (the same path `reasoning_summary`/`thinking_tokens` take).
+      { type: "system", subtype: "reasoning_progress", block_id: "b1", phase: "delta", kind: "summary", text: "**Looking**", provider: "p", model: "m", parent_tool_use_id: null, session_id: "c1", uuid: "u5" },
     ]) {
       const frame: WinterFrame = { type: "data", message } as WinterFrame;
       expect(transformChildFrame(frame, CORR, false)).toEqual({ type: "data", message: { ...message, parent_tool_use_id: CORR.parentToolUseId } } as WinterFrame);

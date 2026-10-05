@@ -386,8 +386,15 @@ export function anthropicCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseI
       // with `ping` filtered out entirely and nothing coalesced or reordered.
       eq(
         events.map((e) => e.type),
-        ["message_start", "native_thinking_block", "text_delta", "text_delta", "tool_call_start", "tool_call_delta", "tool_call_delta", "tool_call_end", "usage", "done"],
+        // 0.0.47: the thinking block's LIVE twin (start, one delta per non-empty `thinking_delta`, end)
+        // precedes its completion, at the wire's own block boundaries.
+        ["message_start", "reasoning_progress", "reasoning_progress", "reasoning_progress", "reasoning_progress", "native_thinking_block", "text_delta", "text_delta", "tool_call_start", "tool_call_delta", "tool_call_delta", "tool_call_end", "usage", "done"],
         "the normalized event order",
+      );
+      eq(
+        events.filter((e) => e.type === "reasoning_progress").map((e) => (e.type === "reasoning_progress" ? [e.phase, e.text ?? null] : [])),
+        [["start", null], ["delta", "let me "], ["delta", "think"], ["end", null]],
+        "the live reasoning block: its text, and never its signature",
       );
       const turn = await foldTurn(adapter, { model: ANTHROPIC_MODELS.full, messages: [user("go")] }, ctxFor(fake));
       eq(turn.thinking?.blocks, [{ type: "thinking", thinking: "let me think", signature: "sig-full-1" }], "the folded in-dialect thinking block");

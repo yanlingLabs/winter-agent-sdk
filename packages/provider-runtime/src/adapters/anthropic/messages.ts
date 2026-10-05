@@ -37,7 +37,10 @@
 //      reasoning a Winter-only frame carries (R6-8). Anthropic's own thinking blocks are in-dialect:
 //      they ride `native_thinking_block`, become `ContentBlock`s the engine persists, and are
 //      replayed byte-identically. `requestSummary` therefore only sets the descriptor's own
-//      `thinking.display` field -- it never re-routes the reasoning to another channel.
+//      `thinking.display` field -- it never re-routes the reasoning to another channel. The one
+//      addition (0.0.47) is OBSERVATIONAL: each thinking/redacted block also opens a live
+//      `reasoning_progress` block whose deltas copy the readable `thinking_delta` text -- never a
+//      signature, never redacted data -- so a host can show the model thinking while it does.
 //
 //   5. **Retry stops at the first COMMITTED frame, and the retry OBSERVATIONS still reach the consumer.**
 //      `withRetry` wraps the fetch AND the read up to the stream's first content-bearing frame
@@ -863,11 +866,18 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
   // Computed ONCE, shared by the fallback gate below AND the display step further down (fix round 2,
   // Minor 2): whether this row's OWN evidence can actually produce a `display` value for a requested
   // summary. `req.requestSummary === true` alone is not enough to justify sending an otherwise-omitted
-  // field -- a row with no `summaryRequest` evidence (Fable 5's shape) would get a BARE
+  // field -- a row with no `summaryRequest` evidence (Fable 5's shape until 0.0.47) would get a BARE
   // `{type:"adaptive"}` with nothing attached to it, a wire change with no purpose: no display (no
   // evidence for one) and no block_binding (checked separately below).
   const summaryRequest = reasoning?.summaryRequest?.value;
-  const canAttachDisplay = req.requestSummary === true && summaryRequest !== undefined && summaryRequest.field === "thinking.display" && summaryRequest.values.includes("summarized");
+  // 0.0.47: `"updates"` (beta) where the row's own evidence lists it, else `"summarized"`. The two are
+  // either/or per request: under `"updates"` reasoning blocks come back EMPTY and only the progress
+  // notes the model writes between tool calls carry text
+  // (https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates, read 2026-10-05),
+  // which is what a host shows while the model works. Its beta header is derived from the body
+  // (`thinkingDisplayUpdatesBetaFor`), so the value never reaches the wire without it.
+  const displayValue = summaryRequest?.field === "thinking.display" ? (summaryRequest.values.includes("updates") ? "updates" : summaryRequest.values.includes("summarized") ? "summarized" : undefined) : undefined;
+  const canAttachDisplay = req.requestSummary === true && displayValue !== undefined;
 
   // TWO of the THREE "send an otherwise-omitted field anyway" cases (doc comment above; the third is
   // the `blockBinding` arm of the explicit-`disabled` branch, above). Both require an
@@ -887,8 +897,10 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
 
   if (base === undefined) return { ok: true, value: undefined, ...(outputConfigEffort !== undefined ? { outputConfigEffort } : {}) };
 
-  if (canAttachDisplay && base.type !== "disabled") {
-    base = { ...base, display: "summarized" };
+  // `between_tools` (Sonnet 5.5's lowest setting) takes no `display` at all -- a 400 with one -- but
+  // Winter never sends that arm (`WireThinking` has none), so every arm that can reach here takes it.
+  if (canAttachDisplay && displayValue !== undefined && base.type !== "disabled") {
+    base = { ...base, display: displayValue };
   }
 
   // Block binding (2026-09-25 fix round 1):
@@ -1091,9 +1103,24 @@ export function toolChangesBetaFor(body: Record<string, unknown>, descriptor: Wi
   return descriptor?.inlineToolDefinitions?.value.beta ?? descriptor?.midConversationToolChanges?.value.beta;
 }
 
+/** The beta Anthropic gates `thinking.display: "updates"` behind (https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates, read 2026-10-05). */
+export const THINKING_DISPLAY_UPDATES_BETA = "thinking-display-updates-2026-08-18";
+
+/**
+ * 0.0.47: the progress-updates beta, or `undefined` -- derived from the BODY, the same one-decision rule
+ * `blockBindingBetaFor` states: the header rides exactly when the body's `thinking.display` is
+ * `"updates"`. The two must travel together: "Without it, the value is rejected with the same 400
+ * `invalid_request_error` as an unknown `display` value" (the progress-updates section, read 2026-10-05).
+ */
+export function thinkingDisplayUpdatesBetaFor(body: Record<string, unknown>): string | undefined {
+  const thinking = body["thinking"];
+  if (thinking === null || typeof thinking !== "object" || (thinking as { display?: unknown }).display !== "updates") return undefined;
+  return THINKING_DISPLAY_UPDATES_BETA;
+}
+
 /** Every body-derived beta, in a fixed order. One list, so `prepare()` and `countTokens()` cannot disagree about which ride. */
 function bodyBetas(body: Record<string, unknown>, descriptor: WinterModelDescriptor | undefined, req?: Pick<TurnRequest, "toolChanges">): string[] {
-  return [perMessageEffortBetaFor(body, descriptor), toolChangesBetaFor(body, descriptor, req?.toolChanges === true)].filter((b): b is string => b !== undefined);
+  return [perMessageEffortBetaFor(body, descriptor), toolChangesBetaFor(body, descriptor, req?.toolChanges === true), thinkingDisplayUpdatesBetaFor(body)].filter((b): b is string => b !== undefined);
 }
 
 /**
@@ -1542,6 +1569,32 @@ interface OpenBlock {
   signature: string | undefined;
   data: string | undefined;
   toolId: string | undefined;
+  /** 0.0.47: this thinking/redacted block's live `reasoning_progress` key, when it opened one. */
+  progress?: string;
+}
+
+/**
+ * 0.0.47: what a thinking block's readable text IS, read off the `thinking` object the request body
+ * actually sent (never the descriptor -- the body is the one record of what was asked):
+ *
+ *   - `display: "summarized"` -> every block is a `summary` from its start;
+ *   - `display: "updates"`, or Sonnet 5.5's `type: "between_tools"` (whose progress notes "come back
+ *     with summary text, as they would under `display: "updates"`") -> a block is `hidden` until "one of
+ *     its thinking_delta events carries non-empty text", and then an `update`
+ *     (https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates, read 2026-10-05);
+ *   - anything else (no `display`: omitted on the 5.x rows, summarized on older ones) -> `hidden`, and a
+ *     `summary` if text arrives.
+ */
+type ThinkingProgressMode = "summary" | "updates" | "default";
+
+/** EXPORTED (relative-import only, like `buildRequestBody`) so the `between_tools` arm -- which Winter never sends -- is still pinned by a test. */
+export function thinkingProgressMode(body: Record<string, unknown>): ThinkingProgressMode {
+  const thinking = body["thinking"];
+  if (thinking === null || typeof thinking !== "object") return "default";
+  const { display, type } = thinking as { display?: unknown; type?: unknown };
+  if (display === "summarized") return "summary";
+  if (display === "updates" || type === "between_tools") return "updates";
+  return "default";
 }
 
 type AnthropicStopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "pause_turn" | "model_context_window_exceeded";
@@ -1799,6 +1852,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     for (const event of retryEvents) yield event;
 
     const blocks = new Map<number, OpenBlock>();
+    const progressMode = thinkingProgressMode(body);
     /** Completed in-dialect blocks, in wire order, when the descriptor defers the capture to `message_stop`. */
     const heldThinking: unknown[] = [];
     let inputTokens = 0;
@@ -1885,6 +1939,12 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
             blocks.set(index, open);
             if (blockType === "tool_use" && open.toolId !== undefined) {
               yield { type: "tool_call_start", id: open.toolId, name: typeof block["name"] === "string" ? block["name"] : "" };
+            } else if (blockType === "thinking" || blockType === "redacted_thinking") {
+              // 0.0.47: the block's LIVE twin opens with it. A `redacted_thinking` block is `hidden` to
+              // its close and its `data` never rides the event; neither does a thinking block's signature.
+              open.progress = `block:${index}`;
+              yield { type: "reasoning_progress", block: open.progress, phase: "start", kind: blockType === "thinking" && progressMode === "summary" ? "summary" : "hidden" };
+              if (blockType === "thinking" && open.thinking.length > 0) yield { type: "reasoning_progress", block: open.progress, phase: "delta", kind: progressMode === "updates" ? "update" : "summary", text: open.thinking };
             }
             break;
           }
@@ -1900,6 +1960,12 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
               // `native_thinking_block` at `content_block_stop`, never a `thinking_summary_delta`
               // (that event is for FOREIGN reasoning, R6-8).
               open.thinking += delta["thinking"];
+              // 0.0.47 (user ruling 2026-10-05): the same text streams to the host LIVE, as the block's
+              // `reasoning_progress` delta. An empty delta (the omitted/updates reasoning-block shape)
+              // says nothing and is not sent; the first non-empty one makes an updates-mode block an `update`.
+              if (open.progress !== undefined && delta["thinking"].length > 0) {
+                yield { type: "reasoning_progress", block: open.progress, phase: "delta", kind: progressMode === "updates" ? "update" : "summary", text: delta["thinking"] };
+              }
             } else if (deltaType === "signature_delta" && typeof delta["signature"] === "string" && open !== undefined) {
               open.signature = (open.signature ?? "") + delta["signature"];
             } else if (deltaType === "input_json_delta" && typeof delta["partial_json"] === "string" && open?.toolId !== undefined) {
@@ -1912,6 +1978,9 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
             const open = blocks.get(index);
             blocks.delete(index);
             if (open === undefined) break;
+            // 0.0.47: the live block closes HERE, at the wire's own block end, even on a row that holds
+            // the replayable block to `message_stop` -- that hold is about native state, not progress.
+            if (open.progress !== undefined) yield { type: "reasoning_progress", block: open.progress, phase: "end", kind: "hidden" };
             if (open.type === "thinking") {
               // THE COMPLETION EVENT, and only it. The `signature` key is emitted only when the wire
               // carried one: capture (F) shows the pinned runtime materialising `""` for a

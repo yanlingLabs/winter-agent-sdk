@@ -895,6 +895,23 @@ export interface ProviderStreamSink {
   onAuthStatus(info: { isAuthenticating: boolean; output?: string[]; error?: string }): void;
   /** R6-8: a FOREIGN model's readable reasoning summary. It rides the sidecar and the Winter-only `system/reasoning_summary` frame -- never `assistant.message.content`. */
   onReasoningSummary(text: string): void;
+  /**
+   * 0.0.47: one LIVE step of one reasoning block, for every family -- the Winter-only
+   * `system/reasoning_progress` frame. `blockId` is already session-unique (the bridge mints it), and
+   * the bridge guarantees every `start` an `end`. Never carries opaque material.
+   */
+  onReasoningProgress(progress: ReasoningProgress): void;
+}
+
+/** 0.0.47: the payload of `ProviderStreamSink.onReasoningProgress` -- `system/reasoning_progress` minus its envelope. */
+export interface ReasoningProgress {
+  blockId: string;
+  phase: "start" | "delta" | "end";
+  kind: "summary" | "update" | "exposed" | "hidden";
+  /** `delta` only: this step's increment, verbatim. */
+  text?: string;
+  /** The provider's summary part index, where it numbers its parts. */
+  part?: number;
 }
 
 /** The `api_retry` payload minus its frame envelope (`uuid`/`session_id`, which the engine stamps). Mirrors provider-runtime's own `retry` event. */

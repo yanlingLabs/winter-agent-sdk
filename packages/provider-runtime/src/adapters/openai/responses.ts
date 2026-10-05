@@ -734,6 +734,38 @@ export class ResponsesStreamMapper {
     return separate ? [{ type: "thinking_summary_delta", text: "\n\n" }, { type: "thinking_summary_delta", text: delta }] : [{ type: "thinking_summary_delta", text: delta }];
   }
 
+  /**
+   * 0.0.47: each reasoning item's adapter-local key for `reasoning_progress`, by `output_index` once
+   * known. `output_item.added` names the item by `item.id`, a delta by `item_id`, and either may be
+   * missing on a compatible backend; keying on the output position first means the item's opening, its
+   * deltas and its close name ONE block whichever ids each event happened to carry.
+   */
+  private readonly reasoningKeys = new Map<number, string>();
+  /** The reasoning item opened last: the block a delta naming neither its item nor its position belongs to. */
+  private lastReasoningKey: string | undefined;
+
+  private reasoningKey(payload: Record<string, unknown>, id: unknown): string {
+    const index = typeof payload.output_index === "number" ? payload.output_index : undefined;
+    const known = index !== undefined ? this.reasoningKeys.get(index) : undefined;
+    if (known !== undefined) return known;
+    const named = typeof id === "string" && id.length > 0 ? id : undefined;
+    if (named === undefined && index === undefined && this.lastReasoningKey !== undefined) return this.lastReasoningKey;
+    const key = named ?? (index !== undefined ? `#${index}` : "#");
+    if (index !== undefined) this.reasoningKeys.set(index, key);
+    this.lastReasoningKey = key;
+    return key;
+  }
+
+  /**
+   * 0.0.47: one live step of a reasoning item, beside the summary/exposed delta the fold accumulates.
+   * The RAW delta, never the blank line `summaryDelta` puts between parts for the complete summary: the
+   * live frame carries the part number instead, and the host joins parts itself.
+   */
+  private progressDelta(payload: Record<string, unknown>, kind: "summary" | "exposed", indexField: "summary_index" | "content_index", delta: string): ProviderEvent {
+    const part = payload[indexField];
+    return { type: "reasoning_progress", block: this.reasoningKey(payload, payload.item_id), phase: "delta", kind, text: delta, ...(typeof part === "number" ? { part } : {}) };
+  }
+
   /** WS-23 (midconv): a client `tool_search_call` this request's ToolSearch answers. */
   private isClientToolSearch(itemType: string, item: Record<string, unknown>): boolean {
     return itemType === "tool_search_call" && item.execution === "client" && this.tools.toolSearchName !== undefined;
@@ -788,7 +820,7 @@ export class ResponsesStreamMapper {
         const delta = typeof payload.delta === "string" ? payload.delta : "";
         // A provider-produced SUMMARY. It rides the sidecar and the Winter-only frame, never
         // `assistant.message.content` (R6-8).
-        return delta.length > 0 ? this.summaryDelta(`summary:${partKey(payload, "summary_index")}`, delta) : [];
+        return delta.length > 0 ? [...this.summaryDelta(`summary:${partKey(payload, "summary_index")}`, delta), this.progressDelta(payload, "summary", "summary_index", delta)] : [];
       }
       case "response.reasoning_text.delta": {
         // WS-23 fix round 1 (M1): the reasoning TEXT channel. OpenAI uses it for raw chain of thought
@@ -801,7 +833,9 @@ export class ResponsesStreamMapper {
         // the summary: never `assistant.message.content` (R6-8).
         const delta = typeof payload.delta === "string" ? payload.delta : "";
         if (delta.length === 0) return [];
-        return this.readableState === "full-exposed" ? [{ type: "thinking_exposed_delta", text: delta }] : this.summaryDelta(`text:${partKey(payload, "content_index")}`, delta);
+        return this.readableState === "full-exposed"
+          ? [{ type: "thinking_exposed_delta", text: delta }, this.progressDelta(payload, "exposed", "content_index", delta)]
+          : [...this.summaryDelta(`text:${partKey(payload, "content_index")}`, delta), this.progressDelta(payload, "summary", "content_index", delta)];
       }
       case "response.output_item.added":
         return this.onItemAdded(payload);
@@ -857,6 +891,9 @@ export class ResponsesStreamMapper {
     const item = itemOf(payload);
     if (item === undefined) return [];
     const itemType = typeof item.type === "string" ? item.type : "";
+    // 0.0.47: a reasoning item OPENS a live reasoning block. `hidden` until readable text arrives --
+    // an encrypted-only item (no summary asked for, or none written) stays hidden to its close.
+    if (itemType === "reasoning") return [{ type: "reasoning_progress", block: this.reasoningKey(payload, item.id), phase: "start", kind: "hidden" }];
     if (this.isClientToolSearch(itemType, item)) {
       // Opened here, its arguments (an OBJECT, complete only on `done`) handed over there.
       const callId = typeof item.call_id === "string" ? item.call_id : undefined;
@@ -905,7 +942,9 @@ export class ResponsesStreamMapper {
         const index = typeof payload.output_index === "number" ? payload.output_index : Number.MAX_SAFE_INTEGER;
         this.reasoningItems.push({ index, arrival: this.arrivals++, item: replayable });
       }
-      return [];
+      // 0.0.47: the item is complete, so its live block closes (the encrypted content stays above, in
+      // native state, and never rides the progress event).
+      return [{ type: "reasoning_progress", block: this.reasoningKey(payload, item.id), phase: "end", kind: "hidden" }];
     }
     this.noteLayout(payload, itemType, item);
 

@@ -137,6 +137,30 @@ export function createStreamFrameSink(deps: StreamFrameSinkDeps): ProviderStream
         session_id: deps.sessionId,
       });
     },
+
+    onReasoningProgress(progress) {
+      // 0.0.47 (user ruling 2026-10-05, "everything that streams should stream"): the live half of the
+      // same reasoning, per block. UNGATED, like `thinking_tokens`: a host that never opts into
+      // `stream_event` still sees that the model is thinking. `parent_tool_use_id` is `null` here and
+      // stamped at the parent's forwarding boundary for a subagent (`transformChildFrame`), exactly as
+      // for the session's other system frames. The text is passed through untouched -- a host derives
+      // any title from it.
+      const identity = deps.identity();
+      write({
+        type: "system",
+        subtype: "reasoning_progress",
+        block_id: progress.blockId,
+        phase: progress.phase,
+        kind: progress.kind,
+        ...(progress.phase === "delta" && progress.text !== undefined ? { text: progress.text } : {}),
+        ...(progress.part !== undefined ? { part: progress.part } : {}),
+        provider: identity?.providerId ?? "",
+        model: identity?.modelKey ?? deps.model(),
+        parent_tool_use_id: null,
+        uuid: randomUUID(),
+        session_id: deps.sessionId,
+      });
+    },
   };
 
   /**

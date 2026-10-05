@@ -385,8 +385,21 @@ export class ChatStreamMapper {
   private completed = false;
   private readonly callsByIndex = new Map<number, PendingCall>();
   private readonly order: number[] = [];
+  /**
+   * 0.0.47: the live reasoning block a run of `reasoning_content` deltas is streaming into, if one is
+   * open. This dialect has no reasoning block of its own: a block opens with the first reasoning delta
+   * and closes when the answer (text or a tool call) begins, or when the stream completes.
+   */
+  private openReasoning: string | undefined;
+  private reasoningBlocks = 0;
 
   constructor(private readonly captureExposedReasoning: boolean) {}
+
+  private closeReasoning(events: ProviderEvent[]): void {
+    if (this.openReasoning === undefined) return;
+    events.push({ type: "reasoning_progress", block: this.openReasoning, phase: "end", kind: "exposed" });
+    this.openReasoning = undefined;
+  }
 
   map(data: string): ProviderEvent[] {
     if (isStreamTerminator(data)) return this.finalize();
@@ -468,6 +481,7 @@ export class ChatStreamMapper {
     if (this.completed) return [];
     this.completed = true;
     const events: ProviderEvent[] = [];
+    this.closeReasoning(events);
     // Captured at COMPLETION, once, whole — the same rule the Responses surface follows, for the
     // same reason: a partial copy replayed on the next turn is a request the provider rejects.
     if (this.captureExposedReasoning && this.exposed.length > 0) {
@@ -482,7 +496,10 @@ export class ChatStreamMapper {
     const record = delta as { content?: unknown; reasoning_content?: unknown; reasoning?: unknown; tool_calls?: unknown };
     const events: ProviderEvent[] = [];
 
-    if (typeof record.content === "string" && record.content.length > 0) events.push({ type: "text_delta", text: record.content });
+    if (typeof record.content === "string" && record.content.length > 0) {
+      this.closeReasoning(events);
+      events.push({ type: "text_delta", text: record.content });
+    }
 
     // DeepSeek spells it `reasoning_content`; OpenRouter re-exports the same channel as `reasoning`.
     // Both are FULL EXPOSED reasoning, which never becomes assistant content (R6-8).
@@ -490,9 +507,17 @@ export class ChatStreamMapper {
     if (exposedDelta !== undefined && exposedDelta.length > 0) {
       this.exposed += exposedDelta;
       events.push({ type: "thinking_exposed_delta", text: exposedDelta });
+      // 0.0.47 (user ruling 2026-10-05): raw exposed reasoning streams to the host live too -- before
+      // this it reached no host at all.
+      if (this.openReasoning === undefined) {
+        this.openReasoning = `exposed:${this.reasoningBlocks++}`;
+        events.push({ type: "reasoning_progress", block: this.openReasoning, phase: "start", kind: "exposed" });
+      }
+      events.push({ type: "reasoning_progress", block: this.openReasoning, phase: "delta", kind: "exposed", text: exposedDelta });
     }
 
     const toolCalls = record.tool_calls;
+    if (Array.isArray(toolCalls) && toolCalls.length > 0) this.closeReasoning(events);
     if (Array.isArray(toolCalls)) {
       for (const fragment of toolCalls) {
         if (fragment === null || typeof fragment !== "object") continue;

@@ -109,6 +109,7 @@ describe("the renderer through its REAL consumer", () => {
       onRateLimit: (info) => sinkEvents.push(info),
       onAuthStatus: (info) => sinkEvents.push(info),
       onReasoningSummary: (text) => sinkEvents.push(text),
+      onReasoningProgress: (progress) => sinkEvents.push(progress),
     };
     await provider.generate({
       messages: [claudeTurn("m1", "claude's visible answer") as ProviderMessage],

@@ -384,6 +384,11 @@ export function googleFamilyCorpusCases(config: GoogleFamilyCorpusConfig): Parti
           "message_start",
           // A `thought` part is FOREIGN reasoning and rides its own channel -- never `text_delta`.
           "thinking_summary_delta",
+          // 0.0.47: and its live twin -- one block for the run of thought parts, closed by the first
+          // part that is not a thought.
+          "reasoning_progress",
+          "reasoning_progress",
+          "reasoning_progress",
           "text_delta",
           "text_delta",
           "tool_call_start",

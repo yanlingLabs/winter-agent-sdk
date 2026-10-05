@@ -9,30 +9,33 @@ import type { ProviderAdapter, ProviderContext, ProviderEvent, ResolvedModel, Tu
 import { IMAGE_BUDGET_NOTE } from "@yanlinglabs/winter-provider-runtime";
 import type { WireStreamEvent } from "@yanlinglabs/winter-agent-sdk";
 import { adapterAsProvider, createIdentityHistoryRenderer, foldProviderStream, ProviderTurnError, stampNativeState } from "./bridge.ts";
-import type { ProviderMessage, ProviderStreamSink } from "../engine.ts";
+import type { ProviderMessage, ProviderStreamSink, ReasoningProgress } from "../engine.ts";
 
 async function* scripted(events: ProviderEvent[]): AsyncIterable<ProviderEvent> {
   for (const event of events) yield event;
 }
 
-function recordingSink(): { sink: ProviderStreamSink; events: WireStreamEvent[]; retries: unknown[]; rateLimits: unknown[]; authStatuses: unknown[]; summaries: string[] } {
+function recordingSink(): { sink: ProviderStreamSink; events: WireStreamEvent[]; retries: unknown[]; rateLimits: unknown[]; authStatuses: unknown[]; summaries: string[]; progress: ReasoningProgress[] } {
   const events: WireStreamEvent[] = [];
   const retries: unknown[] = [];
   const rateLimits: unknown[] = [];
   const authStatuses: unknown[] = [];
   const summaries: string[] = [];
+  const progress: ReasoningProgress[] = [];
   return {
     events,
     retries,
     rateLimits,
     authStatuses,
     summaries,
+    progress,
     sink: {
       onStreamEvent: (e) => events.push(e),
       onRetry: (i) => retries.push(i),
       onRateLimit: (i) => rateLimits.push(i),
       onAuthStatus: (i) => authStatuses.push(i),
       onReasoningSummary: (t) => summaries.push(t),
+      onReasoningProgress: (p) => progress.push(p),
     },
   };
 }
@@ -820,5 +823,173 @@ describe("code-mode images: the per-request image budget is applied before the a
     const content = seen!.messages[0]!.content as Array<{ type: string; source?: { data: string }; text?: string }>;
     expect(content.filter((b) => b.type === "image").map((b) => b.source!.data)).toEqual(["IMG2", "IMG3", "IMG4", "IMG5", "IMG6", "IMG7", "IMG8", "IMG9"]);
     expect(content.slice(0, 2).map((b) => b.text)).toEqual([IMAGE_BUDGET_NOTE, IMAGE_BUDGET_NOTE]);
+  });
+});
+
+describe("0.0.47: the live reasoning stream (`reasoning_progress`)", () => {
+  const p = (block: string, phase: "start" | "delta" | "end", kind: "summary" | "update" | "exposed" | "hidden", text?: string, part?: number): ProviderEvent => ({
+    type: "reasoning_progress",
+    block,
+    phase,
+    kind,
+    ...(text !== undefined ? { text } : {}),
+    ...(part !== undefined ? { part } : {}),
+  });
+  const done: ProviderEvent = { type: "done", stopReason: "end_turn" };
+  /** The progress with its minted ids replaced by their order of first appearance. */
+  const normalized = (progress: ReasoningProgress[]) => {
+    const ids = new Map<string, string>();
+    return progress.map((step) => ({ ...step, blockId: ids.get(step.blockId) ?? (ids.set(step.blockId, `B${ids.size}`), `B${ids.size - 1}`) }));
+  };
+
+  test("an adapter's steps reach the sink under a minted id, with the end naming the block's LAST kind", async () => {
+    const rec = recordingSink();
+    await foldProviderStream(scripted([p("k", "start", "hidden"), p("k", "delta", "update", "Editing auth.py."), p("k", "end", "hidden"), done]), rec.sink);
+    expect(normalized(rec.progress)).toEqual([
+      { blockId: "B0", phase: "start", kind: "hidden" },
+      { blockId: "B0", phase: "delta", kind: "update", text: "Editing auth.py." },
+      { blockId: "B0", phase: "end", kind: "update" },
+    ]);
+    // A UUID, not the adapter's key: unique across the session however often an adapter reuses its keys.
+    expect(rec.progress[0]!.blockId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  test("the same adapter key in two generations is two blocks", async () => {
+    const rec = recordingSink();
+    for (let i = 0; i < 2; i++) await foldProviderStream(scripted([p("#0", "start", "summary"), p("#0", "end", "summary"), done]), rec.sink);
+    expect(new Set(rec.progress.map((s) => s.blockId)).size).toBe(2);
+  });
+
+  test("one start and one end per block, whatever the adapter sends: a repeated start is dropped, a delta opens an unseen block, nothing follows an end, an empty delta says nothing", async () => {
+    const rec = recordingSink();
+    await foldProviderStream(
+      scripted([
+        p("a", "start", "hidden"),
+        p("a", "start", "hidden"),
+        p("a", "delta", "summary", ""),
+        p("a", "delta", "summary", "one", 0),
+        p("a", "end", "hidden"),
+        p("a", "delta", "summary", "late"),
+        p("a", "end", "summary"),
+        p("b", "delta", "exposed", "raw"),
+        done,
+      ]),
+      rec.sink,
+    );
+    expect(normalized(rec.progress)).toEqual([
+      { blockId: "B0", phase: "start", kind: "hidden" },
+      { blockId: "B0", phase: "delta", kind: "summary", text: "one", part: 0 },
+      { blockId: "B0", phase: "end", kind: "summary" },
+      { blockId: "B1", phase: "start", kind: "exposed" },
+      { blockId: "B1", phase: "delta", kind: "exposed", text: "raw" },
+      // Never closed by the adapter: closed by the fold when the stream ended.
+      { blockId: "B1", phase: "end", kind: "exposed" },
+    ]);
+  });
+
+  test("an `error` event mid-block still ends the block before the fold throws", async () => {
+    const rec = recordingSink();
+    await expect(
+      foldProviderStream(scripted([p("k", "start", "hidden"), p("k", "delta", "summary", "half"), { type: "error", error: { code: "server", message: "boom", retryable: false } }]), rec.sink),
+    ).rejects.toBeInstanceOf(ProviderTurnError);
+    expect(rec.progress.map((s) => [s.phase, s.kind])).toEqual([
+      ["start", "hidden"],
+      ["delta", "summary"],
+      ["end", "summary"],
+    ]);
+  });
+
+  test("a stream that THROWS mid-block still ends the block", async () => {
+    async function* throwing(): AsyncIterable<ProviderEvent> {
+      yield p("k", "start", "summary");
+      throw new Error("socket closed");
+    }
+    const rec = recordingSink();
+    await expect(foldProviderStream(throwing(), rec.sink)).rejects.toBeInstanceOf(ProviderTurnError);
+    expect(rec.progress.map((s) => s.phase)).toEqual(["start", "end"]);
+  });
+
+  test("an INTERRUPT ends every open block synchronously, inside `abort()` -- before the turn unwinds, not when the abandoned stream finally dies", async () => {
+    const controller = new AbortController();
+    let release!: (reason: unknown) => void;
+    const hung = new Promise<never>((_, reject) => (release = reject));
+    async function* stalled(): AsyncIterable<ProviderEvent> {
+      yield p("k", "start", "hidden");
+      yield p("k", "delta", "update", "Reading the logs.");
+      yield p("j", "start", "hidden");
+      await hung;
+    }
+    const rec = recordingSink();
+    const folding = foldProviderStream(stalled(), rec.sink, controller.signal);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(rec.progress.map((s) => s.phase)).toEqual(["start", "delta", "start"]);
+    controller.abort();
+    // Synchronously: no await between `abort()` and this read.
+    expect(rec.progress.slice(3).map((s) => [s.phase, s.kind])).toEqual([
+      ["end", "update"],
+      ["end", "hidden"],
+    ]);
+    // The stream dies later, as an aborted one does; nothing is ended twice.
+    release(new Error("aborted"));
+    await expect(folding).rejects.toBeInstanceOf(ProviderTurnError);
+    expect(rec.progress).toHaveLength(5);
+  });
+
+  test("after an interrupt the abandoned stream reports nothing more -- a block it opens late never reaches the host", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const rec = recordingSink();
+    await foldProviderStream(scripted([p("k", "start", "hidden"), p("k", "delta", "summary", "late"), done]), rec.sink, controller.signal);
+    expect(rec.progress).toEqual([]);
+  });
+
+  test("OBSERVATIONAL ONLY: the turn accumulates nothing from it, and the complete summary still arrives once", async () => {
+    const rec = recordingSink();
+    const onlyProgress = await foldProviderStream(scripted([p("k", "start", "summary"), p("k", "delta", "summary", "not on the turn"), p("k", "end", "summary"), done]), rec.sink);
+    expect(onlyProgress.thinking).toBeUndefined();
+    expect(rec.summaries).toEqual([]);
+
+    const both = recordingSink();
+    const turn = await foldProviderStream(
+      scripted([p("k", "start", "hidden"), { type: "thinking_summary_delta", text: "whole " }, p("k", "delta", "summary", "whole "), { type: "thinking_summary_delta", text: "summary" }, p("k", "delta", "summary", "summary"), p("k", "end", "hidden"), done]),
+      both.sink,
+    );
+    expect(turn.thinking?.summary).toBe("whole summary");
+    expect(both.summaries).toEqual(["whole summary"]);
+    expect(both.progress.filter((s) => s.phase === "delta").map((s) => s.text)).toEqual(["whole ", "summary"]);
+  });
+
+  test("no sink (an auxiliary generation) costs nothing and throws nothing", async () => {
+    const turn = await foldProviderStream(scripted([p("k", "start", "hidden"), p("k", "delta", "summary", "x"), done]));
+    expect(turn.kind).toBe("text");
+  });
+
+  test("a sink that throws never breaks the generation", async () => {
+    const rec = recordingSink();
+    const sink = { ...rec.sink, onReasoningProgress: () => { throw new Error("host gone"); } };
+    const turn = await foldProviderStream(scripted([p("k", "start", "hidden"), { type: "text_delta", text: "fine" }, done]), sink);
+    expect(turn.kind === "text" && turn.text).toBe("fine");
+  });
+
+  test("`adapterAsProvider` hands the fold the request's own signal", async () => {
+    const controller = new AbortController();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const adapter = scriptedAdapter(() =>
+      (async function* () {
+        yield p("k", "start", "hidden");
+        await gate;
+        yield done;
+      })(),
+    );
+    const rec = recordingSink();
+    const provider = adapterAsProvider(resolvedFor(adapter), fakeCtx(), { adapter });
+    const generating = provider.generate({ messages: [], sink: rec.sink, signal: controller.signal });
+    await new Promise((r) => setTimeout(r, 5));
+    controller.abort();
+    expect(rec.progress.map((s) => s.phase)).toEqual(["start", "end"]);
+    release();
+    await generating;
+    expect(rec.progress).toHaveLength(2);
   });
 });

@@ -196,6 +196,7 @@ describe("R6-3 type-level contract: the engine's unions and provider-runtime's m
       onRateLimit: () => {},
       onAuthStatus: () => {},
       onReasoningSummary: () => {},
+      onReasoningProgress: () => {},
     };
     const full: ProviderRequest = {
       messages: [{ role: "user", content: "hi" }],

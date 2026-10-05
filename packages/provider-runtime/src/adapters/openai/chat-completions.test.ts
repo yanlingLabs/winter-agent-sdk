@@ -163,6 +163,10 @@ describe("ChatStreamMapper", () => {
     expect(events).toEqual([
       { type: "message_start", id: "chatcmpl-1", model: "deepseek-reasoner" },
       { type: "thinking_exposed_delta", text: "thinking..." },
+      // 0.0.47: the same reasoning, live, in one block the answer's first text closes.
+      { type: "reasoning_progress", block: "exposed:0", phase: "start", kind: "exposed" },
+      { type: "reasoning_progress", block: "exposed:0", phase: "delta", kind: "exposed", text: "thinking..." },
+      { type: "reasoning_progress", block: "exposed:0", phase: "end", kind: "exposed" },
       { type: "text_delta", text: "answer" },
       // Review r1 finding 5: DeepSeek's `prompt_tokens` includes its cache hits -- normalized.
       { type: "usage", inputTokens: 3, outputTokens: 4, cacheReadTokens: 8 },
@@ -592,5 +596,28 @@ describe("the base URL is the PROVIDER's own, never the adapter's vendor's (WS-2
     expect([openaiError.code, openaiError.retryable]).toEqual(["capability", false]);
     expect(openaiError.message).toContain('provider "openai" has no endpoint');
     expect(requests).toEqual([]);
+  });
+});
+
+describe("ChatStreamMapper: the live reasoning stream (0.0.47)", () => {
+  test("a reasoning run is one exposed block, closed by the first tool call; a later run is a new block", () => {
+    const events = drive(new ChatStreamMapper(false), [
+      { choices: [{ index: 0, delta: { reasoning_content: "look first" } }] },
+      { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "Read", arguments: "{}" } }] } }] },
+      { choices: [{ index: 0, delta: { reasoning: "then again" } }] },
+      { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+      "[DONE]",
+    ]);
+    expect(events.filter((e) => e.type === "reasoning_progress" || e.type === "tool_call_start").map((e) => (e.type === "reasoning_progress" ? `${e.block}:${e.phase}` : e.type))).toEqual([
+      "exposed:0:start",
+      "exposed:0:delta",
+      "exposed:0:end",
+      "tool_call_start",
+      "exposed:1:start",
+      "exposed:1:delta",
+      // Closed at completion, before `done`.
+      "exposed:1:end",
+    ]);
+    expect(events.at(-1)).toEqual({ type: "done", stopReason: "tool_use" });
   });
 });

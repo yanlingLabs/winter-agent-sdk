@@ -285,6 +285,8 @@ describe("ResponsesStreamMapper", () => {
     expect(events).toEqual([
       { type: "message_start", id: "resp_1", model: "o4-mini" },
       { type: "thinking_summary_delta", text: "weighing options" },
+      // 0.0.47: its live twin -- a delta naming no item falls back to the output position (none here).
+      { type: "reasoning_progress", block: "#", phase: "delta", kind: "summary", text: "weighing options" },
       { type: "text_delta", text: "the answer" },
       { type: "usage", inputTokens: 7, outputTokens: 3 },
       { type: "done", stopReason: "end_turn" },
@@ -294,7 +296,7 @@ describe("ResponsesStreamMapper", () => {
   test("`response.reasoning_summary_text.delta` is a SUMMARY whatever the row claims (WS-23 fix round 1, M1)", () => {
     for (const readable of ["none", "summary", "full-exposed"] as const) {
       const events = drive(new ResponsesStreamMapper("response.completed", readable), [{ type: "response.reasoning_summary_text.delta", delta: "short version" }]);
-      expect([readable, events]).toEqual([readable, [{ type: "thinking_summary_delta", text: "short version" }]]);
+      expect([readable, events]).toEqual([readable, [{ type: "thinking_summary_delta", text: "short version" }, { type: "reasoning_progress", block: "#", phase: "delta", kind: "summary", text: "short version" }]]);
     }
   });
 
@@ -302,11 +304,12 @@ describe("ResponsesStreamMapper", () => {
     // It used to be ignored, so a model streaming its readable reasoning on this channel (xAI's own
     // example reads it for grok-4.7) surfaced nothing.
     const frame = [{ type: "response.reasoning_text.delta", delta: "step one" }, { type: "response.reasoning_text.delta", delta: "" }];
-    expect(drive(new ResponsesStreamMapper(), frame)).toEqual([{ type: "thinking_summary_delta", text: "step one" }]);
-    expect(drive(new ResponsesStreamMapper("response.completed", "summary"), frame)).toEqual([{ type: "thinking_summary_delta", text: "step one" }]);
+    const live = (kind: "summary" | "exposed"): ProviderEvent => ({ type: "reasoning_progress", block: "#", phase: "delta", kind, text: "step one" });
+    expect(drive(new ResponsesStreamMapper(), frame)).toEqual([{ type: "thinking_summary_delta", text: "step one" }, live("summary")]);
+    expect(drive(new ResponsesStreamMapper("response.completed", "summary"), frame)).toEqual([{ type: "thinking_summary_delta", text: "step one" }, live("summary")]);
     // The complete trace is a claim with consequences downstream (it can suppress a switch warning),
-    // so it is made only on the row's own evidence.
-    expect(drive(new ResponsesStreamMapper("response.completed", "full-exposed"), frame)).toEqual([{ type: "thinking_exposed_delta", text: "step one" }]);
+    // so it is made only on the row's own evidence -- and the live frame's `kind` follows the same claim.
+    expect(drive(new ResponsesStreamMapper("response.completed", "full-exposed"), frame)).toEqual([{ type: "thinking_exposed_delta", text: "step one" }, live("exposed")]);
   });
 
   test("continuation state comes from the DONE item only — the `added` copy is never used", () => {
@@ -460,5 +463,37 @@ describe("mapResponsesInput: an is_error tool result keeps its text", () => {
   test("the output is sent verbatim", () => {
     const out = mapResponsesInput([{ role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "it failed", is_error: true }] }]) as Array<Record<string, unknown>>;
     expect(out).toContainEqual({ type: "function_call_output", call_id: "c1", output: "it failed" });
+  });
+});
+
+describe("ResponsesStreamMapper: the live reasoning stream (0.0.47)", () => {
+  const live = (events: ProviderEvent[]) => events.filter((e) => e.type === "reasoning_progress");
+
+  test("an item's opening, its deltas and its close name ONE block, whichever ids each event carries", () => {
+    // `added` with no item id, deltas with only `item_id`, `done` with only the output position: all
+    // three are the same item at output 0.
+    const events = drive(new ResponsesStreamMapper(), [
+      { type: "response.output_item.added", output_index: 0, item: { type: "reasoning", summary: [] } },
+      { type: "response.reasoning_summary_text.delta", output_index: 0, item_id: "rs_late_id", summary_index: 0, delta: "**Heading**" },
+      { type: "response.reasoning_summary_text.delta", output_index: 0, summary_index: 1, delta: "next part" },
+      { type: "response.output_item.done", output_index: 0, item: { id: "rs_late_id", type: "reasoning", encrypted_content: "ENC" } },
+    ]);
+    expect(live(events)).toEqual([
+      { type: "reasoning_progress", block: "#0", phase: "start", kind: "hidden" },
+      { type: "reasoning_progress", block: "#0", phase: "delta", kind: "summary", text: "**Heading**", part: 0 },
+      { type: "reasoning_progress", block: "#0", phase: "delta", kind: "summary", text: "next part", part: 1 },
+      { type: "reasoning_progress", block: "#0", phase: "end", kind: "hidden" },
+    ]);
+    // The complete summary keeps its blank line between parts; the live deltas never carry it.
+    expect(events.filter((e) => e.type === "thinking_summary_delta").map((e) => (e as { text: string }).text)).toEqual(["**Heading**", "\n\n", "next part"]);
+    expect(JSON.stringify(live(events))).not.toContain("ENC");
+  });
+
+  test("a delta naming neither its item nor its position belongs to the item opened last", () => {
+    const events = drive(new ResponsesStreamMapper(), [
+      { type: "response.output_item.added", output_index: 3, item: { id: "rs_3", type: "reasoning" } },
+      { type: "response.reasoning_summary_text.delta", delta: "anonymous" },
+    ]);
+    expect(live(events).map((e) => (e as { block: string }).block)).toEqual(["rs_3", "rs_3"]);
   });
 });

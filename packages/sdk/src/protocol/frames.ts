@@ -591,10 +591,11 @@ export interface SDKModelRefusalNoFallbackMessage {
 
 // --- Winter-only continuity frames (R6-8 / R6-C / R6-7), disclosed as Winter extensions ------------
 //
-// None of these three exists on the pin. They are the observable half of rulings whose whole point is
+// None of these exists on the pin. They are the observable half of rulings whose whole point is
 // that the pinned surface has NOWHERE to put the information: a foreign reasoning summary must not be
 // written into `assistant.message.content` (R6-8), an overload/manual model swap is frame-invisible on
-// the pin (R6-C, capture (G)), and a degraded resume has no pinned channel at all (R6-7).
+// the pin (R6-C, capture (G)), and a degraded resume has no pinned channel at all (R6-7). 0.0.47 adds
+// `reasoning_progress`, the live per-block reasoning stream (user ruling 2026-10-05).
 
 /**
  * R6-8: a foreign model's reasoning SUMMARY, surfaced live WITHOUT entering the transcript.
@@ -613,6 +614,52 @@ export interface SDKReasoningSummaryMessage {
   text: string;
   provider: string;
   model: string;
+  uuid: string;
+  session_id: string;
+}
+
+/**
+ * WINTER-ONLY (0.0.47): LIVE progress of one reasoning block, for every provider family -- Anthropic's
+ * in-dialect thinking included, so a host needs no dialect knowledge to show that the model is thinking.
+ *
+ * User ruling 2026-10-05, "everything that streams should stream": this supersedes R6-8's rule that a
+ * foreign summary reaches the host only once, complete. That complete `system/reasoning_summary` frame
+ * is still sent, unchanged, at the end of each generation.
+ *
+ * THE CONTRACT, per block:
+ *   - `start` when the block opens, then zero or more `delta`s, then exactly one `end`. Every block that
+ *     got a `start` gets an `end`: on its normal close, and also when the stream ends, fails or is
+ *     interrupted. `block_id` is unique within the session and the same on all three phases.
+ *   - `kind` is what the block is as far as the runtime knows so far. A block that opens with no
+ *     readable text is `hidden`; it MAY become `summary`, `update` or `exposed` on its first readable
+ *     `delta` (an Anthropic `display: "updates"` block is a progress update "as soon as one of its
+ *     thinking_delta events carries non-empty text"). The host keeps the LAST kind seen; `end` repeats it.
+ *       `summary` -- a readable summary the provider wrote (OpenAI/xAI Responses, Gemini thought
+ *                    summaries, Anthropic `"summarized"` thinking, Bedrock reasoning summaries);
+ *       `update`  -- an Anthropic progress-update block (`display: "updates"`);
+ *       `exposed` -- the model's raw, full reasoning (`reasoning_content` / `reasoning_text` on a row
+ *                    whose readable state is `full-exposed`);
+ *       `hidden`  -- a reasoning block with no readable text (omitted or updates-mode Anthropic reasoning,
+ *                    `redacted_thinking`, an encrypted-only Responses item).
+ *   - `text` rides `delta` only: that frame's increment, verbatim.
+ *   - `part` numbers a provider's summary parts (OpenAI `summary_index`). A new number starts a new part;
+ *     the host joins parts with a blank line. Absent where the provider numbers no parts.
+ *
+ * Opaque material -- signatures, encrypted content, redacted data -- NEVER rides this frame. Not gated
+ * on `includePartialMessages` (like `thinking_tokens`). A subagent's frames carry its
+ * `parent_tool_use_id`; the session's own carry `null`.
+ */
+export interface SDKReasoningProgressMessage {
+  type: "system";
+  subtype: "reasoning_progress";
+  block_id: string;
+  phase: "start" | "delta" | "end";
+  kind: "summary" | "update" | "exposed" | "hidden";
+  text?: string;
+  part?: number;
+  provider: string;
+  model: string;
+  parent_tool_use_id: string | null;
   uuid: string;
   session_id: string;
 }
@@ -797,6 +844,7 @@ export type SdkMessage =
   | SDKModelRefusalFallbackMessage
   | SDKModelRefusalNoFallbackMessage
   | SDKReasoningSummaryMessage
+  | SDKReasoningProgressMessage
   | SDKModelSwitchMessage
   | SDKContinuityWarningMessage
   // Phase 4 Task 3 (WS-10 §4; derived-shapes-p4.md item (d)): `parent_tool_use_id` is the

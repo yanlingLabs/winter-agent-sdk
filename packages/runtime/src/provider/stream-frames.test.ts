@@ -46,6 +46,27 @@ describe("per-frame gating: `stream_event` is gated, everything else is not", ()
     expect(subtypesOf(frames)).toEqual(["api_retry", "rate_limit_event", "auth_status", "reasoning_summary"]);
   });
 
+  test("0.0.47: `reasoning_progress` is UNGATED, keyed by its block, with `text` on deltas only and `parent_tool_use_id: null`", () => {
+    // Like `thinking_tokens`: a host that never opts into `stream_event` still sees the model thinking.
+    const { sink, frames } = harness();
+    sink.onReasoningProgress({ blockId: "blk-1", phase: "start", kind: "hidden" });
+    sink.onReasoningProgress({ blockId: "blk-1", phase: "delta", kind: "summary", text: "**Planning**\n\nfirst", part: 0 });
+    sink.onReasoningProgress({ blockId: "blk-1", phase: "end", kind: "summary", text: "ignored on an end" });
+    expect(subtypesOf(frames)).toEqual(["reasoning_progress", "reasoning_progress", "reasoning_progress"]);
+    const strip = (f: SdkMessage) => {
+      const { uuid: _u, ...rest } = f as { uuid: string };
+      return rest;
+    };
+    expect(frames.map(strip)).toEqual([
+      { type: "system", subtype: "reasoning_progress", block_id: "blk-1", phase: "start", kind: "hidden", provider: "openai", model: "openai/o-test", parent_tool_use_id: null, session_id: "sess" },
+      { type: "system", subtype: "reasoning_progress", block_id: "blk-1", phase: "delta", kind: "summary", text: "**Planning**\n\nfirst", part: 0, provider: "openai", model: "openai/o-test", parent_tool_use_id: null, session_id: "sess" },
+      { type: "system", subtype: "reasoning_progress", block_id: "blk-1", phase: "end", kind: "summary", provider: "openai", model: "openai/o-test", parent_tool_use_id: null, session_id: "sess" },
+    ]);
+    // A consumer narrows on the frame with no cast.
+    const first = frames[0]!;
+    if (first.type === "system" && first.subtype === "reasoning_progress") expect(first.block_id).toBe("blk-1");
+  });
+
   test("an absent retry status becomes NULL on the frame", () => {
     const { sink, frames } = harness();
     sink.onRetry({ attempt: 2, maxRetries: 10, retryDelayMs: 100, error: "server_error" });

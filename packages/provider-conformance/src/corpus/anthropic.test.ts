@@ -354,8 +354,13 @@ describe("Anthropic Messages: the descriptor's own completion event (Minor 7)", 
       // The block is complete at its own `content_block_stop`, but this row's evidence says the
       // capture happens at `message_stop` -- so it arrives AFTER the text and the tool call, not
       // interleaved where the default would put it.
+      // 0.0.47: the LIVE reasoning block is not held -- it streams and closes at the wire's own block
+      // end, whatever event the row names for the replayable block.
       expect(events.map((e) => e.type)).toEqual([
         "message_start",
+        "reasoning_progress",
+        "reasoning_progress",
+        "reasoning_progress",
         "text_delta",
         "tool_call_start",
         "tool_call_delta",
@@ -383,7 +388,8 @@ describe("Anthropic Messages: the descriptor's own completion event (Minor 7)", 
     await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
       const events = [];
       for await (const e of adapter.streamTurn({ model: ANTHROPIC_MODELS.full, messages: [{ role: "user", content: "go" }] }, testContext(fake.url))) events.push(e);
-      expect(events[1]).toMatchObject({ type: "native_thinking_block" });
+      // Right after the block's own live twin closes (0.0.47), at the same `content_block_stop`.
+      expect(events.findIndex((e) => e.type === "native_thinking_block")).toBe(events.findIndex((e) => e.type === "reasoning_progress" && e.phase === "end") + 1);
     });
   });
 });

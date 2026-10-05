@@ -173,8 +173,9 @@ export type {
   SDKThinkingTokensMessage,
   SDKModelRefusalFallbackMessage,
   SDKModelRefusalNoFallbackMessage,
-  // Winter-only, disclosed as extensions (R6-8 / R6-C / R6-7).
+  // Winter-only, disclosed as extensions (R6-8 / R6-C / R6-7; 0.0.47 the live reasoning stream).
   SDKReasoningSummaryMessage,
+  SDKReasoningProgressMessage,
   SDKModelSwitchMessage,
   SDKContinuityWarningMessage,
 } from "./protocol/frames.ts";

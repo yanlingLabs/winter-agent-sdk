@@ -705,6 +705,13 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
     let cacheReadTokens: number | undefined;
     const signatures: GoogleThoughtSignatureItem[] = [];
     let partIndex = 0;
+    // 0.0.47: the live reasoning block a run of `thought: true` parts streams into. This family has no
+    // block of its own: a run of thought parts is one block, closed by the first part that is not a
+    // thought (the answer or a call) or by the end of the stream. No `part` number is sent: whether a
+    // thought part is a whole summary paragraph or a fragment of one is not something this adapter can
+    // verify, so the parts are one text, exactly as the fold already concatenates them.
+    let openThought: string | undefined;
+    let thoughtBlocks = 0;
 
     try {
       for await (const sse of parseSse(response.body, {
@@ -754,6 +761,10 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
           const index = partIndex++;
           const signature = typeof part["thoughtSignature"] === "string" ? part["thoughtSignature"] : undefined;
           const isThought = part["thought"] === true;
+          if (!isThought && openThought !== undefined) {
+            yield { type: "reasoning_progress", block: openThought, phase: "end", kind: "summary" };
+            openThought = undefined;
+          }
           if (typeof part["functionCall"] === "object" && part["functionCall"] !== null) {
             const call = part["functionCall"] as { name?: unknown; args?: unknown };
             // The id is MINTED here: this family's `functionCall` carries none, and the engine keys
@@ -777,8 +788,15 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
           }
           if (typeof part["text"] === "string") {
             // A `thought` part is FOREIGN reasoning (R6-8): it never becomes content.
-            if (part["thought"] === true) yield { type: "thinking_summary_delta", text: part["text"] };
-            else yield { type: "text_delta", text: part["text"] };
+            if (part["thought"] === true) {
+              yield { type: "thinking_summary_delta", text: part["text"] };
+              // 0.0.47: the same summary, live. The thought SIGNATURE never rides it (kept above, as state).
+              if (openThought === undefined) {
+                openThought = `thought:${thoughtBlocks++}`;
+                yield { type: "reasoning_progress", block: openThought, phase: "start", kind: "summary" };
+              }
+              yield { type: "reasoning_progress", block: openThought, phase: "delta", kind: "summary", text: part["text"] };
+            } else yield { type: "text_delta", text: part["text"] };
           }
         }
 
@@ -796,6 +814,9 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
     } finally {
       ctx.log({ kind: "provider.stream", providerId: ctx.connection.providerId, model: req.model, bytes });
     }
+
+    // A thought run still open when the stream ended is closed here (on a failure, the bridge closes it).
+    if (openThought !== undefined) yield { type: "reasoning_progress", block: openThought, phase: "end", kind: "summary" };
 
     if (!finished) {
       yield { type: "error", error: { code: "network", message: "the provider stream ended before a finishReason; the turn is incomplete and is not reported as finished", retryable: false } };

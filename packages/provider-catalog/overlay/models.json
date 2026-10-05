@@ -723,6 +723,20 @@
         ],
         "continuation": "opaque-provider-state",
         "defaultEffort": "high",
+        "summaryRequest": {
+          "value": {
+            "field": "thinking.display",
+            "values": [
+              "summarized",
+              "omitted",
+              "updates"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "effortRequest": {
           "value": {
             "field": "output_config.effort"
@@ -7587,13 +7601,14 @@
             "field": "thinking.display",
             "values": [
               "summarized",
-              "omitted"
+              "omitted",
+              "updates"
             ]
           },
           "source": "official-doc",
-          "sourceRef": "derived-shapes-p6.md item (c), applied per anthropic/claude-opus-5's own evidence — ThinkingAdaptive/ThinkingEnabled `display`; a Messages API mechanic shared by every current Claude model, not specific to this page",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
           "confidence": "declared",
-          "observedAt": "2026-09-07T00:00:00Z"
+          "observedAt": "2026-10-05T00:00:00Z"
         },
         "completionEvent": {
           "value": "content_block_stop",
@@ -8541,6 +8556,20 @@
         ],
         "continuation": "opaque-provider-state",
         "defaultEffort": "high",
+        "summaryRequest": {
+          "value": {
+            "field": "thinking.display",
+            "values": [
+              "summarized",
+              "omitted",
+              "updates"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
+          "confidence": "declared",
+          "observedAt": "2026-10-05T00:00:00Z"
+        },
         "effortRequest": {
           "value": {
             "field": "output_config.effort"
@@ -8718,13 +8747,14 @@
             "field": "thinking.display",
             "values": [
               "summarized",
-              "omitted"
+              "omitted",
+              "updates"
             ]
           },
           "source": "official-doc",
-          "sourceRef": "derived-shapes-p6.md item (c), applied per anthropic/claude-opus-5's own evidence — ThinkingAdaptive/ThinkingEnabled `display`; a Messages API mechanic shared by every current Claude model, not specific to this page",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
           "confidence": "declared",
-          "observedAt": "2026-09-16T00:00:00Z"
+          "observedAt": "2026-10-05T00:00:00Z"
         },
         "completionEvent": {
           "value": "content_block_stop",
@@ -50793,13 +50823,14 @@
             "field": "thinking.display",
             "values": [
               "summarized",
-              "omitted"
+              "omitted",
+              "updates"
             ]
           },
           "source": "official-doc",
-          "sourceRef": "derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
           "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
+          "observedAt": "2026-10-05T00:00:00Z"
         },
         "completionEvent": {
           "value": "content_block_stop",
@@ -51027,13 +51058,14 @@
             "field": "thinking.display",
             "values": [
               "summarized",
-              "omitted"
+              "omitted",
+              "updates"
             ]
           },
           "source": "official-doc",
-          "sourceRef": "derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
           "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
+          "observedAt": "2026-10-05T00:00:00Z"
         },
         "completionEvent": {
           "value": "content_block_stop",
@@ -51254,13 +51286,14 @@
             "field": "thinking.display",
             "values": [
               "summarized",
-              "omitted"
+              "omitted",
+              "updates"
             ]
           },
           "source": "official-doc",
-          "sourceRef": "derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
           "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
+          "observedAt": "2026-10-05T00:00:00Z"
         },
         "completionEvent": {
           "value": "content_block_stop",
@@ -51484,13 +51517,14 @@
             "field": "thinking.display",
             "values": [
               "summarized",
-              "omitted"
+              "omitted",
+              "updates"
             ]
           },
           "source": "official-doc",
-          "sourceRef": "derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates (read 2026-10-05) — \"On Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Fable 5, the model can write a progress update between tool calls\"; `display: \"updates\"` (beta) returns reasoning blocks with an empty `thinking` field and each progress update as readable summary text, and \"requires the beta header `thinking-display-updates-2026-08-18`\" (without it the value is a 400). https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display (read 2026-10-05) — `display` accepts \"summarized\", \"omitted\" (the default on this model) and \"updates\" (beta). Winter requests \"updates\" where this list carries it. Earlier evidence: derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`.",
           "confidence": "declared",
-          "observedAt": "2026-09-05T00:00:00Z"
+          "observedAt": "2026-10-05T00:00:00Z"
         },
         "completionEvent": {
           "value": "content_block_stop",

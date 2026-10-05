@@ -13,7 +13,8 @@
 //      `ProviderTurn.nativeState` (whose only sink is the provider-state sidecar) and are NEVER
 //      forwarded as a `stream_event`, never logged, never placed in an error message. A
 //      `thinking_summary_delta` is FOREIGN reasoning: it goes to `sink.onReasoningSummary` and onto
-//      `turn.thinking.summary`, never into `assistant.message.content` (R6-8).
+//      `turn.thinking.summary`, never into `assistant.message.content` (R6-8). Its live twin,
+//      `reasoning_progress` (0.0.47), goes to `sink.onReasoningProgress` and nowhere else.
 //   2. **In-dialect thinking rides in-dialect.** `native_thinking_block` carries a COMPLETE
 //      Anthropic-family block with its REAL signature; it becomes a `ContentBlock` the engine
 //      persists verbatim, because that signature is replay-critical (capture (F)).
@@ -24,6 +25,7 @@
 //   4. **Errors are typed and redacted.** Everything that goes wrong becomes a `ProviderTurnError`
 //      carrying the provider's status and structured code -- never a raw body, never credential
 //      material, never opaque state.
+import { randomUUID } from "node:crypto";
 import type { ProviderAdapter, ProviderContext, ProviderError, ProviderEvent, ProviderMessageLike, ResolvedModel, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 import { imageBudgetFor, normalizeThrown, shouldRequestSummary, stripOpaque, withinImageBudget } from "@yanlinglabs/winter-provider-runtime";
 import type { WireContentBlock, WireStreamEvent } from "@yanlinglabs/winter-agent-sdk";
@@ -40,6 +42,7 @@ import {
   type ProviderThinkingOutput,
   type ProviderTurn,
   type ProviderUsage,
+  type ReasoningProgress,
 } from "../engine.ts";
 import type { ContinuationChain } from "../store/provider-state.ts";
 
@@ -248,7 +251,8 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
       // real domain on the very NEXT generation and drop the state. Live native replay would be dead
       // while resumed sessions kept working (the chain rebuilds family/domain from the record) --
       // the common case broken, the rarer one fine, and nothing failing anywhere.
-      const folded = await foldProviderStream(stream, input.sink);
+      // The request's own signal: an interrupt closes the open reasoning blocks at once (see the fold).
+      const folded = await foldProviderStream(stream, input.sink, input.signal);
       // WS-23 (review M-5): the stream-order `content` is kept for the ANTHROPIC family only. Its
       // purpose is replaying in-dialect thinking blocks in place, which no other family has; and at
       // least one other family's serializer keys opaque state on the per-kind shape -- Gemini's
@@ -281,7 +285,7 @@ export type FoldedProviderTurn = Exclude<ProviderTurn, { kind: "rpc_probe" }>;
  * The fold itself, exported so a lane can test its own adapter's stream against the REAL consumer
  * rather than a re-implementation of it.
  */
-export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, sink?: ProviderStreamSink): Promise<FoldedProviderTurn> {
+export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, sink?: ProviderStreamSink, signal?: AbortSignal): Promise<FoldedProviderTurn> {
   let text = "";
   let summary = "";
   let exposed = "";
@@ -317,6 +321,15 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
   // `policy.commit()` draws in the adapters (the first SSE event). Carried onto the typed error so
   // the engine's fallback honours R6-6's first-byte rule.
   let committed = false;
+  // 0.0.47: the live reasoning stream. Every block it opens is closed -- by the adapter, or below, when
+  // the stream ends, fails or the turn is interrupted.
+  const progress = new ReasoningProgressTracker(sink);
+  // An interrupt aborts the request signal BEFORE the engine's race unwinds the turn (engine.ts,
+  // `interruptCurrentTurn`), and abort listeners run inside `abort()` -- so the open blocks' `end` frames
+  // are written before the interrupted turn's own frames, not whenever the abandoned stream finally dies.
+  const onAbort = (): void => progress.stop();
+  if (signal?.aborted === true) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
 
   try {
     for await (const event of stream) {
@@ -345,6 +358,11 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
           break;
         case "thinking_exposed_delta":
           exposed += event.text;
+          break;
+        case "reasoning_progress":
+          // OBSERVATIONAL ONLY: the summary/exposed deltas and `native_thinking_block` remain the
+          // carriers of record; this accumulates nothing into the turn.
+          progress.handle(event);
           break;
         case "native_thinking_block": {
           // An IN-DIALECT Anthropic-family block, complete, with its real signature. Structurally
@@ -434,11 +452,19 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
     }
   } catch (err) {
     throw toProviderTurnError(err, committed);
+  } finally {
+    // Every started block gets its `end`, however the stream stopped: a normal completion whose adapter
+    // left a block open, an `error` event, a throw, or an abort (already closed by the listener).
+    signal?.removeEventListener("abort", onAbort);
+    progress.closeAll();
   }
 
-  // The summary reaches the host ONCE, complete -- not per delta. A frame per delta would be a
-  // second, ungated streaming channel for reasoning text, which is precisely what R6-8 and the
-  // "streaming foreign thinking deltas is a recorded carry, not this phase" ruling exclude.
+  // The COMPLETE summary still reaches the host once, at the end of the generation, as
+  // `system/reasoning_summary` -- unchanged, for hosts that read only that frame. R6-8's rule that this
+  // was the ONLY way reasoning text reached a host ("not per delta") is SUPERSEDED by the user's
+  // 2026-10-05 ruling, "everything that streams should stream": the same text now also streams live,
+  // per block, as `system/reasoning_progress` (the `reasoning_progress` case above). Neither frame ever
+  // puts reasoning into `assistant.message.content`, which is the part of R6-8 that still stands.
   if (summary.length > 0) sink?.onReasoningSummary(summary);
 
   for (const id of callOrder) {
@@ -582,6 +608,83 @@ class StreamEventEmitter {
     if (!this.textOpen) return;
     this.textOpen = false;
     this.emit({ type: "content_block_stop", index: this.index });
+  }
+}
+
+/**
+ * 0.0.47: an adapter's `reasoning_progress` events -> the sink's `onReasoningProgress`, with the
+ * contract's invariants enforced HERE, once, rather than trusted to every adapter:
+ *
+ *   - `block_id` is a fresh UUID per block, so it is unique within the session however many
+ *     generations reuse an adapter's own key (a Responses `#0`, an Anthropic block index 0);
+ *   - a block gets exactly one `start` and one `end`: a repeated `start` is dropped, a `delta`/`end` for
+ *     a block never started opens it first, and anything for a block already ended is dropped;
+ *   - `end` carries the block's LAST kind (a `hidden` block that turned into an `update` ends as one) --
+ *     the kind an adapter's own `end` names is not consulted for a block it already opened;
+ *   - `closeAll()` ends every block still open -- the stream's end, a failure; `stop()` does the same
+ *     for an interrupt and drops whatever the abandoned stream still yields.
+ *
+ * An empty `delta` is dropped: it says nothing a host can render, and an omitted-display Anthropic
+ * block streams exactly that. A `delta` may still change the block's kind (its first readable text).
+ * Every method is a no-op without a sink, so an auxiliary generation costs nothing (R6-G).
+ */
+class ReasoningProgressTracker {
+  private readonly open = new Map<string, { blockId: string; kind: ReasoningProgress["kind"] }>();
+  private readonly ended = new Set<string>();
+  private stopped = false;
+  constructor(private readonly sink: ProviderStreamSink | undefined) {}
+
+  handle(event: Extract<ProviderEvent, { type: "reasoning_progress" }>): void {
+    if (this.sink === undefined || this.stopped || this.ended.has(event.block)) return;
+    let block = this.open.get(event.block);
+    if (block === undefined) {
+      block = { blockId: randomUUID(), kind: event.kind };
+      this.open.set(event.block, block);
+      this.emit({ blockId: block.blockId, phase: "start", kind: event.kind });
+      if (event.phase === "start") return;
+    } else if (event.phase === "start") {
+      return;
+    }
+    if (event.phase === "end") {
+      // The kind an `end` names is ignored for a block already open: what the block turned out to be
+      // was settled by its deltas, and an adapter closing a block need not remember that.
+      this.close(event.block);
+      return;
+    }
+    block.kind = event.kind;
+    if (event.text === undefined || event.text.length === 0) return;
+    this.emit({ blockId: block.blockId, phase: "delta", kind: block.kind, text: event.text, ...(event.part !== undefined ? { part: event.part } : {}) });
+  }
+
+  /** Ends every block still open, each with its last kind. Idempotent. */
+  closeAll(): void {
+    for (const key of [...this.open.keys()]) this.close(key);
+  }
+
+  /**
+   * The turn was interrupted: end what is open and report nothing more. The abandoned stream may still
+   * yield a few events before it dies, and a block opened behind an already-unwound turn would reach
+   * the host after that turn's own frames.
+   */
+  stop(): void {
+    this.closeAll();
+    this.stopped = true;
+  }
+
+  private close(key: string): void {
+    const block = this.open.get(key);
+    if (block === undefined) return;
+    this.open.delete(key);
+    this.ended.add(key);
+    this.emit({ blockId: block.blockId, phase: "end", kind: block.kind });
+  }
+
+  private emit(progress: ReasoningProgress): void {
+    try {
+      this.sink?.onReasoningProgress(progress);
+    } catch {
+      // An observation channel never breaks a generation (the engine's own sink already swallows).
+    }
   }
 }
 

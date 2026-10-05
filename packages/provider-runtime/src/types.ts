@@ -298,6 +298,19 @@ export interface TurnRequest {
 }
 
 /**
+ * 0.0.47: what a reasoning block is, for the `reasoning_progress` event.
+ *
+ *   - `summary`: a readable summary the provider wrote (OpenAI/xAI Responses summary, Gemini thought
+ *     summary, Anthropic `display: "summarized"` thinking, a Bedrock reasoning summary);
+ *   - `update`: an Anthropic progress-update block (`display: "updates"`);
+ *   - `exposed`: the model's raw, full reasoning (`reasoning_content`, `reasoning_text` on a row whose
+ *     readable state is `full-exposed`);
+ *   - `hidden`: a reasoning block with no readable text (an omitted or updates-mode Anthropic reasoning
+ *     block, `redacted_thinking`, an encrypted-only Responses item).
+ */
+export type ReasoningProgressKind = "summary" | "update" | "exposed" | "hidden";
+
+/**
  * The normalized stream every adapter produces. R6-5: the runtime-side bridge folds this into one
  * `ProviderTurn`, and only under `includePartialMessages` does any of it become `stream_event`s.
  */
@@ -310,6 +323,22 @@ export type ProviderEvent =
   | { type: "thinking_exposed_delta"; text: string }
   /** A COMPLETE Anthropic-family in-dialect thinking/redacted block, carried verbatim with its real signature so it can be replayed in-dialect. */
   | { type: "native_thinking_block"; block: unknown }
+  /**
+   * 0.0.47: LIVE progress of one reasoning block, for every family -- the Winter-only
+   * `system/reasoning_progress` frame's source. Observational only: the fold accumulates nothing from it
+   * (the summary/exposed deltas and `native_thinking_block` above stay the carriers of record), so an
+   * adapter emits it BESIDE those events, never instead of them.
+   *
+   * `block` is the adapter's own key for the block, unique within one stream (a Responses item id, a
+   * content-block index, a counter); the bridge maps it to a session-unique id. `kind` is what the block
+   * is as far as the adapter knows SO FAR: a block that opens with no readable text is `hidden`, and may
+   * become `summary`/`update`/`exposed` on its first readable delta (the host keeps the last kind).
+   * `text` rides `delta` only; `part` is a summary part index where the provider numbers its parts.
+   *
+   * NEVER carries opaque material: no signature, no encrypted content, no redacted data -- only text the
+   * provider already returned as readable.
+   */
+  | { type: "reasoning_progress"; block: string; phase: "start" | "delta" | "end"; kind: ReasoningProgressKind; text?: string; part?: number }
   | { type: "tool_call_start"; id: string; name: string }
   | { type: "tool_call_delta"; id: string; argumentsJsonDelta: string }
   | { type: "tool_call_end"; id: string }
