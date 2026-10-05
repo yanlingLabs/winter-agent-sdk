@@ -496,11 +496,6 @@ export class ChatStreamMapper {
     const record = delta as { content?: unknown; reasoning_content?: unknown; reasoning?: unknown; tool_calls?: unknown };
     const events: ProviderEvent[] = [];
 
-    if (typeof record.content === "string" && record.content.length > 0) {
-      this.closeReasoning(events);
-      events.push({ type: "text_delta", text: record.content });
-    }
-
     // DeepSeek spells it `reasoning_content`; OpenRouter re-exports the same channel as `reasoning`.
     // Both are FULL EXPOSED reasoning, which never becomes assistant content (R6-8).
     const exposedDelta = typeof record.reasoning_content === "string" ? record.reasoning_content : typeof record.reasoning === "string" ? record.reasoning : undefined;
@@ -514,6 +509,14 @@ export class ChatStreamMapper {
         events.push({ type: "reasoning_progress", block: this.openReasoning, phase: "start", kind: "exposed" });
       }
       events.push({ type: "reasoning_progress", block: this.openReasoning, phase: "delta", kind: "exposed", text: exposedDelta });
+    }
+
+    // AFTER the reasoning, deliberately: a chunk carrying both is the reasoning's last words and the
+    // answer's first, and in that order one block closes once -- handled the other way round, the answer
+    // would close the block and the same chunk's reasoning open a second one after it.
+    if (typeof record.content === "string" && record.content.length > 0) {
+      this.closeReasoning(events);
+      events.push({ type: "text_delta", text: record.content });
     }
 
     const toolCalls = record.tool_calls;

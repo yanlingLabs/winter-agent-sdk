@@ -1575,26 +1575,26 @@ interface OpenBlock {
 
 /**
  * 0.0.47: what a thinking block's readable text IS, read off the `thinking` object the request body
- * actually sent (never the descriptor -- the body is the one record of what was asked):
+ * actually sent (never the descriptor -- the body is the one record of what was asked). Under EVERY
+ * display a block opens `hidden`, because any block can come back empty ("A progress-update block can
+ * come back with an empty `thinking` field under any `display` value"), and takes its kind at its first
+ * non-empty `thinking_delta`:
  *
- *   - `display: "summarized"` -> every block is a `summary` from its start;
  *   - `display: "updates"`, or Sonnet 5.5's `type: "between_tools"` (whose progress notes "come back
- *     with summary text, as they would under `display: "updates"`") -> a block is `hidden` until "one of
- *     its thinking_delta events carries non-empty text", and then an `update`
+ *     with summary text, as they would under `display: "updates"`") -> `update`: under it "treat a
+ *     block as a progress update as soon as one of its thinking_delta events carries non-empty text"
  *     (https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates, read 2026-10-05);
- *   - anything else (no `display`: omitted on the 5.x rows, summarized on older ones) -> `hidden`, and a
- *     `summary` if text arrives.
+ *   - anything else (`"summarized"`, or no `display`: omitted on the 5.x rows, summarized on older
+ *     ones) -> `summary`.
  */
-type ThinkingProgressMode = "summary" | "updates" | "default";
+type ThinkingProgressMode = "summary" | "updates";
 
 /** EXPORTED (relative-import only, like `buildRequestBody`) so the `between_tools` arm -- which Winter never sends -- is still pinned by a test. */
 export function thinkingProgressMode(body: Record<string, unknown>): ThinkingProgressMode {
   const thinking = body["thinking"];
-  if (thinking === null || typeof thinking !== "object") return "default";
+  if (thinking === null || typeof thinking !== "object") return "summary";
   const { display, type } = thinking as { display?: unknown; type?: unknown };
-  if (display === "summarized") return "summary";
-  if (display === "updates" || type === "between_tools") return "updates";
-  return "default";
+  return display === "updates" || type === "between_tools" ? "updates" : "summary";
 }
 
 type AnthropicStopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "pause_turn" | "model_context_window_exceeded";
@@ -1943,7 +1943,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
               // 0.0.47: the block's LIVE twin opens with it. A `redacted_thinking` block is `hidden` to
               // its close and its `data` never rides the event; neither does a thinking block's signature.
               open.progress = `block:${index}`;
-              yield { type: "reasoning_progress", block: open.progress, phase: "start", kind: blockType === "thinking" && progressMode === "summary" ? "summary" : "hidden" };
+              yield { type: "reasoning_progress", block: open.progress, phase: "start", kind: "hidden" };
               if (blockType === "thinking" && open.thinking.length > 0) yield { type: "reasoning_progress", block: open.progress, phase: "delta", kind: progressMode === "updates" ? "update" : "summary", text: open.thinking };
             }
             break;
@@ -1961,8 +1961,9 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
               // (that event is for FOREIGN reasoning, R6-8).
               open.thinking += delta["thinking"];
               // 0.0.47 (user ruling 2026-10-05): the same text streams to the host LIVE, as the block's
-              // `reasoning_progress` delta. An empty delta (the omitted/updates reasoning-block shape)
-              // says nothing and is not sent; the first non-empty one makes an updates-mode block an `update`.
+              // `reasoning_progress` delta. An empty delta (the shape of an omitted or updates-mode
+              // reasoning block, and of an empty progress update under any display) says nothing and is
+              // not sent; the first non-empty one gives the block its kind (`thinkingProgressMode`).
               if (open.progress !== undefined && delta["thinking"].length > 0) {
                 yield { type: "reasoning_progress", block: open.progress, phase: "delta", kind: progressMode === "updates" ? "update" : "summary", text: delta["thinking"] };
               }

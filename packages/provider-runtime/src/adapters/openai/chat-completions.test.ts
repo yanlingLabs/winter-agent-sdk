@@ -621,3 +621,18 @@ describe("ChatStreamMapper: the live reasoning stream (0.0.47)", () => {
     expect(events.at(-1)).toEqual({ type: "done", stopReason: "tool_use" });
   });
 });
+
+describe("ChatStreamMapper: one chunk carrying reasoning AND answer text (0.0.47 review)", () => {
+  test("the block closes once, before the answer -- no second block opened after it", () => {
+    const events = drive(new ChatStreamMapper(true), [
+      { choices: [{ index: 0, delta: { reasoning_content: "almost done" } }] },
+      { choices: [{ index: 0, delta: { reasoning_content: " -- yes.", content: "The answer" } }] },
+      { choices: [{ index: 0, delta: { content: " is 4." }, finish_reason: "stop" }] },
+      "[DONE]",
+    ]);
+    const shape = events.filter((e) => e.type === "reasoning_progress" || e.type === "text_delta").map((e) => (e.type === "reasoning_progress" ? `${e.block}:${e.phase}${e.text !== undefined ? `:${e.text}` : ""}` : `text:${e.text}`));
+    expect(shape).toEqual(["exposed:0:start", "exposed:0:delta:almost done", "exposed:0:delta: -- yes.", "exposed:0:end", "text:The answer", "text: is 4."]);
+    // The fold's own exposed text is unchanged by the order.
+    expect(events.filter((e) => e.type === "thinking_exposed_delta").map((e) => (e as { text: string }).text).join("")).toBe("almost done -- yes.");
+  });
+});

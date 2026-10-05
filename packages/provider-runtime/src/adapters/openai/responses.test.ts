@@ -285,8 +285,9 @@ describe("ResponsesStreamMapper", () => {
     expect(events).toEqual([
       { type: "message_start", id: "resp_1", model: "o4-mini" },
       { type: "thinking_summary_delta", text: "weighing options" },
-      // 0.0.47: its live twin -- a delta naming no item falls back to the output position (none here).
-      { type: "reasoning_progress", block: "#", phase: "delta", kind: "summary", text: "weighing options" },
+      // 0.0.47: its live twin -- a delta naming neither its item nor its position, with no item opened,
+      // gets a block of its own.
+      { type: "reasoning_progress", block: "#anonymous:0", phase: "delta", kind: "summary", text: "weighing options", part: 0 },
       { type: "text_delta", text: "the answer" },
       { type: "usage", inputTokens: 7, outputTokens: 3 },
       { type: "done", stopReason: "end_turn" },
@@ -296,7 +297,7 @@ describe("ResponsesStreamMapper", () => {
   test("`response.reasoning_summary_text.delta` is a SUMMARY whatever the row claims (WS-23 fix round 1, M1)", () => {
     for (const readable of ["none", "summary", "full-exposed"] as const) {
       const events = drive(new ResponsesStreamMapper("response.completed", readable), [{ type: "response.reasoning_summary_text.delta", delta: "short version" }]);
-      expect([readable, events]).toEqual([readable, [{ type: "thinking_summary_delta", text: "short version" }, { type: "reasoning_progress", block: "#", phase: "delta", kind: "summary", text: "short version" }]]);
+      expect([readable, events]).toEqual([readable, [{ type: "thinking_summary_delta", text: "short version" }, { type: "reasoning_progress", block: "#anonymous:0", phase: "delta", kind: "summary", text: "short version", part: 0 }]]);
     }
   });
 
@@ -304,7 +305,7 @@ describe("ResponsesStreamMapper", () => {
     // It used to be ignored, so a model streaming its readable reasoning on this channel (xAI's own
     // example reads it for grok-4.7) surfaced nothing.
     const frame = [{ type: "response.reasoning_text.delta", delta: "step one" }, { type: "response.reasoning_text.delta", delta: "" }];
-    const live = (kind: "summary" | "exposed"): ProviderEvent => ({ type: "reasoning_progress", block: "#", phase: "delta", kind, text: "step one" });
+    const live = (kind: "summary" | "exposed"): ProviderEvent => ({ type: "reasoning_progress", block: "#anonymous:0", phase: "delta", kind, text: "step one", part: 0 });
     expect(drive(new ResponsesStreamMapper(), frame)).toEqual([{ type: "thinking_summary_delta", text: "step one" }, live("summary")]);
     expect(drive(new ResponsesStreamMapper("response.completed", "summary"), frame)).toEqual([{ type: "thinking_summary_delta", text: "step one" }, live("summary")]);
     // The complete trace is a claim with consequences downstream (it can suppress a switch warning),
@@ -495,5 +496,75 @@ describe("ResponsesStreamMapper: the live reasoning stream (0.0.47)", () => {
       { type: "response.reasoning_summary_text.delta", delta: "anonymous" },
     ]);
     expect(live(events).map((e) => (e as { block: string }).block)).toEqual(["rs_3", "rs_3"]);
+  });
+});
+
+describe("ResponsesStreamMapper: part numbers and block keys (0.0.47 review)", () => {
+  const live = (events: ProviderEvent[]) => events.filter((e): e is Extract<ProviderEvent, { type: "reasoning_progress" }> => e.type === "reasoning_progress");
+
+  test("an item streaming BOTH a summary and reasoning text gives every distinct part its own number -- the two index spaces never share one", () => {
+    // `summary_index` 0 and `content_index` 0 are DIFFERENT parts; the raw indices would both say 0 and
+    // the host would run the two together with no blank line.
+    const events = drive(new ResponsesStreamMapper("response.completed", "summary"), [
+      { type: "response.output_item.added", output_index: 0, item: { id: "rs_1", type: "reasoning" } },
+      { type: "response.reasoning_summary_text.delta", item_id: "rs_1", output_index: 0, summary_index: 0, delta: "**Summary**" },
+      { type: "response.reasoning_text.delta", item_id: "rs_1", output_index: 0, content_index: 0, delta: "text zero" },
+      { type: "response.reasoning_summary_text.delta", item_id: "rs_1", output_index: 0, summary_index: 0, delta: " continues" },
+      { type: "response.reasoning_summary_text.delta", item_id: "rs_1", output_index: 0, summary_index: 1, delta: "**Second**" },
+      { type: "response.reasoning_text.delta", item_id: "rs_1", output_index: 0, content_index: 1, delta: "text one" },
+    ]);
+    expect(live(events).filter((e) => e.phase === "delta").map((e) => [e.part, e.text])).toEqual([
+      [0, "**Summary**"],
+      [1, "text zero"],
+      [0, " continues"],
+      [2, "**Second**"],
+      [3, "text one"],
+    ]);
+  });
+
+  test("part numbers are per block: a second item counts from 0 again", () => {
+    const events = drive(new ResponsesStreamMapper(), [
+      { type: "response.output_item.added", output_index: 0, item: { id: "rs_a", type: "reasoning" } },
+      { type: "response.reasoning_summary_text.delta", item_id: "rs_a", output_index: 0, summary_index: 0, delta: "a0" },
+      { type: "response.reasoning_summary_text.delta", item_id: "rs_a", output_index: 0, summary_index: 1, delta: "a1" },
+      { type: "response.output_item.added", output_index: 1, item: { id: "rs_b", type: "reasoning" } },
+      { type: "response.reasoning_summary_text.delta", item_id: "rs_b", output_index: 1, summary_index: 0, delta: "b0" },
+    ]);
+    expect(live(events).filter((e) => e.phase === "delta").map((e) => [e.block, e.part])).toEqual([
+      ["rs_a", 0],
+      ["rs_a", 1],
+      ["rs_b", 0],
+    ]);
+  });
+
+  test("the item id is preferred, and every name an event gave an item keeps finding it: id-only and index-only events land on one block", () => {
+    const events = drive(new ResponsesStreamMapper(), [
+      { type: "response.output_item.added", output_index: 4, item: { id: "rs_x", type: "reasoning" } },
+      // Only the position:
+      { type: "response.reasoning_summary_text.delta", output_index: 4, summary_index: 0, delta: "by index" },
+      // Only the id:
+      { type: "response.reasoning_summary_text.delta", item_id: "rs_x", summary_index: 0, delta: " by id" },
+      { type: "response.output_item.done", item: { id: "rs_x", type: "reasoning", encrypted_content: "E" } },
+    ]);
+    expect(live(events).map((e) => `${e.block}:${e.phase}`)).toEqual(["rs_x:start", "rs_x:delta", "rs_x:delta", "rs_x:end"]);
+  });
+
+  test("two items carrying NEITHER an id nor a position never collapse onto one block", () => {
+    const events = drive(new ResponsesStreamMapper(), [
+      { type: "response.output_item.added", item: { type: "reasoning" } },
+      { type: "response.reasoning_summary_text.delta", delta: "first item" },
+      { type: "response.output_item.done", item: { type: "reasoning" } },
+      { type: "response.output_item.added", item: { type: "reasoning" } },
+      { type: "response.reasoning_summary_text.delta", delta: "second item" },
+      { type: "response.output_item.done", item: { type: "reasoning" } },
+    ]);
+    expect(live(events).map((e) => `${e.block}:${e.phase}`)).toEqual([
+      "#anonymous:0:start",
+      "#anonymous:0:delta",
+      "#anonymous:0:end",
+      "#anonymous:1:start",
+      "#anonymous:1:delta",
+      "#anonymous:1:end",
+    ]);
   });
 });

@@ -557,6 +557,15 @@ export function transformChildFrame(
     return { ...frame, message: { ...message, parent_tool_use_id: correlation.parentToolUseId } } as WinterFrame;
   }
 
+  // 0.0.47: a child's LIVE REASONING (`system/reasoning_progress`). The block itself always crosses --
+  // its start, its end and every kind change -- so a host still sees that the subagent is thinking. Its
+  // TEXT is the child's thinking, which WS-10 §4 forwards only under `forwardSubagentText` (the same gate
+  // `stream_event` above obeys), so without the option each delta crosses with its `text` removed.
+  if (message["type"] === "system" && message["subtype"] === "reasoning_progress") {
+    const { text: _text, ...withoutText } = message;
+    return { ...frame, message: { ...(forwardSubagentText ? message : withoutText), parent_tool_use_id: correlation.parentToolUseId } } as WinterFrame;
+  }
+
   if (message["type"] === "user") {
     // This engine's own "user" data-frame convention carries only tool_result blocks (engine.ts's
     // round loop) -- WS-10 §4's "tool_use/tool_result blocks... are forwarded" applies

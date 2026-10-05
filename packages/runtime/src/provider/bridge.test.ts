@@ -887,6 +887,15 @@ describe("0.0.47: the live reasoning stream (`reasoning_progress`)", () => {
     ]);
   });
 
+  test("an EMPTY delta changes nothing -- not even the kind: a block of empty text ends as the hidden block it opened as", async () => {
+    const rec = recordingSink();
+    await foldProviderStream(scripted([p("k", "start", "hidden"), p("k", "delta", "update", ""), p("k", "delta", "summary"), p("k", "end", "hidden"), done]), rec.sink);
+    expect(rec.progress.map((s) => [s.phase, s.kind])).toEqual([
+      ["start", "hidden"],
+      ["end", "hidden"],
+    ]);
+  });
+
   test("an `error` event mid-block still ends the block before the fold throws", async () => {
     const rec = recordingSink();
     await expect(

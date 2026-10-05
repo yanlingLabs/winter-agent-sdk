@@ -333,7 +333,8 @@ export type ProviderEvent =
    * content-block index, a counter); the bridge maps it to a session-unique id. `kind` is what the block
    * is as far as the adapter knows SO FAR: a block that opens with no readable text is `hidden`, and may
    * become `summary`/`update`/`exposed` on its first readable delta (the host keeps the last kind).
-   * `text` rides `delta` only; `part` is a summary part index where the provider numbers its parts.
+   * `text` rides `delta` only; `part` numbers the block's distinct parts (0, 1, ... in order of first
+   * appearance) where the provider numbers its parts -- two index spaces never share a number.
    *
    * NEVER carries opaque material: no signature, no encrypted content, no redacted data -- only text the
    * provider already returned as readable.

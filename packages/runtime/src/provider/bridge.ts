@@ -624,8 +624,9 @@ class StreamEventEmitter {
  *   - `closeAll()` ends every block still open -- the stream's end, a failure; `stop()` does the same
  *     for an interrupt and drops whatever the abandoned stream still yields.
  *
- * An empty `delta` is dropped: it says nothing a host can render, and an omitted-display Anthropic
- * block streams exactly that. A `delta` may still change the block's kind (its first readable text).
+ * An empty `delta` is dropped, kind and all: it says nothing a host can render, and an omitted-display
+ * Anthropic block streams exactly that. A non-empty `delta` may change the block's kind (its first
+ * readable text).
  * Every method is a no-op without a sink, so an auxiliary generation costs nothing (R6-G).
  */
 class ReasoningProgressTracker {
@@ -651,8 +652,10 @@ class ReasoningProgressTracker {
       this.close(event.block);
       return;
     }
-    block.kind = event.kind;
+    // An EMPTY delta changes nothing, its kind included: a block that streamed only empty text (an
+    // omitted Anthropic block) is still the `hidden` block it opened as.
     if (event.text === undefined || event.text.length === 0) return;
+    block.kind = event.kind;
     this.emit({ blockId: block.blockId, phase: "delta", kind: block.kind, text: event.text, ...(event.part !== undefined ? { part: event.part } : {}) });
   }
 

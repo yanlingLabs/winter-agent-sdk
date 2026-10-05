@@ -13,7 +13,7 @@ import { foldProviderStream } from "../../../runtime/src/provider/bridge.ts";
 import type { ProviderStreamSink, ReasoningProgress } from "../../../runtime/src/engine.ts";
 import { sseResponse, withFake, type SseFrame } from "../fakes/server.ts";
 import { chatStream } from "../fakes/openai-chat.ts";
-import { startBedrockFake } from "../fakes/bedrock.ts";
+import { converseStreamEvent, eventStreamResponse, startBedrockFake } from "../fakes/bedrock.ts";
 import { ANTHROPIC_MODELS, anthropicCorpusRoutes, testAnthropicAdapter, testContext as anthropicContext } from "./anthropic.ts";
 import { GOOGLE_MODELS, GOOGLE_SIGNATURE, googleContext, googleCorpusRoutes, testGoogleAdapter } from "./google.ts";
 import { BEDROCK_CORPUS_MODEL, OPAQUE_SIGNATURE_MARKER, bedrockScenarios, createBedrockHarness } from "./bedrock.ts";
@@ -237,6 +237,30 @@ describe("Bedrock Converse", () => {
       await foldProviderStream(harness.adapter.streamTurn({ ...req, model: "reasoning" }, harness.ctx as ProviderContext), unasked.sink);
       expectWellFormed(unasked.progress);
       expect(blocks(unasked.progress)).toEqual([{ kinds: ["hidden"], text: "", parts: [] }]);
+    } finally {
+      await fake.close();
+    }
+  }, 30_000);
+
+  test("a reasoning block whose text is EMPTY stays hidden even where a summary was asked for", async () => {
+    const emptyReasoning = [
+      converseStreamEvent("messageStart", { role: "assistant" }),
+      converseStreamEvent("contentBlockDelta", { contentBlockIndex: 0, delta: { reasoningContent: { text: "" } } }),
+      converseStreamEvent("contentBlockDelta", { contentBlockIndex: 0, delta: { reasoningContent: { signature: "SIG-EMPTY-BLOCK" } } }),
+      converseStreamEvent("contentBlockStop", { contentBlockIndex: 0 }),
+      converseStreamEvent("contentBlockDelta", { contentBlockIndex: 1, delta: { text: "answer" } }),
+      converseStreamEvent("contentBlockStop", { contentBlockIndex: 1 }),
+      converseStreamEvent("messageStop", { stopReason: "end_turn" }),
+      converseStreamEvent("metadata", { usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 } }),
+    ];
+    const fake = await startBedrockFake({ scenarios: { ...bedrockScenarios(), "empty-reasoning": () => eventStreamResponse(emptyReasoning) } });
+    try {
+      const harness = createBedrockHarness(fake);
+      const rec = record();
+      await foldProviderStream(harness.adapter.streamTurn({ model: "empty-reasoning", messages: [{ role: "user", content: "hi" }], requestSummary: true }, harness.ctx), rec.sink);
+      expectWellFormed(rec.progress);
+      expect(blocks(rec.progress)).toEqual([{ kinds: ["hidden"], text: "", parts: [] }]);
+      expect(JSON.stringify(rec.progress)).not.toContain("SIG-EMPTY-BLOCK");
     } finally {
       await fake.close();
     }

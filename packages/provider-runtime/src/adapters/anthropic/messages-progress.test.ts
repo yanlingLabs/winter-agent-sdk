@@ -158,13 +158,17 @@ describe("the live reasoning stream: what each thinking block is", () => {
     expect(types.indexOf("tool_call_start")).toBeGreaterThan(types.lastIndexOf("native_thinking_block"));
   });
 
-  test("under `summarized`, a block is a `summary` from its start", async () => {
-    const s = start(messageStart + thinkingBlock(0, ["Weighing two fixes."], "SIG-1") + toolUse(1) + ending);
+  test("under `summarized`, a block opens hidden and is a `summary` from its first text -- an EMPTY block stays hidden", async () => {
+    // An empty progress-update block can come back under any display; it must not read as a summary.
+    const s = start(messageStart + thinkingBlock(0, ["Weighing two fixes."], "SIG-1") + thinkingBlock(1, [""], "SIG-2") + toolUse(2) + ending);
     const events = await collect(s.url, request("claude-sonnet-5", { requestSummary: true, thinking: { type: "adaptive" } }));
-    expect(progressOf(events).map((e) => [e.phase, e.kind])).toEqual([
-      ["start", "summary"],
-      ["delta", "summary"],
-      ["end", "hidden"],
+    expect(s.requests[0]!.body["thinking"]).toMatchObject({ display: "summarized" });
+    expect(progressOf(events).map((e) => [e.block, e.phase, e.kind])).toEqual([
+      ["block:0", "start", "hidden"],
+      ["block:0", "delta", "summary"],
+      ["block:0", "end", "hidden"],
+      ["block:1", "start", "hidden"],
+      ["block:1", "end", "hidden"],
     ]);
   });
 
@@ -172,7 +176,7 @@ describe("the live reasoning stream: what each thinking block is", () => {
     expect(thinkingProgressMode({ thinking: { type: "adaptive", display: "summarized" } })).toBe("summary");
     expect(thinkingProgressMode({ thinking: { type: "adaptive", display: "updates" } })).toBe("updates");
     expect(thinkingProgressMode({ thinking: { type: "between_tools" } })).toBe("updates");
-    expect(thinkingProgressMode({ thinking: { type: "adaptive", display: "omitted" } })).toBe("default");
-    expect(thinkingProgressMode({})).toBe("default");
+    expect(thinkingProgressMode({ thinking: { type: "adaptive", display: "omitted" } })).toBe("summary");
+    expect(thinkingProgressMode({})).toBe("summary");
   });
 });

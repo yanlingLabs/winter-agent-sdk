@@ -754,7 +754,8 @@ class ConverseFold {
             // else — surfacing it would be a claim about the model that no evidence supports.
             if (this.wantsSummary) {
               out.push({ type: "thinking_summary_delta", text: delta.reasoningContent.text });
-              out.push({ type: "reasoning_progress", block: `reasoning:${index}`, phase: "delta", kind: "summary", text: delta.reasoningContent.text });
+              // An empty text says nothing and must not turn a hidden block into a summary.
+              if (delta.reasoningContent.text.length > 0) out.push({ type: "reasoning_progress", block: `reasoning:${index}`, phase: "delta", kind: "summary", text: delta.reasoningContent.text });
             }
           }
           // NEVER emitted as an event, in either case: a signature is replay material and

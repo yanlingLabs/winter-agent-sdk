@@ -12,6 +12,8 @@ import { runEngine, DEFAULT_MAX_PROVIDER_MESSAGE_BYTES, ProviderTurnError, type 
 import { stubExecutor } from "./mock.ts";
 import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import { buildSessionProvider } from "./session-provider.ts";
+import { foldProviderStream } from "./bridge.ts";
+import type { ProviderEvent } from "@yanlinglabs/winter-provider-runtime";
 import { chatCatalog, chatModel, chatProvider, startRawChatFake } from "./raw-chat-fake.test-support.ts";
 
 async function drain(source: AsyncIterable<WinterFrame>): Promise<WinterFrame[]> {
@@ -154,6 +156,48 @@ describe("R6-6: true cancellation", () => {
     await drain(host.input);
     await done;
     expect(seenAborted).toBe(true);
+  });
+
+  test("0.0.47: on an interrupt every open reasoning block's `end` reaches the host BEFORE the turn's `result`, and the abandoned stream adds nothing after it", async () => {
+    // The generation folds a stream the way `adapterAsProvider` does (the request's own sink and
+    // signal), and the stream outlives the interrupt: it dies only a macrotask after the abort, as a
+    // real socket does, and yields one more step first. Nothing it yields then may reach the host.
+    const provider: Provider = {
+      generate(input) {
+        async function* stream(): AsyncIterable<ProviderEvent> {
+          yield { type: "reasoning_progress", block: "k", phase: "start", kind: "hidden" };
+          yield { type: "reasoning_progress", block: "k", phase: "delta", kind: "update", text: "Reading the logs." };
+          yield { type: "reasoning_progress", block: "j", phase: "start", kind: "hidden" };
+          await new Promise<void>((resolve) => input.signal?.addEventListener("abort", () => setTimeout(resolve, 10)));
+          yield { type: "reasoning_progress", block: "late", phase: "start", kind: "summary" };
+          throw new Error("aborted");
+        }
+        return foldProviderStream(stream(), input.sink, input.signal);
+      },
+    };
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+    host.output.write({ type: "user", text: "go" });
+    await new Promise((r) => setTimeout(r, 20));
+    host.output.write({ type: "control_request", requestId: "i1", subtype: "interrupt", payload: undefined });
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    const messages = dataMessages(await drain(host.input));
+    await done;
+    // Let the abandoned stream die and try its last step.
+    await new Promise((r) => setTimeout(r, 30));
+
+    const progress = messages
+      .map((m, index) => ({ m: m as { type: string; subtype?: string; block_id?: string; phase?: string; kind?: string; parent_tool_use_id?: unknown }, index }))
+      .filter(({ m }) => m.type === "system" && m.subtype === "reasoning_progress");
+    const resultAt = messages.findIndex((m) => m.type === "result");
+    expect(resultAt).toBeGreaterThan(-1);
+    const ends = progress.filter(({ m }) => m.phase === "end");
+    expect(ends.map(({ m }) => m.kind)).toEqual(["update", "hidden"]);
+    for (const { index } of ends) expect(index).toBeLessThan(resultAt);
+    // One start and one end per block, two blocks, nothing from after the abort.
+    expect(new Set(progress.map(({ m }) => m.block_id)).size).toBe(2);
+    expect(progress.map(({ m }) => m.phase)).toEqual(["start", "delta", "start", "end", "end"]);
+    expect(progress.every(({ m }) => m.parent_tool_use_id === null)).toBe(true);
   });
 
   test("the signal also reaches the tool executor, so an interrupt stops the in-flight tool", async () => {

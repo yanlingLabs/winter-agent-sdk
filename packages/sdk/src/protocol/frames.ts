@@ -629,7 +629,10 @@ export interface SDKReasoningSummaryMessage {
  * THE CONTRACT, per block:
  *   - `start` when the block opens, then zero or more `delta`s, then exactly one `end`. Every block that
  *     got a `start` gets an `end`: on its normal close, and also when the stream ends, fails or is
- *     interrupted. `block_id` is unique within the session and the same on all three phases.
+ *     interrupted. On an interrupt the SESSION's own open blocks (`parent_tool_use_id: null`) end before
+ *     the interrupted turn's `result`; a subagent's blocks also end, but their `end` frames come through
+ *     the subagent's own stream and may arrive after that `result`. `block_id` is unique within the
+ *     session and the same on all three phases.
  *   - `kind` is what the block is as far as the runtime knows so far. A block that opens with no
  *     readable text is `hidden`; it MAY become `summary`, `update` or `exposed` on its first readable
  *     `delta` (an Anthropic `display: "updates"` block is a progress update "as soon as one of its
@@ -642,12 +645,16 @@ export interface SDKReasoningSummaryMessage {
  *       `hidden`  -- a reasoning block with no readable text (omitted or updates-mode Anthropic reasoning,
  *                    `redacted_thinking`, an encrypted-only Responses item).
  *   - `text` rides `delta` only: that frame's increment, verbatim.
- *   - `part` numbers a provider's summary parts (OpenAI `summary_index`). A new number starts a new part;
- *     the host joins parts with a blank line. Absent where the provider numbers no parts.
+ *   - `part` numbers a block's distinct parts, 0, 1, ... in order of first appearance (each OpenAI
+ *     `summary_index` and each `content_index` is its own part, never sharing a number). A new number
+ *     starts a new part; the host joins parts with a blank line. Absent where the provider numbers no
+ *     parts.
  *
  * Opaque material -- signatures, encrypted content, redacted data -- NEVER rides this frame. Not gated
  * on `includePartialMessages` (like `thinking_tokens`). A subagent's frames carry its
- * `parent_tool_use_id`; the session's own carry `null`.
+ * `parent_tool_use_id`; the session's own carry `null`. A subagent's `text` crosses only under
+ * `forwardSubagentText` (the gate on a child's thinking); without it its frames still open, change kind
+ * and close, with no `text`.
  */
 export interface SDKReasoningProgressMessage {
   type: "system";
