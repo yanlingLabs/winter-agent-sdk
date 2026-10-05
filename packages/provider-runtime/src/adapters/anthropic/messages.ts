@@ -1736,6 +1736,66 @@ async function openCommittedStream(stream: AsyncGenerator<SseEvent>): Promise<{ 
   }
 }
 
+/**
+ * 0.0.49: a mid-stream `error` frame, classified by its own `type` and explained by its own `message`.
+ *
+ * Until 0.0.49 every such frame was `code: "server"` with the vendor's message dropped, so a host showed
+ * "unavailable or overloaded" for a request the API had REFUSED (an `invalid_request_error` live-gated on
+ * Sonnet 5.5) and nobody could see why. Anthropic's error types
+ * (https://platform.claude.com/docs/en/api/errors, read 2026-10-06) map onto the seam's codes the way
+ * their HTTP statuses do in `normalizeHttpError`: `invalid_request_error` (400; also a spend limit or
+ * an exhausted credit balance), `billing_error` (402), `not_found_error` (404), `conflict_error` (409)
+ * and `request_too_large` (413) are `bad_request`; `authentication_error` (401) and `permission_error`
+ * (403) are `auth`; `rate_limit_error` (429) is `rate_limit`; `timeout_error` (504) is `timeout`;
+ * `overloaded_error` (529), `api_error` (500) and any type the API adds later stay `server`. None is
+ * retryable here (above).
+ *
+ * The vendor's message rides along, through `anthropicErrorMessage`: it is Anthropic's own prose about
+ * the request (never credential material), and it is the only place the reason exists.
+ */
+export function streamErrorFrame(raw: unknown): ProviderError {
+  const error = raw !== null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const providerCode = typeof error["type"] === "string" ? error["type"] : undefined;
+  const detail = anthropicErrorMessage(error["message"]);
+  const code: ProviderError["code"] = providerCode !== undefined ? (STREAM_ERROR_CODES[providerCode] ?? "server") : "server";
+  return {
+    code,
+    message: `the provider ended the stream with an error frame${providerCode !== undefined ? ` (${providerCode})` : ""}${detail !== undefined ? `: ${detail}` : ""}`,
+    retryable: false,
+    ...(providerCode !== undefined ? { providerCode } : {}),
+  };
+}
+
+/** Anthropic's documented error types -> the seam's codes (see `streamErrorFrame`). */
+const STREAM_ERROR_CODES: Readonly<Record<string, ProviderError["code"]>> = {
+  invalid_request_error: "bad_request",
+  billing_error: "bad_request",
+  not_found_error: "bad_request",
+  conflict_error: "bad_request",
+  request_too_large: "bad_request",
+  authentication_error: "auth",
+  permission_error: "auth",
+  rate_limit_error: "rate_limit",
+  timeout_error: "timeout",
+};
+
+/** The longest vendor explanation carried on an error: enough for Anthropic's own sentences, never a body. */
+const ANTHROPIC_ERROR_MESSAGE_MAX = 300;
+
+/**
+ * An Anthropic error `message`, made safe to show: control characters and runs of whitespace collapsed,
+ * any QUOTED span longer than a short identifier replaced (a message may quote a value from the request
+ * -- `Unexpected value '...'` -- and a request value is conversation content), and the whole capped.
+ * `undefined` for anything that is not a non-empty string.
+ */
+export function anthropicErrorMessage(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  let text = raw.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  text = text.replace(/(['"`])([^'"`]{41,})\1/g, "$1…$1");
+  if (text.length === 0) return undefined;
+  return text.length > ANTHROPIC_ERROR_MESSAGE_MAX ? `${text.slice(0, ANTHROPIC_ERROR_MESSAGE_MAX)}…` : text;
+}
+
 // eslint-disable-next-line require-yield -- a generator that only rethrows, so the loop's own catch owns the failure
 async function* rethrowing(err: unknown): AsyncGenerator<SseEvent> {
   throw err;
@@ -2037,21 +2097,11 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
             heldThinking.length = 0;
             break;
           case "error": {
-            const error = (payload["error"] ?? {}) as Record<string, unknown>;
-            const providerCode = typeof error["type"] === "string" ? error["type"] : undefined;
-            yield {
-              type: "error",
-              error: {
-                // A mid-stream `error` frame is a SERVER-side failure of an already-started
-                // generation. It is never retryable HERE whatever it says: content has been streamed
-                // and R6-6 forbids replaying an effectful turn. (An `overloaded_error` that arrives
-                // BEFORE any content never reaches this case -- `openCommittedStream` replays it.)
-                code: "server",
-                message: `the provider ended the stream with an error frame${providerCode !== undefined ? ` (${providerCode})` : ""}`,
-                retryable: false,
-                ...(providerCode !== undefined ? { providerCode } : {}),
-              },
-            };
+            // A mid-stream `error` frame ends an already-started generation. It is never retryable HERE
+            // whatever it says: content has been streamed and R6-6 forbids replaying an effectful turn.
+            // (An `overloaded_error` that arrives BEFORE any content never reaches this case --
+            // `openCommittedStream` replays it.) Classified and explained by `streamErrorFrame`.
+            yield { type: "error", error: streamErrorFrame(payload["error"]) };
             return;
           }
           default:

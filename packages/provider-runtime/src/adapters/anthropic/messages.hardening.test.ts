@@ -7,7 +7,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { serve } from "bun";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
-import { ANTHROPIC_ROW_DEFAULT_MAX_TOKENS, INTERLEAVED_THINKING_BETA, buildRequestBody, createAnthropicMessagesAdapter, findDescriptor } from "./messages.ts";
+import { ANTHROPIC_ROW_DEFAULT_MAX_TOKENS, INTERLEAVED_THINKING_BETA, anthropicErrorMessage, buildRequestBody, createAnthropicMessagesAdapter, findDescriptor, streamErrorFrame } from "./messages.ts";
 import { createMemoryCredentialStore } from "../../credentials/memory.ts";
 import { winterUserAgent } from "../../identity.ts";
 import { ANTHROPIC_CONSOLE_CREDENTIAL_ACCOUNT, CONSOLE_BEARER } from "./console-oauth.ts";
@@ -432,5 +432,48 @@ describe("WS-23 M-6: Opus 5's disabled -> adaptive rewrite is logged once per ad
     await run({ thinking: { type: "disabled" }, effort: "xhigh" });
     await run({ thinking: { type: "disabled" }, effort: "max" });
     expect(logs.filter((l) => l.kind.startsWith("provider.thinking_rewrite"))).toEqual([{ kind: "provider.thinking_rewrite.disabled_to_adaptive", providerId: "anthropic", model: "claude-opus-5" }]);
+  });
+});
+
+describe("0.0.49: a mid-stream `error` frame says WHAT the provider refused, and is classified by its own type", () => {
+  // The live-gate shape: an accepted, streaming generation (a whole thinking block already out) ended by
+  // an `invalid_request_error` frame -- Anthropic's own "credit balance is too low" mid-turn. It used to
+  // reach the host as "server" ("unavailable or overloaded") with the reason dropped.
+  const CREDIT = "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.";
+  const thinking =
+    frame("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } }) +
+    frame("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Weighing the fix." } }) +
+    frame("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "SIG-NEVER-SHOWN" } }) +
+    frame("content_block_stop", { type: "content_block_stop", index: 0 });
+
+  test("an `invalid_request_error` frame after content is a non-retryable `bad_request` carrying the provider's own message -- and is never replayed", async () => {
+    const s = start(() => sse(messageStart + thinking + frame("error", { type: "error", error: { type: "invalid_request_error", message: CREDIT } })));
+    const events = await collect(s.url);
+    expect(error(events)?.error).toEqual({ code: "bad_request", message: `the provider ended the stream with an error frame (invalid_request_error): ${CREDIT}`, retryable: false, providerCode: "invalid_request_error" });
+    expect(s.requests).toHaveLength(1);
+    expect(JSON.stringify(error(events))).not.toContain("SIG-NEVER-SHOWN");
+  });
+
+  test("each Anthropic error type maps onto the seam's code; none is retryable once streaming", () => {
+    const codeOf = (type: string) => streamErrorFrame({ type, message: "x" }).code;
+    expect(["invalid_request_error", "billing_error", "not_found_error", "conflict_error", "request_too_large"].map(codeOf)).toEqual(["bad_request", "bad_request", "bad_request", "bad_request", "bad_request"]);
+    expect(["authentication_error", "permission_error"].map(codeOf)).toEqual(["auth", "auth"]);
+    expect(codeOf("rate_limit_error")).toBe("rate_limit");
+    expect(codeOf("timeout_error")).toBe("timeout");
+    expect(["overloaded_error", "api_error", "something_new"].map(codeOf)).toEqual(["server", "server", "server"]);
+    expect(streamErrorFrame({ type: "invalid_request_error", message: "x" }).retryable).toBe(false);
+    // A frame with no message keeps the old wording; a frame with nothing at all is still an error.
+    expect(streamErrorFrame({ type: "api_error" }).message).toBe("the provider ended the stream with an error frame (api_error)");
+    expect(streamErrorFrame(undefined)).toEqual({ code: "server", message: "the provider ended the stream with an error frame", retryable: false });
+  });
+
+  test("the provider's message is made safe: control characters collapsed, long quoted spans (request values) elided, length capped", () => {
+    expect(anthropicErrorMessage("line one\n\tline\u0000two")).toBe("line one line two");
+    const quoted = `messages.4.content.0: unexpected value '${"conversation text ".repeat(4)}' at position 3`;
+    expect(anthropicErrorMessage(quoted)).toBe("messages.4.content.0: unexpected value '…' at position 3");
+    expect(anthropicErrorMessage("field 'thinking' is required")).toBe("field 'thinking' is required");
+    expect(anthropicErrorMessage("x".repeat(1000))!.length).toBe(301);
+    expect(anthropicErrorMessage("   ")).toBeUndefined();
+    expect(anthropicErrorMessage(42)).toBeUndefined();
   });
 });
