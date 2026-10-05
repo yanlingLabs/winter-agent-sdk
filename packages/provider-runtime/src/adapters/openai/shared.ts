@@ -822,6 +822,7 @@ export async function httpErrorFrom(response: Response): Promise<ProviderRequest
   const body = await response.text().catch(() => "");
   const error = new ProviderRequestError(normalizeHttpError(response.status, response.headers, body));
   if (isEncryptedContentRefusal(response.status, body)) ENCRYPTED_CONTENT_REFUSALS.add(error);
+  if (isReasoningSummaryRefusal(response.status, body)) REASONING_SUMMARY_REFUSALS.add(error);
   return error;
 }
 
@@ -841,6 +842,40 @@ function isEncryptedContentRefusal(status: number, body: string): boolean {
 
 export function isEncryptedContentRejection(err: unknown): boolean {
   return err instanceof Error && ENCRYPTED_CONTENT_REFUSALS.has(err);
+}
+
+/**
+ * 0.0.48: the endpoint refused the request's `reasoning.summary`. OpenAI answers an organization that
+ * is not verified for reasoning summaries with a 400 in its standard error envelope, naming the field
+ * (`"param": "reasoning.summary"`) and saying why ("Your organization must be verified to generate
+ * reasoning summaries..."); the reasoning guide warns of it ("you may need to complete organization
+ * verification", https://developers.openai.com/api/docs/guides/reasoning, read 2026-10-05). Azure, xAI
+ * and the codex backend speak the same envelope.
+ *
+ * NARROW, like the encrypted-content match above: a 400 whose PARSED envelope names `reasoning.summary`
+ * as its `param`, or whose message is the organization-verification refusal for reasoning summaries.
+ * Nothing else -- an unrelated 400 that merely mentions a summary somewhere does not match. Read off the
+ * FULL body while it is in hand; the body is never logged and the error keeps only its capped message.
+ */
+const REASONING_SUMMARY_REFUSALS = new WeakSet<Error>();
+
+function isReasoningSummaryRefusal(status: number, body: string): boolean {
+  if (status !== 400) return false;
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(body);
+  } catch {
+    return false;
+  }
+  const error = envelope !== null && typeof envelope === "object" ? (envelope as { error?: unknown }).error : undefined;
+  if (error === null || typeof error !== "object") return false;
+  const { param, message } = error as { param?: unknown; message?: unknown };
+  if (param === "reasoning.summary") return true;
+  return typeof message === "string" && /organi[sz]ation must be verified/i.test(message) && /reasoning summar/i.test(message);
+}
+
+export function isReasoningSummaryRejection(err: unknown): boolean {
+  return err instanceof Error && REASONING_SUMMARY_REFUSALS.has(err);
 }
 
 /** Turns anything thrown during a turn into the `error` event the fold converts to a `ProviderTurnError`. */

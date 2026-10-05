@@ -44,6 +44,7 @@ import {
   identityFor,
   imageDataUrl,
   isEncryptedContentRejection,
+  isReasoningSummaryRejection,
   makeRetryPolicy,
   mapEffortAgainst,
   openStream,
@@ -1189,8 +1190,13 @@ export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: Abor
   // refused a replayed reasoning item's encrypted content, the same body without the replayed reasoning.
   // Review r1, M-2: items an endpoint already refused to decrypt are not replayed again -- a permanently
   // undecryptable item would otherwise cost one failed 400 on every later request of the session.
+  // 0.0.48: a connection whose endpoint already refused `reasoning.summary` for this model is not asked
+  // again -- every later request would otherwise pay one failed 400 first.
+  const summaryKey = reasoningSummaryKey(plan);
   let body = withoutKnownUndecryptable(plan.body);
+  if (SUMMARY_REFUSED.has(summaryKey)) body = withoutReasoningSummary(body) ?? body;
   let droppedReplay = false;
+  let droppedSummary = false;
   for (;;) {
     try {
       response = yield* pumpEvents(
@@ -1226,6 +1232,22 @@ export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: Abor
       // then continues without the model's prior reasoning -- the visible conversation is intact -- rather
       // than failing outright; the stored state is untouched, so a later request replays it again.
       // Never twice: `droppedReplay` ends the loop on the next refusal of any kind.
+      //
+      // 0.0.48: likewise ONE retry without `reasoning.summary` when the endpoint refused it (an
+      // organization not verified for reasoning summaries). Pre-stream for the same reason, so nothing is
+      // replayed; the turn runs without readable reasoning rather than failing on every request. The
+      // refusal is remembered for this connection and model for the life of the process, logged once.
+      if (!droppedSummary && isReasoningSummaryRejection(err)) {
+        const stripped = withoutReasoningSummary(body);
+        if (stripped !== undefined) {
+          droppedSummary = true;
+          body = stripped;
+          if (rememberSummaryRefused(summaryKey)) {
+            plan.ctx.log({ kind: "provider.reasoning_summary_dropped", providerId: plan.ctx.connection.providerId, model: plan.model, detail: { reason: "reasoning_summary_refused" } });
+          }
+          continue;
+        }
+      }
       if (!droppedReplay && isEncryptedContentRejection(err)) {
         const stripped = withoutReplayedReasoning(body);
         if (stripped !== undefined) {
@@ -1320,6 +1342,51 @@ function withoutKnownUndecryptable(body: string): string {
     return hash === undefined || !UNDECRYPTABLE.has(hash);
   });
   return kept.length === parsed.input.length ? body : JSON.stringify({ ...parsed, input: kept });
+}
+
+/**
+ * 0.0.48: the connections (provider, endpoint URL, model) whose endpoint refused `reasoning.summary`,
+ * remembered for the process and bounded (oldest forgotten first). The URL is part of the key because
+ * the refusal is the ACCOUNT's (an unverified organization): two Azure resources, or an API key and a
+ * proxy, can answer differently for the same model.
+ */
+const SUMMARY_REFUSED = new Set<string>();
+const SUMMARY_REFUSED_MAX = 1_024;
+
+function reasoningSummaryKey(plan: ResponsesTurnPlan): string {
+  return `${plan.ctx.connection.providerId}\u0000${plan.url}\u0000${plan.model}`;
+}
+
+/** Records a refusal; true when the key is new (the one time it is logged). */
+function rememberSummaryRefused(key: string): boolean {
+  if (SUMMARY_REFUSED.has(key)) return false;
+  SUMMARY_REFUSED.add(key);
+  if (SUMMARY_REFUSED.size > SUMMARY_REFUSED_MAX) SUMMARY_REFUSED.delete(SUMMARY_REFUSED.values().next().value!);
+  return true;
+}
+
+/** Test-only: forgets every remembered refusal, so one test's memory never leaks into another's. */
+export function resetReasoningSummaryRefusalsForTest(): void {
+  SUMMARY_REFUSED.clear();
+}
+
+/**
+ * The request body without `reasoning.summary` (and without the `reasoning` object, if that was all it
+ * held), or `undefined` when the body asked for no summary -- then there is nothing a retry could change.
+ */
+function withoutReasoningSummary(body: string): string | undefined {
+  let parsed: { reasoning?: unknown };
+  try {
+    parsed = JSON.parse(body) as { reasoning?: unknown };
+  } catch {
+    return undefined;
+  }
+  const reasoning = parsed.reasoning;
+  if (reasoning === null || typeof reasoning !== "object" || !("summary" in reasoning)) return undefined;
+  const { summary: _summary, ...rest } = reasoning as Record<string, unknown>;
+  // Key order kept: the body is otherwise byte-identical to the one that was refused.
+  const entries = Object.entries(parsed).flatMap(([key, value]): Array<[string, unknown]> => (key !== "reasoning" ? [[key, value]] : Object.keys(rest).length > 0 ? [[key, rest]] : []));
+  return JSON.stringify(Object.fromEntries(entries));
 }
 
 /**
