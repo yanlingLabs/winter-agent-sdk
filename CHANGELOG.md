@@ -4,6 +4,15 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.46
+
+0.0.45 was tagged but never published. Its release job runs the tests on Linux after restoring the
+darwin-arm64 binary, and a new test ran that binary there. It could not start, so the test read a
+process ID of 0 and its cleanup signalled the job's whole process group, taking the runner down. The
+test now runs the compiled leg only on darwin-arm64. It never signals a process ID that is not a real
+process above 1, and it reaps every tool subprocess it started even when a test fails. 0.0.46 ships
+0.0.45's code with that test fix.
+
 ## 0.0.45
 
 ### A spawned runtime stops when its host dies, even mid-turn

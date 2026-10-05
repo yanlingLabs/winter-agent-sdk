@@ -22,6 +22,13 @@ const STOP_BOUND_MS = 4_000;
 
 const TEMP: string[] = [];
 afterAll(() => {
+  for (const f of TOOL_PID_FILES) {
+    try {
+      killPid(Number(readFileSync(f, "utf8").trim()));
+    } catch {
+      /* never started */
+    }
+  }
   for (const d of TEMP) rmSync(d, { recursive: true, force: true });
 });
 function tempDir(label: string): string {
@@ -31,10 +38,29 @@ function tempDir(label: string): string {
 }
 
 const LEGS: Array<[string, string[]]> = [["bun main.ts", [process.execPath, MAIN]]];
-if (existsSync(COMPILED)) LEGS.push(["the compiled winter", [COMPILED]]);
+// Only where the darwin-arm64 binary can RUN: the release job restores it on its Linux runner too, where
+// spawning it fails -- and a pid read from a parent that never started one is 0, which kill(2) takes for
+// the whole process group (it took the runner down: v0.0.45's release, never published).
+if (process.platform === "darwin" && process.arch === "arm64" && existsSync(COMPILED)) LEGS.push(["the compiled winter", [COMPILED]]);
+
+/** A pid this test may signal: a real process, never 0/-1/1 (kill(2): the group / every process / init). */
+function pidOf(raw: string, what: string): number {
+  const pid = Number(raw.trim());
+  if (!Number.isInteger(pid) || pid <= 1) throw new Error(`${what}: not a pid (${JSON.stringify(raw)})`);
+  return pid;
+}
+function killPid(pid: number): void {
+  if (!Number.isInteger(pid) || pid <= 1) return;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    /* gone */
+  }
+}
 
 /** Alive and not a zombie (Linux: `/proc/<pid>/stat`'s state field; macOS reaps an orphan's zombie at once). */
 function alive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 1) return false;
   try {
     process.kill(pid, 0);
   } catch {
@@ -73,7 +99,12 @@ function sessionArgs(dir: string): string[] {
 const runtimeEnv = (home: string, extra: Record<string, string> = {}): Record<string, string> => ({ PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, WINTER_HOME: home, WINTER_DISABLE_GIT_INSTRUCTIONS: "1", ...extra });
 
 /** A Bash call that records its own pid in `pidFile`, then becomes a 300 s sleep -- a turn that would run for minutes. */
-const hangingTool = (pidFile: string): string => `CALL Bash ${JSON.stringify({ command: `echo $$ > ${pidFile}; exec sleep 300` })}`;
+/** Every hanging tool's pid file: reaped after the file, whatever a test's outcome, so a failure never orphans a `sleep 300`. */
+const TOOL_PID_FILES: string[] = [];
+const hangingTool = (pidFile: string): string => {
+  TOOL_PID_FILES.push(pidFile);
+  return `CALL Bash ${JSON.stringify({ command: `echo $$ > ${pidFile}; exec sleep 300` })}`;
+};
 
 /**
  * Starts the intermediate parent: it spawns the runtime (`command` + session args, piped stdio), sends
@@ -109,14 +140,16 @@ setInterval(() => {}, 1000);
   );
   const parent = Bun.spawn([process.execPath, parentScript], { stdout: "pipe", stderr: "inherit" });
   const first = await parent.stdout.getReader().read();
-  const runtimePid = Number(new TextDecoder().decode(first.value).trim());
+  let runtimePid: number;
+  try {
+    runtimePid = pidOf(new TextDecoder().decode(first.value ?? new Uint8Array()), "the runtime the parent started");
+  } catch (error) {
+    parent.kill("SIGKILL");
+    throw error;
+  }
   const cleanup = (): void => {
     parent.kill("SIGKILL");
-    try {
-      process.kill(runtimePid, "SIGKILL");
-    } catch {
-      /* gone, as it should be */
-    }
+    killPid(runtimePid);
   };
   return { parent, runtimePid, cleanup };
 }
@@ -168,7 +201,7 @@ describe.each(LEGS)("the parent dies mid-turn (%s)", (_label, command) => {
     } finally {
       cleanup();
       try {
-        process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL");
+        killPid(Number(readFileSync(pidFile, "utf8").trim()));
       } catch {
         /* gone */
       }
