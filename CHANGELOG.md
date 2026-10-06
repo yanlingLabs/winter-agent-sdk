@@ -4,6 +4,30 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.49
+
+### A mid-stream Anthropic error says what was refused, and is classified by its type
+
+When an Anthropic stream that had already started was ended by an `error` frame, Winter reported it as
+`server` ("the provider is unavailable or overloaded") and dropped the provider's message. A live-gate
+turn on Claude Sonnet 5.5 at effort max ended this way with an `invalid_request_error` that nobody could
+explain. The next request on the same API key was refused before streaming with "Your credit balance is
+too low to access the Anthropic API", so the turn most likely ran the balance out mid-generation. The
+request itself had been accepted: replayed thinking blocks are checked when a request is accepted, and
+this one was already streaming new thinking.
+
+- **Explained.** The error now carries the frame's own `type` and `message`:
+  `the provider ended the stream with an error frame (invalid_request_error): <Anthropic's message>`. The
+  message is Anthropic's own text about the request, cleaned before it is shown: control characters
+  collapsed, any quoted span longer than 40 characters elided (it could be a value from the
+  conversation), and capped at 300 characters.
+- **Classified by type.** Anthropic's documented types map the way their HTTP statuses already do:
+  `invalid_request_error`, `billing_error`, `not_found_error`, `conflict_error` and `request_too_large`
+  are `bad_request`; `authentication_error` and `permission_error` are `auth`; `rate_limit_error` is
+  `rate_limit`; `timeout_error` is `timeout`; `overloaded_error`, `api_error` and any type the API adds
+  later stay `server`. A mid-stream error is still never retried, because content has already streamed.
+  An `overloaded_error` before any content is still retried as before.
+
 ## 0.0.48
 
 ### Claude asks for summarized thinking again, not progress updates
