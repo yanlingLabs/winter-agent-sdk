@@ -4,6 +4,32 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.50
+
+### GPT-6.1 Sol is in the catalog, and the `sol` slot points to it
+
+OpenAI released GPT-6.1 Sol (`gpt-6.1-sol`) on 2026-09-29. It is now in the catalog for the OpenAI API
+key (`openai/gpt-6.1-sol`) and the ChatGPT sign-in (`codex-oauth/gpt-6.1-sol`). Every field is filled in
+from OpenAI's own model page, its guides, the Codex model catalogue and Codex's bundled model list.
+
+- **API:** 1,050,000-token context, 922,000 max input, 128,000 max output, text and image in. Priced at
+  $2 input, $10 output, $0.10 cached input (5% of input, half of GPT-6 Sol's rate) and $2.50 cache write
+  per million tokens. It reasons at `low` to `max` with `medium` as the default. It has no `none`
+  effort: OpenAI refuses `none` and `minimal` on this model. It can change effort mid-conversation
+  (`configuration_update`), and supports client tool search, `additional_tools`, `allowed_tools`,
+  parallel tool calls and `prompt_cache_key`. Chat Completions serves it without tool calling, so tools
+  go through Responses, as for GPT-6 Astra.
+- **Codex:** a 272,000-token context, `low` to `max` with `low` as the default (Codex's own default),
+  parallel tool calls, client tool search and `prompt_cache_key`. Unpriced, like every subscription row.
+- **The `gpt` family's `sol` slot now names GPT-6.1 Sol** instead of GPT-6 Sol. OpenAI's GPT-6 Sol page
+  calls 6.1 "the newer Sol model", and Codex now labels GPT-6 Sol "previous generation". A `sol` pin
+  therefore runs GPT-6.1 Sol: at `low` by default on Codex, and with no `none` effort on the API. GPT-6
+  Sol stays in the catalog under its own tag.
+- Not added: the Daybreak security models (`gpt-5.6-cyber`, `gpt-daybreak-blue-latest`,
+  `gpt-daybreak-red-latest`) need OpenAI's separate approval and a request-level `access_programs`
+  field the Responses adapter does not send. The models Codex hides from its own picker
+  (`gpt-reserve`, `codex-auto-review`) are not added either.
+
 ## 0.0.49
 
 ### A mid-stream Anthropic error says what was refused, and is classified by its type
