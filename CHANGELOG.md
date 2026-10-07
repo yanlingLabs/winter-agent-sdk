@@ -4,6 +4,18 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.53
+
+### A host tool's image reaches the model as an image
+
+A host's in-process MCP tool (`type: "sdk"`, answered over `sdk_mcp_call`) that returned an MCP
+`image` item had it joined into the result's text, so the model received a base64 string it could
+not see. Winter's Computer and Browser screenshots arrived this way: the model was told a screenshot
+was captured but never saw it. Those results now take the path an external MCP server's image
+already took: the image becomes an image block in the tool result, prepared like an image Read
+(sniffed, shrunk to 1568 px, the byte limit, and the note for a model that reads no images). A
+result with no image is unchanged.
+
 ## 0.0.52
 
 ### After a compaction, the model is told where the full transcript is
