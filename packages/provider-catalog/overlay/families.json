@@ -283,11 +283,11 @@
         },
         {
           "name": "sol",
-          "canonicalModelId": "gpt-6-sol",
+          "canonicalModelId": "gpt-6.1-sol",
           "description": "a highly capable model for VERY complex novelty tasks; already overkill for most work.",
           "reason": "Second: the ceiling before Astra.",
           "basis": "user-ruling",
-          "citation": "spec:WS-13c §0 (user rulings D25–D28, 2026-09-06) via §9",
+          "citation": "spec:WS-13c §0 (user rulings D25–D28, 2026-09-06) via §9; 2026-10-07: repointed from `gpt-6-sol` to GPT-6.1 Sol, the current Sol (https://developers.openai.com/api/docs/models/gpt-6-sol: \"See GPT-6.1 Sol for the newer Sol model\"; the Codex catalogue now calls gpt-6-sol \"Previous generation workhorse model\" and recommends gpt-6.1-sol)",
           "status": "candidate"
         },
         {

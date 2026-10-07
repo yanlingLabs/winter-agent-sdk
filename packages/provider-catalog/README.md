@@ -1,6 +1,6 @@
 # `@yanlinglabs/winter-provider-catalog`
 
-Winter's provider and model catalog as inert, validated DATA: 218 provider rows and 1296 model rows
+Winter's provider and model catalog as inert, validated DATA: 218 provider rows and 1298 model rows
 with their endpoints, auth kinds, pricing evidence, admission tier and provenance, plus the validator
 and the vocabularies the JSON Schema restates.
 

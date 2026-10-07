@@ -51339,6 +51339,142 @@
       }
     },
     {
+      "key": "codex-oauth/gpt-6.1-sol",
+      "providerId": "codex-oauth",
+      "upstreamId": "gpt-6.1-sol",
+      "displayName": "GPT-6.1-Sol (Codex)",
+      "aliases": [],
+      "$comment": "Winter-owned (D11), authored 2026-10-07 (user ask: add the new GPT models to openai and codex-oauth, every field filled). https://learn.chatgpt.com/docs/models — \"For complex coding and agentic workflows, use GPT-6.1 Sol when available to your account and client\"; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z lists gpt-6.1-sol first (priority 1, visibility list, \"Latest workhorse model for coding and everyday work.\") and relabels gpt-6-sol \"Previous generation workhorse model\"; codex-rs models-manager/models.json (openai/codex a6baf88, 2026-10-07) bundles it. Availability is rollout- and plan-dependent. Like every codex-oauth row it is deliberately UNPRICED — a subscription backend has no per-token list price (`pricingBasis: subscription` on the provider), so `maxBudgetUsd` is inert for it by design. Default effort is `low` here (the cache's default_reasoning_level) while the API row's is `medium` — each surface's own default. The cache lists Ultra too; Codex docs explain Ultra is client-side automatic task delegation, not a wire reasoning effort, so it is excluded. Responses reasoning state is opaque (encrypted items); it shares no continuation domain with api.openai.com. Deliberately ABSENT: perMessageEffort, additionalToolsItem and allowedToolsChoice stay probe-gated on the codex backend exactly as on codex-oauth/gpt-6-sol (codex-rs sends configuration updates only behind an off-by-default feature, additional_tools only at input[0], and tool_choice always \"auto\"); maxInputTokens (the API page's 922,000 exceeds the 272,000 window this backend serves); structuredOutput and promptCaching have no codex-backend statement; the Anthropic-dialect fields (deferredToolLoading, midConversationSystem, midConversationToolChanges, inlineToolDefinitions, assistantPrefill) have no counterpart on this wire; undeclaredToolCalls is live-probe only; classifierEligible is R6-14's.",
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 272000,
+        "source": "live-discovery",
+        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z: gpt-6.1-sol context_window=272000; max_context_window=872000 is a separate upper ceiling, not the default.",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T08:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "live-discovery",
+        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z: gpt-6.1-sol input_modalities=text, image.",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T08:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-25T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "live-discovery",
+        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z: gpt-6.1-sol tool_mode=code_mode_only; Codex tool calls are native but code-mode scoped.",
+        "confidence": "inferred",
+        "observedAt": "2026-10-07T08:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "live-discovery",
+        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z: gpt-6.1-sol tool_mode=code_mode_only; native tool use inferred from Codex execution surface.",
+        "confidence": "inferred",
+        "observedAt": "2026-10-07T08:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "live-discovery",
+          "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z: gpt-6.1-sol supported_reasoning_levels=low, medium, high, xhigh, max (+ ultra, a client-side mode, excluded); default_reasoning_level=low.",
+          "confidence": "declared",
+          "observedAt": "2026-10-07T08:00:00Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "defaultEffort": "low",
+        "continuation": "opaque-provider-state",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface returns a readable summary, never the raw chain",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "concise",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface's summary control and its current values `auto`/`concise`/`detailed`; the deprecated `generate_summary` alias is deliberately not listed.",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "response.completed",
+          "source": "upstream-static",
+          "sourceRef": "Norma packages/core/src/providers/responses-sse.ts — encrypted_content is preserved VERBATIM off the completion event",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "codex-oauth/gpt-6.1-sol"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model. §2.5 for the narrowness: two endpoints can both use `/v1/responses` while issuing UNRELATED encrypted payloads, so this backend shares NO domain with `openai/*` despite the shared HTTP shape. WS-13 §8.2: \"OpenAI-compatible\" is never the capability test, so this key shares NO domain with any other row.",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        }
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z",
+        "sourceRef": "https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs — Codex (the vendor's own client for this backend) sets prompt_cache_key on every Responses request, to the session id (or source:parent_thread_id for internal sessions); https://developers.openai.com/api/docs/guides/prompt-caching documents the field."
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "codex-rs models-manager/models.json (openai/codex a6baf88, 2026-10-07) and the ~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z: gpt-6.1-sol supports_search_tool=true; core/src/tools/spec_plan.rs turns on the client tool_search when the provider's namespace capability is on (default true) -- the vendor's own client sends it to chatgpt.com/backend-api/codex.",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "MAKER page for the model this row serves (the serving provider's own pages state nothing for it; a host may cap differently): https://developers.openai.com/api/docs/models/gpt-6.1-sol (read 2026-10-07): \"128,000 max output tokens\" — OpenAI's own model page; Codex serves the same underlying model",
+        "confidence": "inferred",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "parallelTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "codex-rs models-manager/models.json (openai/codex a6baf88, 2026-10-07): gpt-6.1-sol supports_parallel_tool_calls=true (true on every bundled model) — the vendor's own client sends parallel tool calls to this backend.",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      }
+    },
+    {
       "key": "codex-oauth/gpt-6-luna",
       "providerId": "codex-oauth",
       "upstreamId": "gpt-6-luna",
@@ -51652,6 +51788,201 @@
         "confidence": "declared",
         "observedAt": "2026-09-26T00:00:00Z",
         "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[{\"type\":\"function\",\"name\":…}]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\"; \"When you use tool search, tool_choice still applies to the tools that are currently callable in the turn.\" No model list on the page; set on the same GPT-5.4+ rows. NOT on codex-oauth: codex-rs always sends tool_choice \"auto\" (core/src/client.rs:1004) and its allowed_tools is a client-side filter (ext/extension-api/src/tool_policy.rs:14-36) -- the live probe decides. Retrieved 2026-09-26."
+      }
+    },
+    {
+      "key": "openai/gpt-6.1-sol",
+      "providerId": "openai",
+      "upstreamId": "gpt-6.1-sol",
+      "displayName": "GPT-6.1 Sol",
+      "aliases": [],
+      "$comment": "Winter-authored 2026-10-07 (user ask: add the new GPT models to openai and codex-oauth, every field filled). Released 2026-09-29 (https://developers.openai.com/api/docs/changelog — \"Released GPT-6.1 Sol (gpt-6.1-sol) for complex coding and professional work at a lower cost than GPT-6 Astra\"); every field cites https://developers.openai.com/api/docs/models/gpt-6.1-sol (its .md rendering, read 2026-10-07) or the guide named in the field. Differences from openai/gpt-6-sol: NO `none` effort (\"The none and minimal reasoning efforts are not supported\" — a `none` request is refused, not mapped), cached input $0.10 (5% of input, vs gpt-6-sol's 10%), knowledge cutoff 2026-04-30, and Chat Completions carries NO tool calling at any effort (\"Use the Responses API for tool calling. Chat Completions is supported without tool calling.\"; https://developers.openai.com/api/docs/guides/reasoning: \"Chat Completions does not support function calling with GPT-6 Astra or GPT-6.1 Sol\") — `chat` stays in `endpoints` because the page lists it Supported, exactly as on openai/gpt-6-astra. Pricing is the STANDARD tier at SHORT context; the page also states >272K input = 2x input and cache rates and 1.5x output for the full request, Fast mode = 2x Standard, Batch/Flex = 50% off and regional processing +10%, none of which the single-tier `ModelPricing` can carry (the estimator under-counts long-context turns). Deliberately ABSENT: deferredToolLoading, midConversationSystem, midConversationToolChanges, inlineToolDefinitions and assistantPrefill are Anthropic-dialect mechanisms with no OpenAI counterpart on this wire (the OpenAI equivalents are clientToolSearch, additionalToolsItem, allowedToolsChoice and perMessageEffort, all set); undeclaredToolCalls is live-probe evidence only and no probe has run on this model; classifierEligible is R6-14's (never set from a page). `unsupportedParameters: [\"prediction\"]` — the page's \"Unsupported features: … predicted_outputs\" (the Responses adapter never sends it; listed so no adapter ever does).",
+      "endpoints": [
+        "chat",
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1050000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6.1-sol — gpt-6.1-sol \"1,050,000 context window\".",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "maxInputTokens": {
+        "value": 922000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6.1-sol — gpt-6.1-sol \"Maximum input tokens: 922,000\".",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6.1-sol — gpt-6.1-sol \"128,000 max output tokens\".",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6.1-sol — gpt-6.1-sol \"Input modalities: text, image\"; \"Unsupported modalities: audio, video\".",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6.1-sol — gpt-6.1-sol \"Output modalities: text\".",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6.1-sol — gpt-6.1-sol supported features include function_calling (Responses only: \"Use the Responses API for tool calling\").",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6.1-sol — gpt-6.1-sol function_calling listed under supported features; Responses tools: web_search, file_search, image_generation, code_interpreter, hosted_shell, apply_patch, skills, computer_use, mcp, tool_search.",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6.1-sol — gpt-6.1-sol supported features include structured_outputs.",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6.1-sol — gpt-6.1-sol supported features include prompt_caching.",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6.1-sol — gpt-6.1-sol model details list \"Reasoning token support\".",
+          "confidence": "declared",
+          "observedAt": "2026-10-07T09:00:00Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "continuation": "opaque-provider-state",
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface returns a readable summary, never the raw chain",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "concise",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface's summary control and its current values `auto`/`concise`/`detailed`; the deprecated `generate_summary` alias is deliberately not listed.",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "response.completed",
+          "source": "upstream-static",
+          "sourceRef": "Norma packages/core/src/providers/responses-sse.ts — encrypted_content is preserved VERBATIM off the completion event",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "openai/gpt-6.1-sol"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model.  WS-13 §8.2: \"OpenAI-compatible\" is never the capability test, so this key shares NO domain with any other row (not even openai/gpt-6-sol).",
+          "confidence": "declared",
+          "observedAt": "2026-10-07T09:00:00Z"
+        },
+        "perMessageEffort": {
+          "value": {
+            "item": "configuration_update"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/guides/reasoning — \"Configuration updates are supported by the GPT-6 model family in standard, single-agent mode. They change only reasoning effort.\" (read 2026-10-07); https://developers.openai.com/api/docs/guides/latest-model names gpt-6.1-sol a GPT-6 family member (\"Set model to gpt-6-astra, gpt-6.1-sol, or gpt-6-luna\"), and https://developers.openai.com/api/docs/guides/prompt-caching's configuration_update example runs on \"model\": \"gpt-6.1-sol\". Same shape as openai/gpt-6-sol. NOT set on codex-oauth/gpt-6.1-sol (probe-gated there, as on every codex row).",
+          "confidence": "declared",
+          "observedAt": "2026-10-07T09:00:00Z"
+        }
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 2,
+          "outputPerMTokUsd": 10,
+          "cacheReadPerMTokUsd": 0.1,
+          "cacheWritePerMTokUsd": 2.5
+        },
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6.1-sol — gpt-6.1-sol standard short-context USD/MTok table: input $2, cached input $0.1, cache writes $2.5, output $10; \"Cached input tokens are priced at 5% of the uncached input token rate\" (https://developers.openai.com/api/docs/guides/prompt-caching: reads cost \"0.05× on GPT-6.1 Sol\" — the 0.1 is not a typo for gpt-6-sol's 0.2). - Prompts with more than 272K input tokens are priced at 2x input and cache rates and 1.5x output for the full request.",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "unsupportedParameters": [
+        "prediction"
+      ],
+      "status": "candidate",
+      "promptCacheKey": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/prompt-caching — the Responses API takes prompt_cache_key: \"A supplied prompt_cache_key, which separates cache reuse between groups of requests and helps optimize cache routing on models before GPT-5.6\" — on GPT-5.6+ (this model) routing is automatic and the key is kept for separate cache accounting (read 2026-10-07).",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "clientToolSearch": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"In the Responses API, only gpt-5.4 and later models support tool_search\" (read 2026-10-07); https://developers.openai.com/api/docs/models/gpt-6.1-sol lists tool_search among its supported tools. Client execution shape as on openai/gpt-6-sol.",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "additionalToolsItem": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/tools-tool-search — \"you can use an additional_tools input item to make tools available at a specific point in the conversation\" (read 2026-10-07). The page names no model list, so it is set on the rows the same page documents tool_search for (GPT-5.4 and later), as on openai/gpt-6-sol.",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "allowedToolsChoice": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — tool_choice {\"type\":\"allowed_tools\",\"mode\":\"auto\"|\"required\",\"tools\":[…]}: \"make only a subset of tools available across model requests, but not modify the list of tools you pass in, so you can maximize savings from prompt caching\" (read 2026-10-07). No model list on the page; set on the same GPT-5.4+ rows.",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
+      },
+      "parallelTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://developers.openai.com/api/docs/guides/function-calling — \"On supported models beginning with GPT-5, functions can be called in parallel when built-in tools are also available … You can prevent this by setting parallel_tool_calls to false\" (read 2026-10-07); the Responses adapter already sends parallel_tool_calls: true unless this is false.",
+        "confidence": "declared",
+        "observedAt": "2026-10-07T09:00:00Z"
       }
     },
     {

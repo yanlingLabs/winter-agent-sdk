@@ -95,6 +95,30 @@ describe("the seed is fully replaced", () => {
     expect(slot.canonicalModelId).toBe("claude-sonnet-5.5");
     expect(catalog.models.find((m) => m.key === "anthropic/claude-sonnet-5-5")!.canonicalModelId).toBe(slot.canonicalModelId);
   });
+
+  test("GPT-6.1 Sol: the `sol` slot names it, and each surface keeps its own effort facts", () => {
+    // 2026-10-07: OpenAI's gpt-6-sol page points to GPT-6.1 Sol as "the newer Sol model", so the slot moves.
+    const slot = catalog.families.find((f) => f.id === "gpt")!.slots.find((s) => s.name === "sol")!;
+    expect(slot.canonicalModelId).toBe("gpt-6.1-sol");
+    const api = catalog.models.find((m) => m.key === "openai/gpt-6.1-sol")!;
+    const codex = catalog.models.find((m) => m.key === "codex-oauth/gpt-6.1-sol")!;
+    for (const row of [api, codex]) {
+      expect(row.canonicalModelId).toBe(slot.canonicalModelId);
+      // "The none and minimal reasoning efforts are not supported" -- unlike gpt-6-sol, which lists `none`.
+      expect(row.reasoning!.efforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+      expect(row.reasoning!.continuationDomain!.value).toEqual([row.key]);
+    }
+    // Each surface's own default: the API page says medium, the Codex catalogue low.
+    expect(api.reasoning!.defaultEffort).toBe("medium");
+    expect(codex.reasoning!.defaultEffort).toBe("low");
+    // configuration_update is documented for the API's GPT-6 family; on the Codex backend it stays probe-gated.
+    expect(api.reasoning!.perMessageEffort?.value).toEqual({ item: "configuration_update" });
+    expect(codex.reasoning!.perMessageEffort).toBeUndefined();
+    // Cached input is 5% of input on this model (0.1), not gpt-6-sol's 10% (0.2); Codex stays unpriced.
+    expect(api.pricing!.value).toEqual({ inputPerMTokUsd: 2, outputPerMTokUsd: 10, cacheReadPerMTokUsd: 0.1, cacheWritePerMTokUsd: 2.5 });
+    expect(codex.pricing).toBeUndefined();
+    expect([api.contextWindow!.value, api.maxInputTokens!.value, codex.contextWindow!.value]).toEqual([1050000, 922000, 272000]);
+  });
 });
 
 describe("pricing (R6-H, R6-9)", () => {
@@ -588,6 +612,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "openai/gpt-6-astra",
       "openai/gpt-6-luna",
       "openai/gpt-6-sol",
+      "openai/gpt-6.1-sol",
       "openai/o3",
       "openai/o3-mini",
       "openai/o4-mini",
@@ -1815,9 +1840,10 @@ describe("SDK 0.0.4: codex-oauth serves the whole GPT-5.6 slot row", () => {
       .map((m) => m.key)
       .sort();
 
-  test("the provider lists the three GPT-5.6 models and the three GPT-6 models, and nothing else", () => {
+  test("the provider lists the three GPT-5.6 models, the three GPT-6 models and GPT-6.1 Sol, and nothing else", () => {
     // 2026-09-25 refresh: GPT-6 Sol and Luna joined Astra in Codex on 2026-09-22 (the server-delivered
     // ~/.codex/models_cache.json lists all six), and the `gpt` family's sol/luna slots moved to them (user ruling).
+    // 2026-10-07: GPT-6.1 Sol (released 2026-09-29) heads that list, and the `sol` slot follows it.
     expect(codexKeys()).toEqual([
       "codex-oauth/gpt-5.6-luna",
       "codex-oauth/gpt-5.6-sol",
@@ -1825,6 +1851,7 @@ describe("SDK 0.0.4: codex-oauth serves the whole GPT-5.6 slot row", () => {
       "codex-oauth/gpt-6-astra",
       "codex-oauth/gpt-6-luna",
       "codex-oauth/gpt-6-sol",
+      "codex-oauth/gpt-6.1-sol",
     ]);
   });
 
