@@ -130,7 +130,7 @@ import { resolveBuiltinCommand, looksLikeCommand, type CommandResolver } from ".
 // integration recipe in its own report, and could not perform the integration itself: the
 // elicitation sender it needs is `bridge`, which is a closure-local value inside THIS function --
 // there is no seam exposing it outward, so main.ts structurally cannot construct one.
-import { createMcpLifecycle, FIRST_TURN_MCP_WAIT_DEFAULT_MS, firstTurnMcpWaitDeadlineMs, resolveMcpServerSources, registerSessionMcpLifecycle, type McpLifecycle, type McpServerSource } from "./mcp/lifecycle.ts";
+import { createMcpLifecycle, FIRST_TURN_MCP_WAIT_DEFAULT_MS, firstTurnMcpWaitDeadlineMs, isMcpImageItem, mcpResultWithImages, resolveMcpServerSources, registerSessionMcpLifecycle, type McpLifecycle, type McpServerSource } from "./mcp/lifecycle.ts";
 import { createElicitationAsker } from "./mcp/elicitation.ts";
 // WS-25 (MCP OAuth): the session's sign-ins, the needs-auth call hint and the needs-auth notice.
 import { createSessionMcpOAuth, mcpNeedsAuthAttachment, needsAuthToolHint } from "./mcp-auth/engine-wiring.ts";
@@ -4940,6 +4940,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
                   { server: serverName, tool: tool.name, arguments: input && typeof input === "object" ? input : {} },
                   { timeoutMs, ...(ctx?.signal !== undefined ? { signal: ctx.signal, cancelGraceMs: SDK_MCP_CANCEL_GRACE_MS } : {}) },
                 );
+                // 2026-10-07: a host tool's MCP `image` item (Winter's Computer/Browser screenshots) reaches the model
+                // as an IMAGE block, exactly as an external server's does (`mcpResultWithImages`: sniffed, shrunk
+                // to 1568 px, the byte limit, the text-only gate). Before, this bridge joined every block into
+                // text, so a screenshot arrived as base64 the model could not see.
+                if ((result.content ?? []).some(isMcpImageItem)) return await mcpResultWithImages(result.content ?? [], result.isError === true, ctx, serverName, tool.name);
                 const text = (result.content ?? [])
                   .map((block) => (typeof block.text === "string" ? block.text : JSON.stringify(block)))
                   .join("\n");

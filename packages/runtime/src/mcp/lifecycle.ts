@@ -493,7 +493,7 @@ function contentToText(content: readonly unknown[]): string {
 }
 
 /** An MCP `image` content item (`{type:"image", data: <base64>, mimeType}`, the MCP spec's ImageContent). */
-function isMcpImageItem(block: unknown): block is { type: "image"; data: string; mimeType?: string } {
+export function isMcpImageItem(block: unknown): block is { type: "image"; data: string; mimeType?: string } {
   return typeof block === "object" && block !== null && (block as { type?: unknown }).type === "image" && typeof (block as { data?: unknown }).data === "string";
 }
 
@@ -509,7 +509,7 @@ function isMcpImageItem(block: unknown): block is { type: "image"; data: string;
  * `capMcpOutput` spill-to-file is not used here: its envelope is a text-only result, and the images are
  * the point of this one.
  */
-async function mcpResultWithImages(content: readonly unknown[], isError: boolean, ctx: ToolExecutionContext, serverName: string, toolName: string): Promise<ToolResultPayload> {
+export async function mcpResultWithImages(content: readonly unknown[], isError: boolean, ctx: ToolExecutionContext, serverName: string, toolName: string): Promise<ToolResultPayload> {
   let textLeft = MCP_IMAGE_RESULT_TEXT_CHARS;
   let noted = false;
   const note = `[text truncated at ${MCP_IMAGE_RESULT_TEXT_CHARS} characters; mcp tool "${toolName}" on server "${serverName}"]`;

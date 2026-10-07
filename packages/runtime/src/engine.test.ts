@@ -3364,6 +3364,62 @@ describe("Phase 4 Task 3: sdk_mcp_call runtime-side forwarding (MUST 4, WS-04 ad
     expect(getRegisteredTool("mcp__fixture__echo")).toBeUndefined();
   });
 
+  // 2026-10-07: a host tool that answers with an MCP `image` item (Winter's Computer screenshot) -- the
+  // image reaches the model as an IMAGE block, like an external server's, never as base64 text.
+  test("a host tool's image item reaches the tool_result as an image block, not base64 text", async () => {
+    const { realPng } = await import("./tools/image-test-fixtures.ts");
+    const png = realPng(64, 48);
+    const { host, runtime } = createInMemoryChannel();
+    const provider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "call-1", name: "mcp__fixture__shot", input: {} }] },
+      { kind: "text", text: "done" },
+    ]);
+    // What the MODEL is sent: every request, recorded as it goes out.
+    const requests: string[] = [];
+    const generate = provider.generate.bind(provider);
+    provider.generate = (async (req: unknown, ...rest: unknown[]) => {
+      requests.push(JSON.stringify(req));
+      return (generate as (...a: unknown[]) => unknown)(req, ...rest);
+    }) as typeof provider.generate;
+    const config = baseConfig({
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      mcpServers: { fixture: { type: "sdk", name: "fixture", tools: [{ name: "shot", inputSchema: { type: "object" } }] } },
+    });
+    const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+
+    host.output.write({ type: "user", text: "go" });
+    const seen: WinterFrame[] = [];
+    let reqId: string | undefined;
+    for await (const f of host.input) {
+      seen.push(f);
+      if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "sdk_mcp_call") {
+        reqId = (f as ControlRequestFrame).requestId;
+        break;
+      }
+    }
+    host.output.write({ type: "control_response", requestId: reqId!, ok: true, payload: { content: [{ type: "text", text: "Screenshot captured." }, { type: "image", data: png.toString("base64"), mimeType: "image/png" }] } });
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    for await (const f of host.input) {
+      seen.push(f);
+      if (f.type === "data" && (f as { message: SdkMessage }).message.type === "result") break;
+    }
+    seen.push(...(await drain(host.input)));
+    await done;
+
+    // The host's copy of the tool_result carries the image block (its bytes left out of the frame)…
+    const msgs = dataMessages(seen);
+    const toolResultMsg = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: unknown }> } };
+    const content = toolResultMsg.message.content.find((b) => b.tool_use_id === "call-1")?.content as Array<{ type: string; source?: { media_type?: string } }>;
+    expect(content.map((b) => b.type)).toEqual(["text", "image"]);
+    expect(content[1]!.source?.media_type).toBe("image/png");
+    // …and the model's next request carries the image itself as an image block, never the MCP item as text.
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toContain(png.toString("base64"));
+    expect(requests[1]).toContain('"media_type":"image/png"');
+    expect(requests[1]).not.toContain('{\\"type\\":\\"image\\",\\"data\\"');
+  });
+
   test("a rejected sdk_mcp_call (e.g. the host has no responder) folds into an error tool_result, never a hung round or a crashed run", async () => {
     const { host, runtime } = createInMemoryChannel();
     const provider = scriptedProvider([
