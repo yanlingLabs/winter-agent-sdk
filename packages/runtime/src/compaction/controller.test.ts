@@ -460,6 +460,15 @@ describe("compaction/controller.ts -- the transcript note (claude parity, 2026-1
     expect(notes(second.summary)).toBe(1);
   });
 
+  test("a model that copies the note into its own summary (a resume re-summarizes the replayed one) still ends with exactly one", async () => {
+    const note = transcriptNote(PATH);
+    const { provider } = recordingProvider(`A SUMMARY\n\n${note}`);
+    const accountant = createContextAccountant({ limit: 1000 });
+    const result = await createCompactionController().compact({ messages: longConversation(), trigger: "auto", customInstructions: null, accountant, provider, transcriptNote: note });
+    expect(result.summary).toBe(`A SUMMARY\n\n${note}`);
+    expect(notes(result.summary)).toBe(1);
+  });
+
   test("withoutTranscriptNote takes off only a trailing note paragraph", () => {
     const note = transcriptNote(PATH);
     expect(withoutTranscriptNote(`S\n\n${note}`)).toBe("S");

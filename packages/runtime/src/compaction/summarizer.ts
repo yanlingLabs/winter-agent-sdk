@@ -58,13 +58,6 @@ export function isCompactionSummaryRequest(req: Pick<ProviderRequest, "system" |
 export const CARRIED_SUMMARY_NOTE = "The conversation above begins with an earlier summary, which is kept verbatim; summarize only what happened after it.";
 
 /**
- * WS-23: the prefix-reusing request shows the model the WHOLE conversation, including the exchanges the
- * compaction keeps verbatim after the summary -- the redacted request only ever showed it the part
- * being replaced. This sentence scopes the summary back to that part, so a compaction does not
- * restate what stays in context anyway. It rides the appended instruction, so it costs the cache
- * nothing.
- */
-/**
  * 2026-10-07 (claude parity; claude's interface string, verbatim): the paragraph a summary ENDS with when
  * the session can read its own durable transcript, naming that file -- the summary replaced the older
  * part of the conversation, but the transcript still holds every word of it. The engine decides whether
@@ -86,6 +79,13 @@ export function withoutTranscriptNote(summary: string): string {
   return summary.startsWith(TRANSCRIPT_NOTE_PREFIX) && !summary.includes("\n") ? "" : summary;
 }
 
+/**
+ * WS-23: the prefix-reusing request shows the model the WHOLE conversation, including the exchanges the
+ * compaction keeps verbatim after the summary -- the redacted request only ever showed it the part
+ * being replaced. This sentence scopes the summary back to that part, so a compaction does not
+ * restate what stays in context anyway. It rides the appended instruction, so it costs the cache
+ * nothing.
+ */
 export function retainedExchangesNote(pairs: number): string {
   return `The most recent ${pairs} user/assistant exchange${pairs === 1 ? "" : "s"} will be kept verbatim after your summary; summarize what precedes ${pairs === 1 ? "it" : "them"}, and include from ${pairs === 1 ? "it" : "them"} only what is needed to understand the earlier context.`;
 }

@@ -151,7 +151,10 @@ export function createCompactionController(opts: CompactionControllerOptions = {
       const fresh = overPrefix ?? (await summarize(input.provider, redacted, buildSummaryInstruction(input.customInstructions, bounded)));
       // 2026-10-07: the transcript note (if any) ends the summary exactly once -- a carried summary's own
       // note is taken off before the new material is appended after it.
-      const summaryText = carried === null ? fresh : `${withoutTranscriptNote(carried)}\n\n${fresh}`;
+      // The fresh pass is stripped too: after a resume the replayed summary (with its note) is summarized
+      // again, and a model that copies the note's closing line must not end up with two.
+      const freshText = withoutTranscriptNote(fresh);
+      const summaryText = carried === null ? freshText : `${withoutTranscriptNote(carried)}\n\n${freshText}`;
       const summary = input.transcriptNote !== undefined && input.transcriptNote.length > 0 ? `${summaryText}\n\n${input.transcriptNote}` : summaryText;
       lastSummary = summary;
 
