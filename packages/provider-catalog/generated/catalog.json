@@ -32524,11 +32524,11 @@
         "responses"
       ],
       "contextWindow": {
-        "value": 272000,
+        "value": 872000,
         "source": "live-discovery",
-        "sourceRef": "Current server-delivered Codex model catalogue cached at ~/.codex/models_cache.json, read 2026-09-19: context_window 272,000 and max_context_window 872,000 for this model. This catalog stores the conservative advertised default (272K); its schema has no separate maximum-context field. OpenAI public plan documentation does not publish a Plus-versus-$100/$200 Codex window split, so no unverified plan-specific split is encoded.",
+        "sourceRef": "Current server-delivered Codex model catalogue (~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z): max_context_window 872,000 for this model. codex-rs (openai/codex a6baf88) defines that field as the \"Maximum context window allowed for config overrides\" (protocol/src/openai_models.rs), and models-manager/src/model_info.rs clamps a configured model_context_window to it (context_window.min(max_context_window)) -- so the backend serves a conversation up to 872,000 tokens when the client opts in, as a Codex user does with model_context_window in config.toml. The catalogue's context_window 272,000 is Codex's DEFAULT, the point its own client compacts at, not what the backend accepts. The value is delivered per account; an account served less is still caught by the runtime's reactive compaction on context_length_exceeded. Measured, not only declared: the operator's own Codex rollouts (~/.codex/sessions, read 2026-10-07) record completed responses whose request input exceeded 272,000 tokens on gpt-6-luna (2,324 requests, max 820,037), gpt-6-astra (1,143, max 667,000), gpt-6.1-sol (364, max 586,810) and gpt-5.6-sol (45, max 330,401), at model_context_window 828,400 (95% of 872,000).",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-10-07T10:00:00Z"
       },
       "inputModalities": {
         "value": [
@@ -32652,11 +32652,11 @@
         "responses"
       ],
       "contextWindow": {
-        "value": 272000,
+        "value": 872000,
         "source": "live-discovery",
-        "sourceRef": "Current server-delivered Codex model catalogue cached at ~/.codex/models_cache.json, read 2026-09-19: context_window 272,000 and max_context_window 872,000 for this model. This catalog stores the conservative advertised default (272K); its schema has no separate maximum-context field. OpenAI public plan documentation does not publish a Plus-versus-$100/$200 Codex window split, so no unverified plan-specific split is encoded.",
+        "sourceRef": "Current server-delivered Codex model catalogue (~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z): max_context_window 872,000 for this model. codex-rs (openai/codex a6baf88) defines that field as the \"Maximum context window allowed for config overrides\" (protocol/src/openai_models.rs), and models-manager/src/model_info.rs clamps a configured model_context_window to it (context_window.min(max_context_window)) -- so the backend serves a conversation up to 872,000 tokens when the client opts in, as a Codex user does with model_context_window in config.toml. The catalogue's context_window 272,000 is Codex's DEFAULT, the point its own client compacts at, not what the backend accepts. The value is delivered per account; an account served less is still caught by the runtime's reactive compaction on context_length_exceeded. Measured, not only declared: the operator's own Codex rollouts (~/.codex/sessions, read 2026-10-07) record completed responses whose request input exceeded 272,000 tokens on gpt-6-luna (2,324 requests, max 820,037), gpt-6-astra (1,143, max 667,000), gpt-6.1-sol (364, max 586,810) and gpt-5.6-sol (45, max 330,401), at model_context_window 828,400 (95% of 872,000).",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-10-07T10:00:00Z"
       },
       "inputModalities": {
         "value": [
@@ -32780,11 +32780,11 @@
         "responses"
       ],
       "contextWindow": {
-        "value": 272000,
+        "value": 872000,
         "source": "live-discovery",
-        "sourceRef": "Current server-delivered Codex model catalogue cached at ~/.codex/models_cache.json, read 2026-09-19: context_window 272,000 and max_context_window 872,000 for this model. This catalog stores the conservative advertised default (272K); its schema has no separate maximum-context field. OpenAI public plan documentation does not publish a Plus-versus-$100/$200 Codex window split, so no unverified plan-specific split is encoded.",
+        "sourceRef": "Current server-delivered Codex model catalogue (~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z): max_context_window 872,000 for this model. codex-rs (openai/codex a6baf88) defines that field as the \"Maximum context window allowed for config overrides\" (protocol/src/openai_models.rs), and models-manager/src/model_info.rs clamps a configured model_context_window to it (context_window.min(max_context_window)) -- so the backend serves a conversation up to 872,000 tokens when the client opts in, as a Codex user does with model_context_window in config.toml. The catalogue's context_window 272,000 is Codex's DEFAULT, the point its own client compacts at, not what the backend accepts. The value is delivered per account; an account served less is still caught by the runtime's reactive compaction on context_length_exceeded. Measured, not only declared: the operator's own Codex rollouts (~/.codex/sessions, read 2026-10-07) record completed responses whose request input exceeded 272,000 tokens on gpt-6-luna (2,324 requests, max 820,037), gpt-6-astra (1,143, max 667,000), gpt-6.1-sol (364, max 586,810) and gpt-5.6-sol (45, max 330,401), at model_context_window 828,400 (95% of 872,000).",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-10-07T10:00:00Z"
       },
       "inputModalities": {
         "value": [
@@ -32908,11 +32908,11 @@
         "responses"
       ],
       "contextWindow": {
-        "value": 272000,
+        "value": 872000,
         "source": "live-discovery",
-        "sourceRef": "Current server-delivered Codex model catalogue cached at ~/.codex/models_cache.json, read 2026-09-19: context_window 272,000 and max_context_window 872,000 for this model. This catalog stores the conservative advertised default (272K); its schema has no separate maximum-context field. OpenAI public plan documentation does not publish a Plus-versus-$100/$200 Codex window split, so no unverified plan-specific split is encoded.",
+        "sourceRef": "Current server-delivered Codex model catalogue (~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z): max_context_window 872,000 for this model. codex-rs (openai/codex a6baf88) defines that field as the \"Maximum context window allowed for config overrides\" (protocol/src/openai_models.rs), and models-manager/src/model_info.rs clamps a configured model_context_window to it (context_window.min(max_context_window)) -- so the backend serves a conversation up to 872,000 tokens when the client opts in, as a Codex user does with model_context_window in config.toml. The catalogue's context_window 272,000 is Codex's DEFAULT, the point its own client compacts at, not what the backend accepts. The value is delivered per account; an account served less is still caught by the runtime's reactive compaction on context_length_exceeded. Measured, not only declared: the operator's own Codex rollouts (~/.codex/sessions, read 2026-10-07) record completed responses whose request input exceeded 272,000 tokens on gpt-6-luna (2,324 requests, max 820,037), gpt-6-astra (1,143, max 667,000), gpt-6.1-sol (364, max 586,810) and gpt-5.6-sol (45, max 330,401), at model_context_window 828,400 (95% of 872,000).",
         "confidence": "declared",
-        "observedAt": "2026-09-19T00:00:00Z"
+        "observedAt": "2026-10-07T10:00:00Z"
       },
       "inputModalities": {
         "value": [
@@ -33038,11 +33038,11 @@
         "responses"
       ],
       "contextWindow": {
-        "value": 272000,
+        "value": 872000,
         "source": "live-discovery",
-        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-09-25T10:16:24.468875Z: gpt-6-luna context_window=272000; max_context_window=872000 is a separate upper ceiling, not the default.",
+        "sourceRef": "Current server-delivered Codex model catalogue (~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z): max_context_window 872,000 for this model. codex-rs (openai/codex a6baf88) defines that field as the \"Maximum context window allowed for config overrides\" (protocol/src/openai_models.rs), and models-manager/src/model_info.rs clamps a configured model_context_window to it (context_window.min(max_context_window)) -- so the backend serves a conversation up to 872,000 tokens when the client opts in, as a Codex user does with model_context_window in config.toml. The catalogue's context_window 272,000 is Codex's DEFAULT, the point its own client compacts at, not what the backend accepts. The value is delivered per account; an account served less is still caught by the runtime's reactive compaction on context_length_exceeded. Measured, not only declared: the operator's own Codex rollouts (~/.codex/sessions, read 2026-10-07) record completed responses whose request input exceeded 272,000 tokens on gpt-6-luna (2,324 requests, max 820,037), gpt-6-astra (1,143, max 667,000), gpt-6.1-sol (364, max 586,810) and gpt-5.6-sol (45, max 330,401), at model_context_window 828,400 (95% of 872,000).",
         "confidence": "declared",
-        "observedAt": "2026-09-25T10:18:08Z"
+        "observedAt": "2026-10-07T10:00:00Z"
       },
       "inputModalities": {
         "value": [
@@ -33168,11 +33168,11 @@
         "responses"
       ],
       "contextWindow": {
-        "value": 272000,
+        "value": 872000,
         "source": "live-discovery",
-        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-09-25T10:16:24.468875Z: gpt-6-sol context_window=272000; max_context_window=872000 is a separate upper ceiling, not the default.",
+        "sourceRef": "Current server-delivered Codex model catalogue (~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z): max_context_window 872,000 for this model. codex-rs (openai/codex a6baf88) defines that field as the \"Maximum context window allowed for config overrides\" (protocol/src/openai_models.rs), and models-manager/src/model_info.rs clamps a configured model_context_window to it (context_window.min(max_context_window)) -- so the backend serves a conversation up to 872,000 tokens when the client opts in, as a Codex user does with model_context_window in config.toml. The catalogue's context_window 272,000 is Codex's DEFAULT, the point its own client compacts at, not what the backend accepts. The value is delivered per account; an account served less is still caught by the runtime's reactive compaction on context_length_exceeded. Measured, not only declared: the operator's own Codex rollouts (~/.codex/sessions, read 2026-10-07) record completed responses whose request input exceeded 272,000 tokens on gpt-6-luna (2,324 requests, max 820,037), gpt-6-astra (1,143, max 667,000), gpt-6.1-sol (364, max 586,810) and gpt-5.6-sol (45, max 330,401), at model_context_window 828,400 (95% of 872,000).",
         "confidence": "declared",
-        "observedAt": "2026-09-25T10:18:08Z"
+        "observedAt": "2026-10-07T10:00:00Z"
       },
       "inputModalities": {
         "value": [
@@ -33298,11 +33298,11 @@
         "responses"
       ],
       "contextWindow": {
-        "value": 272000,
+        "value": 872000,
         "source": "live-discovery",
-        "sourceRef": "https://learn.chatgpt.com/docs/models — Codex model availability; local server-delivered ~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z: gpt-6.1-sol context_window=272000; max_context_window=872000 is a separate upper ceiling, not the default.",
+        "sourceRef": "Current server-delivered Codex model catalogue (~/.codex/models_cache.json, fetched_at 2026-10-07T07:59:47.410248Z): max_context_window 872,000 for this model. codex-rs (openai/codex a6baf88) defines that field as the \"Maximum context window allowed for config overrides\" (protocol/src/openai_models.rs), and models-manager/src/model_info.rs clamps a configured model_context_window to it (context_window.min(max_context_window)) -- so the backend serves a conversation up to 872,000 tokens when the client opts in, as a Codex user does with model_context_window in config.toml. The catalogue's context_window 272,000 is Codex's DEFAULT, the point its own client compacts at, not what the backend accepts. The value is delivered per account; an account served less is still caught by the runtime's reactive compaction on context_length_exceeded. Measured, not only declared: the operator's own Codex rollouts (~/.codex/sessions, read 2026-10-07) record completed responses whose request input exceeded 272,000 tokens on gpt-6-luna (2,324 requests, max 820,037), gpt-6-astra (1,143, max 667,000), gpt-6.1-sol (364, max 586,810) and gpt-5.6-sol (45, max 330,401), at model_context_window 828,400 (95% of 872,000).",
         "confidence": "declared",
-        "observedAt": "2026-10-07T08:00:00Z"
+        "observedAt": "2026-10-07T10:00:00Z"
       },
       "inputModalities": {
         "value": [

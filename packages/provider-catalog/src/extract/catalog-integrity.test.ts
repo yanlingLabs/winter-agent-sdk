@@ -117,7 +117,7 @@ describe("the seed is fully replaced", () => {
     // Cached input is 5% of input on this model (0.1), not gpt-6-sol's 10% (0.2); Codex stays unpriced.
     expect(api.pricing!.value).toEqual({ inputPerMTokUsd: 2, outputPerMTokUsd: 10, cacheReadPerMTokUsd: 0.1, cacheWritePerMTokUsd: 2.5 });
     expect(codex.pricing).toBeUndefined();
-    expect([api.contextWindow!.value, api.maxInputTokens!.value, codex.contextWindow!.value]).toEqual([1050000, 922000, 272000]);
+    expect([api.contextWindow!.value, api.maxInputTokens!.value, codex.contextWindow!.value]).toEqual([1050000, 922000, 872000]);
   });
 });
 

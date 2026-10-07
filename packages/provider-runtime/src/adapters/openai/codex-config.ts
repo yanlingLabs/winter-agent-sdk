@@ -76,6 +76,12 @@ export const CODEX_MODELS_VERIFIED = "2026-07-31";
  * offers — a number the port records as having been WRONG once (372000, hand-transcribed), which
  * put an auto-compaction threshold above the backend's own hard ceiling and killed compaction
  * silently. Re-derive it from the live catalogue; never edit it by hand.
+ *
+ * 2026-10-07: 272000 is the catalogue's DEFAULT `context_window`, not the backend's ceiling — the
+ * same catalogue states `max_context_window` 872000 ("Maximum context window allowed for config
+ * overrides" in codex-rs), and requests up to ~820K input complete. The provider catalog's
+ * `codex-oauth/*` rows, which is what sessions compact against, carry 872000 with that evidence;
+ * this table is only the adapter's own static listing.
  */
 export const CODEX_MODELS: ReadonlyArray<{ id: string; contextWindow: number; supportsVision: boolean }> = [
   { id: "gpt-5.6-sol", contextWindow: 272_000, supportsVision: true },
