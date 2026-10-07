@@ -4,7 +4,7 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
-## Unreleased
+## 0.0.52
 
 ### After a compaction, the model is told where the full transcript is
 
