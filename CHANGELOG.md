@@ -4,6 +4,24 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.51
+
+### Codex models use the backend's full 872,000-token window
+
+Every `codex-oauth` model (GPT-5.6 Sol, Terra and Luna; GPT-6 Astra, Sol and Luna; GPT-6.1 Sol) was
+catalogued with a 272,000-token context window. That figure is Codex's default, the point where
+Codex's own client compacts, not what the backend accepts. The same Codex model catalogue lists a
+maximum of 872,000 tokens that a client may opt into, and Codex requests well past 272,000 tokens
+complete (up to about 820,000 in the evidence read). A session therefore summarized its history
+much earlier than it had to, for example on switching a 329,000-token conversation to Codex.
+
+- The `codex-oauth` rows now say 872,000. A session compacts at 92% of that (about 802,000 tokens).
+  If an account is ever served less, the runtime still compacts and retries when the provider
+  refuses a request as too long.
+- `openai/*` rows are unchanged: the API states its own windows (1,050,000 for the GPT-6 family).
+- A longer conversation uses more of a ChatGPT plan's limits per request, as it does in Codex when
+  `model_context_window` is raised.
+
 ## 0.0.50
 
 ### GPT-6.1 Sol is in the catalog, and the `sol` slot points to it
