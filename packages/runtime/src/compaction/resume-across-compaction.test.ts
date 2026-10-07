@@ -16,7 +16,7 @@ import type { RuntimeConfig, WinterFrame, ProtocolSdkMessage as SdkMessage } fro
 import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { runEngine, type Provider, type ProviderTurn } from "../engine.ts";
-import { isCompactionSummaryRequest as isSummaryRequest } from "./summarizer.ts";
+import { isCompactionSummaryRequest as isSummaryRequest, transcriptNote } from "./summarizer.ts";
 import { stubExecutor } from "../provider/mock.ts";
 import { resolveEngineSession, CLAUDE_COMPACT_SUMMARY_PREAMBLE } from "../store/dialect.ts";
 import { createCompactionController } from "./controller.ts";
@@ -255,7 +255,10 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
       // W18-12: the resumed content is claude's own preamble followed by the summary text, not the
       // bare summary string -- the whole point of writing the summary through
       // `claudeCompactSummaryEntry` rather than a raw string entry.
-      expect(resumed.initialMessages[0]!.content).toBe(`${CLAUDE_COMPACT_SUMMARY_PREAMBLE}\n\nThe user's lucky number is 4242.`);
+      // 2026-10-07: this session has a durable store and the full built-in set (so `Read`), so the summary
+      // ends with the note naming its own transcript -- and the resume replays exactly that.
+      expect(resolved.store?.transcriptPath).toBeDefined();
+      expect(resumed.initialMessages[0]!.content).toBe(`${CLAUDE_COMPACT_SUMMARY_PREAMBLE}\n\nThe user's lucky number is 4242.\n\n${transcriptNote(resolved.store!.transcriptPath!)}`);
       // The summarizer's own generation never entered the conversation history it summarized.
       expect(resumed.initialMessages.map((m) => m.content)).not.toContain("my lucky number is 4242");
     } finally {

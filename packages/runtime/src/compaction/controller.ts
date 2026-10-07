@@ -13,10 +13,10 @@
 // contract test's re-entrancy case). A second guard here would stack with that one and silently skip
 // the legitimate second compaction of a turn that genuinely grew past the threshold twice.
 import { DEFAULT_COMPACTION_THRESHOLD } from "@yanlinglabs/winter-agent-sdk";
-import type { CompactionController, CompactionInput, CompactionResult } from "./seam.ts";
+import { preTokensFor, type CompactionController, type CompactionInput, type CompactionResult } from "./seam.ts";
 import { isProviderTurnError, type ContextAccountant, type ProviderMessage } from "../engine.ts";
 import { DEFAULT_RETAINED_PAIRS, evidencedToolNames, selectRetention } from "./retention.ts";
-import { buildSummaryInstruction, CARRIED_SUMMARY_NOTE, redactForSummary, retainedExchangesNote, summarize, summarizeOverPrefix, WINTER_PREFIX_SUMMARY_INSTRUCTION, WINTER_SUMMARY_INSTRUCTION } from "./summarizer.ts";
+import { buildSummaryInstruction, CARRIED_SUMMARY_NOTE, redactForSummary, retainedExchangesNote, summarize, summarizeOverPrefix, WINTER_PREFIX_SUMMARY_INSTRUCTION, WINTER_SUMMARY_INSTRUCTION, withoutTranscriptNote } from "./summarizer.ts";
 
 export { DEFAULT_COMPACTION_THRESHOLD };
 
@@ -85,8 +85,10 @@ export function createCompactionController(opts: CompactionControllerOptions = {
 
     async compact(input: CompactionInput): Promise<CompactionResult> {
       // Read BEFORE the summarizer runs. `preTokens` is what the window measured when the boundary
-      // was decided, and it lands verbatim on the pinned `compact_metadata.pre_tokens`.
-      const preTokens = input.accountant.contextTokens();
+      // was decided, and it lands verbatim on the pinned `compact_metadata.pre_tokens` -- or, when the
+      // accountant has measured nothing yet (a fresh process compacting before its first generation),
+      // the engine's estimate of the history (2026-10-07: a resumed switch recorded 0 for 329K tokens).
+      const preTokens = preTokensFor(input);
 
       // THE CARRIED SUMMARY IS TAKEN OFF THE FRONT **BEFORE** RETENTION, never after. The engine
       // swaps its history for `[summary, ...retained]` and that summary is a `user` message, so it
@@ -147,7 +149,10 @@ export function createCompactionController(opts: CompactionControllerOptions = {
       }
       const bounded = omitted > 0 ? `${instruction}\n\n${omittedNote(omitted)}` : instruction;
       const fresh = overPrefix ?? (await summarize(input.provider, redacted, buildSummaryInstruction(input.customInstructions, bounded)));
-      const summary = carried === null ? fresh : `${carried}\n\n${fresh}`;
+      // 2026-10-07: the transcript note (if any) ends the summary exactly once -- a carried summary's own
+      // note is taken off before the new material is appended after it.
+      const summaryText = carried === null ? fresh : `${withoutTranscriptNote(carried)}\n\n${fresh}`;
+      const summary = input.transcriptNote !== undefined && input.transcriptNote.length > 0 ? `${summaryText}\n\n${input.transcriptNote}` : summaryText;
       lastSummary = summary;
 
       return {

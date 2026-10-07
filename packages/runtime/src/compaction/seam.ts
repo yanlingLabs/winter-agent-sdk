@@ -64,6 +64,19 @@ export interface CompactionInput {
    * so; the retained tail is untouched. Absent: unbounded, as before.
    */
   maxInputChars?: number;
+  /**
+   * 2026-10-07: the engine's ESTIMATE of the history's size in tokens (the switch fit check's own
+   * estimator), for `preTokens` when the accountant has measured nothing yet -- a fresh process (a
+   * resume) that compacts before its first generation read `contextTokens() === 0`, and the boundary
+   * then recorded `pre_tokens: 0` for a 329K-token conversation. A real measurement always wins.
+   */
+  estimatedTokens?: number;
+  /**
+   * 2026-10-07: the paragraph the summary ends with -- `summarizer.ts`'s `transcriptNote(path)`, naming
+   * the session's durable transcript -- when the engine decided the model can read it (a main session
+   * with a durable store whose tool pool offers `Read`). Absent: no note.
+   */
+  transcriptNote?: string;
 }
 
 export interface CompactionResult {
@@ -133,6 +146,18 @@ export interface CompactBoundaryWriteResult {
 }
 
 /**
+ * `compact_metadata.pre_tokens` for a compaction: the accountant's measurement when it has one, else the
+ * engine's estimate (`CompactionInput.estimatedTokens`), else 0. Shared by the real controller and the
+ * test double so the two can never disagree about it.
+ */
+export function preTokensFor(input: Pick<CompactionInput, "accountant" | "estimatedTokens">): number {
+  const measured = input.accountant.contextTokens();
+  if (measured > 0) return measured;
+  const estimate = input.estimatedTokens;
+  return typeof estimate === "number" && Number.isFinite(estimate) && estimate > 0 ? Math.round(estimate) : 0;
+}
+
+/**
  * The spine's test double. Summarizes by concatenating a marker with the message count and keeps the
  * last `keep` messages -- deterministic, authored-prose-free, and enough for an engine test to prove
  * the whole sequence ran in order.
@@ -159,7 +184,7 @@ export function fakeCompactionController(opts?: {
       return {
         summary: opts?.summary ?? `[fake-summary of ${input.messages.length} messages; trigger=${input.trigger}; instructions=${input.customInstructions ?? "none"}]`,
         retained: keep > 0 ? input.messages.slice(-keep) : [],
-        preTokens: input.accountant.contextTokens(),
+        preTokens: preTokensFor(input),
         evidencedToolNames: opts?.evidencedToolNames ?? [],
       };
     },

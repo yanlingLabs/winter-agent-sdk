@@ -4,6 +4,30 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## Unreleased
+
+### After a compaction, the model is told where the full transcript is
+
+A compaction replaces the older part of a conversation with a summary, but the session's transcript
+file still holds every word of it. As in Claude Code, the summary now ends with one paragraph naming
+that file: "If you need specific details from before compaction (like exact code snippets, error
+messages, or content you generated), read the full transcript at: <path>".
+
+- The path is the session's own durable transcript in the store home
+  (`projects/<project>/<session>.jsonl`), the same file a command hook's `transcript_path` names.
+- The note is added only when the model can use it: a main session (never a subagent) with a durable
+  transcript, whose tools include `Read` at that moment. A session whose allowed tools leave `Read`
+  out, or deny it, gets no note, so the summary never names a tool the session does not have.
+- A summary carried into a later compaction drops its old note first, so a summary always ends with
+  exactly one. A resumed session replays the same text the live session saw.
+
+### A compaction in a fresh process records the conversation's size, not 0
+
+`compact_metadata.pre_tokens` was the context reading at the moment of compaction. A process that
+had not generated anything yet, such as a resumed session compacting on a model switch, read 0 and
+recorded `pre_tokens: 0` for a 329,000-token conversation. When nothing has been measured yet, the
+compaction now records the estimate the switch's fit check uses. A real measurement still wins.
+
 ## 0.0.51
 
 ### Codex models use the backend's full 872,000-token window

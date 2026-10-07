@@ -121,6 +121,7 @@ import { parseMcpEnvConfig } from "./mcp/env.ts";
 // cycle the compiled binary resolves differently from the dev leg.
 import type { AssembledPrompt, SkillListing, SystemPromptAssembler, SystemPromptInput } from "./context/seam.ts";
 import type { CompactBoundaryRecord, CompactBoundaryWriteResult, CompactionController, CompactionResult } from "./compaction/seam.ts";
+import { transcriptNote } from "./compaction/summarizer.ts";
 import { STRUCTURED_OUTPUT_TOOL_NAME, resolveMaxStructuredOutputAttempts, type StructuredOutputSeam } from "./structured/seam.ts";
 import { isCheckpointedTool, type CheckpointedTool, type FileCheckpointSink } from "./checkpoint/seam.ts";
 import { resolveBuiltinCommand, looksLikeCommand, type CommandResolver } from "./commands/seam.ts";
@@ -7634,7 +7635,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // WS-23 (reasoning-state): `opts.provider` is the model that SUMMARIZES when it is not the live one (a
   // switch's source model, decision 5); `opts.maxInputChars` bounds the summarizer's request for one
   // smaller than the history (see `CompactionInput.maxInputChars`).
-  const performCompaction = async (trigger: "auto" | "manual", customInstructions: string | null, opts: { reason?: "overflow"; provider?: Provider; maxInputChars?: number } = {}): Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }> => {
+  // 2026-10-07: `opts.estimatedTokens` is the caller's own estimate of the history (a switch's fit check);
+  // absent, one is taken here -- by that same estimator -- whenever the accountant has measured nothing yet,
+  // so `pre_tokens` never reads 0 for a resumed session's first compaction.
+  const performCompaction = async (trigger: "auto" | "manual", customInstructions: string | null, opts: { reason?: "overflow"; provider?: Provider; maxInputChars?: number; estimatedTokens?: number } = {}): Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }> => {
     if (compactionController === undefined) {
       return { ok: false, error: "No compaction controller is configured for this session (R5-4: the compaction vehicle is supplied by the host; the engine never summarizes on its own)." };
     }
@@ -7648,6 +7652,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const effectiveInstructions = [customInstructions, ...forwarded].filter((t): t is string => typeof t === "string" && t.length > 0).join("\n\n");
 
     const prefixRequest = opts.reason === "overflow" ? undefined : compactionPrefixRequest();
+    const estimatedTokens = opts.estimatedTokens ?? (contextAccountant.contextTokens() > 0 ? undefined : historyTokenEstimate());
+    const note = compactionTranscriptNote();
     let result: CompactionResult;
     try {
       result = await compactionController.compact({
@@ -7662,6 +7668,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         ...(prefixRequest !== undefined ? { prefixRequest } : {}),
         ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
         ...(opts.maxInputChars !== undefined ? { maxInputChars: opts.maxInputChars } : {}),
+        ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
+        ...(note !== undefined ? { transcriptNote: note } : {}),
       });
     } catch (err) {
       // A failed compaction is REPORTED, never fatal: the turn continues on the un-compacted history
@@ -7818,7 +7826,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         session_id: config.sessionId,
       },
     });
-    const outcome = await performCompaction("auto", null, { reason: "overflow", ...(source !== undefined ? { provider: source } : {}), ...(bound !== undefined ? { maxInputChars: bound } : {}) });
+    const outcome = await performCompaction("auto", null, { reason: "overflow", estimatedTokens: fit.estimatedTokens, ...(source !== undefined ? { provider: source } : {}), ...(bound !== undefined ? { maxInputChars: bound } : {}) });
     return outcome.ok;
   };
 
@@ -8053,6 +8061,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const requestFit = (system: string, tools: readonly ProviderToolSpec[], outbound: readonly ProviderMessage[]): FitVerdict | undefined => {
     const window = liveWindow();
     if (window === undefined) return undefined;
+    return fitVerdict(estimateRequestTokens(system, tools, outbound), window, compactionThreshold());
+  };
+
+  /** The fit check's token ESTIMATE of one request -- the one estimator, also what a compaction records as
+   *  `pre_tokens` when the accountant has measured nothing yet (`historyTokenEstimate`). */
+  const estimateRequestTokens = (system: string, tools: readonly ProviderToolSpec[], outbound: readonly ProviderMessage[]): number => {
     const owns = ownedBy(currentProviderIdentity?.modelKey ?? currentModel);
     let tokens = estimateTextTokens(system) + (tools.length > 0 ? estimateValueTokens(tools) : 0);
     let foreign = false;
@@ -8063,7 +8077,27 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       else if (message.nativeState !== undefined) tokens += estimateValueTokens(message.nativeState.items);
     }
     if (foreign) tokens += estimateTokensFromChars(DECORATION_CHAR_BUDGET);
-    return fitVerdict(tokens, window, compactionThreshold());
+    return tokens;
+  };
+
+  /** The live history's estimate, over the last main request's system prompt and tools when there was one. */
+  const historyTokenEstimate = (): number => estimateRequestTokens(lastMainRequestShape?.system.system ?? "", lastMainRequestShape?.tools ?? [], messages);
+
+  /**
+   * 2026-10-07 (claude parity, tool-aware): the paragraph a compaction summary ends with, naming the
+   * session's durable transcript -- only when the model can act on it: a MAIN session (a subagent's
+   * compaction never gets one; its store states no path either), with a durable store that knows its file
+   * (`SessionPersistence.transcriptPath`, the store home's own JSONL -- never a run folder), whose tool pool
+   * offers `Read` right now (chat's allowed list leaves it out, and a prompt must never name a tool the
+   * session was not given).
+   */
+  const compactionTranscriptNote = (): string | undefined => {
+    if (subagentHooks !== undefined) return undefined;
+    const path = store?.transcriptPath;
+    if (path === undefined || path.length === 0) return undefined;
+    const mode = policyStateStore.getState().mode;
+    const readOffered = advertisedPartition.eager.some((d) => d.canonicalName === "Read" && isToolAvailable(d, { ...advertisedCfg, mode }));
+    return readOffered ? transcriptNote(path) : undefined;
   };
 
   /** The most characters a summarizer on the live model may be sent, for a compaction that must fit it. */

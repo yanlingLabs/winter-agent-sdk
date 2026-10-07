@@ -64,6 +64,28 @@ export const CARRIED_SUMMARY_NOTE = "The conversation above begins with an earli
  * restate what stays in context anyway. It rides the appended instruction, so it costs the cache
  * nothing.
  */
+/**
+ * 2026-10-07 (claude parity; claude's interface string, verbatim): the paragraph a summary ENDS with when
+ * the session can read its own durable transcript, naming that file -- the summary replaced the older
+ * part of the conversation, but the transcript still holds every word of it. The engine decides whether
+ * it applies (a main session with a durable store whose tool pool offers `Read`) and hands the finished
+ * sentence in as `CompactionInput.transcriptNote`; the controller appends it, and strips it again from a
+ * summary it carries forward, so one summary never holds two.
+ */
+export const TRANSCRIPT_NOTE_PREFIX =
+  "If you need specific details from before compaction (like exact code snippets, error messages, or content you generated), read the full transcript at: ";
+
+export function transcriptNote(transcriptPath: string): string {
+  return `${TRANSCRIPT_NOTE_PREFIX}${transcriptPath}`;
+}
+
+/** `summary` without the transcript note it ends with, if it ends with one. */
+export function withoutTranscriptNote(summary: string): string {
+  const at = summary.lastIndexOf(`\n\n${TRANSCRIPT_NOTE_PREFIX}`);
+  if (at >= 0 && !summary.slice(at + 2).includes("\n")) return summary.slice(0, at);
+  return summary.startsWith(TRANSCRIPT_NOTE_PREFIX) && !summary.includes("\n") ? "" : summary;
+}
+
 export function retainedExchangesNote(pairs: number): string {
   return `The most recent ${pairs} user/assistant exchange${pairs === 1 ? "" : "s"} will be kept verbatim after your summary; summarize what precedes ${pairs === 1 ? "it" : "them"}, and include from ${pairs === 1 ? "it" : "them"} only what is needed to understand the earlier context.`;
 }

@@ -6,7 +6,7 @@
 import { test, expect, describe } from "bun:test";
 import { createContextAccountant, type ProviderMessage, type ProviderRequest, type Provider, type ProviderTurn } from "../engine.ts";
 import { createCompactionController, DEFAULT_COMPACTION_THRESHOLD } from "./controller.ts";
-import { WINTER_SUMMARY_INSTRUCTION } from "./summarizer.ts";
+import { TRANSCRIPT_NOTE_PREFIX, transcriptNote, WINTER_SUMMARY_INSTRUCTION, withoutTranscriptNote } from "./summarizer.ts";
 
 const user = (text: string): ProviderMessage => ({ role: "user", content: text });
 const assistant = (text: string): ProviderMessage => ({ role: "assistant", content: text });
@@ -396,3 +396,76 @@ describe("compaction/controller.ts -- compact()", () => {
   });
 });
 
+// 2026-10-07: a resumed session's switch compaction recorded `pre_tokens: 0` for a 329K-token history,
+// because a fresh process has measured nothing yet. The engine now hands its estimate in.
+describe("compaction/controller.ts -- preTokens when nothing has been measured yet", () => {
+  test("an accountant that reads 0 records the engine's estimate", async () => {
+    const { provider } = recordingProvider("S");
+    const accountant = createContextAccountant({ limit: 1000 });
+    const result = await createCompactionController().compact({ messages: longConversation(), trigger: "auto", customInstructions: null, accountant, provider, estimatedTokens: 329_439 });
+    expect(result.preTokens).toBe(329_439);
+  });
+
+  test("a real measurement always wins over the estimate", async () => {
+    const { provider } = recordingProvider("S");
+    const accountant = createContextAccountant({ limit: 1000 });
+    accountant.record({ inputTokens: 700, outputTokens: 60 });
+    const result = await createCompactionController().compact({ messages: longConversation(), trigger: "auto", customInstructions: null, accountant, provider, estimatedTokens: 329_439 });
+    expect(result.preTokens).toBe(760);
+  });
+
+  test("no measurement and no estimate (or a nonsense one) is still 0, never NaN", async () => {
+    for (const estimatedTokens of [undefined, Number.NaN, -5]) {
+      const { provider } = recordingProvider("S");
+      const accountant = createContextAccountant({ limit: 1000 });
+      const result = await createCompactionController().compact({ messages: longConversation(), trigger: "auto", customInstructions: null, accountant, provider, ...(estimatedTokens !== undefined ? { estimatedTokens } : {}) });
+      expect(result.preTokens).toBe(0);
+    }
+  });
+});
+
+describe("compaction/controller.ts -- the transcript note (claude parity, 2026-10-07)", () => {
+  const PATH = "/home/u/.winter/sdk/projects/-repo/sess-1.jsonl";
+  const notes = (text: string): number => text.split(TRANSCRIPT_NOTE_PREFIX).length - 1;
+
+  test("the summary ends with the note naming the transcript, as its own paragraph", async () => {
+    const { provider } = recordingProvider("A SUMMARY");
+    const accountant = createContextAccountant({ limit: 1000 });
+    const result = await createCompactionController().compact({ messages: longConversation(), trigger: "auto", customInstructions: null, accountant, provider, transcriptNote: transcriptNote(PATH) });
+    expect(result.summary).toBe(`A SUMMARY\n\n${TRANSCRIPT_NOTE_PREFIX}${PATH}`);
+  });
+
+  test("no note asked for, none written -- the summary is byte-identical to before", async () => {
+    const { provider } = recordingProvider("A SUMMARY");
+    const accountant = createContextAccountant({ limit: 1000 });
+    const result = await createCompactionController().compact({ messages: longConversation(), trigger: "auto", customInstructions: null, accountant, provider });
+    expect(result.summary).toBe("A SUMMARY");
+  });
+
+  test("two compactions in a row: the first summary is still CARRIED verbatim, and the result holds exactly one note, at the end", async () => {
+    const { provider, requests } = recordingProvider("FIRST PASS", "SECOND PASS");
+    const controller = createCompactionController({ retainedPairs: 1 });
+    const accountant = createContextAccountant({ limit: 1000 });
+    const note = transcriptNote(PATH);
+    const first = await controller.compact({ messages: longConversation(), trigger: "auto", customInstructions: null, accountant, provider, transcriptNote: note });
+    expect(notes(first.summary)).toBe(1);
+
+    // Exactly what the engine does with the result.
+    const afterFirst: ProviderMessage[] = [{ role: "user", content: first.summary }, ...first.retained, assistant("reply six"), user("turn seven"), assistant("reply seven"), user("turn eight")];
+    const second = await controller.compact({ messages: afterFirst, trigger: "auto", customInstructions: null, accountant, provider, transcriptNote: note });
+
+    // Carried, not re-summarized: the first pass's text is in the second summary and was never sent back.
+    expect(second.summary).toBe(`FIRST PASS\n\nSECOND PASS\n\n${note}`);
+    expect(JSON.stringify(requests[1]!.messages)).not.toContain("FIRST PASS");
+    expect(notes(second.summary)).toBe(1);
+  });
+
+  test("withoutTranscriptNote takes off only a trailing note paragraph", () => {
+    const note = transcriptNote(PATH);
+    expect(withoutTranscriptNote(`S\n\n${note}`)).toBe("S");
+    expect(withoutTranscriptNote("S")).toBe("S");
+    expect(withoutTranscriptNote(note)).toBe("");
+    // A note that is not the LAST paragraph is the model's own text, not ours -- left alone.
+    expect(withoutTranscriptNote(`S\n\n${note}\nmore`)).toBe(`S\n\n${note}\nmore`);
+  });
+});

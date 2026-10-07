@@ -2432,10 +2432,12 @@ describe("child-engine.ts: I4 -- a settings-file hook governs a CHILD, and a chi
     const dir = mkdtempSync(join(tmpdir(), "winter-i4-compact-"));
     try {
       const compactions: number[] = [];
+      const notes: Array<string | undefined> = [];
       const controller: CompactionController = {
         shouldCompact: (accountant) => accountant.contextTokens() >= 900,
         async compact(input) {
           compactions.push(input.messages.length);
+          notes.push(input.transcriptNote);
           return { summary: "child summary", retained: input.messages.slice(-1), preTokens: input.accountant.contextTokens(), evidencedToolNames: [] };
         },
       };
@@ -2453,6 +2455,8 @@ describe("child-engine.ts: I4 -- a settings-file hook governs a CHILD, and a chi
       const code = await driveWithChild({ provider: childProvider, compactionController: controller }, dir, ["ReadNotifications"], { contextWindowTokens: 1000 });
       expect(code).toBe(0);
       expect(compactions.length, "with no controller `maybeAutoCompact` returns immediately and a child never compacts").toBeGreaterThan(0);
+      // 2026-10-07: a SUBAGENT's compaction never gets the transcript note -- only a main session does.
+      expect(notes.every((n) => n === undefined)).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
