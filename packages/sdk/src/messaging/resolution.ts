@@ -32,9 +32,10 @@ export function childToListedRuntimeObject(parentSessionId: string, child: Child
     // "resume, don't steer" from SendMessage's own point of view (WS-10 §10.3).
     status: running ? "running" : "exited",
     // T8 FLAG: WS-10 §11 leaves `mode` untyped (just `string`); the companion doc's own
-    // directory record types it as the SESSION/PRODUCT mode ("code"|"chat"|"cowork"|"dispatch"|
-    // "build", Norma-global-messaging-spec.md), not a PermissionMode. A child has no product-mode
-    // of its own visible on ChildHandle/ChildSessionRecord -- `effectiveMode` (permission axis) is
+    // directory record describes SESSION/PRODUCT labels (Norma-global-messaging-spec.md), not a
+    // PermissionMode. Its "cowork"/"build" labels are planned vocabulary, not modes implemented by
+    // this SDK. A child has no product-mode of its own visible on ChildHandle/ChildSessionRecord;
+    // `effectiveMode` (permission axis) is
     // what's actually available here, substituted across axes. Nothing downstream consumes this
     // field yet; flagging so a real product-mode source (if one is added) doesn't silently collide
     // with this placeholder's shape.
