@@ -722,6 +722,8 @@ export interface TranscriptWriterOptions {
 // recordUserEntry already accepts `string | ContentBlock[]`, which is exactly how both plain user
 // text and tool-result blocks arrive.
 export class TranscriptWriter implements SessionPersistence {
+  /** Child engines use the writer directly; descendants inherit this recorded directory too. */
+  get projectKey(): string { return this.key.projectKey; }
   private readonly store: SessionStore;
   private readonly key: SessionKey;
   private readonly ctx: SessionCtx;
@@ -1133,6 +1135,7 @@ export interface ResolvedEngineSession {
 // (nor needs one) unless it goes through buildWriter/resolveEngineSession.
 function withPermissionJournal(writer: TranscriptWriter, location: { winterHome: string; projectKey: string; sessionId: string }): SessionPersistence {
   return {
+    projectKey: location.projectKey,
     // WS-23: the transcript's own absolute path, from the one (winterHome, projectKey, sessionId)
     // triple that decides it -- what a command hook's `transcript_path` names. Exact for a resume
     // found under another project directory, which a path re-derived from the cwd would not be.

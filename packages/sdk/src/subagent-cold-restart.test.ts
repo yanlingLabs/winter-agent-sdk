@@ -10,6 +10,11 @@ import type { RuntimeConfig } from "./protocol/config.ts";
 import type { WinterFrame } from "./protocol/frames.ts";
 import { TEST_KEYCHAIN_ENV, TEST_KEYCHAIN_MEMORY } from "./options.ts";
 import { compatibilityKeys } from "./paths/keys.ts";
+import { inMemoryProcess } from "../../runtime/src/testing.ts";
+import { testProviderByName, userMessageText } from "../../runtime/src/provider/mock.ts";
+import type { Provider, ProviderMessage } from "../../runtime/src/engine.ts";
+import type { SpawnedRuntimeProcess } from "./transport.ts";
+import { WINTER_BRAND, envName } from "./brand.ts";
 
 const mainPath = fileURLToPath(new URL("../../runtime/src/main.ts", import.meta.url));
 const preloadPath = fileURLToPath(new URL("../../../scripts/fixtures/subagent-cold-restart-provider.preload.ts", import.meta.url));
@@ -60,6 +65,10 @@ async function runParent(config: RuntimeConfig, prompt: string, env: Record<stri
     "--run", "--config-json", JSON.stringify(config)], cwd: config.cwd, env });
   expect(proc.pid).toBeGreaterThan(0);
   expect(proc.pid).not.toBe(process.pid);
+  return collectParent(proc, prompt, phase);
+}
+
+async function collectParent(proc: SpawnedRuntimeProcess, prompt: string, phase: string) {
   const frames: WinterFrame[] = [];
   let stderr = "";
   const readErr = (async () => { for await (const chunk of proc.stderr ?? []) stderr += chunk; })();
@@ -100,7 +109,7 @@ async function runParent(config: RuntimeConfig, prompt: string, env: Record<stri
   }
 }
 
-test("SendMessage resumes the same named child and its context through two real parent process restarts", async () => {
+test.each([undefined, "cold-restart-project-override"])("SendMessage resumes the same named child through real parent restarts (project override: %s)", async (projectDirName) => {
   const root = mkdtempSync(join(tmpdir(), "winter-subagent-cold-restart-"));
   const cwd = join(root, "workspace");
   const winterHome = join(root, "winter-home");
@@ -119,6 +128,7 @@ test("SendMessage resumes the same named child and its context through two real 
     PATH: process.env.PATH ?? "/usr/bin:/bin", TMPDIR: tmpdir(), TZ: "UTC",
     WINTER_HOME: winterHome, WINTER_DISABLE_GIT_INSTRUCTIONS: "1",
     WINTER_COLD_RESTART_REPORTS: reportsPath, [TEST_KEYCHAIN_ENV]: TEST_KEYCHAIN_MEMORY,
+    ...(projectDirName !== undefined ? { WINTER_PROJECT_DIR_NAME: projectDirName } : {}),
   };
   try {
     const first = await runParent(base, "CALL Agent " + JSON.stringify({
@@ -133,7 +143,9 @@ test("SendMessage resumes the same named child and its context through two real 
     expect(replyCorrelations(first.frames)).toEqual([originalSpawnId]);
     const initialReply = childReplies(first.frames).at(-1)!;
     expect(initialReply).toMatchObject({ phase: "INITIAL", markerSeen: true, personaSeen: true, priorReplies: 0, pid: first.pid });
-    const subagents = join(winterHome, "projects", compatibilityKeys(cwd).transcriptProjectKey, sessionId, "subagents");
+    const recordedProjectKey = projectDirName ?? compatibilityKeys(cwd).transcriptProjectKey;
+    const projects = join(winterHome, "projects");
+    const subagents = join(projects, recordedProjectKey, sessionId, "subagents");
     const transcriptPath = join(subagents, `agent-${childId}.jsonl`);
     const initialTranscript = readFileSync(transcriptPath, "utf8");
     expect(initialTranscript).toContain("COLD_RESTART_SECRET_MARKER");
@@ -141,11 +153,13 @@ test("SendMessage resumes the same named child and its context through two real 
 
     // Current trusted definitions remain authoritative across every process incarnation.
     const resumedConfig = { ...base, agents: { "cold-probe": { ...base.agents!["cold-probe"]!, prompt: "COLD_RESTART_CURRENT_PERSONA" } } };
+    const changedEnv = { ...env, ...(projectDirName !== undefined ? { WINTER_PROJECT_DIR_NAME: "changed-project-override" } : {}) };
     const second = await runParent({ ...resumedConfig, resume: sessionId },
-      "CALL ListAgents {}\nCALL SendMessage " + JSON.stringify({ to: childId, message: "FOLLOWUP_ONE" }), env, "FOLLOWUP_ONE");
+      "CALL ListAgents {}\nCALL SendMessage " + JSON.stringify({ to: childId, message: "FOLLOWUP_ONE" }), changedEnv, "FOLLOWUP_ONE");
     expect(second.pid).not.toBe(first.pid);
     expect(toolResults(second.frames).find((result) => result.status !== undefined)?.status).toBe("resumed_and_delivered");
     expect(JSON.stringify(toolResults(second.frames))).toContain("durable-probe");
+    expect(JSON.stringify(toolResults(second.frames))).toContain(childId);
     const secondReply = childReplies(second.frames).at(-1)!;
     expect(secondReply).toMatchObject({ phase: "FOLLOWUP_ONE", markerSeen: true, personaSeen: false, currentPersonaSeen: true, priorReplies: 1, pid: second.pid });
     expect(secondReply.cacheKey).toBe(initialReply.cacheKey);
@@ -154,13 +168,17 @@ test("SendMessage resumes the same named child and its context through two real 
     expect(secondTranscript.startsWith(initialTranscript)).toBe(true);
     expect(secondTranscript).toContain("FOLLOWUP_ONE");
 
+    const unsetEnv = { ...env };
+    delete unsetEnv.WINTER_PROJECT_DIR_NAME;
     const third = await runParent({ ...resumedConfig, resume: sessionId },
-      "CALL SendMessage " + JSON.stringify({ to: "durable-probe", message: "FOLLOWUP_TWO" }), env, "FOLLOWUP_TWO");
+      "CALL ListAgents {}\nCALL SendMessage " + JSON.stringify({ to: "durable-probe", message: "FOLLOWUP_TWO" }), unsetEnv, "FOLLOWUP_TWO");
     expect(new Set([first.pid, second.pid, third.pid]).size).toBe(3);
     expect(toolResults(third.frames).find((result) => result.status !== undefined)?.status).toBe("resumed_and_delivered");
     expect(childReplies(third.frames).at(-1)).toMatchObject({ phase: "FOLLOWUP_TWO", markerSeen: true, personaSeen: false, currentPersonaSeen: true,
       priorReplies: 2, cacheKey: initialReply.cacheKey, pid: third.pid });
     expect(replyCorrelations(third.frames)).toEqual([originalSpawnId]);
+    expect(JSON.stringify(toolResults(third.frames))).toContain(childId);
+    expect(readdirSync(projects)).toEqual([recordedProjectKey]);
     expect(readdirSync(subagents).sort()).toEqual(initialFiles);
     const finalTranscript = readFileSync(transcriptPath, "utf8");
     expect(finalTranscript.startsWith(secondTranscript)).toBe(true);
@@ -176,7 +194,7 @@ test("SendMessage resumes the same named child and its context through two real 
     const { agents: _definitions, ...missingDefinitionConfig } = base;
     const refused = await runParent({ ...missingDefinitionConfig, resume: sessionId }, "CALL SendMessage " + JSON.stringify({
       to: childId, message: "FOLLOWUP_ONE MUST NOT EXECUTE",
-    }), env, "FOLLOWUP_ONE");
+    }), unsetEnv, "FOLLOWUP_ONE");
     expect(toolResults(refused.frames).find((result) => result.status !== undefined)?.status).toBe("unavailable");
     expect(childReplies(refused.frames)).toEqual([]);
     expect(readFileSync(transcriptPath, "utf8")).toBe(finalTranscript);
@@ -185,7 +203,81 @@ test("SendMessage resumes the same named child and its context through two real 
   } finally { rmSync(root, { recursive: true, force: true }); }
 }, 175_000);
 
-test("a nested child remains addressable with its original depth and history after its parent process exits", async () => {
+test.each(["WINTER_", "ACME_"])("inMemoryProcess retains the recorded child directory after changed and unset %s overrides", async (envPrefix) => {
+  const root = mkdtempSync(join(tmpdir(), "winter-subagent-project-key-"));
+  const cwd = join(root, "workspace");
+  const winterHome = join(root, "winter-home");
+  mkdirSync(cwd);
+  const sessionId = randomUUID();
+  const brand = { ...WINTER_BRAND, envPrefix };
+  const overrideName = envName(brand, "PROJECT_DIR_NAME");
+  const recordedProjectKey = "recorded-child-directory";
+  const base: RuntimeConfig = {
+    sessionId, cwd, winterHome, brand, model: "winter-test/calls", settingSources: [],
+    allowedTools: ["Agent", "SendMessage", "ListAgents"], forwardSubagentText: true,
+    sandbox: { enabled: false }, autoMemory: { enabled: false },
+    agents: { "cold-probe": { description: "Remember context", prompt: "COLD_RESTART_PERSONA", tools: [] } },
+  };
+  const calls = testProviderByName("calls");
+  const provider: Provider = {
+    async generate(request) {
+      if (!request.cacheKey?.includes(":")) return calls.generate({ ...request, messages: request.messages.map((message): ProviderMessage =>
+        message.role === "tool" && userMessageText(message).split("\n").some((line) => line.trim().startsWith("CALL "))
+          ? { ...message, role: "user" } : message) });
+      const text = request.messages.filter((message) => message.role === "user" || message.role === "tool").map(userMessageText).at(-1) ?? "";
+      const report = {
+        phase: text.includes("FOLLOWUP_TWO") ? "FOLLOWUP_TWO" : text.includes("FOLLOWUP_ONE") ? "FOLLOWUP_ONE" : "INITIAL",
+        markerSeen: JSON.stringify(request.messages).includes("COLD_RESTART_SECRET_MARKER"),
+        personaSeen: request.system?.includes("COLD_RESTART_PERSONA") === true,
+        priorReplies: request.messages.filter((message) => message.role === "assistant" && userMessageText(message).includes(REPLY)).length,
+        cacheKey: request.cacheKey,
+      };
+      return { kind: "text", text: REPLY + JSON.stringify(report) };
+    },
+  };
+  const initialEnv: Record<string, string> = {
+    [overrideName]: recordedProjectKey, [TEST_KEYCHAIN_ENV]: TEST_KEYCHAIN_MEMORY,
+    // A branded session must never accidentally resolve Winter's env spelling.
+    ...(envPrefix !== WINTER_BRAND.envPrefix ? { WINTER_PROJECT_DIR_NAME: "wrong-brand-directory" } : {}),
+  };
+  const run = (config: RuntimeConfig, prompt: string, env: Record<string, string>, phase: string) =>
+    collectParent(inMemoryProcess(["--run", "--config-json", JSON.stringify(config)], provider, undefined, env), prompt, phase);
+  try {
+    const first = await run(base, "CALL Agent " + JSON.stringify({ name: "durable-probe", subagent_type: "cold-probe",
+      description: "Persist memory", prompt: "COLD_RESTART_SECRET_MARKER", run_in_background: false }), initialEnv, "INITIAL");
+    const childId = toolResults(first.frames).find((result) => typeof result.agentId === "string")?.agentId as string;
+    expect(childId).toBeString();
+    const projects = join(winterHome, "projects");
+    const subagents = join(projects, recordedProjectKey, sessionId, "subagents");
+    const transcriptPath = join(subagents, `agent-${childId}.jsonl`);
+    const initialTranscript = readFileSync(transcriptPath, "utf8");
+    const files = readdirSync(subagents).sort();
+    expect(childReplies(first.frames).at(-1)).toMatchObject({ markerSeen: true, personaSeen: true, priorReplies: 0 });
+    const changedEnv = { ...initialEnv, [overrideName]: "changed-child-directory" };
+    const second = await run({ ...base, resume: sessionId }, "CALL ListAgents {}\nCALL SendMessage " + JSON.stringify({
+      to: childId, message: "FOLLOWUP_ONE" }), changedEnv, "FOLLOWUP_ONE");
+    const unsetEnv = { ...initialEnv };
+    delete unsetEnv[overrideName];
+    const third = await run({ ...base, resume: sessionId }, "CALL ListAgents {}\nCALL SendMessage " + JSON.stringify({
+      to: "durable-probe", message: "FOLLOWUP_TWO" }), unsetEnv, "FOLLOWUP_TWO");
+    for (const [index, resumed] of [second, third].entries()) {
+      expect(toolResults(resumed.frames).find((result) => result.status !== undefined)?.status).toBe("resumed_and_delivered");
+      expect(JSON.stringify(toolResults(resumed.frames))).toContain(childId);
+      expect(childReplies(resumed.frames).at(-1)).toMatchObject({ markerSeen: true, personaSeen: true,
+        priorReplies: index + 1, cacheKey: childReplies(first.frames).at(-1)!.cacheKey });
+      expect(messages(resumed.frames).flatMap((message) => message.message?.content ?? [])
+        .filter((block) => block.type === "tool_use" && block.name === "Agent")).toEqual([]);
+    }
+    expect(readdirSync(projects)).toEqual([recordedProjectKey]);
+    expect(readdirSync(subagents).sort()).toEqual(files);
+    const finalTranscript = readFileSync(transcriptPath, "utf8");
+    expect(finalTranscript.startsWith(initialTranscript)).toBe(true);
+    expect(finalTranscript).toContain("FOLLOWUP_ONE");
+    expect(finalTranscript).toContain("FOLLOWUP_TWO");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}, 90_000);
+
+test("nested children keep their depth, history and recorded project key across changed and unset overrides", async () => {
   const root = mkdtempSync(join(tmpdir(), "winter-nested-cold-restart-"));
   const cwd = join(root, "workspace");
   const winterHome = join(root, "winter-home");
@@ -204,6 +296,7 @@ test("a nested child remains addressable with its original depth and history aft
     PATH: process.env.PATH ?? "/usr/bin:/bin", TMPDIR: tmpdir(), TZ: "UTC",
     WINTER_HOME: winterHome, WINTER_DISABLE_GIT_INSTRUCTIONS: "1",
     WINTER_COLD_RESTART_REPORTS: join(root, "provider-requests.jsonl"), [TEST_KEYCHAIN_ENV]: TEST_KEYCHAIN_MEMORY,
+    WINTER_PROJECT_DIR_NAME: "nested-recorded-project",
   };
   try {
     const leafScript = "CALL Agent " + JSON.stringify({
@@ -214,7 +307,8 @@ test("a nested child remains addressable with its original depth and history aft
       name: "nested-parent", subagent_type: "nested-spawner", description: "Spawn nested context probe",
       prompt: leafScript, run_in_background: false,
     }), env, "INITIAL");
-    const subagents = join(winterHome, "projects", compatibilityKeys(cwd).transcriptProjectKey, sessionId, "subagents");
+    const projects = join(winterHome, "projects");
+    const subagents = join(projects, env.WINTER_PROJECT_DIR_NAME!, sessionId, "subagents");
     const initialFiles = readdirSync(subagents).sort();
     const metadata = initialFiles.filter((file) => file.endsWith(".meta.json"))
       .map((file) => ({ file, record: JSON.parse(readFileSync(join(subagents, file), "utf8")) as { id: string; name: string; spawnDepth: number; status: string } }));
@@ -225,8 +319,9 @@ test("a nested child remains addressable with its original depth and history aft
     const before = readFileSync(transcriptPath, "utf8");
     const originalReply = childReplies(first.frames).at(-1)!;
     expect(originalReply).toMatchObject({ markerSeen: true, personaSeen: true, priorReplies: 0 });
+    const changedEnv = { ...env, WINTER_PROJECT_DIR_NAME: "changed-nested-project" };
     const second = await runParent({ ...base, resume: sessionId },
-      "CALL SendMessage " + JSON.stringify({ to: "nested-leaf", message: "FOLLOWUP_ONE" }), env, "FOLLOWUP_ONE");
+      "CALL SendMessage " + JSON.stringify({ to: "nested-leaf", message: "FOLLOWUP_ONE" }), changedEnv, "FOLLOWUP_ONE");
     expect(second.pid).not.toBe(first.pid);
     expect(toolResults(second.frames).find((result) => result.status !== undefined)?.status).toBe("resumed_and_delivered");
     expect(childReplies(second.frames).at(-1)).toMatchObject({ phase: "FOLLOWUP_ONE", markerSeen: true, personaSeen: true,
@@ -238,8 +333,34 @@ test("a nested child remains addressable with its original depth and history aft
     expect(after).toContain("FOLLOWUP_ONE");
     expect(readdirSync(subagents).sort()).toEqual(initialFiles);
     expect(readFileSync(join(cwd, "initial-effects.txt"), "utf8")).toBe("initial-effect\n");
+
+    // A restored parent child receives the raw TranscriptWriter. Its newly spawned descendant
+    // must use that writer's recorded project identity, not the current environment's override.
+    const newLeafScript = "CALL Agent " + JSON.stringify({ name: "post-restart-leaf", subagent_type: "cold-probe",
+      description: "Created after the ancestor resumed", prompt: "COLD_RESTART_SECRET_MARKER", run_in_background: false });
+    const third = await runParent({ ...base, resume: sessionId }, "CALL SendMessage " + JSON.stringify({
+      to: "nested-parent", message: newLeafScript }), changedEnv, "INITIAL");
+    expect(toolResults(third.frames).find((result) => result.status !== undefined)?.status).toBe("resumed_and_delivered");
+    const newLeafFile = readdirSync(subagents).filter((file) => file.endsWith(".meta.json"))
+      .find((file) => JSON.parse(readFileSync(join(subagents, file), "utf8")).name === "post-restart-leaf")!;
+    expect(newLeafFile).toBeString();
+    const newLeafMetadata = JSON.parse(readFileSync(join(subagents, newLeafFile), "utf8")) as { id: string; spawnDepth: number };
+    expect(newLeafMetadata.spawnDepth).toBe(2);
+    const newLeafTranscriptPath = join(subagents, newLeafFile.replace(".meta.json", ".jsonl"));
+    const newLeafBefore = readFileSync(newLeafTranscriptPath, "utf8");
+    const unsetEnv = { ...env };
+    delete unsetEnv.WINTER_PROJECT_DIR_NAME;
+    const fourth = await runParent({ ...base, resume: sessionId }, "CALL ListAgents {}\nCALL SendMessage " + JSON.stringify({
+      to: newLeafMetadata.id, message: "FOLLOWUP_ONE" }), unsetEnv, "FOLLOWUP_ONE");
+    expect(new Set([first.pid, second.pid, third.pid, fourth.pid]).size).toBe(4);
+    expect(toolResults(fourth.frames).find((result) => result.status !== undefined)?.status).toBe("resumed_and_delivered");
+    expect(childReplies(fourth.frames).at(-1)).toMatchObject({ markerSeen: true, priorReplies: 1,
+      cacheKey: childReplies(third.frames).at(-1)!.cacheKey });
+    expect(readFileSync(newLeafTranscriptPath, "utf8").startsWith(newLeafBefore)).toBe(true);
+    expect(readdirSync(subagents).filter((file) => file.endsWith(".meta.json"))).toHaveLength(3);
+    expect(readdirSync(projects)).toEqual([env.WINTER_PROJECT_DIR_NAME!]);
   } finally { rmSync(root, { recursive: true, force: true }); }
-}, 95_000);
+}, 175_000);
 
 test("SIGKILL during a child tool resumes valid parent and child histories in a fresh PID without repeating its effect", async () => {
   const root = mkdtempSync(join(tmpdir(), "winter-subagent-sigkill-"));

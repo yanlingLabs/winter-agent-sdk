@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { RuntimeConfig, WinterFrame, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
+import type { RuntimeConfig, WinterFrame, PermissionMode, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
 import { encodeFrame, splitFrames } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "../testing.ts";
 import type { Provider } from "../engine.ts";
@@ -170,11 +170,13 @@ function inheritance(root: string): ChildInheritance {
 }
 function message(body: string) { return { messageId: randomUUID(), body } as never; }
 
-async function persistedChild() {
+async function persistedChild(effectiveMode: PermissionMode = "default", permissionMode?: string) {
   const root = freshHome();
   const store = new WinterCompatibilitySessionStore({ winterHome: root });
   const deps = createChildEngineFactory({ provider: { async generate() { return { kind: "text", text: "original answer" }; } }, store, winterHome: root })({ parentSessionId: "cold-parent", forwardChildFrame() {} });
-  const child = await deps.spawn({ parentToolUseId: "original-spawn", prompt: "original marker", runInBackground: false, name: "cold-child", definition: { description: "persona fixture", prompt: "saved persona", tools: ["Read", "Bash"] } }, inheritance(root));
+  const inherited = inheritance(root);
+  inherited.policy.effectiveMode = effectiveMode;
+  const child = await deps.spawn({ parentToolUseId: "original-spawn", prompt: "original marker", runInBackground: false, name: "cold-child", definition: { description: "persona fixture", prompt: "saved persona", tools: ["Read", "Bash"], ...(permissionMode !== undefined ? { permissionMode } : {}) } }, inherited);
   await waitForSettled(child);
   await child.generationDone?.();
   return { root, store, record: JSON.parse(JSON.stringify(child.record)) as ChildSessionRecord };
@@ -522,6 +524,188 @@ describe("current definition and workspace authority on cold continuation", () =
       expect(outcome).toMatchObject({ status: "unavailable", retryable: false });
       expect(calls).toBe(0);
     }
+  });
+});
+
+describe("cold continuation retains fresh-spawn forced modes and durable floors", () => {
+  const forcedModes: PermissionMode[] = ["auto", "acceptEdits", "bypassPermissions"];
+  const definitionModes: Array<string | undefined> = ["default", "plan", "dontAsk", "auto", "acceptEdits", "bypassPermissions", "bubble", undefined];
+  test.each(forcedModes.flatMap((parent) => definitionModes.map((definition) => ({ parent, definition }))))("$parent parent ignores $definition definition override on cold resume", async ({ parent, definition }) => {
+    const { root, store, record } = await persistedChild(parent, definition);
+    record.execution!.request.agentType = "reviewer";
+    let calls = 0;
+    const actualModes: string[] = [];
+    const factory = createChildEngineFactory({ store, winterHome: root, provider: { async generate() { calls++; return { kind: "text", text: "forced answer" }; } } })({ parentSessionId: record.parentSessionId, getParentPolicy: () => ({ mode: parent, version: 2, hash: "forced-current" }), getCurrentAgentDefinition: () => ({ description: "current", prompt: "current persona", ...(definition !== undefined ? { permissionMode: definition } : {}) }), forwardChildFrame(frame) { const data = frame as { message?: { subtype?: string; permissionMode?: string } }; if (data.message?.subtype === "init" && data.message.permissionMode !== undefined) actualModes.push(data.message.permissionMode); } });
+    const restored = restoredChildHandle(record);
+    bindRestoredChildren([restored], factory.restore!);
+    expect(await restored.resume(message("forced followup"))).toMatchObject({ status: "resumed_and_delivered" });
+    await waitForSettled(restored);
+    await restored.generationDone?.();
+    expect(calls).toBe(1);
+    expect(actualModes).toContain(parent);
+    expect(record.permission).toEqual({ effectiveMode: parent, parentPolicyVersion: 2, parentPolicyHash: "forced-current" });
+    const stored = await store.load({ projectKey: record.execution!.projectKey, sessionId: record.parentSessionId, subpath: `subagents/agent-${record.id}` });
+    expect((stored!.find((entry) => entry.type === "agent_metadata")!.permission as typeof record.permission).effectiveMode).toBe(parent);
+  });
+
+  const changed: Array<{ saved: PermissionMode; parent: PermissionMode; definition: PermissionMode; expected?: PermissionMode }> = [
+    { saved: "default", parent: "auto", definition: "plan", expected: "auto" },
+    { saved: "plan", parent: "auto", definition: "dontAsk", expected: "plan" },
+    { saved: "default", parent: "acceptEdits", definition: "plan", expected: "default" },
+    { saved: "plan", parent: "bypassPermissions", definition: "default", expected: "plan" },
+    { saved: "dontAsk", parent: "auto", definition: "plan" },
+    { saved: "auto", parent: "default", definition: "dontAsk" },
+    { saved: "auto", parent: "dontAsk", definition: "default" },
+    { saved: "auto", parent: "plan", definition: "default", expected: "plan" },
+  ];
+  test.each(changed)("saved $saved under changed $parent parent and $definition definition preserves its floor", async ({ saved, parent, definition, expected }) => {
+    const { root, store, record } = await persistedChild(saved);
+    record.execution!.request.agentType = "reviewer";
+    let calls = 0;
+    const factory = createChildEngineFactory({ store, winterHome: root, provider: { async generate() { calls++; return { kind: "text", text: "changed answer" }; } } })({ parentSessionId: record.parentSessionId, getParentPolicy: () => ({ mode: parent, version: 2, hash: "changed-current" }), getCurrentAgentDefinition: () => ({ description: "current", prompt: "current persona", permissionMode: definition }), forwardChildFrame() {} });
+    const restored = restoredChildHandle(record);
+    bindRestoredChildren([restored], factory.restore!);
+    const outcome = await restored.resume(message("changed followup"));
+    if (expected === undefined) {
+      expect(outcome).toMatchObject({ status: "unavailable", retryable: false });
+      expect("reason" in outcome ? outcome.reason : "").toContain("INCOMPARABLE");
+      expect(calls).toBe(0);
+      expect(record.permission.effectiveMode).toBe(saved);
+    } else {
+      expect(outcome).toMatchObject({ status: "resumed_and_delivered" });
+      await waitForSettled(restored);
+      await restored.generationDone?.();
+      expect(calls).toBe(1);
+      expect(record.permission.effectiveMode).toBe(expected);
+    }
+    expect(currentRunningSubagentCount()).toBe(0);
+  });
+
+  test("a dormant ancestor's forced auto mode ignores plan definitions while retaining a saved plan descendant", async () => {
+    const { root, store, record } = await persistedChild("auto", "plan");
+    const ancestor = JSON.parse(JSON.stringify(record)) as ChildSessionRecord;
+    ancestor.id = "forced-dormant-parent";
+    ancestor.execution!.request.agentType = "reviewer";
+    record.execution!.parentAgentId = ancestor.id;
+    record.execution!.request.agentType = "worker";
+    record.spawnDepth = 2;
+    let calls = 0;
+    const factory = createChildEngineFactory({ store, winterHome: root, getParentPolicy: () => ({ mode: "auto", version: 2, hash: "root-auto" }), provider: { async generate() { calls++; return { kind: "text", text: "nested forced answer" }; } } })({ parentSessionId: record.parentSessionId, getRecordedChild: (id) => id === ancestor.id ? ancestor : undefined, getParentPolicy: () => ({ mode: "auto", version: 2, hash: "root-auto" }), getCurrentAgentDefinition: () => ({ description: "current", prompt: "current persona", permissionMode: "plan" }), forwardChildFrame() {} });
+    const restored = restoredChildHandle(record);
+    bindRestoredChildren([restored], factory.restore!);
+    expect(await restored.resume(message("nested forced followup"))).toMatchObject({ status: "resumed_and_delivered" });
+    await waitForSettled(restored);
+    await restored.generationDone?.();
+    expect(record.permission.effectiveMode).toBe("auto");
+    record.permission.effectiveMode = "plan";
+    expect(await restored.resume(message("retain saved plan"))).toMatchObject({ status: "resumed_and_delivered" });
+    await waitForSettled(restored);
+    expect(record.permission.effectiveMode).toBe("plan");
+    expect(calls).toBe(2);
+  });
+
+  test("the current host's bypass veto applies before a definition is restored", async () => {
+    const { root, store, record } = await persistedChild();
+    record.execution!.request.agentType = "reviewer";
+    const modes: string[] = [];
+    const factory = createChildEngineFactory({ store, winterHome: root, disableBypassPermissionsMode: true, provider: { async generate() { return { kind: "text", text: "veto answer" }; } } })({ parentSessionId: record.parentSessionId, getParentPolicy: () => ({ mode: "default", version: 2, hash: "veto-current" }), getCurrentAgentDefinition: () => ({ description: "current", prompt: "current persona", permissionMode: "bypassPermissions" }), forwardChildFrame(frame) { const data = frame as { message?: { subtype?: string; permissionMode?: string } }; if (data.message?.subtype === "init" && data.message.permissionMode !== undefined) modes.push(data.message.permissionMode); } });
+    const restored = restoredChildHandle(record);
+    bindRestoredChildren([restored], factory.restore!);
+    expect(await restored.resume(message("veto followup"))).toMatchObject({ status: "resumed_and_delivered" });
+    await waitForSettled(restored);
+    expect(modes).toContain("default");
+    expect(record.permission.effectiveMode).toBe("default");
+  });
+});
+
+describe("cold continuation normalizes definition tool names before intersecting authority", () => {
+  test("a registered old name still carries its configured legacy deny onto the current tool", async () => {
+    const { root, store, record } = await persistedChild();
+    record.execution!.request.agentType = "reviewer";
+    record.execution!.request.definition!.disallowedTools = ["Read"];
+    let tools: string[] = [];
+    const factory = createChildEngineFactory({ store, winterHome: root, parentLegacyToolNames: { Read: "Bash" }, provider: { async generate(request) { tools = (request.tools ?? []).map((tool) => tool.name); return { kind: "text", text: "collision answer" }; } } })({ parentSessionId: record.parentSessionId, getParentTools: () => ["Read", "Bash"], getCurrentAgentDefinition: () => ({ description: "current", prompt: "current persona", tools: ["Read", "Bash"] }), forwardChildFrame() {} });
+    const restored = restoredChildHandle(record);
+    bindRestoredChildren([restored], factory.restore!);
+    expect(await restored.resume(message("collision followup"))).toMatchObject({ status: "resumed_and_delivered" });
+    await waitForSettled(restored);
+    expect(tools).toEqual([]);
+    expect(record.execution!.request.definition!.disallowedTools).toEqual(["Read", "Bash"]);
+  });
+
+  test.each([
+    { source: "saved", spelling: "Agent" },
+    { source: "current", spelling: "Agent" },
+    { source: "saved", spelling: "OldAgent" },
+    { source: "current", spelling: "OldAgent" },
+    { source: "saved rules", spelling: "OldAgent" },
+  ])("a dormant ancestor's $source $spelling(type) deny blocks direct descendant continuation", async ({ source, spelling }) => {
+    const { root, store, record } = await persistedChild();
+    const ancestor = JSON.parse(JSON.stringify(record)) as ChildSessionRecord;
+    ancestor.id = "denied-dormant-parent";
+    ancestor.execution!.request.agentType = "reviewer";
+    record.execution!.parentAgentId = ancestor.id;
+    record.execution!.request.agentType = "worker";
+    record.spawnDepth = 2;
+    const rule = `${spelling}(Explore, worker)`;
+    if (source === "saved") ancestor.execution!.request.definition!.disallowedTools = [rule];
+    if (source === "saved rules") ancestor.execution!.restrictions.deny = [rule];
+    let calls = 0;
+    const factory = createChildEngineFactory({ store, winterHome: root, parentLegacyToolNames: { OldAgent: "Agent" }, provider: { async generate() { calls++; return { kind: "text", text: "must not run" }; } } })({ parentSessionId: record.parentSessionId, getRecordedChild: (id) => id === ancestor.id ? ancestor : undefined, getCurrentAgentDefinition: (name) => ({ description: "current", prompt: "current persona", tools: ["*"], disallowedTools: name === "reviewer" && source === "current" ? [rule] : [] }), forwardChildFrame() {} });
+    const restored = restoredChildHandle(record);
+    bindRestoredChildren([restored], factory.restore!);
+    const outcome = await restored.resume(message("denied worker"));
+    expect(outcome).toMatchObject({ status: "unavailable", retryable: false });
+    expect("reason" in outcome ? outcome.reason : "").toContain("denied by permission rule 'Agent(Explore, worker)'");
+    expect(calls).toBe(0);
+    expect(currentRunningSubagentCount()).toBe(0);
+  });
+
+  const cases = [
+    { label: "saved legacy, current canonical", saved: ["OldRead"], current: ["Read"], savedDeny: [], currentDeny: [], expected: ["Read"] },
+    { label: "saved canonical, current legacy", saved: ["Read"], current: ["OldRead"], savedDeny: [], currentDeny: [], expected: ["Read"] },
+    { label: "both legacy", saved: ["OldRead"], current: ["OldRead"], savedDeny: [], currentDeny: [], expected: ["Read"] },
+    { label: "saved legacy deny", saved: ["*"], current: ["*"], savedDeny: ["OldRead"], currentDeny: [], expected: ["Bash"] },
+    { label: "current legacy deny", saved: ["*"], current: ["*"], savedDeny: [], currentDeny: ["OldBash"], expected: ["Read"] },
+    { label: "canonical deny", saved: ["*"], current: ["*"], savedDeny: ["Bash"], currentDeny: [], expected: ["Read"] },
+  ];
+  test.each(cases)("$label preserves fresh-spawn tool availability", async ({ saved, current, savedDeny, currentDeny, expected }) => {
+    const { root, store, record } = await persistedChild();
+    record.execution!.request.agentType = "reviewer";
+    record.execution!.request.definition!.tools = saved;
+    record.execution!.request.definition!.disallowedTools = savedDeny;
+    let tools: string[] = [];
+    const factory = createChildEngineFactory({ store, winterHome: root, parentLegacyToolNames: { OldRead: "Read", OldBash: "Bash" }, provider: { async generate(request) { tools = (request.tools ?? []).map((tool) => tool.name); return { kind: "text", text: "normalized answer" }; } } })({ parentSessionId: record.parentSessionId, getParentTools: () => ["Read", "Bash"], getCurrentAgentDefinition: () => ({ description: "current", prompt: "current persona", tools: current, disallowedTools: currentDeny }), forwardChildFrame() {} });
+    const restored = restoredChildHandle(record);
+    bindRestoredChildren([restored], factory.restore!);
+    expect(await restored.resume(message("normalized followup"))).toMatchObject({ status: "resumed_and_delivered" });
+    await waitForSettled(restored);
+    await restored.generationDone?.();
+    expect(tools).toEqual(expected);
+    expect(record.execution!.inheritance.tools).toEqual(expected);
+    expect(record.execution!.request.definition!.disallowedTools).toEqual([...new Set([...savedDeny, ...currentDeny].map((name) => name === "OldRead" ? "Read" : name === "OldBash" ? "Bash" : name))]);
+  });
+
+  test("saved/current Agent(type) scopes intersect independently of canonical and legacy ordinary tools", async () => {
+    const { root, store, record } = await persistedChild();
+    const ancestor = JSON.parse(JSON.stringify(record)) as ChildSessionRecord;
+    ancestor.id = "scoped-dormant-parent";
+    ancestor.execution!.request.agentType = "reviewer";
+    ancestor.execution!.request.definition!.tools = ["*", "Agent(worker,Explore)"];
+    record.execution!.parentAgentId = ancestor.id;
+    record.execution!.request.agentType = "worker";
+    record.spawnDepth = 2;
+    let tools: string[] = [];
+    const factory = createChildEngineFactory({ store, winterHome: root, parentLegacyToolNames: { OldRead: "Read" }, provider: { async generate(request) { tools = (request.tools ?? []).map((tool) => tool.name); return { kind: "text", text: "scoped answer" }; } } })({ parentSessionId: record.parentSessionId, getRecordedChild: (id) => id === ancestor.id ? ancestor : undefined, getParentTools: () => ["Read", "Bash"], getCurrentAgentDefinition: (name) => name === "reviewer" ? { description: "current parent", prompt: "current parent persona", tools: ["OldRead", "Agent(worker,Plan)"] } : { description: "worker", prompt: "current worker", tools: ["Read", "Bash"] }, forwardChildFrame() {} });
+    const restored = restoredChildHandle(record);
+    bindRestoredChildren([restored], factory.restore!);
+    expect(await restored.resume(message("allowed worker"))).toMatchObject({ status: "resumed_and_delivered" });
+    await waitForSettled(restored);
+    expect(tools).toEqual(["Read"]);
+    record.execution!.request.agentType = "Explore";
+    expect(await restored.resume(message("saved-only type"))).toMatchObject({ status: "unavailable", retryable: false });
+    record.execution!.request.agentType = "Plan";
+    expect(await restored.resume(message("current-only type"))).toMatchObject({ status: "unavailable", retryable: false });
   });
 });
 

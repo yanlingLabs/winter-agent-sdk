@@ -37,6 +37,7 @@ import { registerDefaultChildEngineFactory } from "./subagents/register-default-
 import { buildProductionWiring, withAutoSkillPermissions } from "./production-wiring.ts";
 import { loadResumedChain } from "./provider/session-provider.ts";
 import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
+import { resolveProjectDirName } from "./paths/project-dir-name.ts";
 import { restoreChildRoster } from "./subagents/restore.ts";
 // Review r2 finding 9's process-group sweep -- the embedded ABORT's first act, as it is SIGTERM's.
 import { killAllTaskProcessGroups } from "./tools/impl/background-task-runtime.ts";
@@ -295,7 +296,12 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
     // `ListAgents`/`SendMessage` can see a child that outlived a restart. Withdrawn after the run.
     const restoredChildren =
       childStore !== undefined && config.forkSession !== true && (config.resume !== undefined || config.continue === true)
-        ? await restoreChildRoster(childStore, { projectKey: compatibilityKeys(effectiveConfig.cwd).transcriptProjectKey, sessionId: effectiveConfig.sessionId }, { registerMessaging: false })
+        ? await restoreChildRoster(childStore, {
+            // Resume keeps the parent's recorded directory even when this incarnation's override
+            // changed or disappeared. Only stores without that identity use the current resolution.
+            projectKey: store?.projectKey ?? resolveProjectDirName(compatibilityKeys(effectiveConfig.cwd).transcriptProjectKey, env, effectiveConfig.brand),
+            sessionId: effectiveConfig.sessionId,
+          }, { registerMessaging: false })
         : undefined;
     try {
       return await runEngine({

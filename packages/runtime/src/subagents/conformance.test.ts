@@ -141,8 +141,8 @@ const ROWS: ConformanceRow[] = [
     bullet: "parent restart + child restoration (rebuild identity and resume state from durable storage)",
     status: "covered",
     citations: [
-      { file: "../../../sdk/src/subagent-cold-restart.test.ts", testName: "SendMessage resumes the same named child and its context through two real parent process restarts" },
-      { file: "../../../sdk/src/subagent-cold-restart.test.ts", testName: "a nested child remains addressable with its original depth and history after its parent process exits" },
+      { file: "../../../sdk/src/subagent-cold-restart.test.ts", testName: "SendMessage resumes the same named child through real parent restarts (project override:" },
+      { file: "../../../sdk/src/subagent-cold-restart.test.ts", testName: "nested children keep their depth, history and recorded project key across changed and unset overrides" },
       { file: "./roster.test.ts", testName: "rebuilds a metadata-only child (one that never produced native transcript output)" },
       { file: "./roster.test.ts", testName: "a DIFFERENT parent session's children are never mixed into this roster" },
       { file: "./roster.test.ts", testName: "fix round 1 (finding I4): a restart-orphaned 'running' record is reconciled to a terminal 'stopped' " },
