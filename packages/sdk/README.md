@@ -176,6 +176,25 @@ All three report the icon of each site they name to the HOST only, as `winter_si
 
 Subagents inherit both.
 
+### Resuming subagents after a runtime restart
+
+With session persistence enabled, resume the parent against the same durable store and workspace.
+Its saved children are listed under their original IDs and names. `SendMessage` can continue a
+child created with a durable execution snapshot: a new engine generation reads its earlier
+conversation and retained persona instead of rerunning the original task. Children are not started
+automatically merely because the parent resumes.
+
+This preserves agent history, not live shell processes or sockets. A child recorded as running
+when its runtime exited is restored as stopped. Its saved tool and permission restrictions remain
+constraints, and the current parent can narrow access further. Credentials and MCP transport
+configuration are supplied by the current host; child-scoped MCP transports require the original
+named agent definition to be available for reattachment.
+
+Older child records without an execution snapshot remain readable/listable but cannot be safely
+continued. Missing or corrupt history, a removed isolated worktree, or unavailable required
+configuration produces a typed refusal rather than a fresh child with empty history. Forking the
+parent does not inherit the original session's children.
+
 ### Messaging a host's other sessions (0.0.39)
 
 **`Options.hostMessaging`** — `{ send, list }`, for a host that runs many sessions (one process or one

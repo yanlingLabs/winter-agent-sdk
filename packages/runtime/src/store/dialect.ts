@@ -1222,6 +1222,8 @@ export function childTranscriptSubpath(agentId: string): string {
 }
 
 export interface ChildTranscriptWriterOptions {
+  initialParentUuid?: string;
+  initialConversationalUuids?: string[];
   store: SessionStore;
   projectKey: string;
   parentSessionId: string;
@@ -1243,6 +1245,8 @@ export function buildChildTranscriptWriter(opts: ChildTranscriptWriterOptions): 
     key: { projectKey: opts.projectKey, sessionId: opts.parentSessionId, subpath: childTranscriptSubpath(opts.agentId) },
     ctx: { sessionId: opts.parentSessionId, cwd: opts.cwd, version: RUNTIME_ENGINE_VERSION, projectDirName: opts.projectKey },
     sidechain: { agentId: opts.agentId, parentToolUseId: opts.parentToolUseId },
+    ...(opts.initialParentUuid !== undefined ? { initialParentUuid: opts.initialParentUuid } : {}),
+    ...(opts.initialConversationalUuids !== undefined ? { initialConversationalUuids: opts.initialConversationalUuids } : {}),
     // Phase 6 Task 3 (R6-7): the CHILD's own sidecar, beside the child's own transcript --
     // `<sessionId>/subagents/agent-<id>.provider-state.jsonl`. Derived from the child transcript path
     // rather than from a second path-shaping rule, so the two cannot drift.

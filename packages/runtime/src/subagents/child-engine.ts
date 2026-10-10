@@ -126,6 +126,7 @@ import { createStallWatchdog, resolveStallTimeoutMs } from "./watchdog.ts";
 import { resolveModelAlias, describeRequestedModel, resolveEffort, recordModelEffort, type ModelCatalog, type RecordedModelEffort } from "./resolution.ts";
 import { buildForkInitialMessages, buildForkDirectiveText } from "./fork.ts";
 import { createWorkspace, cleanupWorkspace } from "./workspace.ts";
+import { readChildExecutionSnapshot, snapshotChildExecution } from "./execution-snapshot.ts";
 import { validateAgentDefinition, allowedAgentTypesFromTools } from "./definitions.ts";
 import { resolveChildResumeMode, ChildResumeModeIncomparableError } from "../permissions/auto/inheritance.ts";
 // Phase 5 Task 8: the parent's assembler and skill index reach a child through the factory deps --
@@ -534,6 +535,81 @@ export function createChildEngineFactory(deps: ChildEngineFactoryDeps): ChildEng
     spawn(req: SpawnChildRequest, inherit: ChildInheritance): Promise<ChildHandle> {
       return spawnChildEngine(req, inherit, runCtx, deps);
     },
+    async restore(record: ChildSessionRecord): Promise<ChildHandle> {
+      let restoreCtx = runCtx;
+      if (deps.store === undefined) throw new Error("durable child store is unavailable");
+      if (record.parentSessionId !== runCtx.parentSessionId) throw new Error("child belongs to another session");
+      const snapshot = readChildExecutionSnapshot(record);
+      if (snapshot.parentAgentId !== runCtx.parentAgentId) {
+        // An idle ancestor has no live engine context. Reconstruct its restrictions conservatively
+        // from the durable lineage, intersecting every ancestor's tool pool and permission mode with
+        // today's root. A live ancestor instead binds its actual context through runEngine below.
+        const ancestors: ChildSessionRecord[] = [];
+        const seen = new Set([record.id]);
+        let parentId = snapshot.parentAgentId;
+        while (parentId !== undefined) {
+          if (seen.has(parentId)) throw new Error("corrupt child lineage: cycle");
+          seen.add(parentId);
+          const parent = runCtx.getRecordedChild?.(parentId);
+          if (parent === undefined || parent.parentSessionId !== record.parentSessionId) throw new Error(`recorded parent agent ${parentId} is unavailable`);
+          const execution = readChildExecutionSnapshot(parent);
+          if (parent.status === "running") throw new Error(`parent agent ${parentId} is running without a bound live child context`);
+          if (execution.scopedMcpServerNames.length > 0) throw new Error(`parent agent ${parentId} must resume first to reattach its child-scoped MCP servers`);
+          ancestors.push(parent);
+          parentId = execution.parentAgentId;
+        }
+        if (ancestors.length + 1 !== record.spawnDepth) throw new Error("corrupt child lineage: spawn depth does not match its ancestors");
+        const rootRules = (): import("./child-handle.ts").ParentRuleMirror => runCtx.getParentRules?.() ?? { allow: [], ask: [], deny: [] };
+        restoreCtx = {
+          ...runCtx,
+          ...(snapshot.parentAgentId !== undefined ? { parentAgentId: snapshot.parentAgentId } : {}),
+          getParentTools: () => {
+            const rootTools = runCtx.getParentTools?.() ?? snapshot.inheritance.tools;
+            return rootTools.filter((tool) => ancestors.every((parent) => parent.execution!.inheritance.tools.includes(tool)));
+          },
+          getParentRules: () => {
+            const current = rootRules();
+            return { allow: current.allow, ask: [...new Set([...current.ask, ...ancestors.flatMap((parent) => [...parent.execution!.restrictions.ask])])], deny: [...new Set([...current.deny, ...ancestors.flatMap((parent) => [...parent.execution!.restrictions.deny, ...(parent.execution!.request.definition?.disallowedTools ?? [])])])] };
+          },
+          getParentPolicy: () => {
+            const current = runCtx.getParentPolicy?.() ?? { mode: record.permission.effectiveMode, hash: record.permission.parentPolicyHash, version: record.permission.parentPolicyVersion };
+            let mode = current.mode;
+            for (const parent of ancestors) mode = resolveChildResumeMode(parent.permission, mode);
+            return { ...current, mode };
+          },
+        };
+      }
+      // Rebind named definition-owned transports from the host's CURRENT definition. Their env,
+      // headers, SDK instances and credentials never cross the durable snapshot boundary.
+      const request: SpawnChildRequest = { ...snapshot.request };
+      if (snapshot.scopedMcpServerNames.length > 0) {
+        const definition = snapshot.request.agentType !== undefined ? runCtx.getParentAgents?.()?.[snapshot.request.agentType] : undefined;
+        const specs = typeof definition === "object" && definition !== null && "mcpServers" in definition && Array.isArray(definition.mcpServers) ? definition.mcpServers : [];
+        const rebound: NonNullable<SpawnChildRequest["definition"]>["mcpServers"] = [];
+        for (const name of snapshot.scopedMcpServerNames) {
+          const matches = specs.filter((spec) => typeof spec === "object" && spec !== null && !Array.isArray(spec) && Object.hasOwn(spec, name));
+          if (matches.length !== 1) throw new Error(`child-scoped MCP server "${name}" requires an unambiguous current host definition for "${snapshot.request.agentType ?? "unnamed agent"}"`);
+          rebound.push({ [name]: matches[0][name] });
+        }
+        if (request.definition === undefined) throw new Error("child-scoped MCP snapshot has no definition");
+        request.definition = { ...request.definition, mcpServers: rebound };
+      }
+      const mcp = runCtx.getParentMcpState?.();
+      for (const name of snapshot.inheritedMcpServerNames) {
+        if (mcp?.declaredServers?.[name] === undefined) throw new Error(`recorded MCP server "${name}" is not configured in this session`);
+      }
+      const currentTools = restoreCtx.getParentTools?.();
+      const inherit: ChildInheritance = {
+        ...snapshot.inheritance,
+        policy: record.permission,
+        model: record.model.effectiveModel,
+        tools: currentTools === undefined ? snapshot.inheritance.tools : snapshot.inheritance.tools.filter((name) => currentTools.includes(name)),
+      };
+      // Exact fork layouts still retain their persona and schemas, but a host withdrawing a tool
+      // must also withdraw that tool from the saved advertised layout.
+      if (inherit.requestLayout !== undefined) inherit.requestLayout = { ...inherit.requestLayout, tools: inherit.requestLayout.tools.filter((tool) => inherit.tools.includes(tool.name)) };
+      return spawnChildEngine(request, inherit, restoreCtx, deps, record);
+    },
   });
 }
 
@@ -554,8 +630,8 @@ interface ResultLikeMessage {
  */
 export const CHILD_BUDGET_STOP_TEXT = "The agent stopped because the session reached its spending limit (maxBudgetUsd), so no further model calls could be made. Retrying will not help -- continue with what it produced, or ask the user to raise the session's budget.";
 
-async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritance, runCtx: ChildEngineRunContext, deps: ChildEngineFactoryDeps): Promise<ChildHandle> {
-  const agentId = randomUUID();
+async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritance, runCtx: ChildEngineRunContext, deps: ChildEngineFactoryDeps, restored?: ChildSessionRecord): Promise<ChildHandle> {
+  const agentId = restored?.id ?? randomUUID();
   // NEW-2: this child's OWN controller, minted once here and reused by every generation below. Falls
   // back to the shared instance so a host that supplies only `compactionController` keeps working.
   const ownCompactionController = deps.compactionControllerFactory !== undefined ? deps.compactionControllerFactory() : deps.compactionController;
@@ -569,22 +645,23 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
   // 1 for a top-level spawn, N+1 inside a depth-N agent (limits.ts's own header). Captured once,
   // here, for `record.spawnDepth` below; `resume()`'s own later call to this same function (its own
   // header note) is a concurrency re-check on the SAME childKey, never a fresh depth for the record.
-  const { depth: spawnDepth } = checkAndRegisterSpawn({ parentKey: runCtx.parentAgentId ?? runCtx.parentSessionId, childKey: agentId, env, ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}) });
-  let spawnRegistered = true;
+  const spawnDepth = restored?.spawnDepth ?? checkAndRegisterSpawn({ parentKey: runCtx.parentAgentId ?? runCtx.parentSessionId, childKey: agentId, env, ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}) }).depth;
+  let spawnRegistered = restored === undefined;
   // WS-24: the first generation's MCP server-name claims, until `startGeneration` owns them (its `runEngine` releases them).
   let pendingServerRelease: (() => void) | undefined;
 
   try {
     // --- Model/effort resolution (WS-10 §3) -----------------------------------------------------
     const requestedModel = describeRequestedModel(req);
-    const resolvedModel = resolveModelAlias(inherit.model, deps.modelCatalog); // may throw UnresolvableModelAliasError
+    const resolvedModel = restored === undefined ? resolveModelAlias(inherit.model, deps.modelCatalog) : { effectiveModel: restored.model.effectiveModel }; // may throw UnresolvableModelAliasError
     const resolvedEffort = resolveEffort(inherit.effort);
     // Phase 6 Task 10 (R6-17): resolved HERE, once, from the model this child actually settled on --
     // never from `req.model`, which may be an alias, and never inside the runEngine call, where a
     // second resolution could disagree with the one `config.model` was built from.
     // ASYNC since the fix wave (Ruling E-1): a child on ANOTHER provider than the parent's has its
     // own credential probed before the spawn commits to it, and a probe is a store read.
-    const childResolution = await deps.resolveChildProvider?.(resolvedModel.effectiveModel);
+    let childResolution: ChildProviderResolution | undefined;
+    if (restored === undefined) childResolution = await deps.resolveChildProvider?.(resolvedModel.effectiveModel);
     // P6.6 (WS-13c §8): the parent's identity AT THIS SPAWN. `inherit.provider` (R6-17, an EXISTING
     // field -- `ChildInheritance.provider`, child-handle.ts) is `buildChildInheritance`'s own read of
     // the parent's LIVE `currentProviderIdentity` (engine.ts:2405), taken fresh at the moment of THIS
@@ -598,7 +675,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // production-source cases). Captured ONCE, here, and reused verbatim by `resume()` below --
     // WS-13c §8 compares against what was true when this child was BORN, never against whatever the
     // parent is doing by the time it resumes.
-    const parentIdentityAtSpawn: ChildProviderIdentity | undefined = inherit.provider;
+    const parentIdentityAtSpawn: ChildProviderIdentity | undefined = restored === undefined ? inherit.provider : runCtx.getParentIdentity?.();
     // P6.6 (WS-13c §8, Lane D Task 5 -- the investigation this lane's own report opens with):
     // `childProvider` is now ALWAYS materialised, never left `undefined`. Before this fix, a
     // "same-provider" child (the final `else` branch below) recorded NO identity of its own at all,
@@ -782,7 +859,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // Review r2 finding 5 (whole-branch): NO "a configured WorktreeCreate hook counts" carve-out
     // here any more -- see workspace.ts's own header for why. Worktree isolation outside a git
     // repository always refuses.
-    const workspaceResult = await createWorkspace({
+    const workspaceResult = restored?.execution !== undefined ? { ok: true as const, workspace: restored.execution.workspace } : await createWorkspace({
       parentCwd: inherit.sessionRoot,
       ...(req.isolation !== undefined ? { isolation: req.isolation } : {}),
       agentId,
@@ -801,8 +878,14 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
 
     // --- Durable transcript (WS-05 §4/§5.2/§5.3, WS-10 §7) --------------------------------------
     const childStore = deps.store;
-    const projectKey = compatibilityKeys(inherit.sessionRoot).transcriptProjectKey;
+    const projectKey = restored?.execution?.projectKey ?? compatibilityKeys(inherit.sessionRoot).transcriptProjectKey;
     const childKey = { projectKey, sessionId: runCtx.parentSessionId, subpath: childTranscriptSubpath(agentId) };
+    // Read before constructing a resumed writer, so a second process appends to the existing
+    // chain rather than creating a fresh root and hiding earlier generations on the next restart.
+    const restoredEntries = restored !== undefined && childStore !== undefined ? await TranscriptWriter.readBack(childStore, childKey) : [];
+    const restoredChain = toDialectEntries(restoredEntries);
+    const restoredLeaf = restoredChain.at(-1)?.uuid;
+    const restoredConversationalUuids = restoredChain.filter((e) => (e.message !== undefined && (e.type === "user" || e.type === "assistant" || e.type === "compact_summary")) || (e.type === "attachment" && e.attachment !== undefined)).map((e) => e.uuid);
     const writer: TranscriptWriter | undefined =
       childStore !== undefined
         ? buildChildTranscriptWriter({
@@ -812,6 +895,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
             agentId,
             parentToolUseId: req.parentToolUseId,
             cwd: workspace.root,
+            ...(restoredLeaf !== undefined ? { initialParentUuid: restoredLeaf, initialConversationalUuids: restoredConversationalUuids } : {}),
             // P7a fix wave (item 2): `winterHome` is what makes `buildChildTranscriptWriter` attach a
             // `providerStateSink` (dialect.ts spreads it conditionally). Omitting it here meant NO
             // production child -- ever -- had a durable provider-state sidecar: every child ran on an
@@ -838,7 +922,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           : `${projectKey}/${runCtx.parentSessionId}/${childTranscriptSubpath(agentId)}.jsonl`; // a store exists but this factory has no winterHome/storeHome to resolve an absolute path -- a relative store key, not directly readable by path, but still a meaningful identifier for a caller holding the same store object
 
     // WS-13c §8: `ChildSessionRecord.model` IS `RecordedModelEffort` (R-6c-20), so `effectiveProvider`/`slot` type-check without a local widening.
-    const record: ChildSessionRecord = {
+    const record: ChildSessionRecord = restored ?? {
       id: agentId,
       parentSessionId: runCtx.parentSessionId,
       parentToolUseId: req.parentToolUseId,
@@ -850,7 +934,15 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       ...(req.name !== undefined ? { name: req.name } : {}),
       spawnDepth,
     };
-    void writer?.writeMetadata({ ...record });
+    if (restored === undefined) {
+      const liveRules = runCtx.getParentRules?.();
+      record.execution = snapshotChildExecution({
+        request: req, inheritance: { ...inherit, tools: effectiveTools }, workspace, projectKey,
+        ...(runCtx.parentAgentId !== undefined ? { parentAgentId: runCtx.parentAgentId } : {}),
+        rules: { ask: [...new Set([...(deps.parentPermissionRules?.ask ?? []), ...(liveRules?.ask ?? [])])], deny: [...new Set([...(deps.parentPermissionRules?.deny ?? []), ...(liveRules?.deny ?? [])])] },
+      });
+      await writer?.writeMetadata({ ...record });
+    }
 
     let resolveResultOnce!: (r: ChildResult) => void;
     const resultPromise = new Promise<ChildResult>((resolve) => {
@@ -875,6 +967,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     let lastGenerationDone: Promise<void> = Promise.resolve();
     // Fix round 3: set while a resume waits for the previous generation's teardown (see `resume()`).
     let pendingResume: { stopped: boolean } | undefined;
+    let resuming = false;
 
     // One generation = one live `runEngine()` invocation, from its initial "user" turn until IT
     // reaches a terminal frame (or is stopped/stalls). `resume()` starts a NEW generation against
@@ -1229,6 +1322,15 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       try {
         lastGenerationDone = runEngine({
           config,
+          ...(runCtx.bindRestoredDescendants !== undefined ? {
+            bindRestoredDescendants: runCtx.bindRestoredDescendants,
+            onChildEngineDepsReady: (getDeps) => runCtx.bindRestoredDescendants!(agentId, async (childRecord) => {
+              const childDeps = getDeps();
+              if (childDeps.restore === undefined) throw new Error("child factory does not support durable resume");
+              return childDeps.restore(childRecord);
+            }),
+          } : {}),
+          ...(runCtx.getRecordedChild !== undefined ? { getRecordedChild: runCtx.getRecordedChild } : {}),
           contextAccountant: childAccountant,
           // Phase 6 Task 3 (R6-17): the PARENT's resolved provider identity, threaded onto the child's
           // own engine.
@@ -1424,8 +1526,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // run-context seam (this file's own tests, and any future non-engine host).
     function resolveParentRules(): { allow?: string[]; ask?: string[]; deny?: string[] } | undefined {
       const live = runCtx.getParentRules?.();
-      if (live === undefined) return deps.parentPermissionRules;
-      const mirror = deps.parentPermissionRules;
+      if (live === undefined) return { ...deps.parentPermissionRules, ask: [...(deps.parentPermissionRules?.ask ?? []), ...(record.execution?.restrictions.ask ?? [])], deny: [...(deps.parentPermissionRules?.deny ?? []), ...(record.execution?.restrictions.deny ?? [])] };
+      const original = record.execution?.restrictions;
+      const mirror = { ...deps.parentPermissionRules, ask: [...(deps.parentPermissionRules?.ask ?? []), ...(original?.ask ?? [])], deny: [...(deps.parentPermissionRules?.deny ?? []), ...(original?.deny ?? [])] };
       const ask = [...new Set([...(mirror?.ask ?? []), ...live.ask])];
       const deny = [...new Set([...(mirror?.deny ?? []), ...live.deny])];
       return {
@@ -1623,251 +1726,284 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         return { status: "delivered", messageId: msg.messageId };
       },
       async resume(msg: GlobalAgentMessage): Promise<DeliveryOutcome> {
-        if (record.status !== "completed" && record.status !== "stopped" && record.status !== "failed") {
-          return { status: "not_found", messageId: msg.messageId, reason: `child ${agentId} is still running -- resume targets a terminal child only` };
-        }
-        // An isolated child's worktree may already be gone -- `settle()` fires `cleanupWorkspace`
-        // fire-and-forget on EVERY terminal status, and WS-10 §8's own "auto-cleaned when unchanged"
-        // is the common case for a short-lived, successful child. `baseConfig.cwd` is fixed at spawn
-        // time to `workspace.root`; starting a fresh generation against a directory that no longer
-        // exists would fail deep inside `runEngine` in some unhelpful, non-obvious way instead.
-        // Recreating the worktree here (same agentId, presumably the same branch) is possible but
-        // drags in real git edge cases (has the source branch moved? does the old branch name still
-        // resolve?) not worth taking on for this lane -- disclosed as a follow-up rather than
-        // attempted.
-        if (workspace.isolationType === "worktree" && !existsSync(workspace.root)) {
-          return {
-            status: "unavailable",
-            messageId: msg.messageId,
-            retryable: false,
-            reason: `child ${agentId}'s isolated worktree (${workspace.root}) was already auto-cleaned -- resume is unavailable for this child`,
-          };
-        }
-
-        // WS-13c §8 (Lane D Task 5): "a resumed or followed-up child re-resolves under ITS recorded
-        // provider and model, never the parent's current family." Re-resolves against
-        // `record.model.effectiveModel` -- the CHILD's own recorded model, set once at spawn and
-        // never the parent's live model -- before anything stateful (checkAndRegisterSpawn, the
-        // transcript read) runs, so a refusal here is cheap and side-effect-free exactly like a
-        // rejected spawn (this file's own spawn-time header comment).
-        //
-        // Four outcomes `again` can carry (a fifth, THROWN, is Fix round 1 (m4) below):
-        //  - a REFUSAL: the resolver actively probed this child's own target and found no
-        //    credential for it (Ruling E-1) -- authoritative on its own, refused regardless of what
-        //    the parent is doing, since a refusal only ever names a model genuinely different from
-        //    whatever the parent is running (see `resolveChildProvider`'s own contract).
-        //  - `undefined`: the child's own recorded model no longer resolves AT ALL (no catalog to
-        //    resolve against, or a key the registry now rejects). Harmless when the recorded provider
-        //    id still agrees with `parentIdentityAtSpawn` -- there is nothing to contradict, and every
-        //    same-provider child is that by construction, so it falls through to the frozen
-        //    `childProvider.provider` unchanged. A DIFFERENT recorded provider id means a child that
-        //    used to resolve onto its OWN provider no longer resolves anywhere: WS-13c §8's "never a
-        //    substitution" makes refusal the only safe reading.
-        //  - `{ sameAsParent: true, identity }` (P6.6 fix wave, whole-branch Important-1): the model
-        //    RESOLVED, onto exactly the key the parent is running right now. The child is servable --
-        //    on the identity's provider, which the mismatch guard below proves equal to the recorded
-        //    one -- so this PROCEEDS, on the adapter frozen at spawn, and refuses only if the resolved
-        //    provider disagrees with what this child was recorded against.
-        //
-        //    This shape is the fix for a false refusal that was live on the assembled branch. Before
-        //    it, the resolver answered `undefined` for BOTH "unresolvable" and "resolves onto what the
-        //    parent is now running", while `parentIdentityAtSpawn` is (by construction -- nothing on
-        //    this run context exposes the parent's CURRENT identity to an already-spawned handle)
-        //    frozen at THIS child's spawn. Once `production-wiring.ts`'s resolver was made to compare
-        //    against the parent's LIVE identity, a parent whose `set_model` landed on EXACTLY this
-        //    child's own model key produced `undefined` here, measured against a pre-switch parent
-        //    identity, and refused a child whose provider was perfectly available -- inside the very
-        //    conformance rows (WS13c-SM1/SM2) this path exists to satisfy, with a reason string that
-        //    claimed a provider "no longer serves" a model it does. Fail-closed, never a substitution,
-        //    but false. The distinction is not arithmetic this branch can do: it has to come from the
-        //    resolver, which is why the third shape exists.
-        //  - a fresh, successful resolution: re-resolved cleanly under the child's own recorded
-        //    model; the closure's own `childProvider` is refreshed so `startGeneration` below (and
-        //    any LATER resume) reads the fresh adapter, and the sidecar is updated to match --
-        //    PROVIDED (Fix round 1, I1) the resolved provider id still MATCHES the recorded one: see
-        //    the mismatch guard below for why trusting it unconditionally was a silent substitution.
-        let again: ChildProviderResolution | undefined;
+        if (record.status === "running") return { status: "not_found", messageId: msg.messageId, reason: `child ${agentId} is still running -- resume targets a terminal child only` };
+        if (resuming) return { status: "unavailable", messageId: msg.messageId, retryable: true, reason: `child ${agentId} is already resuming` };
+        resuming = true;
+        const ticket = { stopped: false };
+        pendingResume = ticket;
+        let resumeSlot = false;
+        let generationStarted = false;
+        let allocatedForResume: ChildServerAllocation | undefined;
+        let resumeProviderId: string | undefined;
         try {
-          again = await deps.resolveChildProvider?.(record.model.effectiveModel);
-        } catch (err) {
-          // Fix round 1 (m4): unlike `checkAndRegisterSpawn` twenty lines below, this call was
-          // unguarded -- a throw here escaped `resume()` entirely, past its own `Promise<
-          // DeliveryOutcome>` contract, and reached `messaging/router.ts`'s generic catch, which
-          // reports `delivery_uncertain` ("the effect may have already happened"). That is provably
-          // FALSE at this point: nothing stateful (checkAndRegisterSpawn, the transcript read,
-          // startGeneration) has run yet. Production's resolver does not throw today
-          // (`production-wiring.ts` catches its own store errors), so this was latent, not observed
-          // -- caught here anyway, since the method's own contract is a typed outcome, never a throw.
-          const reason = err instanceof Error ? err.message : String(err);
-          return {
-            status: "unavailable",
-            messageId: msg.messageId,
-            retryable: false,
-            reason: `child-provider-unavailable: re-resolution failed for ${record.model.effectiveModel} (${reason})`,
-          };
-        }
-        if (again !== undefined && "refused" in again) {
-          const { providerId, modelKey, reason } = again.refused;
-          return {
-            status: "unavailable",
-            messageId: msg.messageId,
-            retryable: false,
-            // P6.6 fix wave (Important-1): NOT "no longer serves" -- the provider very often still
-            // serves this model perfectly well and the refusal is about THIS SESSION's access to it
-            // (Ruling E-1: no credential of the child's own). A reason string that states a false
-            // fact about a vendor is the same D25 "no false information" failure the typed refusal
-            // exists to avoid.
-            reason: `child-provider-unavailable: this session cannot reach ${modelKey} on ${providerId} (${reason})`,
-          };
-        }
-        if (again === undefined) {
-          const recordedProviderId = record.model.effectiveProvider;
-          if (recordedProviderId !== undefined && recordedProviderId !== parentIdentityAtSpawn?.providerId) {
+          if (record.status !== "completed" && record.status !== "stopped" && record.status !== "failed") {
+            return { status: "not_found", messageId: msg.messageId, reason: `child ${agentId} is still running -- resume targets a terminal child only` };
+          }
+          // An isolated child's worktree may already be gone -- `settle()` fires `cleanupWorkspace`
+          // fire-and-forget on EVERY terminal status, and WS-10 §8's own "auto-cleaned when unchanged"
+          // is the common case for a short-lived, successful child. `baseConfig.cwd` is fixed at spawn
+          // time to `workspace.root`; starting a fresh generation against a directory that no longer
+          // exists would fail deep inside `runEngine` in some unhelpful, non-obvious way instead.
+          // Recreating the worktree here (same agentId, presumably the same branch) is possible but
+          // drags in real git edge cases (has the source branch moved? does the old branch name still
+          // resolve?) not worth taking on for this lane -- disclosed as a follow-up rather than
+          // attempted.
+          if (workspace.isolationType === "worktree" && !existsSync(workspace.root)) {
             return {
               status: "unavailable",
               messageId: msg.messageId,
               retryable: false,
-              // P6.6 fix wave (Important-1): states the ACTUAL cause. `undefined` now means one thing
-              // only -- the recorded model did not resolve at all -- so the text says that, and names
-              // the recorded provider (which may well still serve the model; this session just cannot
-              // resolve its way back to it) rather than accusing it of having dropped the model.
-              reason: `child-provider-unavailable: ${record.model.effectiveModel} no longer resolves for this session, so its recorded provider ${recordedProviderId} cannot be re-established for this child`,
+              reason: `child ${agentId}'s isolated worktree (${workspace.root}) was already auto-cleaned -- resume is unavailable for this child`,
             };
           }
-          // Else: no recorded identity to contradict, or it still agrees with the parent's identity
-          // at this child's own spawn -- proceed on the already-frozen `childProvider.provider`.
-        } else if (record.model.effectiveProvider !== undefined && again.identity.providerId !== record.model.effectiveProvider) {
-          // Fix round 1 (I1, CRITICAL per review): the other half of WS-13c §8's own sentence.
-          // Before this guard, a SUCCESSFUL re-resolution was trusted unconditionally -- but
-          // "successful" only means "the resolver returned SOME adapter for this model," never "the
-          // SAME provider the child was recorded against." A resolver that maps this child's own
-          // recorded model onto a DIFFERENT provider on resume (a bare-id resolution against a now
-          // -live, switched parent baseline -- exactly what Lane A's §1.6 fix will make reachable,
-          // per the report's own finding) would otherwise run the resume on the substituted adapter
-          // and silently rewrite `record.model.effectiveProvider` out from under its own history.
-          // Recorded absent (never resolved before, e.g. a same-provider child whose FIRST real
-          // resolution happens on resume) is not a mismatch -- there is nothing yet to contradict.
-          return {
-            status: "unavailable",
-            messageId: msg.messageId,
-            retryable: false,
-            reason: `child-provider-unavailable: recorded ${record.model.effectiveProvider}, the resolver now maps ${record.model.effectiveModel} onto ${again.identity.providerId}`,
-          };
-        } else if ("sameAsParent" in again) {
-          // P6.6 fix wave (Important-1): the model resolved, onto the key the parent is now running,
-          // and the guard directly above has just proven the resolved provider id equals the one this
-          // child was recorded against. So the child IS servable, on the adapter frozen at ITS OWN
-          // spawn -- which is the same provider by that equality, and is the reference WS-13c §8's
-          // retention rule wants used regardless. Nothing is refreshed and nothing is rewritten: the
-          // resolver handed back no adapter (deliberately -- see `ChildProviderResolution`), and
-          // `record.model.effectiveProvider` already says exactly what this branch just confirmed.
-        } else {
-          childProvider = { provider: again.provider, identity: again.identity };
-          record.model = { ...record.model, effectiveProvider: again.identity.providerId };
-          // Fix round 2's own precedent (below, for `record.permission`): a mutation the sidecar must
-          // reflect durably is written HERE, synchronously with the mutation, never deferred to the
-          // next settle() -- a crash in that window must not leave the durable record on stale
-          // provider information.
-          void writer?.writeMetadata({ ...record });
-        }
 
-        // A resume is itself a fresh spawn for accounting purposes -- the previous generation
-        // already released its own slot on termination. `checkAndRegisterSpawn` THROWS
-        // (SpawnDepthExceededError/SpawnConcurrencyExceededError) rather than returning a result --
-        // this method's own return type is a `DeliveryOutcome`, which Lane D's messaging router
-        // consumes directly (WS-10 §10) with no reason to expect `resume()` itself to throw. An
-        // over-limit resume is exactly as legitimate a "the system is at capacity right now" outcome
-        // as a fresh spawn hitting the same limit -- `retryable: true`, since concurrency (unlike the
-        // gone-worktree case above) can free up on its own moments later.
-        try {
-          // Phase 4 fix wave (I1): keyed by the SPAWNER's own agent key -- see limits.ts's own header for
-  // why `parentSessionId` alone would now read depth 0 at every nesting level.
-  checkAndRegisterSpawn({ parentKey: runCtx.parentAgentId ?? runCtx.parentSessionId, childKey: agentId, env });
-        } catch (err) {
-          return {
-            status: "unavailable",
-            messageId: msg.messageId,
-            retryable: true,
-            reason: err instanceof Error ? err.message : String(err),
-          };
-        }
-
-        let rebuilt: ProviderMessage[] = [];
-        if (childStore !== undefined) {
+          // WS-13c §8 (Lane D Task 5): "a resumed or followed-up child re-resolves under ITS recorded
+          // provider and model, never the parent's current family." Re-resolves against
+          // `record.model.effectiveModel` -- the CHILD's own recorded model, set once at spawn and
+          // never the parent's live model -- before anything stateful (checkAndRegisterSpawn, the
+          // transcript read) runs, so a refusal here is cheap and side-effect-free exactly like a
+          // rejected spawn (this file's own spawn-time header comment).
+          //
+          // Four outcomes `again` can carry (a fifth, THROWN, is Fix round 1 (m4) below):
+          //  - a REFUSAL: the resolver actively probed this child's own target and found no
+          //    credential for it (Ruling E-1) -- authoritative on its own, refused regardless of what
+          //    the parent is doing, since a refusal only ever names a model genuinely different from
+          //    whatever the parent is running (see `resolveChildProvider`'s own contract).
+          //  - `undefined`: the child's own recorded model no longer resolves AT ALL (no catalog to
+          //    resolve against, or a key the registry now rejects). Harmless when the recorded provider
+          //    id still agrees with `parentIdentityAtSpawn` -- there is nothing to contradict, and every
+          //    same-provider child is that by construction, so it falls through to the frozen
+          //    `childProvider.provider` unchanged. A DIFFERENT recorded provider id means a child that
+          //    used to resolve onto its OWN provider no longer resolves anywhere: WS-13c §8's "never a
+          //    substitution" makes refusal the only safe reading.
+          //  - `{ sameAsParent: true, identity }` (P6.6 fix wave, whole-branch Important-1): the model
+          //    RESOLVED, onto exactly the key the parent is running right now. The child is servable --
+          //    on the identity's provider, which the mismatch guard below proves equal to the recorded
+          //    one -- so this PROCEEDS, on the adapter frozen at spawn, and refuses only if the resolved
+          //    provider disagrees with what this child was recorded against.
+          //
+          //    This shape is the fix for a false refusal that was live on the assembled branch. Before
+          //    it, the resolver answered `undefined` for BOTH "unresolvable" and "resolves onto what the
+          //    parent is now running", while `parentIdentityAtSpawn` is (by construction -- nothing on
+          //    this run context exposes the parent's CURRENT identity to an already-spawned handle)
+          //    frozen at THIS child's spawn. Once `production-wiring.ts`'s resolver was made to compare
+          //    against the parent's LIVE identity, a parent whose `set_model` landed on EXACTLY this
+          //    child's own model key produced `undefined` here, measured against a pre-switch parent
+          //    identity, and refused a child whose provider was perfectly available -- inside the very
+          //    conformance rows (WS13c-SM1/SM2) this path exists to satisfy, with a reason string that
+          //    claimed a provider "no longer serves" a model it does. Fail-closed, never a substitution,
+          //    but false. The distinction is not arithmetic this branch can do: it has to come from the
+          //    resolver, which is why the third shape exists.
+          //  - a fresh, successful resolution: re-resolved cleanly under the child's own recorded
+          //    model; the closure's own `childProvider` is refreshed so `startGeneration` below (and
+          //    any LATER resume) reads the fresh adapter, and the sidecar is updated to match --
+          //    PROVIDED (Fix round 1, I1) the resolved provider id still MATCHES the recorded one: see
+          //    the mismatch guard below for why trusting it unconditionally was a silent substitution.
+          let again: ChildProviderResolution | undefined;
           try {
-            const raw = await TranscriptWriter.readBack(childStore, childKey);
-            rebuilt = rebuildProviderMessages(toDialectEntries(raw));
-          } catch {
-            rebuilt = []; // an unreadable/corrupted transcript degrades to "resume with no history," never a crash
-          }
-        }
-        // Fix round 1 (finding Q1, forward-compat): WS-07 §11's own "resume applies the stricter of
-        // recorded vs. current parent policy" -- applied when `deps.getParentPolicy` is supplied
-        // (today: only a test; T8 wires the real per-spawn accessor onto `ChildEngineRunContext`,
-        // see `ChildEngineFactoryDeps`'s own header on this field for why nothing reaches it in
-        // production yet). Absent, this falls back to `record.permission.effectiveMode` reused
-        // verbatim -- exactly the pre-fix-round behavior, which can only be EQUAL to or STRICTER
-        // than a parent that has since loosened (a real, disclosed residual gap only if the parent's
-        // own policy has since become STRICTER than what was recorded).
-        let resumeMode: PermissionMode = record.permission.effectiveMode;
-        if (deps.getParentPolicy !== undefined) {
-          const currentPolicy = deps.getParentPolicy();
-          try {
-            resumeMode = resolveChildResumeMode(record.permission, currentPolicy.mode);
+            again = await deps.resolveChildProvider?.(record.model.effectiveModel);
           } catch (err) {
-            if (err instanceof ChildResumeModeIncomparableError) {
-              // RULING P4-D: the one documented incomparable pair ({dontAsk, auto}, either
-              // direction) fails closed -- a legible, typed, NON-retryable refusal on the handle,
-              // never a silently-resolved composite mode and never an escaped throw.
-              return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: err.message };
-            }
-            throw err;
+            // Fix round 1 (m4): unlike `checkAndRegisterSpawn` twenty lines below, this call was
+            // unguarded -- a throw here escaped `resume()` entirely, past its own `Promise<
+            // DeliveryOutcome>` contract, and reached `messaging/router.ts`'s generic catch, which
+            // reports `delivery_uncertain` ("the effect may have already happened"). That is provably
+            // FALSE at this point: nothing stateful (checkAndRegisterSpawn, the transcript read,
+            // startGeneration) has run yet. Production's resolver does not throw today
+            // (`production-wiring.ts` catches its own store errors), so this was latent, not observed
+            // -- caught here anyway, since the method's own contract is a typed outcome, never a throw.
+            const reason = err instanceof Error ? err.message : String(err);
+            return {
+              status: "unavailable",
+              messageId: msg.messageId,
+              retryable: false,
+              reason: `child-provider-unavailable: re-resolution failed for ${record.model.effectiveModel} (${reason})`,
+            };
           }
-          // Fix round 2 (nit): mutating `record.permission` alone is an IN-MEMORY update only --
-          // the durable `.meta.json` sidecar would otherwise stay on the OLD (looser) recorded mode
-          // until the next settle(), which can be arbitrarily far in the future (the whole rest of
-          // this resumed generation's own run). A crash in that window must never leave the
-          // pre-resume, looser mode as the durable record of what this child is actually running
-          // under -- so the sidecar is rewritten HERE, synchronously with the mutation, not deferred
-          // to the next terminal settlement. A LATER resume (or a roster rebuild after restart) then
-          // compares against this generation's own resolution rather than the original spawn-time
-          // snapshot, durably, not just in this process's own memory.
-          record.permission = { effectiveMode: resumeMode, parentPolicyHash: currentPolicy.hash, parentPolicyVersion: currentPolicy.version };
-          void writer?.writeMetadata({ ...record });
+          if (again !== undefined && "refused" in again) {
+            const { providerId, modelKey, reason } = again.refused;
+            return {
+              status: "unavailable",
+              messageId: msg.messageId,
+              retryable: false,
+              // P6.6 fix wave (Important-1): NOT "no longer serves" -- the provider very often still
+              // serves this model perfectly well and the refusal is about THIS SESSION's access to it
+              // (Ruling E-1: no credential of the child's own). A reason string that states a false
+              // fact about a vendor is the same D25 "no false information" failure the typed refusal
+              // exists to avoid.
+              reason: `child-provider-unavailable: this session cannot reach ${modelKey} on ${providerId} (${reason})`,
+            };
+          }
+          if (again === undefined) {
+            const recordedProviderId = record.model.effectiveProvider;
+            if (recordedProviderId !== undefined && recordedProviderId !== parentIdentityAtSpawn?.providerId) {
+              return {
+                status: "unavailable",
+                messageId: msg.messageId,
+                retryable: false,
+                // P6.6 fix wave (Important-1): states the ACTUAL cause. `undefined` now means one thing
+                // only -- the recorded model did not resolve at all -- so the text says that, and names
+                // the recorded provider (which may well still serve the model; this session just cannot
+                // resolve its way back to it) rather than accusing it of having dropped the model.
+                reason: `child-provider-unavailable: ${record.model.effectiveModel} no longer resolves for this session, so its recorded provider ${recordedProviderId} cannot be re-established for this child`,
+              };
+            }
+            // Else: no recorded identity to contradict, or it still agrees with the parent's identity
+            // at this child's own spawn -- proceed on the already-frozen `childProvider.provider`.
+          } else if (record.model.effectiveProvider !== undefined && again.identity.providerId !== record.model.effectiveProvider) {
+            // Fix round 1 (I1, CRITICAL per review): the other half of WS-13c §8's own sentence.
+            // Before this guard, a SUCCESSFUL re-resolution was trusted unconditionally -- but
+            // "successful" only means "the resolver returned SOME adapter for this model," never "the
+            // SAME provider the child was recorded against." A resolver that maps this child's own
+            // recorded model onto a DIFFERENT provider on resume (a bare-id resolution against a now
+            // -live, switched parent baseline -- exactly what Lane A's §1.6 fix will make reachable,
+            // per the report's own finding) would otherwise run the resume on the substituted adapter
+            // and silently rewrite `record.model.effectiveProvider` out from under its own history.
+            // Recorded absent (never resolved before, e.g. a same-provider child whose FIRST real
+            // resolution happens on resume) is not a mismatch -- there is nothing yet to contradict.
+            return {
+              status: "unavailable",
+              messageId: msg.messageId,
+              retryable: false,
+              reason: `child-provider-unavailable: recorded ${record.model.effectiveProvider}, the resolver now maps ${record.model.effectiveModel} onto ${again.identity.providerId}`,
+            };
+          } else if ("sameAsParent" in again) {
+            // P6.6 fix wave (Important-1): the model resolved, onto the key the parent is now running,
+            // and the guard directly above has just proven the resolved provider id equals the one this
+            // child was recorded against. So the child IS servable, on the adapter frozen at ITS OWN
+            // spawn -- which is the same provider by that equality, and is the reference WS-13c §8's
+            // retention rule wants used regardless. Nothing is refreshed and nothing is rewritten: the
+            // resolver handed back no adapter (deliberately -- see `ChildProviderResolution`), and
+            // `record.model.effectiveProvider` already says exactly what this branch just confirmed.
+          } else {
+            childProvider = { provider: again.provider, identity: again.identity };
+            resumeProviderId = again.identity.providerId;
+            // Fix round 2's own precedent (below, for `record.permission`): a mutation the sidecar must
+            // reflect durably is written HERE, synchronously with the mutation, never deferred to the
+            // next settle() -- a crash in that window must not leave the durable record on stale
+            // provider information.
+
+          }
+
+          // A resume is itself a fresh spawn for accounting purposes -- the previous generation
+          // already released its own slot on termination. `checkAndRegisterSpawn` THROWS
+          // (SpawnDepthExceededError/SpawnConcurrencyExceededError) rather than returning a result --
+          // this method's own return type is a `DeliveryOutcome`, which Lane D's messaging router
+          // consumes directly (WS-10 §10) with no reason to expect `resume()` itself to throw. An
+          // over-limit resume is exactly as legitimate a "the system is at capacity right now" outcome
+          // as a fresh spawn hitting the same limit -- `retryable: true`, since concurrency (unlike the
+          // gone-worktree case above) can free up on its own moments later.
+          try {
+            // Phase 4 fix wave (I1): keyed by the SPAWNER's own agent key -- see limits.ts's own header for
+    // why `parentSessionId` alone would now read depth 0 at every nesting level.
+            checkAndRegisterSpawn({ parentKey: record.execution?.parentAgentId ?? runCtx.parentAgentId ?? runCtx.parentSessionId, childKey: agentId, env, recordedDepth: spawnDepth, ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}) });
+            resumeSlot = true;
+          } catch (err) {
+            return {
+              status: "unavailable",
+              messageId: msg.messageId,
+              retryable: true,
+              reason: err instanceof Error ? err.message : String(err),
+            };
+          }
+
+          let rebuilt: ProviderMessage[] = [];
+          if (childStore !== undefined) {
+            try {
+              const raw = await TranscriptWriter.readBack(childStore, childKey);
+              rebuilt = rebuildProviderMessages(toDialectEntries(raw));
+              if (rebuilt.length === 0) throw new Error("transcript is missing or has no recoverable messages");
+            } catch (err) {
+              releaseSpawn(agentId);
+              return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: `child-history-unavailable: ${err instanceof Error ? err.message : String(err)}` };
+            }
+          }
+          // Fix round 1 (finding Q1, forward-compat): WS-07 §11's own "resume applies the stricter of
+          // recorded vs. current parent policy" -- applied when `deps.getParentPolicy` is supplied
+          // (today: only a test; T8 wires the real per-spawn accessor onto `ChildEngineRunContext`,
+          // see `ChildEngineFactoryDeps`'s own header on this field for why nothing reaches it in
+          // production yet). Absent, this falls back to `record.permission.effectiveMode` reused
+          // verbatim -- exactly the pre-fix-round behavior, which can only be EQUAL to or STRICTER
+          // than a parent that has since loosened (a real, disclosed residual gap only if the parent's
+          // own policy has since become STRICTER than what was recorded).
+          let resumeMode: PermissionMode = record.permission.effectiveMode;
+          const getCurrentParentPolicy = deps.getParentPolicy ?? runCtx.getParentPolicy;
+          if (getCurrentParentPolicy !== undefined) {
+            const currentPolicy = getCurrentParentPolicy();
+            try {
+              resumeMode = resolveChildResumeMode(record.permission, currentPolicy.mode);
+            } catch (err) {
+              if (err instanceof ChildResumeModeIncomparableError) {
+                // RULING P4-D: the one documented incomparable pair ({dontAsk, auto}, either
+                // direction) fails closed -- a legible, typed, NON-retryable refusal on the handle,
+                // never a silently-resolved composite mode and never an escaped throw.
+                releaseSpawn(agentId);
+                return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: err.message };
+              }
+              throw err;
+            }
+            // Fix round 2 (nit): mutating `record.permission` alone is an IN-MEMORY update only --
+            // the durable `.meta.json` sidecar would otherwise stay on the OLD (looser) recorded mode
+            // until the next settle(), which can be arbitrarily far in the future (the whole rest of
+            // this resumed generation's own run). A crash in that window must never leave the
+            // pre-resume, looser mode as the durable record of what this child is actually running
+            // under -- so the sidecar is rewritten HERE, synchronously with the mutation, not deferred
+            // to the next terminal settlement. A LATER resume (or a roster rebuild after restart) then
+            // compares against this generation's own resolution rather than the original spawn-time
+            // snapshot, durably, not just in this process's own memory.
+            record.permission = { effectiveMode: resumeMode, parentPolicyHash: currentPolicy.hash, parentPolicyVersion: currentPolicy.version };
+            void writer?.writeMetadata({ ...record });
+          }
+          const currentRules = resolveParentRules();
+          if (record.execution !== undefined) record.execution.restrictions = {
+            ask: [...new Set([...(record.execution.restrictions.ask ?? []), ...(currentRules?.ask ?? [])])],
+            deny: [...new Set([...(record.execution.restrictions.deny ?? []), ...(currentRules?.deny ?? [])])],
+          };
+          if (resumeProviderId !== undefined) record.model = { ...record.model, effectiveProvider: resumeProviderId };
+          record.status = "running";
+          await writer?.writeMetadata({ ...record });
+          // Fix wave (C1 + I6): the resumed generation re-reads the parent's LIVE rules too -- a
+          // resume is exactly the moment WS-07 §11's "the same rules apply over child actions" is
+          // most likely to have moved since the spawn (it already re-reads the parent's live MODE,
+          // immediately above).
+          // Phase 5 Task 3 (R5-3): the persona is re-sent on EVERY generation, not only the first.
+          // Under P4-J it survived a resume only because it sat in the rebuilt message history; now
+          // that it rides `system`, a resume that omitted it would silently run a persona-less child --
+          // exactly the C1 defect P4-J was created to fix, reintroduced by the move.
+          // WS-24: the names are re-claimed for this generation -- the same ones where still free; a name a
+          // sibling took while this child was idle is re-allocated, and the child is told.
+          const previous = serverAllocation.actual;
+          // Fix round 1 (M1): the previous generation's names are released only once its `runEngine` has
+          // returned (its lifecycle's teardown closes clients first), while `record.status` went terminal
+          // synchronously at settle -- so a quick resume waits for that, bounded, rather than finding its
+          // own names still claimed and renaming a server that collides with nothing.
+          await Promise.race([lastGenerationDone, new Promise<void>((resolve) => setTimeout(resolve, GENERATION_TEARDOWN_WAIT_MS).unref?.())]);
+          // Fix round 3: a `stop()` that landed during that wait had no generation of its own to settle (the
+          // previous one already had), so it is honoured here -- the new generation never starts.
+          if (ticket.stopped) return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: `child ${agentId} was stopped while resuming` };
+          serverAllocation = allocateChildScopedServers(childScopedMcpServers, parentVisibleServers(), previous, parentMcp?.declaredServers, deps.parentReservedMcpServerNames);
+          allocatedForResume = serverAllocation;
+          const moved = [...serverAllocation.actual].filter(([declared, name]) => previous.get(declared) !== name).map(([declared, name]) => `this agent's own "${declared}" is now connected as "${name}" (its tools are named mcp__${name}__<tool>)`);
+          pendingResume = undefined;
+          startGeneration(generationConfig(resumeMode), rebuilt, moved.length > 0 ? `${msg.body}\n\n[winter: ${moved.join("; ")}]` : msg.body, resolvedSystemPrompt, serverAllocation);
+          generationStarted = true;
+          return { status: "resumed_and_delivered", messageId: msg.messageId };
+        } catch (err) {
+          return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: `child-resume-unavailable: ${err instanceof Error ? err.message : String(err)}` };
+        } finally {
+          if (!generationStarted) allocatedForResume?.release();
+          if (!generationStarted && resumeSlot) releaseSpawn(agentId);
+          if (!generationStarted && record.status === "running") {
+            record.status = "stopped";
+            await writer?.writeMetadata({ ...record }).catch(() => {});
+          }
+          if (pendingResume === ticket) pendingResume = undefined;
+          resuming = false;
         }
-        record.status = "running";
-        // Fix wave (C1 + I6): the resumed generation re-reads the parent's LIVE rules too -- a
-        // resume is exactly the moment WS-07 §11's "the same rules apply over child actions" is
-        // most likely to have moved since the spawn (it already re-reads the parent's live MODE,
-        // immediately above).
-        // Phase 5 Task 3 (R5-3): the persona is re-sent on EVERY generation, not only the first.
-        // Under P4-J it survived a resume only because it sat in the rebuilt message history; now
-        // that it rides `system`, a resume that omitted it would silently run a persona-less child --
-        // exactly the C1 defect P4-J was created to fix, reintroduced by the move.
-        // WS-24: the names are re-claimed for this generation -- the same ones where still free; a name a
-        // sibling took while this child was idle is re-allocated, and the child is told.
-        const previous = serverAllocation.actual;
-        // Fix round 1 (M1): the previous generation's names are released only once its `runEngine` has
-        // returned (its lifecycle's teardown closes clients first), while `record.status` went terminal
-        // synchronously at settle -- so a quick resume waits for that, bounded, rather than finding its
-        // own names still claimed and renaming a server that collides with nothing.
-        const ticket = { stopped: false };
-        pendingResume = ticket;
-        await Promise.race([lastGenerationDone, new Promise<void>((resolve) => setTimeout(resolve, GENERATION_TEARDOWN_WAIT_MS).unref?.())]);
-        pendingResume = undefined;
-        // Fix round 3: a `stop()` that landed during that wait had no generation of its own to settle (the
-        // previous one already had), so it is honoured here -- the new generation never starts.
-        if (ticket.stopped) return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: `child ${agentId} was stopped while resuming` };
-        serverAllocation = allocateChildScopedServers(childScopedMcpServers, parentVisibleServers(), previous, parentMcp?.declaredServers, deps.parentReservedMcpServerNames);
-        const moved = [...serverAllocation.actual].filter(([declared, name]) => previous.get(declared) !== name).map(([declared, name]) => `this agent's own "${declared}" is now connected as "${name}" (its tools are named mcp__${name}__<tool>)`);
-        startGeneration(generationConfig(resumeMode), rebuilt, moved.length > 0 ? `${msg.body}\n\n[winter: ${moved.join("; ")}]` : msg.body, resolvedSystemPrompt, serverAllocation);
-        return { status: "resumed_and_delivered", messageId: msg.messageId };
       },
       async result(): Promise<ChildResult> {
         return resultPromise;
       },
       async stop(): Promise<void> {
-        if (record.status !== "running") return; // already terminal -- idempotent
         // Fix round 3: a resume still waiting for the previous generation's teardown has nothing to settle
         // yet -- the stop cancels that resume instead, and the child is recorded stopped.
         if (pendingResume !== undefined) {
@@ -1876,6 +2012,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           void writer?.writeMetadata({ ...record });
           return;
         }
+        if (record.status !== "running") return; // already terminal -- idempotent
         // Routed through the CURRENT generation's own gated `settle` (never a parallel, ungated
         // status mutation) -- see startGeneration's own header comment on `currentSettle` for why:
         // whichever of {this stop, a genuine result frame arriving moments later} reaches the gate
@@ -1886,7 +2023,16 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       usage(): ChildResult["usage"] {
         return currentUsage?.();
       },
+      generationDone: () => lastGenerationDone,
+      cancelPendingResume: () => { if (pendingResume !== undefined) pendingResume.stopped = true; },
     };
+
+    if (restored !== undefined) {
+      resolveResultOnce({ status: record.status === "completed" ? "completed" : record.status === "failed" ? "failed" : "stopped", content: `restored from durable storage: ${record.transcript}` });
+      pendingServerRelease?.();
+      pendingServerRelease = undefined;
+      return handle;
+    }
 
     // Review r1 finding 9: the caller learns the handle BEFORE the first generation starts, so its
     // `task_started` precedes every frame (and every `task_progress`) this child can produce. A throw

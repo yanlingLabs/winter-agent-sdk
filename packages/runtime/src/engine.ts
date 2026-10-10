@@ -138,7 +138,8 @@ import type { McpOAuthStore } from "./mcp-auth/store.ts";
 import type { HostCredentialChannel } from "./provider/host-credentials.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
-import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildInheritance, type ParentMcpState, type ParentRuleMirror, type SpawnChildRequest } from "./subagents/child-handle.ts";
+import { bindRestoredChildren } from "./subagents/restore.ts";
+import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildEngineDeps, type ChildInheritance, type ParentMcpState, type ParentRuleMirror, type SpawnChildRequest } from "./subagents/child-handle.ts";
 // Phase 4 Task 8: the process-level default messaging runtime Lane D's three tool executors read --
 // see that function's own header for why it is process-level and why the roster is contributed
 // per-run rather than the runtime being rebuilt per-run.
@@ -1683,6 +1684,11 @@ export interface EngineOptions {
   // MessagingRouterSeam.children() (@yanlinglabs/winter-agent-sdk/messaging) is meant to be built from. No routing
   // logic lives in the engine; this is purely "here is where the children actually are."
   onChildRosterReady?: (getChildren: () => readonly ChildHandle[]) => void;
+  restoredChildren?: ChildHandle[];
+  /** Descendant engines rebind their own persisted children without registering a second roster. */
+  onChildEngineDepsReady?: (getDeps: () => ChildEngineDeps) => (() => void);
+  bindRestoredDescendants?: import("./subagents/child-handle.ts").ChildEngineRunContext["bindRestoredDescendants"];
+  getRecordedChild?: import("./subagents/child-handle.ts").ChildEngineRunContext["getRecordedChild"];
   // NEW-3 (P4 residual round): the same shape as `onChildRosterReady` above, over the set of
   // still-running FOREGROUND children an interrupt must take down (fix wave I5). Its own exposure
   // point, because the invariant it carries -- entries are removed when the child SETTLES, not only
@@ -3583,7 +3589,155 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // logic lives here (WS-10 §15's own split); `onChildRosterReady` (EngineOptions) is this run's own
   // ONE exposure point, called once below, for whichever host-level code constructs Lane D's own
   // real MessagingRouterSeam to wire its `children()` against.
-  const childRoster: ChildHandle[] = [];
+  function createChildrenDeps() {
+    const factory = getChildEngineFactory();
+    if (!factory) {
+      throw new Error(
+        "winter: Agent spawn requested but no child engine factory is registered (registerChildEngineFactory, subagents/child-handle.ts) -- Lane C's own child-engine.ts must register one before any Agent tool call can succeed",
+      );
+    }
+    return factory({
+      getParentTools: () => currentAdvertisedCanonicalNames,
+      getParentIdentity: () => currentProviderIdentity,
+      getRecordedChild: (id) => opts.getRecordedChild?.(id) ?? childRoster.find((child) => child.record.id === id)?.record,
+      bindRestoredDescendants: opts.bindRestoredDescendants ?? bindDescendants,
+      parentSessionId: config.sessionId,
+      // Phase 4 fix wave (I1): this run's OWN agent key -- present only when THIS engine is
+      // itself a child. `config.sessionId` is the owning session at every nesting level now
+      // (a child shares its parent's), so it can no longer identify the spawner; the spawn
+      // DEPTH table (subagents/limits.ts) is keyed on this instead.
+      ...(config.agentId !== undefined ? { parentAgentId: config.agentId } : {}),
+      // Handoff note (fix round 1, T3 review minor, item 4) -- CLOSED, and corrected here
+      // because it asserted the opposite of what is now true (P4 fix wave, KNOWN item 8's
+      // stale-comment sweep). A real ChildEngineFactory IS registered on every leg
+      // (subagents/register-default-factory.ts, called by main.ts AND testing.ts), and this
+      // closure runs through real spawned/compiled processes in three committed
+      // cross-transport scenarios: `subagent-spawn-round`, `sendmessage-child-round`, and the
+      // fix wave's own `subagent-permission-round` (which is also the one that pins
+      // `parent_tool_use_id` on the wire).
+      forwardChildFrame: (frame: WinterFrame, correlation: { parentToolUseId: string; agentId: string }): void => {
+        const forwarded = transformChildFrame(frame, correlation, config.forwardSubagentText === true);
+        if (forwarded !== null) output.write(forwarded);
+      },
+      // Phase 4 Task 8 (rider 19, RULING P4-I): see childResponseHandlers' own declaration.
+      registerChildResponseHandler: (handle: (frame: ControlResponseFrame) => boolean): (() => void) => {
+        childResponseHandlers.push(handle);
+        return () => {
+          const idx = childResponseHandlers.indexOf(handle);
+          if (idx !== -1) childResponseHandlers.splice(idx, 1);
+        };
+      },
+      // RULING P5-J (fix wave): a descendant's provider usage folds into the OWNING session's
+      // cumulative spend, and into nothing else. A per-run accessor, not a construction-time
+      // mirror -- the accountant belongs to a RUN and a registered factory is built once.
+      recordDescendantUsage: (usage: { inputTokens: number; outputTokens: number }): void => {
+        contextAccountant.recordDescendantUsage(usage);
+      },
+      // The COST half of the same roll-up: a descendant's priced generation lands on THIS run's
+      // ledger (and climbs on from here), so `total_cost_usd`, `modelUsage` and `maxBudgetUsd`
+      // are the whole tree's. Per-run for the same reason as the accessor above.
+      recordDescendantCost: (entry: PricedGenerationEntry): void => {
+        foldPricedGeneration(entry);
+      },
+      // ...and the answer that spend produces, handed DOWN: this run's `budgetExceeded()`
+      // already includes its own ancestors', so a grandchild asking its parent is asking the root.
+      budgetExceeded: (): boolean => budgetExceeded(),
+      // Phase 4 Task 8 (rider 26, RULING P4-J(e)): the parent's CURRENT live policy, read
+      // fresh on every call (never a spawn-time snapshot) -- WS-10 §9's stricter-of comparison
+      // is only meaningful against the policy in force at RESUME time. `computePolicyHash` is
+      // the same function the durable-approval path already stamps records with, so a child's
+      // recorded `parentPolicyHash` and this value are directly comparable by construction.
+      getParentPolicy: () => {
+        const st = policyStateStore.getState();
+        return { mode: st.mode, version: st.version, hash: computePolicyHash(st) };
+      },
+      // Phase 4 fix wave (C1 + I6): the parent's CURRENT LIVE rule set, read fresh on every
+      // call (never a spawn-time or factory-construction-time snapshot) -- see
+      // ChildEngineRunContext.getParentRules for the two escapes this closes. The live
+      // `PolicyStateStore` is the ONE authority: it already carries the config-seeded `sdk`
+      // entries (allowedTools/disallowedTools/permissions.* alike, WS-07 §3.3), WS-07 §9's
+      // journal-restored rules, and every mid-session `PermissionUpdate` -- so a child cannot
+      // observe a different rule set from the one the parent's own next tool call would.
+      getParentRules: (): ParentRuleMirror => {
+        const mirror: ParentRuleMirror = { allow: [], ask: [], deny: [] };
+        for (const entry of policyStateStore.getState().rules.entries) {
+          // KEPT, and the reason is no longer the one originally written here (residual round,
+          // NEW-4). The old note said `managed` meant only the hardcoded `BASELINE_DENY_RULES`,
+          // which every `runEngine` seeds for itself. The fix wave falsified that: C1 seeds
+          // managed-TIER settings rules as `managed` and I1 emits the resolved-root floor twins
+          // as `managed`, so for a while this skip was silently dropping real policy on the way
+          // into every child.
+          //
+          // WIDENING THE MIRROR WOULD NOT HAVE FIXED IT, and this is the part worth keeping:
+          // a mirrored rule arrives in the child re-tagged `sdk`, and a forced-bypass child --
+          // which is every descendant of a bypass parent -- honours ONLY `managed` denies at
+          // stage 2. A managed deny mirrored as `sdk` would be inert in exactly the case that
+          // matters most. The child therefore seeds the SAME `SettingsRuleSeed` its parent did,
+          // tags intact (`child-engine.ts` passes `deps.settingsRules` straight through), which
+          // also keeps the P5-A/P5-D per-tier gates identical on both sides. With that in place
+          // this skip is correct again: mirroring would now be a strictly weaker DUPLICATE of
+          // something the child already has.
+          if (entry.source === "managed") continue;
+          // WS-07 §3.2 as amended by RULING P5-D, and the ONE way this accessor could WIDEN
+          // rather than bind: a `project`-sourced ALLOW entry is INERT in an untrusted workspace
+          // (evaluator.ts's own `findMatchingRuleEntry` skips it, exactly as ruleset.ts's
+          // resolveRules does). Mirroring it here would re-tag it `sdk` in the child, where
+          // that gate no longer applies -- a child auto-approving what its own parent still
+          // gates, which is the C1 class in the opposite direction, inside C1's own fix. The
+          // write path makes this reachable today, not just after P5: only `cliArg` is
+          // authority-restricted (ruleset.ts's assertAuthorityMayWriteDestination), so a
+          // host's `canUseTool` can already return `{type:"addRules", destination:
+          // "projectSettings", behavior:"allow", ...}` under `session` authority. DENY/ASK
+          // entries from those same sources apply WITHOUT trust and are mirrored unchanged --
+          // the skip is allow-side only, matching the evaluator's own predicate verbatim.
+          //
+          // P5-D narrowed it from `project`/`local` to `project` alone: capture (1) shows the
+          // pinned runtime lets local/user permissive rules widen without trust. "Matching the
+          // evaluator's own predicate verbatim" is the invariant -- this is the fourth of four
+          // hand-mirrored copies of one gate (evaluator.ts's findMatchingRuleEntry,
+          // ruleset.ts's resolveRules and effectiveDirectories are the others), and they move
+          // together or a child ends up with a different permission surface than its parent.
+          if (entry.behavior === "allow" && entry.source === "project" && !trustedWorkspace) continue;
+          const raw = entry.ruleValue.ruleContent === undefined ? entry.ruleValue.toolName : `${entry.ruleValue.toolName}(${entry.ruleValue.ruleContent})`;
+          mirror[entry.behavior].push(raw);
+        }
+        return mirror;
+      },
+      // Phase 4 fix wave (I2): this run's RESOLVED MCP state, handed down so a child is not
+      // an MCP island (see ChildEngineRunContext.getParentMcpState). Read at CALL time, not
+      // capture time -- `effectiveMcpStateSource`/`effectiveMcpControlSeam` are declared
+      // below this function and are always assigned long before any Agent tool call can run,
+      // the same "declared later, read at call time" closure binding `emitToolReference`
+      // already uses for `loadedToolSet`.
+      getParentMcpState: (): ParentMcpState => ({
+        ...(effectiveMcpStateSource !== undefined ? { stateSource: effectiveMcpStateSource } : {}),
+        ...(effectiveMcpControlSeam !== undefined ? { controlSeam: effectiveMcpControlSeam } : {}),
+        ...(config.mcpServers !== undefined ? { declaredServers: config.mcpServers } : {}),
+        // Fix round 21: this run's own visible-server set, so a child's scope recurses (see
+        // `ParentMcpState.visibleServerNames`). Declared later in this function; read at call time.
+        visibleServerNames: () => [...visibleMcpServers()],
+        // WS-24 (fix round 3): the renames in this run's scope, inherited with the servers above.
+        ...(mcpServerRenames !== undefined ? { serverRenames: mcpServerRenames } : {}),
+      }),
+      // Fix wave follow-up (8), whole-branch M7: this session's own programmatic agents map,
+      // so a grandchild can resolve a `subagent_type` the host declared (see
+      // ChildEngineRunContext.getParentAgents).
+      getParentAgents: () => config.agents,
+    });
+  }
+  const childRoster: ChildHandle[] = [...(opts.restoredChildren ?? [])];
+  const restoreWithCurrentRoot = async (record: import("./subagents/child-handle.ts").ChildSessionRecord): Promise<ChildHandle> => {
+    const deps = createChildrenDeps();
+    if (deps.restore === undefined) throw new Error("the registered child factory does not support durable resume");
+    return deps.restore(record);
+  };
+  function bindDescendants(parentAgentId: string, restore: (record: import("./subagents/child-handle.ts").ChildSessionRecord) => Promise<ChildHandle>): () => void {
+    const owned = childRoster.filter((child) => child.record.execution?.parentAgentId === parentAgentId);
+    bindRestoredChildren(owned, restore);
+    return () => bindRestoredChildren(owned, restoreWithCurrentRoot);
+  }
+  bindRestoredChildren(childRoster, restoreWithCurrentRoot);
+  const removeChildContextBinding = opts.onChildEngineDepsReady?.(createChildrenDeps);
   // Phase 4 Task 8 (rider 19, RULING P4-I): the pump-side child-bridge roster. Every child engine
   // spawned by THIS run registers its own `RpcBridge.handleResponse` here; the pump consults them,
   // in registration order, for any `control_response` this run's OWN bridge did not claim. The child
@@ -4629,136 +4783,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // needs to reach the ACTUAL host connection this run owns) fresh per call -- cheap,
         // side-effect-free until a factory is actually registered and invoked.
         async spawnChild(req: SpawnChildRequest): Promise<ChildHandle> {
-          const factory = getChildEngineFactory();
-          if (!factory) {
-            throw new Error(
-              "winter: Agent spawn requested but no child engine factory is registered (registerChildEngineFactory, subagents/child-handle.ts) -- Lane C's own child-engine.ts must register one before any Agent tool call can succeed",
-            );
-          }
-          const deps = factory({
-            parentSessionId: config.sessionId,
-            // Phase 4 fix wave (I1): this run's OWN agent key -- present only when THIS engine is
-            // itself a child. `config.sessionId` is the owning session at every nesting level now
-            // (a child shares its parent's), so it can no longer identify the spawner; the spawn
-            // DEPTH table (subagents/limits.ts) is keyed on this instead.
-            ...(config.agentId !== undefined ? { parentAgentId: config.agentId } : {}),
-            // Handoff note (fix round 1, T3 review minor, item 4) -- CLOSED, and corrected here
-            // because it asserted the opposite of what is now true (P4 fix wave, KNOWN item 8's
-            // stale-comment sweep). A real ChildEngineFactory IS registered on every leg
-            // (subagents/register-default-factory.ts, called by main.ts AND testing.ts), and this
-            // closure runs through real spawned/compiled processes in three committed
-            // cross-transport scenarios: `subagent-spawn-round`, `sendmessage-child-round`, and the
-            // fix wave's own `subagent-permission-round` (which is also the one that pins
-            // `parent_tool_use_id` on the wire).
-            forwardChildFrame: (frame: WinterFrame, correlation: { parentToolUseId: string; agentId: string }): void => {
-              const forwarded = transformChildFrame(frame, correlation, config.forwardSubagentText === true);
-              if (forwarded !== null) output.write(forwarded);
-            },
-            // Phase 4 Task 8 (rider 19, RULING P4-I): see childResponseHandlers' own declaration.
-            registerChildResponseHandler: (handle: (frame: ControlResponseFrame) => boolean): (() => void) => {
-              childResponseHandlers.push(handle);
-              return () => {
-                const idx = childResponseHandlers.indexOf(handle);
-                if (idx !== -1) childResponseHandlers.splice(idx, 1);
-              };
-            },
-            // RULING P5-J (fix wave): a descendant's provider usage folds into the OWNING session's
-            // cumulative spend, and into nothing else. A per-run accessor, not a construction-time
-            // mirror -- the accountant belongs to a RUN and a registered factory is built once.
-            recordDescendantUsage: (usage: { inputTokens: number; outputTokens: number }): void => {
-              contextAccountant.recordDescendantUsage(usage);
-            },
-            // The COST half of the same roll-up: a descendant's priced generation lands on THIS run's
-            // ledger (and climbs on from here), so `total_cost_usd`, `modelUsage` and `maxBudgetUsd`
-            // are the whole tree's. Per-run for the same reason as the accessor above.
-            recordDescendantCost: (entry: PricedGenerationEntry): void => {
-              foldPricedGeneration(entry);
-            },
-            // ...and the answer that spend produces, handed DOWN: this run's `budgetExceeded()`
-            // already includes its own ancestors', so a grandchild asking its parent is asking the root.
-            budgetExceeded: (): boolean => budgetExceeded(),
-            // Phase 4 Task 8 (rider 26, RULING P4-J(e)): the parent's CURRENT live policy, read
-            // fresh on every call (never a spawn-time snapshot) -- WS-10 §9's stricter-of comparison
-            // is only meaningful against the policy in force at RESUME time. `computePolicyHash` is
-            // the same function the durable-approval path already stamps records with, so a child's
-            // recorded `parentPolicyHash` and this value are directly comparable by construction.
-            getParentPolicy: () => {
-              const st = policyStateStore.getState();
-              return { mode: st.mode, version: st.version, hash: computePolicyHash(st) };
-            },
-            // Phase 4 fix wave (C1 + I6): the parent's CURRENT LIVE rule set, read fresh on every
-            // call (never a spawn-time or factory-construction-time snapshot) -- see
-            // ChildEngineRunContext.getParentRules for the two escapes this closes. The live
-            // `PolicyStateStore` is the ONE authority: it already carries the config-seeded `sdk`
-            // entries (allowedTools/disallowedTools/permissions.* alike, WS-07 §3.3), WS-07 §9's
-            // journal-restored rules, and every mid-session `PermissionUpdate` -- so a child cannot
-            // observe a different rule set from the one the parent's own next tool call would.
-            getParentRules: (): ParentRuleMirror => {
-              const mirror: ParentRuleMirror = { allow: [], ask: [], deny: [] };
-              for (const entry of policyStateStore.getState().rules.entries) {
-                // KEPT, and the reason is no longer the one originally written here (residual round,
-                // NEW-4). The old note said `managed` meant only the hardcoded `BASELINE_DENY_RULES`,
-                // which every `runEngine` seeds for itself. The fix wave falsified that: C1 seeds
-                // managed-TIER settings rules as `managed` and I1 emits the resolved-root floor twins
-                // as `managed`, so for a while this skip was silently dropping real policy on the way
-                // into every child.
-                //
-                // WIDENING THE MIRROR WOULD NOT HAVE FIXED IT, and this is the part worth keeping:
-                // a mirrored rule arrives in the child re-tagged `sdk`, and a forced-bypass child --
-                // which is every descendant of a bypass parent -- honours ONLY `managed` denies at
-                // stage 2. A managed deny mirrored as `sdk` would be inert in exactly the case that
-                // matters most. The child therefore seeds the SAME `SettingsRuleSeed` its parent did,
-                // tags intact (`child-engine.ts` passes `deps.settingsRules` straight through), which
-                // also keeps the P5-A/P5-D per-tier gates identical on both sides. With that in place
-                // this skip is correct again: mirroring would now be a strictly weaker DUPLICATE of
-                // something the child already has.
-                if (entry.source === "managed") continue;
-                // WS-07 §3.2 as amended by RULING P5-D, and the ONE way this accessor could WIDEN
-                // rather than bind: a `project`-sourced ALLOW entry is INERT in an untrusted workspace
-                // (evaluator.ts's own `findMatchingRuleEntry` skips it, exactly as ruleset.ts's
-                // resolveRules does). Mirroring it here would re-tag it `sdk` in the child, where
-                // that gate no longer applies -- a child auto-approving what its own parent still
-                // gates, which is the C1 class in the opposite direction, inside C1's own fix. The
-                // write path makes this reachable today, not just after P5: only `cliArg` is
-                // authority-restricted (ruleset.ts's assertAuthorityMayWriteDestination), so a
-                // host's `canUseTool` can already return `{type:"addRules", destination:
-                // "projectSettings", behavior:"allow", ...}` under `session` authority. DENY/ASK
-                // entries from those same sources apply WITHOUT trust and are mirrored unchanged --
-                // the skip is allow-side only, matching the evaluator's own predicate verbatim.
-                //
-                // P5-D narrowed it from `project`/`local` to `project` alone: capture (1) shows the
-                // pinned runtime lets local/user permissive rules widen without trust. "Matching the
-                // evaluator's own predicate verbatim" is the invariant -- this is the fourth of four
-                // hand-mirrored copies of one gate (evaluator.ts's findMatchingRuleEntry,
-                // ruleset.ts's resolveRules and effectiveDirectories are the others), and they move
-                // together or a child ends up with a different permission surface than its parent.
-                if (entry.behavior === "allow" && entry.source === "project" && !trustedWorkspace) continue;
-                const raw = entry.ruleValue.ruleContent === undefined ? entry.ruleValue.toolName : `${entry.ruleValue.toolName}(${entry.ruleValue.ruleContent})`;
-                mirror[entry.behavior].push(raw);
-              }
-              return mirror;
-            },
-            // Phase 4 fix wave (I2): this run's RESOLVED MCP state, handed down so a child is not
-            // an MCP island (see ChildEngineRunContext.getParentMcpState). Read at CALL time, not
-            // capture time -- `effectiveMcpStateSource`/`effectiveMcpControlSeam` are declared
-            // below this function and are always assigned long before any Agent tool call can run,
-            // the same "declared later, read at call time" closure binding `emitToolReference`
-            // already uses for `loadedToolSet`.
-            getParentMcpState: (): ParentMcpState => ({
-              ...(effectiveMcpStateSource !== undefined ? { stateSource: effectiveMcpStateSource } : {}),
-              ...(effectiveMcpControlSeam !== undefined ? { controlSeam: effectiveMcpControlSeam } : {}),
-              ...(config.mcpServers !== undefined ? { declaredServers: config.mcpServers } : {}),
-              // Fix round 21: this run's own visible-server set, so a child's scope recurses (see
-              // `ParentMcpState.visibleServerNames`). Declared later in this function; read at call time.
-              visibleServerNames: () => [...visibleMcpServers()],
-              // WS-24 (fix round 3): the renames in this run's scope, inherited with the servers above.
-              ...(mcpServerRenames !== undefined ? { serverRenames: mcpServerRenames } : {}),
-            }),
-            // Fix wave follow-up (8), whole-branch M7: this session's own programmatic agents map,
-            // so a grandchild can resolve a `subagent_type` the host declared (see
-            // ChildEngineRunContext.getParentAgents).
-            getParentAgents: () => config.agents,
-          });
+          const deps = createChildrenDeps();
           const inheritance = buildChildInheritance(req);
           const handle = await deps.spawn(req, inheritance);
           childRoster.push(handle);
@@ -10967,6 +10992,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // The top-level engine owns the session's queue; a child engine shares its parent's and must not
   // drop it. Singleton hygiene, matching `clearSessionRequestLayout`.
   if (config.agentId === undefined) clearNotificationQueue(config.sessionId);
+  removeChildContextBinding?.();
   removeChildRosterSource();
   removeHostMessagingPort?.();
   // R-7b-4 addendum: withdraw this run's self-peer and its notice forwarder at teardown, exactly like
