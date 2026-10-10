@@ -823,7 +823,8 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
         // WS-13 §8.1 read fail-closed. Upstream states tool calling on SOME rows only, and an
         // unstated capability is unknown — so an absent flag becomes `none` at `confidence:
         // "unknown"`, never `native`. `native` is what makes a model agent-eligible; inferring it
-        // from silence would admit every unproven row to Code/Dispatch/Cowork/Build on a guess,
+        // from silence would admit every unproven row to agent use on a guess (WS-13 names
+        // Code/Dispatch and planned Cowork/Build; catalog eligibility does not implement a mode),
         // which is precisely the "silently continuing as plain chat" failure §8.1 prohibits. A row
         // whose provider really does support tools is corrected in the overlay with real evidence.
         toolCalling:

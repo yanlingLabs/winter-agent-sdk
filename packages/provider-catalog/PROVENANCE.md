@@ -179,8 +179,10 @@ than skipped.
 
 **Absent `toolCalling` becomes `none`, not `native`.** Upstream states tool calling on some rows and
 not others, and an unstated capability is unknown. `native` is what makes a model agent-eligible, so
-inferring it from silence would admit every unproven row to Code/Dispatch/Cowork/Build on a guess —
-precisely the silent degradation WS-13 §8.1 prohibits. The cost is that upstream-derived Claude and
+inferring it from silence would admit every unproven row to agent use on a guess — precisely the
+silent degradation WS-13 §8.1 prohibits. The spec's Code/Dispatch/Cowork/Build labels describe the
+intended eligibility policy; Cowork and Build are planned modes, and catalog eligibility does not
+implement or advertise their availability. The cost is that upstream-derived Claude and
 GPT rows report `toolCalling: none` until an overlay row or a live probe corrects them; the
 confidence marker on each says `unknown` so nobody reads it as a denial.
 

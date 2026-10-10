@@ -5,8 +5,11 @@
 // this file itself defines. It is deliberately NOT the daemon-wide, durable, cross-process,
 // authenticated RuntimeDirectory [WS-15] owns.
 //
-// NAMED P8 SEAM -- what a real daemon-side router/adapter must additionally supply, never
-// implemented here:
+// HISTORICAL P8 SEAM -- the following are limitations of THIS reference adapter, not a current
+// status report for every host integration. The shipped `Options.hostMessaging` bridge reaches a
+// host's other sessions (packages/sdk/src/options.ts; ./host-port.ts), including host-supplied product
+// modes via HostReachableSession. That bridge does not add Cowork/Build behavior to this adapter.
+// A host using this reference directly must supply the following itself:
 //   - durable, cross-restart outcome/message-id storage (router.ts's own MessagingRouterSeam is
 //     in-memory only; WS-10 §15's "the daemon authors canonical addresses, inbox state, name
 //     leases, and delivery records" is durable persistence this reference does not attempt);
@@ -19,9 +22,9 @@
 //   - authenticated routes (this reference treats every same-process peer as `authenticated: true`
 //     unconditionally in deliverToSession below -- a real remote/cross-machine route is exactly what
 //     inbound.ts's own `authenticated` parameter exists to gate, once a real transport exists);
-//   - an automatic "session went idle" event source (real engine/session lifecycle hooks are a P8
-//     wiring concern) -- this reference exposes `firePeerIdleTransition` for a caller (a real host,
-//     or this file's own tests) to call explicitly instead.
+//   - an automatic "session went idle" event source for this peer directory -- this reference
+//     exposes `firePeerIdleTransition` for a caller (a real host or this file's own tests) to call
+//     explicitly instead.
 //
 // PHASE 7B (R-7b-4): the contract and every routing rule this adapter is measured against now live
 // in `@yanlinglabs/winter-agent-sdk/messaging`; the adapter itself stays here, because WS-10 §15 is
@@ -83,8 +86,8 @@ export interface PeerSessionHandle {
   // WS-10 §14: "adapters without a reliable idle signal MUST refuse" notify_when_idle.
   hasReliableIdleSignal(): boolean;
   // Called only once inbound policy has already decided "accept": queue at the next tool boundary
-  // (running) or start a new turn (idle). The REAL engine-level mechanics of either are P8 (this
-  // file's own header) -- this reference only proves the decision was reached and the call made.
+  // (running) or start a new turn (idle). The delivery mechanics belong to the injected peer;
+  // this reference only proves the decision was reached and the call made.
   deliver(msg: GlobalAgentMessage): Promise<void>;
 }
 
@@ -208,11 +211,14 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
       status,
       // T8 FLAG: see resolution.ts's own childToListedRuntimeObject for the identical note --
       // WS-10 §11 leaves `mode` as an untyped `string`; the companion doc's directory record types
-      // it as the session/product mode ("code"|"chat"|"cowork"|"dispatch"|"build"), not a
-      // PermissionMode. `PeerSessionHandle` (this file's own in-process abstraction) exposes only
+      // it as a session/product label, not a PermissionMode. The companion's "cowork"/"build"
+      // labels are planned vocabulary, not modes implemented by this SDK.
+      // `PeerSessionHandle` (this file's own in-process abstraction) exposes only
       // `mode(): PermissionMode` -- there is no product-mode source to plug in here instead, so this
       // reference adapter substitutes the permission axis. Nothing downstream consumes this field
-      // yet; a real daemon-side adapter (P8) would need an actual product-mode source.
+      // for routing here. The separate shipped hostMessaging bridge carries the host's actual
+      // product-mode string (HostReachableSession -> hostSessionToListed); this reference remains
+      // a permission-mode placeholder.
       mode: peer.mode(),
       ...(peer.cwd !== undefined ? { cwd: peer.cwd } : {}),
       capabilities: {
