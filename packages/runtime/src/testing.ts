@@ -302,10 +302,11 @@ export function inMemoryProcess(
       // left registered would leak a dead session's children into the next session's ListAgents.
       const restoredChildren =
         childStore !== undefined && config.forkSession !== true && (config.resume !== undefined || config.continue === true)
-          ? await restoreChildRoster(childStore, { projectKey: compatibilityKeys(effectiveConfig.cwd).transcriptProjectKey, sessionId: effectiveConfig.sessionId })
+          ? await restoreChildRoster(childStore, { projectKey: compatibilityKeys(effectiveConfig.cwd).transcriptProjectKey, sessionId: effectiveConfig.sessionId }, { registerMessaging: false })
           : undefined;
       try {
       const code = await runEngine({
+        ...(restoredChildren !== undefined ? { restoredChildren: restoredChildren.handles } : {}),
         config: withAutoSkillPermissions(wiring.config),
         ...wiring.engineOptions,
         input,

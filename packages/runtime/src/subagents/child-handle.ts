@@ -44,6 +44,8 @@ export interface ChildSessionRecord {
    * real spawn path at all.
    */
   spawnDepth?: number;
+  /** Versioned, credential-free execution context for process restart continuation. */
+  execution?: import("./execution-snapshot.ts").ChildExecutionSnapshot;
 }
 
 // WS-10 §1.4's own 3-branch AgentOutput union, narrowed to the "completed"/local-terminal cases a
@@ -124,6 +126,10 @@ export interface ChildHandle {
    * arrives still reports usage.
    */
   usage?(): ChildResult["usage"];
+  /** Settles after the current generation has released its host/MCP resources. */
+  generationDone?(): Promise<void>;
+  /** Retire a pending resume when its parent context changes; running work is untouched. */
+  cancelPendingResume?(): void;
 }
 
 // WS-10 §2's own AgentDefinition surface, ALREADY fully pinned as the wire-shaped
@@ -291,6 +297,7 @@ export interface ChildInheritance {
 // engine.ts).
 export interface ChildEngineDeps {
   spawn(req: SpawnChildRequest, inherit: ChildInheritance): Promise<ChildHandle>;
+  restore?(record: ChildSessionRecord): Promise<ChildHandle>;
 }
 
 // --- The factory-registration point (this spine's own addition, per the brief's "the engine exposes
@@ -311,6 +318,10 @@ export interface ChildEngineRunContext {
   // I1) a child engine's own `RuntimeConfig.sessionId` IS this value: WS-10 addressing has one
   // owning session with N agents in it, distinguished by `agentId`, never N sessions.
   parentSessionId: string;
+  getParentTools?(): readonly string[];
+  getParentIdentity?(): ChildInheritance["provider"];
+  getRecordedChild?(agentId: string): ChildSessionRecord | undefined;
+  bindRestoredDescendants?(parentAgentId: string, restore: (record: ChildSessionRecord) => Promise<ChildHandle>): () => void;
   // Phase 4 fix wave (I1): the SPAWNING engine's own agent key -- `config.agentId` when the spawner
   // is itself a child, absent for the one top-level session. Distinct from `parentSessionId`, which
   // no longer identifies the spawner once every descendant shares it: without this, the spawn-depth

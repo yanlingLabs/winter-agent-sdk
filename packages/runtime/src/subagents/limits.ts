@@ -99,13 +99,13 @@ export interface SpawnLimitCheck {
 // "typed capability/limit error" precedent (sandbox/profile.ts's SandboxConfigError). Registers the
 // new child's OWN depth (for ITS future children to look up) and increments the running counter --
 // paired with releaseSpawn below, called once the child reaches a terminal status.
-export function checkAndRegisterSpawn(opts: { parentKey: string; childKey: string; env?: Record<string, string | undefined>; brand?: EnvBrand }): SpawnLimitCheck {
+export function checkAndRegisterSpawn(opts: { parentKey: string; childKey: string; env?: Record<string, string | undefined>; brand?: EnvBrand; recordedDepth?: number }): SpawnLimitCheck {
   const env = opts.env ?? process.env;
   const brand = opts.brand ?? WINTER_BRAND;
   const maxDepth = resolveMaxSpawnDepth(env, brand);
   const maxConcurrency = resolveMaxConcurrentSubagents(env, brand);
   const parentDepth = depthById.get(opts.parentKey) ?? 0;
-  const depth = parentDepth + 1;
+  const depth = opts.recordedDepth ?? parentDepth + 1;
   if (depth > maxDepth) throw new SpawnDepthExceededError(depth, maxDepth, envName(brand, "MAX_SUBAGENT_SPAWN_DEPTH"));
   if (runningCount >= maxConcurrency) throw new SpawnConcurrencyExceededError(runningCount, maxConcurrency, envName(brand, "MAX_CONCURRENT_SUBAGENTS"));
   depthById.set(opts.childKey, depth);

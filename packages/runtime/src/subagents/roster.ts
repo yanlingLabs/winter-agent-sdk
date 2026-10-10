@@ -5,14 +5,10 @@
 // settle()/spawn) is the only durable record of it. This module rebuilds a parent's own roster of
 // ChildSessionRecords from that storage on resume.
 //
-// Deliberately data-only: this does NOT rehydrate a live, resumable `ChildHandle` for any of these
-// records. Doing that needs the SAME construction-time `Provider`/`SessionStore` dependencies
-// child-engine.ts's own `createChildEngineFactory` takes (Disclosed Gap #1's identical root cause --
-// nothing reachable from a plain "rebuild the roster" call site carries either), so a genuinely
-// LIVE, resume()-after-restart-capable child handle is a real second entry point this lane does not
-// build here -- disclosed as a follow-up in this lane's own report, not attempted.
+// Data-only discovery; restore.ts creates lazy handles and child-engine.ts rebinds their
+// durable execution snapshots to a new parent run when SendMessage requests continuation.
 import type { SessionStore } from "@yanlinglabs/winter-agent-sdk";
-import { listChildAgentIds, childTranscriptSubpath, TranscriptWriter } from "../store/dialect.ts";
+import { listChildAgentIds, childTranscriptSubpath } from "../store/dialect.ts";
 import type { ChildSessionRecord } from "./child-handle.ts";
 
 export interface RosterKey {
@@ -40,7 +36,12 @@ export type RosterEntry = { ok: true; record: ChildSessionRecord; reconciled?: "
 function isPlausibleChildSessionRecord(v: unknown): v is ChildSessionRecord {
   if (typeof v !== "object" || v === null) return false;
   const r = v as Record<string, unknown>;
-  return typeof r["id"] === "string" && typeof r["parentSessionId"] === "string" && typeof r["parentToolUseId"] === "string" && typeof r["status"] === "string";
+  const model = r["model"];
+  const permission = r["permission"];
+  return typeof r["id"] === "string" && typeof r["parentSessionId"] === "string" && typeof r["parentToolUseId"] === "string" &&
+    typeof r["transcript"] === "string" && r["runtime"] === "winter-agent" && ["running", "completed", "stopped", "failed"].includes(String(r["status"])) &&
+    typeof model === "object" && model !== null && "effectiveModel" in model && typeof model.effectiveModel === "string" &&
+    typeof permission === "object" && permission !== null && "effectiveMode" in permission && typeof permission.effectiveMode === "string";
 }
 
 // Enumerates every child agentId known under a parent session (`listChildAgentIds`, WS-05 §6) and
@@ -54,14 +55,17 @@ export async function rebuildChildRoster(store: SessionStore, key: RosterKey): P
   for (const agentId of agentIds) {
     const childKey = { projectKey: key.projectKey, sessionId: key.sessionId, subpath: childTranscriptSubpath(agentId) };
     try {
-      const entries = await TranscriptWriter.readBack(store, childKey);
+      // Discover identity independently of chain validation. A corrupt transcript must leave its
+      // child addressable so SendMessage can return a history-specific refusal, rather than
+      // silently dropping the identity from ListAgents. The execution factory validates the chain.
+      const entries = await store.load(childKey) ?? [];
       const metadata = entries.find((e) => e.type === "agent_metadata");
       if (metadata === undefined) {
         out.push({ ok: false, agentId, reason: `child ${agentId} has a transcript but no agent_metadata sidecar -- cannot rebuild its record` });
         continue;
       }
       const { type: _type, ...record } = metadata;
-      if (!isPlausibleChildSessionRecord(record)) {
+      if (!isPlausibleChildSessionRecord(record) || record.id !== agentId || record.parentSessionId !== key.sessionId) {
         out.push({ ok: false, agentId, reason: `child ${agentId}'s agent_metadata sidecar is missing required fields -- treating as corrupted` });
         continue;
       }
