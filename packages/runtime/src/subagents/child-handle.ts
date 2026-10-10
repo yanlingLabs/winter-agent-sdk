@@ -321,7 +321,10 @@ export interface ChildEngineRunContext {
   getParentTools?(): readonly string[];
   getParentIdentity?(): ChildInheritance["provider"];
   getRecordedChild?(agentId: string): ChildSessionRecord | undefined;
-  bindRestoredDescendants?(parentAgentId: string, restore: (record: ChildSessionRecord) => Promise<ChildHandle>): () => void;
+  /** Cancels pending resumes and drains descendants before their owning context is released. */
+  bindRestoredDescendants?(parentAgentId: string, restore: (record: ChildSessionRecord) => Promise<ChildHandle>): () => void | Promise<void>;
+  getCurrentAgentDefinition?(name: string): ResolvedAgentDefinition | undefined;
+  getParentWorkspace?(): { cwd: string; projectKey: string };
   // Phase 4 fix wave (I1): the SPAWNING engine's own agent key -- `config.agentId` when the spawner
   // is itself a child, absent for the one top-level session. Distinct from `parentSessionId`, which
   // no longer identifies the spawner once every descendant shares it: without this, the spawn-depth

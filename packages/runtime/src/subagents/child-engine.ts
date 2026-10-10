@@ -99,8 +99,9 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import type { RuntimeConfig, WinterFrame, SessionStore, ControlResponseFrame, RuntimeHooksConfig, SandboxSettingsConfig, PermissionMode, BrandProfile } from "@yanlinglabs/winter-agent-sdk";
-import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
+import { compatibilityKeys, WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 import { runEngine, createContextAccountant, type ContextAccountant, type EngineOptions, type EngineSettingsRuleSeed, type Provider, type ProviderMessage, type ProviderUsage } from "../engine.ts";
 import { createInMemoryChannel, type FrameSink } from "../protocol/channel.ts";
 import { STRUCTURED_OUTPUT_TOOL_NAME } from "../structured/seam.ts";
@@ -126,9 +127,10 @@ import { createStallWatchdog, resolveStallTimeoutMs } from "./watchdog.ts";
 import { resolveModelAlias, describeRequestedModel, resolveEffort, recordModelEffort, type ModelCatalog, type RecordedModelEffort } from "./resolution.ts";
 import { buildForkInitialMessages, buildForkDirectiveText } from "./fork.ts";
 import { createWorkspace, cleanupWorkspace } from "./workspace.ts";
-import { readChildExecutionSnapshot, snapshotChildExecution } from "./execution-snapshot.ts";
+import { readChildExecutionSnapshot, readChildExecutionProjectKey, snapshotChildExecution, type ChildExecutionSnapshot } from "./execution-snapshot.ts";
 import { validateAgentDefinition, allowedAgentTypesFromTools } from "./definitions.ts";
 import { resolveChildResumeMode, ChildResumeModeIncomparableError } from "../permissions/auto/inheritance.ts";
+import { isPermissionMode } from "../permissions/policy-state.ts";
 // Phase 5 Task 8: the parent's assembler and skill index reach a child through the factory deps --
 // see ChildEngineFactoryDeps for why each one is a real gap rather than a nicety.
 import type { SystemPromptAssembler } from "../context/seam.ts";
@@ -530,6 +532,61 @@ export function allocateChildScopedServers(
   };
 }
 
+/** Saved restrictions are a floor; a named persona and its authority must still exist today. */
+function currentChildRequest(snapshot: ChildExecutionSnapshot, runCtx: ChildEngineRunContext): SpawnChildRequest {
+  const request: SpawnChildRequest = { ...snapshot.request };
+  const name = request.agentType ?? request.builtinAgentType;
+  if (name === undefined) return request;
+  const current = runCtx.getCurrentAgentDefinition !== undefined
+    ? runCtx.getCurrentAgentDefinition(name)
+    : runCtx.getParentAgents?.()?.[name] as SpawnChildRequest["definition"];
+  if (current === undefined || typeof current !== "object" || current === null || typeof current.prompt !== "string") {
+    throw new Error(`current trusted agent definition "${name}" is unavailable`);
+  }
+  const saved = snapshot.request.definition;
+  const restricted = (tools: string[] | undefined): tools is string[] => tools !== undefined && !tools.includes("*");
+  const ordinary = (tools: string[] | undefined): string[] | undefined => tools?.filter((tool) => !/^Agent\(.*\)$/s.test(tool.trim()));
+  const oldTools = ordinary(saved?.tools);
+  const newTools = ordinary(current.tools);
+  let tools = restricted(newTools)
+    ? newTools.filter((tool) => !restricted(oldTools) || oldTools.includes(tool))
+    : oldTools;
+  const savedTypes = allowedAgentTypesFromTools(saved?.tools);
+  const currentTypes = allowedAgentTypesFromTools(current.tools);
+  const types = savedTypes === undefined ? currentTypes : currentTypes === undefined ? savedTypes : savedTypes.filter((type) => currentTypes.includes(type));
+  if (types !== undefined) tools = [...(tools ?? ["*"]), `Agent(${types.join(",")})`];
+  const definition = {
+    ...current,
+    ...(request.fork === true && saved !== undefined ? { prompt: saved.prompt } : {}),
+    ...(tools !== undefined ? { tools } : {}),
+    disallowedTools: [...new Set([...(saved?.disallowedTools ?? []), ...(current.disallowedTools ?? [])])],
+  };
+  // Memory scopes are not ordered. A newly introduced or changed scope never gains access through
+  // resume; disabling it is the conservative intersection of the saved/current contracts.
+  if (saved?.memory === undefined || saved.memory !== current.memory) delete definition.memory;
+  request.definition = definition;
+  return request;
+}
+
+function definitionTools(tools: readonly string[], request: SpawnChildRequest): string[] {
+  const declared = request.definition?.tools;
+  return tools.filter((tool) => (declared === undefined || declared.includes("*") || declared.includes(tool)) && !(request.definition?.disallowedTools ?? []).includes(tool));
+}
+
+function definitionMode(record: ChildSessionRecord, request: SpawnChildRequest): PermissionMode {
+  const mode = request.definition?.permissionMode;
+  return mode !== undefined && isPermissionMode(mode) ? resolveChildResumeMode(record.permission, mode) : record.permission.effectiveMode;
+}
+
+function validateRestoredWorkspace(record: ChildSessionRecord, snapshot: ChildExecutionSnapshot, parentCwd: string, deps: ChildEngineFactoryDeps): void {
+  const expectedRoot = snapshot.workspace.isolationType === "worktree"
+    ? join(parentCwd, (deps.parentBrand ?? WINTER_BRAND).projectDirName, "worktrees", `agent-${record.id}`)
+    : parentCwd;
+  if (resolve(snapshot.inheritance.sessionRoot) !== resolve(parentCwd) || resolve(snapshot.workspace.root) !== resolve(expectedRoot)) throw new Error("child workspace does not match its current parent workspace");
+  const rosterKey = readChildExecutionProjectKey(record);
+  if (rosterKey !== undefined && snapshot.projectKey !== rosterKey) throw new Error("child snapshot project key does not match its durable roster key");
+}
+
 export function createChildEngineFactory(deps: ChildEngineFactoryDeps): ChildEngineFactory {
   return (runCtx: ChildEngineRunContext): ChildEngineDeps => ({
     spawn(req: SpawnChildRequest, inherit: ChildInheritance): Promise<ChildHandle> {
@@ -540,11 +597,13 @@ export function createChildEngineFactory(deps: ChildEngineFactoryDeps): ChildEng
       if (deps.store === undefined) throw new Error("durable child store is unavailable");
       if (record.parentSessionId !== runCtx.parentSessionId) throw new Error("child belongs to another session");
       const snapshot = readChildExecutionSnapshot(record);
+      const request = currentChildRequest(snapshot, runCtx);
+      const currentWorkspace = runCtx.getParentWorkspace?.();
+      const ancestors: Array<{ record: ChildSessionRecord; execution: ChildExecutionSnapshot; request: SpawnChildRequest }> = [];
       if (snapshot.parentAgentId !== runCtx.parentAgentId) {
         // An idle ancestor has no live engine context. Reconstruct its restrictions conservatively
         // from the durable lineage, intersecting every ancestor's tool pool and permission mode with
         // today's root. A live ancestor instead binds its actual context through runEngine below.
-        const ancestors: ChildSessionRecord[] = [];
         const seen = new Set([record.id]);
         let parentId = snapshot.parentAgentId;
         while (parentId !== undefined) {
@@ -555,44 +614,63 @@ export function createChildEngineFactory(deps: ChildEngineFactoryDeps): ChildEng
           const execution = readChildExecutionSnapshot(parent);
           if (parent.status === "running") throw new Error(`parent agent ${parentId} is running without a bound live child context`);
           if (execution.scopedMcpServerNames.length > 0) throw new Error(`parent agent ${parentId} must resume first to reattach its child-scoped MCP servers`);
-          ancestors.push(parent);
+          ancestors.push({ record: parent, execution, request: currentChildRequest(execution, runCtx) });
           parentId = execution.parentAgentId;
         }
         if (ancestors.length + 1 !== record.spawnDepth) throw new Error("corrupt child lineage: spawn depth does not match its ancestors");
+        for (let index = 0; index < ancestors.length; index++) {
+          const parent = ancestors[index]!;
+          const child = index === 0 ? request : ancestors[index - 1]!.request;
+          const allowedTypes = allowedAgentTypesFromTools(parent.request.definition?.tools);
+          const childType = child.agentType ?? child.builtinAgentType;
+          if (allowedTypes !== undefined && childType !== undefined && !allowedTypes.includes(childType)) throw new Error(`current parent agent ${parent.record.id} does not allow child type "${childType}"`);
+        }
         const rootRules = (): import("./child-handle.ts").ParentRuleMirror => runCtx.getParentRules?.() ?? { allow: [], ask: [], deny: [] };
         restoreCtx = {
           ...runCtx,
           ...(snapshot.parentAgentId !== undefined ? { parentAgentId: snapshot.parentAgentId } : {}),
           getParentTools: () => {
             const rootTools = runCtx.getParentTools?.() ?? snapshot.inheritance.tools;
-            return rootTools.filter((tool) => ancestors.every((parent) => parent.execution!.inheritance.tools.includes(tool)));
+            return rootTools.filter((tool) => ancestors.every((parent) => definitionTools(parent.execution.inheritance.tools, parent.request).includes(tool)));
           },
           getParentRules: () => {
             const current = rootRules();
-            return { allow: current.allow, ask: [...new Set([...current.ask, ...ancestors.flatMap((parent) => [...parent.execution!.restrictions.ask])])], deny: [...new Set([...current.deny, ...ancestors.flatMap((parent) => [...parent.execution!.restrictions.deny, ...(parent.execution!.request.definition?.disallowedTools ?? [])])])] };
+            return { allow: current.allow, ask: [...new Set([...current.ask, ...ancestors.flatMap((parent) => [...parent.execution.restrictions.ask])])], deny: [...new Set([...current.deny, ...ancestors.flatMap((parent) => [...parent.execution.restrictions.deny, ...(parent.request.definition?.disallowedTools ?? [])])])] };
           },
           getParentPolicy: () => {
             const current = runCtx.getParentPolicy?.() ?? { mode: record.permission.effectiveMode, hash: record.permission.parentPolicyHash, version: record.permission.parentPolicyVersion };
             let mode = current.mode;
-            for (const parent of ancestors) mode = resolveChildResumeMode(parent.permission, mode);
+            for (const parent of ancestors) mode = resolveChildResumeMode({ ...parent.record.permission, effectiveMode: definitionMode(parent.record, parent.request) }, mode);
             return { ...current, mode };
           },
         };
       }
+      if (currentWorkspace !== undefined) {
+        let parentCwd = currentWorkspace.cwd;
+        for (const parent of [...ancestors].reverse()) {
+          validateRestoredWorkspace(parent.record, parent.execution, parentCwd, deps);
+          parentCwd = parent.execution.workspace.root;
+        }
+        validateRestoredWorkspace(record, snapshot, parentCwd, deps);
+        // Hosts without a rebuilt roster still supply an independent current project key. Older
+        // snapshots used the raw compatibility key even when the host selected a branded override.
+        if (readChildExecutionProjectKey(record) === undefined && ancestors.length === 0 && snapshot.projectKey !== currentWorkspace.projectKey && snapshot.projectKey !== compatibilityKeys(parentCwd).transcriptProjectKey) throw new Error("child snapshot project key does not match its current workspace");
+      } else if (readChildExecutionProjectKey(record) !== undefined && snapshot.projectKey !== readChildExecutionProjectKey(record)) throw new Error("child snapshot project key does not match its durable roster key");
       // Rebind named definition-owned transports from the host's CURRENT definition. Their env,
       // headers, SDK instances and credentials never cross the durable snapshot boundary.
-      const request: SpawnChildRequest = { ...snapshot.request };
       if (snapshot.scopedMcpServerNames.length > 0) {
-        const definition = snapshot.request.agentType !== undefined ? runCtx.getParentAgents?.()?.[snapshot.request.agentType] : undefined;
+        const definition = request.definition;
         const specs = typeof definition === "object" && definition !== null && "mcpServers" in definition && Array.isArray(definition.mcpServers) ? definition.mcpServers : [];
         const rebound: NonNullable<SpawnChildRequest["definition"]>["mcpServers"] = [];
         for (const name of snapshot.scopedMcpServerNames) {
-          const matches = specs.filter((spec) => typeof spec === "object" && spec !== null && !Array.isArray(spec) && Object.hasOwn(spec, name));
+          const matches = specs.filter((spec): spec is ChildMcpServers => typeof spec === "object" && spec !== null && !Array.isArray(spec) && Object.hasOwn(spec, name));
           if (matches.length !== 1) throw new Error(`child-scoped MCP server "${name}" requires an unambiguous current host definition for "${snapshot.request.agentType ?? "unnamed agent"}"`);
-          rebound.push({ [name]: matches[0][name] });
+          rebound.push({ [name]: matches[0]![name]! });
         }
         if (request.definition === undefined) throw new Error("child-scoped MCP snapshot has no definition");
-        request.definition = { ...request.definition, mcpServers: rebound };
+        request.definition = { ...request.definition, mcpServers: [...snapshot.inheritedMcpServerNames, ...rebound] };
+      } else if (request.definition !== undefined) {
+        request.definition = { ...request.definition, mcpServers: [...snapshot.inheritedMcpServerNames] };
       }
       const mcp = runCtx.getParentMcpState?.();
       for (const name of snapshot.inheritedMcpServerNames) {
@@ -601,9 +679,9 @@ export function createChildEngineFactory(deps: ChildEngineFactoryDeps): ChildEng
       const currentTools = restoreCtx.getParentTools?.();
       const inherit: ChildInheritance = {
         ...snapshot.inheritance,
-        policy: record.permission,
+        policy: { ...record.permission, effectiveMode: definitionMode(record, request) },
         model: record.model.effectiveModel,
-        tools: currentTools === undefined ? snapshot.inheritance.tools : snapshot.inheritance.tools.filter((name) => currentTools.includes(name)),
+        tools: definitionTools(currentTools === undefined ? snapshot.inheritance.tools : snapshot.inheritance.tools.filter((name) => currentTools.includes(name)), request),
       };
       // Exact fork layouts still retain their persona and schemas, but a host withdrawing a tool
       // must also withdraw that tool from the saved advertised layout.
@@ -877,8 +955,8 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     const childDurableRoot = deps.storeHome ?? deps.winterHome;
 
     // --- Durable transcript (WS-05 §4/§5.2/§5.3, WS-10 §7) --------------------------------------
-    const childStore = deps.store;
-    const projectKey = restored?.execution?.projectKey ?? compatibilityKeys(inherit.sessionRoot).transcriptProjectKey;
+    let childStore = deps.store;
+    const projectKey = restored?.execution?.projectKey ?? runCtx.getParentWorkspace?.().projectKey ?? compatibilityKeys(inherit.sessionRoot).transcriptProjectKey;
     const childKey = { projectKey, sessionId: runCtx.parentSessionId, subpath: childTranscriptSubpath(agentId) };
     // Read before constructing a resumed writer, so a second process appends to the existing
     // chain rather than creating a fresh root and hiding earlier generations on the next restart.
@@ -886,7 +964,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     const restoredChain = toDialectEntries(restoredEntries);
     const restoredLeaf = restoredChain.at(-1)?.uuid;
     const restoredConversationalUuids = restoredChain.filter((e) => (e.message !== undefined && (e.type === "user" || e.type === "assistant" || e.type === "compact_summary")) || (e.type === "attachment" && e.attachment !== undefined)).map((e) => e.uuid);
-    const writer: TranscriptWriter | undefined =
+    let writer: TranscriptWriter | undefined =
       childStore !== undefined
         ? buildChildTranscriptWriter({
             store: childStore,
@@ -934,14 +1012,27 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       ...(req.name !== undefined ? { name: req.name } : {}),
       spawnDepth,
     };
+    let persistenceFailed = false;
     if (restored === undefined) {
       const liveRules = runCtx.getParentRules?.();
-      record.execution = snapshotChildExecution({
-        request: req, inheritance: { ...inherit, tools: effectiveTools }, workspace, projectKey,
-        ...(runCtx.parentAgentId !== undefined ? { parentAgentId: runCtx.parentAgentId } : {}),
-        rules: { ask: [...new Set([...(deps.parentPermissionRules?.ask ?? []), ...(liveRules?.ask ?? [])])], deny: [...new Set([...(deps.parentPermissionRules?.deny ?? []), ...(liveRules?.deny ?? [])])] },
-      });
-      await writer?.writeMetadata({ ...record });
+      try {
+        record.execution = snapshotChildExecution({
+          request: req, inheritance: { ...inherit, tools: effectiveTools }, workspace, projectKey,
+          ...(runCtx.parentAgentId !== undefined ? { parentAgentId: runCtx.parentAgentId } : {}),
+          rules: { ask: [...new Set([...(deps.parentPermissionRules?.ask ?? []), ...(liveRules?.ask ?? [])])], deny: [...new Set([...(deps.parentPermissionRules?.deny ?? []), ...(liveRules?.deny ?? [])])] },
+          resolvedInheritedMcpServerNames: (req.definition?.mcpServers ?? []).filter((spec): spec is string => typeof spec === "string" && parentMcp?.declaredServers?.[spec] !== undefined),
+        });
+        await writer?.writeMetadata({ ...record });
+      } catch {
+        // Persistence is optional for a fresh spawn. A store lease conflict must not turn a
+        // functioning child into an Agent tool error or leave a misleading resume snapshot.
+        delete record.execution;
+        record.transcript = "none -- durable child persistence is unavailable for this run";
+        childStore = undefined;
+        writer = undefined;
+        persistenceFailed = true;
+        try { deps.warn?.(`winter: child ${agentId} cannot persist its execution snapshot; continuing without durable resumability`); } catch { /* warnings are best effort */ }
+      }
     }
 
     let resolveResultOnce!: (r: ChildResult) => void;
@@ -966,7 +1057,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // with it released that generation's MCP server-name claims.
     let lastGenerationDone: Promise<void> = Promise.resolve();
     // Fix round 3: set while a resume waits for the previous generation's teardown (see `resume()`).
-    let pendingResume: { stopped: boolean } | undefined;
+    let pendingResume: { stopped: boolean; contextChanged: boolean } | undefined;
     let resuming = false;
 
     // One generation = one live `runEngine()` invocation, from its initial "user" turn until IT
@@ -1726,10 +1817,12 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         return { status: "delivered", messageId: msg.messageId };
       },
       async resume(msg: GlobalAgentMessage): Promise<DeliveryOutcome> {
+        if (persistenceFailed) return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: `child ${agentId} cannot resume because durable child persistence was unavailable at spawn` };
         if (record.status === "running") return { status: "not_found", messageId: msg.messageId, reason: `child ${agentId} is still running -- resume targets a terminal child only` };
         if (resuming) return { status: "unavailable", messageId: msg.messageId, retryable: true, reason: `child ${agentId} is already resuming` };
         resuming = true;
-        const ticket = { stopped: false };
+        const ticket = { stopped: false, contextChanged: false };
+        const previousStatus = record.status;
         pendingResume = ticket;
         let resumeSlot = false;
         let generationStarted = false;
@@ -1819,6 +1912,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
               reason: `child-provider-unavailable: re-resolution failed for ${record.model.effectiveModel} (${reason})`,
             };
           }
+          if (ticket.stopped || ticket.contextChanged) return { status: "unavailable", messageId: msg.messageId, retryable: !ticket.stopped, reason: ticket.stopped ? `child ${agentId} was stopped while resuming` : `child ${agentId}'s parent context changed while resuming; retry with the current parent` };
           if (again !== undefined && "refused" in again) {
             const { providerId, modelKey, reason } = again.refused;
             return {
@@ -1917,20 +2011,15 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
               return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: `child-history-unavailable: ${err instanceof Error ? err.message : String(err)}` };
             }
           }
-          // Fix round 1 (finding Q1, forward-compat): WS-07 §11's own "resume applies the stricter of
-          // recorded vs. current parent policy" -- applied when `deps.getParentPolicy` is supplied
-          // (today: only a test; T8 wires the real per-spawn accessor onto `ChildEngineRunContext`,
-          // see `ChildEngineFactoryDeps`'s own header on this field for why nothing reaches it in
-          // production yet). Absent, this falls back to `record.permission.effectiveMode` reused
-          // verbatim -- exactly the pre-fix-round behavior, which can only be EQUAL to or STRICTER
-          // than a parent that has since loosened (a real, disclosed residual gap only if the parent's
-          // own policy has since become STRICTER than what was recorded).
-          let resumeMode: PermissionMode = record.permission.effectiveMode;
+          if (ticket.stopped || ticket.contextChanged) return { status: "unavailable", messageId: msg.messageId, retryable: !ticket.stopped, reason: ticket.stopped ? `child ${agentId} was stopped while resuming` : `child ${agentId}'s parent context changed while resuming; retry with the current parent` };
+          // Apply both the current definition's floor and the live parent's mode. Direct hosts
+          // can omit the parent-policy getter; their definition floor must still survive a restart.
+          let resumeMode: PermissionMode = resolveChildResumeMode(record.permission, inherit.policy.effectiveMode);
           const getCurrentParentPolicy = deps.getParentPolicy ?? runCtx.getParentPolicy;
           if (getCurrentParentPolicy !== undefined) {
             const currentPolicy = getCurrentParentPolicy();
             try {
-              resumeMode = resolveChildResumeMode(record.permission, currentPolicy.mode);
+              resumeMode = resolveChildResumeMode({ ...record.permission, effectiveMode: resumeMode }, currentPolicy.mode);
             } catch (err) {
               if (err instanceof ChildResumeModeIncomparableError) {
                 // RULING P4-D: the one documented incomparable pair ({dontAsk, auto}, either
@@ -1941,23 +2030,22 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
               }
               throw err;
             }
-            // Fix round 2 (nit): mutating `record.permission` alone is an IN-MEMORY update only --
-            // the durable `.meta.json` sidecar would otherwise stay on the OLD (looser) recorded mode
-            // until the next settle(), which can be arbitrarily far in the future (the whole rest of
-            // this resumed generation's own run). A crash in that window must never leave the
-            // pre-resume, looser mode as the durable record of what this child is actually running
-            // under -- so the sidecar is rewritten HERE, synchronously with the mutation, not deferred
-            // to the next terminal settlement. A LATER resume (or a roster rebuild after restart) then
-            // compares against this generation's own resolution rather than the original spawn-time
-            // snapshot, durably, not just in this process's own memory.
             record.permission = { effectiveMode: resumeMode, parentPolicyHash: currentPolicy.hash, parentPolicyVersion: currentPolicy.version };
-            void writer?.writeMetadata({ ...record });
-          }
+          } else record.permission = { ...record.permission, effectiveMode: resumeMode };
+          // The awaited metadata write below persists this floor before any generation starts.
           const currentRules = resolveParentRules();
           if (record.execution !== undefined) record.execution.restrictions = {
             ask: [...new Set([...(record.execution.restrictions.ask ?? []), ...(currentRules?.ask ?? [])])],
             deny: [...new Set([...(record.execution.restrictions.deny ?? []), ...(currentRules?.deny ?? [])])],
           };
+          if (record.execution !== undefined) {
+            // Save every newly narrowed authority floor for later restarts, without retaining any
+            // live MCP credentials or transports from the current definition.
+            const updated = snapshotChildExecution({ request: req, inheritance: { ...inherit, tools: effectiveTools }, workspace, projectKey, ...(record.execution.parentAgentId !== undefined ? { parentAgentId: record.execution.parentAgentId } : {}), rules: record.execution.restrictions, resolvedInheritedMcpServerNames: record.execution.inheritedMcpServerNames });
+            if (updated.request.definition !== undefined) record.execution.request.definition = updated.request.definition;
+            else delete record.execution.request.definition;
+            record.execution.inheritance.tools = updated.inheritance.tools;
+          }
           if (resumeProviderId !== undefined) record.model = { ...record.model, effectiveProvider: resumeProviderId };
           record.status = "running";
           await writer?.writeMetadata({ ...record });
@@ -1979,7 +2067,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           await Promise.race([lastGenerationDone, new Promise<void>((resolve) => setTimeout(resolve, GENERATION_TEARDOWN_WAIT_MS).unref?.())]);
           // Fix round 3: a `stop()` that landed during that wait had no generation of its own to settle (the
           // previous one already had), so it is honoured here -- the new generation never starts.
-          if (ticket.stopped) return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: `child ${agentId} was stopped while resuming` };
+          if (ticket.stopped || ticket.contextChanged) return { status: "unavailable", messageId: msg.messageId, retryable: !ticket.stopped, reason: ticket.stopped ? `child ${agentId} was stopped while resuming` : `child ${agentId}'s parent context changed while resuming; retry with the current parent` };
           serverAllocation = allocateChildScopedServers(childScopedMcpServers, parentVisibleServers(), previous, parentMcp?.declaredServers, deps.parentReservedMcpServerNames);
           allocatedForResume = serverAllocation;
           const moved = [...serverAllocation.actual].filter(([declared, name]) => previous.get(declared) !== name).map(([declared, name]) => `this agent's own "${declared}" is now connected as "${name}" (its tools are named mcp__${name}__<tool>)`);
@@ -1993,7 +2081,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           if (!generationStarted) allocatedForResume?.release();
           if (!generationStarted && resumeSlot) releaseSpawn(agentId);
           if (!generationStarted && record.status === "running") {
-            record.status = "stopped";
+            record.status = ticket.contextChanged && !ticket.stopped ? previousStatus : "stopped";
             await writer?.writeMetadata({ ...record }).catch(() => {});
           }
           if (pendingResume === ticket) pendingResume = undefined;
@@ -2024,7 +2112,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         return currentUsage?.();
       },
       generationDone: () => lastGenerationDone,
-      cancelPendingResume: () => { if (pendingResume !== undefined) pendingResume.stopped = true; },
+      cancelPendingResume: () => { if (pendingResume !== undefined) pendingResume.contextChanged = true; },
     };
 
     if (restored !== undefined) {

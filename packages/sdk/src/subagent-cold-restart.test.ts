@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,7 @@ import { compatibilityKeys } from "./paths/keys.ts";
 const mainPath = fileURLToPath(new URL("../../runtime/src/main.ts", import.meta.url));
 const preloadPath = fileURLToPath(new URL("../../../scripts/fixtures/subagent-cold-restart-provider.preload.ts", import.meta.url));
 const REPLY = "COLD_RESTART_REPLY:";
-type Report = { phase: string; markerSeen: boolean; personaSeen: boolean; priorReplies: number; cacheKey: string; pid: number };
+type Report = { phase: string; markerSeen: boolean; personaSeen: boolean; currentPersonaSeen: boolean; interruptedIds: string[]; historyValid: boolean; priorReplies: number; cacheKey: string; pid: number };
 type Block = { type: string; id?: string; text?: string; content?: string; name?: string; input?: unknown };
 type Message = { type: string; parent_tool_use_id?: string | null; subtype?: string; message?: { content?: Block[] } };
 
@@ -139,16 +139,15 @@ test("SendMessage resumes the same named child and its context through two real 
     expect(initialTranscript).toContain("COLD_RESTART_SECRET_MARKER");
     const initialFiles = readdirSync(subagents).sort();
 
-    // Remove the original definition from restart configs. The restored child must keep its
-    // original persona without needing the caller to repeat its original Agent definition.
-    const { agents: _definitions, ...resumedConfig } = base;
+    // Current trusted definitions remain authoritative across every process incarnation.
+    const resumedConfig = { ...base, agents: { "cold-probe": { ...base.agents!["cold-probe"]!, prompt: "COLD_RESTART_CURRENT_PERSONA" } } };
     const second = await runParent({ ...resumedConfig, resume: sessionId },
       "CALL ListAgents {}\nCALL SendMessage " + JSON.stringify({ to: childId, message: "FOLLOWUP_ONE" }), env, "FOLLOWUP_ONE");
     expect(second.pid).not.toBe(first.pid);
     expect(toolResults(second.frames).find((result) => result.status !== undefined)?.status).toBe("resumed_and_delivered");
     expect(JSON.stringify(toolResults(second.frames))).toContain("durable-probe");
     const secondReply = childReplies(second.frames).at(-1)!;
-    expect(secondReply).toMatchObject({ phase: "FOLLOWUP_ONE", markerSeen: true, personaSeen: true, priorReplies: 1, pid: second.pid });
+    expect(secondReply).toMatchObject({ phase: "FOLLOWUP_ONE", markerSeen: true, personaSeen: false, currentPersonaSeen: true, priorReplies: 1, pid: second.pid });
     expect(secondReply.cacheKey).toBe(initialReply.cacheKey);
     expect(replyCorrelations(second.frames)).toEqual([originalSpawnId]);
     const secondTranscript = readFileSync(transcriptPath, "utf8");
@@ -159,7 +158,7 @@ test("SendMessage resumes the same named child and its context through two real 
       "CALL SendMessage " + JSON.stringify({ to: "durable-probe", message: "FOLLOWUP_TWO" }), env, "FOLLOWUP_TWO");
     expect(new Set([first.pid, second.pid, third.pid]).size).toBe(3);
     expect(toolResults(third.frames).find((result) => result.status !== undefined)?.status).toBe("resumed_and_delivered");
-    expect(childReplies(third.frames).at(-1)).toMatchObject({ phase: "FOLLOWUP_TWO", markerSeen: true, personaSeen: true,
+    expect(childReplies(third.frames).at(-1)).toMatchObject({ phase: "FOLLOWUP_TWO", markerSeen: true, personaSeen: false, currentPersonaSeen: true,
       priorReplies: 2, cacheKey: initialReply.cacheKey, pid: third.pid });
     expect(replyCorrelations(third.frames)).toEqual([originalSpawnId]);
     expect(readdirSync(subagents).sort()).toEqual(initialFiles);
@@ -169,12 +168,22 @@ test("SendMessage resumes the same named child and its context through two real 
     expect(readFileSync(join(cwd, "initial-effects.txt"), "utf8")).toBe("initial-effect\n");
     const reports = readFileSync(reportsPath, "utf8").trim().split("\n").map((line) => JSON.parse(line) as Report);
     expect(new Set(reports.map((report) => report.pid))).toEqual(new Set([first.pid, second.pid, third.pid]));
-    expect(reports.every((report) => report.markerSeen && report.personaSeen)).toBe(true);
+    expect(reports.every((report) => report.markerSeen && report.historyValid)).toBe(true);
     // No restart may replay an original Agent call and create a second child.
     for (const run of [second, third]) expect(messages(run.frames).flatMap((message) => message.message?.content ?? [])
       .filter((block) => block.type === "tool_use" && block.name === "Agent")).toEqual([]);
+
+    const { agents: _definitions, ...missingDefinitionConfig } = base;
+    const refused = await runParent({ ...missingDefinitionConfig, resume: sessionId }, "CALL SendMessage " + JSON.stringify({
+      to: childId, message: "FOLLOWUP_ONE MUST NOT EXECUTE",
+    }), env, "FOLLOWUP_ONE");
+    expect(toolResults(refused.frames).find((result) => result.status !== undefined)?.status).toBe("unavailable");
+    expect(childReplies(refused.frames)).toEqual([]);
+    expect(readFileSync(transcriptPath, "utf8")).toBe(finalTranscript);
+    expect(readFileSync(reportsPath, "utf8").trim().split("\n").map((line) => JSON.parse(line) as Report)
+      .some((report) => report.pid === refused.pid)).toBe(false);
   } finally { rmSync(root, { recursive: true, force: true }); }
-}, 135_000);
+}, 175_000);
 
 test("a nested child remains addressable with its original depth and history after its parent process exits", async () => {
   const root = mkdtempSync(join(tmpdir(), "winter-nested-cold-restart-"));
@@ -216,8 +225,7 @@ test("a nested child remains addressable with its original depth and history aft
     const before = readFileSync(transcriptPath, "utf8");
     const originalReply = childReplies(first.frames).at(-1)!;
     expect(originalReply).toMatchObject({ markerSeen: true, personaSeen: true, priorReplies: 0 });
-    const { agents: _definitions, ...resumedConfig } = base;
-    const second = await runParent({ ...resumedConfig, resume: sessionId },
+    const second = await runParent({ ...base, resume: sessionId },
       "CALL SendMessage " + JSON.stringify({ to: "nested-leaf", message: "FOLLOWUP_ONE" }), env, "FOLLOWUP_ONE");
     expect(second.pid).not.toBe(first.pid);
     expect(toolResults(second.frames).find((result) => result.status !== undefined)?.status).toBe("resumed_and_delivered");
@@ -232,3 +240,81 @@ test("a nested child remains addressable with its original depth and history aft
     expect(readFileSync(join(cwd, "initial-effects.txt"), "utf8")).toBe("initial-effect\n");
   } finally { rmSync(root, { recursive: true, force: true }); }
 }, 95_000);
+
+test("SIGKILL during a child tool resumes valid parent and child histories in a fresh PID without repeating its effect", async () => {
+  const root = mkdtempSync(join(tmpdir(), "winter-subagent-sigkill-"));
+  const cwd = join(root, "workspace");
+  const winterHome = join(root, "winter-home");
+  mkdirSync(cwd);
+  const sessionId = randomUUID();
+  const config: RuntimeConfig = {
+    sessionId, cwd, model: "winter-test/calls", settingSources: [],
+    allowedTools: ["Agent", "SendMessage", "Bash"], forwardSubagentText: true,
+    sandbox: { enabled: false }, autoMemory: { enabled: false },
+    agents: { "cold-probe": { description: "Crash context probe", prompt: "COLD_RESTART_PERSONA", tools: ["Bash"] } },
+  };
+  const reportsPath = join(root, "provider-requests.jsonl");
+  const env: Record<string, string> = {
+    PATH: process.env.PATH ?? "/usr/bin:/bin", TMPDIR: tmpdir(), TZ: "UTC",
+    WINTER_HOME: winterHome, WINTER_DISABLE_GIT_INSTRUCTIONS: "1",
+    WINTER_COLD_RESTART_REPORTS: reportsPath, [TEST_KEYCHAIN_ENV]: TEST_KEYCHAIN_MEMORY,
+  };
+  const proc = defaultSpawn({ command: process.execPath, args: ["--preload", preloadPath, mainPath,
+    "--run", "--config-json", JSON.stringify(config)], cwd, env });
+  expect(proc.pid).toBeGreaterThan(0);
+  expect(proc.pid).not.toBe(process.pid);
+  let stderr = "";
+  const readErr = (async () => { for await (const chunk of proc.stderr ?? []) stderr += chunk; })();
+  const drain = (async () => { for await (const _chunk of proc.stdout) { /* keep pipes draining until the OS kill */ } })();
+  try {
+    proc.stdin.write(encodeFrame({ type: "user", text: "CALL Agent " + JSON.stringify({
+      name: "crashed-probe", subagent_type: "cold-probe", description: "Crash mid tool",
+      prompt: "COLD_RESTART_SECRET_MARKER CRASH_START", run_in_background: false,
+    }) }));
+    await bounded(new Promise<void>((resolve) => {
+      const interval = setInterval(() => {
+        if (existsSync(join(cwd, "crash-started.txt"))) { clearInterval(interval); resolve(); }
+      }, 10);
+      // Do not retain a timer if startup fails before it can reach the tool.
+      proc.exited.then(() => { clearInterval(interval); resolve(); });
+    }), "child side effect before SIGKILL");
+    expect(existsSync(join(cwd, "crash-started.txt")), stderr).toBe(true);
+    const subagents = join(winterHome, "projects", compatibilityKeys(cwd).transcriptProjectKey, sessionId, "subagents");
+    const metadataFile = readdirSync(subagents).find((file) => file.endsWith(".meta.json"))!;
+    const metadata = JSON.parse(readFileSync(join(subagents, metadataFile), "utf8")) as { id: string };
+    const transcriptPath = join(subagents, metadataFile.replace(".meta.json", ".jsonl"));
+    const before = readFileSync(transcriptPath, "utf8");
+    expect(before).toContain('"id":"crash-call"');
+    expect(before).not.toContain('"tool_use_id":"crash-call"');
+    const initialReport = JSON.parse(readFileSync(reportsPath, "utf8").trim().split("\n")[0]!) as Report;
+    expect(initialReport.pid).toBe(proc.pid!);
+    // This is an OS kill of the real runtime while Bash is still executing, with no graceful
+    // interrupt frame and no chance for the live tool loop to persist its synthetic result.
+    proc.kill("SIGKILL");
+    expect(await bounded(proc.exited, "SIGKILL parent exit")).toEqual({ code: null, signal: "SIGKILL" });
+    await Promise.all([drain, readErr]);
+    const second = await runParent({ ...config, resume: sessionId }, "CALL SendMessage " + JSON.stringify({
+      to: metadata.id, message: "FOLLOWUP_CRASH",
+    }), env, "FOLLOWUP_CRASH");
+    expect(second.pid).not.toBe(proc.pid);
+    expect(toolResults(second.frames).find((result) => result.status !== undefined)?.status).toBe("resumed_and_delivered");
+    expect(childReplies(second.frames).at(-1)).toMatchObject({ phase: "FOLLOWUP_CRASH", markerSeen: true,
+      personaSeen: true, priorReplies: 0, interruptedIds: ["crash-call"], historyValid: true,
+      cacheKey: initialReport.cacheKey, pid: second.pid });
+    expect(readFileSync(transcriptPath, "utf8").startsWith(before)).toBe(true);
+    const third = await runParent({ ...config, resume: sessionId }, "CALL SendMessage " + JSON.stringify({
+      to: "crashed-probe", message: "FOLLOWUP_CRASH AGAIN",
+    }), env, "FOLLOWUP_CRASH");
+    expect(new Set([proc.pid, second.pid, third.pid]).size).toBe(3);
+    expect(childReplies(third.frames).at(-1)).toMatchObject({ phase: "FOLLOWUP_CRASH", priorReplies: 1,
+      interruptedIds: ["crash-call"], historyValid: true, cacheKey: initialReport.cacheKey });
+    expect(readFileSync(join(cwd, "crash-effects.txt"), "utf8")).toBe("crash-effect\n");
+    expect(existsSync(join(cwd, "initial-effects.txt"))).toBe(false);
+    expect(readdirSync(subagents).filter((file) => file.endsWith(".meta.json"))).toHaveLength(1);
+  } finally {
+    proc.kill("SIGKILL");
+    await bounded(proc.exited, "SIGKILL cleanup");
+    await Promise.all([drain, readErr]);
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 135_000);

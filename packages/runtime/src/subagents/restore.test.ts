@@ -154,7 +154,7 @@ import { createChildEngineFactory } from "./child-engine.ts";
 import { bindRestoredChildren } from "./restore.ts";
 import { currentRunningSubagentCount } from "./limits.ts";
 import { TranscriptWriter } from "../store/dialect.ts";
-import { snapshotChildExecution } from "./execution-snapshot.ts";
+import { snapshotChildExecution, bindChildExecutionProjectKey } from "./execution-snapshot.ts";
 import type { ChildHandle, ChildInheritance, ChildSessionRecord } from "./child-handle.ts";
 import { spyOn } from "bun:test";
 
@@ -404,7 +404,10 @@ test("a parent binding change during a resumed provider probe cancels the old pe
   const latest = createChildEngineFactory({ store, winterHome: root, provider: { async generate() { newCalls++; return { kind: "text", text: "current context answer" }; } } })({ parentSessionId: record.parentSessionId, forwardChildFrame() {} });
   bindRestoredChildren([restored], latest.restore!);
   release();
-  expect(await pending).toMatchObject({ status: "unavailable", retryable: false });
+  expect(await pending).toMatchObject({ status: "unavailable", retryable: true });
+  expect(restored.status()).toBe("completed");
+  const metadata = await store.load({ projectKey: record.execution!.projectKey, sessionId: record.parentSessionId, subpath: `subagents/agent-${record.id}` });
+  expect(metadata?.find((entry) => entry.type === "agent_metadata")?.status).toBe("completed");
   expect(oldCalls).toBe(1);
   expect(currentRunningSubagentCount()).toBe(0);
   expect((await restored.resume(message("use latest context"))).status).toBe("resumed_and_delivered");
@@ -433,4 +436,129 @@ test("finite numeric definition effort and maxTurns preserve the successful spaw
   expect(restored.status()).toBe("completed");
   expect(record.execution!.request.definition!.effort).toBe(0);
   expect(record.execution!.request.definition!.maxTurns).toBe(0);
+});
+
+describe("current definition and workspace authority on cold continuation", () => {
+  test.each([true, false])("a named child refreshes persona and durably intersects authority (live parent policy: %s)", async (withParentPolicy) => {
+    const { root, store, record } = await persistedChild();
+    record.execution!.request.agentType = "reviewer";
+    record.execution!.request.definition!.memory = "user";
+    record.execution!.request.definition!.disallowedTools = ["Write"];
+    const seen: Array<{ system: string; tools: string[] }> = [];
+    let current = { description: "current reviewer", prompt: "current trusted persona", tools: ["Read"], disallowedTools: ["Bash"], permissionMode: "plan", memory: "project" };
+    const factory = createChildEngineFactory({ store, winterHome: root, provider: { async generate(request) { seen.push({ system: request.system ?? "", tools: (request.tools ?? []).map((tool) => tool.name) }); return { kind: "text", text: "current answer" }; } } })({ parentSessionId: record.parentSessionId, getParentTools: () => ["Read", "Bash", "Write"], getCurrentAgentDefinition: () => current as never, ...(withParentPolicy ? { getParentPolicy: () => ({ mode: "default" as const, version: 2, hash: "current" }) } : {}), forwardChildFrame() {} });
+    const restored = restoredChildHandle(record);
+    bindRestoredChildren([restored], factory.restore!);
+    expect(await restored.resume(message("first followup"))).toMatchObject({ status: "resumed_and_delivered" });
+    await waitForSettled(restored);
+    await restored.generationDone?.();
+    expect(seen[0]!.system).toContain("current trusted persona");
+    expect(seen[0]!.system).not.toContain("saved persona");
+    expect(seen[0]!.tools).toEqual(["Read"]);
+    expect(record.permission.effectiveMode).toBe("plan");
+    expect(record.execution!.request.definition!.memory).toBeUndefined();
+    expect(record.execution!.request.definition!.disallowedTools).toEqual(["Write", "Bash"]);
+    const stored = await store.load({ projectKey: record.execution!.projectKey, sessionId: record.parentSessionId, subpath: `subagents/agent-${record.id}` });
+    const metadata = stored!.find((entry) => entry.type === "agent_metadata")!;
+    expect((metadata.permission as typeof record.permission).effectiveMode).toBe("plan");
+    expect((metadata.execution as typeof record.execution)!.inheritance.tools).toEqual(["Read"]);
+    current = { ...current, prompt: "second current persona", tools: ["Read", "Bash", "Write"], disallowedTools: [], permissionMode: "default", memory: "user" };
+    expect(await restored.resume(message("second followup"))).toMatchObject({ status: "resumed_and_delivered" });
+    await waitForSettled(restored);
+    expect(seen[1]!.system).toContain("second current persona");
+    expect(seen[1]!.tools).toEqual(["Read"]);
+    expect(record.permission.effectiveMode).toBe("plan");
+    expect(record.execution!.request.definition!.memory).toBeUndefined();
+  });
+
+  test.each(["removed", "no longer trusted", "fork"])("a %s named definition refuses before provider execution", async (kind) => {
+    const { root, store, record } = await persistedChild();
+    record.execution!.request.agentType = kind === "fork" ? "fork" : "reviewer";
+    if (kind === "fork") record.execution!.request.fork = true;
+    let calls = 0;
+    const factory = createChildEngineFactory({ store, winterHome: root, provider: { async generate() { calls++; return { kind: "text", text: "must not run" }; } } })({ parentSessionId: record.parentSessionId, getCurrentAgentDefinition: () => undefined, ...(kind === "no longer trusted" ? { getParentAgents: () => ({ reviewer: { description: "cached", prompt: "cached untrusted definition" } }) } : {}), forwardChildFrame() {} });
+    const restored = restoredChildHandle(record);
+    bindRestoredChildren([restored], factory.restore!);
+    expect(await restored.resume(message("followup"))).toMatchObject({ status: "unavailable", retryable: false });
+    expect(calls).toBe(0);
+    expect(restored.status()).toBe("completed");
+  });
+
+  test.each(["cwd", "root", "project key", "roster key"])("a mismatched %s cannot redirect a restored child", async (kind) => {
+    const { root, store, record } = await persistedChild();
+    if (kind === "root") record.execution!.workspace.root = join(root, "unexpected");
+    if (kind === "project key" || kind === "roster key") record.execution!.projectKey = "unrelated-project";
+    if (kind === "roster key") bindChildExecutionProjectKey(record, compatibilityKeys(root).transcriptProjectKey);
+    let calls = 0;
+    const factory = createChildEngineFactory({ store, winterHome: root, provider: { async generate() { calls++; return { kind: "text", text: "must not run" }; } } })({ parentSessionId: record.parentSessionId, getParentWorkspace: () => ({ cwd: kind === "cwd" ? join(root, "moved") : root, projectKey: compatibilityKeys(root).transcriptProjectKey }), forwardChildFrame() {} });
+    const restored = restoredChildHandle(record);
+    bindRestoredChildren([restored], factory.restore!);
+    expect(await restored.resume(message("followup"))).toMatchObject({ status: "unavailable", retryable: false });
+    expect(calls).toBe(0);
+  });
+
+  test.each(["current narrowed tools", "current Agent(type) restriction", "saved Agent(type) restriction"])("a dormant ancestor enforces %s on direct descendant continuation", async (kind) => {
+    const { root, store, record } = await persistedChild();
+    const ancestor = JSON.parse(JSON.stringify(record)) as ChildSessionRecord;
+    ancestor.id = "dormant-reviewer";
+    ancestor.execution!.request.agentType = "reviewer";
+    record.execution!.request.agentType = "worker";
+    record.spawnDepth = 2;
+    record.execution!.parentAgentId = ancestor.id;
+    if (kind === "saved Agent(type) restriction") ancestor.execution!.request.definition!.tools = ["*", "Agent(Explore)"];
+    let tools: string[] = [];
+    let calls = 0;
+    const parent = { description: "current reviewer", prompt: "parent persona", tools: kind === "current narrowed tools" ? ["Read"] : kind === "current Agent(type) restriction" ? ["*", "Agent(Explore)"] : ["*"], permissionMode: "plan" };
+    const factory = createChildEngineFactory({ store, winterHome: root, provider: { async generate(request) { calls++; tools = (request.tools ?? []).map((tool) => tool.name); return { kind: "text", text: "nested answer" }; } } })({ parentSessionId: record.parentSessionId, getRecordedChild: (id) => id === ancestor.id ? ancestor : undefined, getParentTools: () => ["Read", "Bash"], getCurrentAgentDefinition: (name) => (name === "reviewer" ? parent : { description: "current worker", prompt: "worker persona", tools: ["Read", "Bash"] }) as never, getParentPolicy: () => ({ mode: "default", version: 2, hash: "root" }), getParentWorkspace: () => ({ cwd: root, projectKey: compatibilityKeys(root).transcriptProjectKey }), forwardChildFrame() {} });
+    const restored = restoredChildHandle(record);
+    bindRestoredChildren([restored], factory.restore!);
+    const outcome = await restored.resume(message("direct nested followup"));
+    if (kind === "current narrowed tools") {
+      expect(outcome).toMatchObject({ status: "resumed_and_delivered" });
+      await waitForSettled(restored);
+      expect(tools).toEqual(["Read"]);
+      expect(record.permission.effectiveMode).toBe("plan");
+    } else {
+      expect(outcome).toMatchObject({ status: "unavailable", retryable: false });
+      expect(calls).toBe(0);
+    }
+  });
+});
+
+test("failure to persist a fresh child snapshot warns and runs once without resumability", async () => {
+  const root = freshHome();
+  const store = new WinterCompatibilitySessionStore({ winterHome: root });
+  const append = spyOn(store, "append").mockRejectedValue(new Error("private store error contents"));
+  let calls = 0;
+  const warnings: string[] = [];
+  try {
+    const factory = createChildEngineFactory({ store, winterHome: root, warn: (line) => warnings.push(line), provider: { async generate() { calls++; return { kind: "text", text: "successful original generation" }; } } })({ parentSessionId: "lease-fixture", forwardChildFrame() {} });
+    const child = await factory.spawn({ parentToolUseId: "lease-spawn", prompt: "task", runInBackground: false }, inheritance(root));
+    await waitForSettled(child);
+    await child.generationDone?.();
+    expect(await child.result()).toMatchObject({ status: "completed", content: "successful original generation" });
+    expect(child.record.execution).toBeUndefined();
+    expect(child.record.transcript).toContain("persistence is unavailable");
+    expect(warnings.join("\n")).toContain("without durable resumability");
+    expect(warnings.join("\n")).not.toContain("private store error contents");
+    expect(await child.resume(message("cannot resume"))).toMatchObject({ status: "unavailable", retryable: false });
+    expect(calls).toBe(1);
+    expect(currentRunningSubagentCount()).toBe(0);
+  } finally { append.mockRestore(); }
+});
+
+test("an unknown MCP string reference ignored at spawn does not become a cold-resume dependency", async () => {
+  const root = freshHome();
+  const store = new WinterCompatibilitySessionStore({ winterHome: root });
+  let calls = 0;
+  const factory = createChildEngineFactory({ store, winterHome: root, provider: { async generate() { calls++; return { kind: "text", text: "MCP fixture answer" }; } } })({ parentSessionId: "unknown-mcp-parent", forwardChildFrame() {} });
+  const child = await factory.spawn({ parentToolUseId: "mcp-spawn", prompt: "task", runInBackground: false, definition: { description: "MCP fixture", prompt: "persona", mcpServers: ["not-declared"] } }, inheritance(root));
+  await waitForSettled(child);
+  await child.generationDone?.();
+  expect(child.record.execution!.inheritedMcpServerNames).toEqual([]);
+  const restored = restoredChildHandle(JSON.parse(JSON.stringify(child.record)) as ChildSessionRecord);
+  bindRestoredChildren([restored], factory.restore!);
+  expect(await restored.resume(message("MCP followup"))).toMatchObject({ status: "resumed_and_delivered" });
+  await waitForSettled(restored);
+  expect(calls).toBe(2);
 });

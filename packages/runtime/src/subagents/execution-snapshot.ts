@@ -3,6 +3,11 @@ import type { ParentRuleMirror } from "./child-handle.ts";
 import { isPermissionMode } from "../permissions/policy-state.ts";
 import type { Workspace } from "./workspace.ts";
 
+// The roster key is host-owned evidence, never taken from the snapshot being validated.
+const rosterProjectKeys = new WeakMap<ChildSessionRecord, string>();
+export function bindChildExecutionProjectKey(record: ChildSessionRecord, projectKey: string): void { rosterProjectKeys.set(record, projectKey); }
+export function readChildExecutionProjectKey(record: ChildSessionRecord): string | undefined { return rosterProjectKeys.get(record); }
+
 /** Credential-bearing adapters, callbacks, MCP transports and parent history stay host-owned. */
 export interface ChildExecutionSnapshot {
   version: 1;
@@ -28,6 +33,8 @@ export function snapshotChildExecution(opts: {
   projectKey: string;
   parentAgentId?: string;
   rules?: { ask?: string[]; deny?: string[] };
+  /** Only string references that the spawning host actually resolved are dependencies on resume. */
+  resolvedInheritedMcpServerNames?: string[];
 }): ChildExecutionSnapshot {
   const req = opts.request;
   const definition = req.definition === undefined ? undefined : Object.fromEntries(definitionFields.flatMap((key) => req.definition![key as keyof NonNullable<SpawnChildRequest["definition"]>] === undefined ? [] : [[key, req.definition![key as keyof NonNullable<SpawnChildRequest["definition"]>]]]));
@@ -58,7 +65,7 @@ export function snapshotChildExecution(opts: {
     },
     restrictions: { ask: opts.rules?.ask ?? [], deny: opts.rules?.deny ?? [] },
     scopedMcpServerNames: (req.definition?.mcpServers ?? []).flatMap((spec) => typeof spec === "string" ? [] : Object.keys(spec)),
-    inheritedMcpServerNames: (req.definition?.mcpServers ?? []).filter((spec): spec is string => typeof spec === "string"),
+    inheritedMcpServerNames: opts.resolvedInheritedMcpServerNames ?? [],
   };
   // A plain data copy avoids later mutations through caller-held definitions/layouts. Reject unsupported
   // payloads rather than silently dropping executable values into a less faithful snapshot.

@@ -138,7 +138,7 @@ import type { McpOAuthStore } from "./mcp-auth/store.ts";
 import type { HostCredentialChannel } from "./provider/host-credentials.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
-import { bindRestoredChildren } from "./subagents/restore.ts";
+import { bindRestoredChildren, drainRestoredChildren } from "./subagents/restore.ts";
 import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildEngineDeps, type ChildInheritance, type ParentMcpState, type ParentRuleMirror, type SpawnChildRequest } from "./subagents/child-handle.ts";
 // Phase 4 Task 8: the process-level default messaging runtime Lane D's three tool executors read --
 // see that function's own header for why it is process-level and why the roster is contributed
@@ -1686,7 +1686,7 @@ export interface EngineOptions {
   onChildRosterReady?: (getChildren: () => readonly ChildHandle[]) => void;
   restoredChildren?: ChildHandle[];
   /** Descendant engines rebind their own persisted children without registering a second roster. */
-  onChildEngineDepsReady?: (getDeps: () => ChildEngineDeps) => (() => void);
+  onChildEngineDepsReady?: (getDeps: () => ChildEngineDeps) => (() => void | Promise<void>);
   bindRestoredDescendants?: import("./subagents/child-handle.ts").ChildEngineRunContext["bindRestoredDescendants"];
   getRecordedChild?: import("./subagents/child-handle.ts").ChildEngineRunContext["getRecordedChild"];
   // NEW-3 (P4 residual round): the same shape as `onChildRosterReady` above, over the set of
@@ -2558,7 +2558,7 @@ function withLegacyToolNameRules(opts: EngineOptions): EngineOptions {
 }
 
 export async function runEngine(opts: EngineOptions): Promise<number> {
-  const facetDisposers: Array<() => void> = [];
+  const facetDisposers: Array<() => void | Promise<void>> = [];
   // Review r2 finding 9 (whole-branch): `runEngineBody`'s own background-shell sweep
   // (`stopSessionShellTasks`, review r1 finding 2's own "the session going away" kill door) sits
   // sequentially near the very END of that function's body -- reached on every ORDINARY return, but
@@ -2590,7 +2590,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // failure must never replace the run's own outcome.
     for (const dispose of facetDisposers.splice(0)) {
       try {
-        dispose();
+        await dispose();
       } catch {
         /* a withdrawal that throws has, at worst, left the entry it was removing */
       }
@@ -2598,7 +2598,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   }
 }
 
-async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => void>, registerBackgroundShellSweep: (fn: () => void) => void): Promise<number> {
+async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => void | Promise<void>>, registerBackgroundShellSweep: (fn: () => void) => void): Promise<number> {
   // SDK 0.0.40: one lane map for the whole session (see `EngineOptions.toolLaneTails`).
   const sessionLaneTails: ToolLaneTails = opts.toolLaneTails ?? createToolLaneTails();
   // Task 1 (P3): `tools` renamed to `providedTools` at the destructuring site ONLY -- every existing
@@ -3600,6 +3600,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       getParentTools: () => currentAdvertisedCanonicalNames,
       getParentIdentity: () => currentProviderIdentity,
       getRecordedChild: (id) => opts.getRecordedChild?.(id) ?? childRoster.find((child) => child.record.id === id)?.record,
+      getCurrentAgentDefinition: (name) => sessionAvailableAgentDefinitions().get(name),
+      getParentWorkspace: () => ({ cwd: config.cwd, projectKey: resolveProjectDirName(compatibilityKeys(config.cwd).transcriptProjectKey, engineEnv ?? process.env, sessionBrand) }),
       bindRestoredDescendants: opts.bindRestoredDescendants ?? bindDescendants,
       parentSessionId: config.sessionId,
       // Phase 4 fix wave (I1): this run's OWN agent key -- present only when THIS engine is
@@ -3726,18 +3728,36 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     });
   }
   const childRoster: ChildHandle[] = [...(opts.restoredChildren ?? [])];
+  let childContextEnding = false;
   const restoreWithCurrentRoot = async (record: import("./subagents/child-handle.ts").ChildSessionRecord): Promise<ChildHandle> => {
+    if (childContextEnding) throw new Error("the parent execution context is ending");
     const deps = createChildrenDeps();
     if (deps.restore === undefined) throw new Error("the registered child factory does not support durable resume");
     return deps.restore(record);
   };
-  function bindDescendants(parentAgentId: string, restore: (record: import("./subagents/child-handle.ts").ChildSessionRecord) => Promise<ChildHandle>): () => void {
+  function bindDescendants(parentAgentId: string, restore: (record: import("./subagents/child-handle.ts").ChildSessionRecord) => Promise<ChildHandle>): () => Promise<void> {
     const owned = childRoster.filter((child) => child.record.execution?.parentAgentId === parentAgentId);
     bindRestoredChildren(owned, restore);
-    return () => bindRestoredChildren(owned, restoreWithCurrentRoot);
+    let draining: Promise<void> | undefined;
+    return () => draining ??= drainRestoredChildren(owned).then(() => {
+      if (!childContextEnding) bindRestoredChildren(owned, restoreWithCurrentRoot);
+    });
   }
   bindRestoredChildren(childRoster, restoreWithCurrentRoot);
-  const removeChildContextBinding = opts.onChildEngineDepsReady?.(createChildrenDeps);
+  const disposeChildContextBinding = opts.onChildEngineDepsReady?.(createChildrenDeps);
+  let childContextDisposal: Promise<void> | undefined;
+  const removeChildContextBinding = (): Promise<void> => {
+    childContextEnding = true;
+    if (childContextDisposal !== undefined) return childContextDisposal;
+    // Both calls close their resume gates before yielding. At root shutdown the fallback bindings
+    // must stay closed too, including a descendant whose immediate parent's drain finishes first.
+    const bindingDisposal = disposeChildContextBinding?.();
+    const restoredDisposal = drainRestoredChildren(childRoster);
+    return childContextDisposal = Promise.all([bindingDisposal, restoredDisposal]).then(() => undefined);
+  };
+  // Drain restored descendants even if a run exits exceptionally. Their binding disposer is
+  // idempotent; put it ahead of the process-level context disposers in the outer finally.
+  facetDisposers.unshift(removeChildContextBinding);
   // Phase 4 Task 8 (rider 19, RULING P4-I): the pump-side child-bridge roster. Every child engine
   // spawned by THIS run registers its own `RpcBridge.handleResponse` here; the pump consults them,
   // in registration order, for any `control_response` this run's OWN bridge did not claim. The child
@@ -10906,6 +10926,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   emitSessionState("idle");
   onSessionPhase?.("ending");
 
+  // Restored descendants live in the root roster but can use THIS child's output, bridge and MCP
+  // context. Close their resume gates and await their generations before any of those are released.
+  await removeChildContextBinding();
+
   // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "teardown" — fired HERE, after the turn loop has
   // fully drained but strictly BEFORE `stopReading()` below, so the pump (still alive at this exact
   // point per Ruling P2-B's own guarantee, point 2) can still route this hook RPC's eventual
@@ -10965,7 +10989,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // spawn that some other caller abandons WITHOUT an interrupt (this file's own test fixtures do
   // exactly that, deliberately, to interact with a child past its parent's turn) keeps its
   // pre-existing lifetime.
-  await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c) && c.status() === "running").map((c) => c.stop()));
+  await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c)).map(async (c) => {
+    await c.stop();
+    await c.generationDone?.();
+  }));
   // Review r1 finding 2 (controller ruling): a BACKGROUND shell outlives the turn that started it
   // (its runCommand no longer carries the per-turn signal -- in claude too, a backgrounded shell no
   // longer follows the turn's abort), so the session going away is one of its three kill doors, beside its
@@ -10992,7 +11019,6 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // The top-level engine owns the session's queue; a child engine shares its parent's and must not
   // drop it. Singleton hygiene, matching `clearSessionRequestLayout`.
   if (config.agentId === undefined) clearNotificationQueue(config.sessionId);
-  removeChildContextBinding?.();
   removeChildRosterSource();
   removeHostMessagingPort?.();
   // R-7b-4 addendum: withdraw this run's self-peer and its notice forwarder at teardown, exactly like
