@@ -120,7 +120,6 @@ import type {
   ChildEngineFactory,
   ChildEngineRunContext,
 } from "./child-handle.ts";
-import { GENERATION_TEARDOWN_WAIT_MS } from "./child-handle.ts";
 import type { GlobalAgentMessage, DeliveryOutcome } from "@yanlinglabs/winter-agent-sdk/messaging";
 import { checkAndRegisterSpawn, releaseSpawn, resolveMaxSpawnDepth } from "./limits.ts";
 import { applySubagentToolPool } from "./tool-pools.ts";
@@ -434,6 +433,9 @@ export interface ChildEngineFactoryDeps {
 // (the same host instance, as a string entry would reach it), or -- when the name is held by a different
 // kind of session server, or by another agent -- nothing under that name.
 const liveChildScopedServerNames = new Set<string>();
+
+/** How long a resume waits for the previous generation to release its scoped server names. */
+const GENERATION_TEARDOWN_WAIT_MS = 5_000;
 
 type ChildMcpServers = NonNullable<RuntimeConfig["mcpServers"]>;
 
@@ -1105,7 +1107,6 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // `settle` itself now owns calling the generation's own `abortGeneration` (see its own comment),
     // so `.stop()` needs no separate abort handle of its own any more.
     let currentSettle: ((status: "completed" | "failed" | "stopped", content: string) => void) | undefined;
-    let currentRetireContext: (() => void) | undefined;
     // Review r1 finding 4: the current generation's live counters (see `startGeneration`).
     let currentUsage: (() => ChildResult["usage"]) | undefined;
     // WS-24 fix round 1 (M1): settles once the current generation's `runEngine` has fully returned, and
@@ -1147,7 +1148,6 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       let totalToolUseCount = 0;
       let lastAssistantText = "";
       let generationSettled = false;
-      let contextRetired = false;
       // Contract §8: the activity text of the most recent RECORDED tool call (every tool_use except
       // the structured-output tool), sticky across messages like claude's own last-activity text --
       // `undefined` when that call's tool has no activity text.
@@ -1260,7 +1260,6 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         }
         return true;
       });
-      currentRetireContext = () => { contextRetired = true; unregisterResponseHandler?.(); };
       function abortGeneration(): void {
         try {
           const requestId = randomUUID();
@@ -1370,7 +1369,6 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       void (async () => {
         try {
           for await (const frame of channel.host.input) {
-            if (contextRetired) continue;
             watchdog.poke();
             const progress = observe(frame);
             // `UnknownFrame`'s own wide `type: string` (frames.ts) defeats plain discriminated
@@ -2170,7 +2168,6 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         return currentUsage?.();
       },
       generationDone: () => lastGenerationDone,
-      retireGenerationContext: () => currentRetireContext?.(),
       cancelPendingResume: () => { if (pendingResume !== undefined) pendingResume.contextChanged = true; },
     };
 

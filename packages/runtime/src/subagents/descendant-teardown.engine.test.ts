@@ -9,7 +9,7 @@ import { createInMemoryChannel } from "../protocol/channel.ts";
 import { userMessageText } from "../provider/mock.ts";
 import { registerTool, unregisterToolForTest } from "../tools/registry.ts";
 import { createChildEngineFactory } from "./child-engine.ts";
-import { GENERATION_TEARDOWN_WAIT_MS, registerChildEngineFactory, resetChildEngineFactoryForTest, type ChildHandle, type ChildInheritance, type ChildSessionRecord } from "./child-handle.ts";
+import { registerChildEngineFactory, resetChildEngineFactoryForTest, type ChildHandle, type ChildInheritance, type ChildSessionRecord } from "./child-handle.ts";
 import { currentRunningSubagentCount, resetSpawnLimitsForTest } from "./limits.ts";
 import { bindRestoredChildren, drainRestoredChildren, restoredChildHandle } from "./restore.ts";
 
@@ -223,57 +223,3 @@ test("context teardown during running metadata persistence preserves the complet
     appendSpy.mockRestore();
   }
 });
-
-test("root shutdown bounds a noncooperative child's generation drain without leaking its slot or accepting late frames", async () => {
-  const home = mkdtempSync(join(tmpdir(), "winter-bounded-child-teardown-"));
-  homes.push(home);
-  const sessionId = randomUUID();
-  const entered = deferred();
-  const finishProvider = deferred();
-  const finishDrain = deferred();
-  const childFrames: WinterFrame[] = [];
-  const child = await createChildEngineFactory({ winterHome: home, provider: { async generate() {
-    entered.resolve();
-    // Deliberately ignores interruption; the engine must abandon this promise safely.
-    await finishProvider.promise;
-    return { kind: "tool_use", calls: [{ id: "late-child-call", name: PROBE, input: {} }] };
-  } } })({ parentSessionId: sessionId, forwardChildFrame(frame) { childFrames.push(frame); } }).spawn({ parentToolUseId: "background-call", prompt: "background task", runInBackground: true }, { policy: { effectiveMode: "default", parentPolicyHash: "original", parentPolicyVersion: 1 }, tools: [PROBE], model: "winter-test/echo", effort: "inherit", thinking: undefined, systemPrompt: "", sessionRoot: home });
-  await entered.promise;
-  const actualGenerationDone = child.generationDone!.bind(child);
-  // A noncooperative generation-owned cleanup keeps generationDone pending even after the
-  // provider's interrupt race releases the concurrency slot. Exercise the real root sweep.
-  const doneSpy = spyOn(child, "generationDone").mockImplementation(async () => { await actualGenerationDone(); await finishDrain.promise; });
-  const retiredSpy = spyOn(child, "retireGenerationContext");
-  const { host, runtime } = createInMemoryChannel();
-  const frames: WinterFrame[] = [];
-  const started = Date.now();
-  const done = runEngine({ config: { sessionId, cwd: home, model: "winter-test/echo", permissionMode: "default" }, input: runtime.input, output: runtime.output, provider: { async generate() { return { kind: "text", text: "root completed" }; } }, winterHome: home, onChildRosterReady(getChildren) { (getChildren() as ChildHandle[]).push(child); } });
-  const reader = (async () => { for await (const frame of host.input) frames.push(frame); })();
-  try {
-    expect(currentRunningSubagentCount()).toBe(1);
-    host.output.write({ type: "user", text: "finish root" });
-    host.output.write({ type: "control_request", requestId: "shutdown", subtype: "end_input", payload: undefined });
-    await done;
-    await reader;
-    expect(Date.now() - started).toBeLessThan(GENERATION_TEARDOWN_WAIT_MS + 2_000);
-    expect(retiredSpy).toHaveBeenCalledTimes(1);
-    expect((await child.result()).status).toBe("stopped");
-    expect(currentRunningSubagentCount()).toBe(0);
-    const previousFrames = childFrames.length;
-    finishProvider.resolve();
-    finishDrain.resolve();
-    await actualGenerationDone();
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(childFrames).toHaveLength(previousFrames);
-    expect(frames.some((frame) => frame.type === "data" && JSON.stringify(frame.message).includes("root completed"))).toBe(true);
-  } finally {
-    finishProvider.resolve();
-    finishDrain.resolve();
-    await child.stop();
-    await actualGenerationDone();
-    doneSpy.mockRestore();
-    retiredSpy.mockRestore();
-    await done;
-    await reader;
-  }
-}, 10_000);

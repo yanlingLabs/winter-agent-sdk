@@ -139,7 +139,7 @@ import type { HostCredentialChannel } from "./provider/host-credentials.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
 import { bindRestoredChildren, drainRestoredChildren } from "./subagents/restore.ts";
-import { getChildEngineFactory, transformChildFrame, waitForChildGenerationTeardown, type ChildHandle, type ChildEngineDeps, type ChildInheritance, type ParentMcpState, type ParentRuleMirror, type SpawnChildRequest } from "./subagents/child-handle.ts";
+import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildEngineDeps, type ChildInheritance, type ParentMcpState, type ParentRuleMirror, type SpawnChildRequest } from "./subagents/child-handle.ts";
 // Phase 4 Task 8: the process-level default messaging runtime Lane D's three tool executors read --
 // see that function's own header for why it is process-level and why the roster is contributed
 // per-run rather than the runtime being rebuilt per-run.
@@ -10981,9 +10981,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // Fix wave (I5): a BACKGROUND child that is still running at teardown outlives the session in the
   // in-memory leg (the child/compiled legs die with the process, main.ts) -- it kept executing tools
   // while being WITHDRAWN from the messaging roster one line below, i.e. live but unaddressable by
-  // anything. Stopped here instead, BEFORE the withdrawal. Give generation-owned cleanup the same
-  // bounded grace period used by resume, then retire its old host callbacks. The generation remains
-  // responsible for eventual MCP cleanup; a noncooperative cleanup cannot hold the parent open.
+  // anything. Stopped here instead, BEFORE the withdrawal, and awaited (each `stop()` settles its
+  // own generation) so a host that returns from `runEngine` has no live background descendants.
   //
   // FOREGROUND children are deliberately NOT swept here (the review's teardown finding is about the
   // background half): a foreground child is owned by the Agent call awaiting it -- it either
@@ -10994,7 +10993,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // pre-existing lifetime.
   await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c)).map(async (c) => {
     await c.stop();
-    await waitForChildGenerationTeardown(c);
+    await c.generationDone?.();
   }));
   // Review r1 finding 2 (controller ruling): a BACKGROUND shell outlives the turn that started it
   // (its runCommand no longer carries the per-turn signal -- in claude too, a backgrounded shell no

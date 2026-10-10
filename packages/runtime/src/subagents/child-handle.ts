@@ -24,23 +24,6 @@ import type { GlobalAgentMessage, DeliveryOutcome } from "@yanlinglabs/winter-ag
 
 export type ChildStatus = "running" | "completed" | "stopped" | "failed";
 
-/** A stopped generation gets this long to drain its host/MCP resources. */
-export const GENERATION_TEARDOWN_WAIT_MS = 5_000;
-
-/** Keep cancellation frames flowing during the grace period, then retire the old host context. */
-export async function waitForChildGenerationTeardown(child: ChildHandle): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const drained = await Promise.race([
-      Promise.resolve().then(() => child.generationDone?.()).then(() => true),
-      new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), GENERATION_TEARDOWN_WAIT_MS); timer.unref?.(); }),
-    ]);
-    if (!drained) child.retireGenerationContext?.();
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
-
 export interface ChildSessionRecord {
   id: string;
   parentSessionId: string;
@@ -145,8 +128,6 @@ export interface ChildHandle {
   usage?(): ChildResult["usage"];
   /** Settles after the current generation has released its host/MCP resources. */
   generationDone?(): Promise<void>;
-  /** Detach a stopped generation's callbacks after its bounded parent-context drain expires. */
-  retireGenerationContext?(): void;
   /** Retire a pending resume when its parent context changes; running work is untouched. */
   cancelPendingResume?(): void;
 }
