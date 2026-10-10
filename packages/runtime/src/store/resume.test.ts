@@ -44,7 +44,8 @@ import type { PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
 import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "../testing.ts";
 import { scriptedProvider, stubExecutor, echoProvider } from "../provider/mock.ts";
-import type { Provider, ProviderMessage, ToolExecutor } from "../engine.ts";
+import type { ContentBlock, Provider, ProviderMessage, ToolExecutor } from "../engine.ts";
+import { toWireMessages } from "../../../provider-runtime/src/adapters/anthropic/messages.ts";
 
 function freshHome(): string {
   return mkdtempSync(join(tmpdir(), "winter-resume-test-"));
@@ -290,11 +291,72 @@ describe("rebuildProviderMessages — Ruling P1-Q (leaf-anchored ancestry, fix-r
   test("an empty tool-result batch rebuilds as role:tool, not role:user", () => {
     const entries: DialectEntry[] = [
       { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "go" } },
-      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "tool_use", id: "c1", name: "t", input: {} }] } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [] } },
       { type: "user", uuid: "u2", parentUuid: "a1", message: { role: "user", content: [] } },
     ];
     const rebuilt = rebuildProviderMessages(entries);
     expect(rebuilt.at(-1)).toEqual({ role: "tool", content: [] });
+  });
+});
+
+describe("rebuildProviderMessages — hard-exit tool history", () => {
+  const user = (uuid: string, parentUuid: string | null, content: unknown): DialectEntry =>
+    ({ type: "user", uuid, parentUuid, message: { role: "user", content } });
+  const assistant = (uuid: string, parentUuid: string, ids: string[]): DialectEntry =>
+    ({ type: "assistant", uuid, parentUuid, message: { role: "assistant", content: ids.map((id) => ({ type: "tool_use", id, name: "t", input: {} })) } });
+  const interrupted = (id: string): ContentBlock => ({ type: "tool_result", tool_use_id: id, content: "[interrupted]", interrupted: true });
+
+  test("closes every unanswered trailing call without mutating stored entries", () => {
+    const entries = [user("u", null, "start"), assistant("a", "u", ["one", "two"])];
+    const before = JSON.stringify(entries);
+    const rebuilt = rebuildProviderMessages(entries);
+    expect(rebuilt.at(-1)).toEqual({ role: "tool", content: [interrupted("one"), interrupted("two")] });
+    expect(rebuildProviderMessages(entries)).toEqual(rebuilt);
+    expect(JSON.stringify(entries)).toBe(before);
+  });
+
+  test("retains real partial results and closes only the missing call before later input", () => {
+    const entries = [user("u", null, "start"), assistant("a", "u", ["one", "two"]),
+      user("r", "a", [{ type: "tool_result", tool_use_id: "one", content: "effect completed" }]), user("next", "r", "followup")];
+    expect(rebuildProviderMessages(entries).slice(2)).toEqual([
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "one", content: "effect completed" }] },
+      { role: "tool", content: [interrupted("two")] }, { role: "user", content: "followup" },
+    ]);
+  });
+
+  test("does not duplicate an already persisted interrupted result across repeated resumes", () => {
+    const entries = [user("u", null, "start"), assistant("a", "u", ["one"]), user("r", "a", [interrupted("one")]), user("next", "r", "followup")];
+    const rebuilt = rebuildProviderMessages(entries);
+    expect(rebuilt.filter((message) => message.role === "tool")).toEqual([{ role: "tool", content: [interrupted("one")] }]);
+    expect(rebuildProviderMessages(entries)).toEqual(rebuilt);
+  });
+
+  test("closes a partial round before a later assistant tool round", () => {
+    const entries = [user("u", null, "start"), assistant("a", "u", ["one", "two"]),
+      user("r", "a", [{ type: "tool_result", tool_use_id: "one", content: "done" }]), assistant("b", "r", ["three"])];
+    expect(rebuildProviderMessages(entries).slice(-3)).toEqual([
+      { role: "tool", content: [interrupted("two")] },
+      { role: "assistant", content: [{ type: "tool_use", id: "three", name: "t", input: {} }], uuid: "b" },
+      { role: "tool", content: [interrupted("three")] },
+    ]);
+  });
+
+  test("completes partial results inside a mixed user message before ordinary text", () => {
+    const entries = [user("u", null, "start"), assistant("a", "u", ["one", "two"]), user("r", "a", [
+      { type: "text", text: "followup" }, { type: "tool_result", tool_use_id: "one", content: "done" },
+    ])];
+    expect(rebuildProviderMessages(entries).at(-1)).toEqual({ role: "user", content: [
+      { type: "tool_result", tool_use_id: "one", content: "done" }, interrupted("two"), { type: "text", text: "followup" },
+    ] });
+  });
+
+  test("closes adjacent Claude parallel call entries together after recovered results", () => {
+    const entries = [user("u", null, "start"), assistant("a", "u", ["one"]), assistant("b", "a", ["two"]),
+      user("r", "a", [{ type: "tool_result", tool_use_id: "one", content: "done" }]), user("next", "b", "followup")];
+    expect(rebuildProviderMessages(entries).slice(-3)).toEqual([
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "one", content: "done" }] },
+      { role: "tool", content: [interrupted("two")] }, { role: "user", content: "followup" },
+    ]);
   });
 });
 
@@ -807,6 +869,53 @@ function runOneEnvelope(
     return { proc, frames };
   })();
 }
+
+test("parent resume repairs an unwritten tool result before provider input without replaying execution", async () => {
+  const home = freshHome();
+  try {
+    const sessionId = randomUUID();
+    const cwd = "/winter-fixture";
+    const store = new WinterCompatibilitySessionStore({ winterHome: home });
+    await store.append({ projectKey: compatibilityKeys(cwd).transcriptProjectKey, sessionId }, [
+      rawEntry({ type: "user", uuid: "crash-user", message: { role: "user", content: "old input" } }),
+      rawEntry({ type: "assistant", uuid: "crash-assistant", parentUuid: "crash-user", message: {
+        role: "assistant", content: [{ type: "tool_use", id: "crash-call", name: "effect", input: {} }],
+      } }),
+    ]);
+    let executions = 0;
+    const requests: ProviderMessage[][] = [];
+    const provider: Provider = { async generate({ messages }) {
+      requests.push(structuredClone(messages));
+      const callIndex = messages.findIndex((message) => Array.isArray(message.content)
+        && message.content.some((block) => block.type === "tool_use" && block.id === "crash-call"));
+      expect(callIndex).toBeGreaterThanOrEqual(0);
+      const resultMessage = messages[callIndex + 1]!;
+      expect(resultMessage.role).toBe("tool");
+      expect(Array.isArray(resultMessage.content)).toBe(true);
+      const result = (resultMessage.content as ContentBlock[])[0]!;
+      expect(result).toMatchObject({ type: "tool_result", tool_use_id: "crash-call", interrupted: true });
+      expect(result.type === "tool_result" && typeof result.content === "string" && result.content.startsWith("[interrupted]")).toBe(true);
+      // The request assembler merges ordinary input into the result message. Verify the real
+      // Anthropic serializer keeps the result immediately after its call and before that input.
+      const wire = toWireMessages(messages);
+      const wireIndex = wire.findIndex((message) => Array.isArray(message.content)
+        && message.content.some((block) => block.type === "tool_use" && block.id === "crash-call"));
+      const wireResults = wire[wireIndex + 1]!;
+      expect(wireResults.role).toBe("user");
+      expect(Array.isArray(wireResults.content) && wireResults.content[0]).toMatchObject({ type: "tool_result", tool_use_id: "crash-call" });
+      return { kind: "text", text: "continued successfully" };
+    } };
+    const executor: ToolExecutor = { async execute() { executions += 1; return { output: "duplicate effect" }; } };
+    const config: RuntimeConfig = { sessionId, cwd, resume: sessionId, model: "winter-test/echo", settingSources: [], autoMemory: { enabled: false } };
+    const first = await runOneEnvelope(config, home, {}, provider, executor);
+    expect(JSON.stringify(first.frames)).toContain("continued successfully");
+    await runOneEnvelope(config, home, {}, provider, executor);
+    expect(requests).toHaveLength(2);
+    expect(executions).toBe(0);
+    for (const request of requests) expect(request.flatMap((message) => Array.isArray(message.content) ? message.content : [])
+      .filter((block) => block.type === "tool_result" && block.tool_use_id === "crash-call")).toHaveLength(1);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
 
 describe("P1-N: recorded project dir name (record + apply half)", () => {
   test("a session created under a WINTER_PROJECT_DIR_NAME override persists under that name and records it in the summary sidecar", async () => {

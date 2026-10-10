@@ -16,6 +16,7 @@ import { buildProductionWiring, withAutoSkillPermissions } from "./production-wi
 import { loadResumedChain } from "./provider/session-provider.ts";
 import { restoreChildRoster } from "./subagents/restore.ts";
 import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
+import { resolveProjectDirName } from "./paths/project-dir-name.ts";
 // Task 1 (P3, WS-06 §1): test-tool registration goes through the registry. The equivalence corpus
 // (packages/sdk/src/query.test.ts's "tooluse" scenarios, scripts/differential.ts's tool-round/
 // hooked-tool-round/canusetool-approved-round/mode-switch-mid-session scenarios) calls
@@ -302,10 +303,16 @@ export function inMemoryProcess(
       // left registered would leak a dead session's children into the next session's ListAgents.
       const restoredChildren =
         childStore !== undefined && config.forkSession !== true && (config.resume !== undefined || config.continue === true)
-          ? await restoreChildRoster(childStore, { projectKey: compatibilityKeys(effectiveConfig.cwd).transcriptProjectKey, sessionId: effectiveConfig.sessionId })
+          ? await restoreChildRoster(childStore, {
+              // Match the production leg: the resumed parent's recorded directory is authoritative.
+              // The fallback only reads this virtual process's environment, never process.env.
+              projectKey: store?.projectKey ?? resolveProjectDirName(compatibilityKeys(effectiveConfig.cwd).transcriptProjectKey, env ?? {}, effectiveConfig.brand),
+              sessionId: effectiveConfig.sessionId,
+            }, { registerMessaging: false })
           : undefined;
       try {
       const code = await runEngine({
+        ...(restoredChildren !== undefined ? { restoredChildren: restoredChildren.handles } : {}),
         config: withAutoSkillPermissions(wiring.config),
         ...wiring.engineOptions,
         input,

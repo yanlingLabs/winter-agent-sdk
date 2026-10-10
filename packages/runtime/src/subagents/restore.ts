@@ -1,72 +1,115 @@
-// Phase 4 fix wave (I3, whole-branch review): WS-10 §7's "the roster rebuilds from durable storage"
-// finally has a PRODUCTION caller.
-//
-// `rebuildChildRoster` (roster.ts) was correct, independently tested, and dead: `grep -rn
-// rebuildChildRoster packages/` found only its own definition and its unit tests, while
-// `subagents/conformance.test.ts` cited those unit tests as coverage for the MUST. A resumed session
-// therefore started with an EMPTY `childRoster` (engine.ts), so after a restart `SendMessage` to a
-// prior child answered `not_found` and `ListAgents` showed nothing -- the child was unreachable by
-// any tool, permanently. Mutual deferral: Lane C disclosed "no live handle rehydration" as a
-// follow-up; T8's riders never took it; the matrix said "covered".
-//
-// WHAT THIS DELIVERS, AND WHAT IT DELIBERATELY DOES NOT. Rebuilding IDENTITY (the WS-10 §7 MUST's
-// first half) is what makes a restored child addressable at all -- `ListAgents` lists it,
-// `SendMessage` resolves it by id or name, and the row carries its real recorded status, model and
-// permission triple. Rebuilding a LIVE, resumable child is a genuinely separate thing: a running
-// generation needs a `ChildEngineRunContext` (forwardChildFrame onto the host stream this run owns,
-// the P4-I response roster) that exists only INSIDE `runEngine`'s own spawn seam, plus the
-// factory's provider/store -- none of which a restore performed BEFORE `runEngine` starts can hold.
-// So a restored handle refuses `resume()` with a legible, NON-retryable outcome naming the carry,
-// rather than pretending: WS-10 §10.3's "a terminal addressable child auto-resumes" is honoured for
-// a child spawned in THIS process and explicitly deferred for one restored across a restart.
+// Durable identities are discovered before runEngine. Live execution is rebound lazily after
+// the new parent has established its host stream, policy and tool context.
 import type { SessionStore } from "@yanlinglabs/winter-agent-sdk";
 import type { ChildHandle, ChildResult, ChildSessionRecord } from "./child-handle.ts";
 import { rebuildChildRoster, successfulRecords, type RosterKey } from "./roster.ts";
 import { ensureDefaultMessagingRuntimeRegistered } from "../messaging/reference-adapter.ts";
 import type { GlobalAgentMessage, DeliveryOutcome } from "@yanlinglabs/winter-agent-sdk/messaging";
 import type { RecordedModelEffort } from "./resolution.ts";
+import { bindChildExecutionProjectKey } from "./execution-snapshot.ts";
+
+type Restore = (record: ChildSessionRecord) => Promise<ChildHandle>;
+const bindings = new WeakMap<ChildHandle, { bind(restore: Restore): void; drain(): Promise<void> }>();
+export function bindRestoredChildren(handles: readonly ChildHandle[], restore: Restore): void {
+  for (const handle of handles) bindings.get(handle)?.bind(restore);
+}
+
+/** Close the old context's resume gate synchronously, then release every generation using it. */
+export async function drainRestoredChildren(handles: readonly ChildHandle[]): Promise<void> {
+  await Promise.allSettled(handles.map((handle) => bindings.get(handle)?.drain()));
+}
 
 // The one place a rebuilt RECORD becomes a ChildHandle the messaging layer can list and address.
 // Every method answers from the durable record alone -- there is no live engine behind it.
 export function restoredChildHandle(record: ChildSessionRecord): ChildHandle {
   const terminal: ChildResult["status"] = record.status === "completed" ? "completed" : record.status === "failed" ? "failed" : "stopped";
-  return {
+  let restore: Restore | undefined;
+  let live: ChildHandle | undefined;
+  let creating: Promise<ChildHandle> | undefined;
+  let resuming = false;
+  let cancelled = false;
+  let bindingVersion = 0;
+  let materializedVersion = -1;
+  let suspended = false;
+  let resumeDone: Promise<void> | undefined;
+  const handle: ChildHandle = {
     record,
-    // `rebuildChildRoster` already reconciles a sidecar still claiming `running` (its own process
-    // died) to `stopped`, so this is always terminal -- a restored child is never advertised as
-    // live, which is what keeps `SendMessage` from trying to STEER something with no engine behind it.
-    status: () => record.status,
-    async steer(msg: GlobalAgentMessage): Promise<DeliveryOutcome> {
+    status: () => live?.status() ?? record.status,
+    async steer(msg): Promise<DeliveryOutcome> {
+      if (live !== undefined) return live.steer(msg);
       return { status: "not_found", messageId: msg.messageId, reason: `child ${record.id} is not running (status: ${record.status})` };
     },
-    async resume(msg: GlobalAgentMessage): Promise<DeliveryOutcome> {
-      // WS-13c §8 (Lane D Task 5): "a restored handle's refusal text carries the recorded provider
-      // id." `ChildSessionRecord.model` (child-handle.ts, spine-frozen) still declares the pre-P6.6
-      // inline shape -- the spine added `effectiveProvider`/`slot` to `RecordedModelEffort`
-      // (resolution.ts) without re-pointing this field at it (the same gap child-engine.ts's own
-      // `record` declaration works around locally; see this lane's report). `rebuildChildRoster`
-      // (roster.ts) reconstructs a child's sidecar via `{ type: _type, ...record }` -- a spread, not
-      // a field-by-field rebuild -- so an `effectiveProvider` child-engine.ts wrote at spawn/resume
-      // survives the round trip onto this object even though its OWN declared type does not name it;
-      // a local cast reads it back without touching the frozen type.
-      const modelInfo = record.model as RecordedModelEffort;
-      const providerNote = modelInfo.effectiveProvider !== undefined ? ` (recorded provider: ${modelInfo.effectiveProvider})` : "";
-      return {
-        status: "unavailable",
-        messageId: msg.messageId,
-        retryable: false,
-        reason:
-          `child ${record.id} was restored from durable storage after a restart -- its identity and transcript are available ` +
-          `(${record.transcript})${providerNote}, but reviving a live generation across a process restart is not implemented yet (WS-10 §7 carry)`,
-      };
+    async resume(msg): Promise<DeliveryOutcome> {
+      if (suspended) return { status: "unavailable", messageId: msg.messageId, retryable: true, reason: `child ${record.id}'s parent context is ending` };
+      if (resuming) return { status: "unavailable", messageId: msg.messageId, retryable: true, reason: `child ${record.id} is already resuming` };
+      resuming = true;
+      let finishResume!: () => void;
+      resumeDone = new Promise<void>((resolve) => { finishResume = resolve; });
+      cancelled = false;
+      try {
+        // Rebuild terminal handles even under the same parent binding: definitions, trust and tool
+        // authority may have changed since the last generation without replacing the parent run.
+        if (live !== undefined && live.status() !== "running") {
+          await live.generationDone?.();
+          live = undefined;
+          creating = undefined;
+        }
+        if (suspended) return { status: "unavailable", messageId: msg.messageId, retryable: true, reason: `child ${record.id}'s parent context is ending` };
+        if (cancelled) return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: `child ${record.id} was stopped while restoring` };
+        if (live !== undefined) return await live.resume(msg);
+        if (restore === undefined) return {
+          status: "unavailable", messageId: msg.messageId, retryable: false,
+          reason: `child ${record.id} was restored from durable storage (${record.transcript})${record.model.effectiveProvider !== undefined ? ` (recorded provider: ${record.model.effectiveProvider})` : ""}, but no live parent execution context is bound`,
+        };
+        try {
+          do {
+            materializedVersion = bindingVersion;
+            creating = restore(record);
+            live = await creating;
+            creating = undefined;
+          } while (!cancelled && !suspended && materializedVersion !== bindingVersion);
+        } catch (err) {
+          live = undefined;
+          materializedVersion = -1;
+          creating = undefined;
+          const providerNote = (record.model as RecordedModelEffort).effectiveProvider;
+          return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: `child ${record.id} cannot resume from durable storage${providerNote !== undefined ? ` (recorded provider: ${providerNote})` : ""}: ${err instanceof Error ? err.message : String(err)}` };
+        }
+        if (suspended) return { status: "unavailable", messageId: msg.messageId, retryable: true, reason: `child ${record.id}'s parent context is ending` };
+        if (cancelled) return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: `child ${record.id} was stopped while restoring` };
+        return await live.resume(msg);
+      } finally { resuming = false; finishResume(); }
     },
     async result(): Promise<ChildResult> {
-      return { status: terminal, content: `restored from durable storage -- the authoritative record is its transcript: ${record.transcript}` };
+      return live !== undefined ? live.result() : { status: terminal, content: `restored from durable storage -- the authoritative record is its transcript: ${record.transcript}` };
     },
-    async stop(): Promise<void> {
-      /* already terminal -- idempotent, exactly like a live handle's own stop() on a settled child */
-    },
+    async stop(): Promise<void> { cancelled = true; await live?.stop(); },
+    async generationDone(): Promise<void> { await resumeDone; await live?.generationDone?.(); },
+    usage: () => live?.usage?.(),
   };
+  bindings.set(handle, { bind(binding) {
+    restore = binding;
+    suspended = false;
+    bindingVersion++;
+    // An old context must not dispatch a new generation after an async provider/store probe.
+    // This cancels only its pending resume ticket, never a generation already running.
+    if (resuming) live?.cancelPendingResume?.();
+    // Materialized running generations retain their context until teardown. Terminal resumes
+    // retire the old handle and re-read the newest immediate-parent authority.
+  }, async drain() {
+    suspended = true;
+    bindingVersion++;
+    // Pending provider/store work must lose its dispatch ticket before the first await.
+    live?.cancelPendingResume?.();
+    // A pending resume records "running" before awaiting metadata persistence. Let its cancelled
+    // ticket restore the prior terminal state first; stop() here would turn a context change into
+    // an explicit user stop and permanently replace the child's previous completion.
+    await resumeDone;
+    // A materialization that was already in flight can only finish now; it cannot dispatch.
+    if (live?.status() === "running") await live.stop().catch(() => {});
+    await live?.generationDone?.();
+  } });
+  return handle;
 }
 
 export interface RestoredChildRoster {
@@ -82,14 +125,17 @@ export interface RestoredChildRoster {
 // Never throws: a store with no children, an unreadable sidecar, or a store that cannot list
 // subkeys at all yields an empty roster (rebuildChildRoster's own per-child error handling), because
 // failing to restore a roster must never prevent a session from starting.
-export async function restoreChildRoster(store: SessionStore, key: RosterKey): Promise<RestoredChildRoster> {
+export async function restoreChildRoster(store: SessionStore, key: RosterKey, options: { registerMessaging?: boolean } = {}): Promise<RestoredChildRoster> {
   let handles: ChildHandle[] = [];
   try {
-    handles = successfulRecords(await rebuildChildRoster(store, key)).map(restoredChildHandle);
+    handles = successfulRecords(await rebuildChildRoster(store, key)).map((record) => {
+      bindChildExecutionProjectKey(record, key.projectKey);
+      return restoredChildHandle(record);
+    });
   } catch {
     handles = [];
   }
-  if (handles.length === 0) return { handles, remove: () => {} };
+  if (handles.length === 0 || options.registerMessaging === false) return { handles, remove: () => {} };
   const remove = ensureDefaultMessagingRuntimeRegistered().addChildRosterSource(() => handles);
   return { handles, remove };
 }

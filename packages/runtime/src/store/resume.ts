@@ -676,5 +676,44 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
     }
     // Unknown entry types are skipped for provider context — never fed to a real provider.
   }
-  return messages;
+  // A hard process exit can leave a persisted tool round without its result write. Closing
+  // those calls is context repair only: their effects may already have happened, so never replay
+  // execution. Use the same marker as the live interrupt path. Repair before any later ordinary
+  // turn as well as at EOF, since the append-only transcript keeps that interrupted round after
+  // a resumed conversation has continued. Existing (including recovered parallel) results win.
+  const balanced: ProviderMessage[] = [];
+  const pending = new Set<string>();
+  let resultsStarted = false;
+  const closeInterrupted = () => {
+    resultsStarted = false;
+    if (pending.size === 0) return;
+    balanced.push({ role: "tool", content: [...pending].map((id) => ({
+      type: "tool_result", tool_use_id: id, content: "[interrupted]", interrupted: true,
+    })) });
+    pending.clear();
+  };
+  for (const message of messages) {
+    const blocks = Array.isArray(message.content) ? message.content : [];
+    const calls = message.role === "assistant" ? blocks.filter((block) => block.type === "tool_use") : [];
+    const results = blocks.filter((block) => block.type === "tool_result");
+    // Claude stores a parallel batch as adjacent assistant entries; collect all of them before
+    // closing the round. A user message with real results can also carry ordinary text.
+    if ((calls.length > 0 && resultsStarted) || (calls.length === 0 && results.length === 0 && message.role !== "tool")) closeInterrupted();
+    for (const block of calls) if (block.type === "tool_use") pending.add(block.id);
+    for (const block of results) if (block.type === "tool_result") pending.delete(block.tool_use_id);
+    if (results.length > 0) resultsStarted = true;
+    if (results.length > 0 && message.role === "user" && blocks.some((block) => block.type !== "tool_result") && pending.size > 0) {
+      // A mixed Claude user entry finishes the result round and carries ordinary input too.
+      // Complete its results before that input, preserving all persisted content verbatim.
+      balanced.push({ ...message, content: [
+        ...blocks.filter((block) => block.type === "tool_result"),
+        ...[...pending].map((id): ContentBlock => ({ type: "tool_result", tool_use_id: id, content: "[interrupted]", interrupted: true })),
+        ...blocks.filter((block) => block.type !== "tool_result"),
+      ] });
+      pending.clear();
+      resultsStarted = false;
+    } else balanced.push(message);
+  }
+  closeInterrupted();
+  return balanced;
 }
