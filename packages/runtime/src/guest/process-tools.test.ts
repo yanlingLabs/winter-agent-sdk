@@ -56,7 +56,7 @@ test("lost/stale/invalid acknowledgments are uncertain and never replay commands
   }
 });
 test("typed prelaunch authority denial is certain; unknown denial remains uncertain",async()=>{
-  for(const [code,uncertain] of [["authority_denied",false],["postlaunch_crash",true]] as const){
+  for(const [code,uncertain] of [["authority_denied",false],["postlaunch_crash",true],["worker_io_failed",true]] as const){
     const f=fixture();f.respond(request=>({...f.receipt(request),exitCode:1,stdout:JSON.stringify({version:1,ok:false,code,errno:1})}));
     const result=await f.run({command:"effect"});expect(result.isError).toBe(true);expect(result.output.includes("do not replay automatically")).toBe(uncertain);
   }

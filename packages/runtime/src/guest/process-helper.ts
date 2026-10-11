@@ -19,6 +19,8 @@ export interface GuestProcessPort {
    * Each invocation gets a private PID namespace with process-worker as PID 1. Cancellation
    * destroys that namespace and waits for all owned descendants, including setsid escapees.
    * Authority revocation destroys affected running invocations as well as denying new ones.
+   * Bound stdin delivery and outer kill/drain waits independently of the worker timer;
+   * uninterruptible guest I/O can delay reaping. Report uncertain cleanup, never success.
    * No inherited env, stores, control FDs or runtime filesystem view. No automatic retries.
    * Invoke process-worker ROOT REL_CWD UID TIMEOUT_MS OUTPUT_LIMIT; bounded command on stdin.
    * The shell is /bin/bash with a fixed, compartment-owned environment. */

@@ -219,6 +219,19 @@ def main():
         result = process("printf poison > /bin/bash")
         assert result["ok"] and result["exitCode"] != 0, result
         checks.append("shell cannot replace immutable executable or impersonate compartment PID 1")
+        for fault in (1, 2):
+            fault_worker = fixture / f"process-worker-fault-{fault}"
+            checked([compiler, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-static",
+                f"-DWINTER_GUEST_PROCESS_FIXTURE_FAULT={fault}", ROOT / "packages/runtime/src/guest/process-worker.c", "-o", fault_worker])
+            os.chmod(fault_worker, 0o555)
+            arguments = process_arguments()
+            arguments[1] = fault_worker
+            code, stdout, stderr = command(arguments, b"printf applied > io-error-effect; printf ready; sleep 30")
+            receipt = json.loads(stdout)
+            assert code != 0 and receipt["ok"] is False and receipt["code"] == "worker_io_failed" and receipt["errno"] == 5, (code, receipt, stderr)
+            if fault == 1:
+                assert (fixture / "source/io-error-effect").read_bytes() == b"applied", "read fault did not exercise post-effect failure"
+        checks.append("native injected pipe read and poll errors never confirm success")
         result = process("printf forbidden > forbidden-shell", policy="plan")
         assert result["ok"] and result["exitCode"] != 0 and not (fixture / "source/forbidden-shell").exists(), result
         result = process("printf forbidden > /readonly/shell-write")

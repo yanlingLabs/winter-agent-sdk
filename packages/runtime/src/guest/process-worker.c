@@ -20,6 +20,13 @@
 static int denial(const char *code) {
     printf("{\"version\":1,\"ok\":false,\"code\":\"%s\",\"errno\":%d}\n",code,errno);return 1;
 }
+static int fail_owned(void) {
+    int cause=errno;
+    if(kill(-1,SIGKILL) && errno!=ESRCH)_exit(78);
+    /* A post-fork I/O failure has uncertain effects. Returning PID 1 destroys the
+     * namespace; the outer supervisor still owns bounded cleanup/termination. */
+    errno=cause;return denial("worker_io_failed");
+}
 static long long now_ms(void) {
     struct timespec ts;if(clock_gettime(CLOCK_MONOTONIC,&ts))_exit(78);
     return (long long)ts.tv_sec*1000+ts.tv_nsec/1000000;
@@ -94,10 +101,22 @@ int main(int argc,char **argv) {
             if(kill(-1,SIGKILL) && errno!=ESRCH)_exit(78);
             killed=1;
         }
-        int ready=poll(streams,2,10);
-        if(ready<0 && errno!=EINTR){kill(-1,SIGKILL);_exit(78);}
+        int ready;
+#if defined(WINTER_GUEST_PROCESS_FIXTURE_FAULT) && WINTER_GUEST_PROCESS_FIXTURE_FAULT == 2
+        /* Compile-time fixture artifact only; never a production input/env option. */
+        errno=EIO;ready=-1;
+#else
+        ready=poll(streams,2,10);
+#endif
+        if(ready<0){if(errno==EINTR)continue;return fail_owned();}
         for(int i=0;i<2;i++)if(streams[i].fd>=0 && streams[i].revents){
-            unsigned char buffer[4096];ssize_t count=read(streams[i].fd,buffer,sizeof(buffer));
+            if(streams[i].revents&(POLLERR|POLLNVAL)){errno=EIO;return fail_owned();}
+            unsigned char buffer[4096];ssize_t count;
+#if defined(WINTER_GUEST_PROCESS_FIXTURE_FAULT) && WINTER_GUEST_PROCESS_FIXTURE_FAULT == 1
+            errno=EIO;count=-1;
+#else
+            count=read(streams[i].fd,buffer,sizeof(buffer));
+#endif
             if(count>0){
                 size_t keep=(size_t)count;if(keep>limit-total)keep=limit-total;
                 memcpy(output[i]+sizes[i],buffer,keep);sizes[i]+=keep;total+=keep;
@@ -105,7 +124,8 @@ int main(int argc,char **argv) {
                     if(!strcmp(termination,"exit"))termination="output_limit";
                     if(!killed){if(kill(-1,SIGKILL) && errno!=ESRCH)_exit(78);killed=1;}
                 }
-            }else if(count==0 || (count<0 && errno!=EINTR && errno!=EAGAIN)){close(streams[i].fd);streams[i].fd=-1;alive--;}
+            }else if(count==0){close(streams[i].fd);streams[i].fd=-1;alive--;}
+            else if(errno!=EINTR && errno!=EAGAIN)return fail_owned();
         }
     }
     /* Reap every adopted descendant before admitting a confirmed receipt. */

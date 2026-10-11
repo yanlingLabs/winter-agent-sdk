@@ -78,6 +78,12 @@ private scratch. Timeout, output overflow and normal shell completion kill all
 descendants in that invocation's private PID namespace and reap them, including
 children that create new process groups or sessions. Supervisor cancellation must
 destroy that namespace and await cleanup before settling its port call.
+The protected outer supervisor must independently bound command-stdin delivery
+and kill/drain/reap waits. A guest task stuck in uninterruptible kernel I/O can
+delay SIGKILL and reaping beyond the command timer. This worker alone cannot
+promise bounded cleanup; unresolved cleanup must remain uncertain and cannot
+produce a confirmed success. Unexpected pipe/poll failures return a post-launch
+uncertain failure instead of treating lost output as clean EOF.
 
 The protected supervisor must validate current authority revisions and artifact,
 UID, root and mount identities before launch, and destroy affected running
@@ -112,6 +118,9 @@ The same Linux fixture also compiles the process worker and exercises real Bash
 cwd/streams/write effects, absent protected-runtime/proc/env surfaces, plan and
 read-only mount denial, cwd symlink escapes, nonzero exit, combined output bound,
 and descendant destruction on timeout, normal exit and external cancellation.
+Compile-time fixture-only read/poll fault variants verify that unexpected native
+I/O errors never emit a successful receipt. They are not production artifacts
+and are never selectable through command input or environment.
 
 On an isolated Linux CI runner with existing compiler:
 
