@@ -1,0 +1,120 @@
+#define _GNU_SOURCE
+/* Linux file worker. MUST be launched in the caller's tool compartment, never as runtime/root. */
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/capability.h>
+#include <linux/openat2.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/prctl.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static int error_result(const char *code) {
+    printf("{\"version\":1,\"ok\":false,\"code\":\"%s\",\"errno\":%d}\n", code, errno);
+    return 1;
+}
+static int value(unsigned char c) {
+    const char *p = strchr(alphabet, (char)c);
+    return p && c ? (int)(p - alphabet) : -1;
+}
+static int decode(const unsigned char *text, size_t length, unsigned char *out, size_t *size, size_t limit) {
+    if (length % 4) return -1;
+    *size = 0;
+    for (size_t i = 0; i < length; i += 4) {
+        int a = value(text[i]), b = value(text[i+1]);
+        int c = text[i+2] == '=' ? 0 : value(text[i+2]);
+        int d = text[i+3] == '=' ? 0 : value(text[i+3]);
+        size_t bytes = text[i+2] == '=' ? 1 : text[i+3] == '=' ? 2 : 3;
+        if (a < 0 || b < 0 || c < 0 || d < 0 || (text[i+2] == '=' && text[i+3] != '=') || (bytes < 3 && i+4 != length) || (bytes == 1 && (b & 15)) || (bytes == 2 && (c & 3)) || *size+bytes > limit) return -1;
+        out[(*size)++] = (unsigned char)((a << 2) | (b >> 4));
+        if (bytes > 1) out[(*size)++] = (unsigned char)((b << 4) | (c >> 2));
+        if (bytes > 2) out[(*size)++] = (unsigned char)((c << 6) | d);
+    }
+    return 0;
+}
+static void encode(const unsigned char *data, size_t length) {
+    for (size_t i = 0; i < length; i += 3) {
+        unsigned a = data[i], b = i+1 < length ? data[i+1] : 0, c = i+2 < length ? data[i+2] : 0;
+        putchar(alphabet[a >> 2]); putchar(alphabet[((a & 3) << 4) | (b >> 4)]);
+        putchar(i+1 < length ? alphabet[((b & 15) << 2) | (c >> 6)] : '=');
+        putchar(i+2 < length ? alphabet[c & 63] : '=');
+    }
+}
+int main(int argc, char **argv) {
+    if (argc != 6 || (strcmp(argv[1], "read") && strcmp(argv[1], "write"))) { errno = EINVAL; return error_result("invalid_request"); }
+    char *end;
+    unsigned long expected_uid = strtoul(argv[4], &end, 10);
+    if (*end || expected_uid == 0 || expected_uid > 65535 || getuid() != expected_uid || geteuid() != expected_uid || prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) != 1 || prctl(PR_GET_SECCOMP) != 2) { errno = EPERM; return error_result("compartment_required"); }
+    struct __user_cap_header_struct header = { .version = _LINUX_CAPABILITY_VERSION_3, .pid = 0 };
+    struct __user_cap_data_struct caps[2] = {{0}, {0}};
+    if (syscall(SYS_capget, &header, caps) || caps[0].effective || caps[1].effective || caps[0].permitted || caps[1].permitted || caps[0].inheritable || caps[1].inheritable) { errno = EPERM; return error_result("compartment_required"); }
+    for (int cap = 0; cap <= CAP_LAST_CAP; cap++) {
+        if (prctl(PR_CAPBSET_READ, cap, 0, 0, 0) != 0 || prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_IS_SET, cap, 0, 0) != 0) { errno = EPERM; return error_result("compartment_required"); }
+    }
+    unsigned long limit = strtoul(argv[5], &end, 10);
+    if (*end || limit < 1 || limit > 16 * 1024 * 1024 || argv[2][0] != '/' || !argv[3][0] || argv[3][0] == '/') { errno = EINVAL; return error_result("invalid_request"); }
+    /* No inherited control/store/socket descriptors, even if a launcher accidentally passed them. */
+    if (syscall(SYS_close_range, 3U, ~0U, 0U)) return error_result("fd_cleanup_unavailable");
+    struct open_how root_how = { .flags = O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, .resolve = RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS };
+    int root = (int)syscall(SYS_openat2, AT_FDCWD, argv[2], &root_how, sizeof(root_how));
+    if (root < 0) return error_result("root_unavailable");
+    unsigned char *data = malloc(limit + 1);
+    if (!data) { close(root); return error_result("resource_unavailable"); }
+    size_t bytes = 0;
+    int writing = !strcmp(argv[1], "write");
+    if (writing) {
+        size_t encoded_limit = ((limit + 2) / 3) * 4;
+        unsigned char *input = malloc(encoded_limit + 1);
+        if (!input) { free(data); close(root); return error_result("resource_unavailable"); }
+        size_t length = 0;
+        for (;;) {
+            ssize_t count = read(STDIN_FILENO, input+length, encoded_limit+1-length);
+            if (count < 0) { if (errno == EINTR) continue; free(input); free(data); close(root); return error_result("input_failed"); }
+            if (!count) break;
+            length += (size_t)count;
+            if (length > encoded_limit) { errno = EFBIG; free(input); free(data); close(root); return error_result("payload_limit"); }
+        }
+        if (decode(input, length, data, &bytes, limit)) { errno = EINVAL; free(input); free(data); close(root); return error_result("invalid_payload"); }
+        free(input);
+    }
+    struct open_how how = {
+        .flags = (writing ? O_WRONLY | O_CREAT : O_RDONLY) | O_CLOEXEC | O_NONBLOCK,
+        /* Respect the compartment's normal umask and setgid workspace group. */
+        .mode = writing ? 0666 : 0,
+        /* In-root relative links and admitted nested binds are normal workspace semantics.
+         * Absolute/out-of-root links and proc-style magic links remain denied by the kernel. */
+        .resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS,
+    };
+    int file = (int)syscall(SYS_openat2, root, argv[3], &how, sizeof(how));
+    close(root);
+    if (file < 0) { free(data); return error_result(errno == ENOSYS ? "openat2_unavailable" : "path_denied"); }
+    struct stat st;
+    if (fstat(file, &st) || !S_ISREG(st.st_mode)) { errno = EINVAL; close(file); free(data); return error_result("regular_file_required"); }
+    if (writing) {
+        /* Validate the opened object before making the first destructive change. */
+        if (ftruncate(file, 0)) { close(file); free(data); return error_result("write_failed"); }
+        size_t written = 0;
+        while (written < bytes) {
+            ssize_t count = write(file, data+written, bytes-written);
+            if (count < 0) { if (errno == EINTR) continue; close(file); free(data); return error_result("write_failed"); }
+            if (!count) { errno = EIO; close(file); free(data); return error_result("write_failed"); }
+            written += (size_t)count;
+        }
+        if (fsync(file)) { close(file); free(data); return error_result("flush_failed"); }
+        printf("{\"version\":1,\"ok\":true,\"bytes\":%zu}\n", bytes);
+    } else {
+        for (;;) {
+            ssize_t count = read(file, data+bytes, limit+1-bytes);
+            if (count < 0) { if (errno == EINTR) continue; close(file); free(data); return error_result("read_failed"); }
+            if (!count) break;
+            bytes += (size_t)count;
+            if (bytes > limit) { errno = EFBIG; close(file); free(data); return error_result("payload_limit"); }
+        }
+        printf("{\"version\":1,\"ok\":true,\"bytes\":%zu,\"dataBase64\":\"", bytes); encode(data, bytes); puts("\"}");
+    }
+    close(file); free(data); return 0;
+}
