@@ -19,6 +19,8 @@ import {
 } from "./profile.ts";
 import type { GlobDenyEntry } from "../permissions/file-rules.ts";
 import { trackProcessGroup } from "../process-groups.ts";
+import { buildMandatoryFloorProfile, hasMandatoryFloor, type HostExecutionFloor, type HostCodeProcessScope, type HostCodeProcessHandle } from "@yanlinglabs/winter-agent-sdk";
+import { currentHostCodeProcessClient, requireBoundHandle } from "./host-code-process.ts";
 
 // ---------------------------------------------------------------------------------------------
 // §3: sandbox availability (darwin + /usr/bin/sandbox-exec present)
@@ -139,7 +141,49 @@ export function resolveExecutionPath(input: ResolveExecutionPathInput): Executio
 
 const DEFAULT_MAX_STREAMED_BYTES = 5 * 1024 ** 3; // WS-12 §6.3: >5 GB streamed output kills the command
 
+async function runBrokeredCommand(opts: RunCommandOptions, bound: NonNullable<ReturnType<typeof currentHostCodeProcessClient>>): Promise<RunCommandResult> {
+  if (!opts.hostCodeScope?.toolUseId) throw new SandboxUnavailableError("host Code execution requires an authenticated active tool call");
+  if (opts.signal?.aborted) throw new SandboxUnavailableError("host Code execution cancelled before admission");
+  const scope = { ...opts.hostCodeScope, generationId: bound.generationId };
+  let handle: HostCodeProcessHandle | undefined;
+  const onAbort = () => { if (handle) void bound.client.signal(handle, "SIGKILL").catch(() => {}); };
+  opts.signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const started = await bound.client.start({ version: 1, ...scope, kind: "command", command: opts.matchCommand ?? opts.command, ...(opts.pwdCapturePath !== undefined ? {pwdCapturePath:opts.pwdCapturePath} : {}), cwd: opts.cwd, timeoutMs: opts.timeoutMs, maxStreamedBytes: opts.maxStreamedBytes ?? DEFAULT_MAX_STREAMED_BYTES, sandboxIntent: opts.dangerouslyDisableSandbox ? "override-requested" : "ordinary" }, opts.signal);
+    requireBoundHandle(started.handle, scope); handle = started.handle;
+    if (!["sandboxed", "config-disabled", "excluded", "override-requested"].includes(started.posture)) throw new SandboxUnavailableError("host Code broker returned invalid posture");
+    if (opts.signal?.aborted) onAbort();
+    opts.onSpawned?.({ pid: handle.pid });
+    let sequence = 0;
+    for (;;) {
+      // Poll cancellation does not hide exit: the host must stop the process then provide exit evidence.
+      const reply = await bound.client.poll(handle, sequence);
+      requireBoundHandle(reply.handle, scope);
+      if (reply.handle.id !== handle.id || reply.handle.pid !== handle.pid || !Array.isArray(reply.events)) throw new SandboxUnavailableError("host Code poll returned a foreign process");
+      let bytes = 0;
+      for (const event of reply.events) {
+        if (event.sequence !== sequence + 1 || (event.stream !== "stdout" && event.stream !== "stderr") || typeof event.dataBase64 !== "string") throw new SandboxUnavailableError("host Code output sequence/schema invalid");
+        const chunk = Buffer.from(event.dataBase64, "base64");
+        if (chunk.toString("base64") !== event.dataBase64 || (bytes += chunk.length) > 65536) throw new SandboxUnavailableError("host Code output exceeds the admitted poll bound");
+        sequence = event.sequence;
+        (event.stream === "stdout" ? opts.onStdout : opts.onStderr)?.(chunk);
+      }
+      if (reply.exit) {
+        if ((reply.exit.code !== null && (!Number.isInteger(reply.exit.code) || reply.exit.code < 0 || reply.exit.code > 255)) || [reply.exit.timedOut,reply.exit.aborted,reply.exit.streamKilled].some(value=>typeof value!=="boolean")) throw new SandboxUnavailableError("host Code exit schema invalid");
+        await bound.client.release(handle,sequence);
+        return { exitCode: reply.exit.code, timedOut: reply.exit.timedOut, aborted: reply.exit.aborted, streamKilled: reply.exit.streamKilled, posture: started.posture, sandboxOverrideRequested: opts.dangerouslyDisableSandbox === true };
+      }
+    }
+  } catch (error) {
+    if (handle) await bound.client.signal(handle, "SIGKILL").catch(() => {});
+    throw new SandboxUnavailableError(`host Code broker unavailable; no local execution fallback (${error instanceof Error ? error.name : "error"})`);
+  } finally { opts.signal?.removeEventListener("abort", onAbort); }
+}
+
 export interface RunCommandOptions {
+  /** Trusted host parent only, separate from SandboxSettings; never a model input. */
+  mandatoryFloor?: HostExecutionFloor;
+  hostCodeScope?: Omit<HostCodeProcessScope, "generationId">;
   command: string;
   /**
    * Task 8 (P3 close-out, "excludedCommands raw-match" MUST): the command string `resolveExecutionPath`
@@ -152,6 +196,8 @@ export interface RunCommandOptions {
    * `excludedCommands` against what the model/settings author actually wrote, never the wrapper.
    */
   matchCommand?: string;
+  /** SDK-generated scratch path; broker parent independently validates it and renders the wrapper. */
+  pwdCapturePath?: string;
   /** Real, existing, already-canonicalized directory to spawn the shell in. */
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -245,6 +291,13 @@ export interface RunCommandResult {
 // which a plain non-async function returning `new Promise(...)` would NOT do for a throw that
 // happens before that `return` statement is ever reached.
 export async function runCommand(opts: RunCommandOptions): Promise<RunCommandResult> {
+  const bound = currentHostCodeProcessClient();
+  if (bound) return runBrokeredCommand(opts, bound);
+  return runCommandLocally(opts);
+}
+
+/** Trusted parent entry; bypasses the child's RPC client, never its mandatory kernel floor. */
+export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCommandResult> {
   const { posture, sandboxOverrideRequested } = resolveExecutionPath({
     settings: opts.settings,
     command: opts.matchCommand ?? opts.command,
@@ -292,6 +345,13 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
     // config-disabled / override-requested / excluded: no seatbelt wrapper at all (§4.1 table).
     spawnFile = "/bin/bash";
     spawnArgs = ["-c", opts.command];
+  }
+  if (opts.mandatoryFloor && hasMandatoryFloor(opts.mandatoryFloor)) {
+    if (!isSandboxAvailable()) throw new SandboxUnavailableError("mandatory host control floor unavailable");
+    const floor = buildMandatoryFloorProfile(opts.mandatoryFloor);
+    profile = profile === undefined ? floor : `${profile}\n${floor.split("\n").slice(2).join("\n")}`;
+    spawnFile = REAL_SANDBOX_EXEC_PATH;
+    spawnArgs = ["-p", profile, "/bin/bash", "-c", opts.command];
   }
 
   const maxStreamedBytes = opts.maxStreamedBytes ?? DEFAULT_MAX_STREAMED_BYTES;

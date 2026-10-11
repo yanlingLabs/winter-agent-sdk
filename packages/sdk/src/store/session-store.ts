@@ -13,6 +13,7 @@ import {
   mkdirSync,
   lstatSync,
   chmodSync,
+  existsSync,
   readdirSync,
   readFileSync,
   statSync,
@@ -32,7 +33,7 @@ import { join } from "node:path";
 // re-exported below (a separate `export ... from` binding, which needs no import of its own) — so
 // importing it here too was dead weight (TS6133). isPidAlive/readLeaseInfo are new imports for the
 // lease-aware tail repair below (Ruling P1-S).
-import { acquireLease, isPidAlive, readLeaseInfo, releaseLease, writeAllSync, WinterStoreError } from "./leases.ts";
+import { acquireLease, isLeaseHolderAlive, isLeaseOwnedByCurrentProcess, readLeaseInfo, releaseLease, writeAllSync, WinterStoreError } from "./leases.ts";
 
 export { WinterStoreError, WinterStoreLeaseError } from "./leases.ts";
 
@@ -369,7 +370,8 @@ function parseWithTailRepair(buf: Buffer): TailRepairResult {
 // itself already gives them.
 function hasLiveForeignLeaseHolder(lockPath: string): boolean {
   const lease = readLeaseInfo(lockPath);
-  return lease !== null && lease.pid !== process.pid && isPidAlive(lease.pid);
+  if (process.platform === "linux" && lease === null && existsSync(lockPath)) return true;
+  return lease !== null && !isLeaseOwnedByCurrentProcess(lease) && isLeaseHolderAlive(lease);
 }
 
 // Collects every resource STEM under `dir` — a stem counts as present via EITHER its `.jsonl` or

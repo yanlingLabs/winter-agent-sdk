@@ -342,6 +342,8 @@ const executor: ToolExecutor = {
           launchToOutput(
             runtime.resume(input.resumeFromRunId, ctx.sessionId, host, {
               parentToolUseId: ctx.toolUseId,
+              ...(ctx.agentId !== undefined ? {agentId:ctx.agentId} : {}),
+              ...(ctx.parentToolUseId !== undefined ? {hostCodeParentToolUseId:ctx.parentToolUseId} : {}),
               ...(replacement !== undefined ? { replacement } : {}),
               ...(input.args !== undefined ? { args: input.args } : {}),
             }),
@@ -382,6 +384,8 @@ const executor: ToolExecutor = {
               meta: meta.meta,
               ...(input.args !== undefined ? { args: input.args } : {}),
               parentToolUseId: ctx.toolUseId,
+              ...(ctx.agentId !== undefined ? {agentId:ctx.agentId} : {}),
+              ...(ctx.parentToolUseId !== undefined ? {hostCodeParentToolUseId:ctx.parentToolUseId} : {}),
             },
             host,
           ),

@@ -15,6 +15,7 @@ import type { SandboxBrand } from "../sandbox/profile.ts";
 
 /** Everything about the SESSION the seatbelt profile needs, for any tool that runs a shell command. */
 export interface SandboxRunInputs {
+  hostCodeScope?: { sessionId: string; toolUseId: string; agentId?: string; parentToolUseId?: string };
   cwd: string;
   env: NodeJS.ProcessEnv;
   settings: ToolExecutionContext["sandboxSettings"];
@@ -55,7 +56,7 @@ export function buildSandboxChildEnv(ctx: ToolExecutionContext): NodeJS.ProcessE
 }
 
 /** `filesystem.denyWrite`/`denyRead`, split into plain paths and glob-shaped regexes (C1 / fix rounds 11-13). */
-export function computeDenyPaths(ctx: ToolExecutionContext): Pick<SandboxRunInputs, "denyWritePaths" | "denyReadPaths" | "denyWriteRegexes" | "denyReadRegexes" | "denyWriteGlobFixedPrefixes" | "denyReadGlobFixedPrefixes" | "denyReadGlobEntries"> {
+export function computeDenyPaths(ctx: Pick<ToolExecutionContext,"sandboxSettings">): Pick<SandboxRunInputs, "denyWritePaths" | "denyReadPaths" | "denyWriteRegexes" | "denyReadRegexes" | "denyWriteGlobFixedPrefixes" | "denyReadGlobFixedPrefixes" | "denyReadGlobEntries"> {
   const fs = ctx.sandboxSettings.filesystem;
   const write = splitDenyPathsByGlobShape(fs?.denyWrite ?? []);
   const read = splitDenyPathsByGlobShape(fs?.denyRead ?? []);
@@ -71,18 +72,22 @@ export function computeDenyPaths(ctx: ToolExecutionContext): Pick<SandboxRunInpu
   };
 }
 
+/** Host supplies these from current authenticated session state, never from a command RPC. */
+export type HostSandboxRunInputs = Pick<SandboxRunInputs,"cwd"|"env"|"settings"|"writableRoots"|"home"|"winterHome"|"storeHome"|"brand"|"allowGitConfigWrites">;
+export function buildHostSandboxRunInputs(input:HostSandboxRunInputs): SandboxRunInputs {
+  return {...input,...computeDenyPaths({sandboxSettings:input.settings})};
+}
+
 /** The session's sandbox inputs, identical for every tool that runs a shell command. */
 export function sandboxRunInputs(ctx: ToolExecutionContext): SandboxRunInputs {
   return {
-    cwd: ctx.cwd,
-    env: buildSandboxChildEnv(ctx),
-    settings: ctx.sandboxSettings,
-    writableRoots: computeWritableRoots(ctx),
-    ...computeDenyPaths(ctx),
-    home: ctx.home,
-    ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
-    ...(ctx.storeHome !== undefined ? { storeHome: ctx.storeHome } : {}),
-    ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
-    ...(ctx.sandboxSettings.filesystem?.allowGitConfig !== undefined ? { allowGitConfigWrites: ctx.sandboxSettings.filesystem.allowGitConfig } : {}),
+    ...(ctx.toolUseId !== undefined ? { hostCodeScope: { sessionId: ctx.sessionId, toolUseId: ctx.toolUseId, ...(ctx.agentId !== undefined ? { agentId: ctx.agentId } : {}), ...(ctx.parentToolUseId !== undefined ? { parentToolUseId: ctx.parentToolUseId } : {}) } } : {}),
+    ...buildHostSandboxRunInputs({
+      cwd:ctx.cwd,env:buildSandboxChildEnv(ctx),settings:ctx.sandboxSettings,writableRoots:computeWritableRoots(ctx),home:ctx.home,
+      ...(ctx.winterHome !== undefined ? {winterHome:ctx.winterHome}:{}),
+      ...(ctx.storeHome !== undefined ? {storeHome:ctx.storeHome}:{}),
+      ...(ctx.brand !== undefined ? {brand:ctx.brand}:{}),
+      ...(ctx.sandboxSettings.filesystem?.allowGitConfig !== undefined ? {allowGitConfigWrites:ctx.sandboxSettings.filesystem.allowGitConfig}:{}),
+    }),
   };
 }

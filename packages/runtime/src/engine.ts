@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
+import { createHostCodeProcessClient, installHostCodeProcessClient } from "./sandbox/host-code-process.ts";
 import { homedir, release as osRelease, type as osType } from "node:os";
 // Phase 5 fix wave, I1: `buildBaselineDenyRules` compares the resolved winter root against the
 // literal default, so it needs path resolution.
@@ -2560,6 +2562,7 @@ function withLegacyToolNameRules(opts: EngineOptions): EngineOptions {
 }
 
 export async function runEngine(opts: EngineOptions): Promise<number> {
+  assertRuntimeExecutionPosture(opts.config);
   const facetDisposers: Array<() => void | Promise<void>> = [];
   // Review r2 finding 9 (whole-branch): `runEngineBody`'s own background-shell sweep
   // (`stopSessionShellTasks`, review r1 finding 2's own "the session going away" kill door) sits
@@ -3003,6 +3006,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // WS-25 bug: a code session with a signed-in OAuth MCP server died at start with `query()`'s
   // "expected 'init' as the first frame, got 'control_request'". See `RpcBridgeOptions.holdUntilOpen`.
   const bridge = createRpcBridge(output, { holdUntilOpen: true });
+  if (config.hostCodeProcessBroker !== undefined) {
+    if (typeof config.hostCodeProcessBroker.generationId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(config.hostCodeProcessBroker.generationId)) throw new Error("invalid host Code broker generation");
+    facetDisposers.push(installHostCodeProcessClient({ client: createHostCodeProcessClient(bridge), generationId: config.hostCodeProcessBroker.generationId }));
+  }
   // WS-25 §7: a host-brokered session's credential reads ride THIS bridge (the one top-level engine binds;
   // a child engine never receives the channel, and shares the parent's binding through the stores).
   hostCredentialChannel?.bind(bridge);
@@ -4854,6 +4861,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
       ...(config.isolationPinnedCwd !== undefined ? { isolationPinnedCwd: config.isolationPinnedCwd } : {}),
       ...(config.agentId !== undefined ? { agentId: config.agentId } : {}),
+      ...(config.parentToolUseId !== undefined ? { parentToolUseId: config.parentToolUseId } : {}),
       // Phase 4 Task 8 (Lane C Gap #3): the programmatic Options.agents map, straight from this
       // run's own RuntimeConfig -- see ToolExecutionContext.agents (registry.ts) for why.
       ...(config.agents !== undefined ? { agents: config.agents } : {}),

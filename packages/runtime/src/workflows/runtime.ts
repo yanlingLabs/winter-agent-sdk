@@ -23,6 +23,8 @@ import { WorkflowRegistry } from "./registry.ts";
 import { makeSemaphore, resolveConcurrencyCap, type Semaphore } from "./semaphore.ts";
 import { createBudget, type WorkflowBudget } from "./budget.ts";
 import { buildWorkerSpawn, resolveWorkerCommand, workflowSandboxAvailable, type WorkerCommand } from "./sandbox.ts";
+import { currentHostCodeProcessClient } from "../sandbox/host-code-process.ts";
+import { brokeredWorkflowWorker } from "./host-code-worker.ts";
 import type { SandboxBrand } from "../sandbox/profile.ts";
 import { trackProcessGroup } from "../process-groups.ts";
 import type { BrandProfile, SettingSource } from "@yanlinglabs/winter-agent-sdk";
@@ -123,7 +125,7 @@ export function stderrTail(stream: NodeJS.ReadableStream | null | undefined): ()
   };
 }
 
-export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; winterHome?: string; brand?: SandboxBrand; cwd?: string }) => WorkerProcess;
+export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; winterHome?: string; brand?: SandboxBrand; cwd?: string; hostCodeScope?: {sessionId:string;toolUseId:string;agentId?:string;parentToolUseId?:string}; runId?:string }) => WorkerProcess;
 
 /**
  * The production spawner: `sandbox-exec -p <profile> <worker>`, its own process-group leader.
@@ -138,6 +140,10 @@ export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; wint
 export function realWorkerSpawner(opts: { sandbox?: boolean } = {}): WorkerSpawner {
   const sandbox = opts.sandbox ?? true;
   return (command, spawnOpts) => {
+    if(currentHostCodeProcessClient()) {
+      if(!spawnOpts.hostCodeScope||!spawnOpts.runId||!spawnOpts.cwd)throw new WorkflowRuntimeError("sandbox-unavailable","Workflow requires an authenticated host execution scope");
+      return brokeredWorkflowWorker({cwd:spawnOpts.cwd,runId:spawnOpts.runId,scope:spawnOpts.hostCodeScope});
+    }
     const spawnTarget = sandbox
       ? buildWorkerSpawn({
           command,
@@ -202,6 +208,8 @@ export interface WorkflowRuntimeDeps {
 
 export interface WorkflowLaunchInput {
   sessionId: string;
+  agentId?: string;
+  hostCodeParentToolUseId?: string;
   cwd: string;
   trustedWorkspace: boolean;
   source: string;
@@ -338,6 +346,7 @@ export class WorkflowRuntime {
     // class): the RESOLVED root is passed too, so a `<PREFIX>HOME` whose basename is not the brand's gets
     // its own `<root>/run` deny -- the profile emits both anchors.
     const worker = this.spawnWorker(command, {
+      ...(currentHostCodeProcessClient() ? {hostCodeScope:{sessionId:input.sessionId,toolUseId:input.parentToolUseId,...(input.agentId!==undefined?{agentId:input.agentId}:{}),...(input.hostCodeParentToolUseId!==undefined?{parentToolUseId:input.hostCodeParentToolUseId}:{})},runId} : {}),
       cwd: input.cwd,
       home: parentOf(this.deps.session.winterHome),
       winterHome: this.deps.session.winterHome,
@@ -463,6 +472,8 @@ export class WorkflowRuntime {
       replacement?: { source: string; meta: WorkflowLaunchInput["meta"] };
       /** Supplied = the new args; OMITTED = the original launch's args, unchanged. */
       args?: unknown;
+      agentId?: string;
+      hostCodeParentToolUseId?: string;
     } = {},
   ): WorkflowLaunchResult {
     const prior = this.registry.get(runId);
@@ -494,6 +505,8 @@ export class WorkflowRuntime {
         ...(opts.replacement !== undefined ? { source: opts.replacement.source, meta: opts.replacement.meta } : {}),
         ...("args" in opts ? { args: opts.args } : {}),
         ...(opts.parentToolUseId !== undefined ? { parentToolUseId: opts.parentToolUseId } : {}),
+        ...(opts.agentId !== undefined ? { agentId: opts.agentId } : {}),
+        ...(opts.hostCodeParentToolUseId !== undefined ? { hostCodeParentToolUseId: opts.hostCodeParentToolUseId } : {}),
         ...(journal.length > 0 ? { resumeJournal: journal } : {}),
       },
       host,

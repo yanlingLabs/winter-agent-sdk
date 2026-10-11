@@ -36,6 +36,7 @@ import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { emptyPathSet, type ExtractedPaths } from "../paths-seam.ts";
+import { scanReadableFiles } from "../safe-glob-scan.ts";
 
 interface GlobInput {
   pattern: string;
@@ -60,12 +61,7 @@ const MAX_PATHS = 100;
 // absolute yielded match is used as-is. This is keyed off the yielded string `p`, not off whether
 // the pattern itself looked absolute -- the same test Norma's own `combine()` applies.
 async function scan(pattern: string, scanRoot: string): Promise<string[]> {
-  const glob = new Bun.Glob(pattern);
-  const out = new Set<string>();
-  for await (const p of glob.scan({ cwd: scanRoot, onlyFiles: true, dot: true, followSymlinks: false })) {
-    out.add(isAbsolute(p) ? resolve(p) : resolve(scanRoot, p));
-  }
-  return [...out];
+  return scanReadableFiles(pattern, scanRoot, true);
 }
 
 async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {

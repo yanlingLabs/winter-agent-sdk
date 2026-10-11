@@ -1712,6 +1712,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       allowDangerouslySkipPermissions: inherit.policy.effectiveMode === "bypassPermissions",
       insideSubagent: true,
       agentId,
+      parentToolUseId: req.parentToolUseId,
       isolationPinnedCwd: req.isolation === "worktree",
       // Spawn-surface parity (R-S5): a forked worker may not fork again -- its own Agent tool reads this.
       ...(req.fork === true ? { insideFork: true } : {}),

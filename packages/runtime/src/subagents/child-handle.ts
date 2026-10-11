@@ -543,6 +543,12 @@ export function transformChildFrame(
   // code was incomplete.
   if (message["type"] === "system" && message["subtype"] === "init") return null;
 
+  // A descendant already crossed its immediate parent's protected forwarding boundary.
+  // Keep that correlator while bubbling up: the host binds its active call to this thread,
+  // and the descendant's Bash broker scope carries the same immediate spawning call id.
+  const parentToolUseId = typeof message["parent_tool_use_id"] === "string" && message["parent_tool_use_id"].length > 0
+    ? message["parent_tool_use_id"] : correlation.parentToolUseId;
+
   if (message["type"] === "assistant") {
     const inner = message["message"] as { content?: Array<{ type?: string; [k: string]: unknown }> } | undefined;
     const blocks = inner?.content ?? [];
@@ -553,7 +559,7 @@ export function transformChildFrame(
     if (filtered.length === 0) return null; // nothing left worth forwarding this frame for
     return {
       ...frame,
-      message: { ...message, message: { ...inner, content: filtered }, parent_tool_use_id: correlation.parentToolUseId },
+      message: { ...message, message: { ...inner, content: filtered }, parent_tool_use_id: parentToolUseId },
     } as WinterFrame;
   }
 
@@ -568,7 +574,7 @@ export function transformChildFrame(
   // would let a child's prose reach the parent stream in delta form past its own gate.
   if (message["type"] === "stream_event") {
     if (!forwardSubagentText) return null;
-    return { ...frame, message: { ...message, parent_tool_use_id: correlation.parentToolUseId } } as WinterFrame;
+    return { ...frame, message: { ...message, parent_tool_use_id: parentToolUseId } } as WinterFrame;
   }
 
   // 0.0.47: a child's LIVE REASONING (`system/reasoning_progress`). The block itself always crosses --
@@ -577,14 +583,14 @@ export function transformChildFrame(
   // `stream_event` above obeys), so without the option each delta crosses with its `text` removed.
   if (message["type"] === "system" && message["subtype"] === "reasoning_progress") {
     const { text: _text, ...withoutText } = message;
-    return { ...frame, message: { ...(forwardSubagentText ? message : withoutText), parent_tool_use_id: correlation.parentToolUseId } } as WinterFrame;
+    return { ...frame, message: { ...(forwardSubagentText ? message : withoutText), parent_tool_use_id: parentToolUseId } } as WinterFrame;
   }
 
   if (message["type"] === "user") {
     // This engine's own "user" data-frame convention carries only tool_result blocks (engine.ts's
     // round loop) -- WS-10 §4's "tool_use/tool_result blocks... are forwarded" applies
     // unconditionally, independent of forwardSubagentText.
-    return { ...frame, message: { ...message, parent_tool_use_id: correlation.parentToolUseId } } as WinterFrame;
+    return { ...frame, message: { ...message, parent_tool_use_id: parentToolUseId } } as WinterFrame;
   }
 
   // WS-24 (cross-lane, the phone review): a child's own SYSTEM frames describe the CHILD's conversation --
@@ -596,15 +602,15 @@ export function transformChildFrame(
   // by `parent_tool_use_id` (Winter's daemon does) filed a subagent's stop notice on the main thread,
   // where it looked like the main turn stopping, and a child's fallback moved the main model. So they
   // carry the child's `parent_tool_use_id` -- an ADDITIVE field on these messages (claude's declared
-  // `SDKSystemMessage` has none), overwriting a grandchild's exactly as the assistant/user frames above do,
-  // so the whole subtree stays on the thread the host knows.
+  // `SDKSystemMessage` has none). Already-correlated nested frames keep the immediate descendant's
+  // thread, just like assistant/user frames, instead of flattening the whole subtree.
   //
   // NOT stamped, deliberately: the task-registry family (`task_started`/`task_progress`/
   // `task_notification`/`task_updated`) and `background_tasks_changed`. Those report SESSION-level task
   // records keyed by their own task id -- a child's background task is the session's task -- and a host
   // folds them by that id, whichever thread produced them. `init` is swallowed above.
   if (message["type"] === "system" && !SESSION_LEVEL_SYSTEM_SUBTYPES.has(String(message["subtype"]))) {
-    return { ...frame, message: { ...message, parent_tool_use_id: correlation.parentToolUseId } } as WinterFrame;
+    return { ...frame, message: { ...message, parent_tool_use_id: parentToolUseId } } as WinterFrame;
   }
 
   // Anything else (an unknown message type): forwarded unchanged. Nothing here merges child content INTO

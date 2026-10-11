@@ -79,6 +79,7 @@ import { readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { emptyPathSet, type ExtractedPaths } from "../paths-seam.ts";
+import { scanReadableFiles } from "../safe-glob-scan.ts";
 
 // --- Input (WS-06 §3.1, verbatim) -------------------------------------------------------------------
 
@@ -282,11 +283,12 @@ function compileGitignoreLine(trimmedLine: string, ownerRelDir: string): IgnoreR
   return { negate, glob: new Bun.Glob(pattern) };
 }
 
-async function loadGitignoreRules(searchRoot: string): Promise<IgnoreRule[]> {
-  const discovery = new Bun.Glob("**/.gitignore");
+async function loadGitignoreRules(searchRoot: string, ctx: ToolExecutionContext): Promise<IgnoreRule[]> {
   const found: { relDir: string; depth: number; content: string }[] = [];
   try {
-    for await (const rel of discovery.scan({ cwd: searchRoot, dot: true, onlyFiles: true, followSymlinks: false })) {
+    for (const absolute of await scanReadableFiles("**/.gitignore", searchRoot, true)) {
+      if (ctx.permissions.probeReadAccess(absolute) === "deny") continue;
+      const rel = relative(searchRoot, absolute);
       const relPosix = rel.split(sep).join("/");
       const dir = dirname(relPosix);
       const relDir = dir === "." ? "" : dir;
@@ -324,11 +326,10 @@ function isIgnored(relPathPosix: string, rules: readonly IgnoreRule[]): boolean 
 
 // --- file discovery --------------------------------------------------------------------------------
 
-async function discoverCandidateFiles(searchRoot: string, globPattern: string): Promise<string[]> {
-  const rules = await loadGitignoreRules(searchRoot);
-  const glob = new Bun.Glob(globPattern);
+async function discoverCandidateFiles(searchRoot: string, globPattern: string, ctx: ToolExecutionContext): Promise<string[]> {
+  const rules = await loadGitignoreRules(searchRoot, ctx);
   const out: string[] = [];
-  for await (const p of glob.scan({ cwd: searchRoot, onlyFiles: true, dot: false, followSymlinks: false })) {
+  for (const p of await scanReadableFiles(globPattern, searchRoot, false)) {
     // Same absolute-yield quirk as Glob's own scan() (see glob.ts's header): join only a RELATIVE
     // match onto searchRoot. Either way, the gitignore matcher needs a path relative to searchRoot
     // (every compiled rule is anchored that way) -- computed via `relative()` from the final
@@ -492,7 +493,7 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
       // traversal, has no effect when the file is named directly.
       candidateFiles = [scanRoot];
     } else if (st.isDirectory()) {
-      candidateFiles = await discoverCandidateFiles(scanRoot, input.glob ?? "**/*");
+      candidateFiles = await discoverCandidateFiles(scanRoot, input.glob ?? "**/*", ctx);
     } else {
       return { output: `Error: path is neither a file nor a directory: ${input.path ?? scanRoot}`, isError: true };
     }

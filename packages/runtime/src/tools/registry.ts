@@ -419,6 +419,7 @@ export interface ToolExecutionContext {
   // exposed here too so a tool executor that needs to self-identify (e.g. a future messaging tool
   // addressing itself) never has to reach back into engine-internal state for it.
   agentId?: string;
+  parentToolUseId?: string;
   // Phase 4 Task 8 (WS-10 "Execution amendments -- Per-call tool-use id"): the id of the
   // model-emitted `tool_use` block this execution is answering -- `EngineToolCall.id`, threaded
   // through `buildRegistryToolExecutor` below. Two production consumers, both of which had to
@@ -1794,6 +1795,7 @@ export interface RegistryToolExecutorDeps {
   // ToolExecutionContext this executor builds. Absent reads as UNTRUSTED.
   trustedWorkspace?: boolean;
   agentId?: string;
+  parentToolUseId?: string;
   // Phase 4 Task 8: mirrors ToolExecutionContext.agents exactly -- see that field's own comment.
   agents?: Readonly<Record<string, unknown>>;
   // Spawn-surface parity: mirrors the four ToolExecutionContext fields of the same names.
@@ -1888,6 +1890,7 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         isolationPinnedCwd: deps.isolationPinnedCwd === true,
         trustedWorkspace: deps.trustedWorkspace === true,
         ...(deps.agentId !== undefined ? { agentId: deps.agentId } : {}),
+        ...(deps.parentToolUseId !== undefined ? { parentToolUseId: deps.parentToolUseId } : {}),
         // Phase 4 Task 8: the model's own tool_use id for THIS call -- see
         // ToolExecutionContext.toolUseId's own comment. Always present here (EngineToolCall.id is a
         // required field); optional only on the interface, for hand-built test contexts.

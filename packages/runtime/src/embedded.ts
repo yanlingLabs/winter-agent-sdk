@@ -28,6 +28,7 @@ import type { RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { splitFrames, encodeFrame } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider } from "./engine.ts";
+import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
 import { stubExecutor, isTestProviderName, testProviderForNamespace, registerBgTaskTestTool } from "./provider/mock.ts";
 import { resolveEngineSession, resolveProductionWinterHome, resolveProductionStoreHome } from "./store/dialect.ts";
 // Phase 4 Task 8 (rider 18): the ONE production registration of Lane C's child-engine factory -- see
@@ -216,6 +217,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
 
   try {
     const config = parseConfigFromArgv(opts.argv);
+    assertRuntimeExecutionPosture(config);
     assertRecognizedTestProviderEnv(env);
     // Task 8: persists by default (RuntimeConfig.persistSession defaults ON) to config.winterHome, or
     // else `env`'s WINTER_HOME, or else ~/.winter (resolveProductionWinterHome) -- this is a

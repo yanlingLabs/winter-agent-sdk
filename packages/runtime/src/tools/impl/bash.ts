@@ -28,6 +28,7 @@ import { splitCompound, extractRedirectTargets, leadingWord, dequoteShellWord } 
 import { type GlobDenyEntry } from "../../permissions/file-rules.ts";
 import { buildSandboxChildEnv, computeDenyPaths as sharedComputeDenyPaths, computeWritableRoots as sharedComputeWritableRoots, sandboxRunInputs } from "../sandbox-run-inputs.ts";
 import { emptyPathSet, type ExtractedPaths } from "../paths-seam.ts";
+import { buildPwdCaptureScript } from "../bash-pwd-capture.ts";
 import {
   runCommand,
   SandboxUnavailableError,
@@ -248,9 +249,6 @@ function buildChildEnv(ctx: ToolExecutionContext): NodeJS.ProcessEnv {
 // early, or was itself a malformed/incomplete bash script whose parse never reaches these trailing
 // lines) simply means no cwd carries, never a tool error.
 // ---------------------------------------------------------------------------------------------
-function shQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
-}
 
 // FIXED (Task 8, "excludedCommands raw-match" MUST) -- was a LATENT TRAP: `runForeground` passes
 // THIS wrapped script (not the model's raw `input.command`) as `RunCommandOptions.command`, so a
@@ -261,9 +259,6 @@ function shQuote(s: string): string {
 // raw string) while still spawning the wrapped script, so `excludedCommands` matches what it was
 // always meant to match, on both the foreground AND background (`runBackground`, which never wrapped
 // its command to begin with, and therefore needs no `matchCommand` override) paths alike.
-function buildPwdCaptureScript(command: string, pwdFile: string): string {
-  return `${command}\n__winter_bash_rc=$?\npwd > ${shQuote(pwdFile)} 2>/dev/null\nexit "$__winter_bash_rc"\n`;
-}
 
 function carryCwdIfAllowed(pwdFile: string, ctx: ToolExecutionContext): void {
   let finalCwd: string;
@@ -437,6 +432,7 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
       ...runOptions,
       command: buildPwdCaptureScript(input.command, pwdFile),
       matchCommand: input.command,
+      pwdCapturePath: pwdFile,
       timeoutMs,
       onSpawned: ({ pid }) => {
         foregroundPid = pid;
