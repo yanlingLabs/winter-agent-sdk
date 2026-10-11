@@ -66,9 +66,10 @@ int main(int argc,char **argv) {
     if(argc!=10 || geteuid()!=0 || (strcmp(argv[5],"auto")&&strcmp(argv[5],"plan")))return 64;
     char *end;unsigned long uid=strtoul(argv[4],&end,10);
     if(*end || (uid!=10001 && uid!=10002))return 64;
+    const char expected_marker[]="winter-guest-file-fixture\n";
     char marker[4096],content[40]={0};path(marker,sizeof(marker),argv[2],".fixture");
     int marked=open(marker,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
-    if(marked<0 || read(marked,content,sizeof(content)-1)!=25 || strcmp(content,"winter-guest-file-fixture\n"))return 64;
+    if(marked<0 || read(marked,content,sizeof(content)-1)!=(ssize_t)(sizeof(expected_marker)-1) || strcmp(content,expected_marker))return 64;
     close(marked);
     require(unshare(CLONE_NEWNS|CLONE_NEWIPC|CLONE_NEWUTS|CLONE_NEWNET|CLONE_NEWPID),"unshare");
     require(mount(NULL,"/",NULL,MS_REC|MS_PRIVATE,NULL),"private mounts");
