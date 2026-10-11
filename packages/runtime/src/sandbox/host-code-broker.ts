@@ -21,7 +21,7 @@ interface Row {
   wake: (() => void) | undefined; exit: HostCodeProcessPollReply["exit"]; backlogKilled?: boolean;
   signal(value: "SIGTERM" | "SIGKILL"): void;
   disposeOutput?: () => void;
-  pauseOutput?: () => void; resumeOutput?: () => void; outputPaused?: boolean; abandoned?: boolean;
+  pauseOutput?: () => void; resumeOutput?: () => void; outputPaused?: boolean; abandoned?: boolean; outputFailed?: boolean;
   stdin?: NodeJS.WritableStream;
   stdinState?: { writing: boolean; ended: boolean; failure: Error | undefined };
 }
@@ -92,7 +92,7 @@ export function createHostCodeProcessRegistration(input: {
     refreshFlow();
   }
   function record(row: Row, stream: "stdout" | "stderr", chunk: Buffer) {
-    if(row.abandoned)return;
+    if(row.abandoned || row.outputFailed)return;
     // Keep every poll at <=64KiB; byte boundaries are preserved with base64. Streams pause
     // synchronously after this already-delivered chunk; the watermark can overshoot by it.
     for (let offset=0; offset<chunk.length; offset+=16384) {
@@ -183,9 +183,15 @@ export function createHostCodeProcessRegistration(input: {
           // Stream errors can arrive after a write callback or during stop. Consume them at
           // the process owner; never allow ERR_STREAM_WRITE_AFTER_END to crash the SDK host.
           stdin.on("error",(error:Error)=>{row!.stdinState!.failure=error;row!.stdinState!.ended=true;row!.signal("SIGKILL");});
-          const outputDone=hostOutput.start(chunk=>record(row!,"stdout",chunk),chunk=>record(row!,"stderr",chunk));
-          void outputDone.catch(()=>row!.signal("SIGKILL"));
-          child.once("close",(code,signal)=>{confirmClose(handle);context.signal.removeEventListener("abort",onAbort);void outputDone.finally(()=>{row!.exit={code,signal,timedOut:false,aborted:context.signal.aborted,streamKilled:row!.backlogKilled === true};row!.wake?.();row!.wake=undefined}).catch(()=>{});});
+          let outputDone:Promise<unknown>;
+          try { outputDone=hostOutput.start(chunk=>record(row!,"stdout",chunk),chunk=>record(row!,"stderr",chunk)); }
+          catch(error) { outputDone=Promise.reject(error); }
+          void outputDone.catch(()=>{row!.outputFailed=true;hostOutput.dispose();row!.signal("SIGKILL")});
+          child.once("close",(code,signal)=>{
+            confirmClose(handle);context.signal.removeEventListener("abort",onAbort);
+            const finished=(outputFailed:boolean)=>{row!.exit={code:outputFailed?null:code,signal,timedOut:false,aborted:context.signal.aborted,streamKilled:outputFailed || row!.backlogKilled === true};row!.wake?.();row!.wake=undefined};
+            void outputDone.then(()=>finished(false),()=>finished(true));
+          });
           child.once("error",(error)=>{hostOutput.dispose();context.signal.removeEventListener("abort",onAbort);rejectStarted(error)}); resolveStarted({handle,posture:"sandboxed"});
         }
         } catch(error) { context.signal.removeEventListener("abort",onAbort); row?.signal("SIGKILL");throw error; }
@@ -202,7 +208,7 @@ export function createHostCodeProcessRegistration(input: {
           if(request.afterSequence!==0)throw new Error("invalid abandonment cursor");
           row.abandoned=true;row.signal("SIGKILL");row.disposeOutput?.();
         } else if(!row.exit || request.afterSequence!==row.nextSequence-1 || request.afterSequence!==row.deliveredSequence)throw new Error("final host Code output not acknowledged");
-        discard(row,row.nextSequence-1);
+        row.abandoned=true;row.disposeOutput?.();discard(row,row.nextSequence-1);
         rows.delete(row.handle.id);released.set(row.handle.id,{handle:row.handle,callerSessionId:row.callerSessionId,sequence:request.afterSequence,abandoned:request.abandon===true});
         if(released.size>256)released.delete(released.keys().next().value!);
         return{};

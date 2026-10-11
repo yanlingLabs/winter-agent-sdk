@@ -386,7 +386,11 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
 
     let streamedBytes = 0;
     let streamKilled = false;
+    let processClosed = false;
     const killGroup = () => {
+      // Output may remain paused after the actual process closed. Its former
+      // PID/group is no longer authority to signal anything during that drain.
+      if (processClosed || child.pid === undefined) return;
       try {
         process.kill(-child.pid!, "SIGKILL");
       } catch {
@@ -402,8 +406,10 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
         killGroup();
       }
     };
-    const outputDone = hostOutput?.start(chunk => onChunk(chunk, opts.onStdout), chunk => onChunk(chunk, opts.onStderr));
-    void outputDone?.catch(() => { killGroup(); });
+    let outputDone: Promise<unknown> | undefined;
+    try { outputDone = hostOutput?.start(chunk => onChunk(chunk, opts.onStdout), chunk => onChunk(chunk, opts.onStderr)); }
+    catch (error) { outputDone = Promise.reject(error); }
+    void outputDone?.catch(() => { streamKilled = true; hostOutput?.dispose(); killGroup(); });
     if (!hostOutput) {
       child.stdout!.on("data", (d: Buffer) => onChunk(d, opts.onStdout));
       child.stderr!.on("data", (d: Buffer) => onChunk(d, opts.onStderr));
@@ -442,7 +448,12 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
       });
     };
 
-    child.on("close", (code) => { opts.onProcessClosed?.(); if(outputDone)void outputDone.then(()=>finish(code),()=>finish(null));else finish(code); });
+    child.on("close", (code) => {
+      processClosed = true;
+      clearTimeout(timer); opts.signal?.removeEventListener("abort", onAbort); releaseGroup();
+      opts.onProcessClosed?.();
+      if(outputDone)void outputDone.then(()=>finish(code),()=>finish(null));else finish(code);
+    });
     child.on("error", (err) => {
       spawnError = (err as Error).message;
       hostOutput?.dispose();

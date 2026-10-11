@@ -15,3 +15,17 @@ Bun 1.3.14's child-process and native ReadableStream output paths eagerly drain 
 Linux writer leases now treat a different kernel boot as unresolved ownership. A local PID's absence cannot establish that a foreign-kernel writer ended. `WinterCompatibilitySessionStore` accepts a host-only `leaseIdentity.confirmPreviousBootTerminated` callback for exclusive-store recovery after the previous kernel is proven terminated. Without that proof, recovery across VM cold boots is refused; ordinary same-kernel parent process restarts and reused PID checks retain their existing behavior. Linux also refuses leases with no kernel identity unless the host-only `confirmLegacyLeaseTerminated` callback proves exclusive migration authority and writer termination. Ordinary macOS legacy behavior is preserved. No runtime wire or model option enables recovery. macOS callers without Linux identity evidence cannot claim or steal Linux-stamped leases. Missing locks during a normal release/acquire race are retried through atomic creation, while malformed Linux lease records still require explicit recovery.
 
 These changes do not close the SDK review's H1 service-delegation escape or H2 embedded execution-floor coverage, and do not implement VM isolation, active memory return, publication policy or Cowork production integration. The guest file-helper experiment remains unactivated.
+
+All trusted writers of one store must use the same PID namespace and exclusive
+host-established store tenancy. A boot ID is shared by container PID namespaces;
+boot ID plus PID/start ticks cannot prove ownership across those namespaces.
+The selected separate-VM design keeps trusted runtime writers in the guest's
+common namespace and denies tool compartments access to SDK stores. Any future
+shared-outer-VM design must preserve that invariant or add namespace-bound host
+recovery evidence before allowing cross-namespace store access.
+
+Process closure and output completion have separate lifetimes. Once the OS
+child closes, timeout/abort/error paths lose permission to signal its former
+PID/group, even while output is still draining. Output transport failure is a
+visible failed result for commands and Workflows, disposes both streams, and
+cannot refill a released row through a late callback.

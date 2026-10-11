@@ -6,7 +6,7 @@ import { HOST_CODE_PROCESS_SUBTYPES as operations, type HostCodeProcessStart, ty
 import { createHostCodeProcessRegistration, type HostCodeCanonicalContext } from "./host-code-broker.ts";
 import { installHostCodeProcessClient, type HostCodeProcessClient } from "./host-code-process.ts";
 import { brokeredWorkflowWorker } from "../workflows/host-code-worker.ts";
-import { runCommand } from "./spawn.ts";
+import { runCommand, runCommandLocally } from "./spawn.ts";
 import { createFixtureHostOutput } from "./fixtures/host-output.ts";
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -219,17 +219,69 @@ describe.skipIf(process.platform!=="darwin")("trusted host Code broker, disposab
     for(const handle of handles)await f.registration.handle(operations.release,{handle,afterSequence:0,abandon:true},f.context);
   });
   test("host authority fd and native pipe endpoints are CLOEXEC; child inherits only 0-2",async()=>{
-    const f=fixture();const authority=openSync(join(f.control,"secret"),"r");
+    const f=fixture();const authority:number[]=[];
     try {
-      const request=f.start({command:'for fd in {0..64}; do if test -e /dev/fd/$fd; then printf "%s\\n" "$fd"; fi; done' });const {handle}=await f.registration.handle(operations.start,request,f.context) as HostCodeProcessStartReply;
+      for(let index=0;index<140;index++)authority.push(openSync(join(f.control,"secret"),"r"));
+      expect(Math.max(...authority)).toBeGreaterThan(128);
+      const request=f.start({command:'for path in /dev/fd/*; do if test -e "$path"; then printf "%s\\n" "${path##*/}"; fi; done' });const {handle}=await f.registration.handle(operations.start,request,f.context) as HostCodeProcessStartReply;
       const terminal=await f.terminal(handle);expect(terminal.reply.exit?.code).toBe(0);expect(terminal.output.trim().split("\n").sort()).toEqual(["0","1","2"]);
       await f.registration.handle(operations.release,{handle,afterSequence:terminal.sequence},f.context);
-    } finally {closeSync(authority);}
+    } finally {for(const fd of authority)closeSync(fd);}
   });
   test("drain confirms managed close events after stop, not a kill receipt",async()=>{
     const f=fixture();await f.registration.handle(operations.start,f.start({command:"sleep 30"}),f.context);
     let settled=false;void f.registration.drained.then(()=>{settled=true});await Promise.resolve();expect(settled).toBe(false);
     f.registration.stopAll();expect(await f.registration.drained).toEqual({status:"confirmed",generationId:"generation",coverage:"registered-process-close-only",confirmedProcessCount:1});
+  });
+  test("closed process cannot be signalled during a delayed or failed output drain",async()=>{
+    const f=fixture(), inner=await createFixtureHostOutput(), abort=new AbortController();
+    let failOutput!:(error:Error)=>void, observedClose!:()=>void;
+    const outputFence=new Promise<void>((_resolve,reject)=>{failOutput=reject});
+    // Observe rejection immediately even if the OS close arrives before pipe EOF.
+    void outputFence.catch(()=>{});
+    const closed=new Promise<void>(resolve=>{observedClose=resolve});
+    const output={...inner,start:(stdout:(chunk:Buffer)=>void,stderr:(chunk:Buffer)=>void)=>inner.start(stdout,stderr).then(()=>outputFence)};
+    cleanup.push(()=>{inner.dispose();failOutput(new Error("fixture cleanup"))});
+    const pending=runCommandLocally({...f.canonical(f.start()).commandOptions,command:"true",timeoutMs:200,signal:abort.signal,hostOwnedOutput:output,onProcessClosed:observedClose});
+    await closed;
+    const kill=spyOn(process,"kill").mockImplementation(()=>{throw new Error("stale signal attempted")});
+    try {
+      abort.abort();await new Promise(resolve=>setTimeout(resolve,250));
+      failOutput(new Error("output failed after process exit"));
+      const result=await pending;
+      expect(kill).not.toHaveBeenCalled();expect(result.timedOut).toBe(false);expect(result.aborted).toBe(false);
+      expect(result.exitCode).toBeNull();expect(result.streamKilled).toBe(true);
+    } finally {kill.mockRestore();}
+  });
+  test("Workflow OS exit zero cannot hide failed native output completion",async()=>{
+    const f=fixture();const base=f.canonical(f.start());
+    let late!:(chunk:Buffer)=>void, allocations=0, disposed=0;
+    const registration=createHostCodeProcessRegistration({generationId:"generation",maxTotalBufferedBytes:65536,createOutputTransport:async()=>{
+      const inner=await createFixtureHostOutput();if(allocations++>0)return inner;
+      return{...inner,dispose(){disposed++;inner.dispose()},start:(stdout:(chunk:Buffer)=>void,stderr:(chunk:Buffer)=>void)=>{
+        late=stderr;return inner.start(stdout,stderr).then(()=>{throw new Error("fixture output completion failed")});
+      }};
+    },resolveCurrentContext:async request=>({...base,scope:{generationId:"generation",sessionId:request.sessionId,toolUseId:request.toolUseId},workflow:{command:{file:process.execPath,args:["-e","process.exit(0)"]}}})});
+    cleanup.push(()=>registration.stopAll());
+    const {command:_command,...request}=f.start({kind:"workflow",workflowRunId:"failed-output"});
+    const {handle}=await registration.handle(operations.start,request,f.context) as HostCodeProcessStartReply;
+    let sequence=0;
+    for(;;){const reply=await registration.handle(operations.poll,{handle,afterSequence:sequence,maxBytes:65536,maxWaitMs:30000},f.context) as HostCodeProcessPollReply;
+      sequence=reply.events.at(-1)?.sequence??sequence;
+      if(reply.exit){expect(reply.exit.code).toBeNull();expect(reply.exit.streamKilled).toBe(true);break;}
+    }
+    expect(disposed).toBeGreaterThan(0);
+    await registration.handle(operations.release,{handle,afterSequence:sequence},f.context);
+    // A broken adapter's second stream callback cannot refill released rows or
+    // consume the aggregate watermark and pause an unrelated later command.
+    late(Buffer.alloc(262144,65));
+    const next=await registration.handle(operations.start,f.start({command:"printf alive",toolUseId:"after-failed-output"}),f.context) as HostCodeProcessStartReply;
+    const reply=await Promise.race([
+      registration.handle(operations.poll,{handle:next.handle,afterSequence:0,maxBytes:65536,maxWaitMs:30000},f.context) as Promise<HostCodeProcessPollReply>,
+      new Promise<never>((_resolve,reject)=>setTimeout(()=>reject(new Error("late output consumed another row's budget")),1000)),
+    ]);
+    expect(reply.events.map(event=>Buffer.from(event.dataBase64,"base64").toString()).join("")).toBe("alive");
+    await registration.handle(operations.release,{handle:next.handle,afterSequence:0,abandon:true},f.context);
   });
   test("unconfirmed kill remains uncertain with its exact owned handle",async()=>{
     const f=fixture();const registration=createHostCodeProcessRegistration({createOutputTransport:createFixtureHostOutput,generationId:"generation",drainTimeoutMs:10,resolveCurrentContext:async request=>f.canonical(request)});cleanup.push(()=>registration.stopAll());
