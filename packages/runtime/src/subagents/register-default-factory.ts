@@ -51,6 +51,8 @@ export interface DefaultChildEngineFactoryOptions {
   // be a genuine, model-readable absolute path (Lane C's own M1 fix), and a store without it
   // degrades that to a relative key.
   store?: SessionStore;
+  /** Trusted ownership observer; must survive the real production registration seam. */
+  onTeardownUncertain?: ChildEngineFactoryDeps["onTeardownUncertain"];
   winterHome?: string;
   /** WS-21 §3.7: `config.storeHome`, preferred over `winterHome` wherever `ChildEngineFactoryDeps` resolves a durable absolute path. See that field's own header. */
   storeHome?: string;
@@ -131,6 +133,7 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       ...(opts.warn !== undefined ? { warn: opts.warn } : {}),
       env: opts.env,
       ...(opts.store !== undefined ? { store: opts.store } : {}),
+      ...(opts.onTeardownUncertain !== undefined ? { onTeardownUncertain: opts.onTeardownUncertain } : {}),
       ...(opts.winterHome !== undefined ? { winterHome: opts.winterHome } : {}),
       ...(opts.storeHome !== undefined ? { storeHome: opts.storeHome } : {}),
       // WS-07 §6.4: a managed veto on bypass must bind on every descendant, not just this session.

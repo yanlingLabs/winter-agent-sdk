@@ -24,6 +24,11 @@ export interface StoreLifetimeTeardownEvidence {
   ownerToken: string;
   outcome: "confirmed-stopped" | "uncertain";
 }
+export interface ProtectedStoreOwnershipOutcome {
+  status: "released" | "retained" | "release-failed" | "not-acquired";
+  reason: "completed" | "not-requested" | "startup-refused" | "acquisition-failed" | "bootstrap-invalid" | "scope-mismatch" | "teardown-uncertain" | "teardown-unconfirmed" | "teardown-proof-invalid" | "teardown-proof-failed" | "durable-operations-pending" | "native-release-failed";
+  scope: Readonly<ProtectedStoreScope> | null;
+}
 /** Trusted native adapter contract. No production adapter ships in this slice.
  * acquire must exclude other processes/realms for this conversation and bind the actual
  * store directory identity. A JS map, PID check or expired heartbeat is insufficient.
@@ -56,7 +61,8 @@ export interface ProtectedStoreBootstrap { readonly [bootstrapBrand]: true }
 declare const openedBrand: unique symbol;
 export interface OpenedProtectedStoreBootstrap { readonly [openedBrand]: true }
 const bootstraps = new WeakMap<ProtectedStoreBootstrap, { scope: Readonly<ProtectedStoreScope>; port: ProtectedStoreOwnershipPort; opening: boolean }>();
-const opened = new WeakMap<OpenedProtectedStoreBootstrap, { scope: Readonly<ProtectedStoreScope>; owner: ProtectedStoreOwner; active: boolean; released: boolean }>();
+const opened = new WeakMap<OpenedProtectedStoreBootstrap, { scope: Readonly<ProtectedStoreScope>; owner: ProtectedStoreOwner; phase: "open" | "closing" | "released" | "release-failed"; inFlight: number }>();
+const acquisitionFailures = new WeakMap<object, ProtectedStoreOwnershipOutcome>();
 const bootPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const sameScope = (a: Readonly<ProtectedStoreScope>, b: Readonly<ProtectedStoreScope>): boolean =>
   !!b && ["workspaceId", "sessionId", "incarnationId", "leaseEpoch", "storeHome", "currentBootId"].every(key => a[key as keyof ProtectedStoreScope] === b[key as keyof ProtectedStoreScope]);
@@ -77,7 +83,7 @@ export function createProtectedStoreBootstrap(scope: ProtectedStoreScope, port?:
 function stateOf(capability: OpenedProtectedStoreBootstrap) {
   const state = opened.get(capability);
   if (!state) throw new ProtectedStoreBootstrapError("bootstrap_invalid");
-  if (!state.active || state.owner.signal.aborted) throw new ProtectedStoreBootstrapError("owner_lost");
+  if (state.phase !== "open" || state.owner.signal.aborted) throw new ProtectedStoreBootstrapError("owner_lost");
   state.owner.assertHeld();
   if (!sameScope(state.scope, state.owner.scope)) throw new ProtectedStoreBootstrapError("scope_mismatch");
   const identity = state.owner.processIdentity(process.pid);
@@ -100,16 +106,33 @@ export async function acquireProtectedStoreBootstrap(capability: ProtectedStoreB
     owner = await bootstrap.port.acquire(scope);
     if (!owner.ownerToken || !sameScope(scope, owner.scope)) throw new ProtectedStoreBootstrapError("scope_mismatch");
     const acquired = Object.freeze({}) as OpenedProtectedStoreBootstrap;
-    opened.set(acquired, { scope, owner, active: true, released: false });
+    opened.set(acquired, { scope, owner, phase: "open", inFlight: 0 });
     stateOf(acquired);
     return acquired;
   } catch (error) {
     // No runtime has started. A successfully returned hold belongs to us even if its evidence
     // was malformed; its trusted adapter must release its own hold, never an unrelated owner's.
-    if (owner) await owner.release();
+    if (owner) {
+      try { await owner.release(); }
+      catch {
+        const failure = new ProtectedStoreBootstrapError("owner_lost");
+        acquisitionFailures.set(failure, Object.freeze({ status: "release-failed", reason: "native-release-failed", scope }));
+        throw failure; // retain opening latch: failed release is not a reusable capability
+      }
+    }
     bootstrap.opening = false;
     throw error;
   }
+}
+
+export function protectedStoreStartupOutcome(capability: ProtectedStoreBootstrap, error: unknown): ProtectedStoreOwnershipOutcome {
+  if (typeof error === "object" && error !== null) {
+    const failed = acquisitionFailures.get(error); if (failed) return failed;
+  }
+  const scope = bootstraps.get(capability)?.scope ?? null;
+  const reason = error instanceof ProtectedStoreBootstrapError && error.code === "bootstrap_invalid" ? "bootstrap-invalid"
+    : error instanceof ProtectedStoreBootstrapError && error.code === "scope_mismatch" ? "scope-mismatch" : "startup-refused";
+  return Object.freeze({ status: "not-acquired", reason, scope });
 }
 
 export function protectedStoreOwnerSignal(capability: OpenedProtectedStoreBootstrap): AbortSignal { return stateOf(capability).owner.signal; }
@@ -127,7 +150,20 @@ export function createProtectedRuntimeStore(capability: OpenedProtectedStoreBoot
   };
   return new WinterCompatibilitySessionStore({
     winterHome: state.scope.storeHome,
-    sessionAuthority: { sessionId: state.scope.sessionId, assertAccess },
+    sessionAuthority: {
+      sessionId: state.scope.sessionId, assertAccess,
+      runOperation<T>(sessionId: string, operation: () => T): T {
+        assertAccess(sessionId);
+        state.inFlight++;
+        try {
+          const result = operation();
+          if (result !== null && (typeof result === "object" || typeof result === "function") && typeof (result as { then?: unknown }).then === "function") {
+            return Promise.resolve(result).finally(() => { state.inFlight--; }) as T;
+          }
+          state.inFlight--; return result;
+        } catch (error) { state.inFlight--; throw error; }
+      },
+    },
     leaseIdentity: {
       identityProbe: pid => { assertAccess(); return state.owner.processIdentity(pid); },
       confirmPreviousBootTerminated: (lease, current) => {
@@ -144,17 +180,31 @@ export function createProtectedRuntimeStore(capability: OpenedProtectedStoreBoot
 }
 
 /** Caller must have confirmed teardown; there is deliberately no timeout-based release. */
-export async function releaseProtectedStoreBootstrap(capability: OpenedProtectedStoreBootstrap): Promise<"released" | "retained"> {
+export function retainProtectedStoreBootstrap(capability: OpenedProtectedStoreBootstrap, reason: ProtectedStoreOwnershipOutcome["reason"]): ProtectedStoreOwnershipOutcome {
   const state = opened.get(capability);
   if (!state) throw new ProtectedStoreBootstrapError("bootstrap_invalid");
-  if (state.released) return "released";
-  if (!state.active) throw new ProtectedStoreBootstrapError("owner_lost"); // pending/failed native release is never success
-  const evidence = state.owner.runtimeTeardownEvidence();
-  if (!evidence || evidence.outcome !== "confirmed-stopped" || !sameScope(state.scope, evidence.scope) || evidence.ownerToken !== state.owner.ownerToken) return "retained";
+  if (state.phase === "open") state.phase = "closing"; // revoke new durable admission even while native hold is retained
+  return Object.freeze({ status: "retained", reason, scope: state.scope });
+}
+export async function releaseProtectedStoreBootstrap(capability: OpenedProtectedStoreBootstrap): Promise<ProtectedStoreOwnershipOutcome> {
+  const state = opened.get(capability);
+  if (!state) throw new ProtectedStoreBootstrapError("bootstrap_invalid");
+  if (state.phase === "released") return Object.freeze({ status: "released", reason: "completed", scope: state.scope });
+  if (state.phase === "release-failed") return Object.freeze({ status: "release-failed", reason: "native-release-failed", scope: state.scope });
+  retainProtectedStoreBootstrap(capability, "teardown-unconfirmed");
+  if (state.inFlight > 0) return retainProtectedStoreBootstrap(capability, "durable-operations-pending");
+  let evidence: StoreLifetimeTeardownEvidence | null;
+  try {
+    evidence = state.owner.runtimeTeardownEvidence();
+    if (!evidence || evidence.outcome === "uncertain") return retainProtectedStoreBootstrap(capability, "teardown-unconfirmed");
+    if (evidence.outcome !== "confirmed-stopped" || !sameScope(state.scope, evidence.scope) || evidence.ownerToken !== state.owner.ownerToken) return retainProtectedStoreBootstrap(capability, "teardown-proof-invalid");
+  }
+  catch { return retainProtectedStoreBootstrap(capability, "teardown-proof-failed"); }
   // Invalidate stores before awaiting release. A failed release retains the native hold/recovery
   // obligation; this capability never becomes reusable, even after a normal completed lifetime.
-  state.active = false;
-  await state.owner.release();
-  state.released = true;
-  return "released";
+  state.phase = "release-failed"; // pending/failed release is never reported as success
+  try { await state.owner.release(); }
+  catch { return Object.freeze({ status: "release-failed", reason: "native-release-failed", scope: state.scope }); }
+  state.phase = "released";
+  return Object.freeze({ status: "released", reason: "completed", scope: state.scope });
 }

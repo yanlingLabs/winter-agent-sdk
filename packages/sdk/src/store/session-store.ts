@@ -24,6 +24,7 @@ import {
   rmSync,
   ftruncateSync,
   constants as fsConstants,
+  realpathSync,
 } from "node:fs";
 import type { Dirent } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -437,17 +438,34 @@ function foldSummary(
   writeJsonAtomically(summaryPath, updated);
 }
 
+export interface SessionStoreAuthority {
+  sessionId: string;
+  assertAccess(sessionId?: string): void;
+  runOperation<T>(sessionId: string, operation: () => T): T;
+}
+
 export class WinterCompatibilitySessionStore implements SessionStore {
   private readonly winterHome: string;
 
   private readonly leaseIdentity: LeaseIdentityOptions;
   /** Trusted constructor dependency, never a RuntimeConfig/SDK option or store file. */
-  private readonly sessionAuthority: { sessionId: string; assertAccess(sessionId?: string): void } | undefined;
+  private readonly sessionAuthority: SessionStoreAuthority | undefined;
 
-  constructor(opts: { winterHome: string; leaseIdentity?: LeaseIdentityOptions; sessionAuthority?: { sessionId: string; assertAccess(sessionId?: string): void } }) {
+  constructor(opts: { winterHome: string; leaseIdentity?: LeaseIdentityOptions; sessionAuthority?: SessionStoreAuthority }) {
     this.winterHome = opts.winterHome;
     this.leaseIdentity = { ...opts.leaseIdentity };
     this.sessionAuthority = opts.sessionAuthority === undefined ? undefined : { ...opts.sessionAuthority };
+  }
+
+  /** Existing durable neighbours use this trusted lifetime seam, keeping their own formats/I/O.
+   * A scoped operation binds the exact store root and session before any read/write or cached
+   * state access. Async operations retain admission until settlement; release cannot race them. */
+  runOwnedDurableOperation<T>(winterHome: string, key: SessionKey, operation: () => T): T {
+    if (!this.sessionAuthority) return operation();
+    this.sessionAuthority.assertAccess(key.sessionId);
+    if (realpathSync(winterHome) !== this.winterHome) throw new WinterStoreError("durable state root does not match its protected store");
+    locateResource(this.winterHome, key);
+    return this.sessionAuthority.runOperation(key.sessionId, operation);
   }
 
   // Fix round 1 (reviewer #2, minor): LOAD-BEARING INVARIANT, stated once here and mirrored at

@@ -34,6 +34,7 @@ import {
 } from "@yanlinglabs/winter-agent-sdk";
 import type { ContentBlock, ProviderMessage, SessionPersistence } from "../engine.ts";
 import { assertProtectedStoreConfig, createProtectedRuntimeStore, type OpenedProtectedStoreBootstrap } from "../guest/store-bootstrap.ts";
+import { durableOperationGuard, guardedDurableMethods, type DurableOperationGuard } from "./durable-authority.ts";
 import type { CompactBoundaryRecord, CompactBoundaryWriteResult } from "../compaction/seam.ts";
 import { resolveProjectDirName } from "../paths/project-dir-name.ts";
 import { findContinueTarget, findResumeTarget, truncateAt, toDialectEntries, rebuildProviderMessages, ResumeTargetError } from "./resume.ts";
@@ -87,8 +88,8 @@ export interface ProviderStateSink {
 }
 
 /** The neighbour-file sink: `<sessionId>.provider-state.jsonl`, 0600, append-only, fsync per record. */
-export function createFileProviderStateSink(sidecarPath: string): ProviderStateSink {
-  return {
+export function createFileProviderStateSink(sidecarPath: string, guard?: DurableOperationGuard): ProviderStateSink {
+  const sink: ProviderStateSink = {
     async append(input) {
       return appendProviderState(sidecarPath, input);
     },
@@ -96,6 +97,7 @@ export function createFileProviderStateSink(sidecarPath: string): ProviderStateS
       return readProviderState(sidecarPath);
     },
   };
+  return guard === undefined ? sink : guardedDurableMethods(guard, () => sink);
 }
 
 /**
@@ -1134,7 +1136,7 @@ export interface ResolvedEngineSession {
 // `winterHome` further into TranscriptWriterOptions itself, and every existing direct
 // TranscriptWriter fixture (dialect.test.ts) stays unaffected — it never gains a journal capability
 // (nor needs one) unless it goes through buildWriter/resolveEngineSession.
-function withPermissionJournal(writer: TranscriptWriter, location: { winterHome: string; projectKey: string; sessionId: string }): SessionPersistence {
+function withPermissionJournal(writer: TranscriptWriter, location: { winterHome: string; projectKey: string; sessionId: string }, guard: DurableOperationGuard): SessionPersistence {
   return {
     projectKey: location.projectKey,
     // WS-23: the transcript's own absolute path, from the one (winterHome, projectKey, sessionId)
@@ -1175,14 +1177,14 @@ function withPermissionJournal(writer: TranscriptWriter, location: { winterHome:
     // ruleset.ts) — SessionPersistence's own `void | Promise<void>` return type accepts either, and
     // engine.ts's caller awaits unconditionally regardless (a no-op await on a non-promise).
     recordPermissionUpdate(update: PermissionUpdate, authority: RuleSource): void {
-      appendPermissionJournal(location, update, { authority });
+      guard.run(() => appendPermissionJournal(location, update, { authority }));
     },
     // Task 10 (WS-08 §9 Amended / P2-A): same journal file, sibling envelope kind — see
     // appendHookAuditJournal's own header (ruleset.ts) for the full rationale. `entry` arrives here
     // typed as engine.ts's own (richer) HookAuditRecord; HookAuditJournalRecord's wider field types
     // (plain `string` where runner.ts's own type has a literal union) accept it with no cast needed.
     recordHookAudit(entry: HookAuditJournalRecord): void {
-      appendHookAuditJournal(location, entry);
+      guard.run(() => appendHookAuditJournal(location, entry));
     },
   };
 }
@@ -1198,6 +1200,7 @@ function buildWriter(opts: {
   // TranscriptWriterOptions.initialConversationalUuids. Omitted for a fresh session.
   initialConversationalUuids?: readonly string[];
 }): SessionPersistence {
+  const guard = durableOperationGuard(opts.store, opts.winterHome, { projectKey: opts.projectKey, sessionId: opts.sessionId });
   const writer = new TranscriptWriter({
     store: opts.store,
     key: { projectKey: opts.projectKey, sessionId: opts.sessionId },
@@ -1207,9 +1210,9 @@ function buildWriter(opts: {
     // Phase 6 Task 3 (R6-7): the neighbour of THIS session's transcript. Derived from the same
     // (winterHome, projectKey, sessionId) triple this function already holds -- which is why it is
     // constructed here rather than threaded in: there is exactly one place that knows all three.
-    providerStateSink: createFileProviderStateSink(providerStateSidecarPath(join(opts.winterHome, "projects", opts.projectKey, `${opts.sessionId}.jsonl`))),
+    providerStateSink: createFileProviderStateSink(providerStateSidecarPath(join(opts.winterHome, "projects", opts.projectKey, `${opts.sessionId}.jsonl`)), guard),
   });
-  return withPermissionJournal(writer, { winterHome: opts.winterHome, projectKey: opts.projectKey, sessionId: opts.sessionId });
+  return withPermissionJournal(writer, { winterHome: opts.winterHome, projectKey: opts.projectKey, sessionId: opts.sessionId }, guard);
 }
 
 // --- Phase 4 Task 3 (WS-05 §4/§5.2/§5.3, WS-10 §7): child (subagent) transcripts ------------------
@@ -1259,7 +1262,7 @@ export function buildChildTranscriptWriter(opts: ChildTranscriptWriterOptions): 
     // fixture constructs them without one. Absent -> an in-memory chain for that child, exactly as a
     // writer with no sink behaves everywhere else, rather than a sidecar written to a guessed path.
     ...(opts.winterHome !== undefined
-      ? { providerStateSink: createFileProviderStateSink(providerStateSidecarPath(join(opts.winterHome, "projects", opts.projectKey, opts.parentSessionId, `${childTranscriptSubpath(opts.agentId)}.jsonl`))) }
+      ? { providerStateSink: createFileProviderStateSink(providerStateSidecarPath(join(opts.winterHome, "projects", opts.projectKey, opts.parentSessionId, `${childTranscriptSubpath(opts.agentId)}.jsonl`)), durableOperationGuard(opts.store, opts.winterHome, { projectKey: opts.projectKey, sessionId: opts.parentSessionId, subpath: childTranscriptSubpath(opts.agentId) })) }
       : {}),
   });
 }
@@ -1380,8 +1383,8 @@ export async function resolveEngineSession(opts: {
       config,
       store: writer,
       initialMessages: [],
-      approvalStore: createFileDurableApprovalStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }),
-      autoStateStore: createFileAutoCounterStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }),
+      approvalStore: createFileDurableApprovalStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }, durableOperationGuard(store, durableRoot, { projectKey: cwdKey, sessionId: config.sessionId })),
+      autoStateStore: createFileAutoCounterStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }, durableOperationGuard(store, durableRoot, { projectKey: cwdKey, sessionId: config.sessionId })),
     };
   }
 
@@ -1401,8 +1404,8 @@ export async function resolveEngineSession(opts: {
         config,
         store: writer,
         initialMessages: [],
-        approvalStore: createFileDurableApprovalStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }),
-        autoStateStore: createFileAutoCounterStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }),
+        approvalStore: createFileDurableApprovalStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }, durableOperationGuard(store, durableRoot, { projectKey: cwdKey, sessionId: config.sessionId })),
+        autoStateStore: createFileAutoCounterStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }, durableOperationGuard(store, durableRoot, { projectKey: cwdKey, sessionId: config.sessionId })),
       };
     }
     targetSessionId = found;
@@ -1512,8 +1515,9 @@ export async function resolveEngineSession(opts: {
   // above just used — a deferred call from an EARLIER run of this exact session has its approvals
   // file right there, store-adjacent; engine.ts's own resume-consumption step (runEngine, before the
   // turn loop) is what actually reads it back and folds a resolution into `initialMessages`.
-  const approvalStore = createFileDurableApprovalStore({ winterHome: durableRoot, projectKey: targetProjectKey, sessionId: targetSessionId });
-  const autoStateStore = createFileAutoCounterStore({ winterHome: durableRoot, projectKey: targetProjectKey, sessionId: targetSessionId });
+  const guard = durableOperationGuard(store, durableRoot, { projectKey: targetProjectKey, sessionId: targetSessionId });
+  const approvalStore = createFileDurableApprovalStore({ winterHome: durableRoot, projectKey: targetProjectKey, sessionId: targetSessionId }, guard);
+  const autoStateStore = createFileAutoCounterStore({ winterHome: durableRoot, projectKey: targetProjectKey, sessionId: targetSessionId }, guard);
   return { config: effectiveConfig, store: writer, initialMessages, approvalStore, autoStateStore };
 }
 

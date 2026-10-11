@@ -28,6 +28,7 @@
 // review, finding 3). This store is that consumer: WS-07 §7.2's "distinguishes allow-once/durable/
 // reject for audit" is realized here, on the resolution of a durable approval, per this task's brief.
 import { mkdirSync, lstatSync, chmodSync, openSync, writeSync, fsyncSync, closeSync, readFileSync, constants as fsConstants } from "node:fs";
+import { guardedDurableMethods, type DurableOperationGuard } from "../store/durable-authority.ts";
 import { join, resolve } from "node:path";
 import type { PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionClassification } from "@yanlinglabs/winter-agent-sdk";
 // Fix round 1, Ruling P2-K: the SAME symlink-chasing primitive the rest of the permission engine
@@ -688,7 +689,8 @@ function loadExisting(path: string): Map<string, DurableApprovalRecord> {
 // construction; every subsequent mutation appends one new envelope AND folds it into the same
 // in-memory map (applyEnvelope is the single source of truth for what an envelope means, shared
 // with the initial load above, so a freshly-constructed store and a long-lived one never disagree).
-export function createFileDurableApprovalStore(location: ApprovalStoreLocation): DurableApprovalStore {
+export function createFileDurableApprovalStore(location: ApprovalStoreLocation, guard?: DurableOperationGuard): DurableApprovalStore {
+  if (guard !== undefined) return guardedDurableMethods(guard, () => createFileDurableApprovalStore(location));
   const path = approvalsPath(location);
   const map = loadExisting(path);
 

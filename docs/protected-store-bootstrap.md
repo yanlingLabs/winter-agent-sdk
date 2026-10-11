@@ -27,6 +27,19 @@ listings. All child subpaths remain under the owning logical root conversation;
 the normal child execution factory still validates ancestry, roster/project binding,
 current definitions and restrictions. No parallel transcript/store format is added.
 
+The same concrete store's `runOwnedDurableOperation` guards the existing provider
+state sinks (root and child), permission/hook journals, approval store and auto
+counters. Construction reads, cached reads and writes all check the trusted scope
+and owner. These guards decorate the existing implementations and retain their
+files/formats; direct legacy file APIs do not gain a new global authority registry.
+Guarded hook-audit reading is available through its explicit trusted guard argument.
+The scope's operation admission counter covers asynchronous methods through promise
+settlement. A release request closes new admission; an admitted pending operation
+produces `retained / durable-operations-pending`, keeps the native hold, and is allowed
+to settle. This introduces no drain or timer. Only a later explicit recovery/release
+attempt after settlement can obtain the native teardown acknowledgement and release.
+Post-release root/child sidecar methods refuse rather than recreating files.
+
 Scoped top-level initialization requires an explicit logical session ID and eagerly
 claims its writer lease even when fresh. Implicit continue, top-level conversation
 forking, and cross-conversation resume are unimplemented on this seam and refuse.
@@ -56,6 +69,19 @@ pending and the owner retained. A thrown engine/cleanup path also retains owners
 Tests cover pending descendant cleanup, rejected cleanup, and absent/uncertain
 acknowledgement independently of normal completion. Native deadlines and recovery
 outcomes remain a host/supervisor integration gate, not a claim of this slice.
+
+The trusted supervisor must supply `onProtectedStoreOwnershipOutcome` whenever it
+supplies a bootstrap capability; omission refuses before owner acquisition. The
+observer fires exactly once after release handling with `{status, reason, scope}`.
+Status is `released`, `retained`, `release-failed` or `not-acquired`; scope is the
+immutable admitted scope, or null for an invalid/no requested capability. This is
+the required lifecycle consumer contract: use the structured outcome to drive
+bounded native shutdown/recovery and admission. Do not parse diagnostics or infer
+ownership from the numeric turn exit code. The numeric API is preserved: a successful
+turn may return 0 with retained ownership, while an exceptional startup can return
+1 after a confirmed release or with retained/release-failed ownership. `completed`
+means release completed, not that the user's task succeeded. Scope/teardown-proof
+exceptions and failed acquisition rollback have explicit terminal outcomes.
 
 Before production use, independently review the native cross-process protocol and
 prove adapter authentication, lifetime revocation, directory identity binding,

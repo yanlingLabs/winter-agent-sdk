@@ -44,7 +44,7 @@ import { restoreChildRoster } from "./subagents/restore.ts";
 import { killAllTaskProcessGroups } from "./tools/impl/background-task-runtime.ts";
 import { setHostWorkflowWorkerCommand, type WorkerCommand } from "./workflows/sandbox.ts";
 import { EMBEDDED_ABORT_END_INPUT_REQUEST_ID, EMBEDDED_ABORT_INTERRUPT_REQUEST_ID } from "./embedded-protocol.ts";
-import { acquireProtectedStoreBootstrap, createProtectedRuntimeStore, protectedStoreOwnerSignal, releaseProtectedStoreBootstrap, type ProtectedStoreBootstrap, type OpenedProtectedStoreBootstrap } from "./guest/store-bootstrap.ts";
+import { acquireProtectedStoreBootstrap, createProtectedRuntimeStore, protectedStoreOwnerSignal, protectedStoreStartupOutcome, releaseProtectedStoreBootstrap, retainProtectedStoreBootstrap, type ProtectedStoreBootstrap, type OpenedProtectedStoreBootstrap, type ProtectedStoreOwnershipOutcome } from "./guest/store-bootstrap.ts";
 
 export interface EmbeddedSessionOptions {
   /** The spawn argv (`--run --config-json <json>`, any leading slots); flags are found by NAME. */
@@ -76,6 +76,10 @@ export interface EmbeddedSessionOptions {
   onSessionPhase?: (phase: "running" | "idle" | "ending") => void;
   /** Trusted supervisor object capability. Never read from RuntimeConfig/SDK options or env. */
   protectedStoreBootstrap?: ProtectedStoreBootstrap;
+  /** REQUIRED whenever protectedStoreBootstrap is supplied. Trusted terminal lifecycle channel,
+   * emitted exactly once after release handling, independently of the numeric agent-turn code.
+   * The supervisor must consume retained/release-failed states without parsing diagnostics. */
+  onProtectedStoreOwnershipOutcome?: (outcome: Readonly<ProtectedStoreOwnershipOutcome>) => void;
 }
 
 // Same argv contract as `testing.ts`'s inMemoryProcess: find the flag by NAME, never by position --
@@ -192,6 +196,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
   let runtimeStarted = false;
   let runtimeReturned = false;
   let teardownUncertain = false;
+  let startupError: unknown;
   // The abort is observed from the first line: a host can abort while the session is still resolving
   // (store I/O, provider wiring), and the process-group sweep must never wait for that.
   let settleAborted!: (v: typeof ABORTED) => void;
@@ -228,6 +233,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
     const config = parseConfigFromArgv(opts.argv);
     assertRuntimeExecutionPosture(config);
     if (opts.protectedStoreBootstrap !== undefined) {
+      if (typeof opts.onProtectedStoreOwnershipOutcome !== "function") throw new Error("protected store bootstrap requires a machine-readable terminal ownership observer");
       const durableRoot = resolveProductionStoreHome(config, env) ?? resolveProductionWinterHome(config, env);
       protectedStoreBootstrap = await acquireProtectedStoreBootstrap(opts.protectedStoreBootstrap, config, durableRoot);
       ownerSignal = protectedStoreOwnerSignal(protectedStoreBootstrap);
@@ -367,6 +373,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
       wiring.dispose();
     }
   } catch (err) {
+    startupError = err;
     if (runtimeStarted) teardownUncertain = true;
     const text = err instanceof Error ? (err.stack ?? err.message) : String(err);
     try {
@@ -378,18 +385,22 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
   } finally {
     opts.signal?.removeEventListener("abort", onAbort);
     ownerSignal?.removeEventListener("abort", onAbort);
-    restoreWorkflowCommand?.();
+    try { restoreWorkflowCommand?.(); }
+    catch { if (protectedStoreBootstrap !== undefined) teardownUncertain = true; }
     // A thrown engine/descendant teardown is unknown, not proof it stopped. Retain native
     // ownership for explicit recovery; never release on a timer or as part of an error fallback.
-    if (protectedStoreBootstrap !== undefined && !teardownUncertain && (!runtimeStarted || runtimeReturned)) {
-      try {
-        if (await releaseProtectedStoreBootstrap(protectedStoreBootstrap) === "retained") {
-          try { writeErr("winter: protected store teardown unconfirmed; ownership retained, recovery required\n"); } catch {}
-        }
-      }
-      catch { try { writeErr("winter: protected store owner release failed; recovery required\n"); } catch {} }
-    } else if (protectedStoreBootstrap !== undefined) {
-      try { writeErr("winter: protected store teardown uncertain; ownership retained, recovery required\n"); } catch {}
+    let outcome: ProtectedStoreOwnershipOutcome;
+    if (protectedStoreBootstrap !== undefined) {
+      outcome = !teardownUncertain && (!runtimeStarted || runtimeReturned)
+        ? await releaseProtectedStoreBootstrap(protectedStoreBootstrap)
+        : retainProtectedStoreBootstrap(protectedStoreBootstrap, "teardown-uncertain");
+    } else outcome = opts.protectedStoreBootstrap === undefined
+      ? Object.freeze({ status: "not-acquired", reason: "not-requested", scope: null })
+      : protectedStoreStartupOutcome(opts.protectedStoreBootstrap, startupError);
+    if (outcome.status === "retained" || outcome.status === "release-failed") {
+      try { writeErr(`winter: protected store ${outcome.reason}; ownership retained, recovery required\n`); } catch {}
     }
+    try { opts.onProtectedStoreOwnershipOutcome?.(outcome); }
+    catch { try { writeErr("winter: terminal ownership observer failed\n"); } catch {} }
   }
 }
