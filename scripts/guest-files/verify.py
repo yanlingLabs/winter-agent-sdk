@@ -9,6 +9,8 @@ import signal
 import subprocess
 import tempfile
 import threading
+import time
+import re
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -46,8 +48,9 @@ def main():
         fixture = Path(temp)
         (fixture / ".fixture").write_text("winter-guest-file-fixture\n")
         os.chmod(fixture / ".fixture", 0o600)
-        worker, launcher = fixture / "file-worker", fixture / "compartment"
+        worker, launcher, process_worker = fixture / "file-worker", fixture / "compartment", fixture / "process-worker"
         for source, target in ((ROOT / "packages/runtime/src/guest/file-worker.c", worker),
+                               (ROOT / "packages/runtime/src/guest/process-worker.c", process_worker),
                                (HERE / "compartment.c", launcher)):
             checked([compiler, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-static", source, "-o", target])
             os.chmod(target, 0o555)
@@ -169,7 +172,99 @@ def main():
         assert not thread.is_alive() and not failure, failure
         assert (fixture / "readonly/secret").read_bytes() == b"out-of-root-sentinel"
         checks.append("concurrent symlink replacement cannot escape root")
+
+        # Real Bash and immutable dependencies in exactly the same source/UID/mount view.
+        # The protected runtime/store sentinel is never mounted into this compartment.
+        runtime = fixture / "runtime"
+        for name in ("bash", "cat", "sleep", "setsid"):
+            executable = shutil.which(name)
+            if not executable:
+                raise AssertionError(f"existing fixture executable required: {name}")
+            binary = runtime / "bin" / name
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(executable, binary)
+            os.chmod(binary, 0o555)
+            dependencies = checked(["ldd", executable]).decode()
+            for dependency in set(re.findall(r"(/[^\s()]+)", dependencies)):
+                library = runtime / dependency.lstrip("/")
+                library.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(dependency, library)
+                os.chmod(library, 0o555)
+        (fixture / "protected-runtime-secret").write_bytes(b"must-not-be-visible")
+
+        def process_arguments(root="/source", cwd=".", policy="auto", timeout=2000, limit=4096):
+            view = tempfile.mkdtemp(prefix="process-view-", dir=fixture)
+            return [launcher, process_worker, fixture, view, 10001, policy, "process", root, cwd, timeout, limit]
+
+        def process(script, **options):
+            code, stdout, stderr = command(process_arguments(**options), script.encode())
+            assert len(stdout) <= 25000 and len(stderr) <= 4096, "bounded process receipt"
+            receipt = json.loads(stdout)
+            assert receipt["version"] == 1 and (code == 0) == receipt["ok"], (code, receipt, stderr)
+            if receipt["ok"]:
+                receipt["stdout"] = base64.b64decode(receipt["stdoutBase64"], validate=True)
+                receipt["stderr"] = base64.b64decode(receipt["stderrBase64"], validate=True)
+            return receipt
+
+        result = process("printf '%s' \"$PWD\"; printf 'err' >&2; printf data > from-shell")
+        assert result["ok"] and result["exitCode"] == 0 and result["stdout"] == b"/source" and result["stderr"] == b"err", result
+        assert (fixture / "source/from-shell").read_bytes() == b"data"
+        assert ok("same-view file helper reads shell effects", execute("read", "from-shell"))["data"] == b"data"
+        checks.append("actual Bash cwd, separate streams and shared file effects")
+        result = process("test ! -e /protected-runtime-secret && test ! -e /proc && test -z \"$WINTER_HOME\" && test -z \"$BASH_ENV\"")
+        assert result["ok"] and result["exitCode"] == 0, result
+        checks.append("protected runtime/store/proc/env absent from shell view")
+        result = process("/file-worker /source . 10001 100 100")
+        assert result["ok"] and result["exitCode"] == 1 and json.loads(result["stdout"])["code"] == "compartment_required", result
+        result = process("printf poison > /bin/bash")
+        assert result["ok"] and result["exitCode"] != 0, result
+        checks.append("shell cannot replace immutable executable or impersonate compartment PID 1")
+        result = process("printf forbidden > forbidden-shell", policy="plan")
+        assert result["ok"] and result["exitCode"] != 0 and not (fixture / "source/forbidden-shell").exists(), result
+        result = process("printf forbidden > /readonly/shell-write")
+        assert result["ok"] and result["exitCode"] != 0 and not (fixture / "readonly/shell-write").exists(), result
+        checks.append("actual Bash plan/read-only mount write denial")
+        (fixture / "source/cwd-outside").symlink_to("../readonly")
+        for cwd in ("cwd-outside", "../readonly", "absolute-link"):
+            result = process("printf forbidden > /source/cwd-escaped", cwd=cwd)
+            assert not result["ok"] and result["code"] == "cwd_denied", result
+        assert not (fixture / "source/cwd-escaped").exists()
+        checks.append("cwd escapes denied before shell effects")
+        result = process("exit 7")
+        assert result["ok"] and result["exitCode"] == 7 and result["termination"] == "exit", result
+        result = process("while :; do printf '0123456789'; done", limit=31)
+        assert result["ok"] and result["termination"] == "output_limit" and len(result["stdout"])+len(result["stderr"]) == 31, result
+        checks.append("nonzero exit and combined stream kill limit")
+        result = process("setsid /bin/bash -c 'printf ready > timeout-ready; sleep 0.5; printf escaped > timeout-orphan' & while [ ! -e timeout-ready ]; do sleep 0.01; done; sleep 30", timeout=150)
+        assert result["ok"] and result["termination"] == "timeout", result
+        assert (fixture / "source/timeout-ready").exists(), "detached timeout child never started"
+        result = process("setsid /bin/bash -c 'printf ready > exit-ready; sleep 0.5; printf escaped > exit-orphan' >/tmp/orphan-output 2>&1 & while [ ! -e exit-ready ]; do sleep 0.01; done; exit 0")
+        assert result["ok"] and result["termination"] == "exit", result
+        assert (fixture / "source/exit-ready").exists(), "detached exit child never started"
+        time.sleep(0.8)
+        assert not (fixture / "source/timeout-orphan").exists() and not (fixture / "source/exit-orphan").exists()
+        checks.append("timeout and normal exit destroy setsid descendants")
+        child = subprocess.Popen([str(arg) for arg in process_arguments()], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            child.stdin.write(b"setsid /bin/bash -c 'printf ready > cancel-ready; sleep 0.7; printf escaped > cancelled-orphan' & sleep 30")
+            child.stdin.close()
+            deadline = time.monotonic()+2
+            while not (fixture / "source/cancel-ready").exists() and time.monotonic()<deadline:
+                time.sleep(0.01)
+            assert (fixture / "source/cancel-ready").exists(), "shell never started"
+        finally:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.wait(timeout=2)
+            child.stdout.close(); child.stderr.close()
+        time.sleep(0.9)
+        assert not (fixture / "source/cancelled-orphan").exists()
+        checks.append("cancellation destroys owned namespace including setsid descendants")
+        code, stdout, _ = command([process_worker, fixture / "source", ".", "10001", "100", "100"], b"printf unsafe")
+        assert code != 0 and json.loads(stdout)["code"] == "compartment_required"
+        checks.append("process worker refuses runtime/root/outside namespace identity")
         print(json.dumps({"linuxCompartmentFiles": True, "realVM": False,
+            "linuxCompartmentProcesses": True,
             "architecture": os.uname().machine, "checks": checks, "raceAttempts": 40}))
 
 

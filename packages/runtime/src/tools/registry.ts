@@ -1848,7 +1848,7 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
   return {
     async execute(call: EngineToolCall, opts?: ToolCallExecuteOptions): Promise<EngineToolResult> {
       if (deps.executionPosture !== undefined && deps.executionPosture !== "local" && deps.executionPosture !== "confined-guest") return foldResult({ output: "Error [guest_file_posture_invalid]: unknown execution posture", isError: true });
-      if (deps.executionPosture === "confined-guest" && !["Read", "Write", "Edit"].includes(call.name)) return foldResult({ output: `Error [guest_tool_unsupported]: ${call.name} has no confined guest implementation`, isError: true });
+      if (deps.executionPosture === "confined-guest" && !["Read", "Write", "Edit", "Bash"].includes(call.name)) return foldResult({ output: `Error [guest_tool_unsupported]: ${call.name} has no confined guest implementation`, isError: true });
       const registered = getRegisteredTool(call.name);
       if (!registered) return foldResult(unknownToolResult(call.name));
       if (registered.descriptor.disposition === "correctly-absent") return foldResult(correctlyAbsentResult(call.name));

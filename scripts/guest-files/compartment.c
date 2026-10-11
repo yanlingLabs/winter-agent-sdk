@@ -30,7 +30,7 @@ static void bind(const char *source, const char *target, int ro, int executable)
     require(mount(NULL,target,NULL,MS_REMOUNT|MS_BIND|MS_NOSUID|MS_NODEV|(ro?MS_RDONLY:0)|(executable?0:MS_NOEXEC),NULL),"bind flags");
 }
 #define DENY(n) BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,__NR_##n,0,1), BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM)
-static void install_filter(void) {
+static void install_filter(int process) {
 #if defined(__aarch64__)
 #define ARCH AUDIT_ARCH_AARCH64
 #elif defined(__x86_64__)
@@ -48,7 +48,14 @@ static void install_filter(void) {
         BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_KILL_PROCESS),
 #endif
         DENY(mount),DENY(umount2),DENY(chroot),DENY(pivot_root),DENY(setns),DENY(unshare),
-        DENY(ptrace),DENY(process_vm_readv),DENY(process_vm_writev),DENY(socket),DENY(clone),
+        DENY(ptrace),DENY(process_vm_readv),DENY(process_vm_writev),DENY(socket),
+        /* Ordinary fork/threads only for the shell slice; namespace creation remains denied. */
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,__NR_clone,0,4),
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,args[0])),
+        BPF_STMT(BPF_ALU|BPF_AND|BPF_K,process?(CLONE_NEWNS|CLONE_NEWCGROUP|CLONE_NEWUTS|CLONE_NEWIPC|CLONE_NEWUSER|CLONE_NEWPID|CLONE_NEWNET):~0U),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,0,process?1:0,0),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,nr)),
         DENY(open_by_handle_at),DENY(name_to_handle_at),DENY(bpf),DENY(perf_event_open),
 #ifdef __NR_clone3
         DENY(clone3),
@@ -82,6 +89,19 @@ int main(int argc,char **argv) {
         path(target,sizeof(target),argv[3],roots[index]);require(mkdir(target,0755),"mountpoint");
         path(source,sizeof(source),argv[2],roots[index]);bind(source,target,index==1||!strcmp(argv[5],"plan"),0);
     }
+    int process=!strcmp(argv[6],"process");
+    if(process){
+        if(argc!=11)return 64;
+        const char *runtime_roots[]={"bin","lib","lib64","usr"};
+        for(int index=0;index<4;index++){
+            path(source,sizeof(source),argv[2],"runtime");
+            char runtime_source[4096];path(runtime_source,sizeof(runtime_source),source,runtime_roots[index]);
+            struct stat st;if(stat(runtime_source,&st)){if(errno==ENOENT)continue;require(-1,"runtime stat");}
+            path(target,sizeof(target),argv[3],runtime_roots[index]);require(mkdir(target,0755),"runtime mountpoint");bind(runtime_source,target,1,1);
+        }
+        path(target,sizeof(target),argv[3],"tmp");require(mkdir(target,0755),"scratch mountpoint");
+        require(mount("tmpfs",target,"tmpfs",MS_NOSUID|MS_NODEV|MS_NOEXEC,"mode=1777,size=8m"),"scratch");
+    }
     path(target,sizeof(target),argv[3],"file-worker");require(close(open(target,O_WRONLY|O_CREAT|O_EXCL,0555)),"worker point");
     bind(argv[1],target,1,1);
     require(mount(NULL,argv[3],NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NODEV,NULL),"readonly skeleton");
@@ -93,8 +113,9 @@ int main(int argc,char **argv) {
     struct __user_cap_header_struct header={.version=_LINUX_CAPABILITY_VERSION_3,.pid=0};
     struct __user_cap_data_struct caps[2]={{0},{0}};require(syscall(SYS_capset,&header,caps),"clear caps");
     require(syscall(SYS_close_range,3U,~0U,0U),"close inherited descriptors");
-    install_filter();umask(0002);
+    install_filter(process);umask(0002);
     char *args[]={"/file-worker",argv[6],argv[7],argv[8],argv[4],argv[9],argc==11?argv[10]:NULL,NULL};
+    char *process_args[]={"/file-worker",argv[7],argv[8],argv[4],argv[9],argc==11?argv[10]:NULL,NULL};
     char *env[]={"LANG=C","LC_ALL=C",NULL};
-    execve(args[0],args,env);require(-1,"execute file worker");return 77;
+    execve(args[0],process?process_args:args,env);require(-1,"execute file worker");return 77;
 }

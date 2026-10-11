@@ -3,6 +3,7 @@ import { createGuestFileHelper, GuestFileHelperError, type GuestFileAuthority, t
 import type { ToolExecutionContext, ToolResultPayload } from "../tools/registry.ts";
 import type { ReadRecord, SessionReadState } from "../tools/read-state.ts";
 import type { ReadAccessProbe } from "../permissions/evaluator.ts";
+import { createGuestProcessHelper, type GuestProcessPort, type GuestProcessResult } from "./process-helper.ts";
 
 const sessions = new WeakSet<object>();
 const bindings = new WeakMap<object, GuestFileSession>();
@@ -13,10 +14,13 @@ export interface GuestFileSession {
   read(path: string, signal?: AbortSignal): Promise<GuestFileSnapshot>;
   write(path: string, data: Uint8Array, version: string, signal?: AbortSignal): Promise<GuestFileSnapshot>;
   probeReadAccess(path: string): ReadAccessProbe;
+  readonly executeProcess?: (command: string, cwd: string, timeoutMs: number, signal?: AbortSignal) => Promise<GuestProcessResult>;
 }
 export function createGuestFileSession(options: {
   authority: GuestFileAuthority; roots: readonly GuestFileRoot[]; expectedUid: number;
   port: GuestFileHelperPort; maxBytes?: number;
+  /** Same protected supervisor and tool compartment as file operations. No local fallback. */
+  processPort?: GuestProcessPort; maxOutputBytes?: number;
   /** Policy-only protected probe; must not perform filesystem access in the runtime compartment. */
   probeReadAccess?: (path: string) => ReadAccessProbe;
 }): GuestFileSession {
@@ -33,6 +37,7 @@ export function createGuestFileSession(options: {
   };
   const session: GuestFileSession = Object.freeze({
     sessionId,
+    ...(options.processPort ? { executeProcess: createGuestProcessHelper({ authority: options.authority, roots: options.roots, expectedUid: options.expectedUid, port: options.processPort, ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}) }) } : {}),
     // Descriptor identity joins in-root aliases after their admitted read, without runtime realpath.
     // An existing lexical record remains visible after replacement so the ladder still detects drift.
     readState: {

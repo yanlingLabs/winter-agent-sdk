@@ -1,5 +1,5 @@
 import { BASH_CEILING_TIMEOUT_MS as CEILING_TIMEOUT_MS, resolveBashTimeout as resolveTimeout } from "../../sandbox/execution-limits.ts";
-import { guestToolUnsupported } from "../../guest/file-session.ts";
+import { guestBash } from "../../guest/process-tools.ts";
 // Task 3 (Lane C): the Bash tool executor (WS-06 §3.2, WS-12 §6). Wires the sandbox mechanism
 // (../../sandbox/{profile,spawn}.ts) behind the pinned Bash contract: fresh shell per call, env
 // non-persistence, cwd-carry within allowed dirs only, TMPDIR export, timeout defaults/ceiling,
@@ -727,7 +727,7 @@ function extractBashPaths(input: unknown): ExtractedPaths {
 // ---------------------------------------------------------------------------------------------
 export const bashExecutor: ToolExecutor = {
   async execute(input, ctx) {
-    const guestRefusal = guestToolUnsupported(ctx, "Bash");
+    const guestRefusal = await guestBash(input, ctx);
     if (guestRefusal) return guestRefusal;
     const parsed = parseBashInput(input);
     if ("error" in parsed) return { output: `Error: ${parsed.error}`, isError: true };

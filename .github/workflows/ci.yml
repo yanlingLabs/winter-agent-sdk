@@ -2,7 +2,8 @@ name: ci
 on: [push, pull_request]
 jobs:
   guest-file-boundary:
-    # Disposable Linux process/mount namespaces, no real VM or secrets. A missing
+    # Real file worker and foreground Bash in disposable Linux process/mount namespaces,
+    # no real VM or secrets. A missing
     # required kernel boundary fails this job rather than turning into a skip.
     runs-on: ubuntu-latest
     permissions:
