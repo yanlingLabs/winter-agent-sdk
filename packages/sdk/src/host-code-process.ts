@@ -25,10 +25,18 @@ export interface HostCodeProcessPollReply {
 export interface HostCodeProcessStartReply { handle: HostCodeProcessHandle; posture: "sandboxed" | "config-disabled" | "excluded" | "override-requested" }
 export interface HostCodeProcessWrite { handle: HostCodeProcessHandle; dataBase64?: string; end?: true }
 export interface HostCodeProcessSignal { handle: HostCodeProcessHandle; signal: "SIGTERM" | "SIGKILL" }
+export type HostCodeDrainEvidence = {
+  generationId:string;
+  /** Proves only registered child close events, never arbitrary detached descendants. */
+  coverage:"registered-process-close-only";
+  confirmedProcessCount:number;
+} & ({status:"confirmed"}|{status:"uncertain";pendingHandles:readonly HostCodeProcessHandle[]});
 /** Host-only function registration. The matching wire marker cannot create this callback. */
 export interface HostCodeProcessRegistration {
   generationId: string;
   /** One registration per query channel; close admission and stop owned processes at teardown. */
   dispose?(): void;
+  /** Settles after admission closes; uncertainty is explicit, never a kill receipt. */
+  readonly drained?: Promise<HostCodeDrainEvidence>;
   handle(subtype: (typeof HOST_CODE_PROCESS_SUBTYPES)[keyof typeof HOST_CODE_PROCESS_SUBTYPES], payload: unknown, context: { signal: AbortSignal; callerSessionId: string; generationId: string }): Promise<unknown>;
 }

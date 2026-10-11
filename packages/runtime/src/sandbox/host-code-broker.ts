@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { HOST_CODE_PROCESS_SUBTYPES, buildMandatoryFloorProfile, hasMandatoryFloor, type HostCodeProcessRegistration, type HostCodeProcessStart, type HostCodeProcessScope, type HostCodeProcessHandle, type HostCodeProcessEvent, type HostCodeProcessPollReply, type HostExecutionFloor } from "@yanlinglabs/winter-agent-sdk";
+import { HOST_CODE_PROCESS_SUBTYPES, buildMandatoryFloorProfile, hasMandatoryFloor, type HostCodeDrainEvidence, type HostCodeProcessRegistration, type HostCodeProcessStart, type HostCodeProcessScope, type HostCodeProcessHandle, type HostCodeProcessEvent, type HostCodeProcessPollReply, type HostExecutionFloor } from "@yanlinglabs/winter-agent-sdk";
 import { runCommandLocally, resolveExecutionPath, type RunCommandOptions } from "./spawn.ts";
 import { buildWorkerSpawn, type WorkerCommand } from "../workflows/sandbox.ts";
 
 export interface HostCodeCanonicalContext {
   /** Host authenticates query/generation/active tool/descendant, validates cwd and current policy. */
   scope: HostCodeProcessScope;
-  commandOptions: Omit<RunCommandOptions, "command" | "onStdout" | "onStderr" | "onSpawned" | "mandatoryFloor" | "hostCodeScope">;
+  commandOptions: Omit<RunCommandOptions, "command" | "onStdout" | "onStderr" | "onSpawned" | "onProcessClosed" | "mandatoryFloor" | "hostCodeScope">;
   floor: HostExecutionFloor;
   /** Host-generated command (e.g. validated pwd capture); never a runtime-supplied profile/script wrapper. */
   executionCommand?: string;
@@ -29,13 +29,25 @@ export function createHostCodeProcessRegistration(input: {
   resolveCurrentContext(request: HostCodeProcessStart, context: { signal: AbortSignal; callerSessionId: string; generationId: string }): Promise<HostCodeCanonicalContext>;
   /** Aggregate decoded output retained by this registration, across every process. */
   maxBufferedBytes?: number;
-}): HostCodeProcessRegistration & { stopAll(): void } {
+  drainTimeoutMs?:number;
+}): HostCodeProcessRegistration & { stopAll(): void; readonly drained:Promise<HostCodeDrainEvidence> } {
   const rows = new Map<string, Row>();
   // Final output stays replayable until explicit acknowledgment; only bounded released handles remain.
   const released = new Map<string, { handle: HostCodeProcessHandle; callerSessionId: string; sequence: number }>();
   const maxBuffered = input.maxBufferedBytes ?? 4 * 1024 * 1024;
   if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(input.generationId) || !Number.isSafeInteger(maxBuffered) || maxBuffered < 65536) throw new Error("invalid host Code broker bounds/identity");
   let closed = false;
+  const pendingClose=new Map<string,HostCodeProcessHandle>();
+  let confirmedProcessCount=0;
+  let settleDrain!:(result:HostCodeDrainEvidence)=>void;
+  const drained=new Promise<HostCodeDrainEvidence>(resolve=>{settleDrain=resolve});
+  let drainTimer:ReturnType<typeof setTimeout>|undefined;
+  const drainTimeout=input.drainTimeoutMs??5000;
+  if(!Number.isSafeInteger(drainTimeout)||drainTimeout<1)throw new Error("invalid host Code drain deadline");
+  function confirmClose(handle:HostCodeProcessHandle|undefined){
+    if(handle&&pendingClose.delete(handle.id))confirmedProcessCount++;
+    if(closed&&pendingClose.size===0){clearTimeout(drainTimer);settleDrain({status:"confirmed",generationId:input.generationId,coverage:"registered-process-close-only",confirmedProcessCount});}
+  }
   let totalBuffered = 0;
   let totalEvents = 0;
   const maxRetainedEvents = 4096; // Bound per-event metadata independently of byte-sized writes.
@@ -61,10 +73,16 @@ export function createHostCodeProcessRegistration(input: {
     if (!row || row.callerSessionId !== callerSessionId || ["id","generationId","sessionId","toolUseId","pid"].some((key) => row.handle[key as keyof HostCodeProcessHandle] !== handle[key as keyof HostCodeProcessHandle])) throw new Error("foreign host Code process handle");
     return row;
   }
-  const registration: HostCodeProcessRegistration & { stopAll(): void } = {
+  const registration: HostCodeProcessRegistration & { stopAll(): void; readonly drained:Promise<HostCodeDrainEvidence> } = {
     generationId: input.generationId,
+    drained,
     dispose() { registration.stopAll(); },
-    stopAll() { closed = true; for (const row of rows.values()) if (!row.exit) row.signal("SIGKILL"); },
+    stopAll() {
+      if(closed)return;closed=true;
+      for (const row of rows.values()) if (!row.exit) row.signal("SIGKILL");
+      confirmClose(undefined);
+      if(pendingClose.size)drainTimer=setTimeout(()=>settleDrain({status:"uncertain",generationId:input.generationId,coverage:"registered-process-close-only",confirmedProcessCount,pendingHandles:[...pendingClose.values()]}),drainTimeout);
+    },
     async handle(subtype, payload, context) {
       if (context.generationId !== input.generationId || context.signal.aborted) throw new Error("stale/cancelled host Code generation");
       if (subtype === HOST_CODE_PROCESS_SUBTYPES.start) {
@@ -87,10 +105,12 @@ export function createHostCodeProcessRegistration(input: {
         if (request.kind === "command") {
           const posture = resolveExecutionPath({ settings: canonical.commandOptions.settings, command: request.command!, ...(canonical.commandOptions.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: canonical.commandOptions.dangerouslyDisableSandbox } : {}) }).posture;
           const completion = runCommandLocally({ ...canonical.commandOptions, command: canonical.executionCommand ?? request.command!, matchCommand: request.command!, mandatoryFloor: canonical.floor, signal: context.signal,
+            onProcessClosed(){confirmClose(row?.handle);},
             onSpawned({pid}) {
               const handle = { id: randomUUID(), generationId: request.generationId, sessionId: request.sessionId, toolUseId: request.toolUseId, pid };
               row = { handle, callerSessionId: context.callerSessionId, acknowledgedSequence: 0, deliveredSequence: 0, polling: false, events: [], nextSequence: 1, buffered: 0, wake: undefined, exit: undefined, signal(value) { if(row?.exit)return;try { process.kill(-pid,value); } catch {} } };
               rows.set(handle.id,row);
+              pendingClose.set(handle.id,handle);
               // Returned posture comes from canonical host selection, not runtime intent.
               resolveStarted({handle,posture});
             }, onStdout(chunk) { if(row) record(row,"stdout",chunk); }, onStderr(chunk) { if(row) record(row,"stderr",chunk); },
@@ -109,11 +129,12 @@ export function createHostCodeProcessRegistration(input: {
           if (!child.pid) throw new Error("workflow worker failed to spawn");
           const pid=child.pid; const handle={id:randomUUID(),generationId:request.generationId,sessionId:request.sessionId,toolUseId:request.toolUseId,pid};
           row={handle,callerSessionId:context.callerSessionId,acknowledgedSequence:0,deliveredSequence:0,polling:false,events:[],nextSequence:1,buffered:0,wake:undefined,exit:undefined,stdin:child.stdin,stdinState:{writing:false,ended:false,failure:undefined},signal(value){if(row?.exit)return;try{process.kill(-pid,value)}catch{}}}; rows.set(handle.id,row);
+          pendingClose.set(handle.id,handle);
           // Stream errors can arrive after a write callback or during stop. Consume them at
           // the process owner; never allow ERR_STREAM_WRITE_AFTER_END to crash the SDK host.
           child.stdin.on("error",(error:Error)=>{row!.stdinState!.failure=error;row!.stdinState!.ended=true;row!.signal("SIGKILL");});
           child.stdout.on("data",(chunk:Buffer)=>record(row!,"stdout",chunk)); child.stderr.on("data",(chunk:Buffer)=>record(row!,"stderr",chunk));
-          child.once("close",(code,signal)=>{context.signal.removeEventListener("abort",onAbort); row!.exit={code,signal,timedOut:false,aborted:context.signal.aborted,streamKilled:row!.backlogKilled === true};row!.wake?.();row!.wake=undefined});
+          child.once("close",(code,signal)=>{confirmClose(handle);context.signal.removeEventListener("abort",onAbort); row!.exit={code,signal,timedOut:false,aborted:context.signal.aborted,streamKilled:row!.backlogKilled === true};row!.wake?.();row!.wake=undefined});
           child.once("error",(error)=>{context.signal.removeEventListener("abort",onAbort);rejectStarted(error)}); resolveStarted({handle,posture:"sandboxed"});
         }
         } catch(error) { context.signal.removeEventListener("abort",onAbort); row?.signal("SIGKILL");throw error; }

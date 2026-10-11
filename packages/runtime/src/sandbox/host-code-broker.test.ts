@@ -128,4 +128,15 @@ describe.skipIf(process.platform!=="darwin")("trusted host Code broker, disposab
     for(const row of [first,second,third])await registration.handle(operations.release,{handle:row.handle,afterSequence:row.sequence},f.context);
     const fourth=await produce("fourth",65536);expect(fourth.bytes).toBe(65536);expect(fourth.reply.exit?.streamKilled).toBe(false);
   });
+  test("drain confirms managed close events after stop, not a kill receipt",async()=>{
+    const f=fixture();await f.registration.handle(operations.start,f.start({command:"sleep 30"}),f.context);
+    let settled=false;void f.registration.drained.then(()=>{settled=true});await Promise.resolve();expect(settled).toBe(false);
+    f.registration.stopAll();expect(await f.registration.drained).toEqual({status:"confirmed",generationId:"generation",coverage:"registered-process-close-only",confirmedProcessCount:1});
+  });
+  test("unconfirmed kill remains uncertain with its exact owned handle",async()=>{
+    const f=fixture();const registration=createHostCodeProcessRegistration({generationId:"generation",drainTimeoutMs:10,resolveCurrentContext:async request=>f.canonical(request)});cleanup.push(()=>registration.stopAll());
+    const {handle}=await registration.handle(operations.start,f.start({command:"sleep 30"}),f.context) as HostCodeProcessStartReply;
+    const original=process.kill;const kill=spyOn(process,"kill").mockImplementation((pid,signal)=>pid===-handle.pid?true:original(pid,signal));
+    try{registration.stopAll();expect(await registration.drained).toEqual({status:"uncertain",generationId:"generation",coverage:"registered-process-close-only",confirmedProcessCount:0,pendingHandles:[handle]});}finally{kill.mockRestore();await registration.handle(operations.signal,{handle,signal:"SIGKILL"},f.context);}
+  });
 });

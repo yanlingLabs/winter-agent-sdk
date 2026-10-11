@@ -181,6 +181,8 @@ async function runBrokeredCommand(opts: RunCommandOptions, bound: NonNullable<Re
 }
 
 export interface RunCommandOptions {
+  /** Trusted host lifecycle owner; called only for the OS child close event. */
+  onProcessClosed?: ()=>void;
   /** Trusted host parent only, separate from SandboxSettings; never a model input. */
   mandatoryFloor?: HostExecutionFloor;
   hostCodeScope?: Omit<HostCodeProcessScope, "generationId">;
@@ -426,7 +428,7 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
       });
     };
 
-    child.on("close", (code) => finish(code));
+    child.on("close", (code) => { opts.onProcessClosed?.(); finish(code); });
     child.on("error", (err) => {
       spawnError = (err as Error).message;
       finish(null);

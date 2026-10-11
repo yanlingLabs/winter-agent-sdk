@@ -65,7 +65,7 @@ export type { SpawnedRuntimeProcess, SpawnRuntimeOptions, SpawnClaudeCodeProcess
 export { buildMandatoryFloorProfile, applyMandatoryFloorToSpawnOptions, createMandatoryFloorSpawn, hasMandatoryFloor, MandatoryFloorUnavailableError, MANDATORY_FLOOR_CONTRACT_VERSION, HOST_EXECUTION_FLOOR_CAPABILITY } from "./mandatory-floor.ts";
 export type { HostExecutionFloor } from "./mandatory-floor.ts";
 export { HOST_CODE_PROCESS_BROKER_VERSION, HOST_CODE_PROCESS_BROKER_CAPABILITY, HOST_CODE_PROCESS_SUBTYPES } from "./host-code-process.ts";
-export type { HostCodeProcessScope, HostCodeProcessStart, HostCodeProcessHandle, HostCodeProcessEvent, HostCodeProcessPoll, HostCodeProcessPollReply, HostCodeProcessStartReply, HostCodeProcessWrite, HostCodeProcessSignal, HostCodeProcessRegistration } from "./host-code-process.ts";
+export type { HostCodeDrainEvidence, HostCodeProcessScope, HostCodeProcessStart, HostCodeProcessHandle, HostCodeProcessEvent, HostCodeProcessPoll, HostCodeProcessPollReply, HostCodeProcessStartReply, HostCodeProcessWrite, HostCodeProcessSignal, HostCodeProcessRegistration } from "./host-code-process.ts";
 export type { RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, SandboxSettingsConfig } from "./protocol/config.ts";
 // Phase 4 Task 2: the WIRE-shaped twins (RuntimeConfig.mcpServers/.agents's own value types) --
 // what packages/runtime code actually imports (engine.ts et al. already consume RuntimeConfig
