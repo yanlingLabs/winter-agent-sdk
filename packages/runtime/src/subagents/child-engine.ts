@@ -217,6 +217,8 @@ export interface ChildEngineFactoryDeps {
   // runs fine with no store, it just does not survive a restart, and `resume()` degrades to
   // "starts fresh with no rebuilt history," disclosed at that call site below).
   store?: SessionStore;
+  /** Trusted protected-owner lifetime observer, inherited by every descendant generation. */
+  onTeardownUncertain?: () => void;
   // Fix round 1 (finding M1): an ABSOLUTE-path mirror for the SAME store `store` above points at --
   // no public API resolves a SessionStore key to a real filesystem path (session-store.ts's own
   // `winterHome` is a private field), so a genuine, model-readable transcript path (WS-12 §7.2's own
@@ -1452,6 +1454,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       let handedOver = false;
       try {
         lastGenerationDone = runEngine({
+          ...(deps.onTeardownUncertain !== undefined ? { onTeardownUncertain: deps.onTeardownUncertain } : {}),
           config,
           ...(runCtx.bindRestoredDescendants !== undefined ? {
             bindRestoredDescendants: runCtx.bindRestoredDescendants,
@@ -1613,6 +1616,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           ...(ownCompactionController !== undefined ? { compactionController: ownCompactionController } : {}),
           env,
         }).catch((err: unknown) => {
+          deps.onTeardownUncertain?.();
           // R-1: CARRY THE REASON. This used to discard `err` and settle with a fixed sentence, so a
           // child that died for a stated, actionable reason -- a managed policy refusing its
           // permission mode, say -- reached the parent's model as "exited unexpectedly", which is both

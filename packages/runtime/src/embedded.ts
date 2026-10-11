@@ -44,6 +44,7 @@ import { restoreChildRoster } from "./subagents/restore.ts";
 import { killAllTaskProcessGroups } from "./tools/impl/background-task-runtime.ts";
 import { setHostWorkflowWorkerCommand, type WorkerCommand } from "./workflows/sandbox.ts";
 import { EMBEDDED_ABORT_END_INPUT_REQUEST_ID, EMBEDDED_ABORT_INTERRUPT_REQUEST_ID } from "./embedded-protocol.ts";
+import { acquireProtectedStoreBootstrap, createProtectedRuntimeStore, protectedStoreOwnerSignal, releaseProtectedStoreBootstrap, type ProtectedStoreBootstrap, type OpenedProtectedStoreBootstrap } from "./guest/store-bootstrap.ts";
 
 export interface EmbeddedSessionOptions {
   /** The spawn argv (`--run --config-json <json>`, any leading slots); flags are found by NAME. */
@@ -73,6 +74,8 @@ export interface EmbeddedSessionOptions {
   workflowWorkerCommand?: WorkerCommand;
   /** Passed to the engine (`EngineOptions.onSessionPhase`): running / idle / ending. */
   onSessionPhase?: (phase: "running" | "idle" | "ending") => void;
+  /** Trusted supervisor object capability. Never read from RuntimeConfig/SDK options or env. */
+  protectedStoreBootstrap?: ProtectedStoreBootstrap;
 }
 
 // Same argv contract as `testing.ts`'s inMemoryProcess: find the flag by NAME, never by position --
@@ -182,7 +185,13 @@ function isSyntheticAbortAck(frame: WinterFrame): boolean {
  * init -- WS-04 §6.1). Never throws.
  */
 export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<number> {
-  const { env, write, writeErr, signal } = opts;
+  const { env, write, writeErr } = opts;
+  let signal = opts.signal;
+  let ownerSignal: AbortSignal | undefined;
+  let protectedStoreBootstrap: OpenedProtectedStoreBootstrap | undefined;
+  let runtimeStarted = false;
+  let runtimeReturned = false;
+  let teardownUncertain = false;
   // The abort is observed from the first line: a host can abort while the session is still resolving
   // (store I/O, provider wiring), and the process-group sweep must never wait for that.
   let settleAborted!: (v: typeof ABORTED) => void;
@@ -218,6 +227,14 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
   try {
     const config = parseConfigFromArgv(opts.argv);
     assertRuntimeExecutionPosture(config);
+    if (opts.protectedStoreBootstrap !== undefined) {
+      const durableRoot = resolveProductionStoreHome(config, env) ?? resolveProductionWinterHome(config, env);
+      protectedStoreBootstrap = await acquireProtectedStoreBootstrap(opts.protectedStoreBootstrap, config, durableRoot);
+      ownerSignal = protectedStoreOwnerSignal(protectedStoreBootstrap);
+      if (ownerSignal.aborted) onAbort();
+      else ownerSignal.addEventListener("abort", onAbort, { once: true });
+      signal = opts.signal === undefined ? ownerSignal : AbortSignal.any([opts.signal, ownerSignal]);
+    }
     assertRecognizedTestProviderEnv(env);
     // Task 8: persists by default (RuntimeConfig.persistSession defaults ON) to config.winterHome, or
     // else `env`'s WINTER_HOME, or else ~/.winter (resolveProductionWinterHome) -- this is a
@@ -233,6 +250,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
       // builds (transcript, provider-state sidecar, permission journal, approval store, auto-counter
       // store) roots on this instead of `resolveWinterHome`'s per-run folder -- see dialect.ts.
       resolveStoreHome: () => resolveProductionStoreHome(config, env),
+      ...(protectedStoreBootstrap !== undefined ? { protectedStoreBootstrap } : {}),
       env,
     });
     // Rider 18: registered BEFORE runEngine starts, so the very first turn's Agent call can spawn. A
@@ -251,7 +269,9 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
     const childDurableRoot = resolveProductionStoreHome(config, env) ?? childWinterHome;
     // ONE store object, shared by the child-engine factory and the roster restore below --
     // `resolveEngineSession`'s own `store` is a narrower write-side `SessionPersistence`.
-    const childStore = config.persistSession === false ? undefined : new WinterCompatibilitySessionStore({ winterHome: childDurableRoot });
+    const childStore = config.persistSession === false ? undefined : protectedStoreBootstrap === undefined
+      ? new WinterCompatibilitySessionStore({ winterHome: childDurableRoot })
+      : createProtectedRuntimeStore(protectedStoreBootstrap, childDurableRoot);
     // R6-7: the RESUMED continuation chain, read once from the sidecar before the run starts -- see
     // `loadResumedChain` for why the renderer needs it and an empty map is not equivalent.
     const providerChain = await loadResumedChain(store, initialMessages);
@@ -292,6 +312,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
       ...(wiring.config.storeHome !== undefined ? { storeHome: wiring.config.storeHome } : {}),
       // Phase 5 Task 8: a CHILD gets the same assembler and skill index its parent has.
       ...wiring.childFactoryOptions,
+      ...(protectedStoreBootstrap !== undefined ? { onTeardownUncertain: () => { teardownUncertain = true; } } : {}),
     });
     // Phase 4 fix wave (I3): WS-10 §7's roster rebuild -- on a RESUME (never a fork), the prior
     // session's children are restored from their durable sidecars before the first turn, so
@@ -306,12 +327,14 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
           }, { registerMessaging: false })
         : undefined;
     try {
-      return await runEngine({
+      runtimeStarted = true;
+      const code = await runEngine({
         ...(restoredChildren !== undefined ? { restoredChildren: restoredChildren.handles } : {}),
         // `wiring.config` -- the effective config PLUS the provider-derived defaults (the
         // descriptor's own context window when the host stated none). Never `effectiveConfig`.
         config: withAutoSkillPermissions(wiring.config),
         ...wiring.engineOptions,
+        ...(protectedStoreBootstrap !== undefined ? { onTeardownUncertain: () => { teardownUncertain = true; } } : {}),
         input: frameSource(opts.input, aborted),
         output,
         // The same abort, straight to the engine as well: the frames above reach it only while the input
@@ -334,6 +357,8 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
         // session the env parameter is the only environment that is this session's.
         env,
       });
+      runtimeReturned = true;
+      return code;
     } finally {
       // LOAD-BEARING for a realm that outlives this session (a test runner calling this in-process):
       // a restored roster, skill index or plugin-agent map left registered would leak into the next
@@ -342,6 +367,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
       wiring.dispose();
     }
   } catch (err) {
+    if (runtimeStarted) teardownUncertain = true;
     const text = err instanceof Error ? (err.stack ?? err.message) : String(err);
     try {
       writeErr(`winter: fatal: ${text}\n`);
@@ -350,7 +376,20 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
     }
     return 1;
   } finally {
-    signal?.removeEventListener("abort", onAbort);
+    opts.signal?.removeEventListener("abort", onAbort);
+    ownerSignal?.removeEventListener("abort", onAbort);
     restoreWorkflowCommand?.();
+    // A thrown engine/descendant teardown is unknown, not proof it stopped. Retain native
+    // ownership for explicit recovery; never release on a timer or as part of an error fallback.
+    if (protectedStoreBootstrap !== undefined && !teardownUncertain && (!runtimeStarted || runtimeReturned)) {
+      try {
+        if (await releaseProtectedStoreBootstrap(protectedStoreBootstrap) === "retained") {
+          try { writeErr("winter: protected store teardown unconfirmed; ownership retained, recovery required\n"); } catch {}
+        }
+      }
+      catch { try { writeErr("winter: protected store owner release failed; recovery required\n"); } catch {} }
+    } else if (protectedStoreBootstrap !== undefined) {
+      try { writeErr("winter: protected store teardown uncertain; ownership retained, recovery required\n"); } catch {}
+    }
   }
 }

@@ -1634,6 +1634,10 @@ export interface EngineOptions {
    * main.ts reads it to decide how hard to stop when the host dies (a teardown is let finish).
    */
   onSessionPhase?: (phase: "running" | "idle" | "ending") => void;
+  /** Trusted ownership-lifetime observer. Never a RuntimeConfig or wire option. Supplying it
+   * observes cleanup failures without changing legacy drain/cancellation semantics. Native
+   * namespace teardown acknowledgement remains required before releasing a protected owner. */
+  onTeardownUncertain?: () => void;
   // Phase 4 Task 3 (RULING P4-A): the "provider predicate seam defaulting per the catalog carry" the
   // brief names -- WS-13's own provider capability catalog (which surface would compute this for
   // real, per WS-09 §8.1's "Winter models these as provider-capability predicates in the catalog")
@@ -2589,6 +2593,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     try {
       sweepBackgroundShellTasksOnExit?.();
     } catch {
+      opts.onTeardownUncertain?.();
       /* a teardown failure must never replace the run's own outcome */
     }
     // Each guarded on its own: one disposer throwing must not strand the others, and a teardown
@@ -2597,6 +2602,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       try {
         await dispose();
       } catch {
+        opts.onTeardownUncertain?.();
         /* a withdrawal that throws has, at worst, left the entry it was removing */
       }
     }
@@ -3743,7 +3749,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const owned = childRoster.filter((child) => child.record.execution?.parentAgentId === parentAgentId);
     bindRestoredChildren(owned, restore);
     let draining: Promise<void> | undefined;
-    return () => draining ??= drainRestoredChildren(owned).then(() => {
+    return () => draining ??= drainRestoredChildren(owned, opts.onTeardownUncertain).then(() => {
       if (!childContextEnding) bindRestoredChildren(owned, restoreWithCurrentRoot);
     });
   }
@@ -3756,7 +3762,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // Both calls close their resume gates before yielding. At root shutdown the fallback bindings
     // must stay closed too, including a descendant whose immediate parent's drain finishes first.
     const bindingDisposal = disposeChildContextBinding?.();
-    const restoredDisposal = drainRestoredChildren(childRoster);
+    const restoredDisposal = drainRestoredChildren(childRoster, opts.onTeardownUncertain);
     return childContextDisposal = Promise.all([bindingDisposal, restoredDisposal]).then(() => undefined);
   };
   // Drain restored descendants even if a run exits exceptionally. Their binding disposer is
@@ -10921,7 +10927,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // out, re-stamped with the session's totals, and only then does the ordinary teardown below run --
   // which is what makes "the model was told about its background work" true before the sweep.
   if (heldResults.length > 0 && sessionAborted) {
-    await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c) && c.status() === "running").map((c) => c.stop()));
+    const stopped = await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c) && c.status() === "running").map((c) => c.stop()));
+    if (stopped.some(result => result.status === "rejected")) opts.onTeardownUncertain?.();
   }
   flushHeldResults();
   emitSessionState("idle");
@@ -10990,10 +10997,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // spawn that some other caller abandons WITHOUT an interrupt (this file's own test fixtures do
   // exactly that, deliberately, to interact with a child past its parent's turn) keeps its
   // pre-existing lifetime.
-  await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c)).map(async (c) => {
+  const childTeardown = await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c)).map(async (c) => {
     await c.stop();
     await c.generationDone?.();
   }));
+  if (childTeardown.some(result => result.status === "rejected")) opts.onTeardownUncertain?.();
   // Review r1 finding 2 (controller ruling): a BACKGROUND shell outlives the turn that started it
   // (its runCommand no longer carries the per-turn signal -- in claude too, a backgrounded shell no
   // longer follows the turn's abort), so the session going away is one of its three kill doors, beside its

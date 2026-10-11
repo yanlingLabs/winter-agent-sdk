@@ -5,6 +5,8 @@
 
 export { runWinterRuntime } from "./runtime.ts";
 export { assertRuntimeExecutionPosture, GuestExecutionUnavailableError, RUNTIME_EXECUTION_POSTURE_CAPABILITIES } from "./guest/execution-posture.ts";
+export { createProtectedStoreBootstrap, ProtectedStoreBootstrapError } from "./guest/store-bootstrap.ts";
+export type { ProtectedStoreBootstrap, ProtectedStoreScope, ProtectedStoreOwnershipPort, ProtectedStoreOwner, PreviousBootTerminationEvidence, StoreLifetimeTeardownEvidence } from "./guest/store-bootstrap.ts";
 
 // The turn engine (Task 3): state machine, tool rounds, maxTurns, interrupt, streaming input,
 // teardown. This is the real production entry point (Task 4's main.ts calls it directly);

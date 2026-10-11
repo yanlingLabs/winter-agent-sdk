@@ -441,10 +441,13 @@ export class WinterCompatibilitySessionStore implements SessionStore {
   private readonly winterHome: string;
 
   private readonly leaseIdentity: LeaseIdentityOptions;
+  /** Trusted constructor dependency, never a RuntimeConfig/SDK option or store file. */
+  private readonly sessionAuthority: { sessionId: string; assertAccess(sessionId?: string): void } | undefined;
 
-  constructor(opts: { winterHome: string; leaseIdentity?: LeaseIdentityOptions }) {
+  constructor(opts: { winterHome: string; leaseIdentity?: LeaseIdentityOptions; sessionAuthority?: { sessionId: string; assertAccess(sessionId?: string): void } }) {
     this.winterHome = opts.winterHome;
     this.leaseIdentity = { ...opts.leaseIdentity };
+    this.sessionAuthority = opts.sessionAuthority === undefined ? undefined : { ...opts.sessionAuthority };
   }
 
   // Fix round 1 (reviewer #2, minor): LOAD-BEARING INVARIANT, stated once here and mirrored at
@@ -469,6 +472,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
     // matching this method's own test ("append(key, []) creates nothing on disk"). A caller that
     // needs a malformed key rejected regardless of batch size should pass a real entry.
     if (entries.length === 0) return;
+    this.sessionAuthority?.assertAccess(key.sessionId);
 
     const { dirLevels, stem } = locateResource(this.winterHome, key);
     for (const level of dirLevels) ensureSecureDir(level);
@@ -517,6 +521,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
   }
 
   async load(key: SessionKey): Promise<SessionStoreEntry[] | null> {
+    this.sessionAuthority?.assertAccess(key.sessionId);
     const { stem } = locateResource(this.winterHome, key); // validates the key even for a pure read
     const jsonlPath = `${stem}.jsonl`;
     const metaPath = `${stem}.meta.json`;
@@ -569,6 +574,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
   }
 
   async listSessions(projectKey: string): Promise<Array<{ sessionId: string; mtime: number }>> {
+    this.sessionAuthority?.assertAccess();
     assertSafeSingleSegment(projectKey, "projectKey");
     const dir = projectDir(this.winterHome, projectKey);
     let names: string[];
@@ -582,6 +588,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
     const seenSessionIds = new Set<string>();
     for (const name of names) {
       if (!name.endsWith(".jsonl")) continue; // excludes .lock/.summary.json/.meta.json/.tail-quarantine and the bare <sessionId>/ subagent dir
+      if (this.sessionAuthority && name !== `${this.sessionAuthority.sessionId}.jsonl`) continue;
       const full = join(dir, name);
       const stat = statSync(full);
       if (!stat.isFile()) continue;
@@ -600,6 +607,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
     // second pass, always wins over its .meta.json — a session with both is never double-counted.
     for (const name of names) {
       if (!name.endsWith(".meta.json")) continue;
+      if (this.sessionAuthority && name !== `${this.sessionAuthority.sessionId}.meta.json`) continue;
       const sessionId = name.slice(0, -".meta.json".length);
       if (seenSessionIds.has(sessionId)) continue;
       const full = join(dir, name);
@@ -612,6 +620,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
   }
 
   async listSessionSummaries(projectKey: string): Promise<SessionSummaryEntry[]> {
+    this.sessionAuthority?.assertAccess();
     assertSafeSingleSegment(projectKey, "projectKey");
     const dir = projectDir(this.winterHome, projectKey);
     let names: string[];
@@ -624,13 +633,16 @@ export class WinterCompatibilitySessionStore implements SessionStore {
     const result: SessionSummaryEntry[] = [];
     for (const name of names) {
       if (!name.endsWith(".summary.json")) continue;
+      if (this.sessionAuthority && name !== `${this.sessionAuthority.sessionId}.summary.json`) continue;
       const parsed = readJsonIfExists<SessionSummaryEntry>(join(dir, name));
+      if (this.sessionAuthority && parsed !== null && parsed.sessionId !== this.sessionAuthority.sessionId) continue;
       if (parsed !== null) result.push(parsed);
     }
     return result;
   }
 
   async delete(key: SessionKey): Promise<void> {
+    this.sessionAuthority?.assertAccess(key.sessionId);
     const { stem } = locateResource(this.winterHome, key);
     if (key.subpath === undefined) {
       // The explicit product deletion transaction (WS-05 §6): the ONLY place a cascade happens —
@@ -665,6 +677,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
   }
 
   async listSubkeys(key: { projectKey: string; sessionId: string }): Promise<string[]> {
+    this.sessionAuthority?.assertAccess(key.sessionId);
     const sessionDir = sessionStem(this.winterHome, key.projectKey, key.sessionId); // no extension = the directory itself
     const results = new Set<string>();
     walkResourceStems(sessionDir, "", results);
@@ -680,6 +693,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
   // <winterHome>/projects/, i.e. every known projectKey. No mtime/sort guarantee, matching
   // listSessions' own "order not guaranteed" contract.
   async listProjectKeys(): Promise<string[]> {
+    this.sessionAuthority?.assertAccess();
     const dir = join(this.winterHome, "projects");
     let entries: Dirent[];
     try {
@@ -730,6 +744,8 @@ export class WinterCompatibilitySessionStore implements SessionStore {
    * number of records copied.
    */
   async copyProviderStateForFork(src: SessionKey, dest: SessionKey): Promise<number> {
+    this.sessionAuthority?.assertAccess(src.sessionId);
+    this.sessionAuthority?.assertAccess(dest.sessionId);
     const { stem: srcStem } = locateResource(this.winterHome, src);
     const { stem: destStem, dirLevels } = locateResource(this.winterHome, dest);
     let raw: string;
@@ -758,12 +774,14 @@ export class WinterCompatibilitySessionStore implements SessionStore {
   }
 
   async readSessionSummary(key: { projectKey: string; sessionId: string }): Promise<SessionSummaryEntry | null> {
+    this.sessionAuthority?.assertAccess(key.sessionId);
     assertSafeSingleSegment(key.projectKey, "projectKey");
     assertSafeSingleSegment(key.sessionId, "sessionId");
     return readJsonIfExists<SessionSummaryEntry>(`${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.summary.json`);
   }
 
   async mergeSessionMetadata(key: { projectKey: string; sessionId: string }, patch: { name?: string; tags?: string[] }): Promise<void> {
+    this.sessionAuthority?.assertAccess(key.sessionId);
     const stem = sessionStem(this.winterHome, key.projectKey, key.sessionId);
     const lockPath = `${stem}.lock`;
     acquireLease(lockPath, this.leaseIdentity);
@@ -793,6 +811,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
   // exactly, so a resume target's already-existing directories are a no-op self-heal, never a
   // special case.
   async acquireSessionLease(key: { projectKey: string; sessionId: string }): Promise<void> {
+    this.sessionAuthority?.assertAccess(key.sessionId);
     const { dirLevels } = locateResource(this.winterHome, key);
     for (const level of dirLevels) ensureSecureDir(level);
     const lockPath = `${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.lock`;
@@ -820,6 +839,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
    * long as neither method's synchronous stretch grows an `await`.
    */
   async releaseSessionLease(key: { projectKey: string; sessionId: string }): Promise<boolean> {
+    this.sessionAuthority?.assertAccess(key.sessionId);
     const lockPath = `${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.lock`;
     return releaseLease(lockPath, this.leaseIdentity);
   }

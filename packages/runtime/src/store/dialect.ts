@@ -33,6 +33,7 @@ import {
   type SessionStoreEntry,
 } from "@yanlinglabs/winter-agent-sdk";
 import type { ContentBlock, ProviderMessage, SessionPersistence } from "../engine.ts";
+import { assertProtectedStoreConfig, createProtectedRuntimeStore, type OpenedProtectedStoreBootstrap } from "../guest/store-bootstrap.ts";
 import type { CompactBoundaryRecord, CompactBoundaryWriteResult } from "../compaction/seam.ts";
 import { resolveProjectDirName } from "../paths/project-dir-name.ts";
 import { findContinueTarget, findResumeTarget, truncateAt, toDialectEntries, rebuildProviderMessages, ResumeTargetError } from "./resume.ts";
@@ -1321,9 +1322,12 @@ export async function resolveEngineSession(opts: {
    * could disagree with itself about).
    */
   resolveStoreHome?: () => string | undefined;
+  /** Sealed trusted supervisor dependency; never supplied by config/env or a wire message. */
+  protectedStoreBootstrap?: OpenedProtectedStoreBootstrap;
   env: Record<string, string | undefined>;
 }): Promise<ResolvedEngineSession> {
   const { config } = opts;
+  if (opts.protectedStoreBootstrap !== undefined) assertProtectedStoreConfig(opts.protectedStoreBootstrap, config);
   if (config.persistSession === false) {
     // WS-05 §7: "Non-persistent sessions ... are excluded from every resume surface." No store to
     // search or write — continue/resume/forkSession/resumeSessionAt are silently inert, exactly as
@@ -1336,12 +1340,17 @@ export async function resolveEngineSession(opts: {
   // WS-21 §6.3 item 3 (durable-write audit, fix round 2): every store constructed below is rooted
   // on `durableRoot`, NOT `winterHome` -- see `resolveStoreHome`'s own header just above for why.
   const durableRoot = opts.resolveStoreHome?.() ?? winterHome;
-  const store = new WinterCompatibilitySessionStore({ winterHome: durableRoot });
+  const store = opts.protectedStoreBootstrap === undefined
+    ? new WinterCompatibilitySessionStore({ winterHome: durableRoot })
+    : createProtectedRuntimeStore(opts.protectedStoreBootstrap, durableRoot);
   const defaultProjectKey = compatibilityKeys(config.cwd).transcriptProjectKey;
   // Ruling P1-N (1): resolve the persistent projectKey (WINTER_PROJECT_DIR_NAME override applied,
   // if any) up front — every branch below (fresh session AND continue's single-directory scope)
   // uses this SAME resolved value, never the raw default.
   const cwdKey = resolveProjectDirName(defaultProjectKey, opts.env, config.brand ?? WINTER_BRAND);
+  // The scoped path requires an exclusive writer even for an explicitly allocated fresh ID.
+  // Ordinary legacy callers retain their existing fresh-session behavior.
+  if (opts.protectedStoreBootstrap !== undefined && config.resume === undefined) await store.acquireSessionLease({ projectKey: cwdKey, sessionId: config.sessionId });
 
   const wantsContinue = config.continue === true;
   const wantsResume = config.resume !== undefined;
