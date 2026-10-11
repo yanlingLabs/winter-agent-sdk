@@ -228,3 +228,5 @@ export { createGuestFileHelper, GuestFileHelperError, GUEST_FILE_HELPER_PROTOCOL
 export type { GuestFileAuthority, GuestFileRoot, GuestFileRequest, GuestFileReply, GuestFileHelperPort, GuestFileSnapshot } from "./guest/file-helper.ts";
 export { createGuestFileSession, bindGuestFileSession } from "./guest/file-session.ts";
 export type { GuestFileSession } from "./guest/file-session.ts";
+
+export { HOST_CODE_EXECUTION_LIMITS_VERSION, hostCodeExecutionLimitsFor } from "./sandbox/execution-limits.ts";

@@ -1,3 +1,4 @@
+import { BASH_CEILING_TIMEOUT_MS as CEILING_TIMEOUT_MS, resolveBashTimeout as resolveTimeout } from "../../sandbox/execution-limits.ts";
 import { guestToolUnsupported } from "../../guest/file-session.ts";
 // Task 3 (Lane C): the Bash tool executor (WS-06 §3.2, WS-12 §6). Wires the sandbox mechanism
 // (../../sandbox/{profile,spawn}.ts) behind the pinned Bash contract: fresh shell per call, env
@@ -94,19 +95,12 @@ function parseBashInput(input: unknown): BashInput | { error: string } {
 // 3 leaves "eligibility" uncaptured by any pinned behavior; this is a marker for a future WS-17
 // differential capture to replace, not a guessed heuristic.
 // ---------------------------------------------------------------------------------------------
-const DEFAULT_TIMEOUT_MS = 120_000;
-const CEILING_TIMEOUT_MS = 600_000;
 
 // Task-frames parity (contract §3): a FOREGROUND command running past this mark is registered in
 // the shared task registry (task_started, is_backgrounded:false) -- so it becomes reachable by
 // TaskStop, exactly as the pin's own engine makes it. A command that finishes before this fires
 // emits no task frames at all.
 const FOREGROUND_REGISTER_MS = 2_000;
-
-function resolveTimeout(requested: number | undefined): number {
-  if (requested === undefined || !Number.isFinite(requested) || requested <= 0) return DEFAULT_TIMEOUT_MS;
-  return Math.min(requested, CEILING_TIMEOUT_MS);
-}
 
 // WS-12 §6.3: inline caps. FAILURE_EXCERPT_CHARS is a documented placeholder -- WS-12 §6.3 pins
 // only "a smaller head/tail excerpt," not an exact size; a future WS-17 capture may pin the real

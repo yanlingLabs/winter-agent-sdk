@@ -1,3 +1,4 @@
+import { MONITOR_PERSISTENT_TIMEOUT_MS as PERSISTENT_STAND_IN_TIMEOUT_MS } from "../../sandbox/execution-limits.ts";
 // Task 3 (Lane C): Monitor (WS-06 §3.2). Exactly one of `command`/`ws`; ALWAYS returns immediately
 // with `{taskId, timeoutMs, persistent?}` -- unlike Bash, Monitor has no non-backgrounded shape at
 // all (no `run_in_background` field on its schema; the tool IS the background primitive). The
@@ -94,7 +95,6 @@ function formatMonitorResult(taskId: string, timeoutMs: number, persistent: bool
 // `timeoutMs` (not optional there) -- max signed 32-bit ms (~24.8 days), the practical Node/Bun
 // setTimeout ceiling, rather than an even larger number some timer implementations silently clamp
 // to firing near-immediately. No real session runs that long; TaskStop is the actual exit door.
-const PERSISTENT_STAND_IN_TIMEOUT_MS = 2_147_483_647;
 
 // Task 8 (P3 close-out, "Settings threading" MUST) -- mirrors bash.ts's own computeWritableRoots/
 // buildChildEnv exactly (a small, deliberate duplication rather than a cross-tool-file import: this

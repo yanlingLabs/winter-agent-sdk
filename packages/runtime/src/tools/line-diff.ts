@@ -64,4 +64,3 @@ export function computeLineDiff(oldText: string, newText: string): DiffLine[] {
   }
   return result;
 }
-

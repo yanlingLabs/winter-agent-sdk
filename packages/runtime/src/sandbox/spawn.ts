@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_STREAMED_BYTES } from "./execution-limits.ts";
 import type { HostOutputTransport } from "./host-output.ts";
 // Task 3 (Lane C, WS-12 §3/§4): execution-path SELECTION and the actual OS-level spawn. Everything
 // platform-specific lives here (never in profile.ts, which stays pure/linux-safe): resolving the
@@ -140,7 +141,6 @@ export function resolveExecutionPath(input: ResolveExecutionPathInput): Executio
 // runCommand: the real spawn, process-group kill, and 5 GB stream-kill (WS-12 §5.2/§6.3)
 // ---------------------------------------------------------------------------------------------
 
-const DEFAULT_MAX_STREAMED_BYTES = 5 * 1024 ** 3; // WS-12 §6.3: >5 GB streamed output kills the command
 
 async function runBrokeredCommand(opts: RunCommandOptions, bound: NonNullable<ReturnType<typeof currentHostCodeProcessClient>>): Promise<RunCommandResult> {
   if (!opts.hostCodeScope?.toolUseId) throw new SandboxUnavailableError("host Code execution requires an authenticated active tool call");
