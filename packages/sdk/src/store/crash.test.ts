@@ -365,14 +365,23 @@ describe("crash: lease-aware tail repair (Ruling P1-S)", () => {
       const fullSize = statSync(jsonlPath).size;
       truncateSync(jsonlPath, fullSize - 5);
 
-      // A short-lived child that exits ON ITS OWN (never killed) — its pid becomes CLEANLY gone,
-      // matching P1's pid-gone-only detection rule (same technique as the "stale-steal" test above).
-      child = Bun.spawn([process.execPath, "-e", "1"], { stdout: "ignore", stderr: "ignore" });
-      const exitCode = await child.exited;
-      expect(exitCode).toBe(0);
+      // A real child must claim the released lease before exiting. Linux stamps its kernel
+      // identity; planting a bare dead PID would describe an unidentified/possibly foreign
+      // writer, which cannot safely be reclaimed using this kernel's PID namespace alone.
+      expect(await store.releaseSessionLease(key)).toBe(true);
+      const script = `
+        const { pathToFileURL } = await import("node:url");
+        const { WinterCompatibilitySessionStore } = await import(pathToFileURL(${JSON.stringify(STORE_MODULE_PATH)}).href);
+        const store = new WinterCompatibilitySessionStore({ winterHome: ${JSON.stringify(home)} });
+        await store.acquireSessionLease(${JSON.stringify(key)});
+      `;
+      const holder = Bun.spawn([process.execPath, "-e", script], { stdout: "ignore", stderr: "pipe" });
+      child = holder;
+      const exitCode = await holder.exited;
+      expect(exitCode, await new Response(holder.stderr).text()).toBe(0);
 
       const lockPath = join(home, "projects", "proj-crash", "dead-holder-torn.lock");
-      writeFileSync(lockPath, JSON.stringify({ pid: child.pid, startTimeMs: Date.now() }));
+      expect(JSON.parse(readFileSync(lockPath, "utf8")).pid).toBe(child.pid);
 
       const loaded = await store.load(key);
       expect(loaded).toEqual([e1]);
