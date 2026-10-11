@@ -877,6 +877,14 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   const wireMcpServers = toWireMcpServers(options.mcpServers);
 
   if (options.hostCodeProcessBroker !== undefined && (typeof options.hostCodeProcessBroker.handle !== "function" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(options.hostCodeProcessBroker.generationId) || options.executionPosture === "confined-guest")) throw new Error("invalid or guest-incompatible trusted host Code process registration");
+  const hostCodeRegistration = options.hostCodeProcessBroker;
+  let hostCodeDisposed = false;
+  const disposeHostCodeRegistration = () => {
+    if (hostCodeDisposed) return;
+    hostCodeDisposed = true;
+    try { hostCodeRegistration?.dispose?.(); } catch { /* teardown must continue */ }
+  };
+  let removeHostCodeAbortListener = () => {};
   const config: RuntimeConfig = {
     ...(options.hostCodeProcessBroker !== undefined ? { hostCodeProcessBroker: { generationId: options.hostCodeProcessBroker.generationId } } : {}),
     ...(options.executionPosture !== undefined ? { executionPosture: options.executionPosture } : {}),
@@ -1045,6 +1053,18 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // abort had landed right after a spawn -- reading it throws `AbortError` -- through an inert stand-in
   // handle whose process is already gone.
   const proc: SpawnedRuntimeProcess = options.abortController?.signal.aborted === true ? abortedBeforeSpawn() : (options.spawnClaudeCodeProcess ?? defaultSpawn)(spawnOptions);
+  if (hostCodeRegistration) {
+    // The consumer may abandon the generator: registration lifetime follows the actual query
+    // abort/process exit, independently of whether iterate() ever reaches its finally block.
+    const signal = options.abortController?.signal;
+    if (signal?.aborted) disposeHostCodeRegistration();
+    else if (signal) {
+      signal.addEventListener("abort", disposeHostCodeRegistration, { once: true });
+      removeHostCodeAbortListener = () => signal.removeEventListener("abort", disposeHostCodeRegistration);
+    }
+    const exited = () => { disposeHostCodeRegistration(); removeHostCodeAbortListener(); };
+    void proc.exited.then(exited, exited);
+  }
   const maxBufferSize = options.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
 
   // An abort BEFORE the first read kills the child now, not when (if ever) the Query is first read: the
@@ -1281,14 +1301,15 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     controlRequestHandlers.set(HOST_MESSAGE_LIST_SUBTYPE, makeHostMessageListHandler(options.hostMessaging, options.abortController));
     controlRequestHandlers.set(HOST_SESSION_STOP_SUBTYPE, makeHostSessionStopHandler(options.hostMessaging, options.abortController));
   }
-  if (options.hostCodeProcessBroker) {
-    const registration = options.hostCodeProcessBroker;
+  if (hostCodeRegistration) {
+    const registration = hostCodeRegistration;
     if (typeof registration.handle !== "function" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(registration.generationId)) throw new Error("invalid trusted host Code process registration");
     for (const subtype of Object.values(HOST_CODE_PROCESS_SUBTYPES)) controlRequestHandlers.set(subtype, async (payload, context) => {
       if (options.executionPosture === "confined-guest") return { ok: false, error: { code: "host_code_broker_denied", message: "guest execution cannot delegate host Code processes" } };
-      const signal = context?.signal ?? new AbortController().signal;
-      try { return { ok: true, payload: await registration.handle(subtype, payload, { signal, callerSessionId: config.sessionId, generationId: registration.generationId }) }; }
+      const { controller, dispose } = abortableFor(options.abortController, context);
+      try { return { ok: true, payload: await registration.handle(subtype, payload, { signal: controller.signal, callerSessionId: config.sessionId, generationId: registration.generationId }) }; }
       catch { return { ok: false, error: { code: "host_code_broker_refused", message: "trusted host Code broker refused this request" } }; }
+      finally { dispose(); }
     });
   }
   if (options.onMcpOAuthRefresh) {
@@ -1516,7 +1537,8 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       // generator as terminated and fails fast instead of registering a promise nothing will ever
       // settle.
       generatorTerminated = true;
-      try { options.hostCodeProcessBroker?.dispose?.(); } catch { /* teardown must continue */ }
+      disposeHostCodeRegistration();
+      removeHostCodeAbortListener();
       options.abortController?.signal.removeEventListener("abort", onAbort);
       removeSpawnAbortListener();
       // A requested kill's SIGKILL escalation is NOT cancelled here (third review): the query ending

@@ -169,17 +169,23 @@ export function createHostCodeProcessRegistration(input: {
           },(error)=>{ hostOutput.dispose();context.signal.removeEventListener("abort",onAbort); if(row){row.signal("SIGKILL");row.exit={code:null,signal:null,timedOut:false,aborted:context.signal.aborted,streamKilled:true};row.wake?.();row.wake=undefined;}rejectStarted(error); });
         } else {
           if (!canonical.workflow) throw new Error("workflow immutable worker unavailable");
+          const workflowTimeoutMs=canonical.commandOptions.timeoutMs;
+          if(!Number.isSafeInteger(workflowTimeoutMs) || workflowTimeoutMs<0 || workflowTimeoutMs>2147483647)throw new Error("invalid host Workflow deadline");
           const worker = buildWorkerSpawn(canonical.workflow);
           const floor = buildMandatoryFloorProfile(canonical.floor).split("\n").slice(2).join("\n");
           const profile = `${worker.args[1]}\n${floor}`;
           const hostOutput=allocatedOutput;
           const child = spawn(worker.file,["-p",profile,...worker.args.slice(2)],{cwd:canonical.commandOptions.cwd,env:canonical.commandOptions.env,stdio:["pipe",hostOutput.stdoutFd,hostOutput.stderrFd],detached:true});
           hostOutput.closeWriters();
+          child.once("error",()=>{}); // a launch refusal must not become an unhandled host error
           if (!child.pid || !child.stdin) {hostOutput.dispose();throw new Error("workflow worker failed to spawn");}
           const stdin=child.stdin;
           const pid=child.pid; const handle={id:randomUUID(),generationId:request.generationId,sessionId:request.sessionId,toolUseId:request.toolUseId,pid};
           row={handle,disposeOutput(){hostOutput.dispose();},pauseOutput(){hostOutput.pause();},resumeOutput(){hostOutput.resume();},callerSessionId:context.callerSessionId,acknowledgedSequence:0,deliveredSequence:0,polling:false,events:[],nextSequence:1,buffered:0,wake:undefined,exit:undefined,stdin,stdinState:{writing:false,ended:false,failure:undefined},signal(value){if(row?.exit || !pendingClose.has(handle.id))return;try{process.kill(-pid,value)}catch{}}}; rows.set(handle.id,row);
           pendingClose.set(handle.id,handle);closingRows.set(handle.id,row);refreshFlow();
+          let workflowTimedOut=false;
+          // Zero is the host's explicit no-deadline policy. Runtime request fields do not choose it.
+          const workflowTimer=workflowTimeoutMs>0 ? setTimeout(()=>{workflowTimedOut=true;row!.signal("SIGKILL");},workflowTimeoutMs) : undefined;
           // Stream errors can arrive after a write callback or during stop. Consume them at
           // the process owner; never allow ERR_STREAM_WRITE_AFTER_END to crash the SDK host.
           stdin.on("error",(error:Error)=>{row!.stdinState!.failure=error;row!.stdinState!.ended=true;row!.signal("SIGKILL");});
@@ -188,11 +194,12 @@ export function createHostCodeProcessRegistration(input: {
           catch(error) { outputDone=Promise.reject(error); }
           void outputDone.catch(()=>{row!.outputFailed=true;hostOutput.dispose();row!.signal("SIGKILL")});
           child.once("close",(code,signal)=>{
+            clearTimeout(workflowTimer);
             confirmClose(handle);context.signal.removeEventListener("abort",onAbort);
-            const finished=(outputFailed:boolean)=>{row!.exit={code:outputFailed?null:code,signal,timedOut:false,aborted:context.signal.aborted,streamKilled:outputFailed || row!.backlogKilled === true};row!.wake?.();row!.wake=undefined};
+            const finished=(outputFailed:boolean)=>{row!.exit={code:outputFailed?null:code,signal,timedOut:workflowTimedOut,aborted:context.signal.aborted,streamKilled:outputFailed || row!.backlogKilled === true};row!.wake?.();row!.wake=undefined};
             void outputDone.then(()=>finished(false),()=>finished(true));
           });
-          child.once("error",(error)=>{hostOutput.dispose();context.signal.removeEventListener("abort",onAbort);rejectStarted(error)}); resolveStarted({handle,posture:"sandboxed"});
+          child.once("error",(error)=>{clearTimeout(workflowTimer);hostOutput.dispose();context.signal.removeEventListener("abort",onAbort);rejectStarted(error)}); resolveStarted({handle,posture:"sandboxed"});
         }
         } catch(error) { context.signal.removeEventListener("abort",onAbort); row?.signal("SIGKILL");throw error; }
         return await started;

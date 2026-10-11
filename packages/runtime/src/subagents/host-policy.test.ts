@@ -48,8 +48,21 @@ test("legacy registered tool names and scoped denies use canonical SDK identitie
   const name = "HostPolicyRenameProbe";
   registerTool({ descriptor: { canonicalName: name, advertisedName: name }, executor: async () => ({ output: "" }) } as unknown as RegisteredTool);
   try {
-    const resolved = resolveHostCodeDescendantPolicy({ ...base, parentTools: [name], agentType: "child", preparedDefinitions: { child: custom({ tools: ["OldProbe"], disallowedTools: ["OldProbe(*)"] }) }, legacyToolNames: { OldProbe: name } });
-    expect(resolved.tools).toEqual([name]);
+    const resolved = resolveHostCodeDescendantPolicy({ ...base, parentTools: [name, "Agent"], agentType: "child", preparedDefinitions: { child: custom({ tools: ["OldProbe"], disallowedTools: ["OldProbe(*)"] }) }, legacyToolNames: { OldProbe: name } });
+    expect(resolved.tools).toEqual([]);
     expect(resolved.disallowedTools).toEqual([`${name}(*)`]);
   } finally { unregisterToolForTest(name); }
+});
+test("host descendant creation respects bare Agent denial and the actual parent pool",()=>{
+  expect(()=>resolveHostCodeDescendantPolicy({...base,parentTools:["Read","Bash"],agentType:"general-purpose"})).toThrow("parent Agent tool is unavailable");
+  for(const ruleContent of [undefined,"*"]){
+    const rules={entries:[sourceRule({toolName:"Agent",...(ruleContent?{ruleContent}:{})},"deny","sdk")],directories:[]};
+    expect(()=>resolveHostCodeDescendantPolicy({...base,parent:{...parent,rules},agentType:"general-purpose"})).toThrow("parent Agent tool is unavailable");
+  }
+});
+test("a child definition bare Agent deny removes all descendant launch authority",()=>{
+  const first=resolveHostCodeDescendantPolicy({...base,agentType:"first",preparedDefinitions:{first:custom({tools:["*"],disallowedTools:["Agent(*)"]})}});
+  expect(first.tools).not.toContain("Agent");
+  expect(()=>resolveHostCodeDescendantPolicy({...base,parentTools:first.tools,agentType:"general-purpose"})).toThrow("parent Agent tool is unavailable");
+  expect(first.disallowedTools).toEqual(["Agent(*)"]);
 });

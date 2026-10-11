@@ -7,6 +7,8 @@ import { findAgentByType, allowedAgentTypesFromTools, type SourcedAgentDefinitio
 import { resolveBuiltinAgents, resolveBuiltinAgentGates } from "./builtin-agents.ts";
 import { applySubagentToolPool } from "./tool-pools.ts";
 import { isBuiltinAllToolsDenied } from "./availability.ts";
+import { matchesRule } from "../permissions/grammar.ts";
+import { isBareDenied } from "../tools/registry.ts";
 
 export interface HostCodeDescendantPolicyOptions {
   parent: PolicyState;
@@ -39,6 +41,13 @@ export interface HostCodeDescendantPolicy {
 /** Pure policy reconstruction for one verified descendant. The host owns ancestry/identity.
  * No filesystem stores, guest snapshots or guest permission state are read here. */
 export function resolveHostCodeDescendantPolicy(options: HostCodeDescendantPolicyOptions): HostCodeDescendantPolicy {
+  const parentTools = [...new Set(options.parentTools.map((name) => currentToolName(name, options.legacyToolNames)))].filter((toolName) =>
+    !options.parent.rules.entries.some((entry) => entry.behavior === "deny" && entry.rule.isBareEquivalent && matchesRule(
+      { ...entry.rule, toolName: currentToolName(entry.rule.toolName, options.legacyToolNames) }, { toolName, input: {} }, { direction: "denyAsk" },
+    )));
+  if (!["Agent", "Task"].some((name) => parentTools.includes(currentToolName(name, options.legacyToolNames)))) {
+    throw new Error("Host descendant cannot launch: parent Agent tool is unavailable");
+  }
   const brand = options.brand ?? WINTER_BRAND;
   const env = options.env ?? process.env;
   const builtin = resolveBuiltinAgents({ brand, env, ...(options.forkSubagentEnabled !== undefined ? {
@@ -53,18 +62,18 @@ export function resolveHostCodeDescendantPolicy(options: HostCodeDescendantPolic
     throw new Error(`Host descendant agent type ${JSON.stringify(found.name)} is denied`);
   }
   const { _source: _source, _plugin: _plugin, ...definition } = found.definition;
-  if (isBuiltinAllToolsDenied({ ...(definition.tools !== undefined ? { tools: definition.tools.map((name) => currentToolName(name, options.legacyToolNames)) } : {}) }, options.parentTools)) {
+  if (isBuiltinAllToolsDenied({ ...(definition.tools !== undefined ? { tools: definition.tools.map((name) => currentToolName(name, options.legacyToolNames)) } : {}) }, parentTools)) {
     throw new Error(`Host descendant agent type ${JSON.stringify(found.name)} is unavailable: all declared tools are denied`);
   }
   const requested = definition.permissionMode;
   const policy = computeChildPolicy(options.parent, {
     ...(requested !== undefined && isPermissionMode(requested) ? { permissionMode: requested } : {}),
   }, { disableBypassPermissionsMode: options.disableBypassPermissionsMode === true });
-  const inherited = inheritDefinitionTools(options.parentTools, definition, options.legacyToolNames);
+  const disallowedTools = currentToolRules(definition.disallowedTools ?? [], options.legacyToolNames);
+  const inherited = inheritDefinitionTools(parentTools, definition, options.legacyToolNames).filter((name) => !isBareDenied(name, disallowedTools));
   const tools = options.fork === true ? inherited : applySubagentToolPool(inherited, {
     planMode: policy.effectiveMode === "plan", mayNest: options.mayNest, background: options.background, brand,
   });
-  const disallowedTools = currentToolRules(definition.disallowedTools ?? [], options.legacyToolNames);
   const allowedAgentTypes = allowedAgentTypesFromTools(definition.tools);
   return { agentType: found.name, definition: structuredClone(definition), policy, tools, disallowedTools,
     ...(allowedAgentTypes !== undefined ? { allowedAgentTypes } : {}) };

@@ -82,6 +82,28 @@ describe("background-task-runtime", () => {
     expect(killOrphanedSpawn(999999)).toBe(false); // not a real, owned process group -- reports honestly
     expect(() => killOrphanedSpawn(999999)).not.toThrow();
   });
+  test("broker-owned tasks and orphan cleanup signal the capability, never the display PID",()=>{
+    let owned=0;const stopOwnedProcess=()=>{owned++;};
+    startTracking({taskId:"owned",kind:"bash",outputPath:"/x",description:"owned",pid:999999,stopOwnedProcess,emitter:{sessionId:"owner-session",emitFrame(){}}});
+    const kill=spyOn(process,"kill").mockImplementation(()=>true);
+    try {
+      expect(killTaskProcessGroup("owned")).toBe(true);expect(owned).toBe(1);
+      expect(killOrphanedSpawn(999999,stopOwnedProcess)).toBe(true);expect(owned).toBe(2);
+      expect(killAllTaskProcessGroups()).toEqual(["owned"]);expect(owned).toBe(3);
+      expect(stopSessionShellTasks({sessionId:"owner-session"})).toEqual(["owned"]);expect(owned).toBe(4);
+      expect(kill).not.toHaveBeenCalled();
+    } finally {kill.mockRestore();}
+  });
+  test("unavailable broker ownership never falls back to a raw PID kill",()=>{
+    const stopOwnedProcess=()=>{throw new Error("broker unavailable")};
+    startTracking({taskId:"owned",kind:"bash",outputPath:"/x",description:"owned",pid:999999,stopOwnedProcess});
+    const kill=spyOn(process,"kill").mockImplementation(()=>true);
+    try {
+      expect(killTaskProcessGroup("owned")).toBe(false);expect(stopTask("owned")).toBe(false);
+      expect(killOrphanedSpawn(999999,stopOwnedProcess)).toBe(false);expect(killAllTaskProcessGroups()).toEqual([]);
+      expect(kill).not.toHaveBeenCalled();
+    } finally {kill.mockRestore();}
+  });
 
   // Review r2 finding 9's own in-process-testable half: main.ts's SIGTERM/SIGINT handler calls this
   // synchronously, with no session/kind filter -- every running, pid-bearing row in the process.

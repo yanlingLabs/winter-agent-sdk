@@ -230,12 +230,12 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
       ...monitorRunOptions,
       command: input.command,
       timeoutMs: effectiveTimeout,
-      onSpawned: ({ pid }) => {
-        const row = startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, pid, isBackgrounded: true, ...ownership, emitter });
+      onSpawned: ({ pid, stopOwnedProcess }) => {
+        const row = startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, pid, ...(stopOwnedProcess ? { stopOwnedProcess } : {}), isBackgrounded: true, ...ownership, emitter });
         // Review r2 finding 10 ("the option that keeps callers correct") -- see bash.ts's own
         // identical comment: a TaskStop landing before this callback leaves the row terminal and
         // pid-less, so the real (still-running) process would otherwise leak.
-        if (row.status !== "running") killOrphanedSpawn(pid);
+        if (row.status !== "running") killOrphanedSpawn(pid, stopOwnedProcess);
       },
       onStdout: (c) => {
         if (c.length > 0) producedOutput = true;

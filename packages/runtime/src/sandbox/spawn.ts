@@ -155,7 +155,12 @@ async function runBrokeredCommand(opts: RunCommandOptions, bound: NonNullable<Re
     requireBoundHandle(started.handle, scope); handle = started.handle;
     if (!["sandboxed", "config-disabled", "excluded", "override-requested"].includes(started.posture)) throw new SandboxUnavailableError("host Code broker returned invalid posture");
     if (opts.signal?.aborted) onAbort();
-    opts.onSpawned?.({ pid: handle.pid });
+    const ownedHandle = handle;
+    opts.onSpawned?.({ pid: ownedHandle.pid, stopOwnedProcess() {
+      // The stable host handle, never the display PID, is signal authority. Completed/released
+      // commands cannot re-signal even if their PID has since been reused.
+      if (!released) void bound.client.signal(ownedHandle, "SIGKILL").catch(() => {});
+    } });
     let sequence = 0;
     for (;;) {
       // Poll cancellation does not hide exit: the host must stop the process then provide exit evidence.
@@ -222,7 +227,7 @@ export interface RunCommandOptions {
    * `run_in_background` callers (tools/impl/bash.ts) need this to register the task BEFORE
    * awaiting the eventual result; a foreground caller simply omits it.
    */
-  onSpawned?: (info: { pid: number; pauseOutput?: () => void; resumeOutput?: () => void }) => void;
+  onSpawned?: (info: { pid: number; stopOwnedProcess?: () => void; pauseOutput?: () => void; resumeOutput?: () => void }) => void;
   maxStreamedBytes?: number;
   settings: SandboxSettings;
   dangerouslyDisableSandbox?: boolean;

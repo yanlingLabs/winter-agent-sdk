@@ -392,6 +392,7 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
   const description = input.description || input.command;
   let foregroundTaskId: string | undefined;
   let foregroundPid: number | undefined;
+  let foregroundStopOwnedProcess: (() => void) | undefined;
   const registerTimer = setTimeout(() => {
     const taskId = randomUUID();
     foregroundTaskId = taskId;
@@ -403,6 +404,7 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
       command: input.command,
       isBackgrounded: false,
       ...(foregroundPid !== undefined ? { pid: foregroundPid } : {}),
+      ...(foregroundStopOwnedProcess ? { stopOwnedProcess: foregroundStopOwnedProcess } : {}),
       ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}),
       ...(ctx.agentId !== undefined ? { ownerAgentId: ctx.agentId } : {}),
       emitter: { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId },
@@ -434,14 +436,15 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
       matchCommand: input.command,
       pwdCapturePath: pwdFile,
       timeoutMs,
-      onSpawned: ({ pid }) => {
+      onSpawned: ({ pid, stopOwnedProcess }) => {
         foregroundPid = pid;
+        foregroundStopOwnedProcess = stopOwnedProcess;
         // The timer already fired and registered a row with no pid (the ordering the header comment
         // above documents as "basically impossible" but not structurally excluded) -- merge the pid
         // in via startTracking's own "re-register while running" merge, so TaskStop can still reach
         // this row through the normal killTaskProcessGroup path.
         if (foregroundTaskId !== undefined) {
-          startTracking({
+          const row = startTracking({
             taskId: foregroundTaskId,
             kind: "bash",
             outputPath: "",
@@ -449,9 +452,11 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
             command: input.command,
             isBackgrounded: false,
             pid,
+            ...(stopOwnedProcess ? { stopOwnedProcess } : {}),
             ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}),
             emitter: { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId },
           });
+          if (row.status !== "running") killOrphanedSpawn(pid, stopOwnedProcess);
         }
       },
       onStdout: (c) => {
@@ -587,15 +592,15 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
     ...runOptions,
     command: input.command,
     timeoutMs,
-    onSpawned: ({ pid }) => {
-      const row = startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, pid, isBackgrounded: true, ...ownership, emitter });
+    onSpawned: ({ pid, stopOwnedProcess }) => {
+      const row = startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, pid, ...(stopOwnedProcess ? { stopOwnedProcess } : {}), isBackgrounded: true, ...ownership, emitter });
       // Review r2 finding 10 ("the option that keeps callers correct"): a TaskStop can land in the
       // window between the pre-spawn registration above and this callback -- the row is terminal by
       // the time the real pid arrives, `startTracking` correctly leaves it untouched (never re-arms
       // it), and so this pid never enters the registry at all. The OS process itself was still
       // really spawned and is really still running; nothing else will ever learn its pid to kill it.
       // Killed directly here, bypassing the registry (which has no record of this pid to act on).
-      if (row.status !== "running") killOrphanedSpawn(pid);
+      if (row.status !== "running") killOrphanedSpawn(pid, stopOwnedProcess);
     },
     onStdout: (c) => outStream.write(c),
     onStderr: (c) => outStream.write(c),

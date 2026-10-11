@@ -8,6 +8,9 @@ import { installHostCodeProcessClient, type HostCodeProcessClient } from "./host
 import { brokeredWorkflowWorker } from "../workflows/host-code-worker.ts";
 import { runCommand, runCommandLocally } from "./spawn.ts";
 import { createFixtureHostOutput } from "./fixtures/host-output.ts";
+import { startTracking, resetBackgroundTaskRuntimeForTest } from "../tools/impl/background-task-runtime.ts";
+import { taskStopExecutor } from "../tools/impl/task-stop.ts";
+import type { ToolExecutionContext } from "../tools/registry.ts";
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { openSync, closeSync } from "node:fs";
@@ -80,6 +83,23 @@ describe.skipIf(process.platform!=="darwin")("trusted host Code broker, disposab
     const worker=brokeredWorkflowWorker({cwd:f.dir,runId:"run",scope:{sessionId:"child-session",toolUseId:"workflow-call"}});
     const exited=new Promise<number|null>((resolve,reject)=>{worker.onExit(resolve);worker.onError(reject)});let output="";worker.stdout.on("data",chunk=>{output+=chunk.toString()});
     worker.stdin.end("stdio-roundtrip\n");expect(await exited).not.toBe(0);expect(output,worker.lastStderrLine?.()).toBe("stdio-roundtrip");expect(worker.lastStderrLine?.()).toMatch(/operation not permitted|permission denied/i);
+  });
+  test("a positive host Workflow deadline wins over a runtime no-deadline request",async()=>{
+    const f=fixture(),base=f.canonical(f.start());
+    const registration=createHostCodeProcessRegistration({createOutputTransport:createFixtureHostOutput,generationId:"generation",resolveCurrentContext:async request=>({...base,scope:{generationId:"generation",sessionId:request.sessionId,toolUseId:request.toolUseId},commandOptions:{...base.commandOptions,timeoutMs:40},workflow:{command:{file:process.execPath,args:["-e","setInterval(()=>{},1000)"]}}})});cleanup.push(()=>registration.stopAll());
+    const {command:_command,...request}=f.start({kind:"workflow",workflowRunId:"deadline",timeoutMs:0});
+    const {handle}=await registration.handle(operations.start,request,f.context) as HostCodeProcessStartReply;
+    const reply=await registration.handle(operations.poll,{handle,afterSequence:0,maxBytes:65536,maxWaitMs:30000},f.context) as HostCodeProcessPollReply;
+    expect(reply.exit).toMatchObject({code:null,signal:"SIGKILL",timedOut:true});
+    await registration.handle(operations.release,{handle,afterSequence:0},f.context);
+  });
+  test("Workflow deadline ends at OS close while output EOF delivery may remain pending",async()=>{
+    const f=fixture(),base=f.canonical(f.start());let eof!:()=>void,finish!:()=>void;const readEOF=new Promise<void>(resolve=>{eof=resolve}),gate=new Promise<void>(resolve=>{finish=resolve});
+    const registration=createHostCodeProcessRegistration({generationId:"generation",createOutputTransport:async()=>{const transport=await createFixtureHostOutput();return{...transport,async start(stdout,stderr){await transport.start(stdout,stderr);eof();await gate;}}},resolveCurrentContext:async request=>({...base,scope:{generationId:"generation",sessionId:request.sessionId,toolUseId:request.toolUseId},commandOptions:{...base.commandOptions,timeoutMs:500},workflow:{command:{file:process.execPath,args:["-e","console.log('done')"]}}})});cleanup.push(()=>registration.stopAll());
+    const {command:_command,...request}=f.start({kind:"workflow",workflowRunId:"pending-output"});const {handle}=await registration.handle(operations.start,request,f.context) as HostCodeProcessStartReply;
+    await readEOF;await new Promise(resolve=>setTimeout(resolve,550));finish();
+    let sequence=0;for(;;){const reply=await registration.handle(operations.poll,{handle,afterSequence:sequence,maxBytes:65536,maxWaitMs:30000},f.context) as HostCodeProcessPollReply;sequence=reply.events.at(-1)?.sequence??sequence;if(reply.exit){expect(reply.exit).toMatchObject({code:0,timedOut:false});break;}}
+    await registration.handle(operations.release,{handle,afterSequence:sequence},f.context);
   });
   test("a nonreading Workflow admits one bounded write and refuses overlapping data/EOF",async()=>{
     const f=fixture();
@@ -160,6 +180,27 @@ describe.skipIf(process.platform!=="darwin")("trusted host Code broker, disposab
     const canonical=f.canonical(f.start());
     await expect(runCommand({...canonical.commandOptions,command:"printf bytes",hostCodeScope:{sessionId:"child-session",toolUseId:"active-call"},onStdout(){throw new Error("consumer stopped")}})).rejects.toThrow("no local execution fallback");
     expect(abandoned).toBe(true);f.registration.stopAll();expect((await f.registration.drained).status).toBe("confirmed");
+  });
+  test("TaskStop signals an exact broker handle and a released stop closure cannot re-signal",async()=>{
+    const f=fixture();resetBackgroundTaskRuntimeForTest();cleanup.push(resetBackgroundTaskRuntimeForTest);
+    let inBroker=false,runtimeSignals=0;const signals:HostCodeProcessStartReply["handle"][]=[];
+    const client:HostCodeProcessClient={
+      start:request=>f.registration.handle(operations.start,request,f.context) as Promise<HostCodeProcessStartReply>,poll:(handle,sequence)=>f.poll(handle,sequence),
+      write:async request=>{await f.registration.handle(operations.write,request,f.context)},
+      release:async(handle,afterSequence,options)=>{await f.registration.handle(operations.release,{handle,afterSequence,...options},f.context)},
+      signal:async(handle,signal)=>{signals.push(handle);inBroker=true;try{await f.registration.handle(operations.signal,{handle,signal},f.context);}finally{inBroker=false;}},
+    };
+    cleanup.push(installHostCodeProcessClient({generationId:"generation",client}));
+    const originalKill=process.kill;const kill=spyOn(process,"kill").mockImplementation(((pid:number,signal?:number|NodeJS.Signals)=>{if(!inBroker)runtimeSignals++;return originalKill(pid,signal)}) as typeof process.kill);
+    let spawned!:()=>void;const started=new Promise<void>(resolve=>{spawned=resolve});let stopped!:(()=>void);let displayPid=0;
+    try {
+      const completion=runCommand({...f.canonical(f.start()).commandOptions,command:"sleep 30",hostCodeScope:{sessionId:"child-session",toolUseId:"active-call"},onSpawned(info){displayPid=info.pid;stopped=info.stopOwnedProcess!;startTracking({taskId:"owned-native",kind:"bash",outputPath:"/fixture",description:"native",pid:info.pid,stopOwnedProcess:stopped});spawned();}});
+      await started;expect(typeof stopped).toBe("function");
+      const context={sessionId:"child-session",emitFrame(){}} as unknown as ToolExecutionContext;
+      expect((await taskStopExecutor.execute({task_id:"owned-native"},context)).isError).toBeFalsy();await completion;
+      expect(signals).toHaveLength(1);expect(signals[0]).toMatchObject({generationId:"generation",sessionId:"child-session",toolUseId:"active-call",pid:displayPid});
+      expect(runtimeSignals).toBe(0);stopped();await Promise.resolve();expect(signals).toHaveLength(1);
+    } finally {kill.mockRestore();}
   });
   test("pending admissions reserve capacity before authorization completes",async()=>{
     const f=fixture();let admit!:(value:HostCodeCanonicalContext)=>void;
