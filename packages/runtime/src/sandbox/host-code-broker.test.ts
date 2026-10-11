@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HOST_CODE_PROCESS_SUBTYPES as operations, type HostCodeProcessStart, type HostCodeProcessStartReply, type HostCodeProcessPollReply } from "@yanlinglabs/winter-agent-sdk";
@@ -7,6 +7,10 @@ import { createHostCodeProcessRegistration, type HostCodeCanonicalContext } from
 import { installHostCodeProcessClient, type HostCodeProcessClient } from "./host-code-process.ts";
 import { brokeredWorkflowWorker } from "../workflows/host-code-worker.ts";
 import { runCommand } from "./spawn.ts";
+import { createFixtureHostOutput } from "./fixtures/host-output.ts";
+import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { openSync, closeSync } from "node:fs";
 
 const cleanup: Array<()=>void> = [];
 afterEach(()=>{for(const dispose of cleanup.splice(0).reverse())dispose();});
@@ -16,7 +20,7 @@ function fixture(resolver?: (request:HostCodeProcessStart)=>Promise<HostCodeCano
   cleanup.push(()=>rmSync(dir,{recursive:true,force:true}));
   const context={signal:new AbortController().signal,callerSessionId:"parent",generationId:"generation"};
   const canonical=(request:HostCodeProcessStart):HostCodeCanonicalContext=>({scope:{generationId:"generation",sessionId:request.sessionId,toolUseId:request.toolUseId},floor:{denyReadPaths:[control],denyWritePaths:[control]},commandOptions:{cwd:dir,env:{PATH:"/bin:/usr/bin",HOME:dir},settings:{enabled:false},timeoutMs:3000}});
-  const registration=createHostCodeProcessRegistration({generationId:"generation",resolveCurrentContext:async(request)=>resolver?resolver(request):canonical(request)});
+  const registration=createHostCodeProcessRegistration({createOutputTransport:createFixtureHostOutput,generationId:"generation",resolveCurrentContext:async(request)=>resolver?resolver(request):canonical(request)});
   cleanup.push(()=>registration.stopAll());
   const start=(extra:Partial<HostCodeProcessStart>={})=>({version:1 as const,generationId:"generation",sessionId:"child-session",toolUseId:"active-call",cwd:dir,kind:"command" as const,command:"printf output",timeoutMs:1000,maxStreamedBytes:65536,...extra});
   const poll=(handle:HostCodeProcessStartReply["handle"],afterSequence=0)=>registration.handle(operations.poll,{handle,afterSequence,maxBytes:65536,maxWaitMs:30000},context) as Promise<HostCodeProcessPollReply>;
@@ -24,6 +28,11 @@ function fixture(resolver?: (request:HostCodeProcessStart)=>Promise<HostCodeCano
   return{dir,control,context,canonical,registration,start,poll,terminal};
 }
 describe.skipIf(process.platform!=="darwin")("trusted host Code broker, disposable native processes",()=>{
+  test("missing protected output capability refuses execution before side effects",async()=>{
+    const f=fixture();const registration=createHostCodeProcessRegistration({generationId:"generation",resolveCurrentContext:async request=>f.canonical(request)});cleanup.push(()=>registration.stopAll());
+    const marker=join(f.dir,"unbounded-must-not-run");
+    await expect(registration.handle(operations.start,f.start({command:`touch '${marker}'`}),f.context)).rejects.toThrow("bounded host output transport unavailable");expect(existsSync(marker)).toBe(false);
+  });
   test("final bytes replay until acknowledged, release is idempotent and stale handles cannot signal",async()=>{
     const f=fixture();const started=await f.registration.handle(operations.start,f.start(),f.context) as HostCodeProcessStartReply;
     const initial=await f.poll(started.handle,0);expect(initial.events).toHaveLength(1);
@@ -50,7 +59,7 @@ describe.skipIf(process.platform!=="darwin")("trusted host Code broker, disposab
     let admit!:(value:HostCodeCanonicalContext)=>void;
     const f=fixture(()=>new Promise(resolve=>{admit=resolve}));
     const request=f.start({command:`touch '${join(f.dir,"must-not-run")}'`});
-    const pending=f.registration.handle(operations.start,request,f.context);f.registration.dispose!();admit(f.canonical(request));
+    const pending=f.registration.handle(operations.start,request,f.context);while(!admit)await new Promise(resolve=>setTimeout(resolve,0));f.registration.dispose!();admit(f.canonical(request));
     await expect(pending).rejects.toThrow("admission changed");
     await expect(f.registration.handle(operations.start,f.start(),f.context)).rejects.toThrow("closing");
   });
@@ -58,7 +67,7 @@ describe.skipIf(process.platform!=="darwin")("trusted host Code broker, disposab
     const f=fixture();
     const base=f.canonical(f.start());
     const workerScript=`import {readFileSync} from 'node:fs';let input='';for await(const chunk of process.stdin)input+=chunk.toString();process.stdout.write(input.trim());try{readFileSync(${JSON.stringify(join(f.control,"secret"))});process.exitCode=0}catch(error){console.error(error.message);process.exitCode=1}`;
-    const registration=createHostCodeProcessRegistration({generationId:"generation",resolveCurrentContext:async request=>({...base,scope:{generationId:"generation",sessionId:request.sessionId,toolUseId:request.toolUseId},workflow:{command:{file:process.execPath,args:["-e",workerScript]}}})});
+    const registration=createHostCodeProcessRegistration({createOutputTransport:createFixtureHostOutput,generationId:"generation",resolveCurrentContext:async request=>({...base,scope:{generationId:"generation",sessionId:request.sessionId,toolUseId:request.toolUseId},workflow:{command:{file:process.execPath,args:["-e",workerScript]}}})});
     cleanup.push(()=>registration.stopAll());
     const client:HostCodeProcessClient={
       start:(request,signal)=>registration.handle(operations.start,request,{...f.context,...(signal?{signal}:{})}) as Promise<HostCodeProcessStartReply>,
@@ -75,7 +84,7 @@ describe.skipIf(process.platform!=="darwin")("trusted host Code broker, disposab
   test("a nonreading Workflow admits one bounded write and refuses overlapping data/EOF",async()=>{
     const f=fixture();
     const base=f.canonical(f.start());
-    const registration=createHostCodeProcessRegistration({generationId:"generation",resolveCurrentContext:async request=>({...base,scope:{generationId:"generation",sessionId:request.sessionId,toolUseId:request.toolUseId},workflow:{command:{file:process.execPath,args:["-e","setInterval(()=>{},1000)"]}}})});
+    const registration=createHostCodeProcessRegistration({createOutputTransport:createFixtureHostOutput,generationId:"generation",resolveCurrentContext:async request=>({...base,scope:{generationId:"generation",sessionId:request.sessionId,toolUseId:request.toolUseId},workflow:{command:{file:process.execPath,args:["-e","setInterval(()=>{},1000)"]}}})});
     cleanup.push(()=>registration.stopAll());
     const {command:_command,...request}=f.start({kind:"workflow",workflowRunId:"nonreader"});
     const {handle}=await registration.handle(operations.start,request,f.context) as HostCodeProcessStartReply;
@@ -97,7 +106,7 @@ describe.skipIf(process.platform!=="darwin")("trusted host Code broker, disposab
   },10000);
   test("EOF is serial and every later write is refused without an ACK",async()=>{
     const f=fixture();const base=f.canonical(f.start());
-    const registration=createHostCodeProcessRegistration({generationId:"generation",resolveCurrentContext:async request=>({...base,scope:{generationId:"generation",sessionId:request.sessionId,toolUseId:request.toolUseId},workflow:{command:{file:process.execPath,args:["-e","let count=0;for await(const chunk of process.stdin)count+=chunk.length;console.log(count)"]}}})});cleanup.push(()=>registration.stopAll());
+    const registration=createHostCodeProcessRegistration({createOutputTransport:createFixtureHostOutput,generationId:"generation",resolveCurrentContext:async request=>({...base,scope:{generationId:"generation",sessionId:request.sessionId,toolUseId:request.toolUseId},workflow:{command:{file:process.execPath,args:["-e","let count=0;for await(const chunk of process.stdin)count+=chunk.length;console.log(count)"]}}})});cleanup.push(()=>registration.stopAll());
     const {command:_command,...request}=f.start({kind:"workflow",workflowRunId:"reader"});
     const {handle}=await registration.handle(operations.start,request,f.context) as HostCodeProcessStartReply;
     await registration.handle(operations.write,{handle,dataBase64:Buffer.from("payload").toString("base64")},f.context);
@@ -109,7 +118,7 @@ describe.skipIf(process.platform!=="darwin")("trusted host Code broker, disposab
   });
   test("per-process backpressure preserves large output while another producer is unacknowledged",async()=>{
     const f=fixture();
-    const registration=createHostCodeProcessRegistration({generationId:"generation",maxBufferedBytes:65536,resolveCurrentContext:async request=>f.canonical(request)});cleanup.push(()=>registration.stopAll());
+    const registration=createHostCodeProcessRegistration({createOutputTransport:createFixtureHostOutput,generationId:"generation",maxBufferedBytes:65536,resolveCurrentContext:async request=>f.canonical(request)});cleanup.push(()=>registration.stopAll());
     const retained=await registration.handle(operations.start,f.start({command:"head -c 49152 /dev/zero",toolUseId:"retained"}),f.context) as HostCodeProcessStartReply;
     let first:HostCodeProcessPollReply;
     do { first=await registration.handle(operations.poll,{handle:retained.handle,afterSequence:0,maxBytes:65536,maxWaitMs:30000},f.context) as HostCodeProcessPollReply; if(!first.exit)await new Promise(resolve=>setTimeout(resolve,0)); } while(!first.exit);
@@ -129,7 +138,7 @@ describe.skipIf(process.platform!=="darwin")("trusted host Code broker, disposab
   },15000);
   test("abandonment frees an unread output row, closes it and never signals a released handle",async()=>{
     const f=fixture();
-    const registration=createHostCodeProcessRegistration({generationId:"generation",maxBufferedBytes:65536,resolveCurrentContext:async request=>f.canonical(request)});cleanup.push(()=>registration.stopAll());
+    const registration=createHostCodeProcessRegistration({createOutputTransport:createFixtureHostOutput,generationId:"generation",maxBufferedBytes:65536,resolveCurrentContext:async request=>f.canonical(request)});cleanup.push(()=>registration.stopAll());
     const {handle}=await registration.handle(operations.start,f.start({command:"head -c 10485760 /dev/zero",maxStreamedBytes:10485761,timeoutMs:10000}),f.context) as HostCodeProcessStartReply;
     await new Promise(resolve=>setTimeout(resolve,30));
     const payload={handle,afterSequence:0,abandon:true};
@@ -152,13 +161,78 @@ describe.skipIf(process.platform!=="darwin")("trusted host Code broker, disposab
     await expect(runCommand({...canonical.commandOptions,command:"printf bytes",hostCodeScope:{sessionId:"child-session",toolUseId:"active-call"},onStdout(){throw new Error("consumer stopped")}})).rejects.toThrow("no local execution fallback");
     expect(abandoned).toBe(true);f.registration.stopAll();expect((await f.registration.drained).status).toBe("confirmed");
   });
+  test("pending admissions reserve capacity before authorization completes",async()=>{
+    const f=fixture();let admit!:(value:HostCodeCanonicalContext)=>void;
+    const registration=createHostCodeProcessRegistration({createOutputTransport:createFixtureHostOutput,generationId:"generation",maxProcesses:1,resolveCurrentContext:()=>new Promise(resolve=>{admit=resolve})});cleanup.push(()=>registration.stopAll());
+    const request=f.start();const pending=registration.handle(operations.start,request,f.context);
+    await expect(registration.handle(operations.start,f.start({toolUseId:"next"}),f.context)).rejects.toThrow("inventory");
+    while(!admit)await new Promise(resolve=>setTimeout(resolve,0));admit(f.canonical(request));const {handle}=await pending as HostCodeProcessStartReply;
+    await registration.handle(operations.release,{handle,afterSequence:0,abandon:true},f.context);
+    registration.stopAll();expect((await registration.drained).status).toBe("confirmed");
+  });
+  test("abandoned rows reserve capacity and can be re-signalled until actual close",async()=>{
+    const f=fixture();const registration=createHostCodeProcessRegistration({createOutputTransport:createFixtureHostOutput,generationId:"generation",maxProcesses:1,drainTimeoutMs:10,resolveCurrentContext:async request=>f.canonical(request)});cleanup.push(()=>registration.stopAll());
+    const {handle}=await registration.handle(operations.start,f.start({command:"sleep 30"}),f.context) as HostCodeProcessStartReply;
+    const originalKill=process.kill;let attempts=0;
+    const kill=spyOn(process,"kill").mockImplementation(((pid:number,signal?:number|NodeJS.Signals)=>{
+      if(pid===-handle.pid){attempts++;return true;}return originalKill(pid,signal);
+    }) as typeof process.kill);
+    try {
+      await registration.handle(operations.release,{handle,afterSequence:0,abandon:true},f.context);
+      await expect(registration.handle(operations.start,f.start({toolUseId:"next"}),f.context)).rejects.toThrow("inventory");
+      registration.stopAll();expect(attempts).toBe(2);expect((await registration.drained).status).toBe("uncertain");
+    } finally {kill.mockRestore();try{process.kill(-handle.pid,"SIGKILL");}catch{}}
+  });
+  test("bound release remains admitted after abort while new execution is refused",async()=>{
+    const f=fixture();const abort=new AbortController();const context={...f.context,signal:abort.signal};
+    const {handle}=await f.registration.handle(operations.start,f.start({command:"sleep 30"}),context) as HostCodeProcessStartReply;
+    abort.abort();
+    await expect(f.registration.handle(operations.start,f.start({toolUseId:"next"}),context)).rejects.toThrow("cancelled");
+    await expect(f.registration.handle(operations.write,{handle,end:true},context)).rejects.toThrow("cancelled");
+    await f.registration.handle(operations.release,{handle,afterSequence:0,abandon:true},context);
+    f.registration.stopAll();expect((await f.registration.drained).status).toBe("confirmed");
+  });
+  test("aggregate watermarks pause peers and abandonment frees budget for a surviving stream",async()=>{
+    const f=fixture();const registration=createHostCodeProcessRegistration({createOutputTransport:createFixtureHostOutput,generationId:"generation",maxBufferedBytes:65536,maxTotalBufferedBytes:262144,resolveCurrentContext:async request=>f.canonical(request)});cleanup.push(()=>registration.stopAll());
+    const handles:HostCodeProcessStartReply["handle"][]=[];
+    for(let index=0;index<5;index++){
+      const marker=join(f.dir,`finished-${index}`);
+      const {handle}=await registration.handle(operations.start,f.start({command:`head -c 10485760 /dev/zero; touch '${marker}'`,toolUseId:`stream-${index}`}),f.context) as HostCodeProcessStartReply;handles.push(handle);
+    }
+    await new Promise(resolve=>setTimeout(resolve,50));expect(existsSync(join(f.dir,"finished-0"))).toBe(false);
+    for(const handle of handles.slice(1))await registration.handle(operations.release,{handle,afterSequence:0,abandon:true},f.context);
+    const handle=handles[0]!;let sequence=0,bytes=0;
+    for(;;){const reply=await registration.handle(operations.poll,{handle,afterSequence:sequence,maxBytes:65536,maxWaitMs:30000},f.context) as HostCodeProcessPollReply;for(const event of reply.events){sequence=event.sequence;bytes+=Buffer.from(event.dataBase64,"base64").length;}if(reply.exit){expect(reply.exit.code).toBe(0);expect(reply.exit.streamKilled).toBe(false);break;}}
+    expect(bytes).toBe(10485760);expect(existsSync(join(f.dir,"finished-0"))).toBe(true);
+    await registration.handle(operations.release,{handle,afterSequence:sequence},f.context);
+  });
+  test("idle native pipes leave host file I/O responsive and wake promptly",async()=>{
+    const f=fixture();const handles:HostCodeProcessStartReply["handle"][]=[];
+    for(let index=0;index<12;index++){
+      const {handle}=await f.registration.handle(operations.start,f.start({command:"sleep 30",toolUseId:`idle-${index}`}),f.context) as HostCodeProcessStartReply;handles.push(handle);
+    }
+    await new Promise(resolve=>setTimeout(resolve,30));
+    const began=performance.now();expect(await readFile(join(f.control,"secret"),"utf8")).toBe("protected");expect(performance.now()-began).toBeLessThan(250);
+    const output=await createFixtureHostOutput();const child=spawn("/bin/sh",["-c","sleep 0.03; printf awake"],{stdio:["ignore",output.stdoutFd,output.stderrFd]});output.closeWriters();
+    let awake!:()=>void;const received=new Promise<void>(resolve=>{awake=resolve});const start=performance.now();
+    const done=output.start(chunk=>{expect(chunk.toString()).toBe("awake");awake();},()=>{});await received;expect(performance.now()-start).toBeLessThan(250);await done;
+    for(const handle of handles)await f.registration.handle(operations.release,{handle,afterSequence:0,abandon:true},f.context);
+  });
+  test("host authority fd and native pipe endpoints are CLOEXEC; child inherits only 0-2",async()=>{
+    const f=fixture();const authority=openSync(join(f.control,"secret"),"r");
+    try {
+      const request=f.start({command:'for fd in {0..64}; do if test -e /dev/fd/$fd; then printf "%s\\n" "$fd"; fi; done' });const {handle}=await f.registration.handle(operations.start,request,f.context) as HostCodeProcessStartReply;
+      const terminal=await f.terminal(handle);expect(terminal.reply.exit?.code).toBe(0);expect(terminal.output.trim().split("\n").sort()).toEqual(["0","1","2"]);
+      await f.registration.handle(operations.release,{handle,afterSequence:terminal.sequence},f.context);
+    } finally {closeSync(authority);}
+  });
   test("drain confirms managed close events after stop, not a kill receipt",async()=>{
     const f=fixture();await f.registration.handle(operations.start,f.start({command:"sleep 30"}),f.context);
     let settled=false;void f.registration.drained.then(()=>{settled=true});await Promise.resolve();expect(settled).toBe(false);
     f.registration.stopAll();expect(await f.registration.drained).toEqual({status:"confirmed",generationId:"generation",coverage:"registered-process-close-only",confirmedProcessCount:1});
   });
   test("unconfirmed kill remains uncertain with its exact owned handle",async()=>{
-    const f=fixture();const registration=createHostCodeProcessRegistration({generationId:"generation",drainTimeoutMs:10,resolveCurrentContext:async request=>f.canonical(request)});cleanup.push(()=>registration.stopAll());
+    const f=fixture();const registration=createHostCodeProcessRegistration({createOutputTransport:createFixtureHostOutput,generationId:"generation",drainTimeoutMs:10,resolveCurrentContext:async request=>f.canonical(request)});cleanup.push(()=>registration.stopAll());
     const {handle}=await registration.handle(operations.start,f.start({command:"sleep 30"}),f.context) as HostCodeProcessStartReply;
     const original=process.kill;const kill=spyOn(process,"kill").mockImplementation((pid,signal)=>pid===-handle.pid?true:original(pid,signal));
     try{registration.stopAll();expect(await registration.drained).toEqual({status:"uncertain",generationId:"generation",coverage:"registered-process-close-only",confirmedProcessCount:0,pendingHandles:[handle]});}finally{kill.mockRestore();await registration.handle(operations.signal,{handle,signal:"SIGKILL"},f.context);}

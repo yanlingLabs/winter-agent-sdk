@@ -1,3 +1,4 @@
+import type { HostOutputTransport } from "./host-output.ts";
 // Task 3 (Lane C, WS-12 §3/§4): execution-path SELECTION and the actual OS-level spawn. Everything
 // platform-specific lives here (never in profile.ts, which stays pure/linux-safe): resolving the
 // real per-user temp dir via `getconf`, checking /usr/bin/sandbox-exec, and the real child_process
@@ -188,6 +189,8 @@ async function runBrokeredCommand(opts: RunCommandOptions, bound: NonNullable<Re
 export interface RunCommandOptions {
   /** Trusted host lifecycle owner; called only for the OS child close event. */
   onProcessClosed?: ()=>void;
+  /** Trusted broker only: use parent-owned POSIX read fds instead of Bun eager buffers. */
+  hostOwnedOutput?: HostOutputTransport;
   /** Trusted host parent only, separate from SandboxSettings; never a model input. */
   mandatoryFloor?: HostExecutionFloor;
   hostCodeScope?: Omit<HostCodeProcessScope, "generationId">;
@@ -363,10 +366,11 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
 
   const maxStreamedBytes = opts.maxStreamedBytes ?? DEFAULT_MAX_STREAMED_BYTES;
 
+  const hostOutput = opts.hostOwnedOutput;
   return new Promise<RunCommandResult>((resolve) => {
     const child = spawn(spawnFile, spawnArgs, {
       cwd: opts.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", hostOutput?.stdoutFd ?? "pipe", hostOutput?.stderrFd ?? "pipe"],
       // Process-group kill (WS-12 §5.2, carried): `detached: true` makes this child its own group
       // leader (setsid), so a negative-pid signal below reaps sandbox-exec + bash + any forked or
       // backgrounded grandchildren -- closing every pipe fd so stream collection unblocks promptly.
@@ -376,8 +380,9 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
     // WS-24: the group is live from here until its leader closes -- mirrored to an embedded session's
     // host, which reaps it if the Worker dies without running the kill doors below (process-groups.ts).
     // Recorded BEFORE `onSpawned`, so no caller can learn the pid ahead of the ledger.
+    hostOutput?.closeWriters();
     const releaseGroup = child.pid !== undefined ? trackProcessGroup(child.pid, "command") : () => {};
-    if (child.pid !== undefined) opts.onSpawned?.({ pid: child.pid, pauseOutput() { child.stdout.pause(); child.stderr.pause(); }, resumeOutput() { child.stdout.resume(); child.stderr.resume(); } });
+    if (child.pid !== undefined) opts.onSpawned?.({ pid: child.pid, pauseOutput() { if(hostOutput)hostOutput.pause();else{child.stdout!.pause(); child.stderr!.pause();} }, resumeOutput() { if(hostOutput)hostOutput.resume();else{child.stdout!.resume(); child.stderr!.resume();} } });
 
     let streamedBytes = 0;
     let streamKilled = false;
@@ -397,8 +402,12 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
         killGroup();
       }
     };
-    child.stdout.on("data", (d: Buffer) => onChunk(d, opts.onStdout));
-    child.stderr.on("data", (d: Buffer) => onChunk(d, opts.onStderr));
+    const outputDone = hostOutput?.start(chunk => onChunk(chunk, opts.onStdout), chunk => onChunk(chunk, opts.onStderr));
+    void outputDone?.catch(() => { killGroup(); });
+    if (!hostOutput) {
+      child.stdout!.on("data", (d: Buffer) => onChunk(d, opts.onStdout));
+      child.stderr!.on("data", (d: Buffer) => onChunk(d, opts.onStderr));
+    }
 
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -433,9 +442,10 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
       });
     };
 
-    child.on("close", (code) => { opts.onProcessClosed?.(); finish(code); });
+    child.on("close", (code) => { opts.onProcessClosed?.(); if(outputDone)void outputDone.then(()=>finish(code),()=>finish(null));else finish(code); });
     child.on("error", (err) => {
       spawnError = (err as Error).message;
+      hostOutput?.dispose();
       finish(null);
     });
   });

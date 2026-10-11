@@ -220,3 +220,5 @@ export type { SourcedHookEntry } from "./hooks/registry.ts";
 export type { PolicyState } from "./permissions/policy-state.ts";
 export { buildHookEntriesFromConfig, buildHookEntriesFromSettings } from "./hooks/from-config.ts";
 export type { SettingsHookSourceInput, HookEntriesFromSettings } from "./hooks/from-config.ts";
+
+export type { HostOutputTransport, HostOutputTransportFactory } from "./sandbox/host-output.ts";

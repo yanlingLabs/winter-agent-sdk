@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, symlinkSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createFixtureHostOutput } from "../../runtime/src/sandbox/fixtures/host-output.ts";
 import { createHostCodeProcessRegistration } from "../../runtime/src/sandbox/host-code-broker.ts";
 import { buildPwdCaptureScript } from "../../runtime/src/tools/bash-pwd-capture.ts";
 import { query } from "./query.ts";
@@ -120,7 +121,7 @@ console.log(JSON.stringify({grep,glob,volumes}));`;
       allow: `/bin/cat '${join(f.source, "ordinary.txt")}'`,
       write: `printf harmless > '${join(f.source, "ordinary-write.txt")}'`,
     };
-    const registration = createHostCodeProcessRegistration({ generationId: "fixture-generation", async resolveCurrentContext(request, context) {
+    const registration = createHostCodeProcessRegistration({createOutputTransport:createFixtureHostOutput, generationId: "fixture-generation", async resolveCurrentContext(request, context) {
       if (context.callerSessionId !== "fixture-session" || request.cwd !== f.source) throw new Error("foreign fixture caller");
       const [mode, operation] = request.toolUseId.split(":");
       if (request.command !== commands[operation as keyof typeof commands]) throw new Error("not an active fixture command");
@@ -173,7 +174,7 @@ process.stdout.write(JSON.stringify({fixtureResult:rows})+'\\n');process.exit(0)
   test("enrolled SDK grandchildren retain observed call correlation and execute Bash through the host broker",async()=>{
     const f=fixture();const commands=[`/bin/cat '${f.manifest}'`,`/bin/cat '${join(f.source,"ordinary.txt")}'`];
     const observed=new Map<string,{command:string;parentToolUseId:string}>();const admitted:HostCodeProcessStart[]=[];const attempts:HostCodeProcessStart[]=[];
-    const registration=createHostCodeProcessRegistration({generationId:"nested-generation",async resolveCurrentContext(request,context){
+    const registration=createHostCodeProcessRegistration({createOutputTransport:createFixtureHostOutput,generationId:"nested-generation",async resolveCurrentContext(request,context){
       attempts.push(request);
       const call=observed.get(request.toolUseId);
       if(context.callerSessionId!=="nested-session" || !call || call.parentToolUseId!==request.parentToolUseId || call.command!==request.command || request.cwd!==f.source || !request.pwdCapturePath?.startsWith(f.dir+"/"))throw new Error("unobserved/foreign nested fixture call");

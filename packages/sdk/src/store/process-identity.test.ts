@@ -87,3 +87,30 @@ test("normal holder release between EEXIST and lease read is retried atomically"
     expect(JSON.parse(originalRead(lock, "utf8")).pid).toBe(process.pid);
   } finally { read.mockRestore(); }
 });
+
+test("Linux cannot steal an unidentified foreign writer using its local PID namespace", () => {
+  const lock=path();const saved={pid:2147483647,startTimeMs:1};const bytes=JSON.stringify(saved);writeFileSync(lock,bytes);
+  expect(isLeaseHolderAlive(saved,{identityProbe:probe})).toBe(true);
+  expect(()=>acquireLease(lock,{identityProbe:probe})).toThrow("live process");expect(readFileSync(lock,"utf8")).toBe(bytes);
+  expect(acquireLease(lock,{identityProbe:probe,confirmLegacyLeaseTerminated:()=>true}).processIdentity).toEqual(current);
+});
+test("repeated release/acquire ENOENT races remain missing, not corruption", () => {
+  const lock=path();const bytes=JSON.stringify({pid:process.pid,startTimeMs:1,processIdentity:current});writeFileSync(lock,bytes);
+  const originalRead=fs.readFileSync, originalLink=fs.linkSync;let releases=0, links=0;
+  const read=spyOn(fs,"readFileSync").mockImplementation(((...args:Parameters<typeof fs.readFileSync>)=>{
+    if(args[0]===lock && releases<2 && existsSync(lock)){unlinkSync(lock);releases++;}return originalRead(...args);
+  }) as typeof fs.readFileSync);
+  const link=spyOn(fs,"linkSync").mockImplementation((source,destination)=>{
+    if(destination===lock && ++links===2)writeFileSync(lock,bytes);originalLink(source,destination);
+  });
+  try {expect(acquireLease(lock,{identityProbe:probe}).processIdentity).toEqual(current);expect(releases).toBe(2);expect(links).toBe(3);}
+  finally {read.mockRestore();link.mockRestore();}
+});
+test("lease read errors never become missing or corrupt recovery",()=>{
+  const lock=path();const bytes=JSON.stringify({pid:process.pid,startTimeMs:1,processIdentity:current});writeFileSync(lock,bytes);const originalRead=fs.readFileSync;
+  const read=spyOn(fs,"readFileSync").mockImplementation(((...args:Parameters<typeof fs.readFileSync>)=>{
+    if(args[0]===lock)throw Object.assign(new Error("permission denied"),{code:"EACCES"});return originalRead(...args);
+  }) as typeof fs.readFileSync);
+  try {expect(()=>acquireLease(lock,{identityProbe:probe})).toThrow("permission denied");expect(originalRead(lock,"utf8")).toBe(bytes);}
+  finally {read.mockRestore();}
+});

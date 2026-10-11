@@ -55,6 +55,9 @@ export interface LeaseIdentityOptions {
   /** Host-only recovery proof: exclusive store tenancy and termination of the previous kernel.
    * Absent/false refuses a different boot, even if its PID is absent in this kernel. Never wire
    * this callback from guest/model settings; a boot-ID mismatch alone is not recovery proof. */
+  /** Linux cannot identify a legacy/macOS writer's kernel from a bare PID. Explicit host
+   * exclusive-tenancy + writer-termination proof is required to migrate such a lease. */
+  confirmLegacyLeaseTerminated?: (lease: Readonly<LeaseInfo>) => boolean;
   confirmPreviousBootTerminated?: (lease: Readonly<LeaseInfo>, current: Readonly<LeaseProcessIdentity>) => boolean;
 }
 export function isLeaseOwnedByCurrentProcess(info: LeaseInfo, opts: LeaseIdentityOptions = {}): boolean {
@@ -67,6 +70,7 @@ export function isLeaseOwnedByCurrentProcess(info: LeaseInfo, opts: LeaseIdentit
 export function isLeaseHolderAlive(info: LeaseInfo, opts: LeaseIdentityOptions = {}): boolean {
   const probe = opts.identityProbe ?? defaultLeaseIdentityProbe();
   if (!probe && info.processIdentity !== undefined) return true; // e.g. macOS reading a Linux lease
+  if (probe && info.processIdentity === undefined) return opts.confirmLegacyLeaseTerminated?.(Object.freeze({ ...info })) !== true;
   if (probe && info.processIdentity !== undefined) {
     const current = probe(process.pid);
     if (!current) return true; // cannot establish which kernel owns this namespace
@@ -112,25 +116,30 @@ export function writeAllSync(fd: number, buf: Buffer): void {
 // load(), deciding whether a torn tail's repair should defer to a live foreign writer — can peek at
 // who holds it without going through acquireLease's own create-or-steal side effects. Semantics
 // unchanged from its original private form: absent, unparseable, or shape-invalid all read as null.
-export function readLeaseInfo(lockPath: string): LeaseInfo | null {
+type LeaseSnapshot = { kind: "missing" | "corrupt" } | { kind: "valid"; info: LeaseInfo };
+
+/** Missing and corrupt are different states: only missing permits an atomic acquire retry. */
+function readLeaseSnapshot(lockPath: string): LeaseSnapshot {
   let raw: string;
-  try {
-    raw = readFileSync(lockPath, "utf8");
-  } catch (err) {
-    if ((err as { code?: unknown }).code === "ENOENT") return null;
-    throw err;
+  try { raw = readFileSync(lockPath, "utf8"); }
+  catch (err) {
+    if ((err as { code?: unknown }).code === "ENOENT") return { kind: "missing" };
+    throw err; // permission/I/O errors are neither absence nor recoverable corruption
   }
   try {
     const parsed = JSON.parse(raw) as Partial<LeaseInfo>;
     if (Number.isSafeInteger(parsed.pid) && parsed.pid! > 0 && typeof parsed.startTimeMs === "number" && Number.isFinite(parsed.startTimeMs)) {
       const identity = parsed.processIdentity;
-      if (Object.hasOwn(parsed, "processIdentity") && (!identity || typeof identity !== "object" || typeof identity.bootId !== "string" || typeof identity.startTicks !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(identity.bootId) || !/^\d+$/.test(identity.startTicks))) return null;
-      return { pid: parsed.pid!, startTimeMs: parsed.startTimeMs, ...(identity ? { processIdentity: { bootId: identity.bootId.toLowerCase(), startTicks: identity.startTicks } } : {}) };
+      if (Object.hasOwn(parsed, "processIdentity") && (!identity || typeof identity !== "object" || typeof identity.bootId !== "string" || typeof identity.startTicks !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(identity.bootId) || !/^\d+$/.test(identity.startTicks))) return { kind: "corrupt" };
+      return { kind: "valid", info: { pid: parsed.pid!, startTimeMs: parsed.startTimeMs, ...(identity ? { processIdentity: { bootId: identity.bootId.toLowerCase(), startTicks: identity.startTicks } } : {}) } };
     }
-  } catch {
-    // unparseable — fall through and treat exactly like a stale/absent lease below
-  }
-  return null;
+  } catch { /* fully present but unparseable */ }
+  return { kind: "corrupt" };
+}
+
+export function readLeaseInfo(lockPath: string): LeaseInfo | null {
+  const snapshot = readLeaseSnapshot(lockPath);
+  return snapshot.kind === "valid" ? snapshot.info : null;
 }
 
 // Fix-wave (T7 review F1, MODERATE-LOW): the ORIGINAL version of this function opened `lockPath`
@@ -210,19 +219,10 @@ export function acquireLease(lockPath: string, opts: LeaseIdentityOptions = {}):
     } catch (err) {
       if ((err as { code?: unknown }).code !== "EEXIST") throw err;
     }
-    const existing = readLeaseInfo(lockPath);
-    if (existing === null) {
-      // Distinguish missing from malformed with another atomic create. A competing acquisition
-      // is re-read next iteration; a still-present malformed Linux record remains fail closed.
-      try {
-        createExclusive(lockPath, fresh);
-        return fresh;
-      } catch (err) {
-        if ((err as { code?: unknown }).code !== "EEXIST") throw err;
-      }
-      if (readLeaseInfo(lockPath) !== null) continue;
-      if (probe) throw new WinterStoreLeaseError("session lease identity is corrupt or unparseable; explicit recovery is required", -1);
-    }
+    const snapshot = readLeaseSnapshot(lockPath);
+    if (snapshot.kind === "missing") continue; // every ENOENT retry returns to atomic exposure
+    if (snapshot.kind === "corrupt" && probe) throw new WinterStoreLeaseError("session lease identity is corrupt or unparseable; explicit recovery is required", -1);
+    const existing = snapshot.kind === "valid" ? snapshot.info : null;
     if (existing !== null && isLeaseOwnedByCurrentProcess(existing, opts)) return existing;
     if (existing !== null && isLeaseHolderAlive(existing, opts)) {
       throw new WinterStoreLeaseError(`session lease is held by another live process (pid ${existing.pid}); refusing a concurrent writer`, existing.pid);
