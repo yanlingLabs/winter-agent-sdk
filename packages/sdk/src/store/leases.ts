@@ -2,7 +2,8 @@
 // subagent transcript append competes for the SAME lease as its parent session's main transcript.
 // P1 stores `{pid, startTimeMs}` in a `<sessionId>.lock` JSON sidecar and detects staleness by
 // pid-liveness alone on non-Linux platforms. Linux additionally records/revalidates kernel boot ID
-// and /proc start ticks: a reused guest PID after cold boot must not count as the original writer.
+// and /proc start ticks. A different boot requires explicit host termination/tenancy evidence;
+// this kernel's PID namespace cannot prove whether a foreign kernel's writer is still alive.
 // startTimeMs is a record timestamp, never process-birth evidence. Same-PROCESS re-entry (the same OS pid re-acquiring
 // its own live lease — e.g. two `WinterCompatibilitySessionStore` instances in one process) always
 // succeeds; a DIFFERENT, still-live pid throws WinterStoreLeaseError.
@@ -49,19 +50,29 @@ export interface LeaseInfo {
   processIdentity?: LeaseProcessIdentity;
 }
 
-export interface LeaseIdentityOptions { identityProbe?: LeaseIdentityProbe }
+export interface LeaseIdentityOptions {
+  identityProbe?: LeaseIdentityProbe;
+  /** Host-only recovery proof: exclusive store tenancy and termination of the previous kernel.
+   * Absent/false refuses a different boot, even if its PID is absent in this kernel. Never wire
+   * this callback from guest/model settings; a boot-ID mismatch alone is not recovery proof. */
+  confirmPreviousBootTerminated?: (lease: Readonly<LeaseInfo>, current: Readonly<LeaseProcessIdentity>) => boolean;
+}
 export function isLeaseOwnedByCurrentProcess(info: LeaseInfo, opts: LeaseIdentityOptions = {}): boolean {
   if (info.pid !== process.pid) return false;
   const probe = opts.identityProbe ?? defaultLeaseIdentityProbe();
-  if (!probe) return true; // existing non-Linux behavior is unchanged
+  if (!probe) return info.processIdentity === undefined; // cannot claim a foreign kernel identity
   const current = probe(process.pid);
   return current !== null && info.processIdentity !== undefined && sameLeaseProcessIdentity(current, info.processIdentity);
 }
 export function isLeaseHolderAlive(info: LeaseInfo, opts: LeaseIdentityOptions = {}): boolean {
   const probe = opts.identityProbe ?? defaultLeaseIdentityProbe();
+  if (!probe && info.processIdentity !== undefined) return true; // e.g. macOS reading a Linux lease
   if (probe && info.processIdentity !== undefined) {
     const current = probe(process.pid);
-    if (current && current.bootId !== info.processIdentity.bootId) return false;
+    if (!current) return true; // cannot establish which kernel owns this namespace
+    if (current.bootId !== info.processIdentity.bootId) {
+      return opts.confirmPreviousBootTerminated?.(Object.freeze({ ...info, processIdentity: Object.freeze({ ...info.processIdentity }) }), Object.freeze({ ...current })) !== true;
+    }
     const holder = probe(info.pid);
     if (holder && !sameLeaseProcessIdentity(holder, info.processIdentity)) return false;
   }
@@ -190,32 +201,38 @@ export function acquireLease(lockPath: string, opts: LeaseIdentityOptions = {}):
   if (probe && !identity) throw new WinterStoreLeaseError("cannot establish this Linux process's boot/start identity; refusing a session writer", process.pid);
   const fresh: LeaseInfo = { pid: process.pid, startTimeMs: Date.now(), ...(identity ? { processIdentity: identity } : {}) };
 
-  // Common/fast path: nobody holds a lease yet. O_EXCL makes creation atomic against a second
-  // process racing to create the SAME brand-new session's lease at the same instant.
-  try {
-    createExclusive(lockPath, fresh);
+  // A holder may normally release between EEXIST and our read. Retry missing paths through
+  // atomic exposure; never mislabel that release race as corrupt, or overwrite a new holder.
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      createExclusive(lockPath, fresh);
+      return fresh;
+    } catch (err) {
+      if ((err as { code?: unknown }).code !== "EEXIST") throw err;
+    }
+    const existing = readLeaseInfo(lockPath);
+    if (existing === null) {
+      // Distinguish missing from malformed with another atomic create. A competing acquisition
+      // is re-read next iteration; a still-present malformed Linux record remains fail closed.
+      try {
+        createExclusive(lockPath, fresh);
+        return fresh;
+      } catch (err) {
+        if ((err as { code?: unknown }).code !== "EEXIST") throw err;
+      }
+      if (readLeaseInfo(lockPath) !== null) continue;
+      if (probe) throw new WinterStoreLeaseError("session lease identity is corrupt or unparseable; explicit recovery is required", -1);
+    }
+    if (existing !== null && isLeaseOwnedByCurrentProcess(existing, opts)) return existing;
+    if (existing !== null && isLeaseHolderAlive(existing, opts)) {
+      throw new WinterStoreLeaseError(`session lease is held by another live process (pid ${existing.pid}); refusing a concurrent writer`, existing.pid);
+    }
+    // Same-kernel dead/reused PID, or an explicitly host-authorized prior-boot recovery.
+    // Concurrent stale stealers remain the documented pre-existing replacement limitation.
+    writeLeaseInfoReplacing(lockPath, fresh);
     return fresh;
-  } catch (err) {
-    if ((err as { code?: unknown }).code !== "EEXIST") throw err;
   }
-
-  const existing = readLeaseInfo(lockPath);
-  if (existing !== null && isLeaseOwnedByCurrentProcess(existing, opts)) {
-    return existing; // same-process re-entry — the original startTimeMs is left untouched
-  }
-  if (probe && existing === null) throw new WinterStoreLeaseError("session lease identity is corrupt or unparseable; explicit recovery is required", -1);
-  if (existing !== null && isLeaseHolderAlive(existing, opts)) {
-    throw new WinterStoreLeaseError(
-      `session lease is held by another live process (pid ${existing.pid}); refusing a concurrent writer`,
-      existing.pid,
-    );
-  }
-  // Stale (holder's pid is gone) or an unreadable/corrupt lock file either way: steal it. This
-  // replacement is best-effort, not itself race-free against a second concurrent stealer reaching
-  // the same conclusion at the same instant — P1 accepts that gap (see module doc: P8 does full
-  // identity revalidation).
-  writeLeaseInfoReplacing(lockPath, fresh);
-  return fresh;
+  throw new WinterStoreLeaseError("session lease changed repeatedly during acquisition; retry required", -1);
 }
 
 /**

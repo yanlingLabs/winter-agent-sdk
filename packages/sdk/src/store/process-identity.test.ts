@@ -1,8 +1,9 @@
-import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { afterEach, expect, test, spyOn } from "bun:test";
+import * as fs from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { acquireLease, releaseLease, isLeaseHolderAlive } from "./leases.ts";
+import { acquireLease, releaseLease, isLeaseHolderAlive, isLeaseOwnedByCurrentProcess } from "./leases.ts";
 import { parseLinuxProcessIdentity, type LeaseProcessIdentity } from "./process-identity.ts";
 
 const boot = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -19,10 +20,11 @@ test("Linux stat parser handles parenthesis/spaces in comm and preserves 64-bit 
   expect(parseLinuxProcessIdentity("not-a-boot", "42 (name) S")).toBeNull();
   expect(parseLinuxProcessIdentity(boot, "42 (name) S")).toBeNull();
 });
-test("same PID after old guest boot is stale, and same current identity is reentrant", () => {
+test("previous boot needs explicit host termination evidence; current identity is reentrant", () => {
   const lock = path(); writeFileSync(lock, JSON.stringify({ pid: process.pid, startTimeMs: 1, processIdentity: { ...current, bootId: oldBoot } }));
   expect(releaseLease(lock, { identityProbe: probe })).toBe(false);
-  const acquired = acquireLease(lock, { identityProbe: probe });
+  expect(() => acquireLease(lock, { identityProbe: probe })).toThrow("live process");
+  const acquired = acquireLease(lock, { identityProbe: probe, confirmPreviousBootTerminated: () => true });
   expect(acquired.processIdentity).toEqual(current);
   expect(acquireLease(lock, { identityProbe: probe })).toEqual(acquired);
   expect(releaseLease(lock, { identityProbe: probe })).toBe(true);
@@ -56,4 +58,32 @@ test("null, zero and numeric ticks cannot be coerced into trusted process identi
     expect(() => acquireLease(lock, { identityProbe: probe })).toThrow("recovery");
     expect(readFileSync(lock, "utf8")).toBe(bytes);
   }
+});
+
+test("foreign-kernel lease is alive even with no PID in the local namespace", () => {
+  const lease = { pid: 2147483647, startTimeMs: 1, processIdentity: { ...current, bootId: oldBoot } };
+  expect(isLeaseHolderAlive(lease, { identityProbe: pid => pid === process.pid ? current : null })).toBe(true);
+  expect(isLeaseHolderAlive(lease, { identityProbe: pid => pid === process.pid ? current : null, confirmPreviousBootTerminated: () => false })).toBe(true);
+  expect(isLeaseHolderAlive(lease, { identityProbe: pid => pid === process.pid ? current : null, confirmPreviousBootTerminated: () => true })).toBe(false);
+});
+test.skipIf(process.platform === "linux")("a host without a Linux identity probe cannot claim or steal a Linux lease", () => {
+  expect(isLeaseOwnedByCurrentProcess({ pid: process.pid, startTimeMs: 1, processIdentity: current })).toBe(false);
+  expect(isLeaseHolderAlive({ pid: 2147483647, startTimeMs: 1, processIdentity: current })).toBe(true);
+});
+
+test("normal holder release between EEXIST and lease read is retried atomically", () => {
+  const lock = path();
+  writeFileSync(lock, JSON.stringify({ pid: process.pid, startTimeMs: 1, processIdentity: current }));
+  const originalRead = fs.readFileSync;
+  let released = false;
+  const read = spyOn(fs, "readFileSync").mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
+    if (args[0] === lock && !released) { released = true; unlinkSync(lock); }
+    return originalRead(...args);
+  }) as typeof fs.readFileSync);
+  try {
+    const acquired = acquireLease(lock, { identityProbe: probe });
+    expect(released).toBe(true);
+    expect(acquired.processIdentity).toEqual(current);
+    expect(JSON.parse(originalRead(lock, "utf8")).pid).toBe(process.pid);
+  } finally { read.mockRestore(); }
 });

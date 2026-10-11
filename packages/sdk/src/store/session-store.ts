@@ -33,7 +33,7 @@ import { join } from "node:path";
 // re-exported below (a separate `export ... from` binding, which needs no import of its own) — so
 // importing it here too was dead weight (TS6133). isPidAlive/readLeaseInfo are new imports for the
 // lease-aware tail repair below (Ruling P1-S).
-import { acquireLease, isLeaseHolderAlive, isLeaseOwnedByCurrentProcess, readLeaseInfo, releaseLease, writeAllSync, WinterStoreError } from "./leases.ts";
+import { acquireLease, isLeaseHolderAlive, isLeaseOwnedByCurrentProcess, readLeaseInfo, releaseLease, writeAllSync, WinterStoreError, type LeaseIdentityOptions } from "./leases.ts";
 
 export { WinterStoreError, WinterStoreLeaseError } from "./leases.ts";
 
@@ -368,10 +368,10 @@ function parseWithTailRepair(buf: Buffer): TailRepairResult {
 // ever defer to, only another process's. No lock file, an unparseable one, or a lease whose pid has
 // genuinely exited are all "no live foreign holder" — the same absent/stale reading leases.ts
 // itself already gives them.
-function hasLiveForeignLeaseHolder(lockPath: string): boolean {
+function hasLiveForeignLeaseHolder(lockPath: string, opts: LeaseIdentityOptions): boolean {
   const lease = readLeaseInfo(lockPath);
   if (process.platform === "linux" && lease === null && existsSync(lockPath)) return true;
-  return lease !== null && !isLeaseOwnedByCurrentProcess(lease) && isLeaseHolderAlive(lease);
+  return lease !== null && !isLeaseOwnedByCurrentProcess(lease, opts) && isLeaseHolderAlive(lease, opts);
 }
 
 // Collects every resource STEM under `dir` — a stem counts as present via EITHER its `.jsonl` or
@@ -440,8 +440,11 @@ function foldSummary(
 export class WinterCompatibilitySessionStore implements SessionStore {
   private readonly winterHome: string;
 
-  constructor(opts: { winterHome: string }) {
+  private readonly leaseIdentity: LeaseIdentityOptions;
+
+  constructor(opts: { winterHome: string; leaseIdentity?: LeaseIdentityOptions }) {
     this.winterHome = opts.winterHome;
+    this.leaseIdentity = { ...opts.leaseIdentity };
   }
 
   // Fix round 1 (reviewer #2, minor): LOAD-BEARING INVARIANT, stated once here and mirrored at
@@ -472,7 +475,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
 
     // Exclusive writer lease, scoped to (projectKey, sessionId) ONLY — never per-subpath.
     const lockPath = `${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.lock`;
-    acquireLease(lockPath);
+    acquireLease(lockPath, this.leaseIdentity);
     chmodSync(lockPath, 0o600);
 
     const jsonlPath = `${stem}.jsonl`;
@@ -553,7 +556,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
       // itself is unaffected either way — parseWithTailRepair already computed the complete-lines-
       // only value above regardless of what happens to the on-disk file next.
       const lockPath = `${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.lock`;
-      if (!hasLiveForeignLeaseHolder(lockPath)) {
+      if (!hasLiveForeignLeaseHolder(lockPath, this.leaseIdentity)) {
         quarantineTornTail(jsonlPath, torn.raw);
         repairTruncate(jsonlPath, torn.keepBytes);
       }
@@ -763,7 +766,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
   async mergeSessionMetadata(key: { projectKey: string; sessionId: string }, patch: { name?: string; tags?: string[] }): Promise<void> {
     const stem = sessionStem(this.winterHome, key.projectKey, key.sessionId);
     const lockPath = `${stem}.lock`;
-    acquireLease(lockPath);
+    acquireLease(lockPath, this.leaseIdentity);
     chmodSync(lockPath, 0o600);
 
     const summaryPath = `${stem}.summary.json`;
@@ -793,7 +796,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
     const { dirLevels } = locateResource(this.winterHome, key);
     for (const level of dirLevels) ensureSecureDir(level);
     const lockPath = `${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.lock`;
-    acquireLease(lockPath);
+    acquireLease(lockPath, this.leaseIdentity);
     chmodSync(lockPath, 0o600);
   }
 
@@ -818,6 +821,6 @@ export class WinterCompatibilitySessionStore implements SessionStore {
    */
   async releaseSessionLease(key: { projectKey: string; sessionId: string }): Promise<boolean> {
     const lockPath = `${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.lock`;
-    return releaseLease(lockPath);
+    return releaseLease(lockPath, this.leaseIdentity);
   }
 }
