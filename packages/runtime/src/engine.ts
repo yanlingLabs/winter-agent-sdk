@@ -149,6 +149,8 @@ import { ensureDefaultMessagingRuntimeRegistered } from "./messaging/reference-a
 import { createHostMessagingPort } from "./messaging/host-port.ts";
 // Phase 4 Task 3 (WS-07 §11 / RULING P2-M): the child permission-policy comparator.
 import { computeChildPolicy } from "./permissions/auto/inheritance.ts";
+import { currentToolName as resolveCurrentToolName } from "./tools/current-tool-name.ts";
+import { inheritDefinitionTools } from "./subagents/host-policy.ts";
 import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode, BUBBLE_PERMISSION_MODE } from "./permissions/policy-state.ts";
 import { emptyRuleSet, buildSdkSourcedEntries, sourceRule, type SourcedRuleEntry } from "./permissions/ruleset.ts";
 import { escapeFileRulePathSegment, FileRuleCompileError } from "./permissions/file-rules.ts";
@@ -299,7 +301,6 @@ import {
   registerMcpServerTools,
   unregisterMcpServerTools,
   mcpSpellingOf,
-  registeredNameForMcpSpelling,
   TOOL_SEARCH_TOOL_NAME,
   DEFERRED_BUILTINS_CAPABILITY,
   // Phase 4 Task 3 (RULING P4-A): the single "Tool Search on" activation authority + the
@@ -2689,12 +2690,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * tool is never shadowed by an old name).
    */
   const legacyToolNames = config.legacyToolNames ?? {};
-  const currentToolName = (name: string): string => {
-    if (getRegisteredTool(name) !== undefined) return name;
-    const legacy = Object.hasOwn(legacyToolNames, name) ? legacyToolNames[name] : undefined;
-    if (typeof legacy === "string" && getRegisteredTool(legacy) !== undefined) return legacy;
-    return name.startsWith("mcp__") ? registeredNameForMcpSpelling(name) : name;
-  };
+  const currentToolName = (name: string): string => resolveCurrentToolName(name, legacyToolNames);
   /** The inverse for identity: the host's old name for a current tool, when it gave one. */
   const legacyNameOf = (name: string): string | undefined => Object.entries(legacyToolNames).find(([old, current]) => current === name && getRegisteredTool(old) === undefined)?.[0];
 
@@ -4585,11 +4581,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // Spawn-surface parity: `tools: ["*"]` (every built-in that means "all tools") is the
       // UNRESTRICTED case, exactly like an absent list -- claude's own wildcard. Filtering the literal
       // "*" against the pool would hand those agents an EMPTY pool.
-      tools:
-        req.definition?.tools !== undefined && !req.definition.tools.includes("*")
-          ? // A definition written before a rename names the tool's OLD spelling (`currentToolName`).
-            [...new Set(req.definition.tools.map(currentToolName))].filter((name) => currentAdvertisedCanonicalNames.includes(name))
-          : [...currentAdvertisedCanonicalNames],
+      tools: inheritDefinitionTools(currentAdvertisedCanonicalNames, req.definition ?? {}, legacyToolNames),
       // WS-13c §3/§4 (P6.6): a SLOT NAME (`AgentInput.model`) becomes the catalog key that serves it,
       // and the slot it named rides along on `slot`. Everything else -- a full key, a canonical id,
       // `WINTER_SUBAGENT_MODEL`, the inherited `config.model` -- passes through exactly as before.

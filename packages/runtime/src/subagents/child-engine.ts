@@ -106,7 +106,7 @@ import { runEngine, createContextAccountant, type ContextAccountant, type Engine
 import { createInMemoryChannel, type FrameSink } from "../protocol/channel.ts";
 import { STRUCTURED_OUTPUT_TOOL_NAME } from "../structured/seam.ts";
 import { toolActivityDescription } from "./activity.ts";
-import { getRegisteredTool, listRegisteredTools, mcpServerHasRegistrations, registeredNameForMcpSpelling } from "../tools/registry.ts";
+import { getRegisteredTool, listRegisteredTools, mcpServerHasRegistrations } from "../tools/registry.ts";
 import { buildChildTranscriptWriter, childTranscriptSubpath, TranscriptWriter } from "../store/dialect.ts";
 import { toDialectEntries, rebuildProviderMessages } from "../store/resume.ts";
 import type {
@@ -130,6 +130,7 @@ import { createWorkspace, cleanupWorkspace } from "./workspace.ts";
 import { listWorktrees, safeRealpath } from "../tools/impl/enter-worktree.ts";
 import { readChildExecutionSnapshot, readChildExecutionProjectKey, snapshotChildExecution, type ChildExecutionSnapshot } from "./execution-snapshot.ts";
 import { validateAgentDefinition, allowedAgentTypesFromTools } from "./definitions.ts";
+import { currentToolName, currentToolRules } from "../tools/current-tool-name.ts";
 import { computeChildPolicy, resolveChildResumeMode, ChildResumeModeIncomparableError } from "../permissions/auto/inheritance.ts";
 import { isPermissionMode } from "../permissions/policy-state.ts";
 import { buildSdkSourcedEntries } from "../permissions/ruleset.ts";
@@ -573,29 +574,12 @@ function currentChildRequest(snapshot: ChildExecutionSnapshot, runCtx: ChildEngi
 
 /** Match engine.ts's fresh-spawn currentToolName: registered names win over legacy aliases. */
 function currentDefinitionToolName(name: string, deps: ChildEngineFactoryDeps): string {
-  if (getRegisteredTool(name) !== undefined) return name;
-  const legacy = deps.parentLegacyToolNames;
-  const target = legacy !== undefined && Object.hasOwn(legacy, name) ? legacy[name] : undefined;
-  if (typeof target === "string" && getRegisteredTool(target) !== undefined) return target;
-  return name.startsWith("mcp__") ? registeredNameForMcpSpelling(name) : name;
+  return currentToolName(name, deps.parentLegacyToolNames);
 }
 
-/** Scoped deny rules use the same renamed head as engine.ts's withLegacyToolNameRules. */
-function currentDefinitionToolRule(rule: string, deps: ChildEngineFactoryDeps): string {
-  const head = /^([^(]+)(.*)$/s.exec(rule.trim());
-  return head === null ? rule : `${currentDefinitionToolName(head[1]!, deps)}${head[2]}`;
-}
-
+/** Scoped denies preserve both legacy identities, as in the parent engine. */
 function currentDefinitionToolRules(rules: readonly string[], deps: ChildEngineFactoryDeps): string[] {
-  return [...new Set(rules.flatMap((rule) => {
-    const normalized = currentDefinitionToolRule(rule, deps);
-    const head = /^([^(]+)(.*)$/s.exec(rule.trim());
-    const legacy = deps.parentLegacyToolNames;
-    const target = head !== null && legacy !== undefined && Object.hasOwn(legacy, head[1]!) ? legacy[head[1]!] : undefined;
-    // Config deny rules expand legacy heads even when the old name is itself registered. Keep
-    // both identities, matching withLegacyToolNameRules rather than the ordinary allow resolver.
-    return typeof target === "string" && target.length > 0 ? [normalized, `${target}${head![2]}`] : [normalized];
-  }))];
+  return currentToolRules(rules, deps.parentLegacyToolNames);
 }
 
 function definitionTools(tools: readonly string[], request: SpawnChildRequest, deps: ChildEngineFactoryDeps): string[] {

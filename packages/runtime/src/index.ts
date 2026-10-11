@@ -210,3 +210,13 @@ export type { SettingsRuleSeed } from "./production-wiring.ts";
 export { createAutoEngine } from "./permissions/auto/engine.ts";
 export type { AutoEngineOptions, ClassifierInterface, ClassifierContext, ClassifierRawResult } from "./permissions/auto/engine.ts";
 export type { AutoEngine, HookStage, PermissionDecisionRecord } from "./permissions/evaluator.ts";
+
+export { resolveHostCodeDescendantPolicy } from "./subagents/host-policy.ts";
+export type { HostCodeDescendantPolicyOptions, HostCodeDescendantPolicy } from "./subagents/host-policy.ts";
+export { createHostCodeHookStage } from "./hooks/host-stage.ts";
+export type { HostCodeHookStageOptions } from "./hooks/host-stage.ts";
+export type { HookInvocationRequest, HookInvoker, HookAuditRecorder, ToolInputValidator } from "./hooks/runner.ts";
+export type { SourcedHookEntry } from "./hooks/registry.ts";
+export type { PolicyState } from "./permissions/policy-state.ts";
+export { buildHookEntriesFromConfig, buildHookEntriesFromSettings } from "./hooks/from-config.ts";
+export type { SettingsHookSourceInput, HookEntriesFromSettings } from "./hooks/from-config.ts";
