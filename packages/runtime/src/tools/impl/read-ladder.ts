@@ -76,6 +76,7 @@ export interface ReadLadderInput {
   // itself; this module never touches the filesystem (kept synchronous and side-effect-free so it is
   // trivially unit-testable against a bare SessionReadState, with no fixture files at all).
   currentMtimeMs: number;
+  currentFileVersion?: string;
   operation: ReadLadderOperation;
   // Edit-only (see RUNG 3 above): does `old_string` currently match EXACTLY ONCE against the
   // target's CURRENT on-disk content? Omit for "overwrite" and for NotebookEdit's "edit" calls --
@@ -100,8 +101,9 @@ export function evaluateReadLadder(input: ReadLadderInput, deps: ReadLadderDeps)
   const profile = input.profile ?? DEFAULT_READ_LADDER_PROFILE;
   const record = deps.readState.lookup(input.filePath);
 
+  const fresh = record !== undefined && (input.currentFileVersion !== undefined ? record.fileVersion === input.currentFileVersion : record.mtimeMs === input.currentMtimeMs);
   // Rung 1.
-  if (record !== undefined && record.complete && record.mtimeMs === input.currentMtimeMs) {
+  if (record !== undefined && record.complete && fresh) {
     return { eligible: true };
   }
 
@@ -114,7 +116,7 @@ export function evaluateReadLadder(input: ReadLadderInput, deps: ReadLadderDeps)
   }
 
   // Rung 3: a record exists but has drifted (mtime changed since it was taken).
-  if (record !== undefined && record.mtimeMs !== input.currentMtimeMs) {
+  if (record !== undefined && !fresh) {
     if (input.operation === "edit" && input.hasUnambiguousCurrentMatch === true && deps.probeReadAccess(input.filePath) === "silent") {
       return { eligible: true };
     }

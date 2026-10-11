@@ -70,10 +70,12 @@ def main():
         os.chown(fixture / "source/fifo", 10001, 10000)
         checks = []
 
-        def execute(operation, relative, data=b"", root="/source", policy="auto", uid=10001, limit=4096):
+        def execute(operation, relative, data=b"", root="/source", policy="auto", uid=10001, limit=4096, expected_version=None):
             view = tempfile.mkdtemp(prefix="view-", dir=fixture)
-            code, stdout, stderr = command([launcher, worker, fixture, view, uid, policy,
-                operation, root, relative, limit], base64.b64encode(data) if operation == "write" else b"")
+            arguments = [launcher, worker, fixture, view, uid, policy, operation, root, relative, limit]
+            if expected_version is not None:
+                arguments.append(expected_version)
+            code, stdout, stderr = command(arguments, base64.b64encode(data) if operation in ("write", "write-check") else b"")
             if len(stdout) > 16384 or len(stderr) > 16384:
                 raise AssertionError("fixture result exceeded its output bound")
             try:
@@ -124,6 +126,18 @@ def main():
         code, stdout, _ = command([worker, "read", fixture / "source", "seed", "10001", "4096"])
         assert code != 0 and json.loads(stdout)["code"] == "compartment_required"
         checks.append("runtime/root identity refused before file access")
+
+        # Descriptor-derived identity rejects stale conditional writes before truncation.
+        snapshot = ok("read returns descriptor identity", execute("read", "written"))
+        assert isinstance(snapshot["fileVersion"], str) and isinstance(snapshot["mtimeMs"], (int, float))
+        ok("conditional write", execute("write-check", "written", b"conditional", expected_version=snapshot["fileVersion"]))
+        denied("stale conditional write leaves bytes unchanged", execute("write-check", "written", b"stale", expected_version=snapshot["fileVersion"]), "file_changed", [11])
+        assert (fixture / "source/written").read_bytes() == b"conditional"
+        ok("absence-conditioned create", execute("write-check", "new-conditional", b"created", expected_version="absent"))
+        denied("absence collision preserves prior bytes", execute("write-check", "new-conditional", b"clobber", expected_version="absent"), "path_denied", [17])
+        assert (fixture / "source/new-conditional").read_bytes() == b"created"
+        denied("plan conditional write unchanged", execute("write-check", "written", b"denied", policy="plan", expected_version=snapshot["fileVersion"]), "path_denied", [30])
+        assert (fixture / "source/written").read_bytes() == b"conditional"
 
         # An external fixture attacker swaps an in-root entry with an out-of-root
         # symlink. Successful resolutions may read only the in-root sentinel.

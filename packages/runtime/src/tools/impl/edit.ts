@@ -1,3 +1,5 @@
+import { guestFileSessionOf, guestFileError } from "../../guest/file-session.ts";
+import { guestEdit } from "../../guest/file-tools.ts";
 // WS-06 §3.1 "Edit" -- implement-now, pinned schema `{file_path, old_string, new_string,
 // replace_all?}`. `old_string` is literal (never regex/fuzzy) and normally unique; `replace_all`
 // replaces every occurrence. Subject to the shared read-before-edit ladder (read-ladder.ts,
@@ -80,6 +82,9 @@ const editExecutor: ToolExecutor = {
     if (!parsed) return errorResult("Edit requires string fields 'file_path', 'old_string', 'new_string' (and an optional boolean 'replace_all')");
     if (parsed.old_string === "") return errorResult("'old_string' must not be empty");
     if (parsed.old_string === parsed.new_string) return errorResult("'old_string' and 'new_string' are identical -- no change to make");
+
+    try { const guest = guestFileSessionOf(ctx); if (guest) return await guestEdit(parsed, ctx, guest); }
+    catch (error) { return guestFileError(error); }
 
     // Fix round 10, item B: trim FIRST, as claude does -- see write.ts's identical
     // comment (the check and the write must never disagree).

@@ -1,3 +1,4 @@
+import { GuestFileHelperError } from "../guest/file-helper.ts";
 // Code-mode images: the ONE place an image is made ready for a model -- the Read tool (an image file, a
 // notebook's plot outputs) and an MCP tool's `image` content items both come through here, so the two
 // answer the same questions the same way: what the bytes are (sniffed, never the name), whether they
@@ -352,7 +353,8 @@ export function readRegularFileNoFollow(path: string): Buffer | undefined {
  *   - `$TMPDIR` (the per-user temp dir): its DIRECT children are sandbox-writable (the profile's mktemp
  *     allowance), so a folder made there could be renamed away and replaced by a link mid-run.
  */
-export function imagePrepWorkRoot(ctx: { storeHome?: string; winterHome?: string }): string | undefined {
+export function imagePrepWorkRoot(ctx: { storeHome?: string; winterHome?: string; executionPosture?: "local" | "confined-guest" }): string | undefined {
+  if (ctx.executionPosture !== undefined && ctx.executionPosture !== "local") throw new GuestFileHelperError("guest_file_type_unsupported", "guest image conversion has no tool-compartment route");
   const anchor = ctx.storeHome ?? ctx.winterHome;
   return anchor !== undefined ? join(anchor, IMAGE_PREP_DIRNAME) : undefined;
 }

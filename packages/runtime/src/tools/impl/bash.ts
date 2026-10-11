@@ -1,3 +1,4 @@
+import { guestToolUnsupported } from "../../guest/file-session.ts";
 // Task 3 (Lane C): the Bash tool executor (WS-06 §3.2, WS-12 §6). Wires the sandbox mechanism
 // (../../sandbox/{profile,spawn}.ts) behind the pinned Bash contract: fresh shell per call, env
 // non-persistence, cwd-carry within allowed dirs only, TMPDIR export, timeout defaults/ceiling,
@@ -732,6 +733,8 @@ function extractBashPaths(input: unknown): ExtractedPaths {
 // ---------------------------------------------------------------------------------------------
 export const bashExecutor: ToolExecutor = {
   async execute(input, ctx) {
+    const guestRefusal = guestToolUnsupported(ctx, "Bash");
+    if (guestRefusal) return guestRefusal;
     const parsed = parseBashInput(input);
     if ("error" in parsed) return { output: `Error: ${parsed.error}`, isError: true };
     return parsed.run_in_background ? runBackground(parsed, ctx) : runForeground(parsed, ctx);

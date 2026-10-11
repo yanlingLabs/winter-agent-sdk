@@ -222,3 +222,9 @@ export { buildHookEntriesFromConfig, buildHookEntriesFromSettings } from "./hook
 export type { SettingsHookSourceInput, HookEntriesFromSettings } from "./hooks/from-config.ts";
 
 export type { HostOutputTransport, HostOutputTransportFactory } from "./sandbox/host-output.ts";
+
+// Protected guest filesystem object APIs; confined runtime bootstrap remains independently gated.
+export { createGuestFileHelper, GuestFileHelperError, GUEST_FILE_HELPER_PROTOCOL_VERSION, GUEST_FILE_HELPER_CAPABILITY } from "./guest/file-helper.ts";
+export type { GuestFileAuthority, GuestFileRoot, GuestFileRequest, GuestFileReply, GuestFileHelperPort, GuestFileSnapshot } from "./guest/file-helper.ts";
+export { createGuestFileSession, bindGuestFileSession } from "./guest/file-session.ts";
+export type { GuestFileSession } from "./guest/file-session.ts";

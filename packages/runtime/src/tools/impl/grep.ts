@@ -1,3 +1,4 @@
+import { guestToolUnsupported } from "../../guest/file-session.ts";
 // WS-06 §3.1 "Grep" -- the real executor (Phase 3, Lane A / Task 4). Registers over the stub
 // descriptors/grep.ts already put in the registry.
 //
@@ -457,6 +458,8 @@ function resolveContext(input: GrepInput): { before: number; after: number } {
 }
 
 async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
+    const guestRefusal = guestToolUnsupported(ctx, "Grep");
+    if (guestRefusal) return guestRefusal;
   let input: GrepInput;
   try {
     input = parseInput(rawInput);

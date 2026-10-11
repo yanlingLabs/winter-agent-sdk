@@ -63,7 +63,7 @@ static void install_filter(void) {
 }
 int main(int argc,char **argv) {
     /* WORKER FIXTURE VIEW UID POLICY OP ROOT REL LIMIT; all are host fixture inputs. */
-    if(argc!=10 || geteuid()!=0 || (strcmp(argv[5],"auto")&&strcmp(argv[5],"plan")))return 64;
+    if((argc!=10 && argc!=11) || geteuid()!=0 || (strcmp(argv[5],"auto")&&strcmp(argv[5],"plan")))return 64;
     char *end;unsigned long uid=strtoul(argv[4],&end,10);
     if(*end || (uid!=10001 && uid!=10002))return 64;
     const char expected_marker[]="winter-guest-file-fixture\n";
@@ -94,7 +94,7 @@ int main(int argc,char **argv) {
     struct __user_cap_data_struct caps[2]={{0},{0}};require(syscall(SYS_capset,&header,caps),"clear caps");
     require(syscall(SYS_close_range,3U,~0U,0U),"close inherited descriptors");
     install_filter();umask(0002);
-    char *args[]={"/file-worker",argv[6],argv[7],argv[8],argv[4],argv[9],NULL};
+    char *args[]={"/file-worker",argv[6],argv[7],argv[8],argv[4],argv[9],argc==11?argv[10]:NULL,NULL};
     char *env[]={"LANG=C","LC_ALL=C",NULL};
     execve(args[0],args,env);require(-1,"execute file worker");return 77;
 }

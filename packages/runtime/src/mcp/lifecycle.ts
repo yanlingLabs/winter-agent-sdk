@@ -1,3 +1,4 @@
+import { guestToolUnsupported } from "../guest/file-session.ts";
 // Phase 4 Task 4 (Lane A), WS-09 §1.2/§2/§2.1/§9: the multi-server orchestrator -- source precedence
 // resolution, the three-deadline connection model, and Lane A's own REAL `McpServerStateSource`
 // (mcp/state.ts's own header: "the REAL implementation... is Lane A's own job"). One instance per
@@ -510,6 +511,8 @@ export function isMcpImageItem(block: unknown): block is { type: "image"; data: 
  * the point of this one.
  */
 export async function mcpResultWithImages(content: readonly unknown[], isError: boolean, ctx: ToolExecutionContext, serverName: string, toolName: string): Promise<ToolResultPayload> {
+  const guestRefusal = guestToolUnsupported(ctx, "MCP image preparation");
+  if (guestRefusal) return guestRefusal;
   let textLeft = MCP_IMAGE_RESULT_TEXT_CHARS;
   let noted = false;
   const note = `[text truncated at ${MCP_IMAGE_RESULT_TEXT_CHARS} characters; mcp tool "${toolName}" on server "${serverName}"]`;
@@ -789,6 +792,8 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       const toolName = tool.name;
       replaceExecutor(canonicalName, {
         async execute(input: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
+          const guestRefusal = guestToolUnsupported(ctx, "MCP");
+          if (guestRefusal) return guestRefusal;
           // WS-09 §2.1: a `cached` server's live connection is deferred to its first tool call.
           if (slot.state === "cached" && !slot.client) {
             // Fix round 1 (MAJOR M2, then a post-fix-round correction): this is a SECOND

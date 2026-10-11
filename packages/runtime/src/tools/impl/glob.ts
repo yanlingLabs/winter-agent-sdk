@@ -1,3 +1,4 @@
+import { guestToolUnsupported } from "../../guest/file-session.ts";
 // WS-06 §3.1 "Glob" -- the real executor (Phase 3, Lane A / Task 4). Registers over the stub
 // descriptors/glob.ts already put in the registry.
 //
@@ -65,6 +66,8 @@ async function scan(pattern: string, scanRoot: string): Promise<string[]> {
 }
 
 async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
+    const guestRefusal = guestToolUnsupported(ctx, "Glob");
+    if (guestRefusal) return guestRefusal;
   let input: GlobInput;
   try {
     input = parseInput(rawInput);

@@ -1,3 +1,4 @@
+import { guestToolUnsupported } from "../../guest/file-session.ts";
 // Phase 5 Lane W (task 4): the Workflow TOOL executor -- WS-11 §1.1/§1.3/§1.4, and the pinned
 // `WorkflowInput`/`WorkflowOutput` of derived-shapes-p5 item (g).
 //
@@ -304,6 +305,8 @@ function resolveSource(input: WorkflowInput, ctx: ToolExecutionContext): { ok: t
 
 const executor: ToolExecutor = {
   async execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
+    const guestRefusal = guestToolUnsupported(ctx, "Workflow");
+    if (guestRefusal) return guestRefusal;
     const input = asInput(rawInput);
     // Fix wave (whole-branch I5): resolved BY SESSION. `runtimeFor` already caches one
     // `WorkflowRuntime` per session id, but it cached it against whatever runtime happened to be

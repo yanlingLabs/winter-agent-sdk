@@ -1,3 +1,4 @@
+import { guestToolUnsupported } from "../../guest/file-session.ts";
 // WS-06 §3.1 "NotebookEdit" -- implement-now, pinned schema `{notebook_path, cell_id?, new_source,
 // cell_type?, edit_mode?}`. `edit_mode` defaults to "replace"; "insert" places a cell after `cell_id`
 // (or at the start when omitted) and REQUIRES `cell_type`; "delete" removes the targeted cell.
@@ -131,6 +132,8 @@ interface NotebookEditToolResult {
 
 const notebookEditExecutor: ToolExecutor = {
   async execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
+    const guestRefusal = guestToolUnsupported(ctx, "NotebookEdit");
+    if (guestRefusal) return guestRefusal;
     const parsed = parseInput(rawInput);
     if (!parsed) {
       return errorResult(

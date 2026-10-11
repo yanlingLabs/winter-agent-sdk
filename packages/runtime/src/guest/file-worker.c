@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <inttypes.h>
 
 static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 static int error_result(const char *code) {
@@ -44,8 +45,12 @@ static void encode(const unsigned char *data, size_t length) {
         putchar(i+2 < length ? alphabet[c & 63] : '=');
     }
 }
+static void file_version(const struct stat *st, char *out, size_t size) {
+    snprintf(out, size, "%ju:%ju:%jd:%jd:%09ld:%jd:%09ld", (uintmax_t)st->st_dev, (uintmax_t)st->st_ino, (intmax_t)st->st_size, (intmax_t)st->st_mtim.tv_sec, st->st_mtim.tv_nsec, (intmax_t)st->st_ctim.tv_sec, st->st_ctim.tv_nsec);
+}
 int main(int argc, char **argv) {
-    if (argc != 6 || (strcmp(argv[1], "read") && strcmp(argv[1], "write"))) { errno = EINVAL; return error_result("invalid_request"); }
+    int conditional = argc == 7 && !strcmp(argv[1], "write-check");
+    if ((!conditional && argc != 6) || (strcmp(argv[1], "read") && strcmp(argv[1], "write") && !conditional)) { errno = EINVAL; return error_result("invalid_request"); }
     char *end;
     unsigned long expected_uid = strtoul(argv[4], &end, 10);
     if (*end || expected_uid == 0 || expected_uid > 65535 || getuid() != expected_uid || geteuid() != expected_uid || prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) != 1 || prctl(PR_GET_SECCOMP) != 2) { errno = EPERM; return error_result("compartment_required"); }
@@ -65,7 +70,8 @@ int main(int argc, char **argv) {
     unsigned char *data = malloc(limit + 1);
     if (!data) { close(root); return error_result("resource_unavailable"); }
     size_t bytes = 0;
-    int writing = !strcmp(argv[1], "write");
+    int writing = strcmp(argv[1], "read") != 0;
+    int creating = conditional && !strcmp(argv[6], "absent");
     if (writing) {
         size_t encoded_limit = ((limit + 2) / 3) * 4;
         unsigned char *input = malloc(encoded_limit + 1);
@@ -82,9 +88,9 @@ int main(int argc, char **argv) {
         free(input);
     }
     struct open_how how = {
-        .flags = (writing ? O_WRONLY | O_CREAT : O_RDONLY) | O_CLOEXEC | O_NONBLOCK,
+        .flags = (writing ? O_WRONLY | (conditional ? (creating ? O_CREAT | O_EXCL : 0) : O_CREAT) : O_RDONLY) | O_CLOEXEC | O_NONBLOCK,
         /* Respect the compartment's normal umask and setgid workspace group. */
-        .mode = writing ? 0666 : 0,
+        .mode = writing && (!conditional || creating) ? 0666 : 0,
         /* In-root relative links and admitted nested binds are normal workspace semantics.
          * Absolute/out-of-root links and proc-style magic links remain denied by the kernel. */
         .resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS,
@@ -94,6 +100,9 @@ int main(int argc, char **argv) {
     if (file < 0) { free(data); return error_result(errno == ENOSYS ? "openat2_unavailable" : "path_denied"); }
     struct stat st;
     if (fstat(file, &st) || !S_ISREG(st.st_mode)) { errno = EINVAL; close(file); free(data); return error_result("regular_file_required"); }
+    char before_version[256], after_version[256];
+    file_version(&st, before_version, sizeof(before_version));
+    if (conditional && !creating && strcmp(argv[6], before_version)) { errno = EAGAIN; close(file); free(data); return error_result("file_changed"); }
     if (writing) {
         /* Validate the opened object before making the first destructive change. */
         if (ftruncate(file, 0)) { close(file); free(data); return error_result("write_failed"); }
@@ -105,7 +114,9 @@ int main(int argc, char **argv) {
             written += (size_t)count;
         }
         if (fsync(file)) { close(file); free(data); return error_result("flush_failed"); }
-        printf("{\"version\":1,\"ok\":true,\"bytes\":%zu}\n", bytes);
+        if (fstat(file, &st)) { close(file); free(data); return error_result("write_failed"); }
+        file_version(&st, after_version, sizeof(after_version));
+        printf("{\"version\":1,\"ok\":true,\"bytes\":%zu,\"fileVersion\":\"%s\",\"mtimeMs\":%.6f}\n", bytes, after_version, (double)st.st_mtim.tv_sec * 1000.0 + (double)st.st_mtim.tv_nsec / 1000000.0);
     } else {
         for (;;) {
             ssize_t count = read(file, data+bytes, limit+1-bytes);
@@ -114,7 +125,10 @@ int main(int argc, char **argv) {
             bytes += (size_t)count;
             if (bytes > limit) { errno = EFBIG; close(file); free(data); return error_result("payload_limit"); }
         }
-        printf("{\"version\":1,\"ok\":true,\"bytes\":%zu,\"dataBase64\":\"", bytes); encode(data, bytes); puts("\"}");
+        if (fstat(file, &st)) { close(file); free(data); return error_result("read_failed"); }
+        file_version(&st, after_version, sizeof(after_version));
+        if (strcmp(before_version, after_version)) { errno = EAGAIN; close(file); free(data); return error_result("file_changed"); }
+        printf("{\"version\":1,\"ok\":true,\"bytes\":%zu,\"fileVersion\":\"%s\",\"mtimeMs\":%.6f,\"dataBase64\":\"", bytes, after_version, (double)st.st_mtim.tv_sec * 1000.0 + (double)st.st_mtim.tv_nsec / 1000000.0); encode(data, bytes); puts("\"}");
     }
     close(file); free(data); return 0;
 }
