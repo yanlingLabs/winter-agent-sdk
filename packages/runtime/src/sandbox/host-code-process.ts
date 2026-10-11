@@ -6,7 +6,7 @@ export interface HostCodeProcessClient {
   poll(handle: HostCodeProcessHandle, afterSequence: number, signal?: AbortSignal): Promise<HostCodeProcessPollReply>;
   write(request: HostCodeProcessWrite, signal?: AbortSignal): Promise<void>;
   signal(handle: HostCodeProcessHandle, signal: "SIGTERM" | "SIGKILL"): Promise<void>;
-  release(handle: HostCodeProcessHandle, afterSequence: number): Promise<void>;
+  release(handle: HostCodeProcessHandle, afterSequence: number, options?: { abandon: true }): Promise<void>;
 }
 export function createHostCodeProcessClient(bridge: RpcBridge): HostCodeProcessClient {
   return {
@@ -14,7 +14,7 @@ export function createHostCodeProcessClient(bridge: RpcBridge): HostCodeProcessC
     poll: (handle, afterSequence, signal) => bridge.request(HOST_CODE_PROCESS_SUBTYPES.poll, { handle, afterSequence, maxBytes: 65536, maxWaitMs: 30_000 }, { ...(signal ? { signal } : {}), timeoutMs: 35_000 }),
     write: (request, signal) => bridge.request(HOST_CODE_PROCESS_SUBTYPES.write, request, { ...(signal ? { signal } : {}), timeoutMs: 5000 }),
     signal: (handle, signal) => bridge.request(HOST_CODE_PROCESS_SUBTYPES.signal, { handle, signal }, { timeoutMs: 5000 }),
-    release: (handle, afterSequence) => bridge.request(HOST_CODE_PROCESS_SUBTYPES.release, { handle, afterSequence }, { timeoutMs: 5000 }),
+    release: (handle, afterSequence, options) => bridge.request(HOST_CODE_PROCESS_SUBTYPES.release, { handle, afterSequence, ...(options?.abandon ? { abandon: true } : {}) }, { timeoutMs: 5000 }),
   };
 }
 /** One runtime process / embedded Worker realm. Never installed from settings or model inputs. */

@@ -65,7 +65,7 @@ export type { SpawnedRuntimeProcess, SpawnRuntimeOptions, SpawnClaudeCodeProcess
 export { buildMandatoryFloorProfile, applyMandatoryFloorToSpawnOptions, createMandatoryFloorSpawn, hasMandatoryFloor, MandatoryFloorUnavailableError, MANDATORY_FLOOR_CONTRACT_VERSION, HOST_EXECUTION_FLOOR_CAPABILITY } from "./mandatory-floor.ts";
 export type { HostExecutionFloor } from "./mandatory-floor.ts";
 export { HOST_CODE_PROCESS_BROKER_VERSION, HOST_CODE_PROCESS_BROKER_CAPABILITY, HOST_CODE_PROCESS_SUBTYPES } from "./host-code-process.ts";
-export type { HostCodeDrainEvidence, HostCodeProcessScope, HostCodeProcessStart, HostCodeProcessHandle, HostCodeProcessEvent, HostCodeProcessPoll, HostCodeProcessPollReply, HostCodeProcessStartReply, HostCodeProcessWrite, HostCodeProcessSignal, HostCodeProcessRegistration } from "./host-code-process.ts";
+export type { HostCodeDrainEvidence, HostCodeProcessScope, HostCodeProcessStart, HostCodeProcessHandle, HostCodeProcessEvent, HostCodeProcessPoll, HostCodeProcessPollReply, HostCodeProcessStartReply, HostCodeProcessWrite, HostCodeProcessSignal, HostCodeProcessRelease, HostCodeProcessRegistration } from "./host-code-process.ts";
 export type { RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, SandboxSettingsConfig } from "./protocol/config.ts";
 // Phase 4 Task 2: the WIRE-shaped twins (RuntimeConfig.mcpServers/.agents's own value types) --
 // what packages/runtime code actually imports (engine.ts et al. already consume RuntimeConfig
@@ -364,3 +364,5 @@ export type { PluginScope, PluginManagerOptions, MarketplaceInfo, InstalledPlugi
 // Fix round 3 (I-1, security): the ONE marketplace-manifest plugin-path resolver, shared with
 // runtime's own installed.ts directory-marketplace fallback (SV-4) -- see this file's own header.
 export { resolveMarketplacePluginPath } from "./plugins/marketplace-path.ts";
+
+export type { LeaseIdentityOptions, LeaseInfo } from "./store/leases.ts";

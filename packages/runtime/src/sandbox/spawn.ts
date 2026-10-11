@@ -146,6 +146,7 @@ async function runBrokeredCommand(opts: RunCommandOptions, bound: NonNullable<Re
   if (opts.signal?.aborted) throw new SandboxUnavailableError("host Code execution cancelled before admission");
   const scope = { ...opts.hostCodeScope, generationId: bound.generationId };
   let handle: HostCodeProcessHandle | undefined;
+  let released = false;
   const onAbort = () => { if (handle) void bound.client.signal(handle, "SIGKILL").catch(() => {}); };
   opts.signal?.addEventListener("abort", onAbort, { once: true });
   try {
@@ -171,13 +172,17 @@ async function runBrokeredCommand(opts: RunCommandOptions, bound: NonNullable<Re
       if (reply.exit) {
         if ((reply.exit.code !== null && (!Number.isInteger(reply.exit.code) || reply.exit.code < 0 || reply.exit.code > 255)) || [reply.exit.timedOut,reply.exit.aborted,reply.exit.streamKilled].some(value=>typeof value!=="boolean")) throw new SandboxUnavailableError("host Code exit schema invalid");
         await bound.client.release(handle,sequence);
+        released = true;
         return { exitCode: reply.exit.code, timedOut: reply.exit.timedOut, aborted: reply.exit.aborted, streamKilled: reply.exit.streamKilled, posture: started.posture, sandboxOverrideRequested: opts.dangerouslyDisableSandbox === true };
       }
     }
   } catch (error) {
     if (handle) await bound.client.signal(handle, "SIGKILL").catch(() => {});
     throw new SandboxUnavailableError(`host Code broker unavailable; no local execution fallback (${error instanceof Error ? error.name : "error"})`);
-  } finally { opts.signal?.removeEventListener("abort", onAbort); }
+  } finally {
+    opts.signal?.removeEventListener("abort", onAbort);
+    if (handle && !released) await bound.client.release(handle, 0, { abandon: true }).catch(() => {});
+  }
 }
 
 export interface RunCommandOptions {
@@ -214,7 +219,7 @@ export interface RunCommandOptions {
    * `run_in_background` callers (tools/impl/bash.ts) need this to register the task BEFORE
    * awaiting the eventual result; a foreground caller simply omits it.
    */
-  onSpawned?: (info: { pid: number }) => void;
+  onSpawned?: (info: { pid: number; pauseOutput?: () => void; resumeOutput?: () => void }) => void;
   maxStreamedBytes?: number;
   settings: SandboxSettings;
   dangerouslyDisableSandbox?: boolean;
@@ -372,7 +377,7 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
     // host, which reaps it if the Worker dies without running the kill doors below (process-groups.ts).
     // Recorded BEFORE `onSpawned`, so no caller can learn the pid ahead of the ledger.
     const releaseGroup = child.pid !== undefined ? trackProcessGroup(child.pid, "command") : () => {};
-    if (child.pid !== undefined) opts.onSpawned?.({ pid: child.pid });
+    if (child.pid !== undefined) opts.onSpawned?.({ pid: child.pid, pauseOutput() { child.stdout.pause(); child.stderr.pause(); }, resumeOutput() { child.stdout.resume(); child.stderr.resume(); } });
 
     let streamedBytes = 0;
     let streamKilled = false;

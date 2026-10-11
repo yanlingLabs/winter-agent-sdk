@@ -16,7 +16,7 @@ export function brokeredWorkflowWorker(input: { cwd: string; runId: string; scop
   const abort=new AbortController();
   const fail=(error:unknown)=>{
     if(done)return;done=true;
-    if(handle)void bound.client.signal(handle,"SIGKILL").catch(()=>{});
+    if(handle)void bound.client.release(handle,0,{abandon:true}).catch(()=>{});
     const failure=error instanceof Error?error:new Error("host Workflow broker failed");
     for(const callback of errors)callback(failure);
     stdout.end();stderr.end();for(const callback of exits)callback(1);

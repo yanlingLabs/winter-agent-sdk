@@ -149,8 +149,7 @@ import { ensureDefaultMessagingRuntimeRegistered } from "./messaging/reference-a
 import { createHostMessagingPort } from "./messaging/host-port.ts";
 // Phase 4 Task 3 (WS-07 §11 / RULING P2-M): the child permission-policy comparator.
 import { computeChildPolicy } from "./permissions/auto/inheritance.ts";
-import { currentToolName as resolveCurrentToolName } from "./tools/current-tool-name.ts";
-import { inheritDefinitionTools } from "./subagents/host-policy.ts";
+import { currentToolName as resolveCurrentToolName, inheritDefinitionTools } from "./tools/current-tool-name.ts";
 import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode, BUBBLE_PERMISSION_MODE } from "./permissions/policy-state.ts";
 import { emptyRuleSet, buildSdkSourcedEntries, sourceRule, type SourcedRuleEntry } from "./permissions/ruleset.ts";
 import { escapeFileRulePathSegment, FileRuleCompileError } from "./permissions/file-rules.ts";

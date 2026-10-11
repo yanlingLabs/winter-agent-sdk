@@ -19,6 +19,7 @@ interface Row {
   callerSessionId: string; acknowledgedSequence: number; deliveredSequence: number; polling: boolean;
   wake: (() => void) | undefined; exit: HostCodeProcessPollReply["exit"]; backlogKilled?: boolean;
   signal(value: "SIGTERM" | "SIGKILL"): void;
+  pauseOutput?: () => void; resumeOutput?: () => void; outputPaused?: boolean; abandoned?: boolean;
   stdin?: NodeJS.WritableStream;
   stdinState?: { writing: boolean; ended: boolean; failure: Error | undefined };
 }
@@ -27,13 +28,13 @@ interface Row {
 export function createHostCodeProcessRegistration(input: {
   generationId: string;
   resolveCurrentContext(request: HostCodeProcessStart, context: { signal: AbortSignal; callerSessionId: string; generationId: string }): Promise<HostCodeCanonicalContext>;
-  /** Aggregate decoded output retained by this registration, across every process. */
+  /** Per-process decoded output high watermark. Reading pauses until acknowledged below half. */
   maxBufferedBytes?: number;
   drainTimeoutMs?:number;
 }): HostCodeProcessRegistration & { stopAll(): void; readonly drained:Promise<HostCodeDrainEvidence> } {
   const rows = new Map<string, Row>();
   // Final output stays replayable until explicit acknowledgment; only bounded released handles remain.
-  const released = new Map<string, { handle: HostCodeProcessHandle; callerSessionId: string; sequence: number }>();
+  const released = new Map<string, { handle: HostCodeProcessHandle; callerSessionId: string; sequence: number; abandoned?: boolean }>();
   const maxBuffered = input.maxBufferedBytes ?? 4 * 1024 * 1024;
   if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(input.generationId) || !Number.isSafeInteger(maxBuffered) || maxBuffered < 65536) throw new Error("invalid host Code broker bounds/identity");
   let closed = false;
@@ -48,22 +49,25 @@ export function createHostCodeProcessRegistration(input: {
     if(handle&&pendingClose.delete(handle.id))confirmedProcessCount++;
     if(closed&&pendingClose.size===0){clearTimeout(drainTimer);settleDrain({status:"confirmed",generationId:input.generationId,coverage:"registered-process-close-only",confirmedProcessCount});}
   }
-  let totalBuffered = 0;
-  let totalEvents = 0;
   const maxRetainedEvents = 4096; // Bound per-event metadata independently of byte-sized writes.
   function discard(row: Row, throughSequence: number) {
     while(row.events[0] && row.events[0].sequence<=throughSequence) {
       const bytes=Buffer.from(row.events.shift()!.dataBase64,"base64").length;
-      row.buffered-=bytes;totalBuffered-=bytes;totalEvents--;
+      row.buffered-=bytes;
+    }
+    if (row.outputPaused && row.buffered < maxBuffered / 2 && row.events.length < maxRetainedEvents / 2) {
+      row.outputPaused = false; row.resumeOutput?.();
     }
   }
   function record(row: Row, stream: "stdout" | "stderr", chunk: Buffer) {
-    if(row.backlogKilled)return;
+    if(row.abandoned)return;
     // Keep every poll at <=64KiB; byte boundaries are preserved with base64.
     for (let offset=0; offset<chunk.length; offset+=16384) {
       const part = chunk.subarray(offset, offset+16384);
-      if (totalBuffered + part.length > maxBuffered || totalEvents>=maxRetainedEvents) { row.backlogKilled = true; row.signal("SIGKILL"); return; }
-      row.events.push({ sequence: row.nextSequence++, stream, dataBase64: part.toString("base64") }); row.buffered += part.length;totalBuffered+=part.length;totalEvents++;
+      row.events.push({ sequence: row.nextSequence++, stream, dataBase64: part.toString("base64") }); row.buffered += part.length;
+    }
+    if (!row.outputPaused && (row.buffered >= maxBuffered || row.events.length >= maxRetainedEvents)) {
+      row.outputPaused = true; row.pauseOutput?.();
     }
     row.wake?.(); row.wake = undefined;
   }
@@ -106,9 +110,9 @@ export function createHostCodeProcessRegistration(input: {
           const posture = resolveExecutionPath({ settings: canonical.commandOptions.settings, command: request.command!, ...(canonical.commandOptions.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: canonical.commandOptions.dangerouslyDisableSandbox } : {}) }).posture;
           const completion = runCommandLocally({ ...canonical.commandOptions, command: canonical.executionCommand ?? request.command!, matchCommand: request.command!, mandatoryFloor: canonical.floor, signal: context.signal,
             onProcessClosed(){confirmClose(row?.handle);},
-            onSpawned({pid}) {
+            onSpawned({pid,pauseOutput,resumeOutput}) {
               const handle = { id: randomUUID(), generationId: request.generationId, sessionId: request.sessionId, toolUseId: request.toolUseId, pid };
-              row = { handle, callerSessionId: context.callerSessionId, acknowledgedSequence: 0, deliveredSequence: 0, polling: false, events: [], nextSequence: 1, buffered: 0, wake: undefined, exit: undefined, signal(value) { if(row?.exit)return;try { process.kill(-pid,value); } catch {} } };
+              row = { handle, ...(pauseOutput ? { pauseOutput } : {}), ...(resumeOutput ? { resumeOutput } : {}), callerSessionId: context.callerSessionId, acknowledgedSequence: 0, deliveredSequence: 0, polling: false, events: [], nextSequence: 1, buffered: 0, wake: undefined, exit: undefined, signal(value) { if(row?.exit)return;try { process.kill(-pid,value); } catch {} } };
               rows.set(handle.id,row);
               pendingClose.set(handle.id,handle);
               // Returned posture comes from canonical host selection, not runtime intent.
@@ -128,7 +132,7 @@ export function createHostCodeProcessRegistration(input: {
           const child = spawn(worker.file,["-p",profile,...worker.args.slice(2)],{cwd:canonical.commandOptions.cwd,env:canonical.commandOptions.env,stdio:["pipe","pipe","pipe"],detached:true});
           if (!child.pid) throw new Error("workflow worker failed to spawn");
           const pid=child.pid; const handle={id:randomUUID(),generationId:request.generationId,sessionId:request.sessionId,toolUseId:request.toolUseId,pid};
-          row={handle,callerSessionId:context.callerSessionId,acknowledgedSequence:0,deliveredSequence:0,polling:false,events:[],nextSequence:1,buffered:0,wake:undefined,exit:undefined,stdin:child.stdin,stdinState:{writing:false,ended:false,failure:undefined},signal(value){if(row?.exit)return;try{process.kill(-pid,value)}catch{}}}; rows.set(handle.id,row);
+          row={handle,pauseOutput(){child.stdout.pause();child.stderr.pause();},resumeOutput(){child.stdout.resume();child.stderr.resume();},callerSessionId:context.callerSessionId,acknowledgedSequence:0,deliveredSequence:0,polling:false,events:[],nextSequence:1,buffered:0,wake:undefined,exit:undefined,stdin:child.stdin,stdinState:{writing:false,ended:false,failure:undefined},signal(value){if(row?.exit)return;try{process.kill(-pid,value)}catch{}}}; rows.set(handle.id,row);
           pendingClose.set(handle.id,handle);
           // Stream errors can arrive after a write callback or during stop. Consume them at
           // the process owner; never allow ERR_STREAM_WRITE_AFTER_END to crash the SDK host.
@@ -141,13 +145,17 @@ export function createHostCodeProcessRegistration(input: {
         return started;
       }
       if(subtype===HOST_CODE_PROCESS_SUBTYPES.release){
-        const request=payload as {handle:HostCodeProcessHandle;afterSequence:number};
+        const request=payload as {handle:HostCodeProcessHandle;afterSequence:number;abandon?:true};
+        if(Object.keys(request).some(key=>!["handle","afterSequence","abandon"].includes(key)) || (request.abandon!==undefined && request.abandon!==true))throw new Error("invalid release request");
         const prior=request?.handle && released.get(request.handle.id);
-        if(prior && prior.callerSessionId===context.callerSessionId && JSON.stringify(prior.handle)===JSON.stringify(request.handle) && prior.sequence===request.afterSequence)return{};
+        if(prior && prior.callerSessionId===context.callerSessionId && JSON.stringify(prior.handle)===JSON.stringify(request.handle) && prior.sequence===request.afterSequence && prior.abandoned===(request.abandon===true))return{};
         const row=owned(payload,context.callerSessionId);
-        if(!row.exit || request.afterSequence!==row.nextSequence-1 || request.afterSequence!==row.deliveredSequence)throw new Error("final host Code output not acknowledged");
-        discard(row,request.afterSequence);
-        rows.delete(row.handle.id);released.set(row.handle.id,{handle:row.handle,callerSessionId:row.callerSessionId,sequence:request.afterSequence});
+        if(request.abandon===true) {
+          if(request.afterSequence!==0)throw new Error("invalid abandonment cursor");
+          row.abandoned=true;row.signal("SIGKILL");
+        } else if(!row.exit || request.afterSequence!==row.nextSequence-1 || request.afterSequence!==row.deliveredSequence)throw new Error("final host Code output not acknowledged");
+        discard(row,row.nextSequence-1);
+        rows.delete(row.handle.id);released.set(row.handle.id,{handle:row.handle,callerSessionId:row.callerSessionId,sequence:request.afterSequence,abandoned:request.abandon===true});
         if(released.size>256)released.delete(released.keys().next().value!);
         return{};
       }

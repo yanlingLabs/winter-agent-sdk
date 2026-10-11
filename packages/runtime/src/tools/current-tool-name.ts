@@ -1,3 +1,4 @@
+import type { RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
 import { getRegisteredTool, registeredNameForMcpSpelling } from "./registry.ts";
 
 /** A registered name wins over a legacy alias, as it does in the running engine. */
@@ -17,4 +18,11 @@ export function currentToolRules(rules: readonly string[], legacyToolNames: Read
     const target = Object.hasOwn(legacyToolNames, head[1]!) ? legacyToolNames[head[1]!] : undefined;
     return typeof target === "string" && target.length > 0 ? [normalized, `${target}${head[2]}`] : [normalized];
   }))];
+}
+
+/** Shared fresh-spawn intersection; definition declarations never widen the parent pool. */
+export function inheritDefinitionTools(parentTools: readonly string[], definition: Pick<RuntimeAgentDefinition, "tools">, legacyToolNames?: Readonly<Record<string, string>>): string[] {
+  const parent = [...new Set(parentTools.map((name) => currentToolName(name, legacyToolNames)))];
+  if (definition.tools === undefined || definition.tools.includes("*")) return parent;
+  return [...new Set(definition.tools.map((name) => currentToolName(name, legacyToolNames)))].filter((name) => parent.includes(name));
 }

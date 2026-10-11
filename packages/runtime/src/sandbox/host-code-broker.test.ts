@@ -6,6 +6,7 @@ import { HOST_CODE_PROCESS_SUBTYPES as operations, type HostCodeProcessStart, ty
 import { createHostCodeProcessRegistration, type HostCodeCanonicalContext } from "./host-code-broker.ts";
 import { installHostCodeProcessClient, type HostCodeProcessClient } from "./host-code-process.ts";
 import { brokeredWorkflowWorker } from "../workflows/host-code-worker.ts";
+import { runCommand } from "./spawn.ts";
 
 const cleanup: Array<()=>void> = [];
 afterEach(()=>{for(const dispose of cleanup.splice(0).reverse())dispose();});
@@ -106,27 +107,50 @@ describe.skipIf(process.platform!=="darwin")("trusted host Code broker, disposab
     let sequence=0,output="";for(;;){const reply=await registration.handle(operations.poll,{handle,afterSequence:sequence,maxBytes:65536,maxWaitMs:30000},f.context) as HostCodeProcessPollReply;for(const event of reply.events){sequence=event.sequence;output+=Buffer.from(event.dataBase64,"base64").toString();}if(reply.exit){expect(reply.exit.code).toBe(0);break;}}
     expect(output).toBe("7\n");
   });
-  test("aggregate output quota spans producers and acknowledgment/release free it",async()=>{
+  test("per-process backpressure preserves large output while another producer is unacknowledged",async()=>{
     const f=fixture();
     const registration=createHostCodeProcessRegistration({generationId:"generation",maxBufferedBytes:65536,resolveCurrentContext:async request=>f.canonical(request)});cleanup.push(()=>registration.stopAll());
-    async function produce(id:string,bytes:number){
-      const command=`'${process.execPath}' -e 'process.stdout.write("x".repeat(${bytes}))'`;
-      const {handle}=await registration.handle(operations.start,f.start({command,toolUseId:id}),f.context) as HostCodeProcessStartReply;
-      const deadline=Date.now()+2000;
-      for(;;){
-        const reply=await registration.handle(operations.poll,{handle,afterSequence:0,maxBytes:65536,maxWaitMs:30000},f.context) as HostCodeProcessPollReply;
-        if(reply.exit)return{handle,reply,sequence:reply.events.at(-1)?.sequence??0,bytes:reply.events.reduce((count,event)=>count+Buffer.from(event.dataBase64,"base64").length,0)};
-        if(Date.now()>deadline)throw new Error("fixture producer did not exit");await new Promise(resolve=>setTimeout(resolve,0));
-      }
+    const retained=await registration.handle(operations.start,f.start({command:"head -c 49152 /dev/zero",toolUseId:"retained"}),f.context) as HostCodeProcessStartReply;
+    let first:HostCodeProcessPollReply;
+    do { first=await registration.handle(operations.poll,{handle:retained.handle,afterSequence:0,maxBytes:65536,maxWaitMs:30000},f.context) as HostCodeProcessPollReply; if(!first.exit)await new Promise(resolve=>setTimeout(resolve,0)); } while(!first.exit);
+    expect(first.events.reduce((sum,event)=>sum+Buffer.from(event.dataBase64,"base64").length,0)).toBe(49152);
+    const size=10*1024*1024;
+    const {handle}=await registration.handle(operations.start,f.start({command:`head -c ${size} /dev/zero`,toolUseId:"large",maxStreamedBytes:size+1,timeoutMs:10000}),f.context) as HostCodeProcessStartReply;
+    // Let this row reach its high watermark while the other row's bytes remain retained.
+    await new Promise(resolve=>setTimeout(resolve,50));
+    let sequence=0,bytes=0;
+    for(;;){const reply=await registration.handle(operations.poll,{handle,afterSequence:sequence,maxBytes:65536,maxWaitMs:30000},f.context) as HostCodeProcessPollReply;
+      for(const event of reply.events){sequence=event.sequence;const chunk=Buffer.from(event.dataBase64,"base64");bytes+=chunk.length;expect(chunk.every(value=>value===0)).toBe(true);}
+      if(reply.exit){expect(reply.exit.code).toBe(0);expect(reply.exit.streamKilled).toBe(false);break;}
     }
-    const first=await produce("first",49152);expect(first.bytes).toBe(49152);expect(first.reply.exit?.streamKilled).toBe(false);
-    const second=await produce("second",49152);expect(second.reply.exit?.streamKilled).toBe(true);expect(first.bytes+second.bytes).toBeLessThanOrEqual(65536);
-    // Acknowledging the first producer's bytes frees global quota even before its release.
-    await registration.handle(operations.poll,{handle:first.handle,afterSequence:first.sequence,maxBytes:65536,maxWaitMs:30000},f.context);
-    const third=await produce("third",49152);expect(third.bytes).toBe(49152);expect(third.reply.exit?.streamKilled).toBe(false);
-    // Release acknowledges and frees each terminal producer's retained bytes.
-    for(const row of [first,second,third])await registration.handle(operations.release,{handle:row.handle,afterSequence:row.sequence},f.context);
-    const fourth=await produce("fourth",65536);expect(fourth.bytes).toBe(65536);expect(fourth.reply.exit?.streamKilled).toBe(false);
+    expect(bytes).toBe(size);
+    await registration.handle(operations.release,{handle,afterSequence:sequence},f.context);
+    await registration.handle(operations.release,{handle:retained.handle,afterSequence:first.events.at(-1)!.sequence},f.context);
+  },15000);
+  test("abandonment frees an unread output row, closes it and never signals a released handle",async()=>{
+    const f=fixture();
+    const registration=createHostCodeProcessRegistration({generationId:"generation",maxBufferedBytes:65536,resolveCurrentContext:async request=>f.canonical(request)});cleanup.push(()=>registration.stopAll());
+    const {handle}=await registration.handle(operations.start,f.start({command:"head -c 10485760 /dev/zero",maxStreamedBytes:10485761,timeoutMs:10000}),f.context) as HostCodeProcessStartReply;
+    await new Promise(resolve=>setTimeout(resolve,30));
+    const payload={handle,afterSequence:0,abandon:true};
+    await registration.handle(operations.release,payload,f.context);
+    await registration.handle(operations.release,payload,f.context);
+    await expect(registration.handle(operations.signal,{handle,signal:"SIGKILL"},f.context)).rejects.toThrow("foreign");
+    registration.stopAll();expect((await registration.drained).status).toBe("confirmed");
+  });
+  test("a throwing output consumer abandons its broker row in command finally",async()=>{
+    const f=fixture();let abandoned=false;
+    const client:HostCodeProcessClient={
+      start:(request)=>f.registration.handle(operations.start,request,f.context) as Promise<HostCodeProcessStartReply>,
+      poll:(handle,afterSequence)=>f.poll(handle,afterSequence),
+      write:async payload=>{await f.registration.handle(operations.write,payload,f.context)},
+      signal:async(handle,signal)=>{await f.registration.handle(operations.signal,{handle,signal},f.context)},
+      release:async(handle,afterSequence,options)=>{abandoned=options?.abandon===true;await f.registration.handle(operations.release,{handle,afterSequence,...options},f.context)},
+    };
+    cleanup.push(installHostCodeProcessClient({generationId:"generation",client}));
+    const canonical=f.canonical(f.start());
+    await expect(runCommand({...canonical.commandOptions,command:"printf bytes",hostCodeScope:{sessionId:"child-session",toolUseId:"active-call"},onStdout(){throw new Error("consumer stopped")}})).rejects.toThrow("no local execution fallback");
+    expect(abandoned).toBe(true);f.registration.stopAll();expect((await f.registration.drained).status).toBe("confirmed");
   });
   test("drain confirms managed close events after stop, not a kill receipt",async()=>{
     const f=fixture();await f.registration.handle(operations.start,f.start({command:"sleep 30"}),f.context);

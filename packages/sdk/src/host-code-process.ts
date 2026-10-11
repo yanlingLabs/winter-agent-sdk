@@ -25,6 +25,13 @@ export interface HostCodeProcessPollReply {
 export interface HostCodeProcessStartReply { handle: HostCodeProcessHandle; posture: "sandboxed" | "config-disabled" | "excluded" | "override-requested" }
 export interface HostCodeProcessWrite { handle: HostCodeProcessHandle; dataBase64?: string; end?: true }
 export interface HostCodeProcessSignal { handle: HostCodeProcessHandle; signal: "SIGTERM" | "SIGKILL" }
+export interface HostCodeProcessRelease {
+  handle: HostCodeProcessHandle;
+  afterSequence: number;
+  /** Terminal/error cleanup: stop the owned process and discard unread bytes. Requires cursor 0.
+   * This never grants execution or weakens the floor; the host still observes the child close. */
+  abandon?: true;
+}
 export type HostCodeDrainEvidence = {
   generationId:string;
   /** Proves only registered child close events, never arbitrary detached descendants. */

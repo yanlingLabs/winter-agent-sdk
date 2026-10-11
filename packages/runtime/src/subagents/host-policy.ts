@@ -2,7 +2,7 @@ import { WINTER_BRAND, type BrandProfile, type RuntimeAgentDefinition } from "@y
 import { computeChildPolicy, type ChildPolicyResult } from "../permissions/auto/inheritance.ts";
 import { isPermissionMode, type PolicyState } from "../permissions/policy-state.ts";
 import { findAgentDenyRule } from "../permissions/evaluator.ts";
-import { currentToolName, currentToolRules } from "../tools/current-tool-name.ts";
+import { currentToolName, currentToolRules, inheritDefinitionTools } from "../tools/current-tool-name.ts";
 import { findAgentByType, allowedAgentTypesFromTools, type SourcedAgentDefinition } from "./definitions.ts";
 import { resolveBuiltinAgents, resolveBuiltinAgentGates } from "./builtin-agents.ts";
 import { applySubagentToolPool } from "./tool-pools.ts";
@@ -68,11 +68,4 @@ export function resolveHostCodeDescendantPolicy(options: HostCodeDescendantPolic
   const allowedAgentTypes = allowedAgentTypesFromTools(definition.tools);
   return { agentType: found.name, definition: structuredClone(definition), policy, tools, disallowedTools,
     ...(allowedAgentTypes !== undefined ? { allowedAgentTypes } : {}) };
-}
-
-/** Shared fresh-spawn intersection; definition declarations never widen the parent pool. */
-export function inheritDefinitionTools(parentTools: readonly string[], definition: Pick<RuntimeAgentDefinition, "tools">, legacyToolNames?: Readonly<Record<string, string>>): string[] {
-  const parent = [...new Set(parentTools.map((name) => currentToolName(name, legacyToolNames)))];
-  if (definition.tools === undefined || definition.tools.includes("*")) return parent;
-  return [...new Set(definition.tools.map((name) => currentToolName(name, legacyToolNames)))].filter((name) => parent.includes(name));
 }
