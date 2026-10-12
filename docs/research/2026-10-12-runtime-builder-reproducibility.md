@@ -1,0 +1,9 @@
+# Repeatable runtime builder staging
+
+Base `1816df7285f1303b1f42f9b6a8171e2a554082d8` (merged SDK PR4). Only the canonical runtime builder and its regression change; no runtime/provider/helper source, version, release or consumer pin changes.
+
+Bun emits source module comments relative to the compilation cwd. The old independently random source-copy and staging directory names embedded `../winter-build-runtime-copy-<random>/...` in compiled artifacts. Path exclusion alone did not prove byte repeatability. Different output basenames also legitimately change Bun's virtual entrypoint name, so meaningful repeats use the same final basename.
+
+The builder now creates one private random parent containing deterministic `source/` and `stage/` directories. Compilation remains in separate initially empty `stage/`, preserving build-time source bunfig/dotenv/preload separation and the existing runtime no-autoload flags. Only relative comment spelling changes to stable `../source/...`. Every child and compiler stray remains under the private parent and is removed in the existing finally path, including child-directory creation failure. The Linux base is still verified and copied before use; neither a changing external base pathname nor an implicit target replaces it.
+
+Actual compilation regression builds a disposable source twice with the same output basename under different output directories, checks equal complete binary hashes and absence of source/random-parent paths, and includes a source bunfig preload that throws if executed. Existing copy/symlink, path-exclusion, base mismatch, output admission and no-autoload tests remain. **11 tests /24 assertions passed**. This test does not launch a VM or execute the guest runtime. Whole SDK runtime/helper production acceptance and image assembly remain separate gates.

@@ -6,6 +6,7 @@
 // actually calls these before compiling — is proven once, for real, by `bun run verify:compiled`'s
 // existing run (Task S.1's own checkpoint), never re-proven here with a second full build.
 import { afterAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -129,4 +130,24 @@ describe("buildRuntime compiles with the cwd autoloads off (no build triggered)"
     const src = readFileSync(join(import.meta.dir, "build-runtime.ts"), "utf8");
     expect(src).toContain('"build", "--compile", ...COMPILE_NO_AUTOLOAD_FLAGS, entrypoint');
   });
+});
+
+
+describe("actual repeatable isolated compilation", () => {
+  test("fresh builds use stable relative source paths and never load source build configuration", async () => {
+    const { buildRuntime } = await import("./build-runtime.ts");
+    const root = mkdtempSync(join(tmpdir(), "build-runtime-repeat-")); temps.push(root);
+    const source = join(root, "checkout"); mkdirSync(join(source,"packages/runtime/src"),{recursive:true});
+    writeFileSync(join(source,"packages/runtime/src/main.ts"), 'console.log("fixture");\n');
+    writeFileSync(join(source,"bunfig.toml"), 'preload = ["./preload.ts"]\n');
+    writeFileSync(join(source,"preload.ts"), 'throw new Error("source preload must not execute");\n');
+    writeFileSync(join(source,".env"), 'BUILD_SOURCE_ENV=must-not-load\n');
+    const first = join(root,"first/winter"), second = join(root,"second/winter");
+    await buildRuntime({checkoutRoot:source,out:first});
+    await buildRuntime({checkoutRoot:source,out:second});
+    const a=readFileSync(first), b=readFileSync(second);
+    expect(createHash("sha256").update(a).digest("hex")).toBe(createHash("sha256").update(b).digest("hex"));
+    expect(a.includes(Buffer.from(source))).toBe(false);
+    expect(a.includes(Buffer.from("winter-build-runtime-"))).toBe(false);
+  },30_000);
 });
