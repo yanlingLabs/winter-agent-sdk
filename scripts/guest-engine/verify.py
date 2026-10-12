@@ -370,6 +370,83 @@ def snapshot_runtime_diagnostic(fixture,observations):
             if descriptor is not None:os.close(descriptor)
     if 'runtimeDiagnostic' in observations:observations['runtimeDiagnosticAvailable']=True
 
+def bash_transcript_observation(records):
+    """Diagnostic classification only. Never return transcript text or confer execution authority."""
+    call=None;result=None
+    for record in records:
+        if type(record) is not dict or record.get('sessionId')!=BACKEND:raise ValueError('diagnostic transcript session')
+        message=record.get('message',{})
+        if type(message) is not dict:raise ValueError('diagnostic transcript message')
+        blocks=message.get('content',[])
+        if not isinstance(blocks,list):continue
+        for block in blocks:
+            if type(block) is not dict:continue
+            if record.get('type')=='assistant' and block.get('type')=='tool_use' and (block.get('name')=='Bash' or block.get('id')=='call-3'):
+                if call is not None or block.get('id')!='call-3' or (block.get('name'),block.get('input'))!=EXPECTED_CALLS[3] or not isinstance(record.get('uuid'),str) or not record['uuid']:raise ValueError('diagnostic Bash call binding')
+                call=block
+            if record.get('type')=='user' and block.get('type')=='tool_result' and block.get('tool_use_id')=='call-3':
+                if call is None or result is not None:raise ValueError('diagnostic Bash result binding')
+                result=block
+    if call is None:return {'class':'never-requested','requested':False,'resultObserved':False}
+    if result is None:return {'class':'requested-no-result','requested':True,'resultObserved':False}
+    observed={'requested':True,'resultObserved':True,'isError':result.get('is_error') is True,'denied':result.get('denied') is True}
+    content=result.get('content')
+    if type(content) is not str:raise ValueError('diagnostic Bash result content')
+    if observed['denied']:
+        return {**observed,'class':'permission-denied','errorCode':'classifier-blocked' if content=='Blocked by classifier' else 'permission-denied'}
+    guest=re.fullmatch(r'Error \[([a-z_]{1,64})\]: guest process (?:refused|may have changed files; do not replay automatically)',content)
+    if guest:
+        allowed={'invalid_request','background_unsupported','escape_denied','authority_denied','compartment_required','payload_limit','invalid_payload','fd_cleanup_unavailable','root_unavailable','cwd_denied','resource_unavailable','pipe_failed','fork_failed','process_unavailable','uncertain'}
+        return {**observed,'class':'guest-process-error','errorCode':guest[1] if guest[1] in allowed else 'other'}
+    status=re.search(r'\n\[Exit code: (-?[0-9]{1,10}); cwd changes apply to this command only\](?:\n\[Guest process stopped: (exit|timeout|cancelled|signal)\])?$',content)
+    if status and -2147483648<=int(status[1])<=2147483647:
+        code=int(status[1]);stopped=status[2]
+        return {**observed,'class':'nonzero-exit' if code else 'process-stopped' if stopped and stopped!='exit' else 'tool-error' if observed['isError'] else 'exit-zero',
+                'exitCode':code,'stderrObserved':'\n[stderr]\n' in content,'termination':stopped or 'exit'}
+    return {**observed,'class':'tool-error' if observed['isError'] else 'unclassified-result'}
+
+def snapshot_bash_transcript(fixture,observations):
+    # The admitted cwd has a fixed SDK short project key. Never glob a runtime-controlled tree.
+    folders=[];fd=None
+    try:
+        folder=os.open(fixture['store'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);folders.append(folder)
+        for part in ('projects','-workspace-folders-source'):
+            info=os.fstat(folder)
+            if info.st_uid!=RUNTIME_UID or info.st_mode&0o022:raise ValueError('diagnostic transcript directory identity')
+            folder=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=folder);folders.append(folder)
+        info=os.fstat(folder)
+        if info.st_uid!=RUNTIME_UID or info.st_mode&0o022:raise ValueError('diagnostic transcript directory identity')
+        fd=os.open(BACKEND+'.jsonl',os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=folder);before=os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode) or before.st_uid!=RUNTIME_UID or before.st_nlink!=1 or stat.S_IMODE(before.st_mode)!=0o600 or before.st_size>8*1024*1024:raise ValueError('diagnostic transcript identity/limit')
+        parts=[];size=0
+        while True:
+            data=os.read(fd,min(65536,8*1024*1024-size+1))
+            if not data:break
+            size+=len(data)
+            if size>8*1024*1024:raise ValueError('diagnostic transcript limit')
+            parts.append(data)
+        after=os.fstat(fd)
+        if size!=before.st_size or (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns,before.st_mode,before.st_uid,before.st_nlink)!=(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_mode,after.st_uid,after.st_nlink):raise ValueError('diagnostic transcript changed')
+        lines=b''.join(parts).splitlines()
+        if len(lines)>2048 or any(len(line)>256*1024 for line in lines):raise ValueError('diagnostic transcript record bound')
+        def unique(pairs):
+            result={}
+            for key,value in pairs:
+                if key in result:raise ValueError('diagnostic transcript duplicate field')
+                result[key]=value
+            return result
+        observations['bashTranscript']=bash_transcript_observation([json.loads(line,object_pairs_hook=unique) for line in lines])
+        observations['bashTranscriptAvailable']=True
+        observations.pop('bashTranscriptReadFailure',None)
+    except FileNotFoundError:
+        observations.pop('bashTranscript',None);observations['bashTranscriptAvailable']=False
+    except (OSError,ValueError,TypeError,KeyError,RecursionError) as error:
+        observations.pop('bashTranscript',None)
+        observations['bashTranscriptAvailable']=False;observations['bashTranscriptReadFailure']=failure_metadata(error)
+    finally:
+        if fd is not None:os.close(fd)
+        for folder in reversed(folders):os.close(folder)
+
 def persist_fixture_diagnostic(directory,observations,failure):
     # Exceptions/packets stay metadata only; normalized stderr has a separate cap.
     record={'version':1,'kind':'fixture-failure-diagnostic','failure':failure,'observations':observations,'ownershipReleased':False}
@@ -432,12 +509,13 @@ def execute_fixture(directory,fixture,receipt,observations):
         observations['nativeCleanupConfirmed']=runtime.get('cleanupConfirmed') is True
         observations['nativeStatus']={'state':runtime.get('state') if runtime.get('state') in ('stopped','retained') else 'unknown','exitCode':runtime.get('exitCode') if type(runtime.get('exitCode')) is int else None,'active':status.get('active') if type(status.get('active')) is int else None,'uncertain':status.get('uncertain') is not False}
         if status!={'active':0,'uncertain':False,'runtime':{'state':'stopped','exitCode':0,'cleanupConfirmed':True}}:raise AssertionError('native service cleanup not confirmed')
-        observations['phase']='persisted-evidence';evidence=persisted_evidence(fixture)
+        snapshot_bash_transcript(fixture,observations)
         observations['phase']='provider-receipt';provider.terminate();provider.wait(timeout=5)
         for capture in provider_captures.values():capture.finish()
         observations['providerReceipt']=provider_receipt_observation(provider_captures['stdout'].data)
         if provider.returncode!=0 or any(capture.total>capture.limit or capture.thread.is_alive() for capture in provider_captures.values()):raise AssertionError('provider fixture worker did not complete cleanly')
         if observations['providerReceipt']!={'passed':True,'turns':5,'peerValidated':True}:raise AssertionError('provider worker execution receipt')
+        observations['phase']='persisted-evidence';evidence=persisted_evidence(fixture)
         observations['phase']='service-reap';server.stdin.close();server.wait(timeout=5);observations['serviceReaped']=True;observations['serviceExitCode']=server.returncode
         if server.returncode!=0:raise AssertionError('root service retained cleanup obligation')
         for capture in server_captures.values():capture.finish()
@@ -446,7 +524,9 @@ def execute_fixture(directory,fixture,receipt,observations):
         observations['phase']='complete'
         return {'passed':True,'freshEngineExecutionVerified':True,'linuxExecutionVerified':True,'vmExecutionVerified':False,'coldContinuityVerified':False,'productionAvailabilityEnabled':False,'reviewedArtifactDigests':receipt['artifacts'],'compileReceiptSha256':receipt['compileReceiptSha256'],**evidence}
     except BaseException:
-        failed=True;snapshot_runtime_diagnostic(fixture,observations);raise
+        failed=True;snapshot_runtime_diagnostic(fixture,observations)
+        if 'store' in fixture:snapshot_bash_transcript(fixture,observations)
+        raise
     finally:
         if admission is not None:admission.close()
         finish_child(provider,provider_captures,observations,'provider')

@@ -6,6 +6,78 @@ from unittest.mock import patch
 from types import SimpleNamespace
 MODULE=Path(__file__).with_name('verify.py');spec=importlib.util.spec_from_file_location('retention_verify',MODULE);verify=importlib.util.module_from_spec(spec);spec.loader.exec_module(verify)
 class RetentionTests(unittest.TestCase):
+    def bash_records(self,content='Blocked by classifier',**flags):
+        return [{'sessionId':verify.BACKEND,'type':'assistant','uuid':'known-assistant','message':{'content':[{'type':'tool_use','id':'call-3','name':'Bash','input':verify.EXPECTED_CALLS[3][1]}]}},
+                {'sessionId':verify.BACKEND,'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'call-3','content':content,**flags}]}}]
+    def transcript_fixture(self,directory,records):
+        store=directory/'store';store.mkdir(mode=0o700);projects=store/'projects';projects.mkdir(mode=0o700);project=projects/'-workspace-folders-source';project.mkdir(mode=0o700)
+        path=project/(verify.BACKEND+'.jsonl');path.write_text(''.join(json.dumps(record)+'\n' for record in records));path.chmod(0o600)
+        return {'store':store},path
+    def test_bash_classification_keeps_only_bound_call_and_allowlisted_outcomes(self):
+        self.assertEqual(verify.bash_transcript_observation([]),{'class':'never-requested','requested':False,'resultObserved':False})
+        self.assertEqual(verify.bash_transcript_observation(self.bash_records()[:1])['class'],'requested-no-result')
+        observed=verify.bash_transcript_observation(self.bash_records(denied=True))
+        self.assertEqual(observed['class'],'permission-denied');self.assertEqual(observed['errorCode'],'classifier-blocked')
+        for code,expected in [(0,'exit-zero'),(1,'nonzero-exit')]:
+            text=f'private /secret/path\n[stderr]\ncredential=hidden\n[Exit code: {code}; cwd changes apply to this command only]'
+            observed=verify.bash_transcript_observation(self.bash_records(text,is_error=bool(code)))
+            self.assertEqual(observed['class'],expected);self.assertEqual(observed['exitCode'],code);self.assertTrue(observed['stderrObserved'])
+            for forbidden in ('/secret','credential','hidden','known-assistant'):self.assertNotIn(forbidden,json.dumps(observed))
+        self.assertEqual(verify.bash_transcript_observation(self.bash_records('Error [cwd_denied]: guest process refused',is_error=True))['errorCode'],'cwd_denied')
+        self.assertEqual(verify.bash_transcript_observation(self.bash_records('Error [secret_custom]: guest process refused',is_error=True))['errorCode'],'other')
+    def test_bash_classification_refuses_wrong_call_or_result_binding(self):
+        for mutate in ('input','id','session','duplicate','before'):
+            records=json.loads(json.dumps(self.bash_records()))
+            if mutate=='input':records[0]['message']['content'][0]['input']['command']='other command'
+            elif mutate=='id':records[0]['message']['content'][0]['id']='other'
+            elif mutate=='session':records[1]['sessionId']='other'
+            elif mutate=='duplicate':records.append(records[1])
+            else:records.reverse()
+            with self.subTest(mutate=mutate),self.assertRaises(ValueError):verify.bash_transcript_observation(records)
+    def test_bash_snapshot_is_descriptor_safe_and_does_not_release_ownership(self):
+        with tempfile.TemporaryDirectory() as temporary,patch.object(verify,'RUNTIME_UID',os.getuid()):
+            fixture,path=self.transcript_fixture(Path(temporary),self.bash_records(denied=True));observed={'ownershipReleased':False}
+            verify.snapshot_bash_transcript(fixture,observed)
+            self.assertTrue(observed['bashTranscriptAvailable']);self.assertEqual(observed['bashTranscript']['errorCode'],'classifier-blocked');self.assertFalse(observed['ownershipReleased'])
+            original=path.read_bytes()
+            for kind in ('symlink','fifo','mode','hardlink','oversize','duplicate-json'):
+                with self.subTest(kind=kind):
+                    path.unlink()
+                    if kind=='symlink':target=Path(temporary)/'outside';target.write_bytes(original);path.symlink_to(target)
+                    elif kind=='fifo':os.mkfifo(path,0o600)
+                    else:
+                        path.write_bytes(b'{"sessionId":"one","sessionId":"two"}\n' if kind=='duplicate-json' else original);path.chmod(0o644 if kind=='mode' else 0o600)
+                    if kind=='hardlink':os.link(path,Path(temporary)/'alias')
+                    if kind=='oversize':
+                        with path.open('wb') as stream:stream.truncate(8*1024*1024+1)
+                    opened=[];real_open=os.open
+                    def track(name,*args,**kwargs):
+                        fd=real_open(name,*args,**kwargs);opened.append(fd);return fd
+                    observed={}
+                    with patch.object(verify.os,'open',side_effect=track):verify.snapshot_bash_transcript(fixture,observed)
+                    self.assertFalse(observed['bashTranscriptAvailable']);self.assertNotIn('bashTranscript',observed);self.assertIn('bashTranscriptReadFailure',observed)
+                    for fd in opened:
+                        with self.assertRaises(OSError):os.fstat(fd)
+    def test_bash_snapshot_missing_or_oversized_record_is_explicit(self):
+        with tempfile.TemporaryDirectory() as temporary,patch.object(verify,'RUNTIME_UID',os.getuid()):
+            fixture,path=self.transcript_fixture(Path(temporary),[]);path.unlink();observed={};verify.snapshot_bash_transcript(fixture,observed)
+            self.assertEqual(observed,{'bashTranscriptAvailable':False})
+            path.write_text('x'*(256*1024+1));path.chmod(0o600)
+            with patch.object(verify.json,'loads',side_effect=AssertionError('parsing reached')):
+                observed={};verify.snapshot_bash_transcript(fixture,observed)
+            self.assertIn('bashTranscriptReadFailure',observed)
+    def test_file_oracle_failure_retains_completed_provider_receipt_before_cleanup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory=Path(temporary);config=directory/'config';config.write_text('{}');fixture={'config':config,'binary':directory,'control':directory}
+            server=MagicMock();server.stdin=io.BytesIO();server.stdout=io.BytesIO();server.stderr=io.BytesIO();server.returncode=0;server.poll.return_value=0
+            provider=MagicMock();provider.stdin=None;provider.stdout=io.BytesIO(b'{"passed":true,"turns":5,"peerValidated":true}');provider.stderr=io.BytesIO();provider.returncode=0;provider.poll.return_value=0
+            status={'active':0,'uncertain':False,'runtime':{'state':'stopped','exitCode':0,'cleanupConfirmed':True}};observed={}
+            def oracle(value):
+                self.assertEqual(observed['providerReceipt'],{'passed':True,'turns':5,'peerValidated':True});provider.terminate.assert_called_once();provider.wait.assert_called_with(timeout=5)
+                raise FileNotFoundError('no Bash file')
+            with patch.object(verify.subprocess,'Popen',return_value=server),patch.object(verify,'start_provider',return_value=(provider,MagicMock())),patch.object(verify,'admit_provider'),patch.object(verify,'exchange',return_value={'started':True}),patch.object(verify,'wait_for',side_effect=[True,status]),patch.object(verify,'snapshot_bash_transcript'),patch.object(verify,'snapshot_runtime_diagnostic'),patch.object(verify,'persisted_evidence',side_effect=oracle):
+                with self.assertRaises(FileNotFoundError):verify.execute_fixture(directory,fixture,{'artifacts':{}},observed)
+            self.assertEqual(observed['phase'],'persisted-evidence');self.assertTrue(observed['providerReaped']);self.assertNotIn('ownershipReleased',observed)
     def test_uncertain_unwind_retains_files_and_reports_only_normalized_id(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory=Path(temporary)/'winter-fresh-engine-fixture';directory.mkdir();(directory/'store').write_text('must retain')
