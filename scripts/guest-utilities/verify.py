@@ -107,7 +107,7 @@ def execute(directory,parent,oracle):
     for guest,item in receipt['utilityCapture']['outputs'].items():
         target=environment/guest[1:];target.parent.mkdir(parents=True,exist_ok=True,mode=0o755);copy('environment'+guest,target,0o555 if item['role']=='executable' else 0o444)
     source=directory/'source';source.mkdir(mode=0o2770);os.chown(source,10001,10000);source.chmod(0o2770)
-    readonly=directory/'readonly';readonly.mkdir(mode=0o755);(readonly/'sentinel').write_text('readonly-fixture');(readonly/'sentinel').chmod(0o444)
+    readonly=directory/'readonly';readonly.mkdir(mode=0o2770);os.chown(readonly,10001,10000);readonly.chmod(0o2770);(readonly/'sentinel').write_text('readonly-fixture');(readonly/'sentinel').chmod(0o444)
     stores=directory/'stores';stores.mkdir(mode=0o711);store=stores/'private';store.mkdir(mode=0o700);os.chown(store,20001,20001)
     (source/'runtime-escape').symlink_to(str(store/'private-canary'))
     (store/'private-canary').write_text('private-fixture-marker');(store/'private-canary').chmod(0o600)
@@ -133,7 +133,7 @@ def execute(directory,parent,oracle):
         # Quiescence is backed by the existing supervisor's immutable wait receipt;
         # source canaries are an additional descendant check, never its substitute.
         time.sleep(1.1)
-        if not (source/'descendant-ready').is_file() or not (source/'cancel-ready').is_file() or any((source/name).exists() for name in ('descendant-orphan','cancel-orphan','plan-write')) or (readonly/'write').exists():raise ValueError('descendant/source positive-control fence')
+        if any((source/name).read_text()!='ready-after-setsid' for name in ('descendant-ready','cancel-ready')) or (source/'writable-control').read_text()!='writable-source-positive' or any((source/name).exists() for name in ('descendant-orphan','cancel-orphan','plan-write')) or (readonly/'write').exists():raise ValueError('descendant/source positive-control fence')
         quiescent(control,'conversation-utility');quiescent(control,'conversation-plan')
         parent.write_file(directory/'client-records.json',parent.canonical(records).encode(),0o600)
         outer.sample()

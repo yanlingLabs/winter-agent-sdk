@@ -12,13 +12,13 @@ s=load('stage');v=load('verify');o=load('oracle');f=load('test_fixture')
 class UtilityStageTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(prefix='winter-utility-stage-source-');self.root=Path(self.temp.name).resolve();origin=self.root/'origin';origin.mkdir();manifest=f.fixture(origin);capture=f.closure.capture(origin,manifest,self.root/'capture')
-        source_names=['scripts/guest-utilities/'+name for name in ('stage.py','verify.py','closure.py','oracle.py','client.ts','compile.ts','build.py','smoke.sh','utility_inputs.py')]
+        source_names=['scripts/guest-utilities/'+name for name in ('stage.py','verify.py','closure.py','oracle.py','client.ts','compile.ts','build.py','smoke.sh','utility_inputs.py','descendant.py')]
         source_names+=['scripts/guest-engine/provenance.py','scripts/build-runtime.ts','scripts/linux-runtime-base.json','packages/runtime/src/guest/linux-supervisor.py','packages/runtime/src/guest/linux-compartment.h','packages/runtime/src/guest/linux-tool-compartment.c','packages/runtime/src/guest/file-worker.c','packages/runtime/src/guest/process-worker.c','package.json','pnpm-lock.yaml','pnpm-workspace.yaml','tsconfig.base.json','tsconfig.typecheck.json','tsconfig.sdk-fence.json','bunfig.toml']
         source_names+=['.github/workflows/cowork-tool-utilities-build.yml']
         self.data={'source/'+name:(ROOT/name).read_bytes() for name in source_names};inputs={name:{'kind':'file','sha256':s.sha(self.data['source/'+name]),'bytes':len(self.data['source/'+name])} for name in source_names}
         elf=b'\x7fELF\x02\x01'+b'\0'*12+(183).to_bytes(2,'little')+b'INERT-NOT-EXECUTED'
         for name in s.ARTIFACTS:self.data['artifacts/'+name]=elf+name.encode()
-        bundled={name:inputs[name] for name in ('scripts/guest-utilities/client.ts','scripts/guest-utilities/smoke.sh')};meta={'inputs':{name:{'bytes':item['bytes']} for name,item in bundled.items()},'outputs':{}}
+        bundled={name:inputs[name] for name in ('scripts/guest-utilities/client.ts','scripts/guest-utilities/smoke.sh','scripts/guest-utilities/descendant.py')};meta={'inputs':{name:{'bytes':item['bytes']} for name,item in bundled.items()},'outputs':{}}
         self.data['artifacts/utilityClient.metafile.json']=(s.canonical(meta)+'\n').encode();self.data['artifacts/utility-receipt.json']=(s.canonical(capture)+'\n').encode();self.data['artifacts/utility-origin-receipt.json']=(s.canonical({'kind':'winter-utility-origin','manifestSha256':capture['inputManifestSha256'],'utilityExecution':False,'dependencyCompletenessVerified':False})+'\n').encode()
         for guest in capture['outputs']:self.data['environment'+guest]=(self.root/'capture/environment'/guest[1:]).read_bytes()
         files={name:{'kind':'file','sha256':s.sha(data),'bytes':len(data),'executable':name in {'artifacts/'+name for name in s.ARTIFACTS} or name.startswith('environment') and capture['outputs'][name.removeprefix('environment')]['role']=='executable'} for name,data in self.data.items()}
@@ -110,6 +110,56 @@ class UtilityStageTests(unittest.TestCase):
             with self.assertRaises(ValueError):collector.prepare(self.root/'uncreated-origin')
             with self.assertRaises(ValueError):builder.build('missing','missing','missing',self.root/'uncreated-build','missing')
         self.assertFalse((self.root/'uncreated-origin').exists());self.assertFalse((self.root/'uncreated-build').exists())
+    def test_exact_descendant_payload_child_readiness_after_setsid_and_parent_timeout(self):
+        payload=(HERE/'descendant.py').read_text()
+        class Halt(Exception):pass
+        def run(child,scenario='foreground',ready_after=2,setsid_failure=False):
+            events=[];clock=[0.0];reads=[0]
+            def setsid():
+                events.append(('setsid',))
+                if setsid_failure:raise OSError('synthetic setsid failure')
+            def exit_(code):raise Halt(code)
+            def sleep(seconds):events.append(('sleep',seconds));clock[0]+=seconds
+            class File:
+                def __init__(self,name,mode):self.name=name;self.mode=mode
+                def __enter__(self):return self
+                def __exit__(self,*args):events.append(('close',self.name))
+                def write(self,data):events.append(('write',self.name,data));return len(data)
+                def read(self):return 'ready-after-setsid'
+            def open_(name,mode='r'):
+                events.append(('open',name,mode))
+                if mode=='r':
+                    reads[0]+=1
+                    if ready_after is None or reads[0]<ready_after:raise FileNotFoundError(name)
+                return File(name,mode)
+            fake_os=SimpleNamespace(fork=lambda:0 if child else 123,setsid=setsid,_exit=exit_)
+            fake_time=SimpleNamespace(monotonic=lambda:clock[0],sleep=sleep);fake_sys=SimpleNamespace(argv=['-c',scenario])
+            with patch.dict(sys.modules,{'os':fake_os,'time':fake_time,'sys':fake_sys}),patch('builtins.open',open_):
+                try:exec(compile(payload,'exact-descendant-payload','exec'),{})
+                except BaseException as error:return events,error
+            return events,None
+        for scenario,ready in [('foreground','descendant-ready'),('cancel','cancel-ready')]:
+            events,error=run(True,scenario);self.assertIsInstance(error,Halt)
+            self.assertLess(events.index(('setsid',)),events.index(('write',ready,'ready-after-setsid')))
+            self.assertLess(events.index(('close',ready)),events.index(('sleep',1)))
+            events,error=run(True,scenario,setsid_failure=True);self.assertIsInstance(error,OSError)
+            self.assertFalse(any(event[0]=='write' for event in events))
+            events,error=run(False,scenario);self.assertIsNone(error)
+            self.assertFalse(any(event[0] in ('write','setsid') for event in events))
+            self.assertEqual(('sleep',5) in events,scenario=='cancel')
+            events,error=run(False,scenario,ready_after=None);self.assertIsInstance(error,SystemExit)
+            self.assertIn('readiness timeout',str(error));self.assertFalse(('sleep',5) in events)
+    def test_readonly_grant_has_writable_dac_and_mount_flag_positive_controls(self):
+        runner=(HERE/'verify.py').read_text();client=(HERE/'client.ts').read_text();smoke=(HERE/'smoke.sh').read_text()
+        self.assertIn("readonly.mkdir(mode=0o2770);os.chown(readonly,10001,10000);readonly.chmod(0o2770)",runner)
+        self.assertIn("'guestPath':'/workspace/folders/readonly','readOnly':True",runner)
+        self.assertIn("{'rw','nosuid','nodev','noexec'} <= mounts['/workspace/folders/source'][0]",smoke)
+        self.assertIn("{'ro','nosuid','nodev','noexec'} <= mounts['/workspace/folders/readonly'][0]",smoke)
+        self.assertIn('assert stat.S_IMODE(info.st_mode) == 0o2770',smoke)
+        self.assertIn("stream.write('writable-source-positive')",smoke)
+        self.assertIn("(source/'writable-control').read_text()!='writable-source-positive'",runner)
+        self.assertIn('TextDecoder().decode((await guest.read(source + "/cancel-ready")).bytes) === "ready-after-setsid"',client)
+        self.assertIn("any((source/name).read_text()!='ready-after-setsid'",runner)
 
 
 if __name__=='__main__':unittest.main()

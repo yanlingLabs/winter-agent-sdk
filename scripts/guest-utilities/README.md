@@ -93,6 +93,14 @@ reaping and a clean service close/wait. No timeout, EOF or kill() substitutes fo
 native wait confirmation. Result/client records and every failure directory are
 retained; no automatic unmount or ignoring EROFS is available.
 
+The fixed descendant payload writes its readiness marker only in the child,
+after successful `setsid()`. Its foreground parent waits at most two seconds for
+that exact marker before exiting; cancellation observes the same child marker.
+The source and readonly fixture directories both have tool-owned/group-writable
+2770 permissions. The smoke checks exact RW/RO mount flags and matching inode
+ownership/modes, writes a positive control to the writable source and preserves
+the readonly grant. Thus the readonly negative has no independent DAC denial.
+
 `stage.py` is a separate stdlib-only externally hash-admitted parent. Its archive
 contains the entire measured SDK source/dependency closure, utilityClient and
 normalized metafile, three native tool artifacts and their source/header/scripts,

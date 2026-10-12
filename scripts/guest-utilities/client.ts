@@ -2,10 +2,13 @@
 import { createHash } from "node:crypto";
 import { createLinuxSupervisorSession } from "../../packages/runtime/src/guest/supervisor-client.ts";
 import smoke from "./smoke.sh" with { type: "text" };
+import descendant from "./descendant.py" with { type: "text" };
 
 const source = "/workspace/folders/source", readonly = "/workspace/folders/readonly";
 const marker = "tool-device-stdin-fds-ok\ntool-device-inventory-ok\ntool-device-boundaries-ok\ntool-entropy-multiprocessing-ok\ntool-device-smoke-ok\n";
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+const descendantCommand = (scenario: "foreground" | "cancel") => `python3 -c ${quote(descendant)} ${scenario}`;
 const check = (value: unknown, message: string): void => { if (!value) throw new Error(message); };
 if (process.platform !== "linux" || process.argv.length !== 4 || !["ordinary", "plan"].includes(process.argv[3]!)) throw new Error("fixed Linux utility client required");
 const plan = process.argv[3] === "plan", uid = plan ? 20002 : 20001, toolUid = plan ? 10002 : 10001;
@@ -37,15 +40,16 @@ if (plan) {
   check(escaped, "file helper source symlink refusal required");
   const readOnly = await execute(`printf forbidden > ${readonly}/write`, 5000);
   check(readOnly.exitCode !== 0 && readOnly.termination === "exit", "readonly source must remain readonly");
-  const descendants = await execute("python3 -c 'import os,time; p=os.fork();\nif p==0:\n os.setsid(); time.sleep(1); open(\"descendant-orphan\",\"w\").write(\"bad\"); os._exit(0)\nopen(\"descendant-ready\",\"w\").write(\"ready\")'", 5000);
+  const descendants = await execute(descendantCommand("foreground"), 5000);
   check(descendants.exitCode === 0 && descendants.termination === "exit" && descendants.stdout === "" && descendants.stderr === "", "foreground descendant receipt required");
   const abort = new AbortController();
-  const pending = execute("python3 -c 'import os,time; p=os.fork();\nif p==0:\n os.setsid(); time.sleep(1); open(\"cancel-orphan\",\"w\").write(\"bad\"); os._exit(0)\nopen(\"cancel-ready\",\"w\").write(\"ready\"); time.sleep(5)'", 7000, abort.signal);
+  const pending = execute(descendantCommand("cancel"), 7000, abort.signal);
   void pending.catch(() => {});
   let ready = false;
   try {
     for (let attempt = 0; attempt < 200; attempt++) {
-      try { await guest.read(source + "/cancel-ready"); ready = true; break; } catch { await Bun.sleep(10); }
+      try { ready = new TextDecoder().decode((await guest.read(source + "/cancel-ready")).bytes) === "ready-after-setsid"; if (ready) break; } catch {}
+      await Bun.sleep(10);
     }
     check(ready, "cancel positive control required");
   } finally { abort.abort(); }

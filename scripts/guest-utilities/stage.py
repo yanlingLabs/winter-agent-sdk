@@ -125,6 +125,7 @@ def validate_receipt(value,parent_hash):
     roots={'package.json','pnpm-lock.yaml','pnpm-workspace.yaml','tsconfig.base.json','tsconfig.typecheck.json','tsconfig.sdk-fence.json','bunfig.toml'}
     if not {'source/'+name for name in roots}<=set(files):raise ValueError('compiled workspace root inputs required')
     if 'source/.github/workflows/cowork-tool-utilities-build.yml' not in files:raise ValueError('utility build workflow input required')
+    if 'source/scripts/guest-utilities/descendant.py' not in files:raise ValueError('fixed descendant payload input required')
     if {name.removeprefix('artifacts/') for name in files if name.startswith('artifacts/')}!=ARTIFACTS|{'utilityClient.metafile.json','utility-receipt.json','utility-origin-receipt.json'}:raise ValueError('explicit utility artifact inventory')
     compiled=value['compile']
     if type(compiled) is not dict or compiled.get('kind')!='winter-tool-utility-compile' or type(compiled.get('formatVersion')) is not int or compiled['formatVersion']!=1 or compiled.get('linuxExecutionVerified') is not False or compiled.get('vmExecutionVerified') is not False:raise ValueError('utility client compile receipt')
@@ -148,7 +149,7 @@ def validate_receipt(value,parent_hash):
     command=['<compiler>','build','--compile','--no-compile-autoload-bunfig','--no-compile-autoload-dotenv','--target=bun-linux-arm64','--compile-executable-path=linux-bun-base','--metafile=utilityClient.metafile.json','../source/'+entry,'--outfile','<output>/utilityClient']
     if output.get('entry')!=entry or output.get('command')!=command or output.get('sha256')!=files['artifacts/utilityClient']['sha256'] or output.get('bytes')!=files['artifacts/utilityClient']['bytes'] or output.get('metafileSha256')!=files['artifacts/utilityClient.metafile.json']['sha256']:raise ValueError('utilityClient compile binding')
     bundled=output.get('bundledInputs')
-    if type(bundled) is not dict or entry not in bundled or 'scripts/guest-utilities/smoke.sh' not in bundled or any(inputs.get(name)!=item or item.get('kind')!='file' for name,item in bundled.items()):raise ValueError('utilityClient bundled graph')
+    if type(bundled) is not dict or entry not in bundled or 'scripts/guest-utilities/smoke.sh' not in bundled or 'scripts/guest-utilities/descendant.py' not in bundled or any(inputs.get(name)!=item or item.get('kind')!='file' for name,item in bundled.items()):raise ValueError('utilityClient bundled graph')
     capture=value['utilityCapture']
     if type(capture) is not dict or capture.get('kind')!='winter-tool-utility-capture' or capture.get('target')!='linux-arm64-gnu' or any(capture.get(key) is not False for key in ('dependencyCompletenessVerified','linuxExecutionVerified','vmExecutionVerified','generalToolAvailabilityEnabled')):raise ValueError('utility capture cannot grant execution')
     capture_keys={'formatVersion','kind','target','inputs','inputManifestSha256','sources','builder','recipe','outputs','outputInventorySha256','dependencyCompletenessVerified','linuxExecutionVerified','vmExecutionVerified','generalToolAvailabilityEnabled'}

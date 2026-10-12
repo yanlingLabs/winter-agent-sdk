@@ -41,6 +41,14 @@ assert {'ro','nosuid','nodev','noexec'} <= mounts['/proc'][0]
 assert mounts['/proc'][1] == 'proc'
 assert {'rw','nosuid','nodev','noexec'} <= mounts['/dev/shm'][0]
 assert mounts['/dev/shm'][1] == 'tmpfs'
+assert {'rw','nosuid','nodev','noexec'} <= mounts['/workspace/folders/source'][0]
+assert {'ro','nosuid','nodev','noexec'} <= mounts['/workspace/folders/readonly'][0]
+for name in ('/workspace/folders/source','/workspace/folders/readonly'):
+    info = os.stat(name)
+    assert info.st_uid == os.getuid() and info.st_gid == os.getgid()
+    assert stat.S_IMODE(info.st_mode) == 0o2770
+with open('/workspace/folders/source/writable-control','w') as stream:
+    stream.write('writable-source-positive')
 assert stat.S_IMODE(os.stat('/dev/shm').st_mode) == 0o1777
 fs = os.statvfs('/dev/shm')
 assert fs.f_blocks * fs.f_frsize <= 8 * 1024 * 1024
