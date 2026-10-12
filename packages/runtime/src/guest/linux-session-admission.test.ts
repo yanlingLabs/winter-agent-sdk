@@ -2,12 +2,23 @@ import { mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { admitFreshLinuxSession, assertLinuxSession, claimLinuxSession, linuxSessionBindings, linuxSessionConfig, type LinuxSessionAdmission } from "./linux-session-admission.ts";
+import { admitFreshLinuxSession, assertLinuxSession, assertFreshLinuxUserFrame, claimLinuxSession, linuxSessionBindings, linuxSessionConfig, type LinuxSessionAdmission } from "./linux-session-admission.ts";
 import { assertRuntimeExecutionPosture, RUNTIME_EXECUTION_POSTURE_CAPABILITIES } from "./execution-posture.ts";
 import { runEmbeddedSession } from "../embedded.ts";
 import { createProtectedStoreBootstrap } from "./store-bootstrap.ts";
 const forged = Object.freeze({ freshOnly: true, runtimeUid: 20001, ownerToken: "not-native-evidence" }) as unknown as LinuxSessionAdmission;
 const config = { executionPosture: "confined-guest" as const, cwd: "/workspace/folders/source", model: "openai/gpt-5.6", sessionId: "backend", winterHome: "/run/winter/conversations/logical", storeHome: "/workspace/.winter/conversations/logical" };
+
+test("fresh input accepts the runtime text frame and rejects alternate payload or control surfaces", () => {
+  expect(() => assertFreshLinuxUserFrame({ type: "user", text: "Read seed then edit it" })).not.toThrow();
+  for (const frame of [
+    null, [], { type: "user" }, { type: "user", text: 1 },
+    { type: "user", message: { role: "user", content: "Read seed" } },
+    { type: "user", text: "Read seed", message: { content: "different prompt" } },
+    { type: "user", text: "Read seed", images: [] },
+    { type: "user", text: " /compact" }, { type: "control_request", subtype: "set_model" },
+  ]) expect(() => assertFreshLinuxUserFrame(frame)).toThrow("fresh Linux input route unavailable");
+});
 
 test("private fresh invocation does not advertise general confined startup", () => {
   expect(RUNTIME_EXECUTION_POSTURE_CAPABILITIES.supportsConfinedGuestExecution).toBe(false);

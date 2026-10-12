@@ -4,7 +4,7 @@ Only a root-reviewed matching source/artifact receipt can reach privileged stagi
 Guest provider packet parsing belongs to the separate fixture worker, not this root harness.
 """
 from contextlib import contextmanager
-import argparse,array,fcntl,hashlib,importlib.util,json,os,re,shutil,socket,stat,struct,subprocess,sys,tempfile,threading,time
+import argparse,array,fcntl,hashlib,importlib.util,json,os,re,shutil,socket,select,stat,struct,subprocess,sys,tempfile,threading,time
 from pathlib import Path
 def require_staged_imports():
     # Ordinary portable tests may import definitions as an unprivileged process.
@@ -52,6 +52,184 @@ RUNTIME_UID=20001;TOOL_UID=10001;WORKSPACE_GID=10000;PROVIDER_UID=30001
 LOGICAL='conversation-fresh';BACKEND='01234567-89ab-4cde-8fab-0123456789ab'
 EXPECTED_CALLS=[('Read',{'file_path':'seed'}),('Edit',{'file_path':'seed','old_string':'hello','new_string':'edited'}),('Write',{'file_path':'written','content':'written\n'}),('Bash',{'command':'test ! -e /workspace/.winter/conversations && printf shell > from-shell','timeout':5000})]
 EXPECTED_RESULTS=['hello\n',{'filePath':'/workspace/folders/source/seed','diff':[{'type':'remove','oldLineNumber':1,'content':'hello'},{'type':'add','newLineNumber':1,'content':'edited'},{'type':'context','oldLineNumber':2,'newLineNumber':2,'content':''}],'originalContent':'hello\n','replaceAll':False,'userModified':False},{'type':'create','filePath':'/workspace/folders/source/written','content':'written\n','diff':[{'type':'add','newLineNumber':1,'content':'written'},{'type':'add','newLineNumber':2,'content':''}],'userEdited':False},'\n[Exit code: 0; cwd changes apply to this command only]']
+
+MOUNT_ERROR_CODES=frozenset(('mountinfo_limit','mountinfo_invalid','outer_namespace_changed','outer_mounts_changed','runtime_dead','runtime_pid_changed','runtime_namespace_changed','runtime_mounts_missing','runtime_mount_flags','runtime_propagation','proc_read_failed','oracle_phase','oracle_deadline'))
+class MountIsolationError(AssertionError):
+    def __init__(self,code):
+        if code not in MOUNT_ERROR_CODES:raise ValueError('mount error class')
+        self.code=code;super().__init__(code)
+
+MOUNTINFO_BYTES=1024*1024
+MOUNTINFO_RECORDS=8192
+
+def parse_mountinfo(wire):
+    if type(wire) is not bytes or len(wire)>MOUNTINFO_BYTES:raise MountIsolationError('mountinfo_limit')
+    try:text=wire.decode('utf-8')
+    except UnicodeError:raise MountIsolationError('mountinfo_invalid') from None
+    lines=text.splitlines()
+    if not lines or len(lines)>MOUNTINFO_RECORDS or not text.endswith('\n'):raise MountIsolationError('mountinfo_invalid')
+    records={}
+    def decoded(value):
+        if re.search(r'\\(?!040|011|012|134)',value):raise MountIsolationError('mountinfo_invalid')
+        return re.sub(r'\\(040|011|012|134)',lambda match:chr(int(match[1],8)),value)
+    for line in lines:
+        if len(line.encode())>16384 or line.count(' - ')!=1:raise MountIsolationError('mountinfo_invalid')
+        before,after=line.split(' - ');fields=before.split(' ');tail=after.split(' ')
+        if len(fields)<6 or len(tail)!=3 or any(not part for part in fields+tail):raise MountIsolationError('mountinfo_invalid')
+        if not all(re.fullmatch(r'[1-9][0-9]{0,9}',part) and int(part)<=2147483647 for part in fields[:2]) or not re.fullmatch(r'[0-9]{1,10}:[0-9]{1,10}',fields[2]):raise MountIsolationError('mountinfo_invalid')
+        ident=int(fields[0])
+        if ident in records:raise MountIsolationError('mountinfo_invalid')
+        root,point=decoded(fields[3]),decoded(fields[4])
+        if not root.startswith('/') or not point.startswith('/') or '\x00' in root+point:raise MountIsolationError('mountinfo_invalid')
+        options=fields[5].split(',');optional=fields[6:]
+        if len(set(options))!=len(options) or ('rw' in options)==('ro' in options) or any(not re.fullmatch(r'[A-Za-z0-9_.:-]+',part) for part in options+optional):raise MountIsolationError('mountinfo_invalid')
+        if any(part.split(':',1)[0] in ('shared','master','propagate_from') and not re.fullmatch(r'(shared|master|propagate_from):[1-9][0-9]{0,9}',part) for part in optional):raise MountIsolationError('mountinfo_invalid')
+        # Exact records stay internal; only bounded proof classes/counts are emitted.
+        records[ident]={'point':point,'options':frozenset(options),'optional':tuple(optional),'exact':tuple(fields+['-']+tail)}
+    return records
+
+def mount_private(record):
+    return not any(tag.split(':',1)[0] in ('shared','master','propagate_from') for tag in record['optional'])
+
+def relevant_mounts(records,directory):
+    def covers(point):return point=='/' or directory==point or directory.startswith(point.rstrip('/')+'/')
+    covering=[record for record in records.values() if covers(record['point'])]
+    if not covering:raise MountIsolationError('mountinfo_invalid')
+    selected=[record for record in records.values() if covers(record['point']) or record['point']==directory or record['point'].startswith(directory.rstrip('/')+'/')]
+    return tuple(sorted(record['exact'] for record in selected)),len(selected)
+
+def runtime_mount_proof(records):
+    expected={f'/run/winter/conversations/{LOGICAL}':'rw',f'/run/winter/conversations/{LOGICAL}/.control':'ro',f'/workspace/.winter/conversations/{LOGICAL}':'rw'}
+    if any(not mount_private(record) for record in records.values()):raise MountIsolationError('runtime_propagation')
+    points={}
+    for record in records.values():points.setdefault(record['point'],[]).append(record)
+    if any(point not in points for point in expected):raise MountIsolationError('runtime_mounts_missing')
+    for point,access in expected.items():
+        if len(points[point])!=1 or not {access,'nosuid','nodev','noexec'}.issubset(points[point][0]['options']):raise MountIsolationError('runtime_mount_flags')
+    return {point:points[point][0]['exact'] for point in expected}
+
+class KernelMountReader:
+    """Fixed kernel /proc reads only; PID comes from the held admitted pidfd, never JSON."""
+    def __init__(self):
+        self.proc=os.open('/proc',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    def close(self):os.close(self.proc)
+    def directory(self,parent,name):
+        fd=os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=parent)
+        if os.fstat(fd).st_dev!=os.fstat(self.proc).st_dev:os.close(fd);raise MountIsolationError('proc_read_failed')
+        return fd
+    def read(self,parent,name,limit):
+        fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=parent)
+        try:
+            before=os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink!=1 or before.st_size>limit:raise MountIsolationError('proc_read_failed')
+            chunks=[];size=0
+            while True:
+                chunk=os.read(fd,min(65536,limit-size+1))
+                if not chunk:break
+                size+=len(chunk)
+                if size>limit:raise MountIsolationError('mountinfo_limit')
+                chunks.append(chunk)
+            after=os.fstat(fd)
+            if (before.st_dev,before.st_ino,before.st_mode,before.st_uid,before.st_nlink,before.st_size)!=(after.st_dev,after.st_ino,after.st_mode,after.st_uid,after.st_nlink,after.st_size):raise MountIsolationError('proc_read_failed')
+            # Kernel proc files report size zero; do not equate it to streamed byte count.
+            return b''.join(chunks)
+        finally:os.close(fd)
+    def namespace(self,folder):
+        ns=self.directory(folder,'ns');fd=None
+        try:
+            target=os.readlink('mnt',dir_fd=ns)
+            if not re.fullmatch(r'mnt:\[[1-9][0-9]{0,19}\]',target):raise MountIsolationError('proc_read_failed')
+            # This ONE fixed proc namespace magic link is intentionally followed to
+            # pin the kernel object, rather than treating link text as authority.
+            fd=os.open('mnt',os.O_RDONLY|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=ns);info=os.fstat(fd)
+            if info.st_ino!=int(target[5:-1]):raise MountIsolationError('proc_read_failed')
+            result=fd;fd=None;return result
+        finally:
+            if fd is not None:os.close(fd)
+            os.close(ns)
+    def process(self,pid):
+        if type(pid) is not int or not 1<=pid<=2147483647:raise MountIsolationError('proc_read_failed')
+        folder=self.directory(self.proc,str(pid))
+        before=after=None
+        try:
+            before=self.namespace(folder);identity=lambda fd:(os.fstat(fd).st_dev,os.fstat(fd).st_ino)
+            records=parse_mountinfo(self.read(folder,'mountinfo',MOUNTINFO_BYTES));after=self.namespace(folder)
+            if identity(before)!=identity(after):raise MountIsolationError('runtime_namespace_changed')
+            return identity(before),records
+        finally:
+            for fd in (before,after,folder):
+                if fd is not None:os.close(fd)
+    def outer(self):return self.process(os.getpid())
+    def pidfd_pid(self,fd):
+        poll=select.poll();poll.register(fd,select.POLLIN|select.POLLHUP|select.POLLERR)
+        if poll.poll(0):raise MountIsolationError('runtime_dead')
+        folder=self.directory(self.proc,str(os.getpid()));info=None
+        try:
+            info=self.directory(folder,'fdinfo');wire=self.read(info,str(fd),4096)
+        finally:
+            if info is not None:os.close(info)
+            os.close(folder)
+        matches=re.findall(rb'^Pid:[ \t]*([0-9]+)$',wire,re.MULTILINE)
+        if len(matches)!=1 or not 1<=int(matches[0])<=2147483647:raise MountIsolationError('runtime_dead')
+        return int(matches[0])
+    def runtime(self,fd):
+        pid=self.pidfd_pid(fd);namespace,records=self.process(pid)
+        if self.pidfd_pid(fd)!=pid:raise MountIsolationError('runtime_pid_changed')
+        again,_=self.process(pid)
+        if again!=namespace:raise MountIsolationError('runtime_namespace_changed')
+        if self.pidfd_pid(fd)!=pid:raise MountIsolationError('runtime_pid_changed') # Recheck death/rebinding after final read.
+        return namespace,records
+
+class MountIsolationOracle:
+    def __init__(self,directory):self.directory=str(directory);self.baseline=None;self.phase='new'
+    def snapshot(self):
+        reader=KernelMountReader()
+        try:
+            namespace,records=reader.outer();selected,count=relevant_mounts(records,self.directory)
+            again,second=reader.outer();rechecked,_=relevant_mounts(second,self.directory)
+            if again!=namespace:raise MountIsolationError('outer_namespace_changed')
+            if selected!=rechecked:raise MountIsolationError('outer_mounts_changed')
+            return namespace,selected,count,all(mount_private(record) for record in records.values() if record['exact'] in selected)
+        except OSError:raise MountIsolationError('proc_read_failed') from None
+        finally:reader.close()
+    def before(self,observations):
+        if self.phase!='new':raise MountIsolationError('oracle_phase')
+        self.phase='checking';self.baseline=self.snapshot()
+        # Shared source mounts are a deliberate isolation challenge. Observe their
+        # original propagation metadata; never privatize or reject the outer view.
+        observations['mountIsolation']={'baselineRelevantMounts':self.baseline[2],'baselineRelevantMountsPrivate':self.baseline[3]}
+        self.phase='baseline'
+    def outer_unchanged(self,phase,observations):
+        current=self.snapshot()
+        if current[0]!=self.baseline[0]:raise MountIsolationError('outer_namespace_changed')
+        if current[1]!=self.baseline[1]:raise MountIsolationError('outer_mounts_changed')
+        observations['mountIsolation'][phase+'OuterUnchanged']=True
+    def during(self,fd,observations,deadline):
+        if self.phase!='baseline':raise MountIsolationError('oracle_phase')
+        if time.monotonic()>=deadline:raise MountIsolationError('oracle_deadline')
+        self.phase='checking';reader=KernelMountReader()
+        try:
+            while True:
+                try:
+                    namespace,records=reader.runtime(fd)
+                    if namespace==self.baseline[0]:raise MountIsolationError('runtime_namespace_changed')
+                    proof=runtime_mount_proof(records)
+                    again,second=reader.runtime(fd)
+                    if again!=namespace:raise MountIsolationError('runtime_namespace_changed')
+                    if runtime_mount_proof(second)!=proof:raise MountIsolationError('runtime_mount_flags')
+                    break
+                except MountIsolationError as error:
+                    if error.code!='runtime_mounts_missing' or time.monotonic()>=deadline:raise
+                    time.sleep(min(.01,max(0,deadline-time.monotonic())))
+            self.outer_unchanged('live',observations)
+            if time.monotonic()>=deadline:raise MountIsolationError('oracle_deadline')
+            observations['mountIsolation'].update(runtimeNamespaceDistinct=True,runtimePrivateMounts=len(records),runtimeHomeReadWrite=True,runtimeStoreReadWrite=True,runtimeControlReadOnly=True)
+            self.phase='live'
+        except OSError:raise MountIsolationError('proc_read_failed') from None
+        finally:reader.close()
+    def after(self,observations):
+        if self.phase!='live':raise MountIsolationError('oracle_phase')
+        self.phase='checking';self.outer_unchanged('teardown',observations);self.phase='complete'
 
 def checked(args):
     result=subprocess.run(list(map(str,args)),capture_output=True,timeout=60)
@@ -202,7 +380,7 @@ def start_provider(fixture,server):
         for fd in [library,metadata,*copies,*fillers]:os.close(fd)
         listener.close();worker.close()
 
-def admit_provider(fixture,admission,children,observations=None):
+def admit_provider(fixture,admission,children,observations,mount_oracle):
     # Root-only admin sends the actual live namespace-init pidfd. Own all installed
     # rights before validating the bounded framed response; malformed packets leak
     # neither descriptors nor guessed PID authority.
@@ -245,6 +423,7 @@ def admit_provider(fixture,admission,children,observations=None):
                 record=json.loads(data[4:]);scope=record.get('scope',{});expected=fixture['provider']['scope']
                 owner_scope={'workspaceId':expected['workspaceId'],'sessionId':BACKEND,'incarnationId':expected['incarnationId'],'leaseEpoch':expected['leaseEpoch'],'currentBootId':expected['bootId'],'storeHome':f'/workspace/.winter/conversations/{LOGICAL}'}
                 if set(record)!={'logicalSessionId','runtimeUid','scope','ownerToken'} or record.get('logicalSessionId')!=LOGICAL or record.get('runtimeUid')!=RUNTIME_UID or not isinstance(record.get('ownerToken'),str) or not re.fullmatch('[a-f0-9]{64}',record['ownerToken']) or scope!=owner_scope:raise AssertionError('native owner scope binding')
+                mount_oracle.during(fds[0],observations,deadline)
                 if admission.sendmsg([b'I'],[(socket.SOL_SOCKET,socket.SCM_RIGHTS,array.array('i',fds))])!=1:raise AssertionError('provider owner handoff')
                 return True
         finally:
@@ -286,6 +465,7 @@ class BoundedCapture:
 def failure_metadata(error):
     record={'class':type(error).__name__}
     if isinstance(error,OSError) and error.errno is not None:record['errno']=error.errno
+    if isinstance(error,MountIsolationError):record['code']=error.code
     return record
 
 def provider_receipt_observation(data):
@@ -370,6 +550,83 @@ def snapshot_runtime_diagnostic(fixture,observations):
             if descriptor is not None:os.close(descriptor)
     if 'runtimeDiagnostic' in observations:observations['runtimeDiagnosticAvailable']=True
 
+def bash_transcript_observation(records):
+    """Diagnostic classification only. Never return transcript text or confer execution authority."""
+    call=None;result=None
+    for record in records:
+        if type(record) is not dict or record.get('sessionId')!=BACKEND:raise ValueError('diagnostic transcript session')
+        message=record.get('message',{})
+        if type(message) is not dict:raise ValueError('diagnostic transcript message')
+        blocks=message.get('content',[])
+        if not isinstance(blocks,list):continue
+        for block in blocks:
+            if type(block) is not dict:continue
+            if record.get('type')=='assistant' and block.get('type')=='tool_use' and (block.get('name')=='Bash' or block.get('id')=='call-3'):
+                if call is not None or block.get('id')!='call-3' or (block.get('name'),block.get('input'))!=EXPECTED_CALLS[3] or not isinstance(record.get('uuid'),str) or not record['uuid']:raise ValueError('diagnostic Bash call binding')
+                call=block
+            if record.get('type')=='user' and block.get('type')=='tool_result' and block.get('tool_use_id')=='call-3':
+                if call is None or result is not None:raise ValueError('diagnostic Bash result binding')
+                result=block
+    if call is None:return {'class':'never-requested','requested':False,'resultObserved':False}
+    if result is None:return {'class':'requested-no-result','requested':True,'resultObserved':False}
+    observed={'requested':True,'resultObserved':True,'isError':result.get('is_error') is True,'denied':result.get('denied') is True}
+    content=result.get('content')
+    if type(content) is not str:raise ValueError('diagnostic Bash result content')
+    if observed['denied']:
+        return {**observed,'class':'permission-denied','errorCode':'classifier-blocked' if content=='Blocked by classifier' else 'permission-denied'}
+    guest=re.fullmatch(r'Error \[([a-z_]{1,64})\]: guest process (?:refused|may have changed files; do not replay automatically)',content)
+    if guest:
+        allowed={'invalid_request','background_unsupported','escape_denied','authority_denied','compartment_required','payload_limit','invalid_payload','fd_cleanup_unavailable','root_unavailable','cwd_denied','resource_unavailable','pipe_failed','fork_failed','process_unavailable','uncertain'}
+        return {**observed,'class':'guest-process-error','errorCode':guest[1] if guest[1] in allowed else 'other'}
+    status=re.search(r'\n\[Exit code: (-?[0-9]{1,10}); cwd changes apply to this command only\](?:\n\[Guest process stopped: (exit|timeout|cancelled|signal)\])?$',content)
+    if status and -2147483648<=int(status[1])<=2147483647:
+        code=int(status[1]);stopped=status[2]
+        return {**observed,'class':'nonzero-exit' if code else 'process-stopped' if stopped and stopped!='exit' else 'tool-error' if observed['isError'] else 'exit-zero',
+                'exitCode':code,'stderrObserved':'\n[stderr]\n' in content,'termination':stopped or 'exit'}
+    return {**observed,'class':'tool-error' if observed['isError'] else 'unclassified-result'}
+
+def snapshot_bash_transcript(fixture,observations):
+    # The admitted cwd has a fixed SDK short project key. Never glob a runtime-controlled tree.
+    folders=[];fd=None
+    try:
+        folder=os.open(fixture['store'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);folders.append(folder)
+        for part in ('projects','-workspace-folders-source'):
+            info=os.fstat(folder)
+            if info.st_uid!=RUNTIME_UID or info.st_mode&0o022:raise ValueError('diagnostic transcript directory identity')
+            folder=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=folder);folders.append(folder)
+        info=os.fstat(folder)
+        if info.st_uid!=RUNTIME_UID or info.st_mode&0o022:raise ValueError('diagnostic transcript directory identity')
+        fd=os.open(BACKEND+'.jsonl',os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=folder);before=os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode) or before.st_uid!=RUNTIME_UID or before.st_nlink!=1 or stat.S_IMODE(before.st_mode)!=0o600 or before.st_size>8*1024*1024:raise ValueError('diagnostic transcript identity/limit')
+        parts=[];size=0
+        while True:
+            data=os.read(fd,min(65536,8*1024*1024-size+1))
+            if not data:break
+            size+=len(data)
+            if size>8*1024*1024:raise ValueError('diagnostic transcript limit')
+            parts.append(data)
+        after=os.fstat(fd)
+        if size!=before.st_size or (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns,before.st_mode,before.st_uid,before.st_nlink)!=(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_mode,after.st_uid,after.st_nlink):raise ValueError('diagnostic transcript changed')
+        lines=b''.join(parts).splitlines()
+        if len(lines)>2048 or any(len(line)>256*1024 for line in lines):raise ValueError('diagnostic transcript record bound')
+        def unique(pairs):
+            result={}
+            for key,value in pairs:
+                if key in result:raise ValueError('diagnostic transcript duplicate field')
+                result[key]=value
+            return result
+        observations['bashTranscript']=bash_transcript_observation([json.loads(line,object_pairs_hook=unique) for line in lines])
+        observations['bashTranscriptAvailable']=True
+        observations.pop('bashTranscriptReadFailure',None)
+    except FileNotFoundError:
+        observations.pop('bashTranscript',None);observations['bashTranscriptAvailable']=False
+    except (OSError,ValueError,TypeError,KeyError,RecursionError) as error:
+        observations.pop('bashTranscript',None)
+        observations['bashTranscriptAvailable']=False;observations['bashTranscriptReadFailure']=failure_metadata(error)
+    finally:
+        if fd is not None:os.close(fd)
+        for folder in reversed(folders):os.close(folder)
+
 def persist_fixture_diagnostic(directory,observations,failure):
     # Exceptions/packets stay metadata only; normalized stderr has a separate cap.
     record={'version':1,'kind':'fixture-failure-diagnostic','failure':failure,'observations':observations,'ownershipReleased':False}
@@ -416,7 +673,9 @@ def finish_child(child,captures,observations,label):
 
 def execute_fixture(directory,fixture,receipt,observations):
     server=None;provider=None;admission=None;server_captures={};provider_captures={};failed=False
+    mount_oracle=MountIsolationOracle(directory)
     try:
+        observations['phase']='mount-isolation-baseline';mount_oracle.before(observations)
         observations['phase']='service-startup'
         fd=os.open(fixture['config'],os.O_RDONLY|os.O_CLOEXEC)
         try:server=subprocess.Popen([sys.executable,'-I','-S',str(fixture['binary']/'linux-supervisor.py'),'--trusted-config-fd',str(fd)],pass_fds=(fd,),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env={'LANG':'C','LC_ALL':'C'},bufsize=0)
@@ -426,27 +685,31 @@ def execute_fixture(directory,fixture,receipt,observations):
         provider_captures={name:BoundedCapture(getattr(provider,name),limit,(directory,) if name=='stderr' else None) for name,limit in (('stdout',65536),('stderr',16384))}
         observations['phase']='native-admission'
         if exchange(fixture['control']/'admin.sock',{'operation':'launch-runtime','sessionId':LOGICAL})!={'started':True}:raise AssertionError('root fresh runtime launch refused')
-        admit_provider(fixture,admission,[server,provider],observations);admission=None;observations['phase']='sdk-runtime'
+        admit_provider(fixture,admission,[server,provider],observations,mount_oracle);admission=None;observations['phase']='sdk-runtime'
         status=wait_for(lambda:(lambda value:value if value.get('runtime',{}).get('state') in ('stopped','retained') else None)(exchange(fixture['control']/'admin.sock',{'operation':'status','sessionId':LOGICAL})),35,[server])
         runtime=status.get('runtime',{})
         observations['nativeCleanupConfirmed']=runtime.get('cleanupConfirmed') is True
         observations['nativeStatus']={'state':runtime.get('state') if runtime.get('state') in ('stopped','retained') else 'unknown','exitCode':runtime.get('exitCode') if type(runtime.get('exitCode')) is int else None,'active':status.get('active') if type(status.get('active')) is int else None,'uncertain':status.get('uncertain') is not False}
         if status!={'active':0,'uncertain':False,'runtime':{'state':'stopped','exitCode':0,'cleanupConfirmed':True}}:raise AssertionError('native service cleanup not confirmed')
-        observations['phase']='persisted-evidence';evidence=persisted_evidence(fixture)
+        snapshot_bash_transcript(fixture,observations)
         observations['phase']='provider-receipt';provider.terminate();provider.wait(timeout=5)
         for capture in provider_captures.values():capture.finish()
         observations['providerReceipt']=provider_receipt_observation(provider_captures['stdout'].data)
         if provider.returncode!=0 or any(capture.total>capture.limit or capture.thread.is_alive() for capture in provider_captures.values()):raise AssertionError('provider fixture worker did not complete cleanly')
         if observations['providerReceipt']!={'passed':True,'turns':5,'peerValidated':True}:raise AssertionError('provider worker execution receipt')
+        observations['phase']='persisted-evidence';evidence=persisted_evidence(fixture)
         observations['phase']='service-reap';server.stdin.close();server.wait(timeout=5);observations['serviceReaped']=True;observations['serviceExitCode']=server.returncode
         if server.returncode!=0:raise AssertionError('root service retained cleanup obligation')
         for capture in server_captures.values():capture.finish()
         if any(not capture.metadata()['drainComplete'] or capture.total>capture.limit for capture in server_captures.values()):raise AssertionError('service diagnostic drain unconfirmed')
+        observations['phase']='mount-isolation-teardown';mount_oracle.after(observations)
         # Diagnostic or parser errors can never reach this explicit release path.
         observations['phase']='complete'
-        return {'passed':True,'freshEngineExecutionVerified':True,'linuxExecutionVerified':True,'vmExecutionVerified':False,'coldContinuityVerified':False,'productionAvailabilityEnabled':False,'reviewedArtifactDigests':receipt['artifacts'],'compileReceiptSha256':receipt['compileReceiptSha256'],**evidence}
+        return {'passed':True,'freshEngineExecutionVerified':True,'linuxExecutionVerified':True,'vmExecutionVerified':False,'coldContinuityVerified':False,'productionAvailabilityEnabled':False,'mountIsolationVerified':True,'reviewedArtifactDigests':receipt['artifacts'],'compileReceiptSha256':receipt['compileReceiptSha256'],**evidence}
     except BaseException:
-        failed=True;snapshot_runtime_diagnostic(fixture,observations);raise
+        failed=True;snapshot_runtime_diagnostic(fixture,observations)
+        if 'store' in fixture:snapshot_bash_transcript(fixture,observations)
+        raise
     finally:
         if admission is not None:admission.close()
         finish_child(provider,provider_captures,observations,'provider')

@@ -28,7 +28,9 @@ static void directory_fd(int fd) {
 }
 /* Inherited descriptors retain paths in the parent's mount namespace. A legacy
  * MS_BIND of /proc/self/fd/N can therefore fail EINVAL after unshare. Clone the
- * exact admitted descriptor into a detached mount, then attach that object. */
+ * exact admitted descriptor into a detached mount, then attach that object.
+ * Detached clones retain source propagation, so privatize each before attachment;
+ * the later recursive private operation on / cannot reach these detached trees. */
 static int clone_descriptor(int fd,int readonly,int executable) {
     int tree=(int)syscall(SYS_open_tree,fd,"",OPEN_TREE_CLONE|OPEN_TREE_CLOEXEC|AT_EMPTY_PATH);
     require(tree,"clone admitted mount");

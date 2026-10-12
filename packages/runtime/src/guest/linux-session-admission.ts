@@ -2,7 +2,7 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { fstatSync } from "node:fs";
 import { createConnection } from "node:net";
-import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
+import type { RuntimeConfig, UserFrame } from "@yanlinglabs/winter-agent-sdk";
 import type { ToolExecutionContext } from "../tools/registry.ts";
 import { createLinuxSupervisorSession } from "./supervisor-client.ts";
 import type { GuestFileSession } from "./file-session.ts";
@@ -12,6 +12,12 @@ import { createProtectedStoreBootstrap, type ProtectedStoreBootstrap, type Prote
 import type { GuestFileAuthority, GuestFileRoot } from "./file-helper.ts";
 
 export const FRESH_LINUX_TOOLS = Object.freeze(["Read", "Write", "Edit", "Bash"] as const);
+/** The fresh fixture accepts ordinary runtime text input, with no control or attachment surface. */
+export function assertFreshLinuxUserFrame(frame: unknown): asserts frame is UserFrame {
+  if (!frame || typeof frame !== "object" || Array.isArray(frame)) throw new Error("fresh Linux input route unavailable");
+  const value = frame as Record<string, unknown>;
+  if (Object.keys(value).some(key => key !== "type" && key !== "text") || value.type !== "user" || typeof value.text !== "string" || value.text.trimStart().startsWith("/")) throw new Error("fresh Linux input route unavailable");
+}
 declare const brand: unique symbol;
 export interface LinuxSessionAdmission { readonly [brand]: true }
 interface BootstrapRecord {
@@ -36,10 +42,12 @@ function validateRecord(record: BootstrapRecord): void {
 }
 function validateConfig(config: RuntimeConfig, record: BootstrapRecord): void {
   const fixed = record.runtimeConfig;
+  // Root preauthorizes the four fixture tools. SDK default avoids its separate
+  // model classifier; this is not the production host Auto approval bridge.
   // Only provider-derived context sizing may supplement the root-created initial config.
   const admittedKeys = new Set([...Object.keys(fixed), "contextWindowTokens"]);
   if (Object.keys(config).some(key => !admittedKeys.has(key))) unavailable();
-  if (config.executionPosture !== "confined-guest" || config.sessionId !== record.scope.sessionId || config.winterHome !== fixed.winterHome || config.storeHome !== record.scope.storeHome || config.cwd !== fixed.cwd || config.model !== fixed.model || config.persistSession !== true || !same(config.tools, FRESH_LINUX_TOOLS) || !same(config.allowedTools, FRESH_LINUX_TOOLS) || !same(config.settingSources, []) || !same(config.skills, []) || !same(config.plugins, []) || config.strictMcpConfig !== true || !same(config.mcpServers, {}) || config.permissionMode !== "auto") unavailable();
+  if (config.executionPosture !== "confined-guest" || config.sessionId !== record.scope.sessionId || config.winterHome !== fixed.winterHome || config.storeHome !== record.scope.storeHome || config.cwd !== fixed.cwd || config.model !== fixed.model || config.persistSession !== true || !same(config.tools, FRESH_LINUX_TOOLS) || !same(config.allowedTools, FRESH_LINUX_TOOLS) || !same(config.settingSources, []) || !same(config.skills, []) || !same(config.plugins, []) || config.strictMcpConfig !== true || !same(config.mcpServers, {}) || config.permissionMode !== "default") unavailable();
   for (const key of ["resume", "continue", "forkSession", "resumeSessionAt", "resumeDropsTurn", "agentId", "agents", "hooks", "hostCodeProcessBroker", "fallbackModel", "additionalDirectories", "managedSettings", "serverManagedSettings", "outputStyle", "pluginCacheDir", "forkSubagent", "backgroundByDefault"] as const) if (config[key as keyof RuntimeConfig] !== undefined) unavailable();
 }
 function stateOf(value: LinuxSessionAdmission | undefined): State {
