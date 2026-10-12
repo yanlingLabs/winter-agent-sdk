@@ -15,7 +15,8 @@ SDK backend session or model refuses. Guest credential/keychain/tool-secret
 stores remain unavailable; the proxy has no direct HTTP/discovery/local fallback.
 Ordinary sessions with no binding keep their existing provider path.
 
-Each invocation has an independent UUID, sequence, abort state and event stream;
+Each invocation has an independent UUID, monotonic binding-local ordinal, sequence,
+abort state and event stream;
 eight may run concurrently on a binding. Capacity refusal is a typed retryable
 rate-limit error and does not close the binding. There is no automatic turn replay.
 The port must multiplex exchanges without mixing invocation frames and should
@@ -54,3 +55,11 @@ abort plus later turns, early consumer return, and retryable host capacity tests
 Host tests separately cover cancel-before-begin and exactly-once capacity release
 across multiple retained pending operations. These are protocol/adapter tests,
 not proof of the production native channel or subagent model delegation.
+
+The host consumes ordinals once with a contiguous watermark and a bounded 128-entry
+reorder window. Canceled-before-begin ordinals count as consumed, so late begins
+cannot execute and no lifetime invocation set grows. An overflow or ordinal beyond
+the window refuses; the client never resets its counter on a live binding.
+The host limits eight invocations per binding and 32 globally across workspaces.
+A terminal event is returned immediately; host finalization continues in the
+background while retaining its slot, rather than spending a second poll budget.
