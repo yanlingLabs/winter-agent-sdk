@@ -44,7 +44,7 @@ test("aborting one invocation fences its late response while another and later t
   abort.abort();await expect(held).rejects.toThrow();expect(closed).toBe(0);
   answer(frame({version:1,invocationId:late.invocationId,sequence:late.sequence,kind:"accepted"}));
   await expect(provider.generate({messages:[]})).resolves.toMatchObject({kind:"text"});
-  expect(seen.filter(x=>x.operation==="cancel")).toHaveLength(1);expect(closed).toBe(0);client.close();
+  expect(seen.filter(x=>x.operation==="cancel")).toHaveLength(1);expect(seen.filter(x=>x.operation==="begin").map(x=>x.invocationOrdinal)).toEqual([1,2,3]);expect(closed).toBe(0);client.close();
 });
 test("concurrent provider invocations retain independent events and sequences", async () => {
   const seen=new Map<string,number[]>();let closed=0;
