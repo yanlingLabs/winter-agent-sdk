@@ -36,3 +36,22 @@ Success requires actual edited/written/shell-created source bytes, four successf
 Local checks: both TypeScript configurations pass; 86 guest/embedded tests (411 assertions) passed after supervisor ticket composition. The cleanup correction adds an actual Unix socket close regression (five fresh-admission tests pass) and two no-process retention tests; all twelve fresh-engine Python tests pass. The fresh/legacy Python protocol tests and framing/evidence/receipt tests exercise real local sockets and malformed/replayed messages. The portable native frame/deadline harness explicitly substitutes kernel authority; it is not positive Linux admission evidence. Runtime and provider compile to ARM64 ELF using pinned Bun 1.3.14; native launch/owner code cross-compiles with warnings as errors.
 
 No privileged Linux engine fixture, VM, live app/home, credential store or real provider was launched locally. Linux execution remains pending exact source/artifact review and CI. The fixture host-provider script is not the production Core provider broker or native host packet bridge. Production filesystem bootstrap/mount receipts, native worker ownership/channel integration, provider egress and full tool/delegation/context routes remain separate gates. This offline fresh invocation must not be advertised as complete Cowork, cold continuity, Internet availability or general confined startup.
+
+## Composed invocation lifecycle candidate
+
+Runtime source through `baf8dc7c` also includes invocation-scoped provider
+cancellation, monotonically numbered invocations, and cancellation of an individual
+Unix exchange without closing the provider route. The scripted fixture provider
+still tests only its five sequential happy-path turns; concurrent model work is
+covered by separate SDK/Core transport tests and is not Linux execution evidence.
+
+Root validation of this composition passed 114 guest/embedded regressions (592
+assertions) and both typecheck projects. Fresh entries compiled without executing
+Linux programs into `out/fresh-engine-entry-invocations`:
+
+- runtimeEntry: `e97df26ff3decf5d285c64998541f83ee0f00967208f53a63900d43aa83fe0e6`
+- providerWorker: `efbe2dcd850155512c99b335866dd3f63bd0ad09cdabc41d81ddf421d5cefd08`
+
+Both files were inspected as ARM64 Linux ELF. The earlier candidates remain
+retained under their original paths. This is still not a native artifact-admission
+receipt, privileged Linux startup, VM execution or permission to enable Cowork.
