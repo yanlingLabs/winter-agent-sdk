@@ -1,4 +1,4 @@
-import { assertLinuxSession, assertRunningLinuxSession, linuxSessionBindings, FRESH_LINUX_TOOLS, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
+import { assertLinuxSession, assertRunningLinuxSession, assertFreshLinuxUserFrame, linuxSessionBindings, FRESH_LINUX_TOOLS, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
 import { sourceReadRestrictionGeneration } from "./sandbox/source-read.ts";
 import { randomUUID } from "node:crypto";
 import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
@@ -6551,9 +6551,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         if (opts.linuxSessionAdmission !== undefined) {
           assertLinuxSession(opts.linuxSessionAdmission, config);
           // Fresh scope has no host control/delegation/config mutation surface. EOF ends input.
-          if (frame.type !== "user") throw new Error("fresh Linux input route unavailable");
-          const content = typeof frame.message === "object" && frame.message !== null ? (frame.message as { content?: unknown }).content : undefined;
-          if (typeof content !== "string" || content.trimStart().startsWith("/")) throw new Error("fresh Linux input route unavailable");
+          assertFreshLinuxUserFrame(frame);
         }
 
         if (frame.type === "user") {

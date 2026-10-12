@@ -2,7 +2,7 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { fstatSync } from "node:fs";
 import { createConnection } from "node:net";
-import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
+import type { RuntimeConfig, UserFrame } from "@yanlinglabs/winter-agent-sdk";
 import type { ToolExecutionContext } from "../tools/registry.ts";
 import { createLinuxSupervisorSession } from "./supervisor-client.ts";
 import type { GuestFileSession } from "./file-session.ts";
@@ -12,6 +12,12 @@ import { createProtectedStoreBootstrap, type ProtectedStoreBootstrap, type Prote
 import type { GuestFileAuthority, GuestFileRoot } from "./file-helper.ts";
 
 export const FRESH_LINUX_TOOLS = Object.freeze(["Read", "Write", "Edit", "Bash"] as const);
+/** The fresh fixture accepts ordinary runtime text input, with no control or attachment surface. */
+export function assertFreshLinuxUserFrame(frame: unknown): asserts frame is UserFrame {
+  if (!frame || typeof frame !== "object" || Array.isArray(frame)) throw new Error("fresh Linux input route unavailable");
+  const value = frame as Record<string, unknown>;
+  if (Object.keys(value).some(key => key !== "type" && key !== "text") || value.type !== "user" || typeof value.text !== "string" || value.text.trimStart().startsWith("/")) throw new Error("fresh Linux input route unavailable");
+}
 declare const brand: unique symbol;
 export interface LinuxSessionAdmission { readonly [brand]: true }
 interface BootstrapRecord {
