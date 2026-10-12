@@ -33,8 +33,8 @@ jobs:
           if os.geteuid() == 0:
               raise SystemExit('source unpack must be unprivileged')
           folder = Path('out/fresh-engine-approved')
-          def bounded(name, limit, expected):
-              fd = os.open(folder / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+          def bounded(name, limit, expected, root=folder):
+              fd = os.open(root / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
               try:
                   identity = os.fstat(fd)
                   if not stat.S_ISREG(identity.st_mode) or identity.st_nlink != 1 or identity.st_size > limit:
@@ -46,7 +46,14 @@ jobs:
                   raise SystemExit('approved input bytes changed')
               return wire
           compiled = json.loads(bounded('compile-receipt.json', 16 * 1024 * 1024, 'dd98c89b0d0eba22b5ca81a486fa625e0d7b603c53a15e67cb105f3576ad77e4'))
-          bounded('receipt.json', 16 * 1024 * 1024, '0462a6ac7763f534ae79785e6279161cfc4e6c9dac9d1c617f014ffd5b2b3b50')
+          native = json.loads(bounded('receipt.json', 16 * 1024 * 1024, '0462a6ac7763f534ae79785e6279161cfc4e6c9dac9d1c617f014ffd5b2b3b50'))
+          # Refuse stale fixture runs on subsequent source changes. The approved
+          # snapshot remains frozen; a new source needs a new reviewed build.
+          for name, digest in native['sources'].items():
+              path = PurePosixPath(name)
+              if path.is_absolute() or str(path) != name or any(part in ('.', '..') for part in path.parts):
+                  raise SystemExit('approved current source path')
+              bounded(name, 16 * 1024 * 1024, digest, root=Path.cwd())
           archive = bounded('source.tar.gz', 64 * 1024 * 1024, 'af77db01490010f4cd704763a8f227d01e268ee872a16a3b19cd3dd200e59708')
           import io
           destination = folder / 'unpacked'
