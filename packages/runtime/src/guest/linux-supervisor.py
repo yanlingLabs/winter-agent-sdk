@@ -2,7 +2,7 @@
 """Protected Linux tool service. Start only via immutable python -I -S and a trusted config FD.
 Not the guest engine/bootstrap. No host credentials, file paths, UIDs or policy from tool requests.
 """
-import array, base64, hashlib, json, os, re, selectors, select, signal, socket, stat, struct, subprocess, sys, tempfile, threading, time
+import array, base64, hashlib, json, os, re, selectors, select, signal, socket, stat, struct, subprocess, sys, tempfile, threading, time, uuid
 from pathlib import Path
 
 FRAME_LIMIT=2*1024*1024
@@ -115,7 +115,7 @@ class ToolService:
         if sys.platform!='linux' or os.geteuid()!=0:raise Refusal('protected_linux_root_required')
         if not sys.flags.isolated or not sys.flags.no_site:raise Refusal('isolated_interpreter_required')
         if config.get('guestBootId')!=Path('/proc/sys/kernel/random/boot_id').read_text().strip():raise Refusal('stale_guest_boot')
-        self.lock=threading.RLock();self.stop_event=threading.Event();self.conversations={};self.active={};self.debt=set();self.seen={};self.retained_children=[];self.tool_connections=threading.BoundedSemaphore(TOOL_CONNECTION_LIMIT);self.admin_connections=threading.BoundedSemaphore(ADMIN_CONNECTION_LIMIT)
+        self.lock=threading.RLock();self.stop_event=threading.Event();self.conversations={};self.active={};self.debt=set();self.tickets={};self.retained_children=[];self.tool_connections=threading.BoundedSemaphore(TOOL_CONNECTION_LIMIT);self.admin_connections=threading.BoundedSemaphore(ADMIN_CONNECTION_LIMIT)
         self.artifacts={};self.artifact_pins={};self.owned=[];self.listeners=[];self.threads=[]
         try:
             for name in ('launcher','fileWorker','processWorker'):self.artifacts[name]=pinned_artifact(config['artifacts'][name]);self.artifact_pins[name]=config['artifacts'][name]['sha256'];self.owned.append(self.artifacts[name])
@@ -152,25 +152,35 @@ class ToolService:
                 if len(set(views))!=len(views) or any(a!=b and b.startswith(a+'/') for a in views for b in views):raise Refusal('overlapping_roots')
                 private=self.directory/sid;private.mkdir(mode=0o750);os.chown(private,0,runtime)
                 self.conversations[sid]={'logicalSessionId':sid,'authority':scope,'runtimeUid':runtime,'toolUid':tool,'workspaceGid':group,'policy':item['policy'],'roots':roots,'socket':private/'tools.sock','revoked':False}
-                self.seen[sid]=set()
+                self.tickets[sid]={}
         except BaseException:
             self.close();raise
     def _listener(self,path,uid,handler,*,admin=False):
         capacity=self.admin_connections if admin else self.tool_connections
+        local_capacity=None if admin else threading.BoundedSemaphore(2)
         server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);server.bind(str(path));os.chmod(path,0o660 if uid else 0o600);os.chown(path,0,uid);server.listen(ADMIN_CONNECTION_LIMIT if admin else TOOL_CONNECTION_LIMIT);server.settimeout(.1);self.listeners.append(server)
         def accept():
             while not self.stop_event.is_set():
                 try:connection,_=server.accept()
                 except socket.timeout:continue
                 except OSError:break
-                if not capacity.acquire(False):connection.close();continue
+                local_acquired=local_capacity is None or local_capacity.acquire(False)
+                global_acquired=local_acquired and capacity.acquire(False)
+                if not global_acquired:
+                    if local_capacity is not None and local_acquired:local_capacity.release()
+                    try:
+                        connection.settimeout(.1);frame_write(connection,{'error':'capacity_busy'})
+                    except OSError:pass
+                    connection.close();continue
                 def serve(connection=connection):
                     try:
                         connection.settimeout(3)
                         if peer_uid(connection)!=uid:raise Refusal('peer_identity')
                         handler(connection)
                     except (OSError,ValueError,Refusal,Uncertain):pass
-                    finally:connection.close();capacity.release()
+                    finally:
+                        connection.close();capacity.release()
+                        if local_capacity is not None:local_capacity.release()
                 thread=threading.Thread(target=serve,daemon=True);thread.start()
                 with self.lock:self.threads=[t for t in self.threads if t.is_alive()]+[thread]
         thread=threading.Thread(target=accept,daemon=True);thread.start();self.threads.append(thread)
@@ -191,9 +201,33 @@ class ToolService:
                 if active_sid==sid:cancel.set()
     def _deny(self,request,item,code):
         return {'protocolVersion':1,'requestId':request.get('requestId'),'authority':dict(item['authority']),'exitCode':1,'stdout':canonical({'version':1,'ok':False,'code':code,'errno':1})}
+    def _reserve(self,sid,channel,envelope):
+        request=envelope.get('request');item=self.conversations[sid]
+        try:
+            if set(envelope)!={'kind','toolKind','request'} or envelope['toolKind'] not in ('file','process') or not isinstance(request,dict):raise Refusal('invalid_request')
+            with self.lock:
+                if self.stop_event.is_set() or item['revoked'] or sid in self.debt or request.get('authority')!=item['authority'] or request.get('expectedUid')!=item['toolUid']:raise Refusal('authority_denied')
+                key=request.get('requestId')
+                if not isinstance(key,str) or not re.fullmatch('[a-f0-9-]{36}',key):raise Refusal('invalid_request')
+                now=time.monotonic()
+                for pending in self.tickets.values():
+                    for token,entry in list(pending.items()):
+                        if entry[1]<=now:del pending[token]
+                if len(self.tickets[sid])>=16 or sum(map(len,self.tickets.values()))>=128:raise Refusal('capacity_busy')
+                token=str(uuid.uuid4());digest=hashlib.sha256(canonical({'kind':envelope['toolKind'],'request':request}).encode()).digest()
+                self.tickets[sid][token]=(digest,now+15)
+            frame_write(channel,{'protocolVersion':1,'requestId':key,'authority':dict(item['authority']),'ticket':token})
+        except Refusal as failure:frame_write(channel,self._deny(request if isinstance(request,dict) else {},item,str(failure)))
+    def _consume_ticket(self,sid,token,kind,request):
+        # Only server-issued live tickets exist. Removing a consumed/expired ticket
+        # cannot make an old frame executable: absence is always uncertain/refused.
+        entry=self.tickets[sid].pop(token,None) if isinstance(token,str) else None
+        digest=hashlib.sha256(canonical({'kind':kind,'request':request}).encode()).digest()
+        if entry is None or entry[1]<=time.monotonic() or entry[0]!=digest:raise Uncertain('admission_ticket_unavailable')
     def _request(self,sid,channel):
         envelope=frame_read(channel)
-        if not isinstance(envelope,dict) or set(envelope)!={'kind','request'}:raise Refusal('request_shape')
+        if isinstance(envelope,dict) and envelope.get('kind')=='reserve':return self._reserve(sid,channel,envelope)
+        if not isinstance(envelope,dict) or set(envelope)!={'kind','request','ticket'}:raise Refusal('request_shape')
         request=envelope['request']
         if not isinstance(request,dict):raise Refusal('request_shape')
         item=self.conversations[sid];kind=envelope['kind'];cancel=threading.Event();key=None;admitted=False
@@ -204,8 +238,8 @@ class ToolService:
                 if self.stop_event.is_set() or item['revoked'] or sid in self.debt or kind not in ('file','process') or request.get('protocolVersion')!=1 or request.get('authority')!=item['authority'] or request.get('expectedUid')!=item['toolUid']:raise Refusal('authority_denied')
                 key=request.get('requestId')
                 if not isinstance(key,str) or not re.fullmatch('[a-f0-9-]{36}',key):raise Refusal('invalid_request')
-                if key in self.seen[sid]:raise Uncertain('request_already_admitted')
-                if len(self.seen[sid])>=4096 or len(self.active)>=8:raise Refusal('authority_denied')
+                if (sid,key) in self.active:raise Uncertain('request_already_admitted')
+                if len(self.active)>=8 or sum(active_sid==sid for active_sid,_ in self.active.values())>=2:raise Refusal('capacity_busy')
                 requested_root=request.get('root')
                 if not isinstance(requested_root,dict) or not isinstance(requested_root.get('id'),str):raise Refusal('invalid_request')
                 root=item['roots'].get(requested_root['id'])
@@ -230,7 +264,8 @@ class ToolService:
                     command=request.get('command');timeout=request.get('timeoutMs')
                     if not isinstance(command,str) or '\0' in command or not 1<=len(command.encode())<=65536 or type(timeout)!=int or not 1<=timeout<=600000:raise Refusal('invalid_request')
                     operation=str(timeout);payload=command.encode();extra='-';deadline=timeout/1000+3
-                self.seen[sid].add(key);self.active[(sid,key)]=(sid,cancel);admitted=True
+                self._consume_ticket(sid,envelope.get('ticket'),kind,request)
+                self.active[(sid,key)]=(sid,cancel);admitted=True
             code,out=self._run(item,kind,operation,root,relative,limit,extra,payload,deadline,cancel,channel)
             with self.lock:
                 if item['revoked']:raise Uncertain('authority_revoked')

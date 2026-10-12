@@ -47,12 +47,14 @@ class ProtocolTests(unittest.TestCase):
             with busy:entered.append(channel);busy.notify_all()
             release.wait(2)
         with tempfile.TemporaryDirectory(prefix='tool-sockets-') as tmp,patch.object(service,'peer_uid',return_value=0),patch.object(service.os,'chown'):
-            root=Path(tmp);obj._listener(root/'tools',0,hold);obj._listener(root/'admin',0,obj._admin,admin=True)
+            root=Path(tmp)
+            for index in range(4):obj._listener(root/f'tools-{index}',0,hold)
+            obj._listener(root/'admin',0,obj._admin,admin=True)
             try:
-                for _ in range(8):
-                    client=socket.socket(socket.AF_UNIX);client.connect(str(root/'tools'));clients.append(client)
+                for index in range(8):
+                    client=socket.socket(socket.AF_UNIX);client.connect(str(root/f'tools-{index//2}'));clients.append(client)
                 with busy:self.assertTrue(busy.wait_for(lambda:len(entered)==8,timeout=1))
-                ninth=socket.socket(socket.AF_UNIX);ninth.settimeout(1);ninth.connect(str(root/'tools'));clients.append(ninth);self.assertEqual(ninth.recv(1),b'')
+                ninth=socket.socket(socket.AF_UNIX);ninth.settimeout(1);ninth.connect(str(root/'tools-0'));clients.append(ninth);self.assertEqual(service.frame_read(ninth),{'error':'capacity_busy'})
                 def admin(operation):
                     with socket.socket(socket.AF_UNIX) as channel:
                         channel.connect(str(root/'admin'));service.frame_write(channel,{'operation':operation,'sessionId':'logical'});return service.frame_read(channel,timeout=1)
@@ -143,4 +145,47 @@ class ProtocolTests(unittest.TestCase):
     def test_no_privileged_service_fallback_off_linux(self):
         if __import__('sys').platform!='linux':
             with self.assertRaisesRegex(service.Refusal,'protected_linux_root_required'):service.ToolService({})
+    def ticket_fixture(self):
+        obj=service.ToolService.__new__(service.ToolService);obj.lock=threading.RLock();obj.stop_event=threading.Event();obj.debt=set();obj.active={};obj.tickets={'logical':{}}
+        auth={'workspaceId':'workspace','sessionId':'backend','incarnationId':'boot','leaseEpoch':1,'configRevision':1,'grantRevision':1,'policyRevision':1}
+        root={'id':'source','guestPath':'/workspace/repos/source','readOnly':False}
+        obj.conversations={'logical':{'authority':auth,'toolUid':10001,'policy':'auto','revoked':False,'roots':{'source':{'root':root,'fd':-1}}}}
+        effects=[]
+        def run(*args):effects.append(True);return 0,b'{}'
+        obj._run=run
+        request={'protocolVersion':1,'requestId':str(service.uuid.uuid4()),'authority':auth,'expectedUid':10001,'root':root,'operation':'read','relativePath':'file','maxBytes':1024}
+        def call(envelope):
+            left,right=socket.socketpair()
+            try:service.frame_write(left,envelope);obj._request('logical',right);return service.frame_read(left)
+            finally:left.close();right.close()
+        return obj,request,effects,call
+    def test_server_tickets_bound_replay_memory_without_poisoning_long_sessions(self):
+        obj,request,effects,call=self.ticket_fixture();old=None
+        for index in range(4100):
+            request={**request,'requestId':str(service.uuid.uuid4())}
+            reservation=call({'kind':'reserve','toolKind':'file','request':request})
+            frame={'kind':'file','request':request,'ticket':reservation['ticket']}
+            self.assertEqual(call(frame)['exitCode'],0)
+            if old is None:old=frame
+            self.assertEqual(len(obj.tickets['logical']),0)
+        self.assertEqual(len(effects),4100)
+        self.assertEqual(call(old)['error'],'effects_uncertain');self.assertEqual(len(effects),4100)
+    def test_ticket_expiry_request_binding_and_pending_capacity_refuse_without_effects(self):
+        obj,request,effects,call=self.ticket_fixture()
+        issued=call({'kind':'reserve','toolKind':'file','request':request})['ticket']
+        changed={**request,'relativePath':'different'}
+        self.assertEqual(call({'kind':'file','request':changed,'ticket':issued})['error'],'effects_uncertain');self.assertFalse(effects)
+        issued=call({'kind':'reserve','toolKind':'file','request':request})['ticket']
+        digest,_=obj.tickets['logical'][issued];obj.tickets['logical'][issued]=(digest,0)
+        self.assertEqual(call({'kind':'file','request':request,'ticket':issued})['error'],'effects_uncertain');self.assertFalse(effects)
+        for _ in range(16):self.assertIn('ticket',call({'kind':'reserve','toolKind':'file','request':request}))
+        refused=call({'kind':'reserve','toolKind':'file','request':request})
+        self.assertEqual(json.loads(refused['stdout'])['code'],'capacity_busy');self.assertEqual(len(obj.tickets['logical']),16)
+    def test_conversation_active_share_refuses_before_consuming_ticket(self):
+        obj,request,effects,call=self.ticket_fixture()
+        issued=call({'kind':'reserve','toolKind':'file','request':request})['ticket']
+        obj.active={('logical','one'):('logical',threading.Event()),('logical','two'):('logical',threading.Event())}
+        result=call({'kind':'file','request':request,'ticket':issued})
+        self.assertEqual(json.loads(result['stdout'])['code'],'capacity_busy');self.assertIn(issued,obj.tickets['logical']);self.assertFalse(effects)
+
 if __name__=='__main__':unittest.main()

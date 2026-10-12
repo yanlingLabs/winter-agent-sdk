@@ -11,12 +11,12 @@ const authority = { workspaceId: "workspace", sessionId: "session", incarnationI
 const roots = [{ id: "source", guestPath: "/workspace/folders/source", readOnly: false }];
 const directories: string[] = [], servers: Server[] = [];
 afterEach(async () => { for (const server of servers.splice(0)) await new Promise<void>(resolve => server.close(() => resolve())); for (const dir of directories.splice(0)) rmSync(dir,{recursive:true,force:true}); });
-async function wire(respond: (envelope: any) => unknown | undefined, scope=authority, endpoint="s.sock") {
+async function wire(respond: (envelope: any) => unknown | undefined, scope=authority, endpoint="s.sock", reserve?: (envelope: any) => unknown) {
   const directory=mkdtempSync(join(tmpdir(),"w-svc-"));directories.push(directory);
   const path=join(directory,endpoint),calls:any[]=[];
   const server=createServer(socket=>{let data=Buffer.alloc(0);socket.on("error",()=>{});socket.on("data",incoming=>{const chunk=typeof incoming==="string"?Buffer.from(incoming):incoming;
     data=Buffer.concat([data,chunk]);if(data.length<4 || data.length<data.readUInt32BE(0)+4)return;
-    const envelope=JSON.parse(data.subarray(4).toString());calls.push(envelope);const value=respond(envelope);if(value===undefined)return;
+    const envelope=JSON.parse(data.subarray(4).toString());if(envelope.kind!=="reserve")calls.push(envelope);const value=envelope.kind==="reserve"?(reserve ? reserve(envelope) : {protocolVersion:1,requestId:envelope.request.requestId,authority:envelope.request.authority,ticket:"00000000-0000-4000-8000-000000000001"}):respond(envelope);if(value===undefined)return;
     const body=Buffer.from(JSON.stringify(value)),frame=Buffer.alloc(4+body.length);frame.writeUInt32BE(body.length,0);body.copy(frame,4);
     socket.write(frame.subarray(0,2));socket.end(frame.subarray(2));
   });});servers.push(server);await new Promise<void>(resolve=>server.listen(path,resolve));
@@ -47,4 +47,20 @@ test("actual registry binds backend authority independently of the logical conve
  expect(f.calls[0].request.authority.sessionId).toBe("backend-1");
  const wrong=await buildRegistryToolExecutor({...deps,sessionId:"logical-conversation-1"}).execute({id:"wrong",name:"Read",input:{file_path:"file"}});
  expect(wrong.output).toContain("binding_invalid");expect(f.calls).toHaveLength(1);
+});
+
+for (const phase of ["reserve", "effect"] as const) test(`capacity saturation at ${phase} is a no-effect refusal without retry`, async () => {
+  let reservations = 0;
+  const f = await wire(() => ({ error: "capacity_busy" }), authority, "s.sock", envelope => {
+    reservations++;
+    return phase === "reserve" ? { error: "capacity_busy" } : { protocolVersion: 1, requestId: envelope.request.requestId, authority: envelope.request.authority, ticket: "00000000-0000-4000-8000-000000000001" };
+  });
+  await expect(f.guest.write("/workspace/folders/source/file", new TextEncoder().encode("change"), "absent")).rejects.toMatchObject({ code: "capacity_busy", effectsUncertain: false });
+  expect(reservations).toBe(1);
+  expect(f.calls).toHaveLength(phase === "reserve" ? 0 : 1);
+});
+test("a reservation with changed authority never submits an effect", async () => {
+  const f = await wire(() => { throw new Error("effect must not run"); }, authority, "s.sock", envelope => ({ protocolVersion: 1, requestId: envelope.request.requestId, authority: { ...authority, leaseEpoch: 2 }, ticket: "00000000-0000-4000-8000-000000000001" }));
+  await expect(f.guest.write("/workspace/folders/source/file", new TextEncoder().encode("change"), "absent")).rejects.toMatchObject({ effectsUncertain: true });
+  expect(f.calls).toHaveLength(0);
 });

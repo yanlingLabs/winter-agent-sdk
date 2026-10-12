@@ -25,11 +25,12 @@ if(scenario==="ordinary"){
  require((await run("Read",{file_path:"escape"})).isError,"out-of-root symlink");
  require((await run("Bash",{command:"test ! -e /proc && test ! -e /run && test ! -e /protected/runtime && test -z \"$SECRET_SHOULD_NOT_TRAVEL\""})).output.includes("0"),"no runtime/proc/env surface");
  require((await run("Write",{file_path:"/workspace/folders/readonly/new",content:"blocked"})).isError,"readonly file mount");
+ const ro=await run("Bash",{command:"printf blocked > /workspace/folders/readonly/shell-write"});require(ro.isError&&ro.output.includes("Read-only file system"),"actual readonly mount errno");
  for(const name of ["Glob","Grep","NotebookEdit","Workflow","Monitor"])require((await run(name,{})).output.includes("guest_tool_unsupported"),"unsupported route");
  results.push("actual-read-edit-write-bash");
 }else if(scenario==="forged"){
  const response=await new Promise<any>((resolve,reject)=>{const socket=createConnection({path:endpoint});let received=Buffer.alloc(0);socket.on("error",reject);socket.on("connect",()=>{
-  const body=Buffer.from(JSON.stringify({kind:"file",request:{protocolVersion:1,requestId:crypto.randomUUID(),authority:{...authority,sessionId:"backend-2"},operation:"write",root:roots[0],relativePath:"forged-write",expectedUid:Number(uid),maxBytes:1024,dataBase64:Buffer.from("forbidden").toString("base64")}}));const frame=Buffer.alloc(body.length+4);frame.writeUInt32BE(body.length,0);body.copy(frame,4);socket.write(frame);
+  const body=Buffer.from(JSON.stringify({kind:"file",ticket:"unissued",request:{protocolVersion:1,requestId:crypto.randomUUID(),authority:{...authority,sessionId:"backend-2"},operation:"write",root:roots[0],relativePath:"forged-write",expectedUid:Number(uid),maxBytes:1024,dataBase64:Buffer.from("forbidden").toString("base64")}}));const frame=Buffer.alloc(body.length+4);frame.writeUInt32BE(body.length,0);body.copy(frame,4);socket.write(frame);
  });socket.on("data",incoming=>{const chunk=typeof incoming==="string"?Buffer.from(incoming):incoming;received=Buffer.concat([received,chunk]);if(received.length>=4&&received.length>=received.readUInt32BE(0)+4){socket.destroy();resolve(JSON.parse(received.subarray(4).toString()));}});});
  require(response.exitCode!==0&&JSON.parse(response.stdout).code==="authority_denied","runtime UID cannot select another scope");results.push("forged-scope-denied");
 }else if(scenario==="plan"){
