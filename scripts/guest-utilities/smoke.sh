@@ -43,9 +43,12 @@ assert {'rw','nosuid','nodev','noexec'} <= mounts['/dev/shm'][0]
 assert mounts['/dev/shm'][1] == 'tmpfs'
 assert {'rw','nosuid','nodev','noexec'} <= mounts['/workspace/folders/source'][0]
 assert {'ro','nosuid','nodev','noexec'} <= mounts['/workspace/folders/readonly'][0]
+workspace_group = 10000
+assert os.getuid() == 10001 and os.getgid() == 10001
+assert workspace_group in os.getgroups()
 for name in ('/workspace/folders/source','/workspace/folders/readonly'):
     info = os.stat(name)
-    assert info.st_uid == os.getuid() and info.st_gid == os.getgid()
+    assert info.st_uid == os.getuid() and info.st_gid == workspace_group
     assert stat.S_IMODE(info.st_mode) == 0o2770
 with open('/workspace/folders/source/writable-control','w') as stream:
     stream.write('writable-source-positive')

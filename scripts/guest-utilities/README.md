@@ -100,6 +100,9 @@ The source and readonly fixture directories both have tool-owned/group-writable
 2770 permissions. The smoke checks exact RW/RO mount flags and matching inode
 ownership/modes, writes a positive control to the writable source and preserves
 the readonly grant. Thus the readonly negative has no independent DAC denial.
+The tool's primary UID/GID remain 10001; workspace GID 10000 is supplementary.
+The smoke checks that membership and each directory's fixed workspace group
+separately instead of equating the directory group with the primary GID.
 
 `stage.py` is a separate stdlib-only externally hash-admitted parent. Its archive
 contains the entire measured SDK source/dependency closure, utilityClient and

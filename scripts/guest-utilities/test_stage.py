@@ -160,6 +160,20 @@ class UtilityStageTests(unittest.TestCase):
         self.assertIn("(source/'writable-control').read_text()!='writable-source-positive'",runner)
         self.assertIn('TextDecoder().decode((await guest.read(source + "/cancel-ready")).bytes) === "ready-after-setsid"',client)
         self.assertIn("any((source/name).read_text()!='ready-after-setsid'",runner)
+    def test_exact_workspace_group_check_distinguishes_primary_and_supplementary(self):
+        smoke=(HERE/'smoke.sh').read_text();start=smoke.index('workspace_group = 10000')
+        check=smoke[start:smoke.index("with open('/workspace/folders/source/writable-control'",start)]
+        def run(primary=10001,supplementary=(10000,),directory_group=10000):
+            visited=[]
+            def metadata(name):
+                self.assertIn(name,('/workspace/folders/source','/workspace/folders/readonly'));visited.append(name)
+                return SimpleNamespace(st_uid=10001,st_gid=directory_group,st_mode=stat.S_IFDIR|0o2770)
+            fake=SimpleNamespace(getuid=lambda:10001,getgid=lambda:primary,getgroups=lambda:list(supplementary),stat=metadata)
+            exec(compile(check,'exact-workspace-group-check','exec'),{'os':fake,'stat':stat})
+            return visited
+        self.assertEqual(run(),['/workspace/folders/source','/workspace/folders/readonly'])
+        for arguments in ({'primary':10000},{'supplementary':(10001,)},{'directory_group':10001}):
+            with self.subTest(arguments=arguments),self.assertRaises(AssertionError):run(**arguments)
 
 
 if __name__=='__main__':unittest.main()
