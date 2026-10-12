@@ -17,6 +17,7 @@ const results:unknown[]=[];
 if(scenario==="ordinary"){
  const read=await run("Read",{file_path:"seed"});
  require(read.output==="hello\n","actual Read: "+JSON.stringify(read));
+ const parallel=await Promise.all(Array.from({length:10},()=>run("Read",{file_path:"seed"})));require(parallel.every(value=>!value.isError&&value.output==="hello\n"),"ten concurrent actual Reads: "+JSON.stringify(parallel));
  require(!(await run("Edit",{file_path:"seed",old_string:"hello",new_string:"edited"})).isError,"actual Edit");
  require(!(await run("Write",{file_path:"seed",content:"written\n"})).isError,"actual Write");
  const shell=await run("Bash",{command:"printf shell > from-shell; printf '%s' \"$PWD\"; printf err >&2"});require(!shell.isError&&shell.output.includes(cwd)&&shell.output.includes("err"),"actual foreground Bash");
