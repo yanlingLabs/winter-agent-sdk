@@ -1,4 +1,4 @@
-import { sourceObjectAllowed, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
+import { sourceObjectPath, sourceObjectAllowed, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
 // WS-10 §2 / RULING R4-7: AgentDefinition sourcing -- programmatic (Options.agents, already
 // wire-plumbed to RuntimeConfig.agents by T2) + filesystem (`<projectDir>/agents/*.md`,
 // `~/.winter/agents/*.md`) MUST coexist.
@@ -449,7 +449,16 @@ export function loadAgentDefinitions(opts: LoadAgentDefinitionsOptions): Map<str
     });
   for (const [name, def] of Object.entries(builtins)) out.set(name, { ...def, _source: "builtin" });
   for (const [name, def] of Object.entries(opts.pluginAgents ?? {})) {
-    if (!sourceObjectAllowed(def)) continue;
+    if (!sourceObjectAllowed(def)) {
+      const path = sourceObjectPath(def);
+      if (path !== undefined) {
+        try {
+          const parsed = parseAgentDefinitionFile(readSourceFileSync(path, "utf8"), path);
+          if (parsed.ok) out.set(parsed.name, { ...parsed.definition, _source: "plugin", _plugin: def.plugin });
+        } catch { /* fresh denied/unreadable source contributes no definition */ }
+      }
+      continue;
+    }
     const { plugin, ...definition } = def;
     out.set(name, { ...definition, _source: "plugin", _plugin: plugin });
   }

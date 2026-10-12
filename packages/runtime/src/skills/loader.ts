@@ -1,4 +1,4 @@
-import { assertSourceReadAccess, readSourceFileSync, readSourceDirectorySync, statSourceSync, openSourceSync } from "../sandbox/source-read.ts";
+import { captureSourceOrigin, assertSourceOrigin, type SourceOrigin, bindSourceObject, inheritSourceObject, assertSourceReadAccess, readSourceFileSync, readSourceDirectorySync, statSourceSync, openSourceSync } from "../sandbox/source-read.ts";
 // Phase 5 Lane S (WS-11 §2.1): filesystem DISCOVERY for the skill tiers. Metadata only -- this file
 // never reads a skill BODY into a returned value (`SKILL.md` is read to parse its frontmatter and
 // the parsed body is dropped on the floor), which is the operational meaning of "bodies load lazily
@@ -167,7 +167,7 @@ export function scanSkillRoot(root: string, source: SkillTier, exclude?: Readonl
     // BOUNDED at index time (A-11). The unbounded read is `SkillIndex.load()`'s, at invocation.
     const read = readSkillMetadata(path, dir, { maxBytes: SKILL_METADATA_PREFIX_BYTES });
     if (read.ok) {
-      skills.push({ name: read.skill.name, description: read.skill.description, source, path, ...(read.skill.author !== undefined ? { author: read.skill.author } : {}) });
+      skills.push(inheritSourceObject({ name: read.skill.name, description: read.skill.description, source, path, ...(read.skill.author !== undefined ? { author: read.skill.author } : {}) }, read.skill));
     } else if (read.reason !== ABSENT_SKILL_FILE) {
       // A directory with no SKILL.md at all is not a broken skill -- it is not a skill. Everything
       // else (unparseable, unreadable, frontmatter past the bound) is reported: a skill that
@@ -203,16 +203,19 @@ export type SkillMetadataRead = { ok: true; skill: ParsedSkillFile } | { ok: fal
  */
 export function readSkillMetadata(path: string, fallbackName: string, opts: { maxBytes?: number } = {}): SkillMetadataRead {
   let raw: string;
+  let origin: SourceOrigin;
   let truncated = false;
   try {
-    if (!statSourceSync(path).isFile()) return { ok: false, reason: ABSENT_SKILL_FILE };
+    origin = captureSourceOrigin(path); assertSourceOrigin(origin);
+    if (!statSourceSync(origin.canonical).isFile()) return { ok: false, reason: ABSENT_SKILL_FILE };
     if (opts.maxBytes === undefined) {
-      raw = readSourceFileSync(path, "utf8");
+      raw = readSourceFileSync(origin.canonical, "utf8");
     } else {
-      const read = readPrefix(path, opts.maxBytes);
+      const read = readPrefix(origin.canonical, opts.maxBytes);
       raw = read.text;
       truncated = read.truncated;
     }
+    assertSourceOrigin(origin);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     // ENOENT is "not a skill"; anything else (EACCES on a chmod 000 file, EISDIR, an I/O error) is a
@@ -221,7 +224,7 @@ export function readSkillMetadata(path: string, fallbackName: string, opts: { ma
     return { ok: false, reason: `SKILL.md could not be read: ${message}` };
   }
   const parsed = parseSkillFile(raw, fallbackName);
-  if (parsed !== null) return { ok: true, skill: parsed };
+  if (parsed !== null) return { ok: true, skill: bindSourceObject(parsed, origin) };
   if (truncated) {
     return { ok: false, reason: `its frontmatter is not closed within the first ${opts.maxBytes} bytes of the file, which is the index-time read bound (SKILL_METADATA_PREFIX_BYTES)` };
   }

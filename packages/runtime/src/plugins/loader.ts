@@ -1,4 +1,4 @@
-import { bindSourceObject, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
+import { readSourceTextWithOrigin, type SourceOrigin, bindSourceObject, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
 // Phase 5 Lane S (WS-11 §4, derived-shapes-p5 item (b)): `loadPlugins`.
 //
 // SCOPE, exactly: read local plugin directories, aggregate what they contribute, and hand back
@@ -162,21 +162,22 @@ function scanPluginSkillsAt(skillsParentDir: string, pluginName: string): Plugin
   const out: PluginSkillEntry[] = [];
   for (const dir of dirs) {
     const path = join(skillsParentDir, dir, "SKILL.md");
-    let parsed: ReturnType<typeof parseSkillFile>;
+    let parsed: ReturnType<typeof parseSkillFile>, origin: SourceOrigin;
     try {
       if (!statSourceSync(path).isFile()) continue;
-      parsed = parseSkillFile(readSourceFileSync(path, "utf8"), dir);
+      const read = readSourceTextWithOrigin(path); origin = read.origin;
+      parsed = parseSkillFile(read.text, dir);
     } catch {
       continue;
     }
     if (!parsed) continue;
-    out.push({
+    out.push(bindSourceObject({
       name: parsed.name,
       qualifiedName: `${pluginName}:${parsed.name}`,
       description: parsed.description,
       path,
       ...(parsed.author !== undefined ? { author: parsed.author } : {}),
-    });
+    }, origin));
   }
   return out;
 }
@@ -227,20 +228,20 @@ function resolvePluginSkills(root: string, pluginName: string, declared: PluginM
 /** ONE command file, parsed. Shared by the default-directory scan and a manifest override's own per-entry file case (fix round 5). `undefined` for an unreadable file, matching the default scan's own silent-skip posture. */
 function scanPluginCommandFile(path: string, pluginName: string): PluginCommandEntry | undefined {
   const name = basename(path, ".md");
-  let raw: string;
+  let raw: string, origin: SourceOrigin;
   try {
-    raw = readSourceFileSync(path, "utf8");
+    ({ text: raw, origin } = readSourceTextWithOrigin(path));
   } catch {
     return undefined;
   }
   const attrs = frontmatterAttrs(raw);
-  return {
+  return bindSourceObject({
     name,
     qualifiedName: `${pluginName}:${name}`,
     path,
     ...(attrs["description"] !== undefined ? { description: attrs["description"] } : {}),
     ...(attrs["argument-hint"] !== undefined ? { argumentHint: attrs["argument-hint"] } : {}),
-  };
+  }, origin);
 }
 
 function scanPluginCommandsDir(dir: string, pluginName: string): PluginCommandEntry[] {
@@ -336,8 +337,9 @@ type ScannedAgents = { agents: Record<string, PluginAgentDefinition>; rejected: 
 function scanPluginAgentFile(full: string, pluginName: string, out: Record<string, PluginAgentDefinition>, rejected: AgentDefinitionRejection[]): void {
   try {
     if (!statSourceSync(full).isFile()) return;
-    const parsed = parseAgentDefinitionFile(readSourceFileSync(full, "utf8"), full);
-    if (parsed.ok) out[parsed.name] = bindSourceObject({ ...parsed.definition, plugin: pluginName }, full);
+    const read = readSourceTextWithOrigin(full);
+    const parsed = parseAgentDefinitionFile(read.text, full);
+    if (parsed.ok) out[parsed.name] = bindSourceObject({ ...parsed.definition, plugin: pluginName }, read.origin);
     else rejected.push({ source: "plugin", filePath: parsed.filePath, reason: parsed.reason });
   } catch {
     // unreadable -- silently skipped, matching the default directory scan's own posture for the same case

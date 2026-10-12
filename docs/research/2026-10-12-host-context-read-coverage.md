@@ -6,6 +6,11 @@ sandbox read restrictions apply before source settings or prompt content load.
 The source advertisement is a candidate implementation claim for independent
 review, not approval to activate Core, release or pin the SDK.
 
+Independent review of `32b9b753` found a canonical-provenance blocker. The
+[follow-up correction](2026-10-12-host-context-read-provenance-fix.md) binds pending
+bytes and reusable metadata to their exact pre-I/O origin and adds retarget
+regressions; source coverage remains pending re-review.
+
 The preceding Code workload parity report remains frozen at `d7d4688b`. No
 command wrapper, escape posture, tool sandbox flags, or native floor enrollment
 changed in this slice, and its workload matrix was not repeated. Separate disk

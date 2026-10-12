@@ -1,4 +1,4 @@
-import { sourceReadRestrictionGeneration, sourcePathAllowed, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
+import { readSourceTextWithOrigin, bindSourceObject, inheritSourceObject, sourceObjectAllowed, sourceReadRestrictionGeneration, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
 // Phase 5 Lane S (WS-11 §2.4, RULING R5-14): the FILESYSTEM `CommandResolver` -- a project
 // `commands/<name>.md` and a project `skills/<name>/SKILL.md` both create `/name`.
 //
@@ -167,22 +167,23 @@ function scanCommandDir(dir: string, source: SlashCommandOrigin): CommandFile[] 
     const path = join(dir, file);
     const meta = readCommandMeta(path);
     if (!meta) continue;
-    out.push({
+    out.push(inheritSourceObject({
       name: stem,
       path,
       source,
       ...(meta.description !== undefined ? { description: meta.description } : {}),
       ...(meta.argumentHint !== undefined ? { argumentHint: meta.argumentHint } : {}),
-    });
+    }, meta));
   }
   return out;
 }
 
 function readCommandMeta(path: string): { description?: string; argumentHint?: string } | undefined {
-  const raw = readCommandBody(path);
-  if (raw === undefined) return undefined;
-  const parsed = parseCommandFile(raw);
-  return { ...(parsed.description !== undefined ? { description: parsed.description } : {}), ...(parsed.argumentHint !== undefined ? { argumentHint: parsed.argumentHint } : {}) };
+  try {
+    if (!statSourceSync(path).isFile()) return undefined;
+    const read = readSourceTextWithOrigin(path), parsed = parseCommandFile(read.text);
+    return bindSourceObject({ ...(parsed.description !== undefined ? { description: parsed.description } : {}), ...(parsed.argumentHint !== undefined ? { argumentHint: parsed.argumentHint } : {}) }, read.origin);
+  } catch { return undefined; }
 }
 
 function readCommandBody(path: string): string | undefined {
@@ -442,13 +443,15 @@ export class FilesystemCommandResolver implements CommandResolver {
     }
     for (const contribution of this.opts.plugins ?? []) {
       for (const command of contribution.commands) {
-        found.push({
+        const metadata = sourceObjectAllowed(command) ? command : readCommandMeta(command.path);
+        if (!metadata) continue;
+        found.push(inheritSourceObject({
           name: `${contribution.plugin}:${command.name}`,
           path: command.path,
           source: "plugin",
-          ...(command.description !== undefined ? { description: command.description } : {}),
-          ...(command.argumentHint !== undefined ? { argumentHint: command.argumentHint } : {}),
-        });
+          ...(metadata.description !== undefined ? { description: metadata.description } : {}),
+          ...(metadata.argumentHint !== undefined ? { argumentHint: metadata.argumentHint } : {}),
+        }, metadata, command.path));
       }
     }
     return found;
@@ -524,15 +527,17 @@ export class FilesystemCommandResolver implements CommandResolver {
       if (entry.kind === "blocked") continue;
       if (entry.kind === "skill") {
         if (!entry.listed) continue; // an alias resolves but is never advertised
-        out.push({ name: entry.name, description: entry.description, source: "skill" });
+        const current = this.opts.skills?.get(entry.primary);
+        if (current) out.push({ name: entry.name, description: current.description, source: "skill" });
         continue;
       }
       const { file } = entry;
-      if (!sourcePathAllowed(file.path)) continue;
+      const metadata = sourceObjectAllowed(file) ? file : readCommandMeta(file.path);
+      if (!metadata) continue;
       out.push({
         name: file.name,
-        ...(file.description !== undefined ? { description: file.description } : {}),
-        ...(file.argumentHint !== undefined ? { argumentHint: file.argumentHint } : {}),
+        ...(metadata.description !== undefined ? { description: metadata.description } : {}),
+        ...(metadata.argumentHint !== undefined ? { argumentHint: metadata.argumentHint } : {}),
         source: file.source,
       });
     }

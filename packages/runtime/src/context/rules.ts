@@ -1,4 +1,4 @@
-import { sourcePathAllowed, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
+import { readSourceTextWithOrigin, type SourceOrigin, bindSourceObject, sourceObjectAllowed, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
 // WS-21 §6.3 item 2 (F17): a `rules/` loader for the user tier and the (trusted) project tier, with
 // claude's `paths:` conditional-attachment semantics.
 //
@@ -126,10 +126,10 @@ function walkMdFiles(root: string): string[] {
 }
 
 function readRuleFile(path: string, tier: "user" | "project", projectBase?: string): LoadedRule | null {
-  let raw: string;
+  let raw: string, origin: SourceOrigin;
   try {
     if (!statSourceSync(path).isFile()) return null;
-    raw = readSourceFileSync(path, "utf8");
+    ({ text: raw, origin } = readSourceTextWithOrigin(path));
   } catch {
     return null;
   }
@@ -137,13 +137,13 @@ function readRuleFile(path: string, tier: "user" | "project", projectBase?: stri
   const content = body.trim();
   if (content.length === 0) return null; // nothing to inject -- not an error, the same "empty file" contract every reader here shares
   const paths = splitPathsList(attrs["paths"]);
-  return {
+  return bindSourceObject({
     path,
     tier,
     content,
     ...(paths !== undefined ? { paths } : {}),
     ...(tier === "project" && projectBase !== undefined ? { projectBase } : {}),
-  };
+  }, origin);
 }
 
 /**
@@ -271,9 +271,11 @@ export function conditionalRuleAttachmentProducer(rules: readonly LoadedRule[], 
     if (touched.length === 0) return [];
     const produced: ConditionalRuleAttachment[] = [];
     for (const rule of pending) {
-      if (touched.some((filePath) => ruleMatches(rule, filePath, opts.originalCwd))) {
-        // A rule is source content even when its metadata was discovered before activation.
-        if (sourcePathAllowed(rule.path)) produced.push({ type: "conditional_rule", path: rule.path, content: rule.content });
+      // Original bytes retain their original canonical authority. A retarget can contribute only
+      // freshly loaded allowed content, never re-authorize the old body through a new target.
+      const current = sourceObjectAllowed(rule) ? rule : readRuleFile(rule.path, rule.tier, rule.projectBase);
+      if (current !== null && touched.some(filePath => ruleMatches(current, filePath, opts.originalCwd))) {
+        produced.push({ type: "conditional_rule", path: current.path, content: current.content });
       }
     }
     return produced;

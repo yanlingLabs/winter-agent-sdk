@@ -1,4 +1,4 @@
-import { readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
+import { readSourceTextWithOrigin, type SourceOrigin, bindSourceObject, inheritSourceObject, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
 // Phase 5 Lane W (task 4), WS-11 §1.3: where a workflow's SOURCE comes from, and where a run's
 // script GOES.
 //
@@ -234,24 +234,24 @@ interface DiscoveredWorkflowFile {
  * drift on the size cap, the parse step or which fields survive.
  */
 function discoverWorkflowFile(path: string): DiscoveredWorkflowFile | undefined {
-  let source: string;
+  let source: string, origin: SourceOrigin;
   try {
     const stat = statSourceSync(path);
     if (!stat.isFile() || stat.size > WORKFLOW_SCRIPT_MAX_BYTES) return undefined;
-    source = readSourceFileSync(path, "utf8");
+    ({ text: source, origin } = readSourceTextWithOrigin(path));
   } catch {
     return undefined;
   }
   const parsed = parseWorkflowMeta(source);
   if (!parsed.ok) return undefined;
-  return {
+  return bindSourceObject({
     name: parsed.meta.name,
     description: parsed.meta.description,
     path,
     source,
     ...(parsed.meta.whenToUse !== undefined ? { whenToUse: parsed.meta.whenToUse } : {}),
     ...(parsed.meta.phases !== undefined ? { phases: parsed.meta.phases } : {}),
-  };
+  }, origin);
 }
 
 function discoverWorkflowsInDir(dir: string): Map<string, DiscoveredWorkflowFile> {
@@ -324,14 +324,14 @@ export interface WorkflowListingEntry {
  */
 export function listWorkflowsForListing(opts: WorkflowDiscoveryOptions): WorkflowListingEntry[] {
   const out: WorkflowListingEntry[] = [];
-  const toEntry = (w: DiscoveredWorkflowFile, source: WorkflowListingEntry["source"], name: string): WorkflowListingEntry => ({
+  const toEntry = (w: DiscoveredWorkflowFile, source: WorkflowListingEntry["source"], name: string): WorkflowListingEntry => inheritSourceObject({
     name,
     description: w.description,
     source,
     path: w.path,
     ...(w.whenToUse !== undefined ? { whenToUse: w.whenToUse } : {}),
     ...(w.phases !== undefined ? { phases: w.phases } : {}),
-  });
+  }, w);
   for (const plugin of opts.pluginWorkflows ?? []) {
     const paths = pluginWorkflowSourcePaths(plugin);
     if (paths.length === 0) continue;

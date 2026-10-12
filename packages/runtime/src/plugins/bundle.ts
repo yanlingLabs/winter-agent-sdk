@@ -1,3 +1,4 @@
+import { inheritSourceObject } from "../sandbox/source-read.ts";
 // Phase 5 Lane S (WS-11 §4): the loaded-plugin SHAPE, plus the derivations every other subsystem
 // consumes.
 //
@@ -126,7 +127,7 @@ export function pluginAgentDefinitions(bundles: readonly PluginBundle[]): Record
 export function pluginSkillContributions(bundles: readonly PluginBundle[]): PluginSkillContribution[] {
   return bundles.map((bundle) => ({
     plugin: bundle.name,
-    skills: bundle.skills.map((s) => ({ name: s.name, description: s.description, path: s.path, ...(s.author !== undefined ? { author: s.author } : {}) })),
+    skills: bundle.skills.map((s) => inheritSourceObject({ name: s.name, description: s.description, path: s.path, ...(s.author !== undefined ? { author: s.author } : {}) }, s)),
   }));
 }
 
@@ -134,11 +135,11 @@ export function pluginSkillContributions(bundles: readonly PluginBundle[]): Plug
 export function pluginCommandContributions(bundles: readonly PluginBundle[]): PluginCommandContribution[] {
   return bundles.map((bundle) => ({
     plugin: bundle.name,
-    commands: bundle.commands.map((c) => ({
+    commands: bundle.commands.map((c) => inheritSourceObject({
       name: c.name,
       path: c.path,
       ...(c.description !== undefined ? { description: c.description } : {}),
       ...(c.argumentHint !== undefined ? { argumentHint: c.argumentHint } : {}),
-    })),
+    }, c)),
   }));
 }

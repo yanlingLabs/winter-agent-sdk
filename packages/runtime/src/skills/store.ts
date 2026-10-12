@@ -1,4 +1,6 @@
-import { sourcePathAllowed } from "../sandbox/source-read.ts";
+import { parseWorkflowMeta } from "../workflows/meta.ts";
+import { buildWorkflowSkillPrompt } from "../workflows/store.ts";
+import { readSourceTextWithOrigin, bindSourceObject, inheritSourceObject, sourceObjectAllowed } from "../sandbox/source-read.ts";
 // Phase 5 Lane S (WS-11 §2.1/§2.5): the SKILL INDEX -- a name+description metadata index built at
 // startup, with bodies loaded lazily on invocation.
 //
@@ -21,7 +23,7 @@ import { sourcePathAllowed } from "../sandbox/source-read.ts";
 import { basename, dirname, join } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { DEFAULT_SKILL_BODY_BYTES, capBytes, skillNameError, pluginNameError } from "./frontmatter.ts";
-import { SELF_SUBDIR, projectSkillRoots, readSkillMetadata, scanSkillRoot, scanUserSkillRoot, type DiscoveredSkill, type SkillScanError, type SkillTier } from "./loader.ts";
+import { SKILL_METADATA_PREFIX_BYTES, SELF_SUBDIR, projectSkillRoots, readSkillMetadata, scanSkillRoot, scanUserSkillRoot, type DiscoveredSkill, type SkillScanError, type SkillTier } from "./loader.ts";
 import { isStrictPluginOnly, type StrictPluginOnlyCustomization } from "../settings/loaders/strict-plugin-only.ts";
 
 /**
@@ -148,14 +150,14 @@ function discover(opts: SkillIndexOptions): { all: DiscoveredSkill[]; errors: Sk
   for (const contribution of opts.plugins ?? []) {
     if (pluginNameError(contribution.plugin) !== null) continue; // a plugin name that could traverse never becomes a qualified skill name
     for (const skill of contribution.skills) {
-      all.push({
+      all.push(inheritSourceObject({
         name: `${contribution.plugin}:${skill.name}`,
         description: skill.description,
         source: "plugin",
         path: skill.path,
         plugin: contribution.plugin,
         ...(skill.author !== undefined ? { author: skill.author } : {}),
-      });
+      }, skill, skill.path));
     }
   }
   if (!pluginOnly && opts.disableBundledSkills !== true) all.push(...(opts.builtinSkills ?? []));
@@ -164,13 +166,13 @@ function discover(opts: SkillIndexOptions): { all: DiscoveredSkill[]; errors: Sk
   // (for a project-tier one) the identical PROJECT_PLUGIN_NAME alias every other project skill gets,
   // for free, by construction rather than a parallel special case.
   for (const synthetic of opts.syntheticSkills ?? []) {
-    all.push({
+    all.push(inheritSourceObject({
       name: synthetic.name,
       description: synthetic.description,
       source: synthetic.source,
       path: synthetic.path,
       ...(synthetic.plugin !== undefined ? { plugin: synthetic.plugin } : {}),
-    });
+    }, synthetic, synthetic.path));
   }
   return { all, errors };
 }
@@ -226,6 +228,7 @@ export class SkillIndex {
         ...(found.plugin !== undefined ? { plugin: found.plugin } : {}),
         ...(aliases.length > 0 ? { aliases } : {}),
       };
+      inheritSourceObject(meta, found, found.path);
       entries.push(meta);
       byName.set(meta.name, meta);
       // An alias never DISPLACES a real name: if `<projectDir>:review` is already a plugin skill's own
@@ -246,9 +249,31 @@ export class SkillIndex {
     return this.scanErrors.slice();
   }
 
+  private currentMeta(meta: SkillMeta): SkillMeta | undefined {
+    if (sourceObjectAllowed(meta)) return meta;
+    // Ordinary skills can recover from a retarget/revocation by loading fresh allowed metadata.
+    // Synthetic bodies contain source-derived metadata too: rebuild from fresh guarded bytes.
+    if (this.syntheticBodies.has(meta.name)) {
+      try {
+        const read = readSourceTextWithOrigin(meta.path), parsed = parseWorkflowMeta(read.text);
+        if (!parsed.ok) return undefined;
+        meta.description = parsed.meta.description;
+        this.syntheticBodies.set(meta.name, buildWorkflowSkillPrompt({ ...parsed.meta, name: meta.name, path: meta.path, source: "project" }));
+        bindSourceObject(meta, read.origin);
+        return meta;
+      } catch { return undefined; }
+    }
+    const read = readSkillMetadata(meta.path, meta.name.slice(meta.name.indexOf(":") + 1), { maxBytes: SKILL_METADATA_PREFIX_BYTES });
+    if (!read.ok) return undefined;
+    meta.description = read.skill.description;
+    if (read.skill.author === undefined) delete meta.author; else meta.author = read.skill.author;
+    inheritSourceObject(meta, read.skill);
+    return meta;
+  }
+
   /** Every skill, in precedence order, by PRIMARY name. Aliases are not separate entries. */
   list(): SkillMeta[] {
-    return this.entries.filter(meta => sourcePathAllowed(meta.path));
+    return this.entries.flatMap(meta => { const current = this.currentMeta(meta); return current ? [current] : []; });
   }
 
   /** Primary names only, in precedence order -- the `system/init.skills` producer's input. */
@@ -259,7 +284,7 @@ export class SkillIndex {
   /** Resolve a name OR an alias to its metadata. */
   get(name: string): SkillMeta | undefined {
     const meta = this.byName.get(name);
-    return meta && sourcePathAllowed(meta.path) ? meta : undefined;
+    return meta ? this.currentMeta(meta) : undefined;
   }
 
   /** Every name a skill answers to (primary first) -- what a permission rule is matched against. */
