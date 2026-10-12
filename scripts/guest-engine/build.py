@@ -4,11 +4,12 @@ Runtime/provider executables must already be compiled from reviewed fixture entr
 """
 import argparse,hashlib,importlib.util,json,os,shutil,subprocess,sys
 from pathlib import Path
+if __name__=='__main__' and os.geteuid()==0:raise SystemExit('native artifacts must be built unprivileged; privileged checkout entry refused before imports')
 ROOT=Path(__file__).resolve().parents[2]
 PROVENANCE_PATH=Path(__file__).with_name('provenance.py')
 _spec=importlib.util.spec_from_file_location('fresh_provenance',PROVENANCE_PATH);provenance=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(provenance)
 NATIVE={'toolLauncher':'linux-tool-compartment.c','runtimeLauncher':'linux-runtime-compartment.c','fileWorker':'file-worker.c','processWorker':'process-worker.c','ownerLibrary':'linux-session-owner.c'}
-SOURCES=['packages/runtime/src/guest/linux-supervisor.py','packages/runtime/src/guest/linux-compartment.h',*[f'packages/runtime/src/guest/{name}' for name in NATIVE.values()],'packages/runtime/src/guest/linux-session-admission.ts','scripts/guest-engine/runtime.ts','scripts/guest-engine/provider.ts','scripts/guest-engine/compile.ts','scripts/build-runtime.ts','scripts/linux-runtime-base.json','scripts/guest-engine/verify.py','scripts/guest-engine/build.py','scripts/guest-engine/provenance.py']
+SOURCES=['packages/runtime/src/guest/linux-supervisor.py','packages/runtime/src/guest/linux-compartment.h',*[f'packages/runtime/src/guest/{name}' for name in NATIVE.values()],'packages/runtime/src/guest/linux-session-admission.ts','scripts/guest-engine/runtime.ts','scripts/guest-engine/provider.ts','scripts/guest-engine/compile.ts','scripts/build-runtime.ts','scripts/linux-runtime-base.json','scripts/guest-engine/verify.py','scripts/guest-engine/build.py','scripts/guest-engine/provenance.py','scripts/guest-engine/stage.py']
 def digest(path):
     return provenance.sha(path,256*1024*1024)['sha256']
 def source_inventory(extra=()):

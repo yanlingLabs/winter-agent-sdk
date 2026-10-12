@@ -4,8 +4,48 @@ Only a root-reviewed matching source/artifact receipt can reach privileged stagi
 Guest provider packet parsing belongs to the separate fixture worker, not this root harness.
 """
 from contextlib import contextmanager
-import argparse,array,fcntl,hashlib,importlib.util,json,os,re,shutil,socket,struct,subprocess,sys,tempfile,threading,time
+import argparse,array,fcntl,hashlib,importlib.util,json,os,re,shutil,socket,stat,struct,subprocess,sys,tempfile,threading,time
 from pathlib import Path
+def require_staged_imports():
+    # Ordinary portable tests may import definitions as an unprivileged process.
+    # Direct CLI/elevated project imports require the isolated, hash-admitted parent.
+    if __name__!='__main__' and os.geteuid()!=0:return
+    admission=getattr(sys,'_winter_fresh_stage_admission',None)
+    refusal='hash-admitted immutable staged runner required before imports'
+    if admission is None or sys.platform!='linux' or os.geteuid()!=0 or not sys.flags.isolated or not sys.flags.no_site or not sys.dont_write_bytecode:raise SystemExit(refusal)
+    directory=Path(admission.directory)
+    if directory.parent!=Path('/tmp') or not directory.name.startswith('winter-fresh-reviewed-') or admission.pid!=os.getpid() or Path(__file__)!=directory/'source/scripts/guest-engine/verify.py':raise SystemExit(refusal)
+    for name in ('/','/tmp'):
+        info=os.lstat(name)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid!=0 or stat.S_IMODE(info.st_mode)&0o022 and (name=='/' or not info.st_mode&stat.S_ISVTX):raise SystemExit(refusal)
+    held=os.fstat(admission.directory_fd);named=os.lstat(directory)
+    if not stat.S_ISDIR(held.st_mode) or held.st_uid!=0 or stat.S_IMODE(held.st_mode)!=0o500 or (held.st_dev,held.st_ino)!=admission.identity or (named.st_dev,named.st_ino)!=(held.st_dev,held.st_ino):raise SystemExit(refusal)
+    def checked(name,expected,limit):
+        folder=os.dup(admission.directory_fd);fd=None
+        try:
+            parts=name.split('/')
+            for part in parts[:-1]:
+                child=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=folder);os.close(folder);folder=child
+                info=os.fstat(folder)
+                if info.st_uid!=0 or stat.S_IMODE(info.st_mode)!=0o500:raise SystemExit(refusal)
+            fd=os.open(parts[-1],os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=folder);info=os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid!=0 or info.st_nlink!=1 or stat.S_IMODE(info.st_mode)!=0o400 or info.st_size>limit:raise SystemExit(refusal)
+            hash=hashlib.sha256();count=0
+            while True:
+                data=os.read(fd,min(65536,limit-count+1))
+                if not data:break
+                count+=len(data)
+                if count>limit:raise SystemExit(refusal)
+                hash.update(data)
+            if count!=info.st_size or hash.hexdigest()!=expected:raise SystemExit(refusal)
+        finally:
+            if fd is not None:os.close(fd)
+            os.close(folder)
+    checked('source/scripts/guest-engine/verify.py',admission.verify_sha,16*1024*1024)
+    checked('source/scripts/guest-engine/stage.py',admission.parent_sha,16*1024*1024)
+    checked('artifacts/receipt.json',admission.receipt_sha,16*1024*1024)
+require_staged_imports()
+
 ROOT=Path(__file__).resolve().parents[2]
 BUILD_PATH=Path(__file__).with_name('build.py');spec=importlib.util.spec_from_file_location('fresh_build',BUILD_PATH);build=importlib.util.module_from_spec(spec);spec.loader.exec_module(build)
 RUNTIME_UID=20001;TOOL_UID=10001;WORKSPACE_GID=10000;PROVIDER_UID=30001
@@ -323,7 +363,7 @@ def execute_fixture(directory,fixture,receipt,observations):
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--artifacts',type=Path,required=True);parser.add_argument('--reviewed-receipt',type=Path,required=True);args=parser.parse_args()
     receipt=build.validate_receipt(build.provenance.json_read(args.reviewed_receipt),args.artifacts)
-    if sys.platform!='linux' or os.geteuid()!=0 or not sys.flags.isolated or not sys.flags.no_site:raise SystemExit('Explicit Linux root fixture via python -I -S required; no fallback')
+    if sys.platform!='linux' or os.geteuid()!=0 or not sys.flags.isolated or not sys.flags.no_site:raise SystemExit('Admitted staged Linux root fixture required; no fallback')
     observations={'reviewedReceiptSha256':build.digest(args.reviewed_receipt),'compileReceiptSha256':receipt['compileReceiptSha256'],'phase':'fixture-staging','nativeCleanupConfirmed':False,'serviceReaped':False,'providerReaped':False}
     with retained_fixture_directory(observations) as directory:
         fixture=create_fixture(directory,args.artifacts,receipt);result=execute_fixture(directory,fixture,receipt,observations)

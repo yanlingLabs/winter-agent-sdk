@@ -19,13 +19,13 @@ python3 -I -S scripts/guest-engine/build.py --output out/fresh-engine-artifacts 
 
 Build on a disposable Linux ARM64 runner with an existing C compiler/static libc and Python standard library. The build records hashes of the complete SDK/provider/runtime source inventory and all seven artifacts. Before any privileged execution, independently review the exact source, build inputs and receipt. `verify.py` validates the supplied receipt and staged copies; it does not treat a matching receipt as product-native bootstrap authority.
 
-Privileged invocation remains gated. The repository verifier imports project modules
-before its in-function receipt check, so direct elevated execution is not an admitted
-bootstrap path. A separate trusted stdlib-only, externally hash-admitted parent must
-validate and stage the complete source/dependency/artifact closure under protected,
-root-owned ancestry before any privileged repository import. That launcher is not
-implemented by the compile/evidence correction; no privileged runner command is
-recommended here.
+The trusted staging parent now implements the source boundary described in
+`guest/FRESH-ENGINE-STAGING.md`: external parent byte admission, complete approved
+source/dependency/artifact closure, fixed protected Root-owned staging ancestry and
+isolated bootstrap before project imports. Direct checkout verifier execution
+refuses. Actual privileged staging and Linux execution remain unrun and require
+separate source/artifact/build-provenance admission and explicit job authorization.
+The current guide provides a future Linux build recipe, not a launch approval.
 
 The fixture uses disposable directories, runtime UID 20001, tool UID 10001 and provider UID 30001. It runs the real Root service and real compiled SDK entry, not a replacement agent loop. The provider is deliberately scripted: five normal model iterations produce Read, Edit, Write, Bash, then final text through the actual guest provider fold. It owns only a fake fixture credential, and authenticates every runtime connection using actual peer UID/PID versus the transferred init pidfd. Bun 1.3.14 cannot listen on inherited FDs; the immutable owner library therefore supplies bounded AF_UNIX frame accept/read/write on the Root-created listener, without pathname reopening. Requests are single-use, scoped, sequenced, and bounded; no blind retry occurs.
 

@@ -22,7 +22,9 @@ Supervisor diagnostics are separate protected control files, not SDK store autho
 
 Synthetic lifecycle regressions cover failure before native/SDK store creation, confirmed native cleanup then later fixture assertion failure, reap mismatch, tool debt, redaction/bounds and retained normalized diagnostics. No real credential is supplied; the fixture provider uses its named fake credential only. The diagnostic policy is fixture-specific and is not a general arbitrary-output secret scrubber.
 
-## Remaining privileged bootstrap gate
+## Remaining privileged bootstrap gate at the frozen initial correction
+
+The following records the gate at `7d61273b`. The source follow-up in [trusted staging](FRESH-ENGINE-STAGING.md) now implements the import/staging boundary; actual privileged staging and Linux execution remain unrun.
 
 The current verifier imports `build.py`/`provenance.py` before `main` checks the supplied receipt. This is not a hash-admitted privileged entrypoint, and the original direct elevated repository command is removed from the current guide. F1–F3 do not establish protected staging ancestry or approval by themselves. Before any privileged project import, a separate trusted stdlib-only, independently hash-admitted parent must validate/stage the **complete** measured source/dependency/artifact closure under root-owned, non-user-renamable ancestry. This is a separate unimplemented/source-review gate, not an invitation to retry either held Mac lane. No privileged execution readiness is claimed for this leaf.
 
