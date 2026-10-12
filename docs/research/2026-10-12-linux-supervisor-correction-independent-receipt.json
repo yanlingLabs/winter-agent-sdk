@@ -1,0 +1,34 @@
+{
+  "reviewedHead": "0fb8f141fc351c56b4d5d97635a3612cf2dd0ae5",
+  "sourceLeaf": "30bb3f18",
+  "runtimeCorrection": "b187c98e98eaa600f137e6310d2c08f5b1ec2cf7",
+  "testEvidenceCorrection": "0fb8f141fc351c56b4d5d97635a3612cf2dd0ae5",
+  "sourceAcceptedForIsolatedLinuxCi": true,
+  "originalFourBlockersClosedAtSource": true,
+  "finalMacProtocolTests": {
+    "run": 11,
+    "passed": 10,
+    "linuxOnlySkipped": 1
+  },
+  "independentBunClientTests": {
+    "passed": 4,
+    "assertions": 14,
+    "runtimeClientUnchangedByCorrections": true
+  },
+  "earlierCorrectionLogScope": "Nine nontruncation tests at b187c98e, retained separately; final 0fb8f141 whole protocol run observed 10 pass/1 skip",
+  "linuxEnforcementExecuted": false,
+  "linuxTruncatedExcessCleanupExecuted": false,
+  "privilegedServiceExecuted": false,
+  "vmStarted": false,
+  "fullConfinedStartupEnabled": false,
+  "linuxPrimarySource": "https://github.com/torvalds/linux/blob/v6.18/net/core/scm.c#L328-L379",
+  "sourceHashes": {
+    "packages/runtime/src/guest/linux-supervisor.py": "9487ef2623ef855424e5196d927a59f7e1aac453de9ad56ca9efbc513ea4f376",
+    "packages/runtime/src/guest/linux-tool-compartment.c": "3922cc08de1db83c16d86ecf540870574cbd18d8b434d6678aa5223f9077334d",
+    "packages/runtime/src/guest/linux-compartment.h": "2a4ac264bfc18b51e87128dbea6da319081002660e0c3f771df8dcfa01e3dad1",
+    "packages/runtime/src/guest/supervisor-client.ts": "4801f6d7b66a498e9997912d89f7b26160fce8f1b99786fa9ffeb1777120fa60",
+    "scripts/guest-supervisor/test_protocol.py": "4dc5240d2b3f59a45da32b8251cef9e80cc07f1bc451ed05410de54b9840bc09",
+    "scripts/guest-supervisor/verify.py": "d0952c3b2d82222d6951856393898db73312501b24f87cffc672dfacb0aa7b97",
+    ".github/workflows/ci.yml": "9a05f9a3ee72132c06dbfe1abf0a1de13a1d051804192c2633aab71bc1a12c4e"
+  }
+}

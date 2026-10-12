@@ -1,0 +1,28 @@
+{
+  "sourceCommit": "30bb3f18",
+  "linuxServiceStarted": false,
+  "privilegedCodeExecuted": false,
+  "vmStarted": false,
+  "trickle": {
+    "socketTimeoutSeconds": 3,
+    "wholeFrameSeconds": 3.57,
+    "acceptedAfterTimeoutBudget": true
+  },
+  "adminSaturation": {
+    "ordinarySlotsHeld": 8,
+    "adminConnectionClosed": true,
+    "adminHandlerInvoked": false,
+    "actualListenerMethodWithMockSocket": true
+  },
+  "sourceAncestorSwap": {
+    "originalResolvedPathPassedProtectionCheck": true,
+    "openedPinnedFdIsProtectedDirectory": true,
+    "actualTempDirectorySyscalls": true
+  },
+  "malformedAncillary": {
+    "actualReceivedFdLeaked": true,
+    "newLeakedDescriptors": 1,
+    "exactRunMethodWithMockLauncher": true,
+    "conversationDebtRetained": true
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "sourceCommit": "30bb3f18",
+  "commands": [
+    {
+      "command": "bun test packages/runtime/src/guest/supervisor-client.test.ts",
+      "exitCode": 0
+    },
+    {
+      "command": "python3 -I -S <frozen-leaf>/scripts/guest-supervisor/test_protocol.py",
+      "exitCode": 0
+    }
+  ],
+  "bunClientTestsPassed": 4,
+  "pythonProtocolTestsPassed": 3,
+  "actualLinuxServiceRun": false,
+  "privilegedExecution": false,
+  "vmStarted": false,
+  "sourceAcceptance": false
+}
