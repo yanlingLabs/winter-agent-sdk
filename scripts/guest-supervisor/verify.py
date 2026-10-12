@@ -43,7 +43,7 @@ def main():
                 path=environment/library.lstrip('/');path.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(library,path);path.chmod(0o555)
         checked([compiler,'-O2','-Wall','-Wextra','-Werror','-pthread',ROOT/'scripts/guest-supervisor/glibc-tools.c','-o',environment/'bin/glibc-tools']);(environment/'bin/glibc-tools').chmod(0o555)
         source=root/'source';source.mkdir(mode=0o2770);os.chown(source,10001,10000);source.chmod(0o2770)
-        readonly=root/'readonly';readonly.mkdir();(readonly/'sentinel').write_bytes(b'private-other-root');(readonly/'sentinel').chmod(0o644)
+        readonly=root/'readonly';readonly.mkdir();readonly.chmod(0o777);(readonly/'sentinel').write_bytes(b'private-other-root');(readonly/'sentinel').chmod(0o644)
         (source/'seed').write_bytes(b'hello\n');os.chown(source/'seed',10001,10000);(source/'seed').chmod(0o660);(source/'escape').symlink_to('../readonly/sentinel')
         scopes=[]
         for number,policy in enumerate(('auto','plan','ask','accept-edits','dont-ask','bypass'),1):
@@ -81,7 +81,9 @@ def main():
                 os.close(read_end)
                 try:
                     os.setgroups([]);os.setgid(20001);os.setuid(20001)
-                    response=exchange(control/'conversation-1/tools.sock',{'kind':'file','request':{'protocolVersion':1,'requestId':str(uuid.uuid4()),'authority':scopes[0]['authority'],'operation':'read','root':{'id':'source','guestPath':'/workspace/folders/source','readOnly':False},'relativePath':'seed','expectedUid':10001,'maxBytes':1024}})
+                    request={'protocolVersion':1,'requestId':str(uuid.uuid4()),'authority':scopes[0]['authority'],'operation':'read','root':{'id':'source','guestPath':'/workspace/folders/source','readOnly':False},'relativePath':'seed','expectedUid':10001,'maxBytes':1024}
+                    ticket=exchange(control/'conversation-1/tools.sock',{'kind':'reserve','toolKind':'file','request':request})['ticket']
+                    response=exchange(control/'conversation-1/tools.sock',{'kind':'file','request':request,'ticket':ticket})
                     os.write(write_end,json.dumps(response).encode()[:4096]);os._exit(0)
                 except BaseException:os._exit(1)
             os.close(write_end);raw_probe=os.read(read_end,4096);os.close(read_end);_,probe_status=os.waitpid(probe_pid,0)
@@ -89,7 +91,7 @@ def main():
             response=json.loads(raw_probe)
             assert response.get('exitCode')==0 and response.get('stdout'),('raw Read response',response)
             assert finish(start(1,'ordinary'))['uid']==20001
-            assert (source/'seed').read_bytes()==b'written\n';assert (source/'from-shell').read_bytes()==b'shell';assert not (readonly/'new').exists()
+            assert (source/'seed').read_bytes()==b'written\n';assert (source/'from-shell').read_bytes()==b'shell';assert not (readonly/'new').exists();assert not (readonly/'shell-write').exists()
             assert (replacement_source/'seed').read_bytes()==b'replacement-must-not-be-read-or-written\n' and not (replacement_source/'from-shell').exists()
             assert finish(start(2,'plan'))['uid']==20002;assert (source/'seed').read_bytes()==b'written\n';assert not (source/'plan-shell').exists()
             for number in range(3,7):
