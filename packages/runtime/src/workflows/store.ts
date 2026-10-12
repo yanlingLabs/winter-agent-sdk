@@ -1,4 +1,4 @@
-import { readSourceTextWithOrigin, type SourceOrigin, bindSourceObject, inheritSourceObject, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
+import { sourceObjectOrigin, readSourceTextWithOrigin, type SourceOrigin, bindSourceObject, inheritSourceObject, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
 // Phase 5 Lane W (task 4), WS-11 §1.3: where a workflow's SOURCE comes from, and where a run's
 // script GOES.
 //
@@ -133,7 +133,7 @@ export function listBuiltinWorkflows(): string[] {
  * (512 KiB) with an "exceeds 524288 bytes — skipping" warning. A file over this size is treated
  * exactly like an unreadable one: silently skipped, never a hard error for the whole directory scan.
  */
-const WORKFLOW_SCRIPT_MAX_BYTES = 524288;
+export const WORKFLOW_SCRIPT_MAX_BYTES = 524288;
 
 function sourcesAllow(settingSources: readonly SettingSource[] | undefined, tier: SettingSource): boolean {
   return settingSources === undefined || settingSources.includes(tier);
@@ -233,7 +233,7 @@ interface DiscoveredWorkflowFile {
  * bare FILE rather than a directory -- `PluginBundle.workflowsPaths`'s own citation) so the two never
  * drift on the size cap, the parse step or which fields survive.
  */
-function discoverWorkflowFile(path: string): DiscoveredWorkflowFile | undefined {
+export function discoverWorkflowFile(path: string): DiscoveredWorkflowFile | undefined {
   let source: string, origin: SourceOrigin;
   try {
     const stat = statSourceSync(path);
@@ -309,6 +309,20 @@ export interface WorkflowListingEntry {
   phases?: WorkflowMetaPhase[];
 }
 
+export interface WorkflowSourceRefresh { reload(): WorkflowListingEntry[]; }
+// Derived values share their original origin identity through inheritSourceObject. Only this
+// discovery module can attach a refresh recipe; serialized metadata cannot select gates/roots.
+const refreshByOrigin = new WeakMap<SourceOrigin, WorkflowSourceRefresh>();
+export function workflowSourceRefresh(value: object): WorkflowSourceRefresh | undefined {
+  const origin = sourceObjectOrigin(value);
+  return origin === undefined ? undefined : refreshByOrigin.get(origin);
+}
+export function workflowSyntheticSkill(entry: WorkflowListingEntry) {
+  return inheritSourceObject({ name: entry.name, description: entry.description,
+    body: buildWorkflowSkillPrompt(entry), source: entry.source, path: entry.path,
+    ...(entry.source === "plugin" ? { plugin: entry.name.slice(0, entry.name.indexOf(":")) } : {}) }, entry);
+}
+
 /**
  * SV-5 (batch-2, second round, extended in fix round 3) -- the router same-view test: claude lists
  * EVERY discovered workflow (user + project + plugin; built-ins are handled separately, and Winter
@@ -323,6 +337,13 @@ export interface WorkflowListingEntry {
  * which tier's copy is "the" workflow of that name.
  */
 export function listWorkflowsForListing(opts: WorkflowDiscoveryOptions): WorkflowListingEntry[] {
+  const captured: WorkflowDiscoveryOptions = { ...opts,
+    ...(opts.brand === undefined ? {} : { brand: { ...opts.brand } }),
+    ...(opts.settingSources === undefined ? {} : { settingSources: [...opts.settingSources] }),
+    ...(opts.pluginWorkflows === undefined ? {} : { pluginWorkflows: opts.pluginWorkflows.map(plugin => ({ ...plugin,
+      ...(plugin.workflowsPaths === undefined ? {} : { workflowsPaths: [...plugin.workflowsPaths] }) })) }),
+  };
+  const refresh: WorkflowSourceRefresh = Object.freeze({ reload: () => listWorkflowsForListing(captured) });
   const out: WorkflowListingEntry[] = [];
   const toEntry = (w: DiscoveredWorkflowFile, source: WorkflowListingEntry["source"], name: string): WorkflowListingEntry => inheritSourceObject({
     name,
@@ -351,6 +372,10 @@ export function listWorkflowsForListing(opts: WorkflowDiscoveryOptions): Workflo
     }
   }
   for (const w of [...merged.values()].sort((a, b) => a.name.localeCompare(b.name))) out.push(w);
+  for (const entry of out) {
+    const origin = sourceObjectOrigin(entry);
+    if (origin !== undefined) refreshByOrigin.set(origin, refresh);
+  }
   return out;
 }
 

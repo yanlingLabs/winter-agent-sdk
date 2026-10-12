@@ -1,6 +1,5 @@
-import { parseWorkflowMeta } from "../workflows/meta.ts";
-import { buildWorkflowSkillPrompt } from "../workflows/store.ts";
-import { readSourceTextWithOrigin, bindSourceObject, inheritSourceObject, sourceObjectAllowed } from "../sandbox/source-read.ts";
+import { discoverWorkflowFile, workflowSourceRefresh, workflowSyntheticSkill, type WorkflowSourceRefresh } from "../workflows/store.ts";
+import { inheritSourceObject, sourceObjectAllowed } from "../sandbox/source-read.ts";
 // Phase 5 Lane S (WS-11 §2.1/§2.5): the SKILL INDEX -- a name+description metadata index built at
 // startup, with bodies loaded lazily on invocation.
 //
@@ -166,22 +165,26 @@ function discover(opts: SkillIndexOptions): { all: DiscoveredSkill[]; errors: Sk
   // (for a project-tier one) the identical PROJECT_PLUGIN_NAME alias every other project skill gets,
   // for free, by construction rather than a parallel special case.
   for (const synthetic of opts.syntheticSkills ?? []) {
-    all.push(inheritSourceObject({
+    const found = inheritSourceObject({
       name: synthetic.name,
       description: synthetic.description,
       source: synthetic.source,
       path: synthetic.path,
       ...(synthetic.plugin !== undefined ? { plugin: synthetic.plugin } : {}),
-    }, synthetic, synthetic.path));
+    }, synthetic, synthetic.path);
+    syntheticDiscoveries.add(found); all.push(found);
   }
   return { all, errors };
 }
 
 /**
- * The startup index. Immutable once built: a session's skill surface is resolved at start, never
- * re-scanned mid-turn (the pinned branch reloads on an explicit control request, never on a watcher
- * -- derived-shapes-p5 item (b); Winter's own "no watchers inside the SDK" rule agrees).
+ * The startup index keeps ordinary source discovery stable. A trusted protection revocation
+ * refreshes affected synthetic workflow identities through the original guarded discovery recipe;
+ * this is source-authority revalidation, not a general settings watcher.
  */
+type SyntheticSkill = NonNullable<SkillIndexOptions["syntheticSkills"]>[number];
+const syntheticDiscoveries = new WeakSet<object>();
+
 export class SkillIndex {
   private readonly entries: SkillMeta[];
   private readonly byName: Map<string, SkillMeta>;
@@ -189,20 +192,26 @@ export class SkillIndex {
   private readonly scanErrors: SkillScanError[];
   /** Fix round 4 (I-E): a synthetic entry's own body, keyed by its PRIMARY name -- `load()` checks this before ever touching disk. */
   private readonly syntheticBodies: Map<string, string>;
+  private readonly syntheticMetas = new Set<SkillMeta>();
+  private readonly syntheticInputs: readonly SyntheticSkill[];
+  private readonly projectPluginName: string;
 
-  private constructor(entries: SkillMeta[], byName: Map<string, SkillMeta>, bodyBytes: number, scanErrors: SkillScanError[], syntheticBodies: Map<string, string>) {
+  private constructor(entries: SkillMeta[], byName: Map<string, SkillMeta>, bodyBytes: number, scanErrors: SkillScanError[], syntheticBodies: Map<string, string>, syntheticInputs: readonly SyntheticSkill[], projectPluginName: string, syntheticMetas: Set<SkillMeta>) {
     this.entries = entries;
     this.byName = byName;
     this.bodyBytes = bodyBytes;
     this.scanErrors = scanErrors;
     this.syntheticBodies = syntheticBodies;
+    this.syntheticInputs = syntheticInputs; this.projectPluginName = projectPluginName;
+    for (const meta of syntheticMetas) this.syntheticMetas.add(meta);
   }
 
   static build(opts: SkillIndexOptions): SkillIndex {
     const entries: SkillMeta[] = [];
     const byName = new Map<string, SkillMeta>();
     const syntheticBodies = new Map<string, string>();
-    for (const synthetic of opts.syntheticSkills ?? []) syntheticBodies.set(synthetic.name, synthetic.body);
+    const syntheticInputs = (opts.syntheticSkills ?? []).map(entry => inheritSourceObject({ ...entry }, entry, entry.path));
+    const syntheticMetas = new Set<SkillMeta>();
     const discovered = discover(opts);
     const errors = discovered.errors;
     for (const found of discovered.all) {
@@ -229,13 +238,17 @@ export class SkillIndex {
         ...(aliases.length > 0 ? { aliases } : {}),
       };
       inheritSourceObject(meta, found, found.path);
+      if (syntheticDiscoveries.has(found)) {
+        const input = syntheticInputs.find(entry => entry.name === found.name);
+        if (input) { syntheticBodies.set(meta.name, input.body); syntheticMetas.add(meta); }
+      }
       entries.push(meta);
       byName.set(meta.name, meta);
       // An alias never DISPLACES a real name: if `<projectDir>:review` is already a plugin skill's own
       // primary name, the project skill keeps its bare identity and simply has no alias slot.
       for (const alias of aliases) if (!byName.has(alias)) byName.set(alias, meta);
     }
-    return new SkillIndex(entries, byName, opts.bodyBytes ?? DEFAULT_SKILL_BODY_BYTES, errors, syntheticBodies);
+    return new SkillIndex(entries, byName, opts.bodyBytes ?? DEFAULT_SKILL_BODY_BYTES, errors, syntheticBodies, syntheticInputs, (opts.brand ?? WINTER_BRAND).projectDirName, syntheticMetas);
   }
 
   /**
@@ -249,20 +262,46 @@ export class SkillIndex {
     return this.scanErrors.slice();
   }
 
+  private refreshSyntheticEntries(): void {
+    if (![...this.syntheticInputs, ...this.syntheticMetas].some(meta => !sourceObjectAllowed(meta))) return;
+    const refreshed: SyntheticSkill[] = [];
+    const groups = new Set<WorkflowSourceRefresh>();
+    for (const input of this.syntheticInputs) {
+      const group = workflowSourceRefresh(input);
+      if (group !== undefined) {
+        if (!groups.has(group)) { groups.add(group); refreshed.push(...group.reload().map(workflowSyntheticSkill)); }
+        continue;
+      }
+      if (sourceObjectAllowed(input)) { refreshed.push(input); continue; }
+      // Trusted programmatic synthetic callers without discovery provenance still share admission.
+      const found = discoverWorkflowFile(input.path);
+      if (!found) continue;
+      const name = input.source === "plugin" ? `${input.plugin ?? input.name.split(":")[0]}:${found.name}` : found.name;
+      refreshed.push(inheritSourceObject({ ...input, name, description: found.description,
+        body: workflowSyntheticSkill({ ...found, name, source: input.source === "plugin" ? "plugin" : input.source === "user" ? "user" : "project" }).body }, found));
+    }
+    const regular = this.entries.filter(meta => !this.syntheticMetas.has(meta));
+    this.entries.splice(0, this.entries.length, ...regular);
+    this.syntheticMetas.clear(); this.syntheticBodies.clear(); this.byName.clear();
+    const index = (meta: SkillMeta) => {
+      this.byName.set(meta.name, meta);
+      for (const alias of meta.aliases ?? []) if (!this.byName.has(alias)) this.byName.set(alias, meta);
+    };
+    for (const meta of regular) index(meta);
+    for (const input of refreshed) {
+      const bare = input.source === "plugin" ? input.name.slice(input.name.indexOf(":") + 1) : input.name;
+      if (skillNameError(bare) !== null || this.byName.has(input.name)) continue;
+      const meta = inheritSourceObject({ name: input.name, description: input.description, source: input.source, path: input.path,
+        ...(input.plugin === undefined ? {} : { plugin: input.plugin }),
+        ...(input.source === "project" ? { aliases: [`${this.projectPluginName}:${input.name}`] } : {}) }, input);
+      this.entries.push(meta); this.syntheticMetas.add(meta); this.syntheticBodies.set(meta.name, input.body); index(meta);
+    }
+  }
+
   private currentMeta(meta: SkillMeta): SkillMeta | undefined {
     if (sourceObjectAllowed(meta)) return meta;
     // Ordinary skills can recover from a retarget/revocation by loading fresh allowed metadata.
-    // Synthetic bodies contain source-derived metadata too: rebuild from fresh guarded bytes.
-    if (this.syntheticBodies.has(meta.name)) {
-      try {
-        const read = readSourceTextWithOrigin(meta.path), parsed = parseWorkflowMeta(read.text);
-        if (!parsed.ok) return undefined;
-        meta.description = parsed.meta.description;
-        this.syntheticBodies.set(meta.name, buildWorkflowSkillPrompt({ ...parsed.meta, name: meta.name, path: meta.path, source: "project" }));
-        bindSourceObject(meta, read.origin);
-        return meta;
-      } catch { return undefined; }
-    }
+    if (this.syntheticMetas.has(meta)) return undefined;
     const read = readSkillMetadata(meta.path, meta.name.slice(meta.name.indexOf(":") + 1), { maxBytes: SKILL_METADATA_PREFIX_BYTES });
     if (!read.ok) return undefined;
     meta.description = read.skill.description;
@@ -273,6 +312,7 @@ export class SkillIndex {
 
   /** Every skill, in precedence order, by PRIMARY name. Aliases are not separate entries. */
   list(): SkillMeta[] {
+    this.refreshSyntheticEntries();
     return this.entries.flatMap(meta => { const current = this.currentMeta(meta); return current ? [current] : []; });
   }
 
@@ -283,6 +323,7 @@ export class SkillIndex {
 
   /** Resolve a name OR an alias to its metadata. */
   get(name: string): SkillMeta | undefined {
+    this.refreshSyntheticEntries();
     const meta = this.byName.get(name);
     return meta ? this.currentMeta(meta) : undefined;
   }

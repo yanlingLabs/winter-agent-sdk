@@ -37,6 +37,10 @@ an alias change. A concurrent owner's denial remains effective when another
 owner relaxes its own policy. Relaxed policy permits newly authorized reads
 again; the change does not permanently disable sources after any update.
 
+The original canonical-provenance P1 was independently accepted at `9092a4e`.
+Two narrow synthetic refresh findings and their correction are recorded in the
+[synthetic workflow follow-up](2026-10-12-synthetic-workflow-refresh-fix.md).
+
 No command wrapper, approved-escape posture, tool-owned sandbox flag, native
 floor enrollment or own-MCP exception changed. The frozen `d7d4688b` workload
 parity matrix was not repeated. `contextReadChecksVersion: 1` remains an explicit

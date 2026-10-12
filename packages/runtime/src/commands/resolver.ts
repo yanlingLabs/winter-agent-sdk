@@ -469,13 +469,17 @@ export class FilesystemCommandResolver implements CommandResolver {
    * they have to be one enumeration.
    */
   private sourceGeneration = sourceReadRestrictionGeneration();
+  private skillSurface = "";
   private enumerate(cwd: string): Map<string, EnumeratedCommand> {
     const generation = sourceReadRestrictionGeneration();
     if (generation !== this.sourceGeneration) { this.byCwd.clear(); this.sourceGeneration = generation; }
+    const skills = this.opts.skills?.list() ?? [];
+    const surface = JSON.stringify(skills.map(skill => [skill.name, skill.description, skill.aliases]));
+    if (surface !== this.skillSurface) { this.byCwd.clear(); this.skillSurface = surface; }
     const cached = this.byCwd.get(cwd);
     if (cached) return cached;
     const map = new Map<string, EnumeratedCommand>();
-    for (const skill of this.opts.skills?.list() ?? []) {
+    for (const skill of skills) {
       const invocable = isUserInvocable(this.opts.skillOverrides, skill);
       // EVERY IDENTITY, not just the primary name (fix round 2, Medium A). `skills.list()` returns
       // primary names only; the `.winter:<skill>` aliases live in the index's own name map, which the

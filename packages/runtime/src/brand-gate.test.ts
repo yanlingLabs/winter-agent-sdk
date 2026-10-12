@@ -846,7 +846,7 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/runtime/src/plugins/manifest.ts:24": "WINTER_PLUGIN_MANIFEST_DIR -- Winter's own value; `pluginManifestDirs(brand)` derives a session's",
   "packages/runtime/src/provider/classifier/prompt.ts:272": "the `instructionsFile` option's DEFAULT; session-provider.ts passes the session brand's (M-1's fix; line shifted by WS-24 follow-up 6's text-fallback prompt addition above it)",
   "packages/runtime/src/permissions/protected.ts:92": "the SEED of the protected set; `isProtectedWrite` adds the session brand's own file per call",
-  "packages/runtime/src/skills/store.ts:46": "PROJECT_PLUGIN_NAME -- Winter's own value; a session's is `SkillIndexOptions.brand.projectDirName`",
+  "packages/runtime/src/skills/store.ts:45": "PROJECT_PLUGIN_NAME -- Winter's own value; a session's is `SkillIndexOptions.brand.projectDirName`",
   "packages/runtime/src/tools/impl/web-fetch.ts:97": "brandNameFor's DEFAULT for the domain-floor refusal text; the call site is `ctx.brand?.productName ?? WINTER_BRAND.productName`, a session's own brand always wins",
   "scripts/research/code-policy-compatibility.ts:44": "The isolated comparison intentionally uses each requested checkout's own default brand; its home is joined to the disposable fixture home, never resolved from the real process home.",
   "packages/provider-runtime/src/identity.ts:64": "DEFAULT_IDENTITY -- what the process presents as until a branded session installs its own frame",

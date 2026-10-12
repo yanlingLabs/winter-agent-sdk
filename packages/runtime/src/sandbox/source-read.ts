@@ -26,6 +26,7 @@ export function inheritSourceObject<T extends object>(value: T, from: object, fa
   return value;
 }
 export function sourceObjectPath(value: object): string | undefined { return sourceObjects.get(value)?.requested; }
+export function sourceObjectOrigin(value: object): SourceOrigin | undefined { return sourceObjects.get(value); }
 export function sourceObjectAllowed(value: object): boolean {
   const origin = sourceObjects.get(value);
   return origin === undefined || origin.paths.every(sourcePathAllowed);

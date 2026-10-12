@@ -1,4 +1,4 @@
-import { inheritSourceObject, installSourceReadRestrictions } from "./sandbox/source-read.ts";
+import { installSourceReadRestrictions } from "./sandbox/source-read.ts";
 // Phase 5 Task 8: THE ONE PLACE every P5 lane's implementation is wired into a live session.
 //
 // WHY A SHARED HELPER AND NOT TWO CALL SITES. Winter runs on three transport legs -- the in-memory
@@ -48,7 +48,7 @@ import { resolveEnabledPlugins } from "./plugins/installed.ts";
 import { pluginAgentDefinitions, pluginCommandContributions, pluginInitInfo, pluginSkillContributions } from "./plugins/bundle.ts";
 import { SkillIndex } from "./skills/store.ts";
 import { buildSkillListing, type SkillOverrides } from "./skills/listing.ts";
-import { listWorkflowsForListing, buildWorkflowSkillPrompt } from "./workflows/store.ts";
+import { listWorkflowsForListing, workflowSyntheticSkill } from "./workflows/store.ts";
 import { autoSkillPermissionEntries, isSkillEnabled, validateSkillsOption } from "./skills/option.ts";
 import { registerSkillSessionRuntime, clearSkillSessionRuntime } from "./skills/runtime.ts";
 import { FilesystemCommandResolver } from "./commands/resolver.ts";
@@ -939,14 +939,7 @@ async function buildProductionWiringImpl(opts: ProductionWiringOptions, restrict
   // work, not merely list the name. Each becomes a SYNTHETIC skill entry, registered into the real SkillIndex below (never a
   // parallel splice past it): `buildWorkflowSkillPrompt`'s own header has the full "Winter-authored
   // prompt, claude's own structure" reasoning.
-  const workflowSyntheticSkills = workflowListing.map((w) => inheritSourceObject({
-    name: w.name,
-    description: w.description,
-    body: buildWorkflowSkillPrompt(w),
-    source: w.source,
-    path: w.path,
-    ...(w.source === "plugin" ? { plugin: w.name.slice(0, w.name.indexOf(":")) } : {}),
-  }, w));
+  const workflowSyntheticSkills = workflowListing.map(workflowSyntheticSkill);
   // Review r2 finding 2 (whole-branch): a rejected `<plugin>/agents/*.md` file (missing/invalid
   // `name:`, missing `description:`) used to vanish with no report at all -- the plugin itself
   // still loads (`rejected` above is per-PLUGIN, this is per-FILE within one that loaded), so this
