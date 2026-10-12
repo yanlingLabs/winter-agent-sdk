@@ -75,7 +75,7 @@ export function buildMandatoryFloorProfile(floor: HostExecutionFloor): string {
     ...read.map((filter) => `(deny file-read* file-read-data file-read-metadata ${filter})`),
     ...write.map((filter) => `(deny file-write* file-write-data file-write-mode file-write-owner file-write-unlink file-write-create ${filter})`),
     ...link.map((filter) => `(deny file-link ${filter})`),
-    ...[...ancestors].map((path) => `(deny file-write-unlink file-write-create file-write-mode file-write-owner (literal ${quoted(path)}))`),
+    ...[...ancestors].map((path) => `(deny file-write-unlink file-write-create file-write-mode file-write-owner file-write-flags file-write-xattr (literal ${quoted(path)}))`),
   ].join("\n");
 }
 /** Apply AFTER the existing host hook has resolved its executable, immediately before OS spawn. */

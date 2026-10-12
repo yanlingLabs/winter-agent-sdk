@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, symlinkSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync, symlinkSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,12 @@ import { applyMandatoryFloorToSpawnOptions, buildMandatoryFloorProfile, createMa
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const darwin = process.platform === "darwin";
+const caseInsensitiveTemp = (() => {
+  if (!darwin) return false;
+  const probe = mkdtempSync(join(tmpdir(), "winter-floor-case-probe-"));
+  try { writeFileSync(join(probe, "lower"), ""); return existsSync(join(probe, "LOWER")); }
+  finally { rmSync(probe, { recursive: true, force: true }); }
+})();
 function fixture() {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "winter-mandatory-floor-"))); dirs.push(dir);
   const cowork = join(dir, "home", "cowork"); const coord = join(dir, "coord"); const source = join(dir, "source");
@@ -88,6 +94,43 @@ describe.skipIf(!darwin)("real macOS persistent floor, disposable files only", (
     if(existsSync(upperVolume))expect((await f.command('/bin/cat "$1"',[upperVolume])).code).not.toBe(0);
     const upperAlias=join(f.dir,".WINTER","cowork","workspaces","w","manifest.json");
     if(existsSync(upperAlias))expect((await f.command('/bin/cat "$1"',[upperAlias])).code).not.toBe(0);
+  });
+  test.skipIf(!caseInsensitiveTemp)("case-variant writes and real ancestor renames cannot change retained storage", async () => {
+    const f = fixture();
+    const upperVolume = join(f.cowork, "WORKSPACES", "W", "DATA.EXT4");
+    const upperHome = join(f.dir, "HOME");
+    // This must reach the same real directory, not merely rename a disposable symlink alias.
+    expect(existsSync(upperVolume)).toBe(true); expect(existsSync(upperHome)).toBe(true);
+    const positive = await f.command('printf changed > "$1"', [join(f.source, "ordinary.txt")]);
+    expect(positive.code, positive.err).toBe(0);
+    const write = await f.command('printf changed > "$1"', [upperVolume]);
+    expect(write.code).not.toBe(0); expect(write.err).toMatch(/Operation not permitted|Permission denied/);
+    const moveSource = join(f.source, "movable"); mkdirSync(moveSource);
+    const moved = join(f.source, "moved");
+    const ordinaryMove = await f.command('/bin/mv "$1" "$2"', [moveSource, moved]);
+    expect(ordinaryMove.code, ordinaryMove.err).toBe(0);
+    const rename = await f.command('/bin/mv "$1" "$2"', [upperHome, join(f.dir, "moved-protected-home")]);
+    expect(rename.code).not.toBe(0); expect(rename.err).toMatch(/Operation not permitted|Permission denied/);
+    expect(readFileSync(join(f.cowork, "workspaces", "w", "data.ext4"), "utf8")).toBe("synthetic-volume-bytes");
+    expect(existsSync(f.manifest)).toBe(true);
+  });
+  test("clonefile copies cannot disclose private backing and ancestor flags/xattrs cannot be changed", async () => {
+    const f = fixture(), home = join(f.dir, "home");
+    const ordinary = join(f.source, "ordinary.txt"), copy = join(f.source, "ordinary-copy.txt");
+    const clone = await f.command('/bin/cp -c "$1" "$2"', [ordinary, copy]);
+    expect(clone.code, clone.err).toBe(0); expect(readFileSync(copy, "utf8")).toBe("ordinary-data");
+    const privateCopy = join(f.source, "private-copy.ext4");
+    const deniedClone = await f.command('/bin/cp -c "$1" "$2"', [join(f.cowork, "workspaces", "w", "data.ext4"), privateCopy]);
+    expect(deniedClone.code).not.toBe(0); expect(deniedClone.err).toMatch(/Operation not permitted|Permission denied/);
+    expect(existsSync(privateCopy)).toBe(false);
+    const flagControl = await f.command('/usr/bin/chflags hidden "$1"', [ordinary]);
+    expect(flagControl.code, flagControl.err).toBe(0);
+    const deniedFlags = await f.command('/usr/bin/chflags hidden "$1"', [home]);
+    expect(deniedFlags.code).not.toBe(0); expect(deniedFlags.err).toMatch(/Operation not permitted|Permission denied/);
+    const attrControl = await f.command('/usr/bin/xattr -w com.winter.fixture harmless "$1"', [ordinary]);
+    expect(attrControl.code, attrControl.err).toBe(0);
+    const deniedAttr = await f.command('/usr/bin/xattr -w com.winter.fixture harmless "$1"', [home]);
+    expect(deniedAttr.code).not.toBe(0); expect(deniedAttr.err).toMatch(/Operation not permitted|Permission denied/);
   });
   test("actual SDK Grep/Glob rooted above storage hide protected files and retain shared hits", async()=>{
     const f=fixture();

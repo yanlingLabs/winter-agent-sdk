@@ -30,6 +30,14 @@ encryption at rest, with keys held by the hardened native storage helper. Shared
 Mac folders, instructions, memory and outputs remain plaintext. An unrelated
 approved Code escape does not have to be disabled merely because Cowork exists.
 
+The native floor also denies flags and extended-attribute changes on literal
+ancestors of protected storage, alongside rename, unlink, mode and owner changes.
+Disposable macOS tests use positive controls for case-variant writes and real
+ancestor renames on a case-insensitive filesystem, APFS clone copies (`cp -c`),
+`chflags` and `xattr`. Ordinary sibling operations remain usable. These tests cover
+direct operations by the enrolled process; they do not establish protection from
+delegation or another process running as the same user.
+
 `createMandatoryFloorSpawn({ spawn, floor, requireHostFloor: true })` is a trusted
 host launch requirement. Missing/empty registration refuses before spawn. The
 wrapper snapshots host floor paths, validates its profile and sets the host-only
@@ -69,8 +77,8 @@ replacement races. Direct subprocess families include
 `context/git-status.ts`, `context/winter-md.ts` and `subagents/git-root.ts`.
 LSP is a host capability (`winter.lsp-server`); its Core adapter needs its own
 read/launch coverage. Bash/Monitor use `sandbox/spawn.ts`; Workflow uses its
-existing host broker. The SDK slash-command seam recognizes `/compact` only;
-Core's `!` user-shell routing must preserve its own applicable launch contract.
+existing host broker. The reviewed SDK command seam recognizes `/compact` only;
+no `!` shell route was found in that seam.
 Production embedded support needs protected descriptor/path access and native
 floor-preserving transports for those launch families, plus transition drain
 evidence. Refusing required embedding does not implement those mechanisms.
