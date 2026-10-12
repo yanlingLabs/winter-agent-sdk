@@ -1,5 +1,5 @@
 """Fresh-runtime config and kernel file ownership checks. Unprivileged; no Linux launch."""
-import importlib.util,os,socket,tempfile,threading,unittest
+import array,importlib.util,json,os,socket,struct,tempfile,threading,unittest
 from pathlib import Path
 from unittest.mock import patch
 MODULE=Path(__file__).resolve().parents[2]/'packages/runtime/src/guest/linux-supervisor.py'
@@ -56,6 +56,33 @@ class FreshProtocolTests(unittest.TestCase):
     def test_debt_does_not_close_store_lock_or_report_cleanup(self):
         self.obj._configure_runtime(self.item,self.config);fd=self.obj.runtimes['logical']['fds']['storeDirectory'];self.obj.debt.add('logical')
         self.assertFalse(self.obj.close());self.assertTrue(os.fstat(fd));self.assertFalse(self.obj.runtimes['logical']['cleanupConfirmed'])
+    def test_admin_handoff_preserves_actual_descriptor_and_fixed_owner_scope(self):
+        # A pipe stands in for pidfd ONLY for portable SCM_RIGHTS framing; native
+        # Linux receiver independently checks pidfd type/liveness before admission.
+        self.obj._configure_runtime(self.item,self.config);runtime=self.obj.runtimes['logical'];record=self.obj._runtime_record(self.item,runtime);readfd,writefd=os.pipe();left,right=socket.socketpair();received=[]
+        try:
+            runtime.update(state='running',initPidfd=readfd,scope=record['scope']);service.frame_write(left,{'operation':'runtime-owner','sessionId':'logical'});self.obj._admin(right)
+            data,ancillary,_,_=left.recvmsg(65536,socket.CMSG_SPACE(16));received=list(array.array('i',ancillary[0][2]));self.assertEqual(len(received),1);self.assertEqual(os.fstat(received[0]).st_ino,os.fstat(readfd).st_ino)
+            length=struct.unpack('!I',data[:4])[0];response=json.loads(data[4:]);self.assertEqual(length,len(data)-4);self.assertEqual(response,{'logicalSessionId':'logical','runtimeUid':os.getuid(),'scope':record['scope'],'ownerToken':runtime['ownerToken']})
+        finally:
+            for fd in received:os.close(fd)
+            os.close(readfd);os.close(writefd);left.close();right.close()
+    def test_admin_handoff_refuses_nonrunning_uncertain_and_dead_owner(self):
+        self.obj._configure_runtime(self.item,self.config);runtime=self.obj.runtimes['logical'];record=self.obj._runtime_record(self.item,runtime);readfd,writefd=os.pipe()
+        def request():
+            left,right=socket.socketpair()
+            try:
+                service.frame_write(left,{'operation':'runtime-owner','sessionId':'logical'})
+                with self.assertRaisesRegex(service.Refusal,'runtime_owner_unavailable'):self.obj._admin(right)
+            finally:left.close();right.close()
+        try:
+            runtime.update(initPidfd=readfd,scope=record['scope'])
+            for state in ('configured','retained','stopped'):runtime['state']=state;request()
+            runtime['state']='running';self.obj.debt.add('logical');request();self.obj.debt.clear()
+            runtime['cancel'].set();request();runtime['cancel'].clear();os.close(writefd);writefd=None;request()
+        finally:
+            os.close(readfd)
+            if writefd is not None:os.close(writefd)
     def test_missing_runtime_artifacts_cannot_admit_store(self):
         self.obj.runtime_artifacts={}
         with self.assertRaisesRegex(service.Refusal,'runtime_config'):self.obj._configure_runtime(self.item,self.config)

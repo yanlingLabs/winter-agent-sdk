@@ -187,9 +187,18 @@ class ToolService:
         self._listener(self.directory/'admin.sock',0,self._admin,admin=True)
     def _admin(self,channel):
         request=frame_read(channel)
-        if set(request)!={'operation','sessionId'} or request['operation'] not in ('revoke','status','launch-runtime'):raise Refusal('admin_request')
+        if set(request)!={'operation','sessionId'} or request['operation'] not in ('revoke','status','launch-runtime','runtime-owner'):raise Refusal('admin_request')
         if request['operation']=='revoke':
             self.revoke(request['sessionId']);frame_write(channel,{'revoked':True})
+        elif request['operation']=='runtime-owner':
+            with self.lock:
+                sid=request['sessionId'];runtime=self.runtimes.get(sid);item=self.conversations.get(sid)
+                if not runtime or not item or runtime['state']!='running' or runtime['cancel'].is_set() or item['revoked'] or sid in self.debt or self.stop_event.is_set():raise Refusal('runtime_owner_unavailable')
+                fd=runtime.get('initPidfd')
+                if fd is None or select.select([fd],[],[],0)[0]:raise Refusal('runtime_owner_unavailable')
+                record={'logicalSessionId':sid,'runtimeUid':item['runtimeUid'],'scope':runtime['scope'],'ownerToken':runtime['ownerToken']}
+                payload=canonical(record).encode();wire=struct.pack('!I',len(payload))+payload
+                if channel.sendmsg([wire],[(socket.SOL_SOCKET,socket.SCM_RIGHTS,array.array('i',[fd]))])!=len(wire):raise Uncertain('runtime_owner_handoff')
         elif request['operation']=='launch-runtime':
             self.launch_runtime(request['sessionId']);frame_write(channel,{'started':True})
         else:
@@ -368,11 +377,11 @@ class ToolService:
         try:fcntl.flock(descriptors['storeDirectory'],fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:raise Refusal('runtime_store_in_use')
         if os.listdir(descriptors['storeDirectory']) or os.listdir(descriptors['runhomeDirectory']):raise Refusal('runtime_fresh_store_required')
-        self.runtimes[item['logicalSessionId']]={'state':'configured','cancel':threading.Event(),'fds':descriptors,'provider':json.loads(canonical(provider)),'model':value['model'],'timeout':timeout/1000,'cleanupConfirmed':False,'exitCode':None}
+        self.runtimes[item['logicalSessionId']]={'state':'configured','cancel':threading.Event(),'fds':descriptors,'provider':json.loads(canonical(provider)),'model':value['model'],'timeout':timeout/1000,'cleanupConfirmed':False,'exitCode':None,'ownerToken':os.urandom(32).hex()}
     def _runtime_record(self,item,runtime):
         sid=item['logicalSessionId'];home=f'/run/winter/conversations/{sid}';store=f'/workspace/.winter/conversations/{sid}'
         tools=['Read','Write','Edit','Bash'];scope={key:item['authority'][key] for key in ('workspaceId','sessionId','incarnationId','leaseEpoch')};scope.update(storeHome=store,currentBootId=self.guest_boot)
-        return {'protocolVersion':1,'freshOnly':True,'runtimeUid':item['runtimeUid'],'toolUid':item['toolUid'],'workspaceGid':item['workspaceGid'],'logicalSessionId':sid,'scope':scope,'ownerToken':os.urandom(32).hex(),'toolSocketPath':home+'/.control/tools.sock','authority':dict(item['authority']),'roots':[binding['root'] for binding in item['roots'].values()],'provider':runtime['provider'],'runtimeConfig':{'executionPosture':'confined-guest','sessionId':item['authority']['sessionId'],'model':runtime['model'],'cwd':next(iter(item['roots'].values()))['root']['guestPath'],'winterHome':home,'storeHome':store,'persistSession':True,'settingSources':[],'tools':tools,'allowedTools':tools,'skills':[],'plugins':[],'strictMcpConfig':True,'mcpServers':{},'permissionMode':'auto'}}
+        return {'protocolVersion':1,'freshOnly':True,'runtimeUid':item['runtimeUid'],'toolUid':item['toolUid'],'workspaceGid':item['workspaceGid'],'logicalSessionId':sid,'scope':scope,'ownerToken':runtime['ownerToken'],'toolSocketPath':home+'/.control/tools.sock','authority':dict(item['authority']),'roots':[binding['root'] for binding in item['roots'].values()],'provider':runtime['provider'],'runtimeConfig':{'executionPosture':'confined-guest','sessionId':item['authority']['sessionId'],'model':runtime['model'],'cwd':next(iter(item['roots'].values()))['root']['guestPath'],'winterHome':home,'storeHome':store,'persistSession':True,'settingSources':[],'tools':tools,'allowedTools':tools,'skills':[],'plugins':[],'strictMcpConfig':True,'mcpServers':{},'permissionMode':'auto'}}
     def launch_runtime(self,sid):
         with self.lock:
             if sid not in self.runtimes or self.stop_event.is_set() or self.conversations[sid]['revoked'] or sid in self.debt:raise Refusal('runtime_admission')
@@ -394,11 +403,13 @@ class ToolService:
                 child=subprocess.Popen(args,executable=f"/proc/self/fd/{self.runtime_artifacts['launcher']}",stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=fds,close_fds=True,env={'LANG':'C','LC_ALL':'C'},start_new_session=True,bufsize=0)
             finally:os.close(control_directory)
             parent.close();guest.close();control.settimeout(2);pidfd=receive_init_pidfd(control);service_pidfd=os.pidfd_open(os.getpid(),0)
-            record=canonical(self._runtime_record(item,runtime)).encode()
+            bootstrap_record=self._runtime_record(item,runtime)
+            with self.lock:runtime['scope']=bootstrap_record['scope']
+            record=canonical(bootstrap_record).encode()
             if len(record)>65536:raise Refusal('runtime_bootstrap_limit')
             rights=array.array('i',[pidfd,service_pidfd,runtime['fds']['storeDirectory'],self.runtime_artifacts['executable']]);bootstrap.settimeout(2)
             if bootstrap.sendmsg([record],[(socket.SOL_SOCKET,socket.SCM_RIGHTS,rights)])!=len(record):raise Uncertain('runtime_bootstrap_send')
-            with self.lock:runtime['state']='running'
+            with self.lock:runtime.update(state='running',initPidfd=pidfd)
             selector=selectors.DefaultSelector();control.setblocking(False);selector.register(control,selectors.EVENT_READ)
             for stream in (child.stdout,child.stderr):os.set_blocking(stream.fileno(),False);selector.register(stream,selectors.EVENT_READ)
             terminal=None;out=bytearray();err=bytearray();start=time.monotonic();killed=False;kill_deadline=None
@@ -452,6 +463,7 @@ class ToolService:
                 except subprocess.TimeoutExpired:self.retained_children.append(child)
             if child is not None:
                 for stream in (child.stdout,child.stderr):stream.close()
+            with self.lock:runtime.pop('initPidfd',None)
             for fd in (pidfd,service_pidfd):
                 if fd is not None:os.close(fd)
             for channel in (control,parent,bootstrap,guest):
