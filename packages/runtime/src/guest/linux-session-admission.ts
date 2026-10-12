@@ -42,10 +42,12 @@ function validateRecord(record: BootstrapRecord): void {
 }
 function validateConfig(config: RuntimeConfig, record: BootstrapRecord): void {
   const fixed = record.runtimeConfig;
+  // Root preauthorizes the four fixture tools. SDK default avoids its separate
+  // model classifier; this is not the production host Auto approval bridge.
   // Only provider-derived context sizing may supplement the root-created initial config.
   const admittedKeys = new Set([...Object.keys(fixed), "contextWindowTokens"]);
   if (Object.keys(config).some(key => !admittedKeys.has(key))) unavailable();
-  if (config.executionPosture !== "confined-guest" || config.sessionId !== record.scope.sessionId || config.winterHome !== fixed.winterHome || config.storeHome !== record.scope.storeHome || config.cwd !== fixed.cwd || config.model !== fixed.model || config.persistSession !== true || !same(config.tools, FRESH_LINUX_TOOLS) || !same(config.allowedTools, FRESH_LINUX_TOOLS) || !same(config.settingSources, []) || !same(config.skills, []) || !same(config.plugins, []) || config.strictMcpConfig !== true || !same(config.mcpServers, {}) || config.permissionMode !== "auto") unavailable();
+  if (config.executionPosture !== "confined-guest" || config.sessionId !== record.scope.sessionId || config.winterHome !== fixed.winterHome || config.storeHome !== record.scope.storeHome || config.cwd !== fixed.cwd || config.model !== fixed.model || config.persistSession !== true || !same(config.tools, FRESH_LINUX_TOOLS) || !same(config.allowedTools, FRESH_LINUX_TOOLS) || !same(config.settingSources, []) || !same(config.skills, []) || !same(config.plugins, []) || config.strictMcpConfig !== true || !same(config.mcpServers, {}) || config.permissionMode !== "default") unavailable();
   for (const key of ["resume", "continue", "forkSession", "resumeSessionAt", "resumeDropsTurn", "agentId", "agents", "hooks", "hostCodeProcessBroker", "fallbackModel", "additionalDirectories", "managedSettings", "serverManagedSettings", "outputStyle", "pluginCacheDir", "forkSubagent", "backgroundByDefault"] as const) if (config[key as keyof RuntimeConfig] !== undefined) unavailable();
 }
 function stateOf(value: LinuxSessionAdmission | undefined): State {
