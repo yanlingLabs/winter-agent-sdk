@@ -24,7 +24,7 @@ invocation gets a private mount/PID/network/IPC/UTS view and non-root tool UID,
 read-only skeleton, zero capabilities, no-new-privileges and seccomp. It binds
 only admitted roots and immutable helper/environment files. Stdio is the only
 helper data channel; private control/artifact/source descriptors close before
-execution. Plans receive read-only source mounts. Current source/scratch views
+execution. Plans receive read-only source mounts. All other host approval labels map to writable mounts; the runtime permission layer must approve each operation before invoking this service. The supervisor enforces filesystem access, not approval-card decisions. Current source/scratch views
 retain the foundation's noexec restriction, and this is still foreground-only
 Bash: cwd carry, background tasks, pids cgroups and complete Code parity are open.
 
@@ -63,7 +63,9 @@ starts the real isolated Python service, and executes clients as two real runtim
 UIDs. Those clients use the existing registry Read/Edit/Write/Bash routes over the
 new port. It checks bytes, plan/readonly denials, absent runtime/proc/env surfaces,
 forged scope rejection, unsupported routes, native descendant cancellation and
-revocation after a positive child-start marker. No VM, providers, real home,
+revocation after a positive child-start marker. The dynamic glibc regression exercises actual pthread_create and posix_spawn fallback plus AF_UNIX; AF_INET/AF_INET6 remain denied in this offline service slice. Internet access is still a product requirement awaiting the admitted egress backend, not an accepted offline-only v1 decision. Same-boot supervisor restart remains unsupported: an existing control directory is never silently adopted; whole-VM recovery supplies a fresh boot/control scope.
+
+No VM, providers, real home,
 credentials, Docker or global installation is involved. Missing Linux kernel
 prerequisites fail; there is no unconfined fallback.
 

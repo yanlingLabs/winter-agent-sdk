@@ -17,6 +17,7 @@
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -54,7 +55,19 @@ static inline void install_filter(int process) {
 #ifdef __NR_open_tree
         DENY(open_tree),DENY(move_mount),DENY(mount_setattr),
 #endif
-        DENY(ptrace),DENY(process_vm_readv),DENY(process_vm_writev),DENY(socket),
+        DENY(ptrace),DENY(process_vm_readv),DENY(process_vm_writev),
+        /* Local IPC is needed by build tools; Internet sockets remain outside this
+         * offline compartment until the guest egress backend is admitted. */
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,__NR_socket,0,3),
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,args[0])),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,AF_UNIX,1,0),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,nr)),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,__NR_socketpair,0,3),
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,args[0])),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,AF_UNIX,1,0),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,nr)),
         /* Ordinary fork/threads only for the shell slice; namespace creation remains denied. */
         BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,__NR_clone,0,4),
         BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,args[0])),
@@ -64,7 +77,9 @@ static inline void install_filter(int process) {
         BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,nr)),
         DENY(open_by_handle_at),DENY(name_to_handle_at),DENY(bpf),DENY(perf_event_open),
 #ifdef __NR_clone3
-        DENY(clone3),
+        /* glibc falls back to the filtered legacy clone only for ENOSYS. */
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,__NR_clone3,0,1),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|ENOSYS),
 #endif
 #ifdef __NR_io_uring_setup
         DENY(io_uring_setup),
