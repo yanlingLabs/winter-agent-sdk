@@ -38,6 +38,7 @@ class RuntimeEntropyTests(unittest.TestCase):
 #define MOUNT_ATTR_NOSUID 0x2
 #define MOUNT_ATTR_NODEV 0x4
 #define MOUNT_ATTR_NOEXEC 0x8
+#define MS_PRIVATE (1UL << 18)
 struct mount_attr { uint64_t attr_set,attr_clr,propagation,userns_fd; };
 static int mode,opened,stat_calls,trees,attributes,closed;
 static int fake_open(const char *name,int flags,...){
@@ -61,7 +62,7 @@ static long fake_syscall(long call,...){
  }
  assert(call==SYS_mount_setattr);assert(va_arg(args,int)==91);assert(!strcmp(va_arg(args,const char *),""));assert(va_arg(args,int)==AT_EMPTY_PATH);
  struct mount_attr *attr=va_arg(args,struct mount_attr *);assert(va_arg(args,size_t)==sizeof *attr);
- assert(attr->attr_set==(MOUNT_ATTR_RDONLY|MOUNT_ATTR_NOSUID|MOUNT_ATTR_NOEXEC));assert(!(attr->attr_set&MOUNT_ATTR_NODEV));assert(attr->attr_clr==MOUNT_ATTR_NODEV);assert(!attr->propagation&&!attr->userns_fd);
+ assert(attr->attr_set==(MOUNT_ATTR_RDONLY|MOUNT_ATTR_NOSUID|MOUNT_ATTR_NOEXEC));assert(!(attr->attr_set&MOUNT_ATTR_NODEV));assert(attr->attr_clr==MOUNT_ATTR_NODEV);assert(attr->propagation==MS_PRIVATE&&!attr->userns_fd);
  attributes++;va_end(args);if(mode==10){errno=EPERM;return -1;}return 0;
 }
 static int fake_close(int fd){assert(fd==17);closed++;return 0;}

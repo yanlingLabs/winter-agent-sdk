@@ -6,6 +6,56 @@ from unittest.mock import patch
 from types import SimpleNamespace
 MODULE=Path(__file__).with_name('verify.py');spec=importlib.util.spec_from_file_location('retention_verify',MODULE);verify=importlib.util.module_from_spec(spec);spec.loader.exec_module(verify)
 class RetentionTests(unittest.TestCase):
+    def setUp(self):
+        # Existing fixture flow is injected; the kernel mount oracle has its own
+        # portable reader/parser tests and must never read host /proc here.
+        patched=patch.object(verify,'MountIsolationOracle');self.mount_oracle=patched.start()
+        self.addCleanup(patched.stop)
+    def test_mount_oracle_baseline_refusal_precedes_every_fixture_process_effect(self):
+        self.mount_oracle.return_value.before.side_effect=verify.MountIsolationError('outer_mounts_changed')
+        with patch.object(verify.subprocess,'Popen') as spawn,patch.object(verify,'snapshot_runtime_diagnostic'),patch.object(verify,'snapshot_bash_transcript'):
+            with self.assertRaisesRegex(verify.MountIsolationError,'outer_mounts_changed'):verify.execute_fixture(Path('/unused'),{}, {'artifacts':{}},{})
+        spawn.assert_not_called()
+    def test_handoff_mount_refusal_closes_received_right_before_provider_admission(self):
+        # Ordinary pipe is installed as a fake received right. No real pidfd or
+        # kernel namespace is inspected; the injected oracle must reject it.
+        read,write=os.pipe();channel=MagicMock();channel.__enter__.return_value=channel;admission=MagicMock()
+        expected={'workspaceId':'workspace','incarnationId':'incarnation','leaseEpoch':1,'bootId':'fixture-boot'}
+        scope={key:expected[key] for key in ('workspaceId','incarnationId','leaseEpoch')};scope.update(sessionId=verify.BACKEND,currentBootId=expected['bootId'],storeHome=f'/workspace/.winter/conversations/{verify.LOGICAL}')
+        record={'logicalSessionId':verify.LOGICAL,'runtimeUid':verify.RUNTIME_UID,'scope':scope,'ownerToken':'a'*64}
+        data=json.dumps(record).encode();wire=verify.struct.pack('!I',len(data))+data
+        channel.recvmsg.return_value=(wire,[(socket.SOL_SOCKET,socket.SCM_RIGHTS,verify.array.array('i',[read]).tobytes())],0,None)
+        oracle=MagicMock();oracle.during.side_effect=verify.MountIsolationError('runtime_propagation')
+        try:
+            with patch.object(verify.socket,'socket',return_value=channel),patch.object(verify.socket,'MSG_CMSG_CLOEXEC',0x40000000,create=True):
+                with self.assertRaisesRegex(verify.MountIsolationError,'runtime_propagation'):verify.admit_provider({'control':Path('/unused'),'provider':{'scope':expected}},admission,[],{},oracle)
+            admission.sendmsg.assert_not_called();oracle.during.assert_called_once()
+            with self.assertRaises(OSError):os.fstat(read)
+        finally:
+            try:os.close(read)
+            except OSError:pass
+            os.close(write)
+    def test_after_teardown_mount_change_preserves_fixture_instead_of_cleanup_fallback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory=Path(temporary)/'winter-fresh-engine-fixture';directory.mkdir();config=directory/'bootstrap.json';config.write_text('{}')
+            fixture={'config':config,'binary':directory,'control':directory};observations={}
+            server=MagicMock();server.stdin=io.BytesIO();server.stdout=io.BytesIO();server.stderr=io.BytesIO();server.returncode=0;server.poll.return_value=0
+            provider=MagicMock();provider.stdin=None;provider.stdout=io.BytesIO(b'{"passed":true,"turns":5,"peerValidated":true}');provider.stderr=io.BytesIO();provider.returncode=0;provider.poll.return_value=0
+            status={'active':0,'uncertain':False,'runtime':{'state':'stopped','exitCode':0,'cleanupConfirmed':True}}
+            oracle=self.mount_oracle.return_value
+            def after(observed):
+                provider.wait.assert_called_with(timeout=5);server.wait.assert_called_with(timeout=5)
+                self.assertTrue(observed['nativeCleanupConfirmed']);self.assertTrue(observed['serviceReaped'])
+                raise verify.MountIsolationError('outer_mounts_changed')
+            oracle.after.side_effect=after
+            with patch.object(verify.tempfile,'mkdtemp',return_value=str(directory)),patch.object(verify.sys,'stderr',io.StringIO()),patch.object(verify.subprocess,'Popen',return_value=server),patch.object(verify,'start_provider',return_value=(provider,MagicMock())),patch.object(verify,'admit_provider'),patch.object(verify,'exchange',return_value={'started':True}),patch.object(verify,'wait_for',side_effect=[True,status]),patch.object(verify,'persisted_evidence',return_value={}),patch.object(verify,'snapshot_runtime_diagnostic'),patch.object(verify.shutil,'rmtree') as remove:
+                with self.assertRaisesRegex(verify.MountIsolationError,'outer_mounts_changed'):
+                    with verify.retained_fixture_directory(observations):verify.execute_fixture(directory,fixture,{'artifacts':{},'compileReceiptSha256':'a'*64},observations)
+                remove.assert_not_called()
+            oracle.before.assert_called_once();oracle.after.assert_called_once()
+            record=json.loads((directory/'fixture-diagnostic.json').read_text())
+            self.assertEqual(record['failure'],{'class':'MountIsolationError','code':'outer_mounts_changed'});self.assertFalse(record['ownershipReleased'])
+            self.assertEqual(observations['providerReceipt'],{'passed':True,'turns':5,'peerValidated':True});self.assertTrue(directory.exists())
     def bash_records(self,content='Blocked by classifier',**flags):
         return [{'sessionId':verify.BACKEND,'type':'assistant','uuid':'known-assistant','message':{'content':[{'type':'tool_use','id':'call-3','name':'Bash','input':verify.EXPECTED_CALLS[3][1]}]}},
                 {'sessionId':verify.BACKEND,'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'call-3','content':content,**flags}]}}]
@@ -203,7 +253,7 @@ class RetentionTests(unittest.TestCase):
         status={'active':0,'uncertain':True,'runtime':{'state':'retained','exitCode':None,'cleanupConfirmed':False},'unsafe':'secret /private/path'}
         def wait(check,seconds,children):self.assertEqual(seconds,2);return check()
         with patch.object(verify.socket,'MSG_CMSG_CLOEXEC',0x40000000,create=True),patch.object(verify.socket,'socket',return_value=channel),patch.object(verify,'wait_for',side_effect=wait),patch.object(verify,'exchange',return_value=status) as exchange,patch.object(verify,'snapshot_runtime_diagnostic') as snapshot:
-            with self.assertRaisesRegex(AssertionError,'terminal before owner'):verify.admit_provider(fixture,admission,[],observations)
+            with self.assertRaisesRegex(AssertionError,'terminal before owner'):verify.admit_provider(fixture,admission,[],observations,self.mount_oracle.return_value)
         self.assertEqual(observations['ownerAdmissionFailure'],'terminal-runtime-before-owner');self.assertEqual(observations['nativeStatus'],{'state':'retained','exitCode':None,'cleanupConfirmed':False,'active':0,'uncertain':True});self.assertFalse(observations['nativeCleanupConfirmed']);admission.sendmsg.assert_not_called();snapshot.assert_called_once_with(fixture,observations);self.assertLessEqual(exchange.call_args.kwargs['seconds'],.25);self.assertNotIn('secret',json.dumps(observations))
     def test_execute_failure_snapshots_runtime_diagnostic_before_and_after_existing_cleanup(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -219,6 +269,6 @@ class RetentionTests(unittest.TestCase):
         fixture={'control':Path('/unused-fixture-control')};channel=MagicMock();channel.__enter__.return_value=channel;channel.recvmsg.return_value=(b'',[],0,None);admission=MagicMock();observations={}
         def wait(check,seconds,children):self.assertEqual(seconds,2);self.assertFalse(check());raise AssertionError('bounded fixture wait failed')
         with patch.object(verify.socket,'MSG_CMSG_CLOEXEC',0x40000000,create=True),patch.object(verify.socket,'socket',return_value=channel),patch.object(verify,'wait_for',side_effect=wait),patch.object(verify,'exchange',return_value={'runtime':{'state':'starting'}}):
-            with self.assertRaisesRegex(AssertionError,'bounded fixture wait'):verify.admit_provider(fixture,admission,[],observations)
+            with self.assertRaisesRegex(AssertionError,'bounded fixture wait'):verify.admit_provider(fixture,admission,[],observations,self.mount_oracle.return_value)
         self.assertNotIn('nativeStatus',observations);admission.sendmsg.assert_not_called()
 if __name__=='__main__':unittest.main()

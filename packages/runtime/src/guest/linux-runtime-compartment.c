@@ -12,7 +12,9 @@ static int number(const char *text,int minimum,int maximum){char *end;long n=str
 static int descriptor(const char *text){int fd=number(text,3,65535);if(fcntl(fd,F_GETFD)<0)_exit(64);return fd;}
 static void pinned_file(int fd){struct stat s;require(fstat(fd,&s),"artifact identity");if(!S_ISREG(s.st_mode)||s.st_uid!=0||s.st_nlink!=1||(s.st_mode&0222)||(fcntl(fd,F_GETFL)&O_ACCMODE)!=O_RDONLY)_exit(64);}
 static void directory(int fd,int uid,int mode){struct stat s;require(fstat(fd,&s),"directory identity");if(!S_ISDIR(s.st_mode)||(uid>=0&&s.st_uid!=(uid_t)uid)||(mode>=0&&(s.st_mode&0777)!=(mode_t)mode))_exit(64);}
-static int clone_mount(int fd,int ro,int executable){int tree=(int)syscall(SYS_open_tree,fd,"",OPEN_TREE_CLONE|OPEN_TREE_CLOEXEC|AT_EMPTY_PATH);require(tree,"clone runtime mount");struct mount_attr attr={.attr_set=MOUNT_ATTR_NOSUID|MOUNT_ATTR_NODEV|(ro?MOUNT_ATTR_RDONLY:0)|(executable?0:MOUNT_ATTR_NOEXEC)};require((int)syscall(SYS_mount_setattr,tree,"",AT_EMPTY_PATH,&attr,sizeof attr),"runtime mount flags");return tree;}
+/* Detached clones retain source propagation. Make each private before attachment;
+ * the later recursive private operation on / cannot reach these detached trees. */
+static int clone_mount(int fd,int ro,int executable){int tree=(int)syscall(SYS_open_tree,fd,"",OPEN_TREE_CLONE|OPEN_TREE_CLOEXEC|AT_EMPTY_PATH);require(tree,"clone runtime mount");struct mount_attr attr={.attr_set=MOUNT_ATTR_NOSUID|MOUNT_ATTR_NODEV|(ro?MOUNT_ATTR_RDONLY:0)|(executable?0:MOUNT_ATTR_NOEXEC),.propagation=MS_PRIVATE};require((int)syscall(SYS_mount_setattr,tree,"",AT_EMPTY_PATH,&attr,sizeof attr),"runtime mount flags");return tree;}
 /* Only the trusted runtime needs this kernel entropy device. Pin its actual
  * Linux character identity and clone from that FD, never reopen a checked path. */
 static int urandom_mount(void){
@@ -22,7 +24,7 @@ static int urandom_mount(void){
     int tree=(int)syscall(SYS_open_tree,fd,"",OPEN_TREE_CLONE|OPEN_TREE_CLOEXEC|AT_EMPTY_PATH);require(tree,"clone runtime entropy mount");
     /* NODEV on this one mount would prevent Bun reading the device. All other
      * mounts retain their existing NODEV policy; no whole /dev tree is exposed. */
-    struct mount_attr attr={.attr_set=MOUNT_ATTR_RDONLY|MOUNT_ATTR_NOSUID|MOUNT_ATTR_NOEXEC,.attr_clr=MOUNT_ATTR_NODEV};
+    struct mount_attr attr={.attr_set=MOUNT_ATTR_RDONLY|MOUNT_ATTR_NOSUID|MOUNT_ATTR_NOEXEC,.attr_clr=MOUNT_ATTR_NODEV,.propagation=MS_PRIVATE};
     require((int)syscall(SYS_mount_setattr,tree,"",AT_EMPTY_PATH,&attr,sizeof attr),"runtime entropy mount flags");close(fd);return tree;
 }
 static void attach(int tree,const char *target){require((int)syscall(SYS_move_mount,tree,"",AT_FDCWD,target,MOVE_MOUNT_F_EMPTY_PATH),"attach runtime mount");close(tree);}
