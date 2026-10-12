@@ -58,11 +58,12 @@ embedded floor coverage: Bun Workers share Core's OS process and cannot establis
 a per-session Seatbelt floor.
 
 The host-only `brokerRequired` option on the embedded spawn/session lifecycle
-enrolls Bash/Monitor command execution independently of the RPC client's presence.
+enrolls Bash, Monitor and Workflow launches independently of the RPC client's presence.
 The trusted Worker `start` message carries that requirement; `RuntimeConfig`, SDK
 `Options`, model inputs and environment do not. Engine client removal does not
 remove enrollment, and a missing/refused broker produces no local execution
-fallback. Enrollment ends only after the session has returned and its terminal
+fallback. Workflow refuses before creating its script, transcript or task, and
+checks again at its real process-spawn door. Enrollment ends only after the session has returned and its terminal
 cleanup has completed. The trusted parent broker's `runCommandLocally` entry is
 separate: it requires the canonical host floor at admission and native spawn.
 This command-only requirement does not floor other embedded consumers.

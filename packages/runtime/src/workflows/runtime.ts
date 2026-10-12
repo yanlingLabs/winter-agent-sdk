@@ -23,7 +23,7 @@ import { WorkflowRegistry } from "./registry.ts";
 import { makeSemaphore, resolveConcurrencyCap, type Semaphore } from "./semaphore.ts";
 import { createBudget, type WorkflowBudget } from "./budget.ts";
 import { buildWorkerSpawn, resolveWorkerCommand, workflowSandboxAvailable, type WorkerCommand } from "./sandbox.ts";
-import { currentHostCodeProcessClient } from "../sandbox/host-code-process.ts";
+import { currentHostCodeProcessClient, hostCodeProcessBrokerRequired } from "../sandbox/host-code-process.ts";
 import { brokeredWorkflowWorker } from "./host-code-worker.ts";
 import type { SandboxBrand } from "../sandbox/profile.ts";
 import { trackProcessGroup } from "../process-groups.ts";
@@ -127,6 +127,12 @@ export function stderrTail(stream: NodeJS.ReadableStream | null | undefined): ()
 
 export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; winterHome?: string; brand?: SandboxBrand; cwd?: string; hostCodeScope?: {sessionId:string;toolUseId:string;agentId?:string;parentToolUseId?:string}; runId?:string }) => WorkerProcess;
 
+function assertRequiredWorkflowBroker(): void {
+  if (hostCodeProcessBrokerRequired() && !currentHostCodeProcessClient()) {
+    throw new WorkflowRuntimeError("sandbox-unavailable", "required host Workflow broker unavailable; no local execution fallback");
+  }
+}
+
 /**
  * The production spawner: `sandbox-exec -p <profile> <worker>`, its own process-group leader.
  *
@@ -140,6 +146,7 @@ export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; wint
 export function realWorkerSpawner(opts: { sandbox?: boolean } = {}): WorkerSpawner {
   const sandbox = opts.sandbox ?? true;
   return (command, spawnOpts) => {
+    assertRequiredWorkflowBroker();
     if(currentHostCodeProcessClient()) {
       if(!spawnOpts.hostCodeScope||!spawnOpts.runId||!spawnOpts.cwd)throw new WorkflowRuntimeError("sandbox-unavailable","Workflow requires an authenticated host execution scope");
       return brokeredWorkflowWorker({cwd:spawnOpts.cwd,runId:spawnOpts.runId,scope:spawnOpts.hostCodeScope});
@@ -302,6 +309,9 @@ export class WorkflowRuntime {
   }
 
   launch(input: WorkflowLaunchInput, host: WorkflowRunHost): WorkflowLaunchResult {
+    // Refuse before scripts, journals, tasks or worker processes can be created. The real
+    // spawner checks again at use, including its verification-only sandbox:false entry.
+    assertRequiredWorkflowBroker();
     // The sandbox refusal is checked BEFORE anything is created, so a host without `sandbox-exec`
     // gets a clean error instead of a half-registered run. Only an injected spawner skips it -- and
     // then only because that spawner is, by construction, not forking anything.
