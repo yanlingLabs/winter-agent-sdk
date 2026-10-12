@@ -195,9 +195,9 @@ bun scripts/research/host-floor-compatibility.ts /tmp/winter-floor-sourcekit-evi
 ```
 
 - [Build/browser evidence: 18 cases](2026-10-12-host-floor-compatibility-evidence-full/results.json)
-- [Build/browser actual saved profile](2026-10-12-host-floor-compatibility-evidence-full/floor.sb)
+- [Build/browser normalized saved profile](2026-10-12-host-floor-compatibility-evidence-full/floor.sb)
 - [SourceKit evidence: four cases](2026-10-12-host-floor-sourcekit-evidence/results.json)
-- [SourceKit actual saved profile](2026-10-12-host-floor-sourcekit-evidence/floor.sb)
+- [SourceKit normalized saved profile](2026-10-12-host-floor-sourcekit-evidence/floor.sb)
 - [Runner](../../scripts/research/host-floor-compatibility.ts)
 - [Owned fixture cleanup record](2026-10-12-host-floor-cleanup.json)
 
@@ -205,5 +205,7 @@ Each evidence directory retains separate stdout/stderr logs. The first eight-cas
 measurement was superseded by the complete eighteen-case run, which reproduced
 its conclusions. The report and captured hashes refer to that complete run and
 the SourceKit run.
+
+Public copies normalize the per-user macOS temporary-directory prefix to `/private/var/folders/xx/yyyy/T`. Stream hashes and saved-profile hashes bind those copies; raw native-argument hashes and pre-normalization published hashes remain identified separately. Raw originals are retained locally. The normalization manifest records the before/after published file identities; no workload or outcome was changed or rerun.
 
 Public evidence paths and ancestor literals are synthetic. Published capture/profile hashes refer to normalized copies; retained raw/native hashes refer to the original measurements. No workload was rerun for this publication change.

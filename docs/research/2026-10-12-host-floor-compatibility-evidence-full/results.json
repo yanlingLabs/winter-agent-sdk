@@ -43,7 +43,9 @@
       "stdout": "synthetic-floor-needle",
       "stderr": "",
       "stdoutSha256": "fc1f32054b61ae07cd0346708bff5d8a452222fd238da90e9286b2cddda29914",
-      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "preTempNormalizationStdoutSha256": "fc1f32054b61ae07cd0346708bff5d8a452222fd238da90e9286b2cddda29914",
+      "preTempNormalizationStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "label": "floor-probe-floor",
@@ -73,6 +75,7 @@
       "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "stderrSha256": "8187b3833bdf6c7d168205d5d78449a0f4ed672b1ef6129e866b68a8a74f8398",
       "profileSha256": "5cc1a1d508825e0b0658c63962e05b5f7dd30d8a7cacf3361fb06c137d6de471",
+      "preTempNormalizationStdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "preTempNormalizationStderrSha256": "eb9a5ff1f8d534deb2b3145b05fd4a425a68e3386c51bf386fd606b33bd8eec7"
     },
     {
@@ -116,7 +119,9 @@
       "stdout": "Building for debugging...\n[0/2] Write sources\n[1/2] Write swift-version--58304C5D6DBC2206.txt\n[3/4] Compiling FloorFixture Fixture.swift\n[4/4] Emitting module FloorFixture\nBuild complete! (0.42s)\n",
       "stderr": "",
       "stdoutSha256": "e967a383051fb5d9ea5f99889e6d4a380d258fb433eede20adeb0ca1a6484f69",
-      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "preTempNormalizationStdoutSha256": "e967a383051fb5d9ea5f99889e6d4a380d258fb433eede20adeb0ca1a6484f69",
+      "preTempNormalizationStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "label": "swift-build-floor",
@@ -161,6 +166,7 @@
       "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "stderrSha256": "b6704f8d00b95aa4139a3e5cec56a3c6601ff94fa3ba3be35ad6fab1fdb71de6",
       "profileSha256": "5cc1a1d508825e0b0658c63962e05b5f7dd30d8a7cacf3361fb06c137d6de471",
+      "preTempNormalizationStdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "preTempNormalizationStderrSha256": "dd9a0c51a670211ea8e5d3e93d6a7ee68b44616e678250e6a9cb1a8a5cb3df2f"
     },
     {
@@ -206,7 +212,9 @@
       "stdout": "Building for debugging...\n[0/2] Write sources\n[1/2] Write swift-version--58304C5D6DBC2206.txt\n[3/4] Compiling FloorFixture Fixture.swift\n[4/4] Emitting module FloorFixture\nBuild complete! (0.39s)\n",
       "stderr": "",
       "stdoutSha256": "623a05d8366df3eac6387b2a320de9fb991ed4eecf633e06914cb85ff83eaaf3",
-      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "preTempNormalizationStdoutSha256": "623a05d8366df3eac6387b2a320de9fb991ed4eecf633e06914cb85ff83eaaf3",
+      "preTempNormalizationStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "label": "swift-build-disable-sandbox-floor",
@@ -252,7 +260,9 @@
       "stderr": "",
       "stdoutSha256": "e967a383051fb5d9ea5f99889e6d4a380d258fb433eede20adeb0ca1a6484f69",
       "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "profileSha256": "5cc1a1d508825e0b0658c63962e05b5f7dd30d8a7cacf3361fb06c137d6de471"
+      "profileSha256": "5cc1a1d508825e0b0658c63962e05b5f7dd30d8a7cacf3361fb06c137d6de471",
+      "preTempNormalizationStdoutSha256": "e967a383051fb5d9ea5f99889e6d4a380d258fb433eede20adeb0ca1a6484f69",
+      "preTempNormalizationStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "label": "swift-test-control",
@@ -296,6 +306,7 @@
       "stderr": "Building for debugging...\n[0/7] /private/var/folders/xx/yyyy/T/winter-host-floor-compat-e41muW/swift-test-control/.build/arm64-apple-macosx/debug/FloorFixturePackageTests.derived/runner.swift\n[1/7] Write sources\n[4/7] Write swift-version--58304C5D6DBC2206.txt\n[6/9] Emitting module FloorFixture\n[7/9] Compiling FloorFixture Fixture.swift\n[8/11] Compiling FloorFixtureTests FixtureTests.swift\n[9/11] Emitting module FloorFixtureTests\n[10/13] Compiling FloorFixturePackageTests runner.swift\n[11/13] Emitting module FloorFixturePackageTests\n[11/13] Write Objects.LinkFileList\n[12/13] Linking FloorFixturePackageTests\nBuild complete! (9.43s)\n",
       "stdoutSha256": "ad6a3a1ad8a9b2c23d340735a661c1d8925bc672e253399fb7386e574d991078",
       "stderrSha256": "a28d09672e3469b7160ccbb52fea568b1ef4f922c5af6a9f0891278fd6d3b5b1",
+      "preTempNormalizationStdoutSha256": "ad6a3a1ad8a9b2c23d340735a661c1d8925bc672e253399fb7386e574d991078",
       "preTempNormalizationStderrSha256": "ab4375c4b15c961a953ec73e3cc7ff2a0442296ed384d8c8a3e10aed5910d7df"
     },
     {
@@ -341,6 +352,7 @@
       "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "stderrSha256": "853c9987a3239f16ffa38372553efa265126f78f9803629acc612d3e84824277",
       "profileSha256": "5cc1a1d508825e0b0658c63962e05b5f7dd30d8a7cacf3361fb06c137d6de471",
+      "preTempNormalizationStdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "preTempNormalizationStderrSha256": "e193090bb5edca7ca82fa18c858c792e348160784579e7c71c71b8b465a33b60"
     },
     {
@@ -387,6 +399,7 @@
       "stderr": "Building for debugging...\n[0/7] /private/var/folders/xx/yyyy/T/winter-host-floor-compat-e41muW/swift-test-disable-sandbox-control/.build/arm64-apple-macosx/debug/FloorFixturePackageTests.derived/runner.swift\n[1/7] Write sources\n[4/7] Write swift-version--58304C5D6DBC2206.txt\n[6/9] Emitting module FloorFixture\n[7/9] Compiling FloorFixture Fixture.swift\n[8/11] Emitting module FloorFixtureTests\n[9/11] Compiling FloorFixtureTests FixtureTests.swift\n[10/13] Emitting module FloorFixturePackageTests\n[11/13] Compiling FloorFixturePackageTests runner.swift\n[11/13] Write Objects.LinkFileList\n[12/13] Linking FloorFixturePackageTests\nBuild complete! (8.81s)\n",
       "stdoutSha256": "da70f4262fce76904cfbf6daa07cf38f2b2d662f2f1091b08ef72c3f807d7751",
       "stderrSha256": "31872eb59e1143acb41035b1169e15d7c23f49ff8a6e2f71ceb07314b4bf6c00",
+      "preTempNormalizationStdoutSha256": "da70f4262fce76904cfbf6daa07cf38f2b2d662f2f1091b08ef72c3f807d7751",
       "preTempNormalizationStderrSha256": "c748afc56ea56ec492d99b2a6bf6d33749504a3c36a64f2c68c848480ac70f4a"
     },
     {
@@ -434,6 +447,7 @@
       "stdoutSha256": "b48ee06c202cef9f4a1ed95b22a53559349e6c5235d860773afc362b8ed23a80",
       "stderrSha256": "7e44d016b99ba4359cd7878d804bb6c84f2b26043d04da8075f84d1f58de6e31",
       "profileSha256": "5cc1a1d508825e0b0658c63962e05b5f7dd30d8a7cacf3361fb06c137d6de471",
+      "preTempNormalizationStdoutSha256": "b48ee06c202cef9f4a1ed95b22a53559349e6c5235d860773afc362b8ed23a80",
       "preTempNormalizationStderrSha256": "fbd562f34f5ed793438679d469b2c4615935153c7a363ca04ce111be40ce1780"
     },
     {
@@ -478,7 +492,9 @@
       "stdout": "<!DOCTYPE html>\n<html><head><title>Floor fixture</title></head><body><p id=\"proof\">headless-fixture-ready</p></body></html>\n",
       "stderr": "[1012/022729.260473:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n[1012/022729.318781:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n[1012/022729.353078:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n",
       "stdoutSha256": "d84bc210f344a0b047a7ada3aeaa3a3c137a722f042635ee2e775e20dbead7b2",
-      "stderrSha256": "9b08435fc702b51eb7c11f38165a90d2f61e3ff1a8dfa6d43e8433da5a993cd7"
+      "stderrSha256": "9b08435fc702b51eb7c11f38165a90d2f61e3ff1a8dfa6d43e8433da5a993cd7",
+      "preTempNormalizationStdoutSha256": "d84bc210f344a0b047a7ada3aeaa3a3c137a722f042635ee2e775e20dbead7b2",
+      "preTempNormalizationStderrSha256": "9b08435fc702b51eb7c11f38165a90d2f61e3ff1a8dfa6d43e8433da5a993cd7"
     },
     {
       "label": "chromium-default-floor",
@@ -523,7 +539,9 @@
       "stderr": "sandbox initialization failed: Operation not permitted\n[1012/022729.470581:ERROR:content/browser/gpu/gpu_process_host.cc:1044] GPU process exited unexpectedly: exit_code=5\n[1012/022729.470596:WARNING:content/browser/gpu/gpu_process_host.cc:1503] The GPU process has crashed 1 time(s)\nsandbox initialization failed: Operation not permitted\n[1012/022729.487686:ERROR:content/browser/gpu/gpu_process_host.cc:1044] GPU process exited unexpectedly: exit_code=5\n[1012/022729.487697:WARNING:content/browser/gpu/gpu_process_host.cc:1503] The GPU process has crashed 2 time(s)\nsandbox initialization failed: Operation not permitted\n[1012/022729.503253:ERROR:content/browser/gpu/gpu_process_host.cc:1044] GPU process exited unexpectedly: exit_code=5\n[1012/022729.503264:WARNING:content/browser/gpu/gpu_process_host.cc:1503] The GPU process has crashed 3 time(s)\nsandbox initialization failed: Operation not permitted\n[1012/022729.520094:ERROR:content/browser/gpu/gpu_process_host.cc:1044] GPU process exited unexpectedly: exit_code=5\n[1012/022729.520105:WARNING:content/browser/gpu/gpu_process_host.cc:1503] The GPU process has crashed 4 time(s)\nsandbox initialization failed: Operation not permitted\n[1012/022729.537157:ERROR:content/browser/gpu/gpu_process_host.cc:1044] GPU process exited unexpectedly: exit_code=5\n[1012/022729.537168:WARNING:content/browser/gpu/gpu_process_host.cc:1503] The GPU process has crashed 5 time(s)\nsandbox initialization failed: Operation not permitted\n[1012/022729.554405:ERROR:content/browser/gpu/gpu_process_host.cc:1044] GPU process exited unexpectedly: exit_code=5\n[1012/022729.554418:WARNING:content/browser/gpu/gpu_process_host.cc:1503] The GPU process has crashed 6 time(s)\n[1012/022729.554440:FATAL:content/browser/gpu/gpu_data_manager_impl_private.cc:389] GPU process isn't usable. Goodbye.\n",
       "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "stderrSha256": "57ba826d85e49f03992e0348c4a07b32139d80aa1afdb5f7876cacee705ab4b4",
-      "profileSha256": "5cc1a1d508825e0b0658c63962e05b5f7dd30d8a7cacf3361fb06c137d6de471"
+      "profileSha256": "5cc1a1d508825e0b0658c63962e05b5f7dd30d8a7cacf3361fb06c137d6de471",
+      "preTempNormalizationStdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "preTempNormalizationStderrSha256": "57ba826d85e49f03992e0348c4a07b32139d80aa1afdb5f7876cacee705ab4b4"
     },
     {
       "label": "chromium-disable-gpu-sandbox-control",
@@ -568,7 +586,9 @@
       "stdout": "<!DOCTYPE html>\n<html><head><title>Floor fixture</title></head><body><p id=\"proof\">headless-fixture-ready</p></body></html>\n",
       "stderr": "[1012/022729.637540:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n[1012/022729.647476:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n[1012/022729.670132:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n",
       "stdoutSha256": "d84bc210f344a0b047a7ada3aeaa3a3c137a722f042635ee2e775e20dbead7b2",
-      "stderrSha256": "725ab01ef7475cb37ad28bd81ff3d9e2d9c1131e5fa3e49f322347de242981f8"
+      "stderrSha256": "725ab01ef7475cb37ad28bd81ff3d9e2d9c1131e5fa3e49f322347de242981f8",
+      "preTempNormalizationStdoutSha256": "d84bc210f344a0b047a7ada3aeaa3a3c137a722f042635ee2e775e20dbead7b2",
+      "preTempNormalizationStderrSha256": "725ab01ef7475cb37ad28bd81ff3d9e2d9c1131e5fa3e49f322347de242981f8"
     },
     {
       "label": "chromium-disable-gpu-sandbox-floor",
@@ -614,7 +634,9 @@
       "stderr": "",
       "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "profileSha256": "5cc1a1d508825e0b0658c63962e05b5f7dd30d8a7cacf3361fb06c137d6de471"
+      "profileSha256": "5cc1a1d508825e0b0658c63962e05b5f7dd30d8a7cacf3361fb06c137d6de471",
+      "preTempNormalizationStdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "preTempNormalizationStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "label": "chromium-no-sandbox-control",
@@ -659,7 +681,9 @@
       "stdout": "<!DOCTYPE html>\n<html><head><title>Floor fixture</title></head><body><p id=\"proof\">headless-fixture-ready</p></body></html>\n",
       "stderr": "[1012/022744.790878:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n[1012/022744.805349:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n[1012/022744.832139:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n",
       "stdoutSha256": "d84bc210f344a0b047a7ada3aeaa3a3c137a722f042635ee2e775e20dbead7b2",
-      "stderrSha256": "957dd25bcf70cd8ecfef3d8c9f05987087c6890484bda144a3dfedaa3ddd4ba1"
+      "stderrSha256": "957dd25bcf70cd8ecfef3d8c9f05987087c6890484bda144a3dfedaa3ddd4ba1",
+      "preTempNormalizationStdoutSha256": "d84bc210f344a0b047a7ada3aeaa3a3c137a722f042635ee2e775e20dbead7b2",
+      "preTempNormalizationStderrSha256": "957dd25bcf70cd8ecfef3d8c9f05987087c6890484bda144a3dfedaa3ddd4ba1"
     },
     {
       "label": "chromium-no-sandbox-floor",
@@ -705,7 +729,9 @@
       "stderr": "[1012/022744.940452:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n[1012/022744.946697:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n[1012/022744.971706:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n",
       "stdoutSha256": "d84bc210f344a0b047a7ada3aeaa3a3c137a722f042635ee2e775e20dbead7b2",
       "stderrSha256": "309cc17077add5dcf09abcf772d60c9512afdec52c103b6518b8b20982555de0",
-      "profileSha256": "5cc1a1d508825e0b0658c63962e05b5f7dd30d8a7cacf3361fb06c137d6de471"
+      "profileSha256": "5cc1a1d508825e0b0658c63962e05b5f7dd30d8a7cacf3361fb06c137d6de471",
+      "preTempNormalizationStdoutSha256": "d84bc210f344a0b047a7ada3aeaa3a3c137a722f042635ee2e775e20dbead7b2",
+      "preTempNormalizationStderrSha256": "309cc17077add5dcf09abcf772d60c9512afdec52c103b6518b8b20982555de0"
     },
     {
       "label": "chromium-no-sandbox-protected-file-control",
@@ -750,7 +776,9 @@
       "stdout": "<html><head><meta name=\"color-scheme\" content=\"light dark\"></head><body><pre style=\"word-wrap: break-word; white-space: pre-wrap;\">synthetic-floor-needle</pre></body></html>\n",
       "stderr": "[1012/022745.089289:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n[1012/022745.089633:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n[1012/022745.113204:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n",
       "stdoutSha256": "cd8ed6227a3436d6ed92de68dfd49cf21291e7fc42382ac104bef899f61fd0e9",
-      "stderrSha256": "23345151a0a7cf1e31adbaa42b0564104bb61c68dc0759b09a872f10260524bb"
+      "stderrSha256": "23345151a0a7cf1e31adbaa42b0564104bb61c68dc0759b09a872f10260524bb",
+      "preTempNormalizationStdoutSha256": "cd8ed6227a3436d6ed92de68dfd49cf21291e7fc42382ac104bef899f61fd0e9",
+      "preTempNormalizationStderrSha256": "23345151a0a7cf1e31adbaa42b0564104bb61c68dc0759b09a872f10260524bb"
     },
     {
       "label": "chromium-no-sandbox-protected-file-floor",
@@ -796,7 +824,9 @@
       "stderr": "[1012/022745.224882:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n[1012/022745.228416:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670\n[1012/022745.256315:ERROR:components/headless/command_handler/headless_command_handler.cc:403] Page load failed: net::ERR_FILE_NOT_FOUND\n",
       "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "stderrSha256": "f9b018239fcd653382cfb97023aa843a7cd1a3f51c515fb83db7a3a7eca4898e",
-      "profileSha256": "5cc1a1d508825e0b0658c63962e05b5f7dd30d8a7cacf3361fb06c137d6de471"
+      "profileSha256": "5cc1a1d508825e0b0658c63962e05b5f7dd30d8a7cacf3361fb06c137d6de471",
+      "preTempNormalizationStdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "preTempNormalizationStderrSha256": "f9b018239fcd653382cfb97023aa843a7cd1a3f51c515fb83db7a3a7eca4898e"
     }
   ],
   "preTempNormalizationSavedProfileSha256": "f92167b76d6bb36f8f389549af9662542c0e75735c1a7ccfedaf5ebd7fea3bfe",

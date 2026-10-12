@@ -169,8 +169,13 @@ Core's reviewed incarnation-handoff fallback until integration/pinning occurs.
 - [Reproducible runner](../../scripts/research/code-policy-compatibility.ts)
 
 Browser executable personal-home prefixes are represented as `<USER_HOME>` in
-committed logs/arguments; the installed relative path is preserved. Saved hashes
-identify each actual sandbox profile. Native timeouts/output limits are owned
+committed logs/arguments; the installed relative path is preserved. Per-user macOS
+temporary-directory prefixes are represented as `/private/var/folders/xx/yyyy/T`.
+Published stdout/stderr/profile hashes identify these normalized copies. Existing
+raw hashes and `preTempNormalization*Sha256` retain their earlier identities; the
+normalization manifest binds before/after published bytes. Raw originals are
+retained locally, not republished. This changes no measurements or outcomes and
+does not rerun the workloads. Native timeouts/output limits are owned
 fixture limits; no workload was promoted to a passing result because of a zero
 exit status with no useful output. The initial uncommitted candidate run is
 superseded by the source-pinned run above.

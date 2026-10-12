@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFi
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { publicEvidenceJson, publicEvidenceText } from "./public-evidence";
 
 const sdkRoot = resolve(process.argv[2]!);
 const output = resolve(process.argv[3]!);
@@ -44,22 +45,23 @@ async function run(label: string, argv: string[], f: ReturnType<typeof fixture>,
     ...(escape ? { dangerouslyDisableSandbox: true } : {}), writableRoots: [f.cwd], home: f.home, winterHome: join(f.home, WINTER_BRAND.homeDirName),
     onStdout(chunk: Buffer) { stdout += chunk.toString(); }, onStderr(chunk: Buffer) { stderr += chunk.toString(); } });
   const { profile, ...status } = result;
-  if (profile !== undefined) writeFileSync(join(output, label + ".sb"), profile);
+  const publishedProfile = profile === undefined ? undefined : publicEvidenceText(profile, homedir());
+  if (publishedProfile !== undefined) writeFileSync(join(output, label + ".sb"), publishedProfile);
   const rawStdoutSha256 = hash(stdout), rawStderrSha256 = hash(stderr);
-  stdout = stdout.split(homedir() + "/").join("<USER_HOME>/"); stderr = stderr.split(homedir() + "/").join("<USER_HOME>/");
+  stdout = publicEvidenceText(stdout, homedir()); stderr = publicEvidenceText(stderr, homedir());
   const row = { label, candidate, escape, argv: argv.map(value => value.startsWith(homedir() + "/") ? "<USER_HOME>" + value.slice(homedir().length) : value), command: command.split(homedir() + "/").join("<USER_HOME>/"), cwd: f.cwd, env: f.env,
-    ...status, durationMs: Date.now() - started, stdout, stderr, stdoutSha256: hash(stdout), stderrSha256: hash(stderr), ...(profile !== undefined ? { profileSha256: hash(profile) } : {}),
+    ...status, durationMs: Date.now() - started, stdout, stderr, stdoutSha256: hash(stdout), stderrSha256: hash(stderr), ...(publishedProfile !== undefined ? { profileSha256: hash(publishedProfile), rawProfileSha256: hash(profile!) } : {}),
     rawStdoutSha256, rawStderrSha256,
     usefulBrowserDom: stdout.includes("code-policy-fixture-ready"), usefulIndexJobs: (stdout.match(/-index-file-path /g) ?? []).length,
     nestedSandboxFailure: (stdout + stderr).includes("sandbox_apply: Operation not permitted") };
   rows.push(row);
   writeFileSync(join(output, label + ".stdout.txt"), stdout); writeFileSync(join(output, label + ".stderr.txt"), stderr);
-  writeFileSync(join(output, "results.json"), JSON.stringify({ commit, candidate, fixtureRoot: root, protectedDir,
-    spawnSourceSha256: hash(readFileSync(join(sdkRoot, "packages/runtime/src/sandbox/spawn.ts"))), profileSourceSha256: hash(readFileSync(join(sdkRoot, "packages/runtime/src/sandbox/profile.ts"))), rows }, null, 2) + "\n");
-  console.log(JSON.stringify({ label, ...status, durationMs: row.durationMs, usefulBrowserDom: row.usefulBrowserDom, usefulIndexJobs: row.usefulIndexJobs, nestedSandboxFailure: row.nestedSandboxFailure, stderrTail: stderr.slice(-500) }));
+  writeFileSync(join(output, "results.json"), publicEvidenceJson({ commit, candidate, fixtureRoot: root, protectedDir,
+    spawnSourceSha256: hash(readFileSync(join(sdkRoot, "packages/runtime/src/sandbox/spawn.ts"))), profileSourceSha256: hash(readFileSync(join(sdkRoot, "packages/runtime/src/sandbox/profile.ts"))), rows }, homedir()));
+  console.log(publicEvidenceJson({ label, ...status, durationMs: row.durationMs, usefulBrowserDom: row.usefulBrowserDom, usefulIndexJobs: row.usefulIndexJobs, nestedSandboxFailure: row.nestedSandboxFailure, stderrTail: stderr.slice(-500) }, homedir()));
 }
 
-console.log(JSON.stringify({ commit, candidate, fixtureRoot: root }));
+console.log(publicEvidenceJson({ commit, candidate, fixtureRoot: root }, homedir()));
 for (const escape of [false, true]) {
   const mode = escape ? "approved-escape" : "sandboxed";
   if (!extraOnly) for (const operation of ["build", "test"]) {
@@ -85,7 +87,7 @@ try { const page = await context.newPage(); await page.route('**/*', route => ro
 console.log(JSON.stringify({chromiumSandbox:true, text:await page.locator('p').textContent()})); } finally { await context.close(); }
 `);
     await run(label, ["/opt/homebrew/bin/node", driver, browser], f, escape, 15000);
-    writeFileSync(join(output, label + ".driver.mjs"), readFileSync(driver));
+    writeFileSync(join(output, label + ".driver.mjs"), publicEvidenceText(readFileSync(driver, "utf8"), homedir()));
   }
   if (extraOnly) {
     const label = "xcode-resolve-" + mode, f = fixture(label), project = join(f.cwd, "FixtureApp.xcodeproj"), dependency = join(f.cwd, "PackageDependency");

@@ -44,6 +44,7 @@
       "usefulBrowserDom": false,
       "usefulIndexJobs": 0,
       "nestedSandboxFailure": false,
+      "preTempNormalizationStdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "preTempNormalizationStderrSha256": "2f36423e6b6a0912bb01f797894fdd679030c74896a10f0f87f61a4841d06b03",
       "preTempNormalizationProfileSha256": "ccb1780ea9f137e54b74dedade65760f96456746ee82199da11e71325cedb2aa"
     },
@@ -104,6 +105,7 @@
       "usefulIndexJobs": 0,
       "nestedSandboxFailure": false,
       "preTempNormalizationStdoutSha256": "f1c2ca2f4f159824fa44382fbe90dab9b330dcb857f491696c94c19ce352be18",
+      "preTempNormalizationStderrSha256": "24acf2d17657d52ad16d030210cf70ec0563871f441540502a571663577af115",
       "preTempNormalizationProfileSha256": "63bf9cf75d580232e991888e14403e4d1bd86f3f16c70d71a6820cbf43db5d47"
     },
     {
@@ -142,7 +144,9 @@
       "rawStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "usefulBrowserDom": true,
       "usefulIndexJobs": 0,
-      "nestedSandboxFailure": false
+      "nestedSandboxFailure": false,
+      "preTempNormalizationStdoutSha256": "88b2b70bc1ba583f2336a54fb963f8b63c98a524449830b58593fe532e2696ff",
+      "preTempNormalizationStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "label": "xcode-resolve-approved-escape",
@@ -199,7 +203,8 @@
       "usefulBrowserDom": false,
       "usefulIndexJobs": 0,
       "nestedSandboxFailure": false,
-      "preTempNormalizationStdoutSha256": "f42d8c0328ca246b9366cc51567b7a0782a14f79efe4392ad153e3353f76c69b"
+      "preTempNormalizationStdoutSha256": "f42d8c0328ca246b9366cc51567b7a0782a14f79efe4392ad153e3353f76c69b",
+      "preTempNormalizationStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
   ],
   "publicEvidenceNormalization": "Public path prefixes and ancestor literals are synthetic; published stream/saved-profile hashes bind normalized copies. Raw/native and earlier published hashes remain historical. No measurement rerun."

@@ -57,6 +57,7 @@
       "usefulBrowserDom": false,
       "usefulIndexJobs": 0,
       "nestedSandboxFailure": false,
+      "preTempNormalizationStdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "preTempNormalizationStderrSha256": "11b4c9b321e9a95867deb326ac539b2d4e079f8d391a2d0434e1d2d0b033c6ba",
       "preTempNormalizationProfileSha256": "a750215e49a59c5db36e03c19911c58af9482954e3bdaa8e80770f1afa32ca9b"
     },
@@ -111,6 +112,7 @@
       "usefulBrowserDom": false,
       "usefulIndexJobs": 0,
       "nestedSandboxFailure": false,
+      "preTempNormalizationStdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "preTempNormalizationStderrSha256": "64e793b20c19b7575d582c31c298b09f98bcf3496c3ed630e2fe5e8a75254609",
       "preTempNormalizationProfileSha256": "e5a472e447fdbabd531eda44d7e104629a031831aef107fa346a24d70189592a"
     },
@@ -152,6 +154,8 @@
       "usefulBrowserDom": false,
       "usefulIndexJobs": 0,
       "nestedSandboxFailure": false,
+      "preTempNormalizationStdoutSha256": "7de3e251ef3c3763a1507b73cabef4798624820ef9fd6b8be5399afdc5697e37",
+      "preTempNormalizationStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "preTempNormalizationProfileSha256": "55470c280c5a333dfc29305bdaf74eca446eae23ad619bd1802f56e6acf87d0e"
     },
     {
@@ -206,6 +210,8 @@
       "usefulBrowserDom": false,
       "usefulIndexJobs": 0,
       "nestedSandboxFailure": false,
+      "preTempNormalizationStdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "preTempNormalizationStderrSha256": "7d0ac3a20b40995c2adcf485e0f02a30454b770e4d0770f88d9cbf1e899d73d8",
       "preTempNormalizationProfileSha256": "7d2660133adf76c14bb4f8e35a103b5c02d47025bfd61bb49be581fe45a9f11f"
     },
     {
@@ -243,6 +249,8 @@
       "usefulBrowserDom": false,
       "usefulIndexJobs": 0,
       "nestedSandboxFailure": false,
+      "preTempNormalizationStdoutSha256": "b4bfaa1729b2df8a05371a04e7b3db5b8a743a5ddc9f219d5b40f26ce82112f7",
+      "preTempNormalizationStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "preTempNormalizationProfileSha256": "7ce6cd77a65d57012b43dcdc96666cb1f62581bb879aa5d6667ecb395af9190c"
     },
     {
@@ -294,7 +302,9 @@
       "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "usefulBrowserDom": false,
       "usefulIndexJobs": 0,
-      "nestedSandboxFailure": false
+      "nestedSandboxFailure": false,
+      "preTempNormalizationStdoutSha256": "3cb23eeb5f716d0233983d235b1d634cf545eb2202c5a284831df4180d74af41",
+      "preTempNormalizationStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "label": "swift-test-approved-escape",
@@ -346,6 +356,7 @@
       "usefulBrowserDom": false,
       "usefulIndexJobs": 0,
       "nestedSandboxFailure": false,
+      "preTempNormalizationStdoutSha256": "d95a7c99cbc015e13689d7d0101094692ff0df5fc0f9f809d061f518a4c1612b",
       "preTempNormalizationStderrSha256": "dc26e7bb87f2893bdff727de8eec73778dbfe9d89e6c4454b476547e74c86cb7"
     },
     {
@@ -385,7 +396,8 @@
       "usefulBrowserDom": false,
       "usefulIndexJobs": 2,
       "nestedSandboxFailure": false,
-      "preTempNormalizationStdoutSha256": "ffb13e788f6b70a7083bce2d8a842749272e66ac799577fe970c15833100845e"
+      "preTempNormalizationStdoutSha256": "ffb13e788f6b70a7083bce2d8a842749272e66ac799577fe970c15833100845e",
+      "preTempNormalizationStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "label": "chromium-approved-escape",
@@ -437,7 +449,9 @@
       "stderrSha256": "62492c42c6586c46d3f2f8be32efc550ef62878ceea8916515e0e87ba29fdb6b",
       "usefulBrowserDom": true,
       "usefulIndexJobs": 0,
-      "nestedSandboxFailure": false
+      "nestedSandboxFailure": false,
+      "preTempNormalizationStdoutSha256": "4644ca6000b3bc0f6f8cbf1f0590df57d71c6dc6611bcfe0dcc59ac3d68576e7",
+      "preTempNormalizationStderrSha256": "62492c42c6586c46d3f2f8be32efc550ef62878ceea8916515e0e87ba29fdb6b"
     },
     {
       "label": "protected-read-approved-escape",
@@ -472,7 +486,9 @@
       "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "usefulBrowserDom": false,
       "usefulIndexJobs": 0,
-      "nestedSandboxFailure": false
+      "nestedSandboxFailure": false,
+      "preTempNormalizationStdoutSha256": "b4bfaa1729b2df8a05371a04e7b3db5b8a743a5ddc9f219d5b40f26ce82112f7",
+      "preTempNormalizationStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
   ],
   "publicEvidenceNormalization": "Public path prefixes and ancestor literals are synthetic; published stream/saved-profile hashes bind normalized copies. Raw/native and earlier published hashes remain historical. No measurement rerun."

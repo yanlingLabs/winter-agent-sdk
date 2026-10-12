@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync, readFileSync, exis
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { applyMandatoryFloorToSpawnOptions, buildMandatoryFloorProfile, type HostExecutionFloor } from "../../packages/sdk/src/mandatory-floor.ts";
+import { publicEvidenceJson, publicEvidenceText } from "./public-evidence";
 
 const output = resolve(process.argv[2] ?? "docs/research/2026-10-12-host-floor-compatibility-evidence");
 const sourcekitOnly = process.argv.includes("--sourcekit-only");
@@ -18,7 +19,8 @@ const floor: HostExecutionFloor = { denyReadPaths: [protectedDir], denyWritePath
 const profile = buildMandatoryFloorProfile(floor);
 const hash = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
 const sdkCommit = execFileSync("/usr/bin/git", ["rev-parse", "HEAD"], { encoding: "utf8", timeout: 5000 }).trim();
-writeFileSync(join(output, "floor.sb"), profile + "\n");
+const publishedProfile = publicEvidenceText(profile, homedir());
+writeFileSync(join(output, "floor.sb"), publishedProfile + "\n");
 const rows: unknown[] = [];
 const runtimeBinary = join(homedir(), "Library/Caches/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-mac-arm64/chrome-headless-shell");
 
@@ -64,18 +66,20 @@ async function run(label: string, command: string, args: string[], f: ReturnType
     child.once("close", (code, signal) => done({ code, signal }));
   });
   clearTimeout(timer);
+  const rawStdoutSha256 = hash(stdout), rawStderrSha256 = hash(stderr);
+  stdout = publicEvidenceText(stdout, homedir()); stderr = publicEvidenceText(stderr, homedir());
   const row = { label, floored, command, args, cwd: f.cwd, env: f.env, ...status, timedOut, outputExceeded, durationMs: Date.now() - started,
     ...(existsSync(join(f.cwd, "manifest-probe.txt")) ? { manifestProbe: readFileSync(join(f.cwd, "manifest-probe.txt"), "utf8") } : {}),
-    stdout, stderr, stdoutSha256: hash(stdout), stderrSha256: hash(stderr), ...(floored ? { profileSha256: hash(profile) } : {}) };
+    stdout, stderr, stdoutSha256: hash(stdout), stderrSha256: hash(stderr), rawStdoutSha256, rawStderrSha256, ...(floored ? { profileSha256: hash(profile) } : {}) };
   rows.push(row);
   writeFileSync(join(output, `${label}.stdout.txt`), stdout);
   writeFileSync(join(output, `${label}.stderr.txt`), stderr);
-  writeFileSync(join(output, "results.json"), JSON.stringify({ sdkCommit, floorSourceSha256: hash(readFileSync(new URL("../../packages/sdk/src/mandatory-floor.ts", import.meta.url))), fixtureRoot: root, protectedDir, floor, profileSha256: hash(profile), savedProfileSha256: hash(profile + "\n"), rows }, null, 2) + "\n");
-  console.log(JSON.stringify({ label, code: status.code, signal: status.signal, timedOut, durationMs: row.durationMs, stdoutTail: stdout.slice(-600), stderrTail: stderr.slice(-1600) }));
+  writeFileSync(join(output, "results.json"), publicEvidenceJson({ sdkCommit, floorSourceSha256: hash(readFileSync(new URL("../../packages/sdk/src/mandatory-floor.ts", import.meta.url))), fixtureRoot: root, protectedDir, floor, profileSha256: hash(profile), savedProfileSha256: hash(publishedProfile + "\n"), rows }, homedir()));
+  console.log(publicEvidenceJson({ label, code: status.code, signal: status.signal, timedOut, durationMs: row.durationMs, stdoutTail: stdout.slice(-600), stderrTail: stderr.slice(-1600) }, homedir()));
   return row;
 }
 
-console.log(JSON.stringify({ fixtureRoot: root, output, profileSha256: hash(profile) }));
+console.log(publicEvidenceJson({ fixtureRoot: root, output, profileSha256: hash(profile) }, homedir()));
 if (!sourcekitOnly) for (const floored of [false, true]) {
   const f = fixture(`floor-probe-${floored ? "floor" : "control"}`);
   await run(`floor-probe-${floored ? "floor" : "control"}`, "/bin/sh", ["-c", `cat '${secret}'; printf changed > '${secret}'`], f, floored, 5000);
