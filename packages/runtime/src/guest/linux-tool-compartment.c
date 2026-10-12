@@ -6,6 +6,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
+#include <linux/mount.h>
 
 static int descriptor(const char *text) {
     char *end;long number=strtol(text,&end,10);
@@ -24,8 +25,16 @@ static void pinned_file(int fd) {
 static void directory_fd(int fd) {
     struct stat st;require(fstat(fd,&st),"root identity");if(!S_ISDIR(st.st_mode))_exit(64);
 }
-static void fdpath(char *out,size_t size,int fd) {
-    if(snprintf(out,size,"/proc/self/fd/%d",fd)>=(int)size)_exit(64);
+/* Inherited descriptors retain paths in the parent's mount namespace. A legacy
+ * MS_BIND of /proc/self/fd/N can therefore fail EINVAL after unshare. Clone the
+ * exact admitted descriptor into a detached mount, then attach that object. */
+static void bind_descriptor(int fd,const char *target,int readonly,int executable) {
+    int tree=(int)syscall(SYS_open_tree,fd,"",OPEN_TREE_CLONE|OPEN_TREE_CLOEXEC|AT_EMPTY_PATH);
+    require(tree,"clone admitted mount");
+    struct mount_attr attributes={.attr_set=MOUNT_ATTR_NOSUID|MOUNT_ATTR_NODEV|(readonly?MOUNT_ATTR_RDONLY:0)|(executable?0:MOUNT_ATTR_NOEXEC)};
+    require((int)syscall(SYS_mount_setattr,tree,"",AT_EMPTY_PATH,&attributes,sizeof attributes),"admitted mount flags");
+    require((int)syscall(SYS_move_mount,tree,"",AT_FDCWD,target,MOVE_MOUNT_F_EMPTY_PATH),"attach admitted mount");
+    close(tree);
 }
 static void point(const char *root,const char *guest,char *out,size_t size) {
     if(guest[0]!='/' || !guest[1] || strstr(guest,"..") || strlen(guest)>1024)_exit(64);
@@ -67,23 +76,23 @@ int main(int argc,char **argv) {
         return WIFEXITED(status)?WEXITSTATUS(status):128+WTERMSIG(status);
     }
     close(control);
-    const char *root=argv[2];char target[4096],source[4096];
+    const char *root=argv[2];char target[4096];
     require(mount("tmpfs",root,"tmpfs",MS_NOSUID|MS_NODEV,"mode=0755,size=16m"),"tool view");
     for(int i=0;i<roots;i++){
-        fdpath(source,sizeof source,descriptor(argv[15+3*i]));point(root,argv[16+3*i],target,sizeof target);
-        guest_bind(source,target,number(argv[17+3*i],0,1)||!strcmp(argv[7],"plan"),0);
+        point(root,argv[16+3*i],target,sizeof target);
+        bind_descriptor(descriptor(argv[15+3*i]),target,number(argv[17+3*i],0,1)||!strcmp(argv[7],"plan"),0);
     }
     if(process){
-        const char *parts[]={"bin","lib","lib64","usr"};char base[64];fdpath(base,sizeof base,environment);
+        const char *parts[]={"bin","lib","lib64","usr"};
         for(int i=0;i<4;i++){
-            path(source,sizeof source,base,parts[i]);struct stat st;
-            if(stat(source,&st)){if(errno==ENOENT)continue;require(-1,"environment identity");}
-            path(target,sizeof target,root,parts[i]);require(mkdir(target,0755),"environment mountpoint");guest_bind(source,target,1,1);
+            int part=openat(environment,parts[i],O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+            if(part<0){if(errno==ENOENT)continue;require(-1,"environment identity");}
+            path(target,sizeof target,root,parts[i]);require(mkdir(target,0755),"environment mountpoint");bind_descriptor(part,target,1,1);close(part);
         }
         path(target,sizeof target,root,"tmp");require(mkdir(target,0755),"scratch mountpoint");
         require(mount("tmpfs",target,"tmpfs",MS_NOSUID|MS_NODEV|MS_NOEXEC,"mode=1777,size=8m"),"private scratch");
     }
-    path(target,sizeof target,root,"file-worker");require(close(open(target,O_WRONLY|O_CREAT|O_EXCL,0555)),"helper point");fdpath(source,sizeof source,worker);guest_bind(source,target,1,1);
+    path(target,sizeof target,root,"file-worker");require(close(open(target,O_WRONLY|O_CREAT|O_EXCL,0555)),"helper point");bind_descriptor(worker,target,1,1);
     require(mount(NULL,root,NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NODEV,NULL),"protected skeleton");
     require(chdir(root),"view cwd");require(chroot("."),"view root");require(chdir(argv[10]),"admitted source cwd");
     require(prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0),"no new privileges");

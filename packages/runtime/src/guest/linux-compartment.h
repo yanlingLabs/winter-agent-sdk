@@ -51,6 +51,9 @@ static inline void install_filter(int process) {
         BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_KILL_PROCESS),
 #endif
         DENY(mount),DENY(umount2),DENY(chroot),DENY(pivot_root),DENY(setns),DENY(unshare),
+#ifdef __NR_open_tree
+        DENY(open_tree),DENY(move_mount),DENY(mount_setattr),
+#endif
         DENY(ptrace),DENY(process_vm_readv),DENY(process_vm_writev),DENY(socket),
         /* Ordinary fork/threads only for the shell slice; namespace creation remains denied. */
         BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,__NR_clone,0,4),
