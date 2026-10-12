@@ -2,6 +2,43 @@
 
 These APIs are host capabilities. A serialized runtime config, tool input or guest execution snapshot must not supply their definitions, registrations, policy state or recovery proof.
 
+The current ordinary Code integration uses **path protection without a persistent
+native floor**. Sandboxed Bash/Monitor add protected host paths to their existing
+SDK profile; approved escapes retain main's no-Seatbelt behavior and the Core
+static WRITE-shaped escape fence. Ordinary hooks, LSP and MCP third-party tools
+retain their own sandbox behavior. No compatibility override is injected.
+Generic opt-in floor/broker APIs below remain useful for explicitly confined
+Winter-owned processes; they are not automatic ordinary Code enrollment.
+
+`spawnEmbeddedWorker({ hostCodeProtection: { revision, denyReadPaths,
+denyWritePaths }, ... })` copies a host-only initial policy. Its returned
+`updateHostCodeProtection(snapshot)` resolves the matching Worker revision
+acknowledgement, with a 5 s deadline. A pre-start update is retained for startup;
+active updates affect subsequent file checks and new ordinary sandboxed command
+launches. Existing native children retain their prior profile. Stale/conflicting
+revisions and unavailable channels refuse; policies are bounded, copied and
+held through terminal cleanup. Direct `runEmbeddedSession` callers can receive
+the trusted lease through `onHostCodeProtectionBound`. These are internal
+lifecycle capabilities, not RuntimeConfig/env/SDK Options/NDJSON authority or
+a general settings hot-reload API.
+
+The `/embedded-host` export advertises
+`HOST_CODE_PROTECTION_CONTRACT_VERSION = 1`, capability
+`host-code-path-protection-v1` and a frozen explicit coverage object. Coverage
+currently comprises Read/Write/Edit/NotebookEdit/Glob/Grep and ordinary sandbox
+path additions; `contextReadChecksVersion = 0` honestly leaves auxiliary
+context/plugin/Skill/Agent/settings/workflow-source discovery unclaimed. The
+marker alone is not a Worker acknowledgement and does not authorize lifting
+an activation gate requiring those consumers. In-process path checks are
+defense in depth, with same-user, hardlink and post-check race residuals.
+
+The first version now defers per-workspace disk encryption by explicit user
+choice; direct same-user/copied-image protection is correspondingly weaker.
+VM isolation, host credential protection and active RAM return remain required.
+The earlier encryption/floor discussion below is retained as generic helper and
+historical review context, not current ordinary Code policy. See the
+[main/candidate parity evidence](research/2026-10-12-code-policy-preserving-baseline.md).
+
 `resolveHostCodeDescendantPolicy` reconstructs one descendant from a host-validated Agent invocation. It merges SDK builtins with host-prepared definitions, resolves the SDK's normalized agent type, computes the actual forced-mode inheritance, resolves registered/legacy tool identities, intersects the parent pool, and applies the normal subagent pool. The caller validates ancestry and preserves every ancestor's ask/deny rules. The returned definition denies must be added to the descendant's permission config, alongside complement denies for tools outside its returned pool. The helper reads no guest store or filesystem definitions.
 
 Descendant construction requires the parent to retain Agent or its legacy Task capability after bare deny rules are applied. A definition's own bare denies also remove tools from its returned pool; `Agent(*)` therefore cannot be reinstated by a grandchild's declaration. Scoped `Agent(type)` denials keep their normal SDK interpretation.

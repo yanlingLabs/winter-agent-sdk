@@ -7,9 +7,11 @@ corpus of committed golden traces rather than asserted in prose.
 Host execution floors are defense in depth for the processes the host enrolls.
 They do not establish confidentiality against arbitrary processes running as the
 same macOS user or against work delegated to another service. Cowork's private
-VM disk protection is encryption at rest; authenticated Winter APIs and a running
-guest can still expose plaintext. Required floor enrollment currently uses a
-native runtime; embedded Workers explicitly refuse that requirement. See the
+VM disk encryption is deferred for the first version, accepting weaker direct
+same-user/copied-image protection. Ordinary Code retains its existing sandbox
+and approved escape behavior; host path checks add defense in depth. Required
+generic floor enrollment uses a native runtime; embedded Workers explicitly
+refuse that stronger requirement. See the
 [host authority contract](docs/host-code-authority.md) for integration limits.
 
 ## Packages

@@ -1,0 +1,14 @@
+// !$*UTF8*$!
+{ archiveVersion = 1; classes = {}; objectVersion = 56; objects = {
+ A00000000000000000000001 = { isa = PBXProject; buildConfigurationList = A00000000000000000000010; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000002; productRefGroup = A00000000000000000000003; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000004); packageReferences = (A00000000000000000000005); };
+ A00000000000000000000002 = { isa = PBXGroup; children = (A00000000000000000000003); sourceTree = "<group>"; };
+ A00000000000000000000003 = { isa = PBXGroup; children = (A00000000000000000000007); name = Products; sourceTree = "<group>"; };
+ A00000000000000000000004 = { isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000011; buildPhases = (); buildRules = (); dependencies = (); name = FixtureApp; productName = FixtureApp; productReference = A00000000000000000000007; productType = "com.apple.product-type.tool"; packageProductDependencies = (A00000000000000000000006); };
+ A00000000000000000000005 = { isa = XCLocalSwiftPackageReference; relativePath = PackageDependency; };
+ A00000000000000000000006 = { isa = XCSwiftPackageProductDependency; package = A00000000000000000000005; productName = PolicyFixture; };
+ A00000000000000000000007 = { isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = FixtureApp; sourceTree = BUILT_PRODUCTS_DIR; };
+ A00000000000000000000010 = { isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+ A00000000000000000000011 = { isa = XCConfigurationList; buildConfigurations = (A00000000000000000000013); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+ A00000000000000000000012 = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGNING_ALLOWED = NO; SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 14.0; SWIFT_VERSION = 6.0; }; name = Debug; };
+ A00000000000000000000013 = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGNING_ALLOWED = NO; SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 14.0; SWIFT_VERSION = 6.0; }; name = Debug; };
+ }; rootObject = A00000000000000000000001; }

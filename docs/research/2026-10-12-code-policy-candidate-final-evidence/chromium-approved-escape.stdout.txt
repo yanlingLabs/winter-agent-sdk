@@ -1,0 +1,2 @@
+<!DOCTYPE html>
+<html><head><title>Code policy fixture</title></head><body><p>code-policy-fixture-ready</p></body></html>

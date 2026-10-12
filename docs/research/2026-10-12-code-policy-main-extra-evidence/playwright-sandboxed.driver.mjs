@@ -1,0 +1,5 @@
+import { chromium } from "file:///private/var/folders/xx/yyyy/T/winter-playwright-fixture-tools-thKcQV/node_modules/playwright-core/index.mjs";
+const context = await chromium.launchPersistentContext("/private/var/folders/xx/yyyy/T/winter-code-policy-compat-XvyeG3/playwright-sandboxed/browser-profile", { executablePath: process.argv[2], headless: true, chromiumSandbox: true, timeout: 7000,
+args: ['--disable-gpu', '--disable-background-networking', '--disable-component-update', '--disable-domain-reliability', '--disable-sync', '--disable-default-apps', '--disable-extensions', '--metrics-recording-only', '--safebrowsing-disable-auto-update', '--use-mock-keychain', '--password-store=basic', '--host-resolver-rules=MAP * ~NOTFOUND'] });
+try { const page = await context.newPage(); await page.route('**/*', route => route.request().url().startsWith('file:') ? route.continue() : route.abort()); await page.goto("file:///private/var/folders/xx/yyyy/T/winter-code-policy-compat-XvyeG3/playwright-sandboxed/page.html", {timeout: 5000});
+console.log(JSON.stringify({chromiumSandbox:true, text:await page.locator('p').textContent()})); } finally { await context.close(); }
