@@ -96,6 +96,12 @@ describe("assertBinaryDoesNotEmbedPath (P9a-7's release-blocking gate)", () => {
 });
 
 describe("buildRuntime's mutual-exclusivity guard (no build triggered)", () => {
+  test("guest artifacts cannot replace implicit host output or the host platform package", async () => {
+    const { buildRuntime } = await import("./build-runtime.ts");
+    await expect(buildRuntime({ target: "bun-linux-arm64" })).rejects.toThrow(/requires explicit out/);
+    await expect(buildRuntime({ target: "bun-linux-arm64", out: "/tmp/fixture-linux", platformPackage: true })).rejects.toThrow(/cannot stage a host platform package/);
+    await expect(buildRuntime({ target: "bun-unknown" as "bun-linux-arm64", out: "/tmp/fixture-linux" })).rejects.toThrow(/unsupported cross-compile target/);
+  });
   test("`out` and `platformPackage` together throw before any compile is attempted", async () => {
     const { buildRuntime } = await import("./build-runtime.ts");
     await expect(buildRuntime({ out: "/tmp/x", platformPackage: true })).rejects.toThrow(/mutually exclusive/);

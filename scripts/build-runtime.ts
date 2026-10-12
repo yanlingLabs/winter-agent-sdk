@@ -74,6 +74,8 @@ export const COMPILE_NO_AUTOLOAD_FLAGS = ["--no-compile-autoload-bunfig", "--no-
 export interface BuildRuntimeOptions {
   out?: string; // explicit output path — wins over platformPackage
   platformPackage?: boolean; // stage into packages/platform/darwin-arm64/bin/winter
+  /** Explicit guest artifact only; never replaces a host/default platform binary. */
+  target?: "bun-linux-arm64";
   /** P9a-7: the checkout to copy-then-compile from. Tests only — defaults to this repository. */
   checkoutRoot?: string;
 }
@@ -115,6 +117,12 @@ export function assertBinaryDoesNotEmbedPath(binaryPath: string, checkoutPath: s
 }
 
 export async function buildRuntime(opts: BuildRuntimeOptions = {}): Promise<BuildRuntimeResult> {
+  if (opts.target !== undefined && opts.target !== "bun-linux-arm64") {
+    throw new Error("buildRuntime: unsupported cross-compile target");
+  }
+  if (opts.target && (!opts.out || opts.platformPackage)) {
+    throw new Error("buildRuntime: guest target requires explicit out and cannot stage a host platform package");
+  }
   if (opts.out && opts.platformPackage) {
     throw new Error("buildRuntime: `out` and `platformPackage` are mutually exclusive");
   }
@@ -155,7 +163,7 @@ export async function buildRuntime(opts: BuildRuntimeOptions = {}): Promise<Buil
     const entrypoint = join(copyRoot, ENTRYPOINT_REL);
     // process.execPath under bun IS the bun binary (matches transport-equivalence.test.ts's own
     // spawnHook precedent for invoking bun itself rather than trusting a "bun" on PATH).
-    const proc = Bun.spawn([process.execPath, "build", "--compile", ...COMPILE_NO_AUTOLOAD_FLAGS, entrypoint, "--outfile", outPath], {
+    const proc = Bun.spawn([process.execPath, "build", "--compile", ...COMPILE_NO_AUTOLOAD_FLAGS, entrypoint, "--outfile", outPath, ...(opts.target ? [`--target=${opts.target}`] : [])], {
       cwd: scratchCwd,
       stdout: "pipe",
       stderr: "pipe",
@@ -181,6 +189,7 @@ export async function buildRuntime(opts: BuildRuntimeOptions = {}): Promise<Buil
 }
 
 if (import.meta.main) {
+  const linuxArm64 = process.argv.includes("--linux-arm64");
   const platformPackage = process.argv.includes("--platform-package");
   const outIdx = process.argv.indexOf("--out");
   const out = outIdx === -1 ? undefined : process.argv[outIdx + 1];
@@ -193,7 +202,7 @@ if (import.meta.main) {
     // string", never "provide string | undefined" — so `out` is only spread in when actually set,
     // matching this file's own `...(opts.platformPackage ? ... )`-style conditional-inclusion idiom
     // used elsewhere in this codebase (e.g. transport-equivalence.test.ts's spawnHook).
-    const { outPath } = await buildRuntime({ ...(out !== undefined ? { out } : {}), platformPackage });
+    const { outPath } = await buildRuntime({ ...(out !== undefined ? { out } : {}), platformPackage, ...(linuxArm64 ? { target: "bun-linux-arm64" as const } : {}) });
     console.log(`built winter runtime -> ${outPath}`);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
