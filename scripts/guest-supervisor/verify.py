@@ -67,6 +67,20 @@ def main():
             def finish(child):
                 out,err=child.communicate(timeout=15);assert child.returncode==0,(child.returncode,out,err);assert not err,err;return json.loads(out)
             assert finish(start(1,'forged'))['uid']==20001;assert not (source/'forged-write').exists()
+            # Observe the actual protocol bytes under the same runtime UID before the SDK fold.
+            # Fixture-only read: no retry of writes/effects, no production diagnostic disclosure.
+            read_end,write_end=os.pipe();probe_pid=os.fork()
+            if probe_pid==0:
+                os.close(read_end)
+                try:
+                    os.setgroups([]);os.setgid(20001);os.setuid(20001)
+                    response=exchange(control/'conversation-1/tools.sock',{'kind':'file','request':{'protocolVersion':1,'requestId':str(uuid.uuid4()),'authority':scopes[0]['authority'],'operation':'read','root':{'id':'source','guestPath':'/workspace/folders/source','readOnly':False},'relativePath':'seed','expectedUid':10001,'maxBytes':1024}})
+                    os.write(write_end,json.dumps(response).encode()[:4096]);os._exit(0)
+                except BaseException:os._exit(1)
+            os.close(write_end);raw_probe=os.read(read_end,4096);os.close(read_end);_,probe_status=os.waitpid(probe_pid,0)
+            assert probe_status==0,('raw protocol probe failed',probe_status,raw_probe)
+            response=json.loads(raw_probe)
+            assert response.get('exitCode')==0 and response.get('stdout'),('raw Read response',response)
             assert finish(start(1,'ordinary'))['uid']==20001
             assert (source/'seed').read_bytes()==b'written\n';assert (source/'from-shell').read_bytes()==b'shell';assert not (readonly/'new').exists()
             assert finish(start(2,'plan'))['uid']==20002;assert (source/'seed').read_bytes()==b'written\n';assert not (source/'plan-shell').exists()
