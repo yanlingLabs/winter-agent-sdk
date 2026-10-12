@@ -1,0 +1,2 @@
+[1012/035859.006703:WARNING:net/dns/dns_config_service_posix.cc:198] Failed to read DnsConfig.
+[1012/035859.017509:FATAL:base/apple/mach_port_rendezvous_mac.cc:159] Check failed: kr == KERN_SUCCESS. bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.12791: Permission denied (1100)

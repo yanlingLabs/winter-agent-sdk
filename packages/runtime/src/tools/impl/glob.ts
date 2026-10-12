@@ -1,3 +1,5 @@
+import { guestToolUnsupported } from "../../guest/file-session.ts";
+import { hostCodePathAllowed } from "../../sandbox/host-code-protection.ts";
 // WS-06 §3.1 "Glob" -- the real executor (Phase 3, Lane A / Task 4). Registers over the stub
 // descriptors/glob.ts already put in the registry.
 //
@@ -36,6 +38,7 @@ import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { emptyPathSet, type ExtractedPaths } from "../paths-seam.ts";
+import { scanReadableFiles } from "../safe-glob-scan.ts";
 
 interface GlobInput {
   pattern: string;
@@ -59,16 +62,14 @@ const MAX_PATHS = 100;
 // this exact lesson, credited in this task's report). Only join a RELATIVE yielded match; an
 // absolute yielded match is used as-is. This is keyed off the yielded string `p`, not off whether
 // the pattern itself looked absolute -- the same test Norma's own `combine()` applies.
-async function scan(pattern: string, scanRoot: string): Promise<string[]> {
-  const glob = new Bun.Glob(pattern);
-  const out = new Set<string>();
-  for await (const p of glob.scan({ cwd: scanRoot, onlyFiles: true, dot: true, followSymlinks: false })) {
-    out.add(isAbsolute(p) ? resolve(p) : resolve(scanRoot, p));
-  }
-  return [...out];
+async function scan(pattern: string, scanRoot: string, ctx: ToolExecutionContext): Promise<string[]> {
+  const extra = ctx.sandboxSettings?.filesystem?.denyRead?.length ? (path: string) => hostCodePathAllowed(path, "read", ctx.sandboxSettings, ctx.cwd) : undefined;
+  return scanReadableFiles(pattern, scanRoot, true, extra);
 }
 
 async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
+    const guestRefusal = guestToolUnsupported(ctx, "Glob");
+    if (guestRefusal) return guestRefusal;
   let input: GlobInput;
   try {
     input = parseInput(rawInput);
@@ -78,6 +79,7 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
 
   // Fix round 10, item B: trim FIRST, as claude does -- see write.ts's identical comment.
   const scanRoot = input.path !== undefined ? resolve(ctx.cwd, input.path.trim()) : ctx.cwd;
+  if (!hostCodePathAllowed(scanRoot, "read", ctx.sandboxSettings, ctx.cwd)) return { output: "Error: protected host path access refused", isError: true };
   try {
     const rootStat = statSync(scanRoot);
     if (!rootStat.isDirectory()) {
@@ -89,7 +91,7 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
 
   let matched: string[];
   try {
-    matched = await scan(input.pattern, scanRoot);
+    matched = await scan(input.pattern, scanRoot, ctx);
   } catch (e) {
     return { output: `Error: ${(e as Error).message}`, isError: true };
   }
@@ -98,7 +100,7 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
   // rule-matched `path` FIELD deny (the baseline `~/.winter/run` denial included) is not a
   // traversal guard; a broad `Glob({pattern:"**/*", path:"<home>"})` would otherwise still surface
   // matches from inside a denied subtree it never named directly.
-  matched = matched.filter((p) => ctx.permissions.probeReadAccess(p) !== "deny");
+  matched = matched.filter((p) => hostCodePathAllowed(p, "read", ctx.sandboxSettings, ctx.cwd) && ctx.permissions.probeReadAccess(p) !== "deny");
 
   const withMtime = matched.map((p) => {
     let mtimeMs = 0;

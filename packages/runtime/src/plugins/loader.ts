@@ -1,3 +1,4 @@
+import { readSourceTextWithOrigin, type SourceOrigin, bindSourceObject, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
 // Phase 5 Lane S (WS-11 §4, derived-shapes-p5 item (b)): `loadPlugins`.
 //
 // SCOPE, exactly: read local plugin directories, aggregate what they contribute, and hand back
@@ -10,7 +11,7 @@
 // the others. `RejectedPlugin.kind` is the "typed error" the brief asks for -- a discriminated
 // verdict a caller can branch on. T8 decides whether `kind: "unsupported-type"` aborts `query()`
 // construction; it has everything it needs to.
-import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import type { BrandProfile, SdkPluginConfig } from "@yanlinglabs/winter-agent-sdk";
@@ -85,7 +86,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 
 function isDirectory(path: string): boolean {
   try {
-    return statSync(path).isDirectory();
+    return statSourceSync(path).isDirectory();
   } catch {
     return false;
   }
@@ -97,7 +98,7 @@ function isDirectory(path: string): boolean {
  * Deliberately NOT `realpathSync`. `system/init.plugins[].path` is read by hosts, and a canonical
  * real path is a DIFFERENT string from the one the host configured whenever any ancestor is a
  * symlink -- on macOS that is true of `/tmp` and `/var` for every process. Symlinked roots still
- * work, because every `readdirSync`/`readFileSync` below follows links on its own.
+ * work, because every `readSourceDirectorySync`/`readSourceFileSync` below follows links on its own.
  */
 function resolveRoot(path: string, cwd: string | undefined): string {
   return cwd !== undefined ? resolve(cwd, path) : resolve(path);
@@ -117,7 +118,7 @@ function identityKey(root: string): string {
 }
 
 /**
- * Admit a `readdirSync` entry as a directory, WS-21 §6.3 item 1 (F6, F7): claude follows a symlinked
+ * Admit a `readSourceDirectorySync` entry as a directory, WS-21 §6.3 item 1 (F6, F7): claude follows a symlinked
  * plugin skill directory the same way it follows a symlinked user/project one (`skills/loader.ts`'s
  * own `isDirEntry`, mirrored here for the plugin scan). A dangling link, or a link to a non-directory,
  * is excluded silently -- the same fate an ordinary subdirectory with no `SKILL.md` already has.
@@ -126,7 +127,7 @@ function isDirEntry(root: string, e: Dirent): boolean {
   if (e.isDirectory()) return true;
   if (!e.isSymbolicLink()) return false;
   try {
-    return statSync(join(root, e.name)).isDirectory();
+    return statSourceSync(join(root, e.name)).isDirectory();
   } catch {
     return false;
   }
@@ -137,7 +138,7 @@ function isFileEntry(dir: string, e: Dirent): boolean {
   if (e.isFile()) return true;
   if (!e.isSymbolicLink()) return false;
   try {
-    return statSync(join(dir, e.name)).isFile();
+    return statSourceSync(join(dir, e.name)).isFile();
   } catch {
     return false;
   }
@@ -151,7 +152,7 @@ function isFileEntry(dir: string, e: Dirent): boolean {
 function scanPluginSkillsAt(skillsParentDir: string, pluginName: string): PluginSkillEntry[] {
   let dirs: string[];
   try {
-    dirs = readdirSync(skillsParentDir, { withFileTypes: true })
+    dirs = readSourceDirectorySync(skillsParentDir, { withFileTypes: true })
       .filter((e) => isDirEntry(skillsParentDir, e))
       .map((e) => e.name)
       .sort();
@@ -161,21 +162,22 @@ function scanPluginSkillsAt(skillsParentDir: string, pluginName: string): Plugin
   const out: PluginSkillEntry[] = [];
   for (const dir of dirs) {
     const path = join(skillsParentDir, dir, "SKILL.md");
-    let parsed: ReturnType<typeof parseSkillFile>;
+    let parsed: ReturnType<typeof parseSkillFile>, origin: SourceOrigin;
     try {
-      if (!statSync(path).isFile()) continue;
-      parsed = parseSkillFile(readFileSync(path, "utf8"), dir);
+      if (!statSourceSync(path).isFile()) continue;
+      const read = readSourceTextWithOrigin(path); origin = read.origin;
+      parsed = parseSkillFile(read.text, dir);
     } catch {
       continue;
     }
     if (!parsed) continue;
-    out.push({
+    out.push(bindSourceObject({
       name: parsed.name,
       qualifiedName: `${pluginName}:${parsed.name}`,
       description: parsed.description,
       path,
       ...(parsed.author !== undefined ? { author: parsed.author } : {}),
-    });
+    }, origin));
   }
   return out;
 }
@@ -226,26 +228,26 @@ function resolvePluginSkills(root: string, pluginName: string, declared: PluginM
 /** ONE command file, parsed. Shared by the default-directory scan and a manifest override's own per-entry file case (fix round 5). `undefined` for an unreadable file, matching the default scan's own silent-skip posture. */
 function scanPluginCommandFile(path: string, pluginName: string): PluginCommandEntry | undefined {
   const name = basename(path, ".md");
-  let raw: string;
+  let raw: string, origin: SourceOrigin;
   try {
-    raw = readFileSync(path, "utf8");
+    ({ text: raw, origin } = readSourceTextWithOrigin(path));
   } catch {
     return undefined;
   }
   const attrs = frontmatterAttrs(raw);
-  return {
+  return bindSourceObject({
     name,
     qualifiedName: `${pluginName}:${name}`,
     path,
     ...(attrs["description"] !== undefined ? { description: attrs["description"] } : {}),
     ...(attrs["argument-hint"] !== undefined ? { argumentHint: attrs["argument-hint"] } : {}),
-  };
+  }, origin);
 }
 
 function scanPluginCommandsDir(dir: string, pluginName: string): PluginCommandEntry[] {
   let files: string[];
   try {
-    files = readdirSync(dir, { withFileTypes: true })
+    files = readSourceDirectorySync(dir, { withFileTypes: true })
       .filter((e) => isFileEntry(dir, e) && e.name.endsWith(".md"))
       .map((e) => e.name)
       .sort();
@@ -270,7 +272,7 @@ function scanPluginCommandsOverride(paths: readonly string[], pluginName: string
   for (const path of paths) {
     let isDir: boolean;
     try {
-      isDir = statSync(path).isDirectory();
+      isDir = statSourceSync(path).isDirectory();
     } catch {
       continue; // vanished since it was resolved -- nothing to load
     }
@@ -334,9 +336,10 @@ type ScannedAgents = { agents: Record<string, PluginAgentDefinition>; rejected: 
 /** ONE agent file, parsed. Shared by the default-directory scan and a manifest override's own per-entry file case (fix round 5). */
 function scanPluginAgentFile(full: string, pluginName: string, out: Record<string, PluginAgentDefinition>, rejected: AgentDefinitionRejection[]): void {
   try {
-    if (!statSync(full).isFile()) return;
-    const parsed = parseAgentDefinitionFile(readFileSync(full, "utf8"), full);
-    if (parsed.ok) out[parsed.name] = { ...parsed.definition, plugin: pluginName };
+    if (!statSourceSync(full).isFile()) return;
+    const read = readSourceTextWithOrigin(full);
+    const parsed = parseAgentDefinitionFile(read.text, full);
+    if (parsed.ok) out[parsed.name] = bindSourceObject({ ...parsed.definition, plugin: pluginName }, read.origin);
     else rejected.push({ source: "plugin", filePath: parsed.filePath, reason: parsed.reason });
   } catch {
     // unreadable -- silently skipped, matching the default directory scan's own posture for the same case
@@ -346,7 +349,7 @@ function scanPluginAgentFile(full: string, pluginName: string, out: Record<strin
 function scanPluginAgentsDir(dir: string, pluginName: string): ScannedAgents {
   let files: string[];
   try {
-    files = readdirSync(dir).sort();
+    files = readSourceDirectorySync(dir).sort();
   } catch {
     return { agents: {}, rejected: [] };
   }
@@ -370,7 +373,7 @@ function scanPluginAgentsOverride(paths: readonly string[], pluginName: string):
   for (const path of paths) {
     let isDir: boolean;
     try {
-      isDir = statSync(path).isDirectory();
+      isDir = statSourceSync(path).isDirectory();
     } catch {
       continue;
     }
@@ -394,8 +397,8 @@ function collectMcpServers(root: string, manifest: PluginManifest | undefined): 
     const path = join(root, file);
     let parsed: unknown;
     try {
-      if (!statSync(path).isFile()) continue;
-      parsed = JSON.parse(readFileSync(path, "utf8"));
+      if (!statSourceSync(path).isFile()) continue;
+      parsed = JSON.parse(readSourceFileSync(path, "utf8"));
     } catch {
       continue; // absent, unreadable or malformed -- a broken plugin file never fails the load
     }
@@ -440,8 +443,8 @@ function collectMcpServers(root: string, manifest: PluginManifest | undefined): 
  */
 function readHooksFile(path: string, pluginName: string, sourceLabel: string, warnings: string[]): unknown {
   try {
-    if (!statSync(path).isFile()) return undefined;
-    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (!statSourceSync(path).isFile()) return undefined;
+    const parsed: unknown = JSON.parse(readSourceFileSync(path, "utf8"));
     if (!isPlainObject(parsed)) return undefined;
     const inner = parsed["hooks"];
     if (isPlainObject(inner)) return inner;
@@ -491,7 +494,7 @@ function resolveManifestHooksStringEntries(root: string, pluginName: string, dec
     }
     let isFile = false;
     try {
-      isFile = statSync(full).isFile();
+      isFile = statSourceSync(full).isFile();
     } catch {
       isFile = false;
     }
@@ -611,7 +614,7 @@ function resolveManifestComponentOverride(
     }
     let isDir: boolean;
     try {
-      isDir = statSync(full).isDirectory();
+      isDir = statSourceSync(full).isDirectory();
     } catch {
       warnings.push(`${label} path "${entry}" was not found at ${full} -- ignoring it`);
       continue;

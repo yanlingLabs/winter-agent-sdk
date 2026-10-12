@@ -34,6 +34,7 @@
 // deliberately NOT used -- this repo's own OS floors are macOS/Linux only (CLAUDE.md's "Latest-OS
 // floors" convention, carried from the wider product), so `node:child_process.spawn` alone suffices.
 import { spawn, type ChildProcess } from "node:child_process";
+import { prepareHostChildLaunch } from "../../sandbox/host-child-floor.ts";
 import { ReadBuffer, serializeMessage, type JSONRPCMessage, type Transport } from "@modelcontextprotocol/client";
 import type { McpStdioServerConfig } from "@yanlinglabs/winter-agent-sdk";
 import { trackProcessGroup } from "../../process-groups.ts";
@@ -140,9 +141,11 @@ export class WinterStdioTransport implements Transport {
       throw new Error("WinterStdioTransport already started");
     }
     return new Promise<void>((resolve, reject) => {
-      const child = spawn(this.opts.command, this.opts.args ?? [], {
+      const env = buildStdioEnv(this.opts.env);
+      const launch = prepareHostChildLaunch(this.opts.command, this.opts.args ?? [], { cwd: this.opts.cwd, env });
+      const child = spawn(launch.command, launch.args, {
         cwd: this.opts.cwd,
-        env: buildStdioEnv(this.opts.env),
+        env,
         // stderr is ALWAYS piped, never inherited -- WS-04 owns exactly two stdio streams already
         // (this process's own stdin/stdout frame pipe, and the host's stderr diagnostics callback
         // for THIS process); a daemon process must never let a connected server's stderr fall

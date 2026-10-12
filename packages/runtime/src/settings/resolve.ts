@@ -4,15 +4,12 @@
 // into the sdk package's own module layout. The implementation itself lives in
 // `packages/sdk/src/settings/*` because `resolveSettings`/`filterEscalatingDefaultMode` turned out
 // to be PINNED PUBLIC SDK EXPORTS (Task 1 item (a)) and WS-02 §3 forbids the sdk package from
-// importing the runtime -- the same pass-through shape `paths`/`store` already use in
-// packages/runtime/src/index.ts.
+// importing the runtime. Resolution stays in SDK; this seam supplies the runtime guarded
+// source reader through a trusted callback, separate from serializable settings/options.
 export {
-  resolveSettings,
-  resolveSettingsDetailed,
   filterEscalatingDefaultMode,
   applyWorkspaceTrust,
   settingsPathFor,
-  loadSettingsFile,
   SETTING_SOURCES,
   OVERLAY_NEVER_KEYS,
   ESCALATING_PERMISSION_MODES,
@@ -20,6 +17,14 @@ export {
   // WS-13b R6b-7: lanes import the seam from HERE, so the narrowing travels with the rest of it.
   providerSettingsFrom,
 } from "@yanlinglabs/winter-agent-sdk";
+import { resolveSettingsDetailed as sdkResolveSettingsDetailed, loadSettingsFile as sdkLoadSettingsFile, type ResolveSettingsDetailedOptions, type ResolveSettingsOptions } from "@yanlinglabs/winter-agent-sdk";
+import { readSourceText } from "../sandbox/source-read.ts";
+export const loadSettingsFile = (path: string) => sdkLoadSettingsFile(path, readSourceText);
+export const resolveSettingsDetailed = (opts: ResolveSettingsDetailedOptions = {}) => sdkResolveSettingsDetailed(opts, readSourceText);
+export async function resolveSettings(opts?: ResolveSettingsOptions) {
+  const { effective, provenance, sources } = await resolveSettingsDetailed(opts ?? {});
+  return { effective, provenance, sources };
+}
 export type {
   SettingSource,
   ResolvedSettingSource,

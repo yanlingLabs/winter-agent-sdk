@@ -1,4 +1,5 @@
 import type { SpawnClaudeCodeProcess } from "./transport.ts";
+import type { HostCodeProcessRegistration } from "./host-code-process.ts";
 import type { PermissionMode, CanUseTool, HookEvent, HookCallbackMatcher } from "./permissions/types.ts";
 import type {
   SandboxSettingsConfig,
@@ -305,6 +306,10 @@ export function isWinterMcpServerInstance(value: unknown): value is WinterMcpSer
 export type AgentDefinition = Omit<RuntimeAgentDefinition, "permissionMode"> & { permissionMode?: PermissionMode };
 
 export interface Options {
+  /** Imperative trusted host port, never settings JSON. Cowork guest transports refuse this capability. */
+  hostCodeProcessBroker?: HostCodeProcessRegistration;
+  /** Explicit guest posture; runtimes without all mandatory compartments refuse startup. */
+  executionPosture?: "local" | "confined-guest";
   model?: string;
   // Ruling 8 (phase plan): tightened to the six-value union — the wire (RuntimeConfig.permissionMode,
   // protocol/config.ts) stays an open string; the runtime is what turns an unknown value into a

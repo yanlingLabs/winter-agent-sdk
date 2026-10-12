@@ -24,10 +24,14 @@
 //
 // COMPILED-BINARY CONSTRAINTS apply exactly as in `main.ts` (a host compiles this into its own
 // single-file binary): static, literal imports only.
-import type { RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
-import { splitFrames, encodeFrame } from "@yanlinglabs/winter-agent-sdk";
+import type { RuntimeConfig, WinterFrame, HostExecutionFloor } from "@yanlinglabs/winter-agent-sdk";
+import { splitFrames, encodeFrame, MandatoryFloorUnavailableError } from "@yanlinglabs/winter-agent-sdk";
+import { requireHostCodeProcessBroker } from "./sandbox/host-code-process.ts";
+import { installHostChildFloor } from "./sandbox/host-child-floor.ts";
+import { installHostCodeProtection, type HostCodeProtection, type HostCodeProtectionLease } from "./sandbox/host-code-protection.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider } from "./engine.ts";
+import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
 import { stubExecutor, isTestProviderName, testProviderForNamespace, registerBgTaskTestTool } from "./provider/mock.ts";
 import { resolveEngineSession, resolveProductionWinterHome, resolveProductionStoreHome } from "./store/dialect.ts";
 // Phase 4 Task 8 (rider 18): the ONE production registration of Lane C's child-engine factory -- see
@@ -43,8 +47,22 @@ import { restoreChildRoster } from "./subagents/restore.ts";
 import { killAllTaskProcessGroups } from "./tools/impl/background-task-runtime.ts";
 import { setHostWorkflowWorkerCommand, type WorkerCommand } from "./workflows/sandbox.ts";
 import { EMBEDDED_ABORT_END_INPUT_REQUEST_ID, EMBEDDED_ABORT_INTERRUPT_REQUEST_ID } from "./embedded-protocol.ts";
+import { acquireProtectedStoreBootstrap, createProtectedRuntimeStore, protectedStoreOwnerSignal, protectedStoreStartupOutcome, releaseProtectedStoreBootstrap, retainProtectedStoreBootstrap, type ProtectedStoreBootstrap, type OpenedProtectedStoreBootstrap, type ProtectedStoreOwnershipOutcome } from "./guest/store-bootstrap.ts";
 
 export interface EmbeddedSessionOptions {
+  /** Trusted direct-call requirement. The embedded entry cannot establish a process floor and
+   * refuses before config, store, hooks, MCP or tools start. Not read from argv or env. */
+  requireHostFloor?: boolean;
+  /** Trusted command-broker enrollment for this realm's lifetime. This gates Bash/Monitor only;
+   * it does not supply an embedded filesystem/subprocess floor. */
+  brokerRequired?: boolean;
+  /** Trusted host floor for this realm's subprocess launch families. It does not establish a
+   * process floor for Core/Worker filesystem consumers. Never read from argv/settings/env. */
+  hostChildFloor?: HostExecutionFloor;
+  /** Host-only path checks and ordinary Bash-profile additions; preserves approved escapes. */
+  hostCodeProtection?: HostCodeProtection;
+  /** Trusted direct lifecycle binding for live updates, never serialized runtime configuration. */
+  onHostCodeProtectionBound?: (lease: HostCodeProtectionLease) => void;
   /** The spawn argv (`--run --config-json <json>`, any leading slots); flags are found by NAME. */
   argv: readonly string[];
   /**
@@ -72,6 +90,12 @@ export interface EmbeddedSessionOptions {
   workflowWorkerCommand?: WorkerCommand;
   /** Passed to the engine (`EngineOptions.onSessionPhase`): running / idle / ending. */
   onSessionPhase?: (phase: "running" | "idle" | "ending") => void;
+  /** Trusted supervisor object capability. Never read from RuntimeConfig/SDK options or env. */
+  protectedStoreBootstrap?: ProtectedStoreBootstrap;
+  /** REQUIRED whenever protectedStoreBootstrap is supplied. Trusted terminal lifecycle channel,
+   * emitted exactly once after release handling, independently of the numeric agent-turn code.
+   * The supervisor must consume retained/release-failed states without parsing diagnostics. */
+  onProtectedStoreOwnershipOutcome?: (outcome: Readonly<ProtectedStoreOwnershipOutcome>) => void;
 }
 
 // Same argv contract as `testing.ts`'s inMemoryProcess: find the flag by NAME, never by position --
@@ -181,7 +205,17 @@ function isSyntheticAbortAck(frame: WinterFrame): boolean {
  * init -- WS-04 §6.1). Never throws.
  */
 export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<number> {
-  const { env, write, writeErr, signal } = opts;
+  let releaseBrokerRequirement: (() => void) | undefined;
+  let releaseHostChildFloor: (() => void) | undefined;
+  let hostCodeProtection: HostCodeProtectionLease | undefined;
+  const { env, write, writeErr } = opts;
+  let signal = opts.signal;
+  let ownerSignal: AbortSignal | undefined;
+  let protectedStoreBootstrap: OpenedProtectedStoreBootstrap | undefined;
+  let runtimeStarted = false;
+  let runtimeReturned = false;
+  let teardownUncertain = false;
+  let startupError: unknown;
   // The abort is observed from the first line: a host can abort while the session is still resolving
   // (store I/O, provider wiring), and the process-group sweep must never wait for that.
   let settleAborted!: (v: typeof ABORTED) => void;
@@ -215,7 +249,24 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
   };
 
   try {
+    if (opts.requireHostFloor) throw new MandatoryFloorUnavailableError("embedded sessions cannot satisfy a required host floor; launch a native floored runtime");
+    releaseBrokerRequirement = opts.brokerRequired ? requireHostCodeProcessBroker() : undefined;
+    releaseHostChildFloor = opts.hostChildFloor ? installHostChildFloor(opts.hostChildFloor) : undefined;
+    if (opts.hostCodeProtection !== undefined || opts.onHostCodeProtectionBound !== undefined) {
+      hostCodeProtection = installHostCodeProtection(opts.hostCodeProtection ?? { revision: 0, denyReadPaths: [], denyWritePaths: [] });
+      opts.onHostCodeProtectionBound?.(hostCodeProtection);
+    }
     const config = parseConfigFromArgv(opts.argv);
+    assertRuntimeExecutionPosture(config);
+    if (opts.protectedStoreBootstrap !== undefined) {
+      if (typeof opts.onProtectedStoreOwnershipOutcome !== "function") throw new Error("protected store bootstrap requires a machine-readable terminal ownership observer");
+      const durableRoot = resolveProductionStoreHome(config, env) ?? resolveProductionWinterHome(config, env);
+      protectedStoreBootstrap = await acquireProtectedStoreBootstrap(opts.protectedStoreBootstrap, config, durableRoot);
+      ownerSignal = protectedStoreOwnerSignal(protectedStoreBootstrap);
+      if (ownerSignal.aborted) onAbort();
+      else ownerSignal.addEventListener("abort", onAbort, { once: true });
+      signal = opts.signal === undefined ? ownerSignal : AbortSignal.any([opts.signal, ownerSignal]);
+    }
     assertRecognizedTestProviderEnv(env);
     // Task 8: persists by default (RuntimeConfig.persistSession defaults ON) to config.winterHome, or
     // else `env`'s WINTER_HOME, or else ~/.winter (resolveProductionWinterHome) -- this is a
@@ -231,6 +282,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
       // builds (transcript, provider-state sidecar, permission journal, approval store, auto-counter
       // store) roots on this instead of `resolveWinterHome`'s per-run folder -- see dialect.ts.
       resolveStoreHome: () => resolveProductionStoreHome(config, env),
+      ...(protectedStoreBootstrap !== undefined ? { protectedStoreBootstrap } : {}),
       env,
     });
     // Rider 18: registered BEFORE runEngine starts, so the very first turn's Agent call can spawn. A
@@ -249,7 +301,9 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
     const childDurableRoot = resolveProductionStoreHome(config, env) ?? childWinterHome;
     // ONE store object, shared by the child-engine factory and the roster restore below --
     // `resolveEngineSession`'s own `store` is a narrower write-side `SessionPersistence`.
-    const childStore = config.persistSession === false ? undefined : new WinterCompatibilitySessionStore({ winterHome: childDurableRoot });
+    const childStore = config.persistSession === false ? undefined : protectedStoreBootstrap === undefined
+      ? new WinterCompatibilitySessionStore({ winterHome: childDurableRoot })
+      : createProtectedRuntimeStore(protectedStoreBootstrap, childDurableRoot);
     // R6-7: the RESUMED continuation chain, read once from the sidecar before the run starts -- see
     // `loadResumedChain` for why the renderer needs it and an empty map is not equivalent.
     const providerChain = await loadResumedChain(store, initialMessages);
@@ -290,6 +344,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
       ...(wiring.config.storeHome !== undefined ? { storeHome: wiring.config.storeHome } : {}),
       // Phase 5 Task 8: a CHILD gets the same assembler and skill index its parent has.
       ...wiring.childFactoryOptions,
+      ...(protectedStoreBootstrap !== undefined ? { onTeardownUncertain: () => { teardownUncertain = true; } } : {}),
     });
     // Phase 4 fix wave (I3): WS-10 §7's roster rebuild -- on a RESUME (never a fork), the prior
     // session's children are restored from their durable sidecars before the first turn, so
@@ -304,12 +359,14 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
           }, { registerMessaging: false })
         : undefined;
     try {
-      return await runEngine({
+      runtimeStarted = true;
+      const code = await runEngine({
         ...(restoredChildren !== undefined ? { restoredChildren: restoredChildren.handles } : {}),
         // `wiring.config` -- the effective config PLUS the provider-derived defaults (the
         // descriptor's own context window when the host stated none). Never `effectiveConfig`.
         config: withAutoSkillPermissions(wiring.config),
         ...wiring.engineOptions,
+        ...(protectedStoreBootstrap !== undefined ? { onTeardownUncertain: () => { teardownUncertain = true; } } : {}),
         input: frameSource(opts.input, aborted),
         output,
         // The same abort, straight to the engine as well: the frames above reach it only while the input
@@ -332,6 +389,8 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
         // session the env parameter is the only environment that is this session's.
         env,
       });
+      runtimeReturned = true;
+      return code;
     } finally {
       // LOAD-BEARING for a realm that outlives this session (a test runner calling this in-process):
       // a restored roster, skill index or plugin-agent map left registered would leak into the next
@@ -340,6 +399,8 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
       wiring.dispose();
     }
   } catch (err) {
+    startupError = err;
+    if (runtimeStarted) teardownUncertain = true;
     const text = err instanceof Error ? (err.stack ?? err.message) : String(err);
     try {
       writeErr(`winter: fatal: ${text}\n`);
@@ -348,7 +409,30 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
     }
     return 1;
   } finally {
-    signal?.removeEventListener("abort", onAbort);
-    restoreWorkflowCommand?.();
+    try {
+      opts.signal?.removeEventListener("abort", onAbort);
+      ownerSignal?.removeEventListener("abort", onAbort);
+      try { restoreWorkflowCommand?.(); }
+      catch { if (protectedStoreBootstrap !== undefined) teardownUncertain = true; }
+      // A thrown engine/descendant teardown is unknown, not proof it stopped. Retain native
+      // ownership for explicit recovery; never release on a timer or as part of an error fallback.
+      let outcome: ProtectedStoreOwnershipOutcome;
+      if (protectedStoreBootstrap !== undefined) {
+        outcome = !teardownUncertain && (!runtimeStarted || runtimeReturned)
+          ? await releaseProtectedStoreBootstrap(protectedStoreBootstrap)
+          : retainProtectedStoreBootstrap(protectedStoreBootstrap, "teardown-uncertain");
+      } else outcome = opts.protectedStoreBootstrap === undefined
+        ? Object.freeze({ status: "not-acquired", reason: "not-requested", scope: null })
+        : protectedStoreStartupOutcome(opts.protectedStoreBootstrap, startupError);
+      if (outcome.status === "retained" || outcome.status === "release-failed") {
+        try { writeErr(`winter: protected store ${outcome.reason}; ownership retained, recovery required\n`); } catch {}
+      }
+      try { opts.onProtectedStoreOwnershipOutcome?.(outcome); }
+      catch { try { writeErr("winter: terminal ownership observer failed\n"); } catch {} }
+    } finally {
+      hostCodeProtection?.close();
+      try { releaseHostChildFloor?.(); }
+      finally { releaseBrokerRequirement?.(); }
+    }
   }
 }

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,6 +58,12 @@ describe("parseTaskStopInput", () => {
 });
 
 describe("TaskStop executor", () => {
+  test("a broker-owned PID is display only; TaskStop invokes its owner capability",async()=>{
+    let owned=0;startTracking({taskId:"owned",kind:"bash",outputPath:"/x",description:"owned",pid:999999,stopOwnedProcess(){owned++;}});
+    const kill=spyOn(process,"kill").mockImplementation(()=>true);
+    try {expect((await taskStop()({task_id:"owned"},fakeCtx())).isError).toBeFalsy();expect(owned).toBe(1);expect(kill).not.toHaveBeenCalled();expect(getTask("owned")?.status).toBe("stopped");}
+    finally {kill.mockRestore();}
+  });
   test("bad args are a tool error, not a throw", async () => {
     const res = await taskStop()({}, fakeCtx());
     expect(res.isError).toBe(true);

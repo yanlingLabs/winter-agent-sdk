@@ -31,6 +31,8 @@ import { resolveRealTarget } from "../permissions/paths.ts";
 export interface ReadRecord {
   complete: boolean;
   mtimeMs: number;
+  /** Guest descriptor identity; mtime alone cannot detect replaced files or same-timestamp edits. */
+  fileVersion?: string;
 }
 
 export interface SessionReadState {
@@ -61,7 +63,7 @@ export function createSessionReadState(opts: SessionReadStateOptions): SessionRe
 
   return {
     recordRead(p, o) {
-      reads.set(canonicalKey(p), { complete: o.complete, mtimeMs: o.mtimeMs });
+      reads.set(canonicalKey(p), { ...o });
     },
     lookup(p) {
       return reads.get(canonicalKey(p));

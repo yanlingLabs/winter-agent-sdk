@@ -1,3 +1,4 @@
+import { readSourceFileSync } from "../sandbox/source-read.ts";
 // Phase 5 Lane W (task 4): the PARENT half of the workflow runtime -- WS-11 §1.4/§1.5/§1.8. Ported
 // from Norma's `workflows/runtime.ts` (D8/D11) with every `NORMA_HOME`/SessionEvent coupling removed:
 // this class emits nothing of its own, holds no notion of a daemon, and reaches the session through
@@ -16,13 +17,15 @@ import { spawn as spawnProcess } from "node:child_process";
 // single-file executable, where a dynamic import of a computed-or-not path is exactly the failure
 // class main.ts's own header warns about -- and no gate in this repo exercises a nested `workflow()`
 // through the compiled binary, so that leg would have been unproven as well as fragile.
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { RunJournal, promptKey, type JournalEntry } from "./journal.ts";
 import { RunTranscript, capTranscriptField, renderTranscriptValue } from "./transcript.ts";
 import { WorkflowRegistry } from "./registry.ts";
 import { makeSemaphore, resolveConcurrencyCap, type Semaphore } from "./semaphore.ts";
 import { createBudget, type WorkflowBudget } from "./budget.ts";
 import { buildWorkerSpawn, resolveWorkerCommand, workflowSandboxAvailable, type WorkerCommand } from "./sandbox.ts";
+import { currentHostCodeProcessClient, hostCodeProcessBrokerRequired } from "../sandbox/host-code-process.ts";
+import { brokeredWorkflowWorker } from "./host-code-worker.ts";
 import type { SandboxBrand } from "../sandbox/profile.ts";
 import { trackProcessGroup } from "../process-groups.ts";
 import type { BrandProfile, SettingSource } from "@yanlinglabs/winter-agent-sdk";
@@ -123,7 +126,13 @@ export function stderrTail(stream: NodeJS.ReadableStream | null | undefined): ()
   };
 }
 
-export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; winterHome?: string; brand?: SandboxBrand; cwd?: string }) => WorkerProcess;
+export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; winterHome?: string; brand?: SandboxBrand; cwd?: string; hostCodeScope?: {sessionId:string;toolUseId:string;agentId?:string;parentToolUseId?:string}; runId?:string }) => WorkerProcess;
+
+function assertRequiredWorkflowBroker(): void {
+  if (hostCodeProcessBrokerRequired() && !currentHostCodeProcessClient()) {
+    throw new WorkflowRuntimeError("sandbox-unavailable", "required host Workflow broker unavailable; no local execution fallback");
+  }
+}
 
 /**
  * The production spawner: `sandbox-exec -p <profile> <worker>`, its own process-group leader.
@@ -138,6 +147,11 @@ export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string; wint
 export function realWorkerSpawner(opts: { sandbox?: boolean } = {}): WorkerSpawner {
   const sandbox = opts.sandbox ?? true;
   return (command, spawnOpts) => {
+    assertRequiredWorkflowBroker();
+    if(currentHostCodeProcessClient()) {
+      if(!spawnOpts.hostCodeScope||!spawnOpts.runId||!spawnOpts.cwd)throw new WorkflowRuntimeError("sandbox-unavailable","Workflow requires an authenticated host execution scope");
+      return brokeredWorkflowWorker({cwd:spawnOpts.cwd,runId:spawnOpts.runId,scope:spawnOpts.hostCodeScope});
+    }
     const spawnTarget = sandbox
       ? buildWorkerSpawn({
           command,
@@ -202,6 +216,8 @@ export interface WorkflowRuntimeDeps {
 
 export interface WorkflowLaunchInput {
   sessionId: string;
+  agentId?: string;
+  hostCodeParentToolUseId?: string;
   cwd: string;
   trustedWorkspace: boolean;
   source: string;
@@ -294,6 +310,9 @@ export class WorkflowRuntime {
   }
 
   launch(input: WorkflowLaunchInput, host: WorkflowRunHost): WorkflowLaunchResult {
+    // Refuse before scripts, journals, tasks or worker processes can be created. The real
+    // spawner checks again at use, including its verification-only sandbox:false entry.
+    assertRequiredWorkflowBroker();
     // The sandbox refusal is checked BEFORE anything is created, so a host without `sandbox-exec`
     // gets a clean error instead of a half-registered run. Only an injected spawner skips it -- and
     // then only because that spawner is, by construction, not forking anything.
@@ -338,6 +357,7 @@ export class WorkflowRuntime {
     // class): the RESOLVED root is passed too, so a `<PREFIX>HOME` whose basename is not the brand's gets
     // its own `<root>/run` deny -- the profile emits both anchors.
     const worker = this.spawnWorker(command, {
+      ...(currentHostCodeProcessClient() ? {hostCodeScope:{sessionId:input.sessionId,toolUseId:input.parentToolUseId,...(input.agentId!==undefined?{agentId:input.agentId}:{}),...(input.hostCodeParentToolUseId!==undefined?{parentToolUseId:input.hostCodeParentToolUseId}:{})},runId} : {}),
       cwd: input.cwd,
       home: parentOf(this.deps.session.winterHome),
       winterHome: this.deps.session.winterHome,
@@ -463,6 +483,8 @@ export class WorkflowRuntime {
       replacement?: { source: string; meta: WorkflowLaunchInput["meta"] };
       /** Supplied = the new args; OMITTED = the original launch's args, unchanged. */
       args?: unknown;
+      agentId?: string;
+      hostCodeParentToolUseId?: string;
     } = {},
   ): WorkflowLaunchResult {
     const prior = this.registry.get(runId);
@@ -494,6 +516,8 @@ export class WorkflowRuntime {
         ...(opts.replacement !== undefined ? { source: opts.replacement.source, meta: opts.replacement.meta } : {}),
         ...("args" in opts ? { args: opts.args } : {}),
         ...(opts.parentToolUseId !== undefined ? { parentToolUseId: opts.parentToolUseId } : {}),
+        ...(opts.agentId !== undefined ? { agentId: opts.agentId } : {}),
+        ...(opts.hostCodeParentToolUseId !== undefined ? { hostCodeParentToolUseId: opts.hostCodeParentToolUseId } : {}),
         ...(journal.length > 0 ? { resumeJournal: journal } : {}),
       },
       host,
@@ -904,7 +928,7 @@ async function defaultNestedResolver(
     return resolved.ok ? { ok: true, source: resolved.source } : { ok: false, error: resolved.error };
   }
   try {
-    return { ok: true, source: readFileSync(ref.scriptPath, "utf8") };
+    return { ok: true, source: readSourceFileSync(ref.scriptPath, "utf8") };
   } catch (err) {
     return { ok: false, error: `unreadable workflow script ${JSON.stringify(ref.scriptPath)}: ${err instanceof Error ? err.message : String(err)}` };
   }

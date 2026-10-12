@@ -1,0 +1,3 @@
+[1012/022745.224882:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[1012/022745.228416:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670
+[1012/022745.256315:ERROR:components/headless/command_handler/headless_command_handler.cc:403] Page load failed: net::ERR_FILE_NOT_FOUND

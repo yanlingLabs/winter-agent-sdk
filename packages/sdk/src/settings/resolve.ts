@@ -395,6 +395,8 @@ const SOURCE_ORDER_LOWEST_FIRST: readonly SettingSource[] = ["user", "project", 
  */
 export async function resolveSettingsDetailed(
   opts: ResolveSettingsDetailedOptions = {},
+  // Trusted caller seam, deliberately separate from serializable settings/options.
+  readSettingsText?: (path: string) => Promise<string>,
 ): Promise<DetailedResolvedSettings> {
   const cwd = opts.cwd ?? process.cwd();
   const selected: readonly SettingSource[] = opts.settingSources ?? SETTING_SOURCES;
@@ -417,7 +419,7 @@ export async function resolveSettingsDetailed(
   for (const source of SOURCE_ORDER_LOWEST_FIRST) {
     if (!selected.includes(source)) continue;
     const path = settingsPathFor(source, pathOpts);
-    const file = await loadSettingsFile(path);
+    const file = await loadSettingsFile(path, readSettingsText);
     if (!file.present) continue; // an absent file contributes no entry at all
     // Phase 5 fix wave, A-2: a VALUE-LEVEL malformed rule array. `loadSettingsFile` reports a
     // SHAPE error (unparseable JSON, a non-object top level) and nothing else, so

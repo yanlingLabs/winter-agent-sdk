@@ -3,6 +3,7 @@
 // and both are "small persisted auto-mode state," mirroring how approvals.ts owns everything the
 // durable-approval record needs in one place.
 import { createHash } from "node:crypto";
+import { guardedDurableMethods, type DurableOperationGuard } from "../../store/durable-authority.ts";
 import { mkdirSync, lstatSync, chmodSync, readFileSync, renameSync, fsyncSync, openSync, closeSync, writeSync, constants as fsConstants } from "node:fs";
 import { join, dirname } from "node:path";
 import type { PolicyState } from "../policy-state.ts";
@@ -306,7 +307,8 @@ function writeAtomic(path: string, value: AutoCounterState): void {
   renameSync(tmpPath, path);
 }
 
-export function createFileAutoCounterStore(location: AutoCounterStoreLocation): AutoCounterStore {
+export function createFileAutoCounterStore(location: AutoCounterStoreLocation, guard?: DurableOperationGuard): AutoCounterStore {
+  if (guard !== undefined) return guardedDurableMethods(guard, () => createFileAutoCounterStore(location));
   const path = statePath(location);
   let state = loadExisting(path);
 

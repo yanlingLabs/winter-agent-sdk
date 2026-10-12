@@ -1,3 +1,4 @@
+import { sourceObjectPath, sourceObjectAllowed, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
 // WS-10 §2 / RULING R4-7: AgentDefinition sourcing -- programmatic (Options.agents, already
 // wire-plumbed to RuntimeConfig.agents by T2) + filesystem (`<projectDir>/agents/*.md`,
 // `~/.winter/agents/*.md`) MUST coexist.
@@ -14,7 +15,7 @@
 // producer: nothing under packages/runtime/src reads a Winter plugin manifest yet, so `pluginAgents`
 // arrives pre-parsed from whoever loaded the plugin bundle, exactly the way `programmatic` arrives
 // pre-parsed from the wire.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+
 import { join } from "node:path";
 import { WINTER_BRAND, type AgentInfo, type BrandProfile, type RuntimeAgentDefinition, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { resolveBuiltinAgents, resolveBuiltinAgentGates, type BuiltinAgentGates } from "./builtin-agents.ts";
@@ -322,7 +323,7 @@ function loadAgentDirectory(dir: string, source: "user" | "project", onReject?: 
   const out: Record<string, RuntimeAgentDefinition> = {};
   let entries: string[];
   try {
-    entries = readdirSync(dir);
+    entries = readSourceDirectorySync(dir);
   } catch {
     return out; // directory doesn't exist -- zero agents from this source, never an error
   }
@@ -330,8 +331,8 @@ function loadAgentDirectory(dir: string, source: "user" | "project", onReject?: 
     if (!entry.toLowerCase().endsWith(".md")) continue;
     const full = join(dir, entry);
     try {
-      if (!statSync(full).isFile()) continue;
-      const raw = readFileSync(full, "utf8");
+      if (!statSourceSync(full).isFile()) continue;
+      const raw = readSourceFileSync(full, "utf8");
       const parsed = parseAgentDefinitionFile(raw, full);
       if (parsed.ok) {
         out[parsed.name] = parsed.definition;
@@ -448,6 +449,16 @@ export function loadAgentDefinitions(opts: LoadAgentDefinitionsOptions): Map<str
     });
   for (const [name, def] of Object.entries(builtins)) out.set(name, { ...def, _source: "builtin" });
   for (const [name, def] of Object.entries(opts.pluginAgents ?? {})) {
+    if (!sourceObjectAllowed(def)) {
+      const path = sourceObjectPath(def);
+      if (path !== undefined) {
+        try {
+          const parsed = parseAgentDefinitionFile(readSourceFileSync(path, "utf8"), path);
+          if (parsed.ok) out.set(parsed.name, { ...parsed.definition, _source: "plugin", _plugin: def.plugin });
+        } catch { /* fresh denied/unreadable source contributes no definition */ }
+      }
+      continue;
+    }
     const { plugin, ...definition } = def;
     out.set(name, { ...definition, _source: "plugin", _plugin: plugin });
   }

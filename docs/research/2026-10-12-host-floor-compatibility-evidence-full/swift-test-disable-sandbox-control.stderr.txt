@@ -1,0 +1,13 @@
+Building for debugging...
+[0/7] /private/var/folders/xx/yyyy/T/winter-host-floor-compat-e41muW/swift-test-disable-sandbox-control/.build/arm64-apple-macosx/debug/FloorFixturePackageTests.derived/runner.swift
+[1/7] Write sources
+[4/7] Write swift-version--58304C5D6DBC2206.txt
+[6/9] Emitting module FloorFixture
+[7/9] Compiling FloorFixture Fixture.swift
+[8/11] Emitting module FloorFixtureTests
+[9/11] Compiling FloorFixtureTests FixtureTests.swift
+[10/13] Emitting module FloorFixturePackageTests
+[11/13] Compiling FloorFixturePackageTests runner.swift
+[11/13] Write Objects.LinkFileList
+[12/13] Linking FloorFixturePackageTests
+Build complete! (8.81s)

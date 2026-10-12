@@ -1,3 +1,4 @@
+import { readSourceFileSync, statSourceSync } from "../sandbox/source-read.ts";
 // WS-21 §6.3 item 4 (F17): `@import` expansion, claude's tier rule.
 //
 // TOKEN GRAMMAR (claude's documented `@path` import syntax): `@path`, `@./path`, `@~/path` or
@@ -23,7 +24,7 @@
 // AN UNRESOLVED TOKEN (missing file, depth exceeded, out-of-scope, or not even shaped like a valid
 // import) STAYS AS LITERAL TEXT -- there is nothing to substitute, so the `@path` the author wrote
 // is left exactly as written, never silently deleted.
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
@@ -203,8 +204,8 @@ function replaceImportTokens(text: string, containingFileDir: string, depth: num
 
     let raw: string;
     try {
-      if (!statSync(resolvedPath).isFile()) return full;
-      raw = readFileSync(resolvedPath, "utf8");
+      if (!statSourceSync(resolvedPath).isFile()) return full;
+      raw = readSourceFileSync(resolvedPath, "utf8");
     } catch {
       return full; // missing/unreadable: unresolved, literal text stays
     }

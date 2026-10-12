@@ -1,0 +1,2 @@
+<!DOCTYPE html>
+<html><head><title>Floor fixture</title></head><body><p id="proof">headless-fixture-ready</p></body></html>

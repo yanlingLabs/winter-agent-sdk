@@ -389,6 +389,12 @@ describe("Grep (Phase 3, Lane A, Task 4)", () => {
   // pidfile`, run Grep with a probeReadAccess that answers deny for that subtree -- the result must
   // not list the file."
   describe("I1 (fix wave, P3 close-out): probeReadAccess filters deny-read subtrees out of the scan, not just the call's own path field", () => {
+    test("a read-denied .gitignore cannot influence an allowed sibling search",async()=>{
+      const ignored=join(dir,".gitignore");writeFileSync(ignored,"allowed.txt\n");writeFileSync(join(dir,"allowed.txt"),"needle");
+      const ctx=makeCtx(dir,{permissions:{probeReadAccess:(path:string)=>path===ignored?"deny":"silent"}});
+      const result=await runGrep({pattern:"needle"},ctx);
+      expect(result.output).toContain(join(dir,"allowed.txt"));
+    });
     test("a file under a subtree probeReadAccess denies is never listed, even though the scan root itself is not denied", async () => {
       const runDir = join(dir, ".winter", "run");
       mkdirSync(runDir, { recursive: true });

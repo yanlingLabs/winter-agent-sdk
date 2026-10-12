@@ -1,3 +1,5 @@
+import { guestToolUnsupported } from "../../guest/file-session.ts";
+import { hostCodePathAllowed } from "../../sandbox/host-code-protection.ts";
 // WS-06 §3.1 "Grep" -- the real executor (Phase 3, Lane A / Task 4). Registers over the stub
 // descriptors/grep.ts already put in the registry.
 //
@@ -79,6 +81,7 @@ import { readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { emptyPathSet, type ExtractedPaths } from "../paths-seam.ts";
+import { scanReadableFiles } from "../safe-glob-scan.ts";
 
 // --- Input (WS-06 §3.1, verbatim) -------------------------------------------------------------------
 
@@ -282,16 +285,19 @@ function compileGitignoreLine(trimmedLine: string, ownerRelDir: string): IgnoreR
   return { negate, glob: new Bun.Glob(pattern) };
 }
 
-async function loadGitignoreRules(searchRoot: string): Promise<IgnoreRule[]> {
-  const discovery = new Bun.Glob("**/.gitignore");
+async function loadGitignoreRules(searchRoot: string, ctx: ToolExecutionContext): Promise<IgnoreRule[]> {
   const found: { relDir: string; depth: number; content: string }[] = [];
   try {
-    for await (const rel of discovery.scan({ cwd: searchRoot, dot: true, onlyFiles: true, followSymlinks: false })) {
+    for (const absolute of await scanReadableFiles("**/.gitignore", searchRoot, true)) {
+      if (ctx.permissions.probeReadAccess(absolute) === "deny") continue;
+      const rel = relative(searchRoot, absolute);
       const relPosix = rel.split(sep).join("/");
       const dir = dirname(relPosix);
       const relDir = dir === "." ? "" : dir;
       try {
-        const content = readFileSync(resolve(searchRoot, rel), "utf8");
+        const path = resolve(searchRoot, rel);
+        if (!hostCodePathAllowed(path, "read", ctx.sandboxSettings, ctx.cwd)) continue;
+        const content = readFileSync(path, "utf8");
         found.push({ relDir, depth: relDir.length === 0 ? 0 : relDir.split("/").length, content });
       } catch {
         // Unreadable .gitignore -- skip it, never abort the whole search over one bad file.
@@ -324,11 +330,11 @@ function isIgnored(relPathPosix: string, rules: readonly IgnoreRule[]): boolean 
 
 // --- file discovery --------------------------------------------------------------------------------
 
-async function discoverCandidateFiles(searchRoot: string, globPattern: string): Promise<string[]> {
-  const rules = await loadGitignoreRules(searchRoot);
-  const glob = new Bun.Glob(globPattern);
+async function discoverCandidateFiles(searchRoot: string, globPattern: string, ctx: ToolExecutionContext): Promise<string[]> {
+  const rules = await loadGitignoreRules(searchRoot, ctx);
   const out: string[] = [];
-  for await (const p of glob.scan({ cwd: searchRoot, onlyFiles: true, dot: false, followSymlinks: false })) {
+  const extra = ctx.sandboxSettings?.filesystem?.denyRead?.length ? (path: string) => hostCodePathAllowed(path, "read", ctx.sandboxSettings, ctx.cwd) : undefined;
+  for (const p of await scanReadableFiles(globPattern, searchRoot, false, extra)) {
     // Same absolute-yield quirk as Glob's own scan() (see glob.ts's header): join only a RELATIVE
     // match onto searchRoot. Either way, the gitignore matcher needs a path relative to searchRoot
     // (every compiled rule is anchored that way) -- computed via `relative()` from the final
@@ -456,6 +462,8 @@ function resolveContext(input: GrepInput): { before: number; after: number } {
 }
 
 async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
+    const guestRefusal = guestToolUnsupported(ctx, "Grep");
+    if (guestRefusal) return guestRefusal;
   let input: GrepInput;
   try {
     input = parseInput(rawInput);
@@ -480,6 +488,7 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
 
   // Fix round 10, item B: trim FIRST, as claude does -- see write.ts's identical comment.
   const scanRoot = input.path !== undefined ? resolve(ctx.cwd, input.path.trim()) : ctx.cwd;
+  if (!hostCodePathAllowed(scanRoot, "read", ctx.sandboxSettings, ctx.cwd)) return { output: "Error: protected host path access refused", isError: true };
   let candidateFiles: string[];
   try {
     const st = statSync(scanRoot);
@@ -492,7 +501,7 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
       // traversal, has no effect when the file is named directly.
       candidateFiles = [scanRoot];
     } else if (st.isDirectory()) {
-      candidateFiles = await discoverCandidateFiles(scanRoot, input.glob ?? "**/*");
+      candidateFiles = await discoverCandidateFiles(scanRoot, input.glob ?? "**/*", ctx);
     } else {
       return { output: `Error: path is neither a file nor a directory: ${input.path ?? scanRoot}`, isError: true };
     }
@@ -507,7 +516,7 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
   // still walk INTO the run dir and surface its contents. Filtering every discovered candidate
   // through `ctx.permissions.probeReadAccess` closes that: a file the standing evaluator would deny
   // reading directly is never listed here either, regardless of how it was reached.
-  candidateFiles = candidateFiles.filter((f) => ctx.permissions.probeReadAccess(f) !== "deny");
+  candidateFiles = candidateFiles.filter((f) => hostCodePathAllowed(f, "read", ctx.sandboxSettings, ctx.cwd) && ctx.permissions.probeReadAccess(f) !== "deny");
   candidateFiles.sort((a, b) => a.localeCompare(b));
 
   const mode: OutputMode = input.output_mode ?? "files_with_matches";
@@ -550,6 +559,7 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
     }
     let buf: Buffer;
     try {
+      if (!hostCodePathAllowed(file, "read", ctx.sandboxSettings, ctx.cwd)) continue;
       buf = readFileSync(file);
     } catch {
       continue; // vanished mid-scan / unreadable -- skip, never abort the whole call

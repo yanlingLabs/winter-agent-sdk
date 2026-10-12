@@ -1,0 +1,1 @@
+cat: /private/var/folders/xx/yyyy/T/winter-code-policy-compat-d4Quug/cowork/data.ext4: Operation not permitted

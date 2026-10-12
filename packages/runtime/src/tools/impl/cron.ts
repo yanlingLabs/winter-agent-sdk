@@ -57,7 +57,9 @@
 //      3-letter English name tokens (JAN..DEC, SUN..SAT), case-insensitive. Rejected, with a legible
 //      per-field error: named schedules (`@daily`, `@hourly`, ...), any field count other than
 //      exactly 5 (no seconds field, no year field), out-of-range values, and empty fields/items.
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, constants as fsConstants, writeSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, constants as fsConstants, writeSync } from "node:fs";
+import { readSourceFileSync } from "../../sandbox/source-read.ts";
+import { assertHostCodePathAccess } from "../../sandbox/host-code-protection.ts";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { WINTER_BRAND, disableCronEnvName, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
@@ -249,12 +251,13 @@ function isCronJobRecord(v: unknown): v is CronJobRecord {
 // Never clobbers: throws (never silently starts fresh, never overwrites) the moment the file exists
 // but cannot be parsed as this module's own envelope shape. Absence of the file (or of the project
 // dot-directory itself) is NOT an error -- it means "no durable jobs have ever been created here."
-function readDurableJobs(projectDir: string, brand?: CronBrand): CronJobRecord[] {
+function readDurableJobs(projectDir: string, brand?: CronBrand, sandbox?: ToolExecutionContext["sandboxSettings"]): CronJobRecord[] {
   const path = durableFilePath(projectDir, brand);
+  assertHostCodePathAccess(path, "read", sandbox, projectDir);
   if (!existsSync(path)) return [];
   let raw: string;
   try {
-    raw = readFileSync(path, "utf8");
+    raw = readSourceFileSync(path, "utf8");
   } catch (e) {
     throw new Error(`could not read ${path}: ${(e as Error).message}`);
   }
@@ -279,8 +282,9 @@ function readDurableJobs(projectDir: string, brand?: CronBrand): CronJobRecord[]
 // owner-only by default). Mirrors the established permissions/auto/caches.ts writeAtomic precedent
 // in this codebase (pid+counter temp name, O_CREAT|O_EXCL|O_NOFOLLOW, fsync, rename).
 let tempCounter = 0;
-function writeDurableJobsAtomic(projectDir: string, jobs: CronJobRecord[], brand?: CronBrand): void {
+function writeDurableJobsAtomic(projectDir: string, jobs: CronJobRecord[], brand?: CronBrand, sandbox?: ToolExecutionContext["sandboxSettings"]): void {
   const path = durableFilePath(projectDir, brand);
+  assertHostCodePathAccess(path, "write", sandbox, projectDir);
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true }); // "create parents"
   const tmpPath = join(dir, `.scheduled_tasks.${process.pid}-${++tempCounter}.tmp`);
@@ -351,12 +355,12 @@ async function executeCreate(rawInput: unknown, ctx: ToolExecutionContext): Prom
     }
     let existing: CronJobRecord[];
     try {
-      existing = readDurableJobs(ctx.session.getSessionRoot(), ctx.brand);
+      existing = readDurableJobs(ctx.session.getSessionRoot(), ctx.brand, ctx.sandboxSettings);
     } catch (e) {
       return errorResult((e as Error).message);
     }
     try {
-      writeDurableJobsAtomic(ctx.session.getSessionRoot(), [...existing, record], ctx.brand);
+      writeDurableJobsAtomic(ctx.session.getSessionRoot(), [...existing, record], ctx.brand, ctx.sandboxSettings);
     } catch (e) {
       return errorResult(`could not persist the durable job: ${(e as Error).message}`);
     }
@@ -399,7 +403,7 @@ async function executeDelete(rawInput: unknown, ctx: ToolExecutionContext): Prom
 
   let existing: CronJobRecord[];
   try {
-    existing = readDurableJobs(ctx.session.getSessionRoot(), ctx.brand);
+    existing = readDurableJobs(ctx.session.getSessionRoot(), ctx.brand, ctx.sandboxSettings);
   } catch (e) {
     return errorResult((e as Error).message);
   }
@@ -411,7 +415,7 @@ async function executeDelete(rawInput: unknown, ctx: ToolExecutionContext): Prom
     return { output: JSON.stringify({ id: input.id }) };
   }
   try {
-    writeDurableJobsAtomic(ctx.session.getSessionRoot(), remaining, ctx.brand);
+    writeDurableJobsAtomic(ctx.session.getSessionRoot(), remaining, ctx.brand, ctx.sandboxSettings);
   } catch (e) {
     return errorResult(`could not persist the deletion: ${(e as Error).message}`);
   }
@@ -428,7 +432,7 @@ async function executeList(_rawInput: unknown, ctx: ToolExecutionContext): Promi
     durableJobs = [];
   } else {
     try {
-      durableJobs = readDurableJobs(ctx.session.getSessionRoot(), ctx.brand);
+      durableJobs = readDurableJobs(ctx.session.getSessionRoot(), ctx.brand, ctx.sandboxSettings);
     } catch (e) {
       return errorResult((e as Error).message);
     }

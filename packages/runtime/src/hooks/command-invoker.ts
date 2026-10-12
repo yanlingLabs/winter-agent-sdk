@@ -61,6 +61,7 @@
 // effective on a real process: on abort it sends SIGTERM, then SIGKILL after a short grace, and it
 // kills in `finally` on every path, so an abandoned hook process can never outlive its invocation.
 import { spawn } from "node:child_process";
+import { prepareHostChildLaunch } from "../sandbox/host-child-floor.ts";
 import { envName, type BrandProfile, type HookEvent } from "@yanlinglabs/winter-agent-sdk";
 import { FAIL_CLOSED_EVENTS, HOOK_PROCESS_OUTPUT, type HookInvocationRequest, type HookInvoker, type HookProcessOutput } from "./runner.ts";
 import { MAX_HOOK_STDOUT_CAPTURE } from "./bounds.ts";
@@ -274,7 +275,8 @@ function startHookProcess(command: string, input: Record<string, unknown>, cfg: 
   // to that shell, never concatenated into a larger command line. Nothing from the REQUEST is ever
   // interpolated into the command: the hook's input rides stdin as JSON, which is the whole reason
   // the §10 payload is a stdin contract and not an argv one.
-  const child = spawn(cfg.shellPath, ["-c", command], {
+  const launch = prepareHostChildLaunch(cfg.shellPath, ["-c", command], cfg);
+  const child = spawn(launch.command, launch.args, {
     cwd: cfg.cwd,
     env: cfg.env as NodeJS.ProcessEnv,
     stdio: ["pipe", "pipe", "pipe"],

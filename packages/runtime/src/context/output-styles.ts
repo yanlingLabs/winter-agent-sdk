@@ -1,3 +1,4 @@
+import { readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
 // Phase 5 Lane C (task 6) -- output styles (WS-11 §6.5). A PRODUCT EXTENSION carried over from
 // Norma, not a pinned surface: `<projectDir>/output-styles/<name>.md` plus built-ins, selected by name
 // through `Settings.outputStyle` / `RuntimeConfig.outputStyle`.
@@ -57,7 +58,7 @@
 // the mechanics and `winter-code-preset.ts` for why "Task execution" alone is the cut section and
 // "Careful actions" (safety floor: credentials are radioactive, ask before the irreversible, name the
 // exact destructive target) is not.
-import { readFileSync, readdirSync, statSync } from "node:fs";
+
 import { basename, join } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { capBytes, neutralizeReminderTags } from "./injection.ts";
@@ -161,8 +162,8 @@ function bodyExcerpt(body: string, def: string): string {
 function parseStyleFile(path: string, fallbackName: string, source: "project" | "user"): ResolvedOutputStyle | null {
   let raw: string;
   try {
-    if (!statSync(path).isFile()) return null;
-    raw = readFileSync(path, "utf8");
+    if (!statSourceSync(path).isFile()) return null;
+    raw = readSourceFileSync(path, "utf8");
   } catch {
     return null;
   }
@@ -212,8 +213,8 @@ function parseStyleFile(path: string, fallbackName: string, source: "project" | 
 function parsePluginStyleFile(path: string, pluginName: string, fallbackBaseName: string): ResolvedOutputStyle | null {
   let raw: string;
   try {
-    if (!statSync(path).isFile()) return null;
-    raw = readFileSync(path, "utf8");
+    if (!statSourceSync(path).isFile()) return null;
+    raw = readSourceFileSync(path, "utf8");
   } catch {
     return null;
   }
@@ -302,16 +303,16 @@ export function resolveOutputStyle(name: string, lookup: OutputStyleLookup): Res
     // Fix round 5: each SOURCE may itself be a directory (the pre-existing shape) or, for a manifest
     // `outputStyles` override entry, a single FILE naming one style directly.
     for (const source of sources) {
-      let stat: ReturnType<typeof statSync>;
+      let stat: ReturnType<typeof statSourceSync>;
       try {
-        stat = statSync(source);
+        stat = statSourceSync(source);
       } catch {
         continue;
       }
       if (stat.isDirectory()) {
         let entries: string[];
         try {
-          entries = readdirSync(source);
+          entries = readSourceDirectorySync(source);
         } catch {
           continue;
         }

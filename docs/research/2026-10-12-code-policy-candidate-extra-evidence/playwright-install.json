@@ -1,0 +1,15 @@
+{
+  "version": "1.64.0",
+  "resolved": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.64.0.tgz",
+  "integrity": "sha512-T9r+MZkTECl2+oUcZ26YgZzTrYidTsIhYYkJix+6iDOymOb1FB2RLLSOxRGnZGv5DStt+aduIVbt+E8WygXYpg==",
+  "license": "Apache-2.0",
+  "bin": {
+    "playwright-core": "cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "package": "playwright-core",
+  "lockfileSha256": "4a3b2f3d58f42ca1c9eeb2d1afe2254e814fcfbb742d1be75625931cbfc95a6c",
+  "installation": "public npm, isolated disposable HOME/cache/config, ignore-scripts, no-audit, no-fund; no browser download"
+}

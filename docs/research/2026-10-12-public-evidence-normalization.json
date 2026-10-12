@@ -1,0 +1,252 @@
+{
+  "sourceHead": "bbab87d9",
+  "normalization": "All per-user macOS temporary ancestors (including quoted T, user directory and bucket) replaced by synthetic xx/yyyy; published hashes updated, outcomes unchanged.",
+  "rawOriginalsRetainedLocally": true,
+  "workloadsRerun": false,
+  "files": {
+    "docs/research/2026-10-12-host-floor-cleanup.json": {
+      "beforePublishedSha256": "2740df85dfc7868c97226c034c887b605272d9c7321bd6e7814b5662d19934ce",
+      "afterPublishedSha256": "43a49093283e73e6d74de263503fb61229f8feb0ee8770e193a3f329d858364e"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-extra-evidence/playwright-sandboxed.driver.mjs": {
+      "beforePublishedSha256": "10306568ab6d193e2ee4afad7ce12b914601b446d2df1118f3b9a85d2e074ab2",
+      "afterPublishedSha256": "cd9a46f67b7c386e1dcaa44c29b02a1f4501dd1661981e15004be8f651149cc7"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-extra-evidence/xcode-resolve-approved-escape.stdout.txt": {
+      "beforePublishedSha256": "c4436655f541813aa0ec59d8818f9981111b77e82cd9292c8e3291f671d7a698",
+      "afterPublishedSha256": "0b0328ea3db7984c0929b98a82416f92f6c6e590861b6b91e10fd3ceaccdcae0"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-extra-evidence/xcode-resolve-sandboxed.stdout.txt": {
+      "beforePublishedSha256": "85c267b6f2e43b4dd10e6b355d50d6a05bb3629744ebdd1a43d69515e806f710",
+      "afterPublishedSha256": "430118a61339b1e7b8ba55d4017136acd084289020716972cffec14ac3456384"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-extra-evidence/playwright-sandboxed.sb": {
+      "beforePublishedSha256": "a1e1288eca1ba3a77c19c07189bf83e48d4ddb885883310f426a9c3802bd0e52",
+      "afterPublishedSha256": "a70463d22c97dfbf14b6088fa79612afe9d5ce4adf62ef283ecb4a775afa3edf"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-extra-evidence/results.json": {
+      "beforePublishedSha256": "ff15fad149ec41215b7f82a6eb08329c32b478554af340c20857c2ee54b1575f",
+      "afterPublishedSha256": "90010877216000d2d201907e2e84e51615db2be63b006b66ce8b1b6b709bad9e"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-extra-evidence/playwright-sandboxed.stderr.txt": {
+      "beforePublishedSha256": "6d9f9d60614f7a331a5010d11bba73230ffa22fad0975f756f963f5ffa7601f2",
+      "afterPublishedSha256": "a11466f58c7fcba9029bf2bfc6e6f14f02e273729bbb09d7f165c9a0cf0ba4fa"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-extra-evidence/xcode-resolve-sandboxed.sb": {
+      "beforePublishedSha256": "4a7b019f572c0397f7928d8b7f8a494dc4d8e5d46241a9f97fe48adea28a7918",
+      "afterPublishedSha256": "a74a332f94ca5014f21d43b970a519a6d3e23e3e280a0689adcca61be02bb1bc"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-extra-evidence/cleanup.json": {
+      "beforePublishedSha256": "063809d11ebe675a48560549d889d28c21bfcacf5bb9ea071b5c306c0c09c069",
+      "afterPublishedSha256": "0d71acc7944d0c011a3e5ceb8e982aa23d37eddf373bb6d4c599ddfa38c61c40"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-extra-evidence/playwright-approved-escape.driver.mjs": {
+      "beforePublishedSha256": "73d364b30e26f11c38922fae3c26fe2660fbcb5eccfe0cac6b45e393b3dd0af5",
+      "afterPublishedSha256": "ceb4cd572ad37018d2ef184a891979e2fc4674927a1d54aa0970173e9140c1be"
+    },
+    "docs/research/2026-10-12-host-floor-sourcekit-evidence/results.json": {
+      "beforePublishedSha256": "c083f6dc50318d0f154ff769416fa389d5da5c1abe17700957d22c65883fa3ef",
+      "afterPublishedSha256": "e2e81ef10ca0705dffa9519e4bab4ca33100313e578d871eecb2d89e94c7fff1"
+    },
+    "docs/research/2026-10-12-host-floor-sourcekit-evidence/floor.sb": {
+      "beforePublishedSha256": "c6719338709cba2c2085b8f4c025abb2397f40105d21e98eae61b7e6f7b38e0f",
+      "afterPublishedSha256": "62f1abc9b9d36f7e927bcfd48ba54aa3b9a5b0ece9b26fe1d7fdf10cc2d1b8f3"
+    },
+    "docs/research/2026-10-12-host-floor-sourcekit-evidence/sourcekit-index-disable-sandbox-floor.stdout.txt": {
+      "beforePublishedSha256": "a41a094649e757aa56911019cad30245d0f4580220dd07a41124f64d04441ffe",
+      "afterPublishedSha256": "e8857690dccf4873a41eabb07fcda8862ee88e184c0026070e9e9615d9b79c78"
+    },
+    "docs/research/2026-10-12-host-floor-sourcekit-evidence/sourcekit-index-default-floor.stdout.txt": {
+      "beforePublishedSha256": "9cbaf07ab240471ef3d99c3d27d42c1172fdbe86aff744b360bc7e4c317f8a52",
+      "afterPublishedSha256": "45adbed701d60286be750417e814e823e3bcbc764693ad35f4d145ac27b345b6"
+    },
+    "docs/research/2026-10-12-host-floor-sourcekit-evidence/sourcekit-index-disable-sandbox-control.config.json": {
+      "beforePublishedSha256": "5aa0407f4371feb2ab16657ba04aedf9d439e5b63222fcca8bd1c72934e3789e",
+      "afterPublishedSha256": "40736b5bc98eb56780b5eb760e93effe5fe69d8bf73cd05bc41595356938a6ca"
+    },
+    "docs/research/2026-10-12-host-floor-sourcekit-evidence/sourcekit-index-disable-sandbox-control.stdout.txt": {
+      "beforePublishedSha256": "839fabef1856d9db2f75c9642a8f395e21155b76047da9cb3915a5129062caf5",
+      "afterPublishedSha256": "8094b4b0c60faf39708461f75c9f340e5e9b19544c2a3efbf7fc6ad6459f2396"
+    },
+    "docs/research/2026-10-12-host-floor-sourcekit-evidence/sourcekit-index-default-control.stdout.txt": {
+      "beforePublishedSha256": "3dc4b6816c3f985509ac3b7b4fc3dbbf98861a4002c07128e4c7ba415716b96a",
+      "afterPublishedSha256": "72bd66c43b7816495b993bfd79b04d2545f156bd27b2072fe51db6374f9f6be3"
+    },
+    "docs/research/2026-10-12-host-floor-sourcekit-evidence/sourcekit-index-default-control.config.json": {
+      "beforePublishedSha256": "7379d3b7086732de0aaa3f926b8f231adcc091374fd327145e13f207e2eaa479",
+      "afterPublishedSha256": "308da5797c42dfb96dfb231b9067d0a107f94aeb46cbbe1578dd8eceb3c68f79"
+    },
+    "docs/research/2026-10-12-host-floor-sourcekit-evidence/sourcekit-index-default-floor.config.json": {
+      "beforePublishedSha256": "34ee2ede68c981b335aca09de170f792af46a46b77326b76086e260ac3f65503",
+      "afterPublishedSha256": "ea3c64b209697b95ff52055abf84139abfbecf3dbdb37327cca54643d7d7ca9a"
+    },
+    "docs/research/2026-10-12-host-floor-sourcekit-evidence/sourcekit-index-disable-sandbox-floor.config.json": {
+      "beforePublishedSha256": "d4b4aef5abd65335a3b03a30c89d05bcc31a1c97d170618a3b500b5212394918",
+      "afterPublishedSha256": "b793cbb66ab4e04c3cdf3640497db6255935dc187f9e9dd0d74c2a739ab67790"
+    },
+    "docs/research/2026-10-12-code-policy-main-evidence/swift-test-sandboxed.sb": {
+      "beforePublishedSha256": "e5a472e447fdbabd531eda44d7e104629a031831aef107fa346a24d70189592a",
+      "afterPublishedSha256": "f41af0ac1ec187ef87b36a40d7790d238737b00a69a6570c0390ae0ee1e13cb7"
+    },
+    "docs/research/2026-10-12-code-policy-main-evidence/swift-test-sandboxed.stderr.txt": {
+      "beforePublishedSha256": "64e793b20c19b7575d582c31c298b09f98bcf3496c3ed630e2fe5e8a75254609",
+      "afterPublishedSha256": "ada17f237e0020dcb946bb3f20238c3e61385bf29fbb4767a7ec9ffa652f6bda"
+    },
+    "docs/research/2026-10-12-code-policy-main-evidence/swift-build-sandboxed.sb": {
+      "beforePublishedSha256": "a750215e49a59c5db36e03c19911c58af9482954e3bdaa8e80770f1afa32ca9b",
+      "afterPublishedSha256": "5a4c067dbea3282632e473eebb7ec3a8b856411a4e351fe54975a449b0ec564e"
+    },
+    "docs/research/2026-10-12-code-policy-main-evidence/sourcekit-index-approved-escape.stdout.txt": {
+      "beforePublishedSha256": "ffb13e788f6b70a7083bce2d8a842749272e66ac799577fe970c15833100845e",
+      "afterPublishedSha256": "0f1a262398b9139e236f6b10c7f900d405dbb2cdcd548a5d2f67f098ca90b0dd"
+    },
+    "docs/research/2026-10-12-code-policy-main-evidence/protected-read-sandboxed.sb": {
+      "beforePublishedSha256": "7ce6cd77a65d57012b43dcdc96666cb1f62581bb879aa5d6667ecb395af9190c",
+      "afterPublishedSha256": "aa920894b49ee5a7fa6b8996fe1fee9654579d3a8244299b3169b98edfccaca2"
+    },
+    "docs/research/2026-10-12-code-policy-main-evidence/results.json": {
+      "beforePublishedSha256": "e55f86ddcdfe351214f273e7df02e2219e34f90e2f7dbae97b9a55c8e6466ba1",
+      "afterPublishedSha256": "ee8587e8ec1cf16aaa0248d78b0125b5019db3648303171e9b91e1e6f72ef7d3"
+    },
+    "docs/research/2026-10-12-code-policy-main-evidence/swift-build-sandboxed.stderr.txt": {
+      "beforePublishedSha256": "11b4c9b321e9a95867deb326ac539b2d4e079f8d391a2d0434e1d2d0b033c6ba",
+      "afterPublishedSha256": "4a52f3a167190635d7257fc812f6e25b5de4d562fc8d756f736ea0befa6bf2fc"
+    },
+    "docs/research/2026-10-12-code-policy-main-evidence/chromium-sandboxed.sb": {
+      "beforePublishedSha256": "7d2660133adf76c14bb4f8e35a103b5c02d47025bfd61bb49be581fe45a9f11f",
+      "afterPublishedSha256": "48d3a74048b8d739faedd49a193dcf590b368df3e3c125ca3e3ab228b553a3a2"
+    },
+    "docs/research/2026-10-12-code-policy-main-evidence/sourcekit-index-sandboxed.sb": {
+      "beforePublishedSha256": "55470c280c5a333dfc29305bdaf74eca446eae23ad619bd1802f56e6acf87d0e",
+      "afterPublishedSha256": "9506c64227d779e593dd84a02bf7beb434fa6bd94a965af72c8bbbd4eb92558a"
+    },
+    "docs/research/2026-10-12-code-policy-main-evidence/swift-test-approved-escape.stderr.txt": {
+      "beforePublishedSha256": "dc26e7bb87f2893bdff727de8eec73778dbfe9d89e6c4454b476547e74c86cb7",
+      "afterPublishedSha256": "01d5390f1b4195de1e092f1dd47806bc606600c694fdad15ee4498a9c668f93c"
+    },
+    "docs/research/2026-10-12-code-policy-main-extra-evidence/playwright-sandboxed.driver.mjs": {
+      "beforePublishedSha256": "eed9149a2e1e1c1a45bdb8875a203c4256e571c69b402570e5e9287b73a1c889",
+      "afterPublishedSha256": "fee09b99914493f1aec9f9fb79512ff82983de5bf6a505bfaeef83bc688daac7"
+    },
+    "docs/research/2026-10-12-code-policy-main-extra-evidence/xcode-resolve-approved-escape.stdout.txt": {
+      "beforePublishedSha256": "f42d8c0328ca246b9366cc51567b7a0782a14f79efe4392ad153e3353f76c69b",
+      "afterPublishedSha256": "df50e6f623f0f604e94e04e53bb6793303e76665aca9afc2624388f4775e2601"
+    },
+    "docs/research/2026-10-12-code-policy-main-extra-evidence/xcode-resolve-sandboxed.stdout.txt": {
+      "beforePublishedSha256": "f1c2ca2f4f159824fa44382fbe90dab9b330dcb857f491696c94c19ce352be18",
+      "afterPublishedSha256": "dd0d7a8bcf3f9df4dd77bfed223ffadffc5adc3379bd29f475046e4ec918f0fc"
+    },
+    "docs/research/2026-10-12-code-policy-main-extra-evidence/playwright-sandboxed.sb": {
+      "beforePublishedSha256": "ccb1780ea9f137e54b74dedade65760f96456746ee82199da11e71325cedb2aa",
+      "afterPublishedSha256": "58fd44626b1dd08431eae5654b52308e67424e3c7617b34d38ccd763fa3b9545"
+    },
+    "docs/research/2026-10-12-code-policy-main-extra-evidence/results.json": {
+      "beforePublishedSha256": "5603d1b474af4158bb789e724baf74fe6e5d09ecdacff98754cd8184aa437ba3",
+      "afterPublishedSha256": "cf93a9aa218a27e6f2c7bad28898eed24f623216411c6a11c7ff66e85dcfd51e"
+    },
+    "docs/research/2026-10-12-code-policy-main-extra-evidence/playwright-sandboxed.stderr.txt": {
+      "beforePublishedSha256": "2f36423e6b6a0912bb01f797894fdd679030c74896a10f0f87f61a4841d06b03",
+      "afterPublishedSha256": "d3ab297ad719e9fb8b92547a5e1ccda88b80149c4a740a732e59717f26baf2ec"
+    },
+    "docs/research/2026-10-12-code-policy-main-extra-evidence/xcode-resolve-sandboxed.sb": {
+      "beforePublishedSha256": "63bf9cf75d580232e991888e14403e4d1bd86f3f16c70d71a6820cbf43db5d47",
+      "afterPublishedSha256": "556bb4fd84d19b274a6d24797cd6d8902f944fb3ef9650c038683441e5ad634d"
+    },
+    "docs/research/2026-10-12-code-policy-main-extra-evidence/playwright-approved-escape.driver.mjs": {
+      "beforePublishedSha256": "91f1f6853ad1674a2afe5fe24966f07216d321f0984db93e9e10131fa3687845",
+      "afterPublishedSha256": "ccca24e38235650d27c9264e5e235f79894ce017b5c584012e2b90a444cb3e21"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/playwright-sandboxed.driver.mjs": {
+      "beforePublishedSha256": "45f402831a187d0289bc712944aa9b53dd98466c2544e43c902b6f2bb5b4b5ec",
+      "afterPublishedSha256": "fa72f0f5f53019832cef9f8643b3bebfc43e847192fadfc5c1e60d0f555bd2c7"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/swift-test-sandboxed.sb": {
+      "beforePublishedSha256": "b9a45a6bef81d84c42e8a7124fc44f300e07eb5ae128a6f411e3ea61bdd31865",
+      "afterPublishedSha256": "038e94e97f6cd8fc4123ee0e459f9cfbb21c92e2a481ddc2c6b4f0ada6480a73"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/swift-test-sandboxed.stderr.txt": {
+      "beforePublishedSha256": "bf64386d3c129da4f963f02d61dd56086c9888960e54ad99c29bc34154eede61",
+      "afterPublishedSha256": "6ee5660633ba0bb9b3db3e03bfde2cacec03f43f9f1742a0c3f38e1fdcd5fa8b"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/swift-build-sandboxed.sb": {
+      "beforePublishedSha256": "37dda737559374512be9dfe7819416b640e7633d1fd617c0cf72673fb2e8647a",
+      "afterPublishedSha256": "684e3e184d3a006440314ab1dda96fa099af8da73d4a90a0d02dd7bddc9e4204"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/sourcekit-index-approved-escape.stdout.txt": {
+      "beforePublishedSha256": "65a70359727d2fd301921dedd75d55602e4afba6ef4961e79ee5dc24a8d6a069",
+      "afterPublishedSha256": "5c8540d645850ac00d8c169bcc18e197851697d21583901a76e4c9a8d465c3bf"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/protected-read-sandboxed.sb": {
+      "beforePublishedSha256": "58f8809f257f4e9a4355a71fe16b4d21636f0c2ab2fd8d5fab7f1e5553dccbd0",
+      "afterPublishedSha256": "ea9c2ec2cc55451a2c40e7a2211519fc1bde582da81e17bdf70f3c7277a16dc2"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/playwright-sandboxed.sb": {
+      "beforePublishedSha256": "ea2fc6ebcc98b5386aedca594155d802f6a37aeefbeeffe3351fc5f7f2e360c3",
+      "afterPublishedSha256": "8a4847aa250eef3fcdff69e463a1380d43f06b23e95329195dd32288dbbe1b34"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/results.json": {
+      "beforePublishedSha256": "3bae95332ffbc6aa990a3cb1966bcec49b09c001428d218f923f0144c1edc531",
+      "afterPublishedSha256": "25cea22a8978e2f5c7eea8ba6715440c6ac2732aa746661a7d8b2afce17c4eac"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/swift-build-sandboxed.stderr.txt": {
+      "beforePublishedSha256": "928a1d0ff0d2f9c943187c02b5692fac4d8706209d14115e6f073bcbcbba1087",
+      "afterPublishedSha256": "137f41caf8e51a0d98b91adeda819ba7218f84f17911b88c370d70d6c96df0c0"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/playwright-sandboxed.stderr.txt": {
+      "beforePublishedSha256": "f34098eea5b3f085feaa7f56f3785a812ca758b5de65f72585202a03a623e771",
+      "afterPublishedSha256": "4114a4285467f2adbfaae410af6888c3d971cbdb78ed47f1e199aafe43620fd8"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/playwright-approved-escape.driver.mjs": {
+      "beforePublishedSha256": "240bbed4e6b181467221e5ad8020f1cbc1ff03d36c0f8486950b4806c485542e",
+      "afterPublishedSha256": "995a292040ee3e772a33a4aa7f9a1b47e8ff7637157e9eff883e2e0b233a4d1b"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/protected-read-sandboxed.stderr.txt": {
+      "beforePublishedSha256": "35cfbe40e121962b4f600eabf5946f4350b9e6c897bc64df689dbee352888470",
+      "afterPublishedSha256": "6a5b211fe84ae2398b4d53a5552883379310b1d9e95e67f2982069f38af9b3f0"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/chromium-sandboxed.sb": {
+      "beforePublishedSha256": "541b12ebe753185d564cce0652449174ab19aa458f9aa498919a544a9bc934da",
+      "afterPublishedSha256": "1b3123659c559f9dbe8ecd08a4c7883792e5a398d2afed72431875c42b9b25b3"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/sourcekit-index-sandboxed.sb": {
+      "beforePublishedSha256": "2cfd928751fdea8da2c43b7a8f40c361c7a9db8f7bdcc5b1931f44cc6973db2b",
+      "afterPublishedSha256": "ab95e00d0e4405fb805d10409c48b181377c78f10fb57f3ed90a9b3689d58544"
+    },
+    "docs/research/2026-10-12-code-policy-candidate-final-evidence/swift-test-approved-escape.stderr.txt": {
+      "beforePublishedSha256": "c9dbd52845d64d9f0a42d1ae82acd2978b8803cba27b80ca34c2e86a63f9a8ee",
+      "afterPublishedSha256": "18357aea1b58f7ca031818bfb337088eed61b552d1cb40ad4933501c243757be"
+    },
+    "docs/research/2026-10-12-host-floor-compatibility-evidence-full/swift-test-disable-sandbox-floor.stderr.txt": {
+      "beforePublishedSha256": "fbd562f34f5ed793438679d469b2c4615935153c7a363ca04ce111be40ce1780",
+      "afterPublishedSha256": "7e44d016b99ba4359cd7878d804bb6c84f2b26043d04da8075f84d1f58de6e31"
+    },
+    "docs/research/2026-10-12-host-floor-compatibility-evidence-full/swift-test-disable-sandbox-control.stderr.txt": {
+      "beforePublishedSha256": "c748afc56ea56ec492d99b2a6bf6d33749504a3c36a64f2c68c848480ac70f4a",
+      "afterPublishedSha256": "31872eb59e1143acb41035b1169e15d7c23f49ff8a6e2f71ceb07314b4bf6c00"
+    },
+    "docs/research/2026-10-12-host-floor-compatibility-evidence-full/results.json": {
+      "beforePublishedSha256": "cea3e41ab8ffc407759b5e397839020749a27deb60d513c5b44b3a05f942121d",
+      "afterPublishedSha256": "38680a18451d09a74c6c965b18b7401e259229d9867fa300ad0bb7e4a5fe878b"
+    },
+    "docs/research/2026-10-12-host-floor-compatibility-evidence-full/floor-probe-floor.stderr.txt": {
+      "beforePublishedSha256": "eb9a5ff1f8d534deb2b3145b05fd4a425a68e3386c51bf386fd606b33bd8eec7",
+      "afterPublishedSha256": "8187b3833bdf6c7d168205d5d78449a0f4ed672b1ef6129e866b68a8a74f8398"
+    },
+    "docs/research/2026-10-12-host-floor-compatibility-evidence-full/floor.sb": {
+      "beforePublishedSha256": "f92167b76d6bb36f8f389549af9662542c0e75735c1a7ccfedaf5ebd7fea3bfe",
+      "afterPublishedSha256": "f91789bc369c10d01be8c4a40db5295d7193195fc86092b87b2b08892a95ce1e"
+    },
+    "docs/research/2026-10-12-host-floor-compatibility-evidence-full/swift-build-floor.stderr.txt": {
+      "beforePublishedSha256": "dd9a0c51a670211ea8e5d3e93d6a7ee68b44616e678250e6a9cb1a8a5cb3df2f",
+      "afterPublishedSha256": "b6704f8d00b95aa4139a3e5cec56a3c6601ff94fa3ba3be35ad6fab1fdb71de6"
+    },
+    "docs/research/2026-10-12-host-floor-compatibility-evidence-full/swift-test-floor.stderr.txt": {
+      "beforePublishedSha256": "e193090bb5edca7ca82fa18c858c792e348160784579e7c71c71b8b465a33b60",
+      "afterPublishedSha256": "853c9987a3239f16ffa38372553efa265126f78f9803629acc612d3e84824277"
+    },
+    "docs/research/2026-10-12-host-floor-compatibility-evidence-full/swift-test-control.stderr.txt": {
+      "beforePublishedSha256": "ab4375c4b15c961a953ec73e3cc7ff2a0442296ed384d8c8a3e10aed5910d7df",
+      "afterPublishedSha256": "a28d09672e3469b7160ccbb52fea568b1ef4f922c5af6a9f0891278fd6d3b5b1"
+    }
+  }
+}

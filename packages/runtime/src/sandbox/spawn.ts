@@ -1,3 +1,5 @@
+import { DEFAULT_MAX_STREAMED_BYTES } from "./execution-limits.ts";
+import type { HostOutputTransport } from "./host-output.ts";
 // Task 3 (Lane C, WS-12 §3/§4): execution-path SELECTION and the actual OS-level spawn. Everything
 // platform-specific lives here (never in profile.ts, which stays pure/linux-safe): resolving the
 // real per-user temp dir via `getconf`, checking /usr/bin/sandbox-exec, and the real child_process
@@ -17,8 +19,12 @@ import {
   resolveNetworkPosture,
   type SandboxSettings,
 } from "./profile.ts";
-import type { GlobDenyEntry } from "../permissions/file-rules.ts";
+import { globDenyEntriesOf, splitDenyPathsByGlobShape, type GlobDenyEntry } from "../permissions/file-rules.ts";
+import { currentHostCodeProtectionPaths } from "./host-code-protection.ts";
 import { trackProcessGroup } from "../process-groups.ts";
+import { buildMandatoryFloorProfile, hasMandatoryFloor, type HostExecutionFloor, type HostCodeProcessScope, type HostCodeProcessHandle } from "@yanlinglabs/winter-agent-sdk";
+import { currentHostCodeProcessClient, hostCodeProcessBrokerRequired, requireBoundHandle } from "./host-code-process.ts";
+import { currentHostChildFloorProfile, prepareHostChildLaunch } from "./host-child-floor.ts";
 
 // ---------------------------------------------------------------------------------------------
 // §3: sandbox availability (darwin + /usr/bin/sandbox-exec present)
@@ -61,7 +67,8 @@ export function resolveDarwinUserTempDir(): string | null {
   darwinTempDirCache = null;
   if (process.platform === "darwin") {
     try {
-      const out = spawnSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], { encoding: "utf8" });
+      const launch = prepareHostChildLaunch("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"]);
+      const out = spawnSync(launch.command, launch.args, { encoding: "utf8" });
       const raw = out.stdout?.trim();
       if (raw) darwinTempDirCache = canonicalizePath(raw.replace(/\/+$/, ""));
     } catch {
@@ -137,9 +144,64 @@ export function resolveExecutionPath(input: ResolveExecutionPathInput): Executio
 // runCommand: the real spawn, process-group kill, and 5 GB stream-kill (WS-12 §5.2/§6.3)
 // ---------------------------------------------------------------------------------------------
 
-const DEFAULT_MAX_STREAMED_BYTES = 5 * 1024 ** 3; // WS-12 §6.3: >5 GB streamed output kills the command
+
+async function runBrokeredCommand(opts: RunCommandOptions, bound: NonNullable<ReturnType<typeof currentHostCodeProcessClient>>): Promise<RunCommandResult> {
+  if (!opts.hostCodeScope?.toolUseId) throw new SandboxUnavailableError("host Code execution requires an authenticated active tool call");
+  if (opts.signal?.aborted) throw new SandboxUnavailableError("host Code execution cancelled before admission");
+  const scope = { ...opts.hostCodeScope, generationId: bound.generationId };
+  let handle: HostCodeProcessHandle | undefined;
+  let released = false;
+  const onAbort = () => { if (handle) void bound.client.signal(handle, "SIGKILL").catch(() => {}); };
+  opts.signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const started = await bound.client.start({ version: 1, ...scope, kind: "command", command: opts.matchCommand ?? opts.command, ...(opts.pwdCapturePath !== undefined ? {pwdCapturePath:opts.pwdCapturePath} : {}), cwd: opts.cwd, timeoutMs: opts.timeoutMs, maxStreamedBytes: opts.maxStreamedBytes ?? DEFAULT_MAX_STREAMED_BYTES, sandboxIntent: opts.dangerouslyDisableSandbox ? "override-requested" : "ordinary" }, opts.signal);
+    requireBoundHandle(started.handle, scope); handle = started.handle;
+    if (!["sandboxed", "config-disabled", "excluded", "override-requested"].includes(started.posture)) throw new SandboxUnavailableError("host Code broker returned invalid posture");
+    if (opts.signal?.aborted) onAbort();
+    const ownedHandle = handle;
+    opts.onSpawned?.({ pid: ownedHandle.pid, stopOwnedProcess() {
+      // The stable host handle, never the display PID, is signal authority. Completed/released
+      // commands cannot re-signal even if their PID has since been reused.
+      if (!released) void bound.client.signal(ownedHandle, "SIGKILL").catch(() => {});
+    } });
+    let sequence = 0;
+    for (;;) {
+      // Poll cancellation does not hide exit: the host must stop the process then provide exit evidence.
+      const reply = await bound.client.poll(handle, sequence);
+      requireBoundHandle(reply.handle, scope);
+      if (reply.handle.id !== handle.id || reply.handle.pid !== handle.pid || !Array.isArray(reply.events)) throw new SandboxUnavailableError("host Code poll returned a foreign process");
+      let bytes = 0;
+      for (const event of reply.events) {
+        if (event.sequence !== sequence + 1 || (event.stream !== "stdout" && event.stream !== "stderr") || typeof event.dataBase64 !== "string") throw new SandboxUnavailableError("host Code output sequence/schema invalid");
+        const chunk = Buffer.from(event.dataBase64, "base64");
+        if (chunk.toString("base64") !== event.dataBase64 || (bytes += chunk.length) > 65536) throw new SandboxUnavailableError("host Code output exceeds the admitted poll bound");
+        sequence = event.sequence;
+        (event.stream === "stdout" ? opts.onStdout : opts.onStderr)?.(chunk);
+      }
+      if (reply.exit) {
+        if ((reply.exit.code !== null && (!Number.isInteger(reply.exit.code) || reply.exit.code < 0 || reply.exit.code > 255)) || [reply.exit.timedOut,reply.exit.aborted,reply.exit.streamKilled].some(value=>typeof value!=="boolean")) throw new SandboxUnavailableError("host Code exit schema invalid");
+        await bound.client.release(handle,sequence);
+        released = true;
+        return { exitCode: reply.exit.code, timedOut: reply.exit.timedOut, aborted: reply.exit.aborted, streamKilled: reply.exit.streamKilled, posture: started.posture, sandboxOverrideRequested: opts.dangerouslyDisableSandbox === true };
+      }
+    }
+  } catch (error) {
+    if (handle) await bound.client.signal(handle, "SIGKILL").catch(() => {});
+    throw new SandboxUnavailableError(`host Code broker unavailable; no local execution fallback (${error instanceof Error ? error.name : "error"})`);
+  } finally {
+    opts.signal?.removeEventListener("abort", onAbort);
+    if (handle && !released) await bound.client.release(handle, 0, { abandon: true }).catch(() => {});
+  }
+}
 
 export interface RunCommandOptions {
+  /** Trusted host lifecycle owner; called only for the OS child close event. */
+  onProcessClosed?: ()=>void;
+  /** Trusted broker only: use parent-owned POSIX read fds instead of Bun eager buffers. */
+  hostOwnedOutput?: HostOutputTransport;
+  /** Trusted host parent only, separate from SandboxSettings; never a model input. */
+  mandatoryFloor?: HostExecutionFloor;
+  hostCodeScope?: Omit<HostCodeProcessScope, "generationId">;
   command: string;
   /**
    * Task 8 (P3 close-out, "excludedCommands raw-match" MUST): the command string `resolveExecutionPath`
@@ -152,6 +214,8 @@ export interface RunCommandOptions {
    * `excludedCommands` against what the model/settings author actually wrote, never the wrapper.
    */
   matchCommand?: string;
+  /** SDK-generated scratch path; broker parent independently validates it and renders the wrapper. */
+  pwdCapturePath?: string;
   /** Real, existing, already-canonicalized directory to spawn the shell in. */
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -166,7 +230,7 @@ export interface RunCommandOptions {
    * `run_in_background` callers (tools/impl/bash.ts) need this to register the task BEFORE
    * awaiting the eventual result; a foreground caller simply omits it.
    */
-  onSpawned?: (info: { pid: number }) => void;
+  onSpawned?: (info: { pid: number; stopOwnedProcess?: () => void; pauseOutput?: () => void; resumeOutput?: () => void }) => void;
   maxStreamedBytes?: number;
   settings: SandboxSettings;
   dangerouslyDisableSandbox?: boolean;
@@ -245,6 +309,14 @@ export interface RunCommandResult {
 // which a plain non-async function returning `new Promise(...)` would NOT do for a throw that
 // happens before that `return` statement is ever reached.
 export async function runCommand(opts: RunCommandOptions): Promise<RunCommandResult> {
+  const bound = currentHostCodeProcessClient();
+  if (bound) return runBrokeredCommand(opts, bound);
+  if (hostCodeProcessBrokerRequired()) throw new SandboxUnavailableError("required host Code broker unavailable; no local execution fallback");
+  return runCommandLocally(opts);
+}
+
+/** Trusted parent entry; bypasses the child's RPC client, never its mandatory kernel floor. */
+export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCommandResult> {
   const { posture, sandboxOverrideRequested } = resolveExecutionPath({
     settings: opts.settings,
     command: opts.matchCommand ?? opts.command,
@@ -265,16 +337,18 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
     }
     const allowNetwork = resolveNetworkPosture(opts.settings.network); // throws SandboxConfigError on a domain-list config -- propagates to the caller uncaught, by design (§2/§12)
     const darwinUserTempDir = resolveDarwinUserTempDir();
+    const protection = currentHostCodeProtectionPaths();
+    const read = splitDenyPathsByGlobShape(protection.denyReadPaths), write = splitDenyPathsByGlobShape(protection.denyWritePaths);
     profile = buildSeatbeltProfile({
       cwd: opts.cwd,
       ...(opts.writableRoots !== undefined ? { writableRoots: opts.writableRoots } : {}),
-      ...(opts.denyWritePaths !== undefined ? { denyWritePaths: opts.denyWritePaths } : {}),
-      ...(opts.denyReadPaths !== undefined ? { denyReadPaths: opts.denyReadPaths } : {}),
-      ...(opts.denyWriteRegexes !== undefined ? { denyWriteRegexes: opts.denyWriteRegexes } : {}),
-      ...(opts.denyReadRegexes !== undefined ? { denyReadRegexes: opts.denyReadRegexes } : {}),
-      ...(opts.denyWriteGlobFixedPrefixes !== undefined ? { denyWriteGlobFixedPrefixes: opts.denyWriteGlobFixedPrefixes } : {}),
-      ...(opts.denyReadGlobFixedPrefixes !== undefined ? { denyReadGlobFixedPrefixes: opts.denyReadGlobFixedPrefixes } : {}),
-      ...(opts.denyReadGlobEntries !== undefined ? { denyReadGlobEntries: opts.denyReadGlobEntries } : {}),
+      denyWritePaths: [...(opts.denyWritePaths ?? []), ...new Set([...protection.denyWritePaths, ...write.paths])],
+      denyReadPaths: [...(opts.denyReadPaths ?? []), ...new Set([...protection.denyReadPaths, ...read.paths])],
+      denyWriteRegexes: [...(opts.denyWriteRegexes ?? []), ...write.regexes],
+      denyReadRegexes: [...(opts.denyReadRegexes ?? []), ...read.regexes],
+      denyWriteGlobFixedPrefixes: [...(opts.denyWriteGlobFixedPrefixes ?? []), ...write.globFixedPrefixes],
+      denyReadGlobFixedPrefixes: [...(opts.denyReadGlobFixedPrefixes ?? []), ...read.globFixedPrefixes],
+      denyReadGlobEntries: [...(opts.denyReadGlobEntries ?? []), ...globDenyEntriesOf(protection.denyReadPaths)],
       allowNetwork,
       ...(darwinUserTempDir !== null ? { darwinUserTempDir } : {}),
       ...(opts.home !== undefined ? { home: opts.home } : {}),
@@ -293,13 +367,23 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
     spawnFile = "/bin/bash";
     spawnArgs = ["-c", opts.command];
   }
+  const hostFloor = currentHostChildFloorProfile();
+  if (hostFloor || (opts.mandatoryFloor && hasMandatoryFloor(opts.mandatoryFloor))) {
+    if (!isSandboxAvailable()) throw new SandboxUnavailableError("mandatory host control floor unavailable");
+    const profiles = [hostFloor, opts.mandatoryFloor && hasMandatoryFloor(opts.mandatoryFloor) ? buildMandatoryFloorProfile(opts.mandatoryFloor) : undefined].filter((value): value is string => value !== undefined);
+    const floor = profiles[0]! + profiles.slice(1).map(value => `\n${value.split("\n").slice(2).join("\n")}`).join("");
+    profile = profile === undefined ? floor : `${profile}\n${floor.split("\n").slice(2).join("\n")}`;
+    spawnFile = REAL_SANDBOX_EXEC_PATH;
+    spawnArgs = ["-p", profile, "/bin/bash", "-c", opts.command];
+  }
 
   const maxStreamedBytes = opts.maxStreamedBytes ?? DEFAULT_MAX_STREAMED_BYTES;
 
+  const hostOutput = opts.hostOwnedOutput;
   return new Promise<RunCommandResult>((resolve) => {
     const child = spawn(spawnFile, spawnArgs, {
       cwd: opts.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", hostOutput?.stdoutFd ?? "pipe", hostOutput?.stderrFd ?? "pipe"],
       // Process-group kill (WS-12 §5.2, carried): `detached: true` makes this child its own group
       // leader (setsid), so a negative-pid signal below reaps sandbox-exec + bash + any forked or
       // backgrounded grandchildren -- closing every pipe fd so stream collection unblocks promptly.
@@ -309,12 +393,17 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
     // WS-24: the group is live from here until its leader closes -- mirrored to an embedded session's
     // host, which reaps it if the Worker dies without running the kill doors below (process-groups.ts).
     // Recorded BEFORE `onSpawned`, so no caller can learn the pid ahead of the ledger.
+    hostOutput?.closeWriters();
     const releaseGroup = child.pid !== undefined ? trackProcessGroup(child.pid, "command") : () => {};
-    if (child.pid !== undefined) opts.onSpawned?.({ pid: child.pid });
+    if (child.pid !== undefined) opts.onSpawned?.({ pid: child.pid, pauseOutput() { if(hostOutput)hostOutput.pause();else{child.stdout!.pause(); child.stderr!.pause();} }, resumeOutput() { if(hostOutput)hostOutput.resume();else{child.stdout!.resume(); child.stderr!.resume();} } });
 
     let streamedBytes = 0;
     let streamKilled = false;
+    let processClosed = false;
     const killGroup = () => {
+      // Output may remain paused after the actual process closed. Its former
+      // PID/group is no longer authority to signal anything during that drain.
+      if (processClosed || child.pid === undefined) return;
       try {
         process.kill(-child.pid!, "SIGKILL");
       } catch {
@@ -330,8 +419,14 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
         killGroup();
       }
     };
-    child.stdout.on("data", (d: Buffer) => onChunk(d, opts.onStdout));
-    child.stderr.on("data", (d: Buffer) => onChunk(d, opts.onStderr));
+    let outputDone: Promise<unknown> | undefined;
+    try { outputDone = hostOutput?.start(chunk => onChunk(chunk, opts.onStdout), chunk => onChunk(chunk, opts.onStderr)); }
+    catch (error) { outputDone = Promise.reject(error); }
+    void outputDone?.catch(() => { streamKilled = true; hostOutput?.dispose(); killGroup(); });
+    if (!hostOutput) {
+      child.stdout!.on("data", (d: Buffer) => onChunk(d, opts.onStdout));
+      child.stderr!.on("data", (d: Buffer) => onChunk(d, opts.onStderr));
+    }
 
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -366,9 +461,15 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
       });
     };
 
-    child.on("close", (code) => finish(code));
+    child.on("close", (code) => {
+      processClosed = true;
+      clearTimeout(timer); opts.signal?.removeEventListener("abort", onAbort); releaseGroup();
+      opts.onProcessClosed?.();
+      if(outputDone)void outputDone.then(()=>finish(code),()=>finish(null));else finish(code);
+    });
     child.on("error", (err) => {
       spawnError = (err as Error).message;
+      hostOutput?.dispose();
       finish(null);
     });
   });

@@ -597,6 +597,9 @@ export interface RuntimeAgentDefinition {
 }
 
 export interface RuntimeConfig {
+  /** Trusted launch wrapper only; never populated from project settings or Options. */
+  hostCodeProcessBroker?: { generationId: string };
+  executionPosture?: "local" | "confined-guest";
   sessionId: string;
   cwd: string;
   model: string;
@@ -759,6 +762,8 @@ export interface RuntimeConfig {
   // top-level `query()` call -- only Lane C's own child-spawn path would construct a RuntimeConfig
   // carrying them).
   agentId?: string;
+  /** Protected child-engine correlation, not an editable setting or grant. */
+  parentToolUseId?: string;
   isolationPinnedCwd?: boolean;
   /**
    * Spawn-surface parity (R-S5): the fork gate -- `subagent_type: "fork"` is selectable (and the

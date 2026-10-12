@@ -7,6 +7,7 @@
 // that other tool as a side effect (tools/impl-isolation.test.ts). The Agent executor must not pull
 // EnterWorktree in with it.
 import { spawn } from "node:child_process";
+import { prepareHostChildLaunch } from "../sandbox/host-child-floor.ts";
 
 export function hasGitRoot(cwd: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -17,7 +18,8 @@ export function hasGitRoot(cwd: string): Promise<boolean> {
       resolve(value);
     };
     try {
-      const child = spawn("git", ["rev-parse", "--show-toplevel"], { cwd, stdio: ["ignore", "ignore", "ignore"] });
+      const launch = prepareHostChildLaunch("git", ["rev-parse", "--show-toplevel"], { cwd });
+      const child = spawn(launch.command, launch.args, { cwd, stdio: ["ignore", "ignore", "ignore"] });
       child.on("error", () => done(false));
       child.on("close", (code) => done(code === 0));
     } catch {

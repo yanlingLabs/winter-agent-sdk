@@ -113,7 +113,7 @@ function buildPayload(call: PermissionCall, ctx: EvaluationContext, meta: Prompt
 // with no schema validation. A malformed answer (wrong shape, a client bug, a stale/foreign
 // protocol version) must fail closed exactly like a rejected request, not throw out of
 // toPromptDecision and surface as an unrelated `error_during_execution` (found by review).
-function isValidPermissionResult(value: unknown): value is PermissionResult {
+export function isValidPermissionResult(value: unknown): value is PermissionResult {
   if (typeof value !== "object" || value === null) return false;
   const behavior = (value as { behavior?: unknown }).behavior;
   if (behavior === "allow") return true;
@@ -121,7 +121,7 @@ function isValidPermissionResult(value: unknown): value is PermissionResult {
   return false;
 }
 
-function toPromptDecision(result: PermissionResult): PromptDecision {
+export function toPromptDecision(result: PermissionResult): PromptDecision {
   if (result.behavior === "allow") {
     return {
       decision: "allow",

@@ -1,3 +1,6 @@
+import { guestFileSessionOf, guestFileError } from "../../guest/file-session.ts";
+import { assertHostCodePathAccess } from "../../sandbox/host-code-protection.ts";
+import { guestTarget, guestText } from "../../guest/file-tools.ts";
 // WS-06 §3.1 "Read" -- the real executor (Phase 3, Lane A / Task 4). Registers over the stub
 // descriptors/read.ts already put in the registry (see registry.ts's own header: "every later
 // lane's REAL executor lives in a SIBLING tools/impl/*.ts file that imports replaceExecutor").
@@ -130,8 +133,7 @@ const DEFAULT_LINE_LIMIT = 2000;
 const LINE_TRUNCATE_LENGTH = 2000;
 const MAX_RESULT_CHARS = 100_000;
 
-function readPlainText(target: string, st: Stats, input: ReadInput, usedWindow: boolean, ctx: ToolExecutionContext): ToolResultPayload {
-  const content = readFileSync(target, "utf8");
+function readPlainText(target: string, st: Pick<Stats, "mtimeMs"> & { fileVersion?: string }, input: ReadInput, usedWindow: boolean, ctx: Pick<ToolExecutionContext, "readState">, content = readFileSync(target, "utf8")): ToolResultPayload {
   const lines = content.split("\n");
   const totalLines = lines.length;
 
@@ -193,7 +195,7 @@ function readPlainText(target: string, st: Stats, input: ReadInput, usedWindow: 
 
   const coveredWholeFile = startIdx === 0 && reachedEnd;
   const complete = !usedWindow && coveredWholeFile;
-  ctx.readState.recordRead(target, { complete, mtimeMs: st.mtimeMs });
+  ctx.readState.recordRead(target, { complete, mtimeMs: st.mtimeMs, ...(st.fileVersion === undefined ? {} : { fileVersion: st.fileVersion }) });
   return { output: body };
 }
 
@@ -407,12 +409,23 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
     return { output: `Error: ${(e as Error).message}`, isError: true };
   }
 
+  try {
+    const guest = guestFileSessionOf(ctx);
+    if (guest) {
+      const target = guestTarget(ctx, input.file_path), ext = extname(target).toLowerCase();
+      if (IMAGE_EXTS.has(ext) || ext === ".pdf" || ext === ".ipynb" || input.pages !== undefined) return { output: "Error [guest_file_type_unsupported]: confined guest Read currently supports UTF-8 text only", isError: true };
+      const snapshot = await guest.read(target, ctx.signal);
+      return readPlainText(target, snapshot, input, input.offset !== undefined || input.limit !== undefined, { readState: guest.readState }, guestText(snapshot));
+    }
+  } catch (error) { return guestFileError(error); }
   // Fix round 10, item B: trim FIRST, as claude does -- see write.ts's identical comment.
   const target = resolve(ctx.cwd, input.file_path.trim());
   let st: Stats;
   try {
+    assertHostCodePathAccess(target, "read", ctx.sandboxSettings, ctx.cwd);
     st = statSync(target);
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === "HostCodeProtectionError") return { output: `Error: ${error.message}`, isError: true };
     return { output: `Error: file not found: ${input.file_path}`, isError: true };
   }
   if (st.isDirectory()) {

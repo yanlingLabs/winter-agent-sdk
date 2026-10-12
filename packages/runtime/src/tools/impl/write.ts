@@ -1,3 +1,6 @@
+import { guestFileSessionOf, guestFileError } from "../../guest/file-session.ts";
+import { assertHostCodePathAccess } from "../../sandbox/host-code-protection.ts";
+import { guestWrite } from "../../guest/file-tools.ts";
 // WS-06 §3.1 "Write" -- implement-now, pinned schema `{file_path, content}`. Create or COMPLETE
 // overwrite, never append/merge; same read-before-overwrite ladder as Edit for EXISTING files (via
 // read-ladder.ts's "overwrite" operation, which folds in the notebook/partial-read override); new
@@ -29,71 +32,8 @@ import { evaluateReadLadder, recordPostOperationRead, type ReadLadderDeps } from
 // Edit/Write (unlike Bash's explicit §3.2 output caps), so none is invented here.
 // ---------------------------------------------------------------------------------------------------
 
-export interface DiffLine {
-  type: "context" | "add" | "remove";
-  oldLineNumber?: number;
-  newLineNumber?: number;
-  content: string;
-}
-
-// An empty string has ZERO lines, not one blank line -- `"".split("\n")` disagrees (`[""]`), which
-// would inject a spurious leading "remove the empty line" artifact into every diff against a brand
-// new (previousContent === "") or fully-emptied file. Any NON-empty string still splits normally,
-// correctly preserving a genuine trailing "" element for content that ends in a newline.
-function splitLines(text: string): string[] {
-  return text === "" ? [] : text.split("\n");
-}
-
-export function computeLineDiff(oldText: string, newText: string): DiffLine[] {
-  const oldLines = splitLines(oldText);
-  const newLines = splitLines(newText);
-  const m = oldLines.length;
-  const n = newLines.length;
-
-  // dp[i][j] = length of the LCS of oldLines[i..] and newLines[j..].
-  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
-  for (let i = m - 1; i >= 0; i--) {
-    for (let j = n - 1; j >= 0; j--) {
-      const dpRowBelow = dp[i + 1]!;
-      const dpRow = dp[i]!;
-      dpRow[j] = oldLines[i] === newLines[j] ? dpRowBelow[j + 1]! + 1 : Math.max(dpRowBelow[j]!, dpRow[j + 1]!);
-    }
-  }
-
-  const result: DiffLine[] = [];
-  let i = 0;
-  let j = 0;
-  let oldLineNumber = 1;
-  let newLineNumber = 1;
-  while (i < m && j < n) {
-    if (oldLines[i] === newLines[j]) {
-      result.push({ type: "context", oldLineNumber, newLineNumber, content: oldLines[i]! });
-      i++;
-      j++;
-      oldLineNumber++;
-      newLineNumber++;
-    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) {
-      result.push({ type: "remove", oldLineNumber, content: oldLines[i]! });
-      i++;
-      oldLineNumber++;
-    } else {
-      result.push({ type: "add", newLineNumber, content: newLines[j]! });
-      j++;
-      newLineNumber++;
-    }
-  }
-  while (i < m) {
-    result.push({ type: "remove", oldLineNumber, content: oldLines[i]! });
-    i++;
-    oldLineNumber++;
-  }
-  while (j < n) {
-    result.push({ type: "add", newLineNumber, content: newLines[j]! });
-    j++;
-    newLineNumber++;
-  }
-  return result;
-}
+export { computeLineDiff, type DiffLine } from "../line-diff.ts";
+import { computeLineDiff, type DiffLine } from "../line-diff.ts";
 
 // ---------------------------------------------------------------------------------------------------
 // The Write executor
@@ -140,6 +80,9 @@ const writeExecutor: ToolExecutor = {
     const parsed = parseInput(rawInput);
     if (!parsed) return errorResult("Write requires string fields 'file_path' and 'content'");
 
+    try { const guest = guestFileSessionOf(ctx); if (guest) return await guestWrite(parsed, ctx, guest); }
+    catch (error) { return guestFileError(error); }
+
     // Fix round 10, item B: trim FIRST, as claude does with a path argument before resolving it
     // -- the check (permissions/paths.ts's `resolveTargetPath`, same fix) and the write must never
     // disagree, or an unescaped trailing-space deny rule would protect a DIFFERENT path than the one
@@ -148,10 +91,12 @@ const writeExecutor: ToolExecutor = {
     const deps: ReadLadderDeps = { readState: ctx.readState, probeReadAccess: ctx.permissions.probeReadAccess };
 
     try {
+      assertHostCodePathAccess(resolvedPath, "write", ctx.sandboxSettings, ctx.cwd);
       let previousContent: string | undefined;
       let type: "create" | "update";
 
       if (existsSync(resolvedPath)) {
+        assertHostCodePathAccess(resolvedPath, "read", ctx.sandboxSettings, ctx.cwd);
         const stat = statSync(resolvedPath);
         if (stat.isDirectory()) return errorResult(`"${resolvedPath}" is a directory, not a file`);
 
@@ -162,6 +107,7 @@ const writeExecutor: ToolExecutor = {
         const decision = evaluateReadLadder({ filePath: resolvedPath, currentMtimeMs: stat.mtimeMs, operation: "overwrite" }, deps);
         if (!decision.eligible) return errorResult(decision.reason);
 
+        assertHostCodePathAccess(resolvedPath, "read", ctx.sandboxSettings, ctx.cwd);
         previousContent = readFileSync(resolvedPath, "utf8");
         type = "update";
       } else {
@@ -170,6 +116,7 @@ const writeExecutor: ToolExecutor = {
         mkdirSync(dirname(resolvedPath), { recursive: true });
       }
 
+      assertHostCodePathAccess(resolvedPath, "write", ctx.sandboxSettings, ctx.cwd);
       writeFileSync(resolvedPath, parsed.content, "utf8");
       const newMtimeMs = statSync(resolvedPath).mtimeMs;
       // Write always ends up knowing the COMPLETE new content, regardless of how much of the

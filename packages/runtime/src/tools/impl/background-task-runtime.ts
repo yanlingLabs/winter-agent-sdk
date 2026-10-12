@@ -64,6 +64,9 @@ export interface BackgroundTaskHandle {
   command?: string;
   /** The spawned child's pid. Always the process-GROUP leader (spawn.ts's `detached: true`), so killTaskProcessGroup's negative-pid signal reaps the whole group, matching WS-12 §5.2. */
   pid?: number;
+  /** Host-only capability bound to an exact broker handle. PID is display-only when present;
+   * no failure/cancellation may turn this into a raw PID signal. Not serialized into task frames. */
+  stopOwnedProcess?: () => void;
   /**
    * A generic stop callback for a task with no OS process to signal -- Monitor's `ws` half is a
    * live socket, not a child process, so it has no pid at all. `stopTask` (below) tries
@@ -140,6 +143,7 @@ export interface StartTrackingInput {
   description: string;
   command?: string;
   pid?: number;
+  stopOwnedProcess?: () => void;
   stop?: () => void;
   isBackgrounded?: boolean;
   toolUseId?: string;
@@ -227,7 +231,11 @@ function killProcessGroup(pid: number): boolean {
 // live pid -- TaskStop treats that as "nothing to kill," not an error.
 export function killTaskProcessGroup(taskId: string): boolean {
   const t = tasks.get(taskId);
-  if (!t || t.pid === undefined) return false;
+  if (!t) return false;
+  if (t.stopOwnedProcess) {
+    try { t.stopOwnedProcess(); return true; } catch { return false; }
+  }
+  if (t.pid === undefined) return false;
   return killProcessGroup(t.pid);
 }
 
@@ -244,7 +252,10 @@ export function killTaskProcessGroup(taskId: string): boolean {
  * calls this directly (bypassing the registry entirely, since the registry has no pid to act on)
  * exactly when the row it gets back from `startTracking` is not `"running"`.
  */
-export function killOrphanedSpawn(pid: number): boolean {
+export function killOrphanedSpawn(pid: number, stopOwnedProcess?: () => void): boolean {
+  if (stopOwnedProcess) {
+    try { stopOwnedProcess(); return true; } catch { return false; }
+  }
   return killProcessGroup(pid);
 }
 
@@ -267,8 +278,8 @@ export function killOrphanedSpawn(pid: number): boolean {
 export function killAllTaskProcessGroups(): string[] {
   const killed: string[] = [];
   for (const task of tasks.values()) {
-    if (task.status !== "running" || task.pid === undefined) continue;
-    if (killProcessGroup(task.pid)) killed.push(task.taskId);
+    if (task.status !== "running" || (task.pid === undefined && task.stopOwnedProcess === undefined)) continue;
+    if (killTaskProcessGroup(task.taskId)) killed.push(task.taskId);
   }
   return killed;
 }
@@ -281,7 +292,7 @@ export function stopTask(taskId: string): boolean {
   const t = tasks.get(taskId);
   if (!t) return false;
   let stopped = false;
-  if (t.pid !== undefined) stopped = killTaskProcessGroup(taskId) || stopped;
+  if (t.pid !== undefined || t.stopOwnedProcess !== undefined) stopped = killTaskProcessGroup(taskId) || stopped;
   if (t.stop) {
     try {
       t.stop();

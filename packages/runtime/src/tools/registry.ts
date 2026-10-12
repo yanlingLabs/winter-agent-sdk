@@ -1,3 +1,4 @@
+import { bindGuestFileSession, type GuestFileSession, guestFileError } from "../guest/file-session.ts";
 // WS-06 §1: the ToolDescriptor registry -- the one object every consumer (ToolSearch, permissions,
 // hooks, telemetry, execution) operates on (report §85). This module owns:
 //   - the ToolDescriptor/RegisteredTool/ToolExecutionContext/ToolExecutor shapes (§1.1, verbatim,
@@ -278,6 +279,7 @@ export interface ToolCallExecuteOptions {
 }
 
 export interface ToolExecutionContext {
+  executionPosture?: "local" | "confined-guest";
   cwd: string;
   home: string;
   /**
@@ -419,6 +421,7 @@ export interface ToolExecutionContext {
   // exposed here too so a tool executor that needs to self-identify (e.g. a future messaging tool
   // addressing itself) never has to reach back into engine-internal state for it.
   agentId?: string;
+  parentToolUseId?: string;
   // Phase 4 Task 8 (WS-10 "Execution amendments -- Per-call tool-use id"): the id of the
   // model-emitted `tool_use` block this execution is answering -- `EngineToolCall.id`, threaded
   // through `buildRegistryToolExecutor` below. Two production consumers, both of which had to
@@ -1748,6 +1751,9 @@ function foldResult(result: ToolResultPayload): EngineToolResult {
 }
 
 export interface RegistryToolExecutorDeps {
+  executionPosture?: "local" | "confined-guest";
+  /** Protected object capability; never reconstructed from config JSON. */
+  guestFiles?: GuestFileSession;
   sessionId: string;
   home: string;
   /** Code-mode images: read per call, so a `set_model` since the last call is seen -- see `ToolExecutionContext.modelReadsImages`. */
@@ -1794,6 +1800,7 @@ export interface RegistryToolExecutorDeps {
   // ToolExecutionContext this executor builds. Absent reads as UNTRUSTED.
   trustedWorkspace?: boolean;
   agentId?: string;
+  parentToolUseId?: string;
   // Phase 4 Task 8: mirrors ToolExecutionContext.agents exactly -- see that field's own comment.
   agents?: Readonly<Record<string, unknown>>;
   // Spawn-surface parity: mirrors the four ToolExecutionContext fields of the same names.
@@ -1840,6 +1847,8 @@ function unavailableResult(name: string): ToolResultPayload {
 export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): EngineFacingToolExecutor {
   return {
     async execute(call: EngineToolCall, opts?: ToolCallExecuteOptions): Promise<EngineToolResult> {
+      if (deps.executionPosture !== undefined && deps.executionPosture !== "local" && deps.executionPosture !== "confined-guest") return foldResult({ output: "Error [guest_file_posture_invalid]: unknown execution posture", isError: true });
+      if (deps.executionPosture === "confined-guest" && !["Read", "Write", "Edit", "Bash"].includes(call.name)) return foldResult({ output: `Error [guest_tool_unsupported]: ${call.name} has no confined guest implementation`, isError: true });
       const registered = getRegisteredTool(call.name);
       if (!registered) return foldResult(unknownToolResult(call.name));
       if (registered.descriptor.disposition === "correctly-absent") return foldResult(correctlyAbsentResult(call.name));
@@ -1854,6 +1863,7 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
       // structurally (every consumer just reads `ctx.tempDir`) while keeping resolution lazy -- see
       // `getTempDir`'s own doc comment above.
       const ctx: ToolExecutionContext = {
+        ...(deps.executionPosture !== undefined ? { executionPosture: deps.executionPosture } : {}),
         cwd: deps.getCwd(),
         home: deps.home,
         // I1: forwarded so a tool naming Winter's own storage uses the RESOLVED root, not the OS home.
@@ -1888,6 +1898,7 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         isolationPinnedCwd: deps.isolationPinnedCwd === true,
         trustedWorkspace: deps.trustedWorkspace === true,
         ...(deps.agentId !== undefined ? { agentId: deps.agentId } : {}),
+        ...(deps.parentToolUseId !== undefined ? { parentToolUseId: deps.parentToolUseId } : {}),
         // Phase 4 Task 8: the model's own tool_use id for THIS call -- see
         // ToolExecutionContext.toolUseId's own comment. Always present here (EngineToolCall.id is a
         // required field); optional only on the interface, for hand-built test contexts.
@@ -1901,6 +1912,12 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         ...(deps.onAgentDefinitionRejected !== undefined ? { onAgentDefinitionRejected: deps.onAgentDefinitionRejected } : {}),
         ...(deps.agentAvailability !== undefined ? { agentAvailability: deps.agentAvailability } : {}),
       };
+      if (deps.executionPosture === "confined-guest") {
+        try {
+          if (!deps.guestFiles) return foldResult({ output: "Error [guest_file_binding_missing]: protected file helper absent", isError: true });
+          bindGuestFileSession(ctx, deps.guestFiles);
+        } catch (error) { return foldResult(guestFileError(error)); }
+      } else if (deps.guestFiles) return foldResult({ output: "Error [guest_file_posture_mismatch]: guest helper requires confined posture", isError: true });
       const result = await registered.executor.execute(call.input, ctx);
       return foldResult(result);
     },
@@ -1940,6 +1957,7 @@ export function buildRegistryToolExecutorWithFallback(deps: RegistryToolExecutor
     // and now the explicit-approval marker -- stopped here and never reached a real executor on any
     // run that supplies a fallback, which the production entry point always does.
     async execute(call: EngineToolCall, opts?: ToolCallExecuteOptions): Promise<EngineToolResult> {
+      if (deps.executionPosture === "confined-guest" || (deps.executionPosture !== undefined && deps.executionPosture !== "local")) return registryExecutor.execute(call, opts);
       if (getRegisteredTool(call.name) === undefined) return fallback.execute(call, opts);
       return registryExecutor.execute(call, opts);
     },

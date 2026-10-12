@@ -810,7 +810,9 @@ export interface HookAuditEntry extends HookAuditJournalRecord {
 export function readHookAuditJournal(
   location: { winterHome: string; projectKey: string; sessionId: string },
   filter?: { event?: string; outcome?: string },
+  guard?: import("../store/durable-authority.ts").DurableOperationGuard,
 ): HookAuditEntry[] {
+  if (guard !== undefined) return guard.run(() => readHookAuditJournal(location, filter));
   const path = journalPath(location);
   let raw: string;
   try {

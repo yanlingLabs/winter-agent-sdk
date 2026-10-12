@@ -18,6 +18,7 @@
 import { fileURLToPath } from "node:url";
 import { buildWorkflowWorkerSeatbeltProfile, type SandboxBrand } from "../sandbox/profile.ts";
 import { isSandboxAvailable } from "../sandbox/spawn.ts";
+import { currentHostChildFloorProfile } from "../sandbox/host-child-floor.ts";
 // The argv contract lives with the ENTRY that reads it (subprocess-entry.ts), never in main.ts --
 // see that module's own header for why main.ts cannot be imported at all. Re-exported here so a
 // spawner needs one import, not two.
@@ -122,7 +123,9 @@ export function buildWorkerSpawn(opts: BuildWorkerSpawnOptions): WorkerCommand {
     ...(opts.winterHome !== undefined ? { winterHome: opts.winterHome } : {}),
     ...(opts.brand !== undefined ? { brand: opts.brand } : {}),
   });
-  return { file: SANDBOX_EXEC_PATH, args: ["-p", profile, opts.command.file, ...opts.command.args] };
+  const floor = currentHostChildFloorProfile();
+  const composed = floor ? `${profile}\n${floor.split("\n").slice(2).join("\n")}` : profile;
+  return { file: SANDBOX_EXEC_PATH, args: ["-p", composed, opts.command.file, ...opts.command.args] };
 }
 
 /** WS-12 §3's own availability rule, reused rather than re-derived. */

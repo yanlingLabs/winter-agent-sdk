@@ -1,3 +1,5 @@
+import { BASH_CEILING_TIMEOUT_MS as CEILING_TIMEOUT_MS, resolveBashTimeout as resolveTimeout } from "../../sandbox/execution-limits.ts";
+import { guestBash } from "../../guest/process-tools.ts";
 // Task 3 (Lane C): the Bash tool executor (WS-06 §3.2, WS-12 §6). Wires the sandbox mechanism
 // (../../sandbox/{profile,spawn}.ts) behind the pinned Bash contract: fresh shell per call, env
 // non-persistence, cwd-carry within allowed dirs only, TMPDIR export, timeout defaults/ceiling,
@@ -28,6 +30,7 @@ import { splitCompound, extractRedirectTargets, leadingWord, dequoteShellWord } 
 import { type GlobDenyEntry } from "../../permissions/file-rules.ts";
 import { buildSandboxChildEnv, computeDenyPaths as sharedComputeDenyPaths, computeWritableRoots as sharedComputeWritableRoots, sandboxRunInputs } from "../sandbox-run-inputs.ts";
 import { emptyPathSet, type ExtractedPaths } from "../paths-seam.ts";
+import { buildPwdCaptureScript } from "../bash-pwd-capture.ts";
 import {
   runCommand,
   SandboxUnavailableError,
@@ -92,19 +95,12 @@ function parseBashInput(input: unknown): BashInput | { error: string } {
 // 3 leaves "eligibility" uncaptured by any pinned behavior; this is a marker for a future WS-17
 // differential capture to replace, not a guessed heuristic.
 // ---------------------------------------------------------------------------------------------
-const DEFAULT_TIMEOUT_MS = 120_000;
-const CEILING_TIMEOUT_MS = 600_000;
 
 // Task-frames parity (contract §3): a FOREGROUND command running past this mark is registered in
 // the shared task registry (task_started, is_backgrounded:false) -- so it becomes reachable by
 // TaskStop, exactly as the pin's own engine makes it. A command that finishes before this fires
 // emits no task frames at all.
 const FOREGROUND_REGISTER_MS = 2_000;
-
-function resolveTimeout(requested: number | undefined): number {
-  if (requested === undefined || !Number.isFinite(requested) || requested <= 0) return DEFAULT_TIMEOUT_MS;
-  return Math.min(requested, CEILING_TIMEOUT_MS);
-}
 
 // WS-12 §6.3: inline caps. FAILURE_EXCERPT_CHARS is a documented placeholder -- WS-12 §6.3 pins
 // only "a smaller head/tail excerpt," not an exact size; a future WS-17 capture may pin the real
@@ -248,9 +244,6 @@ function buildChildEnv(ctx: ToolExecutionContext): NodeJS.ProcessEnv {
 // early, or was itself a malformed/incomplete bash script whose parse never reaches these trailing
 // lines) simply means no cwd carries, never a tool error.
 // ---------------------------------------------------------------------------------------------
-function shQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
-}
 
 // FIXED (Task 8, "excludedCommands raw-match" MUST) -- was a LATENT TRAP: `runForeground` passes
 // THIS wrapped script (not the model's raw `input.command`) as `RunCommandOptions.command`, so a
@@ -261,9 +254,6 @@ function shQuote(s: string): string {
 // raw string) while still spawning the wrapped script, so `excludedCommands` matches what it was
 // always meant to match, on both the foreground AND background (`runBackground`, which never wrapped
 // its command to begin with, and therefore needs no `matchCommand` override) paths alike.
-function buildPwdCaptureScript(command: string, pwdFile: string): string {
-  return `${command}\n__winter_bash_rc=$?\npwd > ${shQuote(pwdFile)} 2>/dev/null\nexit "$__winter_bash_rc"\n`;
-}
 
 function carryCwdIfAllowed(pwdFile: string, ctx: ToolExecutionContext): void {
   let finalCwd: string;
@@ -397,6 +387,7 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
   const description = input.description || input.command;
   let foregroundTaskId: string | undefined;
   let foregroundPid: number | undefined;
+  let foregroundStopOwnedProcess: (() => void) | undefined;
   const registerTimer = setTimeout(() => {
     const taskId = randomUUID();
     foregroundTaskId = taskId;
@@ -408,6 +399,7 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
       command: input.command,
       isBackgrounded: false,
       ...(foregroundPid !== undefined ? { pid: foregroundPid } : {}),
+      ...(foregroundStopOwnedProcess ? { stopOwnedProcess: foregroundStopOwnedProcess } : {}),
       ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}),
       ...(ctx.agentId !== undefined ? { ownerAgentId: ctx.agentId } : {}),
       emitter: { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId },
@@ -437,15 +429,17 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
       ...runOptions,
       command: buildPwdCaptureScript(input.command, pwdFile),
       matchCommand: input.command,
+      pwdCapturePath: pwdFile,
       timeoutMs,
-      onSpawned: ({ pid }) => {
+      onSpawned: ({ pid, stopOwnedProcess }) => {
         foregroundPid = pid;
+        foregroundStopOwnedProcess = stopOwnedProcess;
         // The timer already fired and registered a row with no pid (the ordering the header comment
         // above documents as "basically impossible" but not structurally excluded) -- merge the pid
         // in via startTracking's own "re-register while running" merge, so TaskStop can still reach
         // this row through the normal killTaskProcessGroup path.
         if (foregroundTaskId !== undefined) {
-          startTracking({
+          const row = startTracking({
             taskId: foregroundTaskId,
             kind: "bash",
             outputPath: "",
@@ -453,9 +447,11 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
             command: input.command,
             isBackgrounded: false,
             pid,
+            ...(stopOwnedProcess ? { stopOwnedProcess } : {}),
             ...(ctx.toolUseId !== undefined ? { toolUseId: ctx.toolUseId } : {}),
             emitter: { emitFrame: ctx.emitFrame, sessionId: ctx.sessionId },
           });
+          if (row.status !== "running") killOrphanedSpawn(pid, stopOwnedProcess);
         }
       },
       onStdout: (c) => {
@@ -591,15 +587,15 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
     ...runOptions,
     command: input.command,
     timeoutMs,
-    onSpawned: ({ pid }) => {
-      const row = startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, pid, isBackgrounded: true, ...ownership, emitter });
+    onSpawned: ({ pid, stopOwnedProcess }) => {
+      const row = startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, pid, ...(stopOwnedProcess ? { stopOwnedProcess } : {}), isBackgrounded: true, ...ownership, emitter });
       // Review r2 finding 10 ("the option that keeps callers correct"): a TaskStop can land in the
       // window between the pre-spawn registration above and this callback -- the row is terminal by
       // the time the real pid arrives, `startTracking` correctly leaves it untouched (never re-arms
       // it), and so this pid never enters the registry at all. The OS process itself was still
       // really spawned and is really still running; nothing else will ever learn its pid to kill it.
       // Killed directly here, bypassing the registry (which has no record of this pid to act on).
-      if (row.status !== "running") killOrphanedSpawn(pid);
+      if (row.status !== "running") killOrphanedSpawn(pid, stopOwnedProcess);
     },
     onStdout: (c) => outStream.write(c),
     onStderr: (c) => outStream.write(c),
@@ -731,6 +727,8 @@ function extractBashPaths(input: unknown): ExtractedPaths {
 // ---------------------------------------------------------------------------------------------
 export const bashExecutor: ToolExecutor = {
   async execute(input, ctx) {
+    const guestRefusal = await guestBash(input, ctx);
+    if (guestRefusal) return guestRefusal;
     const parsed = parseBashInput(input);
     if ("error" in parsed) return { output: `Error: ${parsed.error}`, isError: true };
     return parsed.run_in_background ? runBackground(parsed, ctx) : runForeground(parsed, ctx);

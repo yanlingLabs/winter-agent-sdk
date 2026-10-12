@@ -8,7 +8,7 @@
 // is what covers that. The gain is that every rule below is exercised end-to-end in milliseconds
 // instead of behind a 60MB compile.
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, readdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkflowRuntime, WORKFLOW_SANDBOX_REFUSED_EXIT_CODE, STDERR_CARRY_CAP, STDERR_LINE_CAP, realWorkerSpawner, stderrTail, workerExitMessage, type WorkerSpawner, type WorkflowRuntimeDeps } from "./runtime.ts";
@@ -21,6 +21,7 @@ import { fakeStructuredOutputSeam } from "../structured/seam.ts";
 import { createContextAccountant } from "../engine.ts";
 import type { ChildHandle, ChildResult, SpawnChildRequest } from "../subagents/child-handle.ts";
 import { parseWorkflowMeta } from "./meta.ts";
+import { requireHostCodeProcessBroker, installHostCodeProcessClient } from "../sandbox/host-code-process.ts";
 
 const META = `export const meta = { name: "wf", description: "d" };\n`;
 
@@ -133,6 +134,31 @@ function launch(r: Rig, source: string, extra: { args?: unknown; sessionId?: str
 }
 
 describe("launch -- the result contract (WS-11 §1.4 + capture (3))", () => {
+  test("a missing required broker refuses before workflow persistence or task creation", async () => {
+    const r = rig();
+    const release = requireHostCodeProcessBroker();
+    const restore = installHostCodeProcessClient(undefined);
+    try {
+      expect(() => launch(r, META + "return 1;")).toThrow("required host Workflow broker unavailable");
+      expect(readdirSync(r.winterHome)).toEqual([]);
+      expect(readdirSync(r.sessionTempDir)).toEqual([]);
+      expect(r.log).toEqual([]); expect(r.spawned).toEqual([]);
+      // Even the compiled-verification-only bypass must not remove a host requirement.
+      for (const sandbox of [true, false]) {
+        expect(() => realWorkerSpawner({ sandbox })({ file: "/bin/sh", args: ["-c", "exit 99"] }, { cwd: r.winterHome }))
+          .toThrow("no local execution fallback");
+      }
+    } finally { restore(); release(); }
+    try {
+      const ordinary = launch(r, META + "return 1;");
+      expect(ordinary.status).toBe("running");
+      expect((await r.runtime.await(ordinary.runId)).status).toBe("completed");
+    } finally {
+      rmSync(r.winterHome, { recursive: true, force: true });
+      rmSync(r.sessionTempDir, { recursive: true, force: true });
+    }
+  });
+
   test("returns taskId/runId/scriptPath/transcriptDir, and the run starts `running`", async () => {
     const r = rig();
     const launched = launch(r, META + `return 1;`);

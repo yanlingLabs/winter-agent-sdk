@@ -1,4 +1,7 @@
+import { sourceReadRestrictionGeneration } from "./sandbox/source-read.ts";
 import { randomUUID } from "node:crypto";
+import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
+import { createHostCodeProcessClient, installHostCodeProcessClient, requireHostCodeProcessBroker } from "./sandbox/host-code-process.ts";
 import { homedir, release as osRelease, type as osType } from "node:os";
 // Phase 5 fix wave, I1: `buildBaselineDenyRules` compares the resolved winter root against the
 // literal default, so it needs path resolution.
@@ -147,6 +150,7 @@ import { ensureDefaultMessagingRuntimeRegistered } from "./messaging/reference-a
 import { createHostMessagingPort } from "./messaging/host-port.ts";
 // Phase 4 Task 3 (WS-07 §11 / RULING P2-M): the child permission-policy comparator.
 import { computeChildPolicy } from "./permissions/auto/inheritance.ts";
+import { currentToolName as resolveCurrentToolName, inheritDefinitionTools } from "./tools/current-tool-name.ts";
 import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode, BUBBLE_PERMISSION_MODE } from "./permissions/policy-state.ts";
 import { emptyRuleSet, buildSdkSourcedEntries, sourceRule, type SourcedRuleEntry } from "./permissions/ruleset.ts";
 import { escapeFileRulePathSegment, FileRuleCompileError } from "./permissions/file-rules.ts";
@@ -297,7 +301,6 @@ import {
   registerMcpServerTools,
   unregisterMcpServerTools,
   mcpSpellingOf,
-  registeredNameForMcpSpelling,
   TOOL_SEARCH_TOOL_NAME,
   DEFERRED_BUILTINS_CAPABILITY,
   // Phase 4 Task 3 (RULING P4-A): the single "Tool Search on" activation authority + the
@@ -1632,6 +1635,10 @@ export interface EngineOptions {
    * main.ts reads it to decide how hard to stop when the host dies (a teardown is let finish).
    */
   onSessionPhase?: (phase: "running" | "idle" | "ending") => void;
+  /** Trusted ownership-lifetime observer. Never a RuntimeConfig or wire option. Supplying it
+   * observes cleanup failures without changing legacy drain/cancellation semantics. Native
+   * namespace teardown acknowledgement remains required before releasing a protected owner. */
+  onTeardownUncertain?: () => void;
   // Phase 4 Task 3 (RULING P4-A): the "provider predicate seam defaulting per the catalog carry" the
   // brief names -- WS-13's own provider capability catalog (which surface would compute this for
   // real, per WS-09 §8.1's "Winter models these as provider-capability predicates in the catalog")
@@ -2560,6 +2567,10 @@ function withLegacyToolNameRules(opts: EngineOptions): EngineOptions {
 }
 
 export async function runEngine(opts: EngineOptions): Promise<number> {
+  assertRuntimeExecutionPosture(opts.config);
+  // Host broker construction narrows this generation's execution authority. Removing its
+  // client cannot restore local execution, and no settings/env/model boolean can opt out.
+  const releaseBrokerRequirement = opts.config.hostCodeProcessBroker !== undefined ? requireHostCodeProcessBroker() : undefined;
   const facetDisposers: Array<() => void | Promise<void>> = [];
   // Review r2 finding 9 (whole-branch): `runEngineBody`'s own background-shell sweep
   // (`stopSessionShellTasks`, review r1 finding 2's own "the session going away" kill door) sits
@@ -2577,26 +2588,30 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       sweepBackgroundShellTasksOnExit = fn;
     });
   } finally {
-    // Idempotent either way: on the ORDINARY return path `runEngineBody`'s own sweep already ran
-    // (this finds nothing left to stop, since `stopSessionShellTasks` filters to `status ===
-    // "running"` rows), so calling it again here is a harmless no-op. On a THROW, this is the only
-    // place the sweep ever runs -- closing the exact gap the review flags: a `detached: true`
-    // process group this run started would otherwise survive `runEngine` returning (and even
-    // `process.exit`, until this fix's `main.ts` half) with no live turn left to ever clean it up.
     try {
-      sweepBackgroundShellTasksOnExit?.();
-    } catch {
-      /* a teardown failure must never replace the run's own outcome */
-    }
-    // Each guarded on its own: one disposer throwing must not strand the others, and a teardown
-    // failure must never replace the run's own outcome.
-    for (const dispose of facetDisposers.splice(0)) {
+      // Idempotent either way: on the ORDINARY return path `runEngineBody`'s own sweep already ran
+      // (this finds nothing left to stop, since `stopSessionShellTasks` filters to `status ===
+      // "running"` rows), so calling it again here is a harmless no-op. On a THROW, this is the only
+      // place the sweep ever runs -- closing the exact gap the review flags: a `detached: true`
+      // process group this run started would otherwise survive `runEngine` returning (and even
+      // `process.exit`, until this fix's `main.ts` half) with no live turn left to ever clean it up.
       try {
-        await dispose();
+        sweepBackgroundShellTasksOnExit?.();
       } catch {
-        /* a withdrawal that throws has, at worst, left the entry it was removing */
+        opts.onTeardownUncertain?.();
+        /* a teardown failure must never replace the run's own outcome */
       }
-    }
+      // Each guarded on its own: one disposer throwing must not strand the others, and a teardown
+      // failure must never replace the run's own outcome.
+      for (const dispose of facetDisposers.splice(0)) {
+        try {
+          await dispose();
+        } catch {
+          opts.onTeardownUncertain?.();
+          /* a withdrawal that throws has, at worst, left the entry it was removing */
+        }
+      }
+    } finally { releaseBrokerRequirement?.(); }
   }
 }
 
@@ -2686,12 +2701,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * tool is never shadowed by an old name).
    */
   const legacyToolNames = config.legacyToolNames ?? {};
-  const currentToolName = (name: string): string => {
-    if (getRegisteredTool(name) !== undefined) return name;
-    const legacy = Object.hasOwn(legacyToolNames, name) ? legacyToolNames[name] : undefined;
-    if (typeof legacy === "string" && getRegisteredTool(legacy) !== undefined) return legacy;
-    return name.startsWith("mcp__") ? registeredNameForMcpSpelling(name) : name;
-  };
+  const currentToolName = (name: string): string => resolveCurrentToolName(name, legacyToolNames);
   /** The inverse for identity: the host's old name for a current tool, when it gave one. */
   const legacyNameOf = (name: string): string | undefined => Object.entries(legacyToolNames).find(([old, current]) => current === name && getRegisteredTool(old) === undefined)?.[0];
 
@@ -3003,6 +3013,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // WS-25 bug: a code session with a signed-in OAuth MCP server died at start with `query()`'s
   // "expected 'init' as the first frame, got 'control_request'". See `RpcBridgeOptions.holdUntilOpen`.
   const bridge = createRpcBridge(output, { holdUntilOpen: true });
+  if (config.hostCodeProcessBroker !== undefined) {
+    if (typeof config.hostCodeProcessBroker.generationId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(config.hostCodeProcessBroker.generationId)) throw new Error("invalid host Code broker generation");
+    facetDisposers.push(installHostCodeProcessClient({ client: createHostCodeProcessClient(bridge), generationId: config.hostCodeProcessBroker.generationId }));
+  }
   // WS-25 §7: a host-brokered session's credential reads ride THIS bridge (the one top-level engine binds;
   // a child engine never receives the channel, and shares the parent's binding through the stores).
   hostCredentialChannel?.bind(bridge);
@@ -3741,7 +3755,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     const owned = childRoster.filter((child) => child.record.execution?.parentAgentId === parentAgentId);
     bindRestoredChildren(owned, restore);
     let draining: Promise<void> | undefined;
-    return () => draining ??= drainRestoredChildren(owned).then(() => {
+    return () => draining ??= drainRestoredChildren(owned, opts.onTeardownUncertain).then(() => {
       if (!childContextEnding) bindRestoredChildren(owned, restoreWithCurrentRoot);
     });
   }
@@ -3754,7 +3768,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // Both calls close their resume gates before yielding. At root shutdown the fallback bindings
     // must stay closed too, including a descendant whose immediate parent's drain finishes first.
     const bindingDisposal = disposeChildContextBinding?.();
-    const restoredDisposal = drainRestoredChildren(childRoster);
+    const restoredDisposal = drainRestoredChildren(childRoster, opts.onTeardownUncertain);
     return childContextDisposal = Promise.all([bindingDisposal, restoredDisposal]).then(() => undefined);
   };
   // Drain restored descendants even if a run exits exceptionally. Their binding disposer is
@@ -4578,11 +4592,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       // Spawn-surface parity: `tools: ["*"]` (every built-in that means "all tools") is the
       // UNRESTRICTED case, exactly like an absent list -- claude's own wildcard. Filtering the literal
       // "*" against the pool would hand those agents an EMPTY pool.
-      tools:
-        req.definition?.tools !== undefined && !req.definition.tools.includes("*")
-          ? // A definition written before a rename names the tool's OLD spelling (`currentToolName`).
-            [...new Set(req.definition.tools.map(currentToolName))].filter((name) => currentAdvertisedCanonicalNames.includes(name))
-          : [...currentAdvertisedCanonicalNames],
+      tools: inheritDefinitionTools(currentAdvertisedCanonicalNames, req.definition ?? {}, legacyToolNames),
       // WS-13c §3/§4 (P6.6): a SLOT NAME (`AgentInput.model`) becomes the catalog key that serves it,
       // and the slot it named rides along on `slot`. Everything else -- a full key, a canonical id,
       // `WINTER_SUBAGENT_MODEL`, the inherited `config.model` -- passes through exactly as before.
@@ -4854,6 +4864,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
       ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
       ...(config.isolationPinnedCwd !== undefined ? { isolationPinnedCwd: config.isolationPinnedCwd } : {}),
       ...(config.agentId !== undefined ? { agentId: config.agentId } : {}),
+      ...(config.parentToolUseId !== undefined ? { parentToolUseId: config.parentToolUseId } : {}),
       // Phase 4 Task 8 (Lane C Gap #3): the programmatic Options.agents map, straight from this
       // run's own RuntimeConfig -- see ToolExecutionContext.agents (registry.ts) for why.
       ...(config.agents !== undefined ? { agents: config.agents } : {}),
@@ -7991,11 +8002,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     date: string | undefined;
   }
   let sessionContext: SessionContext | undefined;
+  let sessionContextSourceGeneration = sourceReadRestrictionGeneration();
   /** Cleared by a compaction and by `reloadSessionContext`; the next request rebuilds it. */
   const clearSessionContext = (): void => {
     sessionContext = undefined;
   };
   const ensureSessionContext = async (assembled: AssembledPrompt, input: SystemPromptInput): Promise<SessionContext> => {
+    const sourceGeneration = sourceReadRestrictionGeneration();
+    if (sourceGeneration !== sessionContextSourceGeneration) { clearSessionContext(); sessionContextSourceGeneration = sourceGeneration; }
     if (sessionContext !== undefined) return sessionContext;
     // SDK 0.0.16 (P16-7): a fork's own exact userContext -- the PARENT's captured entries, rendered
     // through the SAME `renderUserContext` the parent's own request used, so the text is
@@ -10922,7 +10936,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // out, re-stamped with the session's totals, and only then does the ordinary teardown below run --
   // which is what makes "the model was told about its background work" true before the sweep.
   if (heldResults.length > 0 && sessionAborted) {
-    await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c) && c.status() === "running").map((c) => c.stop()));
+    const stopped = await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c) && c.status() === "running").map((c) => c.stop()));
+    if (stopped.some(result => result.status === "rejected")) opts.onTeardownUncertain?.();
   }
   flushHeldResults();
   emitSessionState("idle");
@@ -10991,10 +11006,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // spawn that some other caller abandons WITHOUT an interrupt (this file's own test fixtures do
   // exactly that, deliberately, to interact with a child past its parent's turn) keeps its
   // pre-existing lifetime.
-  await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c)).map(async (c) => {
+  const childTeardown = await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c)).map(async (c) => {
     await c.stop();
     await c.generationDone?.();
   }));
+  if (childTeardown.some(result => result.status === "rejected")) opts.onTeardownUncertain?.();
   // Review r1 finding 2 (controller ruling): a BACKGROUND shell outlives the turn that started it
   // (its runCommand no longer carries the per-turn signal -- in claude too, a backgrounded shell no
   // longer follows the turn's abort), so the session going away is one of its three kill doors, beside its

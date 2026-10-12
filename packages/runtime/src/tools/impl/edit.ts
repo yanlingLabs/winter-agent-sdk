@@ -1,3 +1,6 @@
+import { guestFileSessionOf, guestFileError } from "../../guest/file-session.ts";
+import { assertHostCodePathAccess } from "../../sandbox/host-code-protection.ts";
+import { guestEdit } from "../../guest/file-tools.ts";
 // WS-06 §3.1 "Edit" -- implement-now, pinned schema `{file_path, old_string, new_string,
 // replace_all?}`. `old_string` is literal (never regex/fuzzy) and normally unique; `replace_all`
 // replaces every occurrence. Subject to the shared read-before-edit ladder (read-ladder.ts,
@@ -81,15 +84,22 @@ const editExecutor: ToolExecutor = {
     if (parsed.old_string === "") return errorResult("'old_string' must not be empty");
     if (parsed.old_string === parsed.new_string) return errorResult("'old_string' and 'new_string' are identical -- no change to make");
 
+    try { const guest = guestFileSessionOf(ctx); if (guest) return await guestEdit(parsed, ctx, guest); }
+    catch (error) { return guestFileError(error); }
+
     // Fix round 10, item B: trim FIRST, as claude does -- see write.ts's identical
     // comment (the check and the write must never disagree).
     const resolvedPath = resolve(ctx.cwd, parsed.file_path.trim());
 
     try {
+      assertHostCodePathAccess(resolvedPath, "read", ctx.sandboxSettings, ctx.cwd);
+      assertHostCodePathAccess(resolvedPath, "write", ctx.sandboxSettings, ctx.cwd);
       if (!existsSync(resolvedPath)) return errorResult(`"${resolvedPath}" does not exist -- Edit can only modify an existing file`);
       const stat = statSync(resolvedPath);
       if (stat.isDirectory()) return errorResult(`"${resolvedPath}" is a directory, not a file`);
 
+      assertHostCodePathAccess(resolvedPath, "read", ctx.sandboxSettings, ctx.cwd);
+      assertHostCodePathAccess(resolvedPath, "write", ctx.sandboxSettings, ctx.cwd);
       const originalContent = readFileSync(resolvedPath, "utf8");
       const occurrences = countOccurrences(originalContent, parsed.old_string);
 
@@ -113,6 +123,7 @@ const editExecutor: ToolExecutor = {
       const updatedContent = parsed.replace_all
         ? replaceAllLiteral(originalContent, parsed.old_string, parsed.new_string)
         : replaceFirstLiteral(originalContent, parsed.old_string, parsed.new_string);
+      assertHostCodePathAccess(resolvedPath, "write", ctx.sandboxSettings, ctx.cwd);
       writeFileSync(resolvedPath, updatedContent, "utf8");
       const newMtimeMs = statSync(resolvedPath).mtimeMs;
       // A targeted, known delta on top of whatever was already known -- carry the prior

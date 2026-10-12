@@ -4,6 +4,9 @@
 // and the wire-protocol types (frames + SDK messages).
 
 export { runWinterRuntime } from "./runtime.ts";
+export { assertRuntimeExecutionPosture, GuestExecutionUnavailableError, RUNTIME_EXECUTION_POSTURE_CAPABILITIES } from "./guest/execution-posture.ts";
+export { createProtectedStoreBootstrap, ProtectedStoreBootstrapError } from "./guest/store-bootstrap.ts";
+export type { ProtectedStoreBootstrap, ProtectedStoreScope, ProtectedStoreOwnershipPort, ProtectedStoreOwner, PreviousBootTerminationEvidence, StoreLifetimeTeardownEvidence, ProtectedStoreOwnershipOutcome } from "./guest/store-bootstrap.ts";
 
 // The turn engine (Task 3): state machine, tool rounds, maxTurns, interrupt, streaming input,
 // teardown. This is the real production entry point (Task 4's main.ts calls it directly);
@@ -196,3 +199,36 @@ export type { ClassifierRoute, ClassifierRouteConfig, ModelClassifierOptions } f
 export { CLASSIFIER_TOOL_NAME, CLASSIFIER_NO_VERDICT_REASONS, CLASSIFIER_VERDICT_SCHEMA } from "./provider/classifier/verdict-schema.ts";
 export type { ClassifierNoVerdictReason } from "./provider/classifier/verdict-schema.ts";
 export { CLASSIFIER_SYSTEM_PROMPT, DEFAULT_MAX_CONTEXT_CHARS } from "./provider/classifier/prompt.ts";
+// Host-only Code process owner. Guest runtimes never register this execution capability.
+export { createHostCodeProcessRegistration } from "./sandbox/host-code-broker.ts";
+export type { HostCodeCanonicalContext } from "./sandbox/host-code-broker.ts";
+export { buildPwdCaptureScript } from "./tools/bash-pwd-capture.ts";
+export { buildHostSandboxRunInputs } from "./tools/sandbox-run-inputs.ts";
+export type { HostSandboxRunInputs, SandboxRunInputs } from "./tools/sandbox-run-inputs.ts";
+export { createHostCodePermissionEvaluator, buildHostCodePermissionContext } from "./permissions/host-code.ts";
+export type { HostCodePermissionSnapshot, HostCodePermissionRequest, HostCodePermissionReceipt } from "./permissions/host-code.ts";
+export { buildSettingsRuleSeed } from "./production-wiring.ts";
+export type { SettingsRuleSeed } from "./production-wiring.ts";
+export { createAutoEngine } from "./permissions/auto/engine.ts";
+export type { AutoEngineOptions, ClassifierInterface, ClassifierContext, ClassifierRawResult } from "./permissions/auto/engine.ts";
+export type { AutoEngine, HookStage, PermissionDecisionRecord } from "./permissions/evaluator.ts";
+
+export { resolveHostCodeDescendantPolicy } from "./subagents/host-policy.ts";
+export type { HostCodeDescendantPolicyOptions, HostCodeDescendantPolicy } from "./subagents/host-policy.ts";
+export { createHostCodeHookStage } from "./hooks/host-stage.ts";
+export type { HostCodeHookStageOptions } from "./hooks/host-stage.ts";
+export type { HookInvocationRequest, HookInvoker, HookAuditRecorder, ToolInputValidator } from "./hooks/runner.ts";
+export type { SourcedHookEntry } from "./hooks/registry.ts";
+export type { PolicyState } from "./permissions/policy-state.ts";
+export { buildHookEntriesFromConfig, buildHookEntriesFromSettings } from "./hooks/from-config.ts";
+export type { SettingsHookSourceInput, HookEntriesFromSettings } from "./hooks/from-config.ts";
+
+export type { HostOutputTransport, HostOutputTransportFactory } from "./sandbox/host-output.ts";
+
+// Protected guest filesystem object APIs; confined runtime bootstrap remains independently gated.
+export { createGuestFileHelper, GuestFileHelperError, GUEST_FILE_HELPER_PROTOCOL_VERSION, GUEST_FILE_HELPER_CAPABILITY } from "./guest/file-helper.ts";
+export type { GuestFileAuthority, GuestFileRoot, GuestFileRequest, GuestFileReply, GuestFileHelperPort, GuestFileSnapshot } from "./guest/file-helper.ts";
+export { createGuestFileSession, bindGuestFileSession } from "./guest/file-session.ts";
+export type { GuestFileSession } from "./guest/file-session.ts";
+
+export { HOST_CODE_EXECUTION_LIMITS_VERSION, hostCodeExecutionLimitsFor } from "./sandbox/execution-limits.ts";

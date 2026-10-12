@@ -1,0 +1,13 @@
+Building for debugging...
+[0/7] /private/var/folders/xx/yyyy/T/winter-code-policy-compat-2kWBBe/swift-test-approved-escape/.build/arm64-apple-macosx/debug/PolicyFixturePackageTests.derived/runner.swift
+[1/7] Write sources
+[4/7] Write swift-version--58304C5D6DBC2206.txt
+[6/9] Emitting module PolicyFixture
+[7/9] Compiling PolicyFixture Fixture.swift
+[8/11] Compiling PolicyFixtureTests FixtureTests.swift
+[9/11] Emitting module PolicyFixtureTests
+[10/13] Emitting module PolicyFixturePackageTests
+[11/13] Compiling PolicyFixturePackageTests runner.swift
+[11/13] Write Objects.LinkFileList
+[12/13] Linking PolicyFixturePackageTests
+Build complete! (8.43s)

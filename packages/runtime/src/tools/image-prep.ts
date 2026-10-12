@@ -1,3 +1,4 @@
+import { GuestFileHelperError } from "../guest/file-helper.ts";
 // Code-mode images: the ONE place an image is made ready for a model -- the Read tool (an image file, a
 // notebook's plot outputs) and an MCP tool's `image` content items both come through here, so the two
 // answer the same questions the same way: what the bytes are (sniffed, never the name), whether they
@@ -12,6 +13,7 @@
 // no `sips` (another platform, a failed run) an image that is already within every limit is sent as it
 // is, and anything else is refused with a text that says why.
 import { execFile } from "node:child_process";
+import { prepareHostChildLaunch } from "../sandbox/host-child-floor.ts";
 import { closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -307,7 +309,8 @@ export function describePreparedImage(image: PreparedImage): string {
 
 function runSips(sips: string, args: string[], signal: AbortSignal | undefined): Promise<{ ok: boolean; stdout: string }> {
   return new Promise((resolve) => {
-    execFile(sips, args, { timeout: SIPS_TIMEOUT_MS, maxBuffer: 1024 * 1024, ...(signal !== undefined ? { signal } : {}) }, (err, stdout) => resolve({ ok: err === null, stdout: String(stdout ?? "") }));
+    const launch = prepareHostChildLaunch(sips, args);
+    execFile(launch.command, launch.args, { timeout: SIPS_TIMEOUT_MS, maxBuffer: 1024 * 1024, ...(signal !== undefined ? { signal } : {}) }, (err, stdout) => resolve({ ok: err === null, stdout: String(stdout ?? "") }));
   });
 }
 
@@ -352,7 +355,8 @@ export function readRegularFileNoFollow(path: string): Buffer | undefined {
  *   - `$TMPDIR` (the per-user temp dir): its DIRECT children are sandbox-writable (the profile's mktemp
  *     allowance), so a folder made there could be renamed away and replaced by a link mid-run.
  */
-export function imagePrepWorkRoot(ctx: { storeHome?: string; winterHome?: string }): string | undefined {
+export function imagePrepWorkRoot(ctx: { storeHome?: string; winterHome?: string; executionPosture?: "local" | "confined-guest" }): string | undefined {
+  if (ctx.executionPosture !== undefined && ctx.executionPosture !== "local") throw new GuestFileHelperError("guest_file_type_unsupported", "guest image conversion has no tool-compartment route");
   const anchor = ctx.storeHome ?? ctx.winterHome;
   return anchor !== undefined ? join(anchor, IMAGE_PREP_DIRNAME) : undefined;
 }

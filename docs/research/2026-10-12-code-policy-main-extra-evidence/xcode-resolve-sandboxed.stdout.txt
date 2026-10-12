@@ -1,0 +1,6 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -resolvePackageDependencies -project /private/var/folders/xx/yyyy/T/winter-code-policy-compat-XvyeG3/xcode-resolve-sandboxed/FixtureApp.xcodeproj -scheme FixtureApp -clonedSourcePackagesDirPath /private/var/folders/xx/yyyy/T/winter-code-policy-compat-XvyeG3/xcode-resolve-sandboxed/cloned -derivedDataPath /private/var/folders/xx/yyyy/T/winter-code-policy-compat-XvyeG3/xcode-resolve-sandboxed/derived -packageCachePath /private/var/folders/xx/yyyy/T/winter-code-policy-compat-XvyeG3/xcode-resolve-sandboxed/package-cache -disablePackageRepositoryCache -skipPackageUpdates -scmProvider system CODE_SIGNING_ALLOWED=NO
+
+Build settings from command line:
+    CODE_SIGNING_ALLOWED = NO
+

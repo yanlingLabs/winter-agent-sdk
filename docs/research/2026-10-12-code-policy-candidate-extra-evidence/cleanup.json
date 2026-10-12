@@ -1,0 +1,15 @@
+{
+  "utc": "2026-10-12T03:28:50.905236+00:00",
+  "ownedRemainingProcesses": [],
+  "removedDisposableRoots": [
+    "/private/var/folders/xx/yyyy/T/winter-code-policy-compat-2kWBBe",
+    "/private/var/folders/xx/yyyy/T/winter-code-policy-compat-XvyeG3",
+    "/private/var/folders/xx/yyyy/T/winter-code-policy-compat-d4Quug",
+    "/private/var/folders/xx/yyyy/T/winter-code-policy-compat-AFfWOb",
+    "/private/var/folders/xx/yyyy/T/winter-code-policy-compat-Ih8cWX",
+    "/private/var/folders/xx/yyyy/T/winter-playwright-fixture-tools-thKcQV"
+  ],
+  "supersededArtifactDirectoryRemoved": "docs/research/2026-10-12-code-policy-candidate-evidence",
+  "retainedDetachedBaselineWorktree": "../winter-agent-sdk-main-baseline-20261012",
+  "scope": "Exact fixture roots only. No signals sent. No live app/home/Keychain/VM touched."
+}

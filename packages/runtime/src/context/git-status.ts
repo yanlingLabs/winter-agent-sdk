@@ -18,6 +18,7 @@
 // prompt, never for an `omitProjectContext` agent (Explore/Plan), never with the kill switch or
 // `includeGitInstructions: false`.
 import { execFile } from "node:child_process";
+import { prepareHostChildLaunch } from "../sandbox/host-child-floor.ts";
 
 /** Winter's snapshot caveat (claude's sentence says the same thing in its own words). */
 export const GIT_STATUS_CAVEAT = "This git status was captured when the session began; it is a snapshot and does not change as the conversation goes on.";
@@ -39,7 +40,8 @@ type GitEnv = Record<string, string | undefined> | undefined;
 
 function runGit(cwd: string, args: readonly string[], env?: GitEnv): Promise<GitResult> {
   return new Promise((resolve) => {
-    execFile("git", [...args], { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, encoding: "utf8", ...(env !== undefined ? { env: env as NodeJS.ProcessEnv } : {}) }, (err, stdout) => {
+    const launch = prepareHostChildLaunch("git", args, { cwd, env });
+    execFile(launch.command, launch.args, { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, encoding: "utf8", ...(env !== undefined ? { env: env as NodeJS.ProcessEnv } : {}) }, (err, stdout) => {
       const code = err === null ? 0 : typeof (err as { code?: unknown }).code === "number" ? ((err as { code: number }).code as number) : 1;
       resolve({ code, stdout: typeof stdout === "string" ? stdout : "" });
     });

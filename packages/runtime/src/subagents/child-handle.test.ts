@@ -86,8 +86,8 @@ describe("transformChildFrame (WS-10 §4)", () => {
     }
   });
 
-  // 0.0.47: the child's live reasoning. Its block always crosses, correlated (its own `null` overwritten,
-  // like a grandchild's id); its TEXT crosses only under forwardSubagentText, the gate WS-10 §4 puts on a
+  // 0.0.47: the child's live reasoning. Its block always crosses, correlated (its own `null` overwritten);
+  // its TEXT crosses only under forwardSubagentText, the gate WS-10 §4 puts on a
   // child's thinking.
   test("a child's `reasoning_progress` crosses correlated; its `text` only when forwardSubagentText is on", () => {
     const steps = [
@@ -116,6 +116,23 @@ describe("transformChildFrame (WS-10 §4)", () => {
       const frame: WinterFrame = { type: "data", message: { type: "system", subtype, task_id: "t1", session_id: "c1", uuid: "u1" } } as WinterFrame;
       expect(transformChildFrame(frame, CORR, false)).toEqual(frame);
     }
+  });
+  test("already-correlated descendant frames retain their immediate spawning call through outer parents",()=>{
+    const nested="inner-agent-call";
+    const messages=[
+      {type:"assistant",message:{content:[{type:"tool_use",id:"grandchild-bash",name:"Bash",input:{command:"pwd"}}]}},
+      {type:"user",message:{content:[{type:"tool_result",tool_use_id:"grandchild-bash",content:"done"}]}},
+      {type:"stream_event",event:{type:"content_block_delta"}},
+      {type:"system",subtype:"reasoning_progress",text:"private thinking"},
+      {type:"system",subtype:"informational",content:"notice"},
+    ];
+    for(const message of messages){
+      const frame={type:"data",message:{...message,parent_tool_use_id:nested}} as WinterFrame;
+      const twice=transformChildFrame(transformChildFrame(frame,CORR,true)!,{parentToolUseId:"outermost-call",agentId:"outermost-agent"},true) as {message:Record<string,unknown>};
+      expect(twice.message.parent_tool_use_id).toBe(nested);
+    }
+    const hidden={type:"data",message:{type:"system",subtype:"reasoning_progress",text:"private thinking",parent_tool_use_id:nested}} as WinterFrame;
+    const filtered=transformChildFrame(hidden,CORR,false) as {message:Record<string,unknown>};expect(filtered.message.parent_tool_use_id).toBe(nested);expect("text" in filtered.message).toBe(false);
   });
 });
 

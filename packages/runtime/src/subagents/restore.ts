@@ -15,8 +15,9 @@ export function bindRestoredChildren(handles: readonly ChildHandle[], restore: R
 }
 
 /** Close the old context's resume gate synchronously, then release every generation using it. */
-export async function drainRestoredChildren(handles: readonly ChildHandle[]): Promise<void> {
-  await Promise.allSettled(handles.map((handle) => bindings.get(handle)?.drain()));
+export async function drainRestoredChildren(handles: readonly ChildHandle[], onUncertain?: () => void): Promise<void> {
+  const results = await Promise.allSettled(handles.map((handle) => bindings.get(handle)?.drain()));
+  if (results.some(result => result.status === "rejected")) onUncertain?.();
 }
 
 // The one place a rebuilt RECORD becomes a ChildHandle the messaging layer can list and address.

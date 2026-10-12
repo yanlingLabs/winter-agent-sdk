@@ -1,3 +1,4 @@
+import { captureSourceOrigin, assertSourceOrigin, type SourceOrigin, bindSourceObject, inheritSourceObject, assertSourceReadAccess, readSourceFileSync, readSourceDirectorySync, statSourceSync, openSourceSync } from "../sandbox/source-read.ts";
 // Phase 5 Lane S (WS-11 §2.1): filesystem DISCOVERY for the skill tiers. Metadata only -- this file
 // never reads a skill BODY into a returned value (`SKILL.md` is read to parse its frontmatter and
 // the parsed body is dropped on the floor), which is the operational meaning of "bodies load lazily
@@ -6,7 +7,7 @@
 // DEFENSIVE THROUGHOUT, Norma parity: a missing root, an unreadable directory, a malformed
 // SKILL.md, a `SKILL.md` that is itself a directory -- every one is SKIPPED, never thrown. A single
 // broken skill in a checked-in project `skills/` directory must not be able to fail a session's startup.
-import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
+import { closeSync, readSync, type Dirent } from "node:fs";
 import { dirname, join } from "node:path";
 import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { parseSkillFile, type ParsedSkillFile } from "./frontmatter.ts";
@@ -48,7 +49,7 @@ export const SELF_SUBDIR = "self";
 /**
  * THE INDEX-TIME READ BOUND (fix wave, A-11 / T5 review Nit 5).
  *
- * `SkillIndex.build()` used to `readFileSync` every SKILL.md in full and drop the parsed body --
+ * `SkillIndex.build()` used to `readSourceFileSync` every SKILL.md in full and drop the parsed body --
  * "lazy" meant NOT RETAINED, not NOT READ. That read is unconditional and pre-session: it covers
  * every `<cwd>/.winter/skills/**` up to the repository root, content that arrives with a `git clone`,
  * before any trust decision and before the model runs. With no cap at all the bound was "the total
@@ -73,7 +74,7 @@ export function findRepoRoot(from: string): string | undefined {
   let dir = from;
   for (;;) {
     try {
-      statSync(join(dir, ".git"));
+      statSourceSync(join(dir, ".git"));
       return dir;
     } catch {
       /* not here */
@@ -111,7 +112,7 @@ export function projectSkillRoots(cwd: string, brand?: Pick<BrandProfile, "proje
 }
 
 /**
- * Admit a `readdirSync` entry as a skill directory, WS-21 §6.3 item 1 (F6, F7): a symlink is
+ * Admit a `readSourceDirectorySync` entry as a skill directory, WS-21 §6.3 item 1 (F6, F7): a symlink is
  * admitted alongside a real directory (as claude does) and then resolved. A link is resolved
  * relative to the directory being scanned (`root` here is always that directory, never a
  * higher-level scan root, since this is called from inside `scanSkillRoot`'s own loop). A dangling
@@ -122,7 +123,7 @@ function isDirEntry(root: string, e: Dirent): boolean {
   if (e.isDirectory()) return true;
   if (!e.isSymbolicLink()) return false;
   try {
-    return statSync(join(root, e.name)).isDirectory();
+    return statSourceSync(join(root, e.name)).isDirectory();
   } catch {
     return false;
   }
@@ -142,7 +143,7 @@ function isDirEntry(root: string, e: Dirent): boolean {
 export function scanSkillRoot(root: string, source: SkillTier, exclude?: ReadonlySet<string>): SkillScanResult {
   let dirs: string[];
   try {
-    // SORTED, not readdir order: `readdirSync` returns directory order, which differs between
+    // SORTED, not readdir order: `readSourceDirectorySync` returns directory order, which differs between
     // filesystems and changes as entries are created and removed. The listing's budget drops from
     // the tail (listing.ts), so an unstable within-root order would make WHICH skills the model can
     // see depend on the order they happened to be written to disk.
@@ -151,7 +152,7 @@ export function scanSkillRoot(root: string, source: SkillTier, exclude?: Readonl
     // claude admits one, resolved with `isDirEntry` below. A
     // dangling link, or a link to a non-directory, is silently excluded -- the same fate a plain
     // subdirectory with no SKILL.md already has.
-    dirs = readdirSync(root, { withFileTypes: true })
+    dirs = readSourceDirectorySync(root, { withFileTypes: true })
       .filter((e) => isDirEntry(root, e))
       .map((e) => e.name)
       .sort();
@@ -166,7 +167,7 @@ export function scanSkillRoot(root: string, source: SkillTier, exclude?: Readonl
     // BOUNDED at index time (A-11). The unbounded read is `SkillIndex.load()`'s, at invocation.
     const read = readSkillMetadata(path, dir, { maxBytes: SKILL_METADATA_PREFIX_BYTES });
     if (read.ok) {
-      skills.push({ name: read.skill.name, description: read.skill.description, source, path, ...(read.skill.author !== undefined ? { author: read.skill.author } : {}) });
+      skills.push(inheritSourceObject({ name: read.skill.name, description: read.skill.description, source, path, ...(read.skill.author !== undefined ? { author: read.skill.author } : {}) }, read.skill));
     } else if (read.reason !== ABSENT_SKILL_FILE) {
       // A directory with no SKILL.md at all is not a broken skill -- it is not a skill. Everything
       // else (unparseable, unreadable, frontmatter past the bound) is reported: a skill that
@@ -202,16 +203,19 @@ export type SkillMetadataRead = { ok: true; skill: ParsedSkillFile } | { ok: fal
  */
 export function readSkillMetadata(path: string, fallbackName: string, opts: { maxBytes?: number } = {}): SkillMetadataRead {
   let raw: string;
+  let origin: SourceOrigin;
   let truncated = false;
   try {
-    if (!statSync(path).isFile()) return { ok: false, reason: ABSENT_SKILL_FILE };
+    origin = captureSourceOrigin(path); assertSourceOrigin(origin);
+    if (!statSourceSync(origin.canonical).isFile()) return { ok: false, reason: ABSENT_SKILL_FILE };
     if (opts.maxBytes === undefined) {
-      raw = readFileSync(path, "utf8");
+      raw = readSourceFileSync(origin.canonical, "utf8");
     } else {
-      const read = readPrefix(path, opts.maxBytes);
+      const read = readPrefix(origin.canonical, opts.maxBytes);
       raw = read.text;
       truncated = read.truncated;
     }
+    assertSourceOrigin(origin);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     // ENOENT is "not a skill"; anything else (EACCES on a chmod 000 file, EISDIR, an I/O error) is a
@@ -220,7 +224,7 @@ export function readSkillMetadata(path: string, fallbackName: string, opts: { ma
     return { ok: false, reason: `SKILL.md could not be read: ${message}` };
   }
   const parsed = parseSkillFile(raw, fallbackName);
-  if (parsed !== null) return { ok: true, skill: parsed };
+  if (parsed !== null) return { ok: true, skill: bindSourceObject(parsed, origin) };
   if (truncated) {
     return { ok: false, reason: `its frontmatter is not closed within the first ${opts.maxBytes} bytes of the file, which is the index-time read bound (SKILL_METADATA_PREFIX_BYTES)` };
   }
@@ -231,10 +235,11 @@ export function readSkillMetadata(path: string, fallbackName: string, opts: { ma
 
 /** Reads at most `maxBytes` from the head of `path`. `truncated` means the file is longer than that. */
 function readPrefix(path: string, maxBytes: number): { text: string; truncated: boolean } {
-  const fd = openSync(path, "r");
+  const fd = openSourceSync(path, "r");
   try {
     const buf = Buffer.allocUnsafe(maxBytes);
     const read = readSync(fd, buf, 0, maxBytes, 0);
+    assertSourceReadAccess(path);
     return { text: buf.subarray(0, read).toString("utf8"), truncated: read >= maxBytes };
   } finally {
     closeSync(fd);

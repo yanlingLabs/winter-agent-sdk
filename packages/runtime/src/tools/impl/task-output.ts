@@ -1,3 +1,4 @@
+import { guestToolUnsupported } from "../../guest/file-session.ts";
 // Task 3 (Lane C): TaskOutput (WS-06 §3.5). Reads a background task's output, optionally waiting.
 // Deprecated in favor of `Read` on the task's output file (model-readable per WS-06 §3.5's own
 // "Read supersedes TaskOutput") -- Winter preserves the tool for pinned compatibility and the file
@@ -97,6 +98,8 @@ function resolveClampedTimeout(requested: number): { effective: number; wasClamp
 
 const taskOutputExecutor: ToolExecutor = {
   async execute(input, ctx) {
+    const guestRefusal = guestToolUnsupported(ctx, "TaskOutput");
+    if (guestRefusal) return guestRefusal;
     const parsed = parseTaskOutputInput(input);
     if ("error" in parsed) return { output: `Error: ${parsed.error}`, isError: true };
 

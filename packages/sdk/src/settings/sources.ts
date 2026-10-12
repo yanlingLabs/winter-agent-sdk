@@ -55,10 +55,10 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * `present: true, loaded: false` with a human-readable `error` and an EMPTY value map, so a
  * malformed repo-committed file can never silently contribute a partial document.
  */
-export async function loadSettingsFile(path: string): Promise<LoadedSettingsFile> {
+export async function loadSettingsFile(path: string, readText: (path: string) => Promise<string> = path => readFile(path, "utf8")): Promise<LoadedSettingsFile> {
   let raw: string;
   try {
-    raw = await readFile(path, "utf8");
+    raw = await readText(path);
   } catch (err) {
     const code = (err as { code?: string } | undefined)?.code;
     // ENOENT/ENOTDIR are "no such settings file", the overwhelmingly common case -- not an error.

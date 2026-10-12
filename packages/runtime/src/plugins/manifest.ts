@@ -1,3 +1,4 @@
+import { readSourceFileSync, statSourceSync } from "../sandbox/source-read.ts";
 // Phase 5 Lane S (WS-11 §4): the plugin MANIFEST.
 //
 // TWO MANIFEST DIRECTORY SPELLINGS, both honoured, the brand's own preferred.
@@ -15,7 +16,7 @@
 // WS-01 §2.5's rename rule governs what WINTER CREATES and what Winter reads for its OWN files; a
 // plugin directory is third-party content that predates the swap, so reading both is the same
 // posture the settings loader takes toward unknown keys -- accept, preserve, do not invent.
-import { readFileSync, statSync } from "node:fs";
+
 import { join } from "node:path";
 import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 
@@ -120,8 +121,8 @@ export function readPluginManifest(root: string, brand?: Pick<BrandProfile, "plu
     const path = join(root, dir, PLUGIN_MANIFEST_FILE);
     let raw: string;
     try {
-      if (!statSync(path).isFile()) continue;
-      raw = readFileSync(path, "utf8");
+      if (!statSourceSync(path).isFile()) continue;
+      raw = readSourceFileSync(path, "utf8");
     } catch {
       continue; // not present at this spelling -- try the next
     }
