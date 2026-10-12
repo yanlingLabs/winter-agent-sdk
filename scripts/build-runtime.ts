@@ -45,7 +45,9 @@
 // --out and --platform-package are mutually exclusive (mirrors resolveRuntimeExecutable's
 // explicit-option-beats-platform-package order in packages/sdk/src/transport.ts).
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import linuxRuntimeBase from "./linux-runtime-base.json";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -76,6 +78,8 @@ export interface BuildRuntimeOptions {
   platformPackage?: boolean; // stage into packages/platform/darwin-arm64/bin/winter
   /** Explicit guest artifact only; never replaces a host/default platform binary. */
   target?: "bun-linux-arm64";
+  /** Independently provisioned executable matching the repository's Linux base pin. */
+  guestBaseExecutable?: string;
   /** P9a-7: the checkout to copy-then-compile from. Tests only — defaults to this repository. */
   checkoutRoot?: string;
 }
@@ -123,6 +127,14 @@ export async function buildRuntime(opts: BuildRuntimeOptions = {}): Promise<Buil
   if (opts.target && (!opts.out || opts.platformPackage)) {
     throw new Error("buildRuntime: guest target requires explicit out and cannot stage a host platform package");
   }
+  if (opts.target && !opts.guestBaseExecutable) throw new Error("buildRuntime: guest target requires a pinned guestBaseExecutable");
+  if (!opts.target && opts.guestBaseExecutable) throw new Error("buildRuntime: guestBaseExecutable requires the guest target");
+  let baseBytes: Buffer | undefined;
+  if (opts.target) {
+    if (Bun.version !== linuxRuntimeBase.version) throw new Error("buildRuntime: compiler version differs from pinned Linux base");
+    baseBytes = readFileSync(opts.guestBaseExecutable!);
+    if (createHash("sha256").update(baseBytes).digest("hex") !== linuxRuntimeBase.executableSha256) throw new Error("buildRuntime: Linux base executable hash mismatch");
+  }
   if (opts.out && opts.platformPackage) {
     throw new Error("buildRuntime: `out` and `platformPackage` are mutually exclusive");
   }
@@ -146,6 +158,9 @@ export async function buildRuntime(opts: BuildRuntimeOptions = {}): Promise<Buil
   // tree — kept apart so a failure in one cleanup path never masks the other's.
   const copyRoot = mkdtempSync(join(tmpdir(), "winter-build-runtime-copy-"));
   try {
+    // Compile from the bytes we verified, not a cache/path that may be replaced after the check.
+    const pinnedBase = join(scratchCwd, "linux-bun-base");
+    if (baseBytes) writeFileSync(pinnedBase, baseBytes, { flag: "wx", mode: 0o500 });
     copyCheckoutExcludingGit(checkoutRoot, copyRoot);
 
     // pnpm's node_modules symlinks are RELATIVE, so a plain recursive copy should carry them
@@ -163,7 +178,7 @@ export async function buildRuntime(opts: BuildRuntimeOptions = {}): Promise<Buil
     const entrypoint = join(copyRoot, ENTRYPOINT_REL);
     // process.execPath under bun IS the bun binary (matches transport-equivalence.test.ts's own
     // spawnHook precedent for invoking bun itself rather than trusting a "bun" on PATH).
-    const proc = Bun.spawn([process.execPath, "build", "--compile", ...COMPILE_NO_AUTOLOAD_FLAGS, entrypoint, "--outfile", outPath, ...(opts.target ? [`--target=${opts.target}`] : [])], {
+    const proc = Bun.spawn([process.execPath, "build", "--compile", ...COMPILE_NO_AUTOLOAD_FLAGS, entrypoint, "--outfile", outPath, ...(opts.target ? [`--target=${opts.target}`, `--compile-executable-path=${pinnedBase}`] : [])], {
       cwd: scratchCwd,
       stdout: "pipe",
       stderr: "pipe",
@@ -190,6 +205,8 @@ export async function buildRuntime(opts: BuildRuntimeOptions = {}): Promise<Buil
 
 if (import.meta.main) {
   const linuxArm64 = process.argv.includes("--linux-arm64");
+  const baseIdx = process.argv.indexOf("--guest-base");
+  const guestBaseExecutable = baseIdx === -1 ? undefined : process.argv[baseIdx + 1];
   const platformPackage = process.argv.includes("--platform-package");
   const outIdx = process.argv.indexOf("--out");
   const out = outIdx === -1 ? undefined : process.argv[outIdx + 1];
@@ -202,7 +219,7 @@ if (import.meta.main) {
     // string", never "provide string | undefined" — so `out` is only spread in when actually set,
     // matching this file's own `...(opts.platformPackage ? ... )`-style conditional-inclusion idiom
     // used elsewhere in this codebase (e.g. transport-equivalence.test.ts's spawnHook).
-    const { outPath } = await buildRuntime({ ...(out !== undefined ? { out } : {}), platformPackage, ...(linuxArm64 ? { target: "bun-linux-arm64" as const } : {}) });
+    const { outPath } = await buildRuntime({ ...(out !== undefined ? { out } : {}), platformPackage, ...(linuxArm64 ? { target: "bun-linux-arm64" as const } : {}), ...(guestBaseExecutable !== undefined ? { guestBaseExecutable } : {}) });
     console.log(`built winter runtime -> ${outPath}`);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
