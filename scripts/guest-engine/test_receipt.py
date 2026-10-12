@@ -10,9 +10,11 @@ class ReceiptTests(unittest.TestCase):
         for name in self.sources:(self.source/name).write_text('fixture source '+name)
         self.names=set(build.NATIVE)|{'runtimeEntry','providerWorker'}
         for name in self.names:(self.artifacts/name).write_bytes(b'fixture-not-executable-'+name.encode())
-        self.receipt={'formatVersion':1,'sources':{name:build.digest(self.source/name) for name in self.sources},'artifacts':{name:build.digest(self.artifacts/name) for name in self.names}}
+        self.receipt={'formatVersion':2,'sources':{name:build.digest(self.source/name) for name in self.sources},'artifacts':{name:build.digest(self.artifacts/name) for name in self.names}}
+        (self.artifacts/'compile-receipt.json').write_text('{}');self.receipt['compileReceiptSha256']=build.digest(self.artifacts/'compile-receipt.json')
+        self.compile_patch=patch.object(build,'validate_compile_receipt',return_value={});self.compile_patch.start()
         self.root_patch=patch.object(build,'ROOT',self.source);self.source_patch=patch.object(build,'SOURCES',self.sources);self.inventory_patch=patch.object(build,'source_inventory',return_value=self.sources);self.root_patch.start();self.source_patch.start();self.inventory_patch.start()
-    def tearDown(self):self.root_patch.stop();self.source_patch.stop();self.inventory_patch.stop();self.temp.cleanup()
+    def tearDown(self):self.compile_patch.stop();self.root_patch.stop();self.source_patch.stop();self.inventory_patch.stop();self.temp.cleanup()
     def test_exact_source_and_artifact_inventory_required(self):
         self.assertIs(build.validate_receipt(self.receipt,self.artifacts),self.receipt)
         for section,key in [('sources','runtime.ts'),('artifacts','runtimeEntry')]:

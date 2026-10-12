@@ -32,7 +32,8 @@ function response(request: any): object {
   if (request.version !== 1 || JSON.stringify(request.scope) !== scope || typeof request.invocationId !== "string" || request.invocationId.length > 128 || !Number.isSafeInteger(request.sequence)) throw new Error("scope");
   if (request.operation === "begin") {
     if (invocation || request.sequence !== 0 || request.turn?.model !== selection.providerModelId || !Array.isArray(request.turn?.messages) || turns > script.length || !fakeHostCredential) throw new Error("turn");
-    if (turns > 0 && !JSON.stringify(request.turn).includes("fixture-native-state")) throw new Error("native continuation missing");
+    const prior = request.turn.messages.filter((message: any) => message.role === "assistant");
+    if (prior.length !== turns || prior.some((message: any, index: number) => message.origin?.providerId !== selection.providerId || message.origin?.modelKey !== selection.modelKey || message.origin?.family !== selection.family || message.nativeState?.family !== selection.family || message.nativeState?.continuationDomain !== selection.continuationDomain || JSON.stringify(message.nativeState?.items) !== JSON.stringify([{ type: "reasoning", id: `reasoning-${index}`, encrypted_content: "fixture-native-state" }]))) throw new Error("native continuation binding missing");
     const call = script[turns], events: ProviderEvent[] = [{ type: "native_state", items: [{ type: "reasoning", id: `reasoning-${turns}`, encrypted_content: "fixture-native-state" }] }];
     if (call) events.push({ type: "tool_call_start", id: `call-${turns}`, name: call.name }, { type: "tool_call_delta", id: `call-${turns}`, argumentsJsonDelta: JSON.stringify(call.input) }, { type: "tool_call_end", id: `call-${turns}` }, { type: "done", stopReason: "tool_use" });
     else events.push({ type: "text_delta", text: "fresh-engine-complete" }, { type: "done", stopReason: "end_turn" });
@@ -60,4 +61,9 @@ try {
     await Bun.sleep(0); // native accept is bounded; signals are processed between calls.
   }
   console.log(JSON.stringify({ passed: turns === 5 && invocation === undefined && peerValidated, turns, peerValidated }));
+} catch (error) {
+  const codes: Record<string, string> = { scope: "scope", turn: "turn", pull: "pull", end: "end", "native continuation binding missing": "native_continuation", "private fixture framing unavailable": "framing", "private fixture write unavailable": "write" };
+  const code = error instanceof Error ? codes[error.message] ?? "provider_failure" : "provider_failure";
+  console.log(JSON.stringify({ passed: false, turns, peerValidated, failure: { phase: "provider_exchange", code } }));
+  process.exitCode = 1;
 } finally { library.close(); }

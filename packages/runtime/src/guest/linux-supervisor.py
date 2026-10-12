@@ -15,6 +15,38 @@ class Refusal(Exception):pass
 class Uncertain(Exception):pass
 
 def canonical(value):return json.dumps(value,sort_keys=True,separators=(',',':'))
+def normalized_stderr(data,paths=()):
+    text=bytes(data[:16384]).decode('utf-8',errors='replace')
+    for path in sorted((str(path) for path in paths if path),key=len,reverse=True):text=text.replace(path,'[fixture-path]')
+    text=text.replace('DISPOSABLE-HOST-CREDENTIAL-NOT-A-REAL-SECRET','[fixture-credential]')
+    text=re.sub(r'(?<![A-Za-z0-9])[a-fA-F0-9]{16,}(?![A-Za-z0-9])','[hex-identity]',text)
+    text=re.sub(r'(?:https?://|/)[^\s\x00"\'<>;,)]+','[absolute-path]',text)
+    text=re.sub(r'(?i)(?:bearer\s+|(?:token|secret|password|credential|authref)\s*[=:]\s*)[^\s,;"\']+','[private-value]',text)
+    text=''.join(char if char in '\n\t' or ord(char)>=32 else '?' for char in text)
+    # Cap encoded durable bytes, including invalid UTF-8 replacement expansion.
+    return text.encode()[:4096].decode('utf-8',errors='ignore')
+def capture_metadata(data,limit,stderr_paths=None):
+    # Arbitrary stdout/provider packets stay metadata only. Stderr is normalized.
+    bounded=bytes(data[:limit])
+    record={'capturedBytes':len(bounded),'captureLimit':limit,'truncated':len(data)>limit,'sha256':hashlib.sha256(bounded).hexdigest()}
+    if stderr_paths is not None:record.update(normalizedText=normalized_stderr(bounded,stderr_paths),textLimit=4096)
+    return record
+def failure_metadata(error):
+    record={'class':type(error).__name__}
+    # Only the service's fixed refusal codes are safe diagnostic text.
+    code=str(error)
+    if isinstance(error,(Refusal,Uncertain)) and re.fullmatch('[a-z][a-z_]{0,63}',code):record['code']=code
+    if isinstance(error,OSError) and error.errno is not None:record['errno']=error.errno
+    return record
+def write_diagnostic(path,record):
+    wire=canonical(record).encode()
+    if len(wire)>16384:raise ValueError('diagnostic_limit')
+    # Fixture-owned control state, separate from canonical SDK records/authority.
+    fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_TRUNC|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
+    try:
+        os.fchmod(fd,0o600)
+        with os.fdopen(fd,'wb',closefd=False) as stream:stream.write(wire);stream.flush();os.fsync(fd)
+    finally:os.close(fd)
 def authority(value):
     if not isinstance(value,dict) or set(value)!=set(AUTH_KEYS):raise Refusal('invalid_authority')
     for name in AUTH_KEYS[:3]:
@@ -426,9 +458,12 @@ class ToolService:
             runtime['state']='starting';thread=threading.Thread(target=self._run_runtime,args=(self.conversations[sid],runtime),daemon=True);self.threads.append(thread);thread.start()
     def _run_runtime(self,item,runtime):
         sid=item['logicalSessionId'];child=None;pidfd=None;control=None;parent=None;bootstrap=None;guest=None;view=None;selector=None;confirmed=False;service_pidfd=None
+        out=bytearray();err=bytearray();failure=None
+        observations={'phase':'artifact-admission','nativeReceiptObserved':False,'nativeExitCode':None,'parentReaped':False,'parentExitCode':None,'toolDrainConfirmed':False,'nativeCleanupConfirmed':False,'ownershipReleased':False}
         try:
             for name,fd in self.runtime_artifacts.items():verify_held_artifact(fd,self.runtime_pins[name])
             if os.listdir(runtime['fds']['storeDirectory']) or os.listdir(runtime['fds']['runhomeDirectory']):raise Refusal('runtime_fresh_store_required')
+            observations['phase']='native-startup'
             view=tempfile.mkdtemp(prefix='runtime-view-',dir=self.directory);control,parent=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET);bootstrap,guest=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET)
             control_directory=os.open(self.directory/sid,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
             try:
@@ -447,7 +482,7 @@ class ToolService:
             with self.lock:runtime.update(state='running',initPidfd=pidfd)
             selector=selectors.DefaultSelector();control.setblocking(False);selector.register(control,selectors.EVENT_READ)
             for stream in (child.stdout,child.stderr):os.set_blocking(stream.fileno(),False);selector.register(stream,selectors.EVENT_READ)
-            terminal=None;out=bytearray();err=bytearray();start=time.monotonic();killed=False;kill_deadline=None
+            terminal=None;start=time.monotonic();killed=False;kill_deadline=None;observations['phase']='sdk-runtime'
             while selector.get_map():
                 if not killed and (runtime['cancel'].is_set() or self.stop_event.is_set() or time.monotonic()-start>runtime['timeout']):
                     try:signal.pidfd_send_signal(pidfd,signal.SIGKILL)
@@ -461,6 +496,7 @@ class ToolService:
                         if receipt:
                             if terminal is not None or len(receipt)!=5 or receipt[:1]!=b'R':raise Uncertain('runtime_native_receipt')
                             terminal=struct.unpack('=I',receipt[1:])[0]
+                            observations.update(nativeReceiptObserved=True,nativeWaitStatus=terminal)
                         else:selector.unregister(stream)
                     else:
                         try:data=os.read(stream.fileno(),16384)
@@ -469,8 +505,10 @@ class ToolService:
                         (out if stream is child.stdout else err).extend(data)
                         if len(out)>1024*1024 or len(err)>16384:raise Uncertain('runtime_capture_limit')
             code=child.wait(timeout=1)
+            observations.update(parentReaped=True,parentExitCode=code,phase='native-cleanup')
             if terminal is None:raise Uncertain('runtime_native_exit_unconfirmed')
             native=os.waitstatus_to_exitcode(terminal);native=native if native>=0 else 128-native
+            observations['nativeExitCode']=native
             if code!=native:raise Uncertain('runtime_parent_reap_unconfirmed')
             # Namespace-init wait + launcher reaping precede tool revocation/drain.
             # Runtime JSON/EOF/success and kill delivery cannot acknowledge tenancy.
@@ -481,10 +519,16 @@ class ToolService:
                 if time.monotonic()>deadline:raise Uncertain('runtime_tool_drain_unconfirmed')
                 time.sleep(.02)
             with self.lock:
+                observations['toolDrainConfirmed']=True
+                observations['toolDebtObserved']=sid in self.debt
                 if sid in self.debt:raise Uncertain('runtime_tool_debt')
-                runtime.update(state='stopped',exitCode=code,cleanupConfirmed=True)
+                observations.update(toolDrainConfirmed=True,nativeCleanupConfirmed=True,phase='complete')
+                # Publish terminal status only after its diagnostic is durable.
+                runtime.update(state='cleaning',exitCode=code,cleanupConfirmed=False)
             confirmed=True
-        except (Refusal,Uncertain,OSError,ValueError,subprocess.TimeoutExpired):
+            if code!=0:failure={'class':'RuntimeExit','code':'runtime_nonzero_exit'}
+        except (Refusal,Uncertain,OSError,ValueError,subprocess.TimeoutExpired) as error:
+            failure=failure_metadata(error)
             with self.lock:runtime['state']='retained';self.debt.add(sid)
             self.revoke(sid)
         finally:
@@ -494,8 +538,27 @@ class ToolService:
                     if pidfd is not None:signal.pidfd_send_signal(pidfd,signal.SIGKILL)
                     else:child.kill()
                 except OSError:pass
-                try:child.wait(timeout=2)
-                except subprocess.TimeoutExpired:self.retained_children.append(child)
+                try:
+                    observations.update(parentExitCode=child.wait(timeout=2),parentReaped=True)
+                except (subprocess.TimeoutExpired,OSError) as error:
+                    self.retained_children.append(child);observations['cleanupFailure']=failure_metadata(error)
+                # Drain only already available bytes; EOF is never a death receipt.
+                for stream,target,limit in ((child.stdout,out,1024*1024),(child.stderr,err,16384)):
+                    try:
+                        os.set_blocking(stream.fileno(),False)
+                        while len(target)<=limit:
+                            data=os.read(stream.fileno(),min(16384,limit+1-len(target)))
+                            if not data:break
+                            target.extend(data)
+                    except (OSError,ValueError):pass
+            diagnostic={'version':1,'kind':'fixture-runtime-diagnostic','observations':observations,'failure':failure,'stdout':capture_metadata(out,1024*1024),'stderr':capture_metadata(err,16384,(self.directory.parent,self.directory,view))}
+            try:
+                write_diagnostic(self.directory/sid/'runtime-diagnostic.json',diagnostic)
+                if confirmed:
+                    with self.lock:runtime.update(state='stopped',cleanupConfirmed=True)
+            except (OSError,ValueError):
+                # Losing diagnostics cannot permit release or erase native debt.
+                with self.lock:runtime['diagnosticFailed']=True;self.debt.add(sid);runtime['state']='retained'
             if child is not None:
                 for stream in (child.stdout,child.stderr):stream.close()
             with self.lock:runtime.pop('initPidfd',None)

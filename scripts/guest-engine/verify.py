@@ -4,12 +4,14 @@ Only a root-reviewed matching source/artifact receipt can reach privileged stagi
 Guest provider packet parsing belongs to the separate fixture worker, not this root harness.
 """
 from contextlib import contextmanager
-import argparse,array,fcntl,importlib.util,json,os,re,shutil,socket,struct,subprocess,sys,tempfile,time
+import argparse,array,fcntl,hashlib,importlib.util,json,os,re,shutil,socket,struct,subprocess,sys,tempfile,threading,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 BUILD_PATH=Path(__file__).with_name('build.py');spec=importlib.util.spec_from_file_location('fresh_build',BUILD_PATH);build=importlib.util.module_from_spec(spec);spec.loader.exec_module(build)
 RUNTIME_UID=20001;TOOL_UID=10001;WORKSPACE_GID=10000;PROVIDER_UID=30001
 LOGICAL='conversation-fresh';BACKEND='01234567-89ab-4cde-8fab-0123456789ab'
+EXPECTED_CALLS=[('Read',{'file_path':'seed'}),('Edit',{'file_path':'seed','old_string':'hello','new_string':'edited'}),('Write',{'file_path':'written','content':'written\n'}),('Bash',{'command':'test ! -e /workspace/.winter/conversations && printf shell > from-shell','timeout':5000})]
+EXPECTED_RESULTS=['hello\n',{'filePath':'/workspace/folders/source/seed','diff':[{'type':'remove','oldLineNumber':1,'content':'hello'},{'type':'add','newLineNumber':1,'content':'edited'},{'type':'context','oldLineNumber':2,'newLineNumber':2,'content':''}],'originalContent':'hello\n','replaceAll':False,'userModified':False},{'type':'create','filePath':'/workspace/folders/source/written','content':'written\n','diff':[{'type':'add','newLineNumber':1,'content':'written'},{'type':'add','newLineNumber':2,'content':''}],'userEdited':False},'\n[Exit code: 0; cwd changes apply to this command only]']
 
 def checked(args):
     result=subprocess.run(list(map(str,args)),capture_output=True,timeout=60)
@@ -81,23 +83,52 @@ def persisted_evidence(fixture):
     transcripts=[path for path in store.rglob('*.jsonl') if path.name==BACKEND+'.jsonl']
     states=[path for path in store.rglob('*.jsonl') if path.name==BACKEND+'.provider-state.jsonl']
     if len(transcripts)!=1 or len(states)!=1:raise AssertionError('actual SDK root transcript/provider-state inventory')
-    records=[json.loads(line) for line in transcripts[0].read_text().splitlines()];state_records=[json.loads(line) for line in states[0].read_text().splitlines()]
+    transcript_data=None;state_data=None
     for path in store.rglob('*.jsonl'):
-        if path.stat().st_size>8*1024*1024 or b'DISPOSABLE-HOST-CREDENTIAL-NOT-A-REAL-SECRET' in path.read_bytes():raise AssertionError('fixture credential leaked or store evidence bound')
-    calls={};results={};assistant_ids=set();final=False
+        if path.stat().st_size>8*1024*1024:raise AssertionError('fixture credential leaked or store evidence bound')
+        with path.open('rb') as stream:data=stream.read(8*1024*1024+1)
+        if len(data)>8*1024*1024 or b'DISPOSABLE-HOST-CREDENTIAL-NOT-A-REAL-SECRET' in data:raise AssertionError('fixture credential leaked or store evidence bound')
+        if path==transcripts[0]:transcript_data=data
+        if path==states[0]:state_data=data
+    if transcript_data is None or state_data is None:raise AssertionError('actual SDK evidence changed during bounded read')
+    records=[json.loads(line) for line in transcript_data.decode().splitlines()];state_records=[json.loads(line) for line in state_data.decode().splitlines()]
+    calls={};results={};assistant_ids=set();anchors=[]
     for record in records:
         if record.get('sessionId')!=BACKEND:raise AssertionError('cross-session transcript record')
-        if record.get('type')=='assistant':assistant_ids.add(record.get('uuid'))
+        if record.get('type')=='assistant':
+            uuid=record.get('uuid')
+            if not isinstance(uuid,str) or not uuid or uuid in assistant_ids:raise AssertionError('actual SDK tool history assistant identity')
+            assistant_ids.add(uuid)
         content=record.get('message',{}).get('content',[])
         if not isinstance(content,list):continue
         for block in content:
             if not isinstance(block,dict):continue
-            if record.get('type')=='assistant' and block.get('type')=='tool_use':calls[block.get('id')]=block.get('name')
-            if record.get('type')=='user' and block.get('type')=='tool_result':results[block.get('tool_use_id')]=block
-            if record.get('type')=='assistant' and block.get('type')=='text' and block.get('text')=='fresh-engine-complete':final=True
-    if not final or not {'Read','Edit','Write','Bash'}<=set(calls.values()) or any(key not in results or results[key].get('is_error') is True for key in calls):raise AssertionError('actual SDK transcript missing completed successful tool history')
+            if record.get('type')=='assistant' and block.get('type')=='tool_use':
+                number=len(calls);key=f'call-{number}'
+                if number>=4 or block.get('id')!=key or (block.get('name'),block.get('input'))!=EXPECTED_CALLS[number] or record['uuid'] in anchors:raise AssertionError('actual SDK tool history exact call/input binding')
+                calls[key]=block;anchors.append(record['uuid'])
+            if record.get('type')=='user' and block.get('type')=='tool_result':
+                key=block.get('tool_use_id')
+                if key not in calls or key in results or len(results)!=len(calls)-1:raise AssertionError('actual SDK tool history result order/binding')
+                results[key]=block
+            if record.get('type')=='assistant' and block.get('type')=='text' and block.get('text')=='fresh-engine-complete':
+                if len(calls)!=4 or len(results)!=4 or record['uuid'] in anchors or len(anchors)!=4:raise AssertionError('actual SDK tool history final binding')
+                anchors.append(record['uuid'])
+    if len(calls)!=4 or len(results)!=4 or len(anchors)!=5:raise AssertionError('actual SDK transcript missing completed successful tool history')
+    for number,expected in enumerate(EXPECTED_RESULTS):
+        result=results[f'call-{number}'];content=result.get('content')
+        if result.get('is_error',False) is not False or result.get('denied',False) is not False:raise AssertionError('actual SDK tool history unsuccessful result')
+        if isinstance(expected,dict):
+            try:content=json.loads(content)
+            except (TypeError,ValueError):raise AssertionError('actual SDK tool history exact result bytes')
+        if content!=expected:raise AssertionError('actual SDK tool history exact result bytes')
     native=[record for record in state_records if record.get('kind')=='native-state']
-    if not native or any(record.get('sessionId')!=BACKEND or record.get('anchorUuid') not in assistant_ids for record in native) or 'fixture-native-state' not in json.dumps(native):raise AssertionError('actual SDK provider native state binding missing')
+    if len(native)!=5:raise AssertionError('actual SDK provider native state binding count')
+    native_ids=set()
+    for number,(record,anchor) in enumerate(zip(native,anchors)):
+        expected={'type':'winter_provider_state','sessionId':BACKEND,'anchorUuid':anchor,'provider':'openai','model':'openai/gpt-5.6','family':'openai','continuationDomain':'openai/gpt-5.6','itemIndex':1,'kind':'native-state','payload':{'items':[{'type':'reasoning','id':f'reasoning-{number}','encrypted_content':'fixture-native-state'}]}}
+        if any(record.get(key)!=value for key,value in expected.items()) or not isinstance(record.get('uuid'),str) or not record['uuid'] or record['uuid'] in assistant_ids or record['uuid'] in native_ids or type(record.get('itemIndex')) is not int or not isinstance(record.get('timestamp'),str) or not record['timestamp']:raise AssertionError('actual SDK provider native state binding schema/identity/item/anchor')
+        native_ids.add(record['uuid'])
     for path in (store,transcripts[0],states[0]):
         st=path.stat()
         if st.st_uid!=RUNTIME_UID or st.st_mode&0o077:raise AssertionError('SDK durable state owner/mode')
@@ -166,51 +197,135 @@ def admit_provider(fixture,admission,children):
     wait_for(obtain,2,children)
     admission.close()
 
-@contextmanager
-def retained_fixture_directory():
-    """Never infer descendant exit from Python unwinding, kill delivery, or EOF.
-    Only main's explicit native/service/store receipt path may remove this directory.
+def normalized_stderr(data,paths=()):
+    text=bytes(data[:16384]).decode('utf-8',errors='replace')
+    for path in sorted((str(path) for path in paths if path),key=len,reverse=True):text=text.replace(path,'[fixture-path]')
+    text=text.replace('DISPOSABLE-HOST-CREDENTIAL-NOT-A-REAL-SECRET','[fixture-credential]')
+    text=re.sub(r'(?<![A-Za-z0-9])[a-fA-F0-9]{16,}(?![A-Za-z0-9])','[hex-identity]',text)
+    text=re.sub(r'(?:https?://|/)[^\s\x00"\'<>;,)]+','[absolute-path]',text)
+    text=re.sub(r'(?i)(?:bearer\s+|(?:token|secret|password|credential|authref)\s*[=:]\s*)[^\s,;"\']+','[private-value]',text)
+    text=''.join(char if char in '\n\t' or ord(char)>=32 else '?' for char in text)
+    return text.encode()[:4096].decode('utf-8',errors='ignore')
+
+class BoundedCapture:
+    """Drain a process pipe concurrently, retaining only bounded bytes for validation.
+    Durable stdout is metadata only; stderr text is bounded and normalized.
     """
-    directory=Path(tempfile.mkdtemp(prefix='winter-fresh-engine-'))
+    def __init__(self,stream,limit,stderr_paths=None):
+        self.stream=stream;self.limit=limit;self.data=bytearray();self.total=0;self.read_failed=False;self.stderr_paths=stderr_paths
+        self.thread=threading.Thread(target=self._read,daemon=True);self.thread.start()
+    def _read(self):
+        try:
+            while True:
+                data=self.stream.read(4096)
+                if not data:break
+                self.total+=len(data)
+                self.data.extend(data[:max(0,self.limit-len(self.data))])
+        except (OSError,ValueError):self.read_failed=True
+    def finish(self):self.thread.join(timeout=1)
+    def metadata(self):
+        record={'capturedBytes':len(self.data),'captureLimit':self.limit,'truncated':self.total>self.limit,'sha256':hashlib.sha256(self.data).hexdigest(),'drainComplete':not self.thread.is_alive() and not self.read_failed}
+        if self.stderr_paths is not None:record.update(normalizedText=normalized_stderr(self.data,self.stderr_paths),textLimit=4096)
+        return record
+
+def failure_metadata(error):
+    record={'class':type(error).__name__}
+    if isinstance(error,OSError) and error.errno is not None:record['errno']=error.errno
+    return record
+
+def provider_receipt_observation(data):
+    try:receipt=json.loads(data)
+    except (ValueError,TypeError):return {'parsed':False}
+    if not isinstance(receipt,dict):return {'parsed':False}
+    observed={'passed':receipt.get('passed') is True,'turns':receipt.get('turns') if type(receipt.get('turns')) is int else None,'peerValidated':receipt.get('peerValidated') is True}
+    failure=receipt.get('failure')
+    if isinstance(failure,dict) and failure.get('phase')=='provider_exchange' and failure.get('code') in ('scope','turn','pull','end','native_continuation','framing','write','provider_failure'):observed['failure']={'phase':'provider_exchange','code':failure['code']}
+    return observed
+
+def persist_fixture_diagnostic(directory,observations,failure):
+    # Exceptions/packets stay metadata only; normalized stderr has a separate cap.
+    record={'version':1,'kind':'fixture-failure-diagnostic','failure':failure,'observations':observations,'ownershipReleased':False}
+    wire=json.dumps(record,sort_keys=True,separators=(',',':')).encode()
+    if len(wire)>32768:raise AssertionError('bounded fixture diagnostic')
+    fd=os.open(directory/'fixture-diagnostic.json',os.O_WRONLY|os.O_CREAT|os.O_TRUNC|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
+    try:
+        os.fchmod(fd,0o600)
+        with os.fdopen(fd,'wb',closefd=False) as stream:stream.write(wire);stream.flush();os.fsync(fd)
+    finally:os.close(fd)
+
+@contextmanager
+def retained_fixture_directory(observations=None):
+    """Only the explicit native/service/provider success path may remove files."""
+    directory=Path(tempfile.mkdtemp(prefix='winter-fresh-engine-'));failure=None
+    if observations is None:observations={'phase':'fixture-startup','nativeCleanupConfirmed':False}
     try:yield directory
+    except BaseException as error:
+        failure=failure_metadata(error);raise
     finally:
         if directory.exists():
-            print(json.dumps({'fixtureRetained':True,'retentionId':directory.name,'nativeCleanupConfirmed':False}),file=sys.stderr)
+            persist_fixture_diagnostic(directory,observations,failure)
+            print(json.dumps({'fixtureRetained':True,'retentionId':directory.name,'nativeCleanupConfirmed':observations.get('nativeCleanupConfirmed') is True,'ownershipReleased':False}),file=sys.stderr)
+
+def finish_child(child,captures,observations,label):
+    if child is None:return
+    try:
+        if child.poll() is None:child.kill()
+    except OSError as error:observations[label+'CleanupFailure']=failure_metadata(error)
+    try:
+        child.wait(timeout=2);observations[label+'Reaped']=True;observations[label+'ExitCode']=child.returncode
+    except (subprocess.TimeoutExpired,OSError) as error:
+        observations[label+'Reaped']=False;observations[label+'CleanupFailure']=failure_metadata(error)
+    for name,capture in captures.items():
+        capture.finish();observations[label+name]=capture.metadata()
+    if label=='provider' and 'stdout' in captures and captures['stdout'].metadata()['drainComplete']:
+        observations['providerReceipt']=provider_receipt_observation(captures['stdout'].data)
+    # Never close a pipe while its collector still reads it.
+    for capture in captures.values():
+        if not capture.thread.is_alive():capture.stream.close()
+    if child.stdin is not None and not child.stdin.closed:child.stdin.close()
+
+def execute_fixture(directory,fixture,receipt,observations):
+    server=None;provider=None;admission=None;server_captures={};provider_captures={}
+    try:
+        observations['phase']='service-startup'
+        fd=os.open(fixture['config'],os.O_RDONLY|os.O_CLOEXEC)
+        try:server=subprocess.Popen([sys.executable,'-I','-S',str(fixture['binary']/'linux-supervisor.py'),'--trusted-config-fd',str(fd)],pass_fds=(fd,),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env={'LANG':'C','LC_ALL':'C'},bufsize=0)
+        finally:os.close(fd)
+        server_captures={name:BoundedCapture(getattr(server,name),limit,(directory,) if name=='stderr' else None) for name,limit in (('stdout',65536),('stderr',16384))}
+        wait_for(lambda:(fixture['control']/'admin.sock').exists(),3,[server]);observations['phase']='provider-startup';provider,admission=start_provider(fixture,server)
+        provider_captures={name:BoundedCapture(getattr(provider,name),limit,(directory,) if name=='stderr' else None) for name,limit in (('stdout',65536),('stderr',16384))}
+        observations['phase']='native-admission'
+        if exchange(fixture['control']/'admin.sock',{'operation':'launch-runtime','sessionId':LOGICAL})!={'started':True}:raise AssertionError('root fresh runtime launch refused')
+        admit_provider(fixture,admission,[server,provider]);admission=None;observations['phase']='sdk-runtime'
+        status=wait_for(lambda:(lambda value:value if value.get('runtime',{}).get('state') in ('stopped','retained') else None)(exchange(fixture['control']/'admin.sock',{'operation':'status','sessionId':LOGICAL})),35,[server])
+        runtime=status.get('runtime',{})
+        observations['nativeCleanupConfirmed']=runtime.get('cleanupConfirmed') is True
+        observations['nativeStatus']={'state':runtime.get('state') if runtime.get('state') in ('stopped','retained') else 'unknown','exitCode':runtime.get('exitCode') if type(runtime.get('exitCode')) is int else None,'active':status.get('active') if type(status.get('active')) is int else None,'uncertain':status.get('uncertain') is not False}
+        if status!={'active':0,'uncertain':False,'runtime':{'state':'stopped','exitCode':0,'cleanupConfirmed':True}}:raise AssertionError('native service cleanup not confirmed')
+        observations['phase']='persisted-evidence';evidence=persisted_evidence(fixture)
+        observations['phase']='provider-receipt';provider.terminate();provider.wait(timeout=5)
+        for capture in provider_captures.values():capture.finish()
+        observations['providerReceipt']=provider_receipt_observation(provider_captures['stdout'].data)
+        if provider.returncode!=0 or any(capture.total>capture.limit or capture.thread.is_alive() for capture in provider_captures.values()):raise AssertionError('provider fixture worker did not complete cleanly')
+        if observations['providerReceipt']!={'passed':True,'turns':5,'peerValidated':True}:raise AssertionError('provider worker execution receipt')
+        observations['phase']='service-reap';server.stdin.close();server.wait(timeout=5);observations['serviceReaped']=True;observations['serviceExitCode']=server.returncode
+        if server.returncode!=0:raise AssertionError('root service retained cleanup obligation')
+        for capture in server_captures.values():capture.finish()
+        if any(not capture.metadata()['drainComplete'] or capture.total>capture.limit for capture in server_captures.values()):raise AssertionError('service diagnostic drain unconfirmed')
+        # Diagnostic or parser errors can never reach this explicit release path.
+        observations['phase']='complete'
+        return {'passed':True,'freshEngineExecutionVerified':True,'linuxExecutionVerified':True,'vmExecutionVerified':False,'coldContinuityVerified':False,'productionAvailabilityEnabled':False,'reviewedArtifactDigests':receipt['artifacts'],'compileReceiptSha256':receipt['compileReceiptSha256'],**evidence}
+    finally:
+        if admission is not None:admission.close()
+        finish_child(provider,provider_captures,observations,'provider')
+        finish_child(server,server_captures,observations,'service')
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--artifacts',type=Path,required=True);parser.add_argument('--reviewed-receipt',type=Path,required=True);args=parser.parse_args()
-    receipt=build.validate_receipt(json.loads(args.reviewed_receipt.read_text()),args.artifacts)
+    receipt=build.validate_receipt(build.provenance.json_read(args.reviewed_receipt),args.artifacts)
     if sys.platform!='linux' or os.geteuid()!=0 or not sys.flags.isolated or not sys.flags.no_site:raise SystemExit('Explicit Linux root fixture via python -I -S required; no fallback')
-    with retained_fixture_directory() as directory:
-        fixture=create_fixture(Path(directory),args.artifacts,receipt);fd=os.open(fixture['config'],os.O_RDONLY|os.O_CLOEXEC)
-        try:server=subprocess.Popen([sys.executable,'-I','-S',str(fixture['binary']/'linux-supervisor.py'),'--trusted-config-fd',str(fd)],pass_fds=(fd,),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env={'LANG':'C','LC_ALL':'C'},bufsize=0)
-        finally:os.close(fd)
-        provider=None;admission=None
-        try:
-            wait_for(lambda:(fixture['control']/'admin.sock').exists(),3,[server]);provider,admission=start_provider(fixture,server)
-            if exchange(fixture['control']/'admin.sock',{'operation':'launch-runtime','sessionId':LOGICAL})!={'started':True}:raise AssertionError('root fresh runtime launch refused')
-            admit_provider(fixture,admission,[server,provider]);admission=None
-            status=wait_for(lambda:(lambda value:value if value.get('runtime',{}).get('state') in ('stopped','retained') else None)(exchange(fixture['control']/'admin.sock',{'operation':'status','sessionId':LOGICAL})),35,[server])
-            if status!={'active':0,'uncertain':False,'runtime':{'state':'stopped','exitCode':0,'cleanupConfirmed':True}}:raise AssertionError(('native service cleanup not confirmed',status))
-            evidence=persisted_evidence(fixture)
-            provider.terminate() # fixture-only parser stops after independently confirmed runtime teardown
-            provider_out,provider_err=provider.communicate(timeout=5)
-            if provider.returncode!=0 or len(provider_out)>65536 or len(provider_err)>16384:raise AssertionError('provider fixture worker did not complete cleanly')
-            provider_receipt=json.loads(provider_out)
-            if provider_receipt.get('passed') is not True or provider_receipt.get('turns')!=5 or provider_receipt.get('peerValidated') is not True:raise AssertionError('provider worker execution receipt')
-            server.stdin.close();server.wait(timeout=5)
-            if server.returncode!=0:raise AssertionError('root service retained cleanup obligation')
-            # Exact native cleanup status + successful service reap and provider
-            # receipt above are required. No exception/finalizer can reach this.
-            shutil.rmtree(directory)
-            print(json.dumps({'passed':True,'freshEngineExecutionVerified':True,'linuxExecutionVerified':True,'vmExecutionVerified':False,'coldContinuityVerified':False,'productionAvailabilityEnabled':False,'reviewedArtifactDigests':receipt['artifacts'],**evidence}))
-        finally:
-            if admission is not None:admission.close()
-            if provider is not None:
-                if provider.poll() is None:provider.kill()
-                provider.wait(timeout=2)
-                provider.stdout.close();provider.stderr.close()
-            if server.poll() is None:server.kill();server.wait(timeout=2)
-            server.stdout.close();server.stderr.close()
-            if not server.stdin.closed:server.stdin.close()
+    observations={'reviewedReceiptSha256':build.digest(args.reviewed_receipt),'compileReceiptSha256':receipt['compileReceiptSha256'],'phase':'fixture-staging','nativeCleanupConfirmed':False,'serviceReaped':False,'providerReaped':False}
+    with retained_fixture_directory(observations) as directory:
+        fixture=create_fixture(directory,args.artifacts,receipt);result=execute_fixture(directory,fixture,receipt,observations)
+        result['reviewedReceiptSha256']=observations['reviewedReceiptSha256'];shutil.rmtree(directory);print(json.dumps(result))
 if __name__=='__main__':main()

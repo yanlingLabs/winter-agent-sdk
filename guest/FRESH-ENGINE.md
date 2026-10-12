@@ -14,16 +14,18 @@ The SDK cannot certify its own death while it is running. Its terminal store out
 
 ```sh
 bun scripts/guest-engine/compile.ts --guest-base /reviewed/bun-linux-arm64 --out out/fresh-engine-entries
-python3 -I -S scripts/guest-engine/build.py --output out/fresh-engine-artifacts --runtime-entry out/fresh-engine-entries/runtimeEntry --provider-worker out/fresh-engine-entries/providerWorker
+python3 -I -S scripts/guest-engine/build.py --output out/fresh-engine-artifacts --runtime-entry out/fresh-engine-entries/runtimeEntry --provider-worker out/fresh-engine-entries/providerWorker --compile-receipt out/fresh-engine-entries/compile-receipt.json
 ```
 
 Build on a disposable Linux ARM64 runner with an existing C compiler/static libc and Python standard library. The build records hashes of the complete SDK/provider/runtime source inventory and all seven artifacts. Before any privileged execution, independently review the exact source, build inputs and receipt. `verify.py` validates the supplied receipt and staged copies; it does not treat a matching receipt as product-native bootstrap authority.
 
-After that explicit source/artifact admission, the isolated runner command is:
-
-```sh
-sudo python3 -I -S scripts/guest-engine/verify.py --artifacts out/fresh-engine-artifacts --reviewed-receipt out/fresh-engine-artifacts/receipt.json
-```
+Privileged invocation remains gated. The repository verifier imports project modules
+before its in-function receipt check, so direct elevated execution is not an admitted
+bootstrap path. A separate trusted stdlib-only, externally hash-admitted parent must
+validate and stage the complete source/dependency/artifact closure under protected,
+root-owned ancestry before any privileged repository import. That launcher is not
+implemented by the compile/evidence correction; no privileged runner command is
+recommended here.
 
 The fixture uses disposable directories, runtime UID 20001, tool UID 10001 and provider UID 30001. It runs the real Root service and real compiled SDK entry, not a replacement agent loop. The provider is deliberately scripted: five normal model iterations produce Read, Edit, Write, Bash, then final text through the actual guest provider fold. It owns only a fake fixture credential, and authenticates every runtime connection using actual peer UID/PID versus the transferred init pidfd. Bun 1.3.14 cannot listen on inherited FDs; the immutable owner library therefore supplies bounded AF_UNIX frame accept/read/write on the Root-created listener, without pathname reopening. Requests are single-use, scoped, sequenced, and bounded; no blind retry occurs.
 
@@ -55,3 +57,34 @@ Linux programs into `out/fresh-engine-entry-invocations`:
 Both files were inspected as ARM64 Linux ELF. The earlier candidates remain
 retained under their original paths. This is still not a native artifact-admission
 receipt, privileged Linux startup, VM execution or permission to enable Cowork.
+
+## Measured compilation and corrected evidence
+
+The fresh-build provenance correction now emits `compile-receipt.json` and both
+normalized Bun metafiles beside the compiled entries. It measures the bounded
+checkout/config/installed dependency tree before and after staging and compilation,
+checks actual bundled inputs against that tree, records host compiler and pinned
+Linux base identities and the exact path-neutral recipe, and binds both resulting
+ARM64 ELF hashes. Dependency package `dist` files are included. The native builder
+requires `--compile-receipt <entries>/compile-receipt.json`, validates current
+inputs and supplied entries before starting its compiler, copies and revalidates
+that receipt/metafiles, then emits native receipt format2 binding its digest.
+
+An unsigned JSON measurement is not build approval or native authority. A trusted,
+reviewed build environment and independent source/artifact/run admission remain
+required. Changing sources/dependencies, supplying stale/foreign entry bytes, or
+substituting the compile receipt/metafiles refuses. Existing entries without a
+compile receipt cannot be relabeled with the current source inventory. The native
+build must use the same installed dependency snapshot as compilation.
+
+The transcript oracle now requires exact Read seed bytes, exact four tool inputs
+and results in order, five distinct assistant anchors, and typed native-state
+payload/provider/model/family/item binding to those anchors. Marker strings do not
+satisfy either check. Failure artifacts now preserve bounded normalized stderr,
+phase and fixed failure metadata, provider receipt observations, native wait
+receipt, parent reap and tool drain observations. They remain fixture diagnostics
+outside canonical SDK stores and never upgrade uncertainty to ownership release.
+
+Local portable evidence and actual compilation hashes are recorded in
+`guest/FRESH-BUILD-PROVENANCE.md`. No privileged Linux service, guest ELF, VM,
+held Mac lane or native egress retry was launched as part of this correction.
