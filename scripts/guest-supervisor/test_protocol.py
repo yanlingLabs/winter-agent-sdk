@@ -194,4 +194,3 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(json.loads(result['stdout'])['code'],'capacity_busy');self.assertIn(issued,obj.tickets['logical']);self.assertFalse(effects)
 
 if __name__=='__main__':unittest.main()
-
