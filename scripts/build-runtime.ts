@@ -154,7 +154,8 @@ export async function buildRuntime(opts: BuildRuntimeOptions = {}): Promise<Buil
   // bundler resolves imports from or where the real output lands.
   // One private random parent, deterministic child names. Bun emits module-boundary comments
   // relative to its staging cwd; independently random cwd/source names broke byte reproducibility.
-  // Staging stays separate and empty, preserving build-time bunfig/dotenv/preload isolation.
+  // Staging has no project configuration (only the verified Linux base when needed),
+  // preserving build-time bunfig/dotenv/preload isolation.
   const buildRoot = mkdtempSync(join(tmpdir(), "winter-build-runtime-"));
   const scratchCwd = join(buildRoot, "stage"), copyRoot = join(buildRoot, "source");
   try {
