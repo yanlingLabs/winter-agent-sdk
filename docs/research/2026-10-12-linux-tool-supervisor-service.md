@@ -45,12 +45,23 @@ all received descriptors before envelope validation (including truncation).
 Bootstrap source aliases now refuse; ordinary in-root file-tool symlink behavior
 is unchanged. No native launcher, helper, workload or confinement policy changed.
 
-Correction evidence: **10 platform-neutral Python tests** exercise actual Unix
+Correction evidence: **10 passing Python tests plus one Linux-only skipped test on macOS** exercise actual Unix
 listener saturation with eight held tool connections plus status/revoke, absolute
 trickle timeout and allowed fragments, real ancestor-symlink/rename races, and
-actual malformed/multiple/truncated SCM_RIGHTS transfers with descriptor closure.
+actual malformed/multiple SCM_RIGHTS transfers with descriptor closure.
 Only peer identity/chown are mocked in the local listener test; it does not prove
 Linux UID enforcement. **67 SDK tests, zero failures, 398 expectations across six
 suites**, plus both typecheck projects pass. The protocol regression runs in the
 existing Linux CI job as well. Linux privileged fixture execution remains pending
 review/push; no VM, native worker, privileged service or provider was launched.
+
+The follow-up isolates deliberate SCM_RIGHTS truncation to Linux and compares the
+complete `/proc/self/fd` identity set before/after refusal while original endpoints
+remain open. The earlier macOS truncation assertion checked only visible received
+FDs and did not prove total cleanup: macOS may install undisclosed descriptors on
+truncation. That case is no longer run on macOS. The Linux kernel installs only
+control-buffer-capacity FDs, marks MSG_CTRUNC and destroys excess references;
+the new target-Linux regression verifies this behavior rather than inferring it
+from visible FDs. [Linux ancillary descriptor cleanup](https://github.com/torvalds/linux/blob/v6.18/net/core/scm.c#L328-L379).
+The Linux-only test has not run locally. No runtime service code changes in this
+test/evidence follow-up; source and actual Linux CI acceptance remain separate.

@@ -1,5 +1,5 @@
 """Real socket/descriptor checks; no privileged service or Linux confinement claim."""
-import array,importlib.util,json,os,socket,struct,tempfile,threading,time,unittest,warnings
+import array,importlib.util,json,os,socket,struct,sys,tempfile,threading,time,unittest,warnings
 from pathlib import Path
 from unittest.mock import patch
 MODULE=Path(__file__).resolve().parents[2]/'packages/runtime/src/guest/linux-supervisor.py'
@@ -89,14 +89,12 @@ class ProtocolTests(unittest.TestCase):
             with patch.object(service.os,'open',side_effect=replacing_open):
                 with self.assertRaisesRegex(service.Refusal,'source_changed'):service.source_directory(source,[])
     def test_received_descriptors_owned_before_malformed_envelope_refusal(self):
-        for marker,count in ((b'X',1),(b'I',2),(b'X',20)):
+        for marker,count in ((b'X',1),(b'I',2)):
             with self.subTest(marker=marker,count=count):
                 left,right=socket.socketpair(socket.AF_UNIX,socket.SOCK_DGRAM);read_fd,write_fd=os.pipe();received=[]
                 class Captured:
                     def recvmsg(self,*args):
-                        with warnings.catch_warnings():
-                            warnings.simplefilter('ignore',RuntimeWarning) # Deliberate SCM_RIGHTS truncation.
-                            result=right.recvmsg(*args)
+                        result=right.recvmsg(*args)
                         for level,kind,data in result[1]:
                             if (level,kind)==(socket.SOL_SOCKET,socket.SCM_RIGHTS):received.extend(array.array('i',data))
                         return result
@@ -107,6 +105,34 @@ class ProtocolTests(unittest.TestCase):
                     for fd in received:
                         with self.assertRaises(OSError):os.fstat(fd)
                 finally:left.close();right.close();os.close(read_fd);os.close(write_fd)
+    @unittest.skipUnless(sys.platform=='linux','Linux truncation semantics; never install undisclosed macOS FDs')
+    def test_truncated_linux_ancillary_preserves_complete_fd_set(self):
+        def snapshot():
+            result={}
+            for name in os.listdir('/proc/self/fd'):
+                try:fd=int(name);st=os.fstat(fd)
+                except OSError:continue # The transient directory enumeration FD is closed.
+                result[fd]=(st.st_dev,st.st_ino,st.st_mode)
+            return result
+        left,right=socket.socketpair(socket.AF_UNIX,socket.SOCK_DGRAM);read_fd,write_fd=os.pipe();flags_seen=[];received=[]
+        class Captured:
+            def recvmsg(self,*args):
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore',RuntimeWarning) # Intentional target-Linux truncation.
+                    result=right.recvmsg(*args)
+                flags_seen.append(result[2])
+                for level,kind,data in result[1]:
+                    if (level,kind)==(socket.SOL_SOCKET,socket.SCM_RIGHTS):received.extend(array.array('i',data))
+                return result
+        try:
+            before=snapshot()
+            left.sendmsg([b'I'],[(socket.SOL_SOCKET,socket.SCM_RIGHTS,array.array('i',[read_fd]*20))])
+            with self.assertRaisesRegex(service.Uncertain,'init_admission_lost'):service.receive_init_pidfd(Captured())
+            self.assertTrue(flags_seen[0]&socket.MSG_CTRUNC);self.assertTrue(received);self.assertLess(len(received),20)
+            # Compare all installed FDs while original endpoints remain open, so
+            # neither undisclosed descriptors nor FD-number reuse can hide leaks.
+            self.assertEqual(snapshot(),before)
+        finally:left.close();right.close();os.close(read_fd);os.close(write_fd)
     def test_valid_descriptor_transfers_single_noninheritable_owner(self):
         left,right=socket.socketpair(socket.AF_UNIX,socket.SOCK_DGRAM);read_fd,write_fd=os.pipe()
         try:
