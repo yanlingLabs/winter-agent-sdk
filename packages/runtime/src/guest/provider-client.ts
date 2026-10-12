@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { ProviderAdapter, ProviderContext, ProviderEvent, ResolvedModel, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 import { adapterAsProvider, type AdapterProvider, type AdapterProviderOptions } from "../provider/bridge.ts";
 
-export const GUEST_PROVIDER_LIMITS = Object.freeze({ requestBytes: 2 * 1024 * 1024, eventBytes: 256 * 1024, responseHeadroom: 4096, exchangeMs: 6000 });
+export const GUEST_PROVIDER_LIMITS = Object.freeze({ requestBytes: 2 * 1024 * 1024, eventBytes: 256 * 1024, responseHeadroom: 4096, exchangeMs: 6000, cancelMs: 1000, activeInvocations: 8 });
 export interface GuestProviderScope {
   homeId: string; workspaceId: string; sessionId: string; backendSessionId: string; taskId: string;
   incarnationId: string; bootId: string; leaseEpoch: number; grantRevision: number; accountRevision: number; modelRevision: number;
@@ -14,7 +14,7 @@ export interface GuestProviderSelection {
   continuationDomain?: string; capabilities: ReturnType<ProviderAdapter["capabilities"]>;
 }
 /** Owns bounded framing/channel admission outside the credential daemon. No automatic resend/reconnect. */
-export interface GuestProviderPort { exchange(frame: Uint8Array): Promise<Uint8Array>; close(): void }
+export interface GuestProviderPort { exchange(frame: Uint8Array, signal?: AbortSignal): Promise<Uint8Array>; close(): void }
 export interface GuestProviderClient { readonly scope: Readonly<GuestProviderScope>; readonly selection: Readonly<GuestProviderSelection>; close(): void }
 const clients = new WeakMap<GuestProviderClient, ProviderAdapter>();
 const providerRoutes = new WeakMap<object, GuestProviderClient>();
@@ -33,31 +33,54 @@ function decode(frame: Uint8Array): Record<string, unknown> {
   const data = Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength); if (data.readUInt32BE(0) !== data.length - 4) throw new Error("guest provider frame");
   const value: unknown = JSON.parse(data.subarray(4).toString("utf8")); if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("guest provider frame"); return value as Record<string, unknown>;
 }
+class InvocationRefused extends Error { constructor(readonly capacity: boolean) { super("guest provider invocation refused"); } }
 const EVENTS = new Set(["message_start", "text_delta", "thinking_summary_delta", "thinking_exposed_delta", "native_thinking_block", "reasoning_progress", "tool_call_start", "tool_call_delta", "tool_call_end", "native_state", "usage", "rate_limit", "retry", "auth_status", "done", "error"]);
 export function createGuestProviderClient(input: { scope: GuestProviderScope; selection: GuestProviderSelection; port: GuestProviderPort }): GuestProviderClient {
   const scope = Object.freeze({ ...input.scope }), selection = Object.freeze({ ...input.selection, capabilities: Object.freeze({ ...input.selection.capabilities }) }), port = input.port;
-  let closed = false, busy = false;
-  const close = (): void => { if (!closed) { closed = true; try { port.close(); } catch { /* No error contents or inferred termination proof. */ } } };
+  let closed = false;
+  const active = new Map<string, AbortController>();
+  const close = (): void => { if (!closed) { closed = true; for (const controller of active.values()) controller.abort(); try { port.close(); } catch { /* No error contents or inferred termination proof. */ } } };
   const adapter: ProviderAdapter = {
     id: "winter-guest-provider-proxy-v1", version: "1", family: selection.family, protocol: selection.protocol,
     validateCredential: async () => ({ ok: false, code: "unsupported", message: "guest credentials unavailable" }),
     listModels: async () => { throw new Error("guest provider discovery unavailable"); },
     capabilities: () => ({ ...selection.capabilities }), mapEffort: effort => ({ ok: true, value: effort }),
     async *streamTurn(request: TurnRequest) {
-      if (closed || busy || request.model !== selection.providerModelId) { yield errorEvent(); return; }
-      const invocationId = randomUUID(); let sequence = 0, terminal = false; busy = true;
-      const onAbort = (): void => close(); request.signal?.addEventListener("abort", onAbort, { once: true });
+      if (closed || request.model !== selection.providerModelId) { yield errorEvent(); return; }
+      if (active.size >= GUEST_PROVIDER_LIMITS.activeInvocations) { yield { type: "error", error: { code: "rate_limit", message: "guest provider capacity unavailable", retryable: true } }; return; }
+      const invocationId = randomUUID(), controller = new AbortController(); let sequence = 0, terminal = false;
+      active.set(invocationId, controller);
+      const onAbort = (): void => controller.abort(); request.signal?.addEventListener("abort", onAbort, { once: true });
+      if (request.signal?.aborted) controller.abort();
       const exchange = async (operation: "begin" | "next", turn?: Omit<TurnRequest, "signal">): Promise<Record<string, unknown>> => {
-        if (request.signal?.aborted || closed) throw new Error("guest provider cancelled");
+        if (controller.signal.aborted || closed) throw new Error("guest provider cancelled");
         const expected = sequence++, frame = encode({ version: 1, operation, invocationId, scope, sequence: expected, ...(turn ? { turn } : {}) }, GUEST_PROVIDER_LIMITS.requestBytes + GUEST_PROVIDER_LIMITS.responseHeadroom);
-        let deadline: ReturnType<typeof setTimeout> | undefined;
+        let deadline: ReturnType<typeof setTimeout> | undefined, abort: (() => void) | undefined;
         try {
-          const result = await Promise.race([port.exchange(frame), new Promise<never>((_, reject) => { deadline = setTimeout(() => { close(); reject(new Error("guest provider deadline")); }, GUEST_PROVIDER_LIMITS.exchangeMs); })]);
-          if (closed || request.signal?.aborted) throw new Error("guest provider cancelled");
+          const result = await Promise.race([port.exchange(frame, controller.signal), new Promise<never>((_, reject) => {
+            abort = () => reject(new Error("guest provider cancelled")); controller.signal.addEventListener("abort", abort, { once: true });
+            if (controller.signal.aborted) abort();
+            deadline = setTimeout(() => { close(); reject(new Error("guest provider deadline")); }, GUEST_PROVIDER_LIMITS.exchangeMs);
+          })]);
+          if (closed || controller.signal.aborted) throw new Error("guest provider cancelled");
           const value = decode(result);
           if (value.version !== 1 || value.invocationId !== invocationId || value.sequence !== expected || !["accepted", "event", "pending", "closed", "refused"].includes(String(value.kind))) throw new Error("guest provider binding");
+          if (value.kind === "refused" && value.code !== "authority_denied") throw new InvocationRefused(value.code === "capacity_busy" && operation === "begin");
           return value;
-        } finally { if (deadline) clearTimeout(deadline); }
+        } finally { if (deadline) clearTimeout(deadline); if (abort) controller.signal.removeEventListener("abort", abort); }
+      };
+      const cancel = async (): Promise<void> => {
+        if (closed || sequence === 0) return;
+        const expected = sequence++, cancellation = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined, received = false;
+        try {
+          const frame = encode({ version: 1, operation: "cancel", invocationId, scope, sequence: expected }, GUEST_PROVIDER_LIMITS.responseHeadroom);
+          const result = await Promise.race([port.exchange(frame, cancellation.signal), new Promise<undefined>(resolve => { timer = setTimeout(() => { cancellation.abort(); resolve(undefined); }, GUEST_PROVIDER_LIMITS.cancelMs); })]);
+          if (result === undefined) return; // Best effort; host retains uncertain invocation ownership.
+          received = true; const value = decode(result);
+          if (value.version !== 1 || value.invocationId !== invocationId || value.sequence !== expected || !["closed", "refused"].includes(String(value.kind))) close();
+        } catch { if (received) close(); /* Transport cancellation failure alone is invocation-local. */ }
+        finally { if (timer) clearTimeout(timer); cancellation.abort(); }
       };
       try {
         const { signal: _signal, ...turn } = request;
@@ -73,8 +96,11 @@ export function createGuestProviderClient(input: { scope: GuestProviderScope; se
           yield event;
           if (terminal) break;
         }
-      } catch { close(); yield errorEvent(request.signal?.aborted); }
-      finally { request.signal?.removeEventListener("abort", onAbort); busy = false; if (!terminal) close(); }
+      } catch (error) {
+        if (error instanceof InvocationRefused) { terminal = true; yield { type: "error", error: { code: error.capacity ? "rate_limit" : "network", message: error.capacity ? "guest provider capacity unavailable" : "guest provider invocation unavailable", retryable: error.capacity } }; }
+        else { if (!controller.signal.aborted) close(); yield errorEvent(request.signal?.aborted); }
+      }
+      finally { request.signal?.removeEventListener("abort", onAbort); if (!terminal) { controller.abort(); await cancel(); } active.delete(invocationId); }
     },
   };
   const client: GuestProviderClient = Object.freeze({ scope, selection, close }); clients.set(client, adapter); return client;
