@@ -32,7 +32,7 @@ static void directory_fd(int fd) {
 static int clone_descriptor(int fd,int readonly,int executable) {
     int tree=(int)syscall(SYS_open_tree,fd,"",OPEN_TREE_CLONE|OPEN_TREE_CLOEXEC|AT_EMPTY_PATH);
     require(tree,"clone admitted mount");
-    struct mount_attr attributes={.attr_set=MOUNT_ATTR_NOSUID|MOUNT_ATTR_NODEV|(readonly?MOUNT_ATTR_RDONLY:0)|(executable?0:MOUNT_ATTR_NOEXEC)};
+    struct mount_attr attributes={.attr_set=MOUNT_ATTR_NOSUID|MOUNT_ATTR_NODEV|(readonly?MOUNT_ATTR_RDONLY:0)|(executable?0:MOUNT_ATTR_NOEXEC),.propagation=MS_PRIVATE};
     require((int)syscall(SYS_mount_setattr,tree,"",AT_EMPTY_PATH,&attributes,sizeof attributes),"admitted mount flags");
     return tree;
 }
@@ -55,7 +55,7 @@ static int tool_device_mount(const struct tool_device *device) {
     /* NODEV must be cleared on these five mounts for character-device use.
      * RDONLY protects mount metadata; it does not prohibit device writes:
      * /dev/null discards them, /dev/full refuses them with ENOSPC. */
-    struct mount_attr attributes={.attr_set=MOUNT_ATTR_RDONLY|MOUNT_ATTR_NOSUID|MOUNT_ATTR_NOEXEC,.attr_clr=MOUNT_ATTR_NODEV};
+    struct mount_attr attributes={.attr_set=MOUNT_ATTR_RDONLY|MOUNT_ATTR_NOSUID|MOUNT_ATTR_NOEXEC,.attr_clr=MOUNT_ATTR_NODEV,.propagation=MS_PRIVATE};
     require((int)syscall(SYS_mount_setattr,tree,"",AT_EMPTY_PATH,&attributes,sizeof attributes),"tool device flags");
     close(fd);return tree;
 }

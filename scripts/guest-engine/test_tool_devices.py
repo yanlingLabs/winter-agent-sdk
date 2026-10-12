@@ -32,6 +32,7 @@ PRELUDE = r'''
 #define MOUNT_ATTR_NOSUID 0x2
 #define MOUNT_ATTR_NODEV 0x4
 #define MOUNT_ATTR_NOEXEC 0x8
+#define MS_PRIVATE (1UL << 18)
 struct mount_attr { uint64_t attr_set,attr_clr,propagation,userns_fd; };
 '''
 
@@ -89,7 +90,7 @@ static long fake_syscall(long call,...){
  assert(!strcmp(va_arg(args,const char *),""));assert(va_arg(args,int)==AT_EMPTY_PATH);
  struct mount_attr *attr=va_arg(args,struct mount_attr *);assert(va_arg(args,size_t)==sizeof *attr);
  assert(attr->attr_set==(MOUNT_ATTR_RDONLY|MOUNT_ATTR_NOSUID|MOUNT_ATTR_NOEXEC));assert(attr->attr_clr==MOUNT_ATTR_NODEV);
- assert(!attr->propagation&&!attr->userns_fd);assert(!flags_set++);va_end(args);
+ assert(attr->propagation==MS_PRIVATE&&!attr->userns_fd);assert(!flags_set++);va_end(args);
  if(mode==10){errno=EPERM;return -1;}return 0;
 }
 static int fake_close(int fd){assert(fd==slot&&flags_set==1);assert(!closed++);return 0;}
@@ -203,6 +204,33 @@ int main(int argc,char **argv){assert(argc==2);mode=atoi(argv[1]);int trees[]={1
         self.assertNotIn('mount("/proc"', self.source)
         self.assertIn('while(waitpid(child,&status,0)<0)', self.source)
         self.assertIn('syscall(SYS_capset,&header,caps)', self.source)
+
+    def test_exact_general_detached_mount_is_private_and_refuses_flag_failure(self):
+        start = self.source.index('static int clone_descriptor(')
+        helper = self.source[start:self.source.index('static void attach_descriptor(', start)]
+        standins = r'''
+static int fault,readonly,executable,cloned,attributes;
+static long fake_syscall(long call,...){
+ va_list args;va_start(args,call);
+ if(call==SYS_open_tree){assert(va_arg(args,int)==17);assert(!strcmp(va_arg(args,const char *),""));assert(va_arg(args,int)==(OPEN_TREE_CLONE|OPEN_TREE_CLOEXEC|AT_EMPTY_PATH));cloned++;va_end(args);if(fault==1){errno=EINVAL;return -1;}return 91;}
+ assert(call==SYS_mount_setattr&&cloned==1);assert(va_arg(args,int)==91);assert(!strcmp(va_arg(args,const char *),""));assert(va_arg(args,int)==AT_EMPTY_PATH);
+ struct mount_attr *attr=va_arg(args,struct mount_attr *);assert(va_arg(args,size_t)==sizeof *attr);va_end(args);
+ assert(attr->attr_set==(uint64_t)(MOUNT_ATTR_NOSUID|MOUNT_ATTR_NODEV|(readonly?MOUNT_ATTR_RDONLY:0)|(executable?0:MOUNT_ATTR_NOEXEC)));
+ assert(!attr->attr_clr&&attr->propagation==MS_PRIVATE&&!attr->userns_fd);attributes++;if(fault==2){errno=EPERM;return -1;}return 0;
+}
+#define syscall fake_syscall
+'''
+        harness = r'''
+int main(int argc,char **argv){assert(argc==4);fault=atoi(argv[1]);readonly=atoi(argv[2]);executable=atoi(argv[3]);assert(clone_descriptor(17,readonly,executable)==91);assert(!fault&&cloned==1&&attributes==1);return 0;}
+'''
+        with tempfile.TemporaryDirectory(prefix='winter-tool-private-clone-') as temp:
+            binary = self.compile_harness(Path(temp), PRELUDE + self.require + standins + helper + harness)
+            for fault in range(3):
+                for readonly in range(2):
+                    for executable in range(2):
+                        with self.subTest(fault=fault, readonly=readonly, executable=executable):
+                            result = subprocess.run([str(binary), str(fault), str(readonly), str(executable)], capture_output=True, text=True, timeout=3)
+                            self.assertEqual(result.returncode, 0 if fault == 0 else 77, result.stderr)
 
 
 if __name__ == '__main__':
