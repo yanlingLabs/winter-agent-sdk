@@ -18,6 +18,7 @@ mkdirSync(output, { recursive: true });
 const hash = (input: string | Buffer) => createHash("sha256").update(input).digest("hex");
 const commit = execFileSync("/usr/bin/git", ["-C", sdkRoot, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const { runCommand } = await import(pathToFileURL(join(sdkRoot, "packages/runtime/src/sandbox/spawn.ts")).href);
+const { WINTER_BRAND } = await import(pathToFileURL(join(sdkRoot, "packages/sdk/src/brand.ts")).href);
 const protectedDir = join(root, "cowork"), protectedData = join(protectedDir, "data.ext4");
 mkdirSync(protectedDir); writeFileSync(protectedData, "synthetic-ciphertext-marker");
 const lease = candidate ? (await import(pathToFileURL(join(sdkRoot, "packages/runtime/src/sandbox/host-code-protection.ts")).href)).installHostCodeProtection({ revision: 1, denyReadPaths: [protectedDir], denyWritePaths: [protectedDir] }) : undefined;
@@ -40,7 +41,7 @@ async function run(label: string, argv: string[], f: ReturnType<typeof fixture>,
   let stdout = "", stderr = "";
   const command = argv.map(quote).join(" "), started = Date.now();
   const result = await runCommand({ command, cwd: f.cwd, env: f.env, timeoutMs, maxStreamedBytes: 262144, settings: {},
-    ...(escape ? { dangerouslyDisableSandbox: true } : {}), writableRoots: [f.cwd], home: f.home, winterHome: join(f.home, ".winter"),
+    ...(escape ? { dangerouslyDisableSandbox: true } : {}), writableRoots: [f.cwd], home: f.home, winterHome: join(f.home, WINTER_BRAND.homeDirName),
     onStdout(chunk: Buffer) { stdout += chunk.toString(); }, onStderr(chunk: Buffer) { stderr += chunk.toString(); } });
   const { profile, ...status } = result;
   if (profile !== undefined) writeFileSync(join(output, label + ".sb"), profile);
