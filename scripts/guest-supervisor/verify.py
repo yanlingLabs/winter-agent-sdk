@@ -65,6 +65,12 @@ def main():
                 if server.poll() is not None:raise AssertionError(server.stderr.read())
                 time.sleep(.02)
             assert (control/'admin.sock').exists(),'service did not admit protected sockets'
+            # The service already holds the admitted directory FD. Replace its original
+            # spelling before tool namespace construction; it must still use that inode.
+            admitted_source=root/'source-admitted';source.rename(admitted_source)
+            source.mkdir(mode=0o2770);os.chown(source,10001,10000)
+            (source/'seed').write_bytes(b'replacement-must-not-be-read-or-written\n')
+            replacement_source=source;source=admitted_source
             def start(number,scenario):
                 uid=20000+number
                 def identity():os.setgroups([]);os.setgid(uid);os.setuid(uid)
@@ -88,6 +94,7 @@ def main():
             assert response.get('exitCode')==0 and response.get('stdout'),('raw Read response',response)
             assert finish(start(1,'ordinary'))['uid']==20001
             assert (source/'seed').read_bytes()==b'written\n';assert (source/'from-shell').read_bytes()==b'shell';assert not (readonly/'new').exists()
+            assert (replacement_source/'seed').read_bytes()==b'replacement-must-not-be-read-or-written\n' and not (replacement_source/'from-shell').exists()
             assert finish(start(2,'plan'))['uid']==20002;assert (source/'seed').read_bytes()==b'written\n';assert not (source/'plan-shell').exists()
             finish(start(1,'cancel'))
             def quiescent():
