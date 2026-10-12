@@ -6,7 +6,7 @@ import argparse,hashlib,json,os,shutil,subprocess,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 NATIVE={'toolLauncher':'linux-tool-compartment.c','runtimeLauncher':'linux-runtime-compartment.c','fileWorker':'file-worker.c','processWorker':'process-worker.c','ownerLibrary':'linux-session-owner.c'}
-SOURCES=['packages/runtime/src/guest/linux-supervisor.py','packages/runtime/src/guest/linux-compartment.h',*[f'packages/runtime/src/guest/{name}' for name in NATIVE.values()],'packages/runtime/src/guest/linux-session-admission.ts','scripts/guest-engine/runtime.ts','scripts/guest-engine/provider.ts','scripts/guest-engine/verify.py','scripts/guest-engine/build.py']
+SOURCES=['packages/runtime/src/guest/linux-supervisor.py','packages/runtime/src/guest/linux-compartment.h',*[f'packages/runtime/src/guest/{name}' for name in NATIVE.values()],'packages/runtime/src/guest/linux-session-admission.ts','scripts/guest-engine/runtime.ts','scripts/guest-engine/provider.ts','scripts/guest-engine/compile.ts','scripts/build-runtime.ts','scripts/linux-runtime-base.json','scripts/guest-engine/verify.py','scripts/guest-engine/build.py']
 def digest(path):
     hash=hashlib.sha256()
     with Path(path).open('rb') as stream:
@@ -21,7 +21,11 @@ def source_inventory(extra=()):
         for name in files:
             path=Path(directory)/name
             if path.suffix in ('.ts','.json','.c','.h','.py'):tracked.append(str(path.relative_to(ROOT)))
-    return sorted(set([*SOURCES,*tracked,'package.json','pnpm-lock.yaml','tsconfig.base.json','bunfig.toml',*extra]))
+    inventory=sorted(set([*SOURCES,*tracked,'package.json','pnpm-lock.yaml','tsconfig.base.json','bunfig.toml',*extra]))
+    for relative in inventory:
+        spelling=Path(relative);source=ROOT/spelling
+        if spelling.is_absolute() or '..' in spelling.parts or source.is_symlink() or source.resolve()!=source:raise ValueError('source inventory must stay canonical inside checkout')
+    return inventory
 def capture_sources(extra=()):
     return {relative:digest(ROOT/relative) for relative in source_inventory(extra)}
 def validate_receipt(receipt,directory):
