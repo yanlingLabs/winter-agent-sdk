@@ -2,7 +2,7 @@
 """Protected Linux tool service. Start only via immutable python -I -S and a trusted config FD.
 Not the guest engine/bootstrap. No host credentials, file paths, UIDs or policy from tool requests.
 """
-import array, base64, hashlib, json, os, re, selectors, select, signal, socket, stat, struct, subprocess, sys, tempfile, threading, time
+import array, base64, fcntl, hashlib, json, os, re, selectors, select, signal, socket, stat, struct, subprocess, sys, tempfile, threading, time
 from pathlib import Path
 
 FRAME_LIMIT=2*1024*1024
@@ -116,13 +116,20 @@ class ToolService:
         if not sys.flags.isolated or not sys.flags.no_site:raise Refusal('isolated_interpreter_required')
         if config.get('guestBootId')!=Path('/proc/sys/kernel/random/boot_id').read_text().strip():raise Refusal('stale_guest_boot')
         self.lock=threading.RLock();self.stop_event=threading.Event();self.conversations={};self.active={};self.debt=set();self.seen={};self.retained_children=[];self.tool_connections=threading.BoundedSemaphore(TOOL_CONNECTION_LIMIT);self.admin_connections=threading.BoundedSemaphore(ADMIN_CONNECTION_LIMIT)
-        self.artifacts={};self.artifact_pins={};self.owned=[];self.listeners=[];self.threads=[]
+        self.artifacts={};self.artifact_pins={};self.owned=[];self.listeners=[];self.threads=[];self.runtimes={};self.runtime_artifacts={};self.runtime_pins={};self.guest_boot=config['guestBootId']
         try:
             for name in ('launcher','fileWorker','processWorker'):self.artifacts[name]=pinned_artifact(config['artifacts'][name]);self.artifact_pins[name]=config['artifacts'][name]['sha256'];self.owned.append(self.artifacts[name])
+            if 'freshRuntime' in config:
+                if set(config['freshRuntime'])!={'artifacts'} or set(config['freshRuntime']['artifacts'])!={'launcher','executable','ownerLibrary'}:raise Refusal('runtime_artifacts')
+                for name,value in config['freshRuntime']['artifacts'].items():
+                    self.runtime_artifacts[name]=pinned_artifact(value);self.runtime_pins[name]=value['sha256'];self.owned.append(self.runtime_artifacts[name])
             self.environment=os.open(config['environment'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);self.owned.append(self.environment)
             self.directory=Path(config['controlDirectory']).resolve(strict=True)
             protected=[self.directory,Path(config['environment']).resolve(strict=True)]+[Path(v['path']).resolve(strict=True).parent for v in config['artifacts'].values()]
             protected.extend(Path(path).resolve(strict=True) for path in config['protectedStoreDirectories'])
+            if self.runtime_artifacts:
+                protected.extend(Path(v['path']).resolve(strict=True).parent for v in config['freshRuntime']['artifacts'].values())
+                protected.extend(Path(v['freshRuntime'][key]).resolve(strict=True) for v in config['conversations'] if 'freshRuntime' in v for key in ('storeDirectory','runhomeDirectory'))
             st=self.directory.lstat()
             if not stat.S_ISDIR(st.st_mode) or st.st_uid!=0 or (st.st_mode&0o777) not in (0o700,0o711):raise Refusal('control_directory')
             uids=set();backends=set();workspace=None
@@ -153,6 +160,7 @@ class ToolService:
                 private=self.directory/sid;private.mkdir(mode=0o750);os.chown(private,0,runtime)
                 self.conversations[sid]={'logicalSessionId':sid,'authority':scope,'runtimeUid':runtime,'toolUid':tool,'workspaceGid':group,'policy':item['policy'],'roots':roots,'socket':private/'tools.sock','revoked':False}
                 self.seen[sid]=set()
+                if 'freshRuntime' in item:self._configure_runtime(self.conversations[sid],item['freshRuntime'])
         except BaseException:
             self.close();raise
     def _listener(self,path,uid,handler,*,admin=False):
@@ -179,14 +187,20 @@ class ToolService:
         self._listener(self.directory/'admin.sock',0,self._admin,admin=True)
     def _admin(self,channel):
         request=frame_read(channel)
-        if set(request)!={'operation','sessionId'} or request['operation'] not in ('revoke','status'):raise Refusal('admin_request')
+        if set(request)!={'operation','sessionId'} or request['operation'] not in ('revoke','status','launch-runtime'):raise Refusal('admin_request')
         if request['operation']=='revoke':
             self.revoke(request['sessionId']);frame_write(channel,{'revoked':True})
+        elif request['operation']=='launch-runtime':
+            self.launch_runtime(request['sessionId']);frame_write(channel,{'started':True})
         else:
-            with self.lock:frame_write(channel,{'active':sum(sid==request['sessionId'] for sid,_ in self.active.values()),'uncertain':request['sessionId'] in self.debt})
+            with self.lock:
+                result={'active':sum(sid==request['sessionId'] for sid,_ in self.active.values()),'uncertain':request['sessionId'] in self.debt}
+                if request['sessionId'] in getattr(self,'runtimes',{}):result['runtime']={key:self.runtimes[request['sessionId']].get(key) for key in ('state','exitCode','cleanupConfirmed')}
+                frame_write(channel,result)
     def revoke(self,sid):
         with self.lock:
             self.conversations[sid]['revoked']=True
+            if sid in getattr(self,'runtimes',{}):self.runtimes[sid]['cancel'].set()
             for active_sid,cancel in self.active.values():
                 if active_sid==sid:cancel.set()
     def _deny(self,request,item,code):
@@ -319,15 +333,141 @@ class ToolService:
             control.close();parent.close()
             # Namespace private mounts vanish with confirmed init teardown. Unknown owner retains its view.
             if cleanup:os.rmdir(view)
+    def _configure_runtime(self,item,value):
+        # Only immutable root bootstrap can select artifacts, directories, model or
+        # public provider metadata. The tool/admin launch request carries only sid.
+        if not self.runtime_artifacts or not isinstance(value,dict) or set(value)-{'storeDirectory','runhomeDirectory','provider','model','timeoutMs'} or not {'storeDirectory','runhomeDirectory','provider','model'}<=set(value):raise Refusal('runtime_config')
+        if not isinstance(value['model'],str) or not 1<=len(value['model'])<=256 or '\0' in value['model']:raise Refusal('runtime_model')
+        provider=value['provider']
+        if not isinstance(provider,dict) or set(provider)!={'scope','selection'}:raise Refusal('runtime_provider')
+        def public_metadata(node):
+            if isinstance(node,dict):
+                for key,child in node.items():
+                    if not isinstance(key,str) or any(word in key.lower() for word in ('authref','url','header','secret','token','credential')):raise Refusal('runtime_provider_private')
+                    public_metadata(child)
+            elif isinstance(node,list):
+                for child in node:public_metadata(child)
+            elif node is not None and type(node) not in (str,int,bool):raise Refusal('runtime_provider')
+        public_metadata(provider)
+        provider_scope=provider['scope'];selection=provider['selection']
+        scope_keys={'homeId','workspaceId','sessionId','backendSessionId','taskId','incarnationId','bootId','leaseEpoch','grantRevision','accountRevision','modelRevision'}
+        selection_keys={'providerId','modelKey','providerModelId','family','protocol','capabilities','continuationDomain'}
+        if not isinstance(provider_scope,dict) or set(provider_scope)!=scope_keys or not isinstance(selection,dict) or set(selection)-selection_keys or not selection_keys-{'continuationDomain'}<=set(selection):raise Refusal('runtime_provider')
+        expected={'workspaceId':item['authority']['workspaceId'],'sessionId':item['logicalSessionId'],'backendSessionId':item['authority']['sessionId'],'incarnationId':item['authority']['incarnationId'],'bootId':self.guest_boot,'leaseEpoch':item['authority']['leaseEpoch'],'grantRevision':item['authority']['grantRevision']}
+        if any(provider_scope[key]!=expected[key] for key in expected) or selection['modelKey']!=value['model']:raise Refusal('runtime_provider_scope')
+        if len(canonical(provider).encode())>32768:raise Refusal('runtime_provider_limit')
+        timeout=value.get('timeoutMs',600000)
+        if type(timeout)!=int or not 1<=timeout<=600000:raise Refusal('runtime_deadline')
+        descriptors={}
+        for key in ('storeDirectory','runhomeDirectory'):
+            fd=source_directory(value[key],[]);self.owned.append(fd);st=os.fstat(fd)
+            if st.st_uid!=item['runtimeUid'] or st.st_mode&0o777!=0o700:raise Refusal('runtime_directory_identity')
+            descriptors[key]=fd
+        # Cross-process directory ownership: same inode cannot be launched by two
+        # root services. Fresh admission refuses every prior file/lease/history.
+        try:fcntl.flock(descriptors['storeDirectory'],fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:raise Refusal('runtime_store_in_use')
+        if os.listdir(descriptors['storeDirectory']) or os.listdir(descriptors['runhomeDirectory']):raise Refusal('runtime_fresh_store_required')
+        self.runtimes[item['logicalSessionId']]={'state':'configured','cancel':threading.Event(),'fds':descriptors,'provider':json.loads(canonical(provider)),'model':value['model'],'timeout':timeout/1000,'cleanupConfirmed':False,'exitCode':None}
+    def _runtime_record(self,item,runtime):
+        sid=item['logicalSessionId'];home=f'/run/winter/conversations/{sid}';store=f'/workspace/.winter/conversations/{sid}'
+        tools=['Read','Write','Edit','Bash'];scope={key:item['authority'][key] for key in ('workspaceId','sessionId','incarnationId','leaseEpoch')};scope.update(storeHome=store,currentBootId=self.guest_boot)
+        return {'protocolVersion':1,'freshOnly':True,'runtimeUid':item['runtimeUid'],'toolUid':item['toolUid'],'workspaceGid':item['workspaceGid'],'logicalSessionId':sid,'scope':scope,'ownerToken':os.urandom(32).hex(),'toolSocketPath':home+'/.control/tools.sock','authority':dict(item['authority']),'roots':[binding['root'] for binding in item['roots'].values()],'provider':runtime['provider'],'runtimeConfig':{'executionPosture':'confined-guest','sessionId':item['authority']['sessionId'],'model':runtime['model'],'cwd':next(iter(item['roots'].values()))['root']['guestPath'],'winterHome':home,'storeHome':store,'persistSession':True,'settingSources':[],'tools':tools,'allowedTools':tools,'skills':[],'plugins':[],'strictMcpConfig':True,'mcpServers':{},'permissionMode':'auto'}}
+    def launch_runtime(self,sid):
+        with self.lock:
+            if sid not in self.runtimes or self.stop_event.is_set() or self.conversations[sid]['revoked'] or sid in self.debt:raise Refusal('runtime_admission')
+            runtime=self.runtimes[sid]
+            if runtime['state']!='configured':raise Refusal('runtime_fresh_only')
+            # Reserve the single fresh launch before starting any external effect.
+            runtime['state']='starting';thread=threading.Thread(target=self._run_runtime,args=(self.conversations[sid],runtime),daemon=True);self.threads.append(thread);thread.start()
+    def _run_runtime(self,item,runtime):
+        sid=item['logicalSessionId'];child=None;pidfd=None;control=None;parent=None;bootstrap=None;guest=None;view=None;selector=None;confirmed=False;service_pidfd=None
+        try:
+            for name,fd in self.runtime_artifacts.items():verify_held_artifact(fd,self.runtime_pins[name])
+            if os.listdir(runtime['fds']['storeDirectory']) or os.listdir(runtime['fds']['runhomeDirectory']):raise Refusal('runtime_fresh_store_required')
+            view=tempfile.mkdtemp(prefix='runtime-view-',dir=self.directory);control,parent=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET);bootstrap,guest=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET)
+            control_directory=os.open(self.directory/sid,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+            try:
+                args=[str(self.runtime_artifacts['launcher']),str(self.runtime_artifacts['executable']),view,str(parent.fileno()),str(self.environment),str(item['runtimeUid']),str(item['workspaceGid']),str(guest.fileno()),str(self.runtime_artifacts['ownerLibrary']),str(runtime['fds']['storeDirectory']),str(runtime['fds']['runhomeDirectory']),str(control_directory),sid,item['policy'],str(len(item['roots']))]
+                fds=[*self.runtime_artifacts.values(),parent.fileno(),self.environment,guest.fileno(),*runtime['fds'].values(),control_directory]
+                for binding in item['roots'].values():args.extend((str(binding['fd']),binding['root']['guestPath'],'1' if binding['root']['readOnly'] else '0'));fds.append(binding['fd'])
+                child=subprocess.Popen(args,executable=f"/proc/self/fd/{self.runtime_artifacts['launcher']}",stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=fds,close_fds=True,env={'LANG':'C','LC_ALL':'C'},start_new_session=True,bufsize=0)
+            finally:os.close(control_directory)
+            parent.close();guest.close();control.settimeout(2);pidfd=receive_init_pidfd(control);service_pidfd=os.pidfd_open(os.getpid(),0)
+            record=canonical(self._runtime_record(item,runtime)).encode()
+            if len(record)>65536:raise Refusal('runtime_bootstrap_limit')
+            rights=array.array('i',[pidfd,service_pidfd,runtime['fds']['storeDirectory'],self.runtime_artifacts['executable']]);bootstrap.settimeout(2)
+            if bootstrap.sendmsg([record],[(socket.SOL_SOCKET,socket.SCM_RIGHTS,rights)])!=len(record):raise Uncertain('runtime_bootstrap_send')
+            with self.lock:runtime['state']='running'
+            selector=selectors.DefaultSelector();control.setblocking(False);selector.register(control,selectors.EVENT_READ)
+            for stream in (child.stdout,child.stderr):os.set_blocking(stream.fileno(),False);selector.register(stream,selectors.EVENT_READ)
+            terminal=None;out=bytearray();err=bytearray();start=time.monotonic();killed=False;kill_deadline=None
+            while selector.get_map():
+                if not killed and (runtime['cancel'].is_set() or self.stop_event.is_set() or time.monotonic()-start>runtime['timeout']):
+                    try:signal.pidfd_send_signal(pidfd,signal.SIGKILL)
+                    except ProcessLookupError:pass
+                    killed=True;kill_deadline=time.monotonic()+2
+                if killed and time.monotonic()>kill_deadline:raise Uncertain('runtime_cleanup_unconfirmed')
+                for event,_ in selector.select(.05):
+                    stream=event.fileobj
+                    if stream is control:
+                        receipt=control.recv(16)
+                        if receipt:
+                            if terminal is not None or len(receipt)!=5 or receipt[:1]!=b'R':raise Uncertain('runtime_native_receipt')
+                            terminal=struct.unpack('=I',receipt[1:])[0]
+                        else:selector.unregister(stream)
+                    else:
+                        try:data=os.read(stream.fileno(),16384)
+                        except BlockingIOError:continue
+                        if not data:selector.unregister(stream);continue
+                        (out if stream is child.stdout else err).extend(data)
+                        if len(out)>1024*1024 or len(err)>16384:raise Uncertain('runtime_capture_limit')
+            code=child.wait(timeout=1)
+            if terminal is None:raise Uncertain('runtime_native_exit_unconfirmed')
+            native=os.waitstatus_to_exitcode(terminal);native=native if native>=0 else 128-native
+            if code!=native:raise Uncertain('runtime_parent_reap_unconfirmed')
+            # Namespace-init wait + launcher reaping precede tool revocation/drain.
+            # Runtime JSON/EOF/success and kill delivery cannot acknowledge tenancy.
+            self.revoke(sid);deadline=time.monotonic()+3
+            while True:
+                with self.lock:active=any(active_sid==sid for active_sid,_ in self.active.values())
+                if not active:break
+                if time.monotonic()>deadline:raise Uncertain('runtime_tool_drain_unconfirmed')
+                time.sleep(.02)
+            with self.lock:
+                if sid in self.debt:raise Uncertain('runtime_tool_debt')
+                runtime.update(state='stopped',exitCode=code,cleanupConfirmed=True)
+            confirmed=True
+        except (Refusal,Uncertain,OSError,ValueError,subprocess.TimeoutExpired):
+            with self.lock:runtime['state']='retained';self.debt.add(sid)
+            self.revoke(sid)
+        finally:
+            if selector is not None:selector.close()
+            if child is not None and not confirmed:
+                try:
+                    if pidfd is not None:signal.pidfd_send_signal(pidfd,signal.SIGKILL)
+                    else:child.kill()
+                except OSError:pass
+                try:child.wait(timeout=2)
+                except subprocess.TimeoutExpired:self.retained_children.append(child)
+            if child is not None:
+                for stream in (child.stdout,child.stderr):stream.close()
+            for fd in (pidfd,service_pidfd):
+                if fd is not None:os.close(fd)
+            for channel in (control,parent,bootstrap,guest):
+                if channel is not None:channel.close()
+            if confirmed and view is not None:os.rmdir(view)
     def close(self):
         self.stop_event.set()
         with self.lock:
             for _,cancel in self.active.values():cancel.set()
+            for runtime in getattr(self,'runtimes',{}).values():runtime['cancel'].set()
         for listener in self.listeners:listener.close()
         deadline=time.monotonic()+3
         for thread in self.threads:
             if isinstance(thread,threading.Thread):thread.join(timeout=max(0,deadline-time.monotonic()))
         if any(thread.is_alive() for thread in self.threads):return False
+        if self.debt:return False
         for fd in self.owned:
             try:os.close(fd)
             except OSError:pass
