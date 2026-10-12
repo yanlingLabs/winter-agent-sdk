@@ -92,6 +92,7 @@ function installEmbeddedWorker(): void {
         signal: abort.signal,
         ...(start.workflowWorkerCommand !== undefined ? { workflowWorkerCommand: start.workflowWorkerCommand } : {}),
         ...(start.brokerRequired ? { brokerRequired: true } : {}),
+        ...(start.hostChildFloor ? { hostChildFloor: start.hostChildFloor } : {}),
       });
     } catch (err) {
       // `runEmbeddedSession` never throws by contract; this is the belt for a host that would

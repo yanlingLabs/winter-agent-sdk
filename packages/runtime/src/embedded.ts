@@ -24,9 +24,10 @@
 //
 // COMPILED-BINARY CONSTRAINTS apply exactly as in `main.ts` (a host compiles this into its own
 // single-file binary): static, literal imports only.
-import type { RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
+import type { RuntimeConfig, WinterFrame, HostExecutionFloor } from "@yanlinglabs/winter-agent-sdk";
 import { splitFrames, encodeFrame, MandatoryFloorUnavailableError } from "@yanlinglabs/winter-agent-sdk";
 import { requireHostCodeProcessBroker } from "./sandbox/host-code-process.ts";
+import { installHostChildFloor } from "./sandbox/host-child-floor.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider } from "./engine.ts";
 import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
@@ -54,6 +55,9 @@ export interface EmbeddedSessionOptions {
   /** Trusted command-broker enrollment for this realm's lifetime. This gates Bash/Monitor only;
    * it does not supply an embedded filesystem/subprocess floor. */
   brokerRequired?: boolean;
+  /** Trusted host floor for this realm's subprocess launch families. It does not establish a
+   * process floor for Core/Worker filesystem consumers. Never read from argv/settings/env. */
+  hostChildFloor?: HostExecutionFloor;
   /** The spawn argv (`--run --config-json <json>`, any leading slots); flags are found by NAME. */
   argv: readonly string[];
   /**
@@ -197,6 +201,7 @@ function isSyntheticAbortAck(frame: WinterFrame): boolean {
  */
 export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<number> {
   let releaseBrokerRequirement: (() => void) | undefined;
+  let releaseHostChildFloor: (() => void) | undefined;
   const { env, write, writeErr } = opts;
   let signal = opts.signal;
   let ownerSignal: AbortSignal | undefined;
@@ -240,6 +245,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
   try {
     if (opts.requireHostFloor) throw new MandatoryFloorUnavailableError("embedded sessions cannot satisfy a required host floor; launch a native floored runtime");
     releaseBrokerRequirement = opts.brokerRequired ? requireHostCodeProcessBroker() : undefined;
+    releaseHostChildFloor = opts.hostChildFloor ? installHostChildFloor(opts.hostChildFloor) : undefined;
     const config = parseConfigFromArgv(opts.argv);
     assertRuntimeExecutionPosture(config);
     if (opts.protectedStoreBootstrap !== undefined) {
@@ -413,6 +419,9 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
       }
       try { opts.onProtectedStoreOwnershipOutcome?.(outcome); }
       catch { try { writeErr("winter: terminal ownership observer failed\n"); } catch {} }
-    } finally { releaseBrokerRequirement?.(); }
+    } finally {
+      try { releaseHostChildFloor?.(); }
+      finally { releaseBrokerRequirement?.(); }
+    }
   }
 }

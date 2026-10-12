@@ -13,6 +13,7 @@
 import { mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
+import { prepareHostChildLaunch } from "../../sandbox/host-child-floor.ts";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import "../descriptors/enter-worktree.ts"; // self-sufficiency: guarantees the "EnterWorktree" stub is registered before replaceExecutor runs below.
 
@@ -35,7 +36,8 @@ export async function runGit(args: string[], cwd: string): Promise<GitRunResult>
   // the linux CI runner showed, intermittently, from a fixture whose PATH did not carry git.
   const spawned = (() => {
     try {
-      return { ok: true as const, proc: Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" }) };
+      const launch = prepareHostChildLaunch("git", args, { cwd });
+      return { ok: true as const, proc: Bun.spawn([launch.command, ...launch.args], { cwd, stdout: "pipe", stderr: "pipe" }) };
     } catch (err) {
       return { ok: false as const, message: err instanceof Error ? err.message : String(err) };
     }

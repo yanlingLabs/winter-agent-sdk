@@ -67,11 +67,39 @@ cleanup has completed. The trusted parent broker's `runCommandLocally` entry is
 separate: it requires the canonical host floor at admission and native spawn.
 This command-only requirement does not floor other embedded consumers.
 
+Every engine generation carrying a host process broker now retains an independent
+broker requirement from entry through facet teardown. This applies to native,
+embedded and descendant engines. Removing a client during a turn cannot enable
+local command execution. The registration marker only narrows execution; an
+authenticated host handler still supplies actual admission authority.
+
+For embedded subprocess coverage, Core can supply
+`spawnEmbeddedWorker({ hostChildFloor, ... })` (or the trusted direct session
+equivalent). The host floor is snapshotted before a held Worker start and crosses
+only the internal lifecycle channel, not `RuntimeConfig`, SDK `Options`, model
+inputs or environment. The Worker renders and retains the immutable floor before
+startup through terminal cleanup. `prepareHostChildLaunch` resolves the actual
+executable using the child's environment/session cwd and wraps its command/argv
+in native `sandbox-exec`. Hook shells, MCP stdio servers, git worktree/root/context
+commands and image conversion use this shared boundary. Bash/Monitor and Workflow
+compose the same denies into their existing sandbox profile, including permitted
+unsandboxed Code postures. Missing native sandbox support and unresolved binaries
+refuse rather than launching an unfloored child. An absent host registration
+preserves ordinary SDK execution.
+
+This is subprocess coverage, not full required embedded support. Core must keep
+the floor registration trusted, pass it to every session generation, drain
+existing/retired child processes before a protection transition, and consume
+existing process-group/lifecycle evidence. Runtime-owned filesystem consumers
+still need the separate protected file-operation boundary below. In particular,
+`hostChildFloor` does not allow `requireHostFloor: true` to start an embedded
+Worker; that full-mode requirement continues to refuse.
+
 Full H2 embedded support remains open. Direct in-process file consumers include
 `tools/impl/read.ts`, `write.ts`, `edit.ts`, `glob.ts`, `grep.ts`, their
 `tools/safe-glob-scan.ts` walker and read-state/image/notebook helpers. Existing
 permission path checks alone are not descriptor-bound protection against path
-replacement races. Direct subprocess families include
+replacement races. The shared launch boundary covers these subprocess families:
 `hooks/command-invoker.ts` (hook shell), `mcp/transports/stdio.ts` (stdio servers),
 `tools/image-prep.ts` (sips), `tools/impl/enter-worktree.ts` (git),
 `context/git-status.ts`, `context/winter-md.ts` and `subagents/git-root.ts`.

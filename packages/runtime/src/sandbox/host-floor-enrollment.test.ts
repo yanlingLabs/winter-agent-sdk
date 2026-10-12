@@ -7,6 +7,9 @@ import { spawnEmbeddedWorker } from "../embedded-host.ts";
 import { runEmbeddedSession } from "../embedded.ts";
 import { requireHostCodeProcessBroker, hostCodeProcessBrokerRequired, installHostCodeProcessClient, type HostCodeProcessClient } from "./host-code-process.ts";
 import { runCommand, SandboxUnavailableError } from "./spawn.ts";
+import { runEngine } from "../engine.ts";
+import { scriptedProvider } from "../provider/mock.ts";
+import { createInMemoryChannel } from "../protocol/channel.ts";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -121,3 +124,29 @@ test("real Worker Bash honors host enrollment despite serialized/env attempts to
   expect(JSON.stringify(results[0])).toContain('"is_error":true');
   expect(JSON.stringify(results[0])).not.toContain("winter-t8-lanec");
 }, 30_000);
+
+test("every brokered engine retains enrollment after client removal and releases after teardown", async () => {
+  const f = fixture();
+  const { host, runtime } = createInMemoryChannel();
+  let observed = false;
+  const completion = runEngine({ config: { sessionId: "fixture-engine", cwd: f.dir, model: "winter-test/echo", persistSession: false,
+    hostCodeProcessBroker: { generationId: "fixture-generation" } },
+    input: runtime.input, output: runtime.output, env: { WINTER_HOME: join(f.dir, "home"), WINTER_DISABLE_GIT_INSTRUCTIONS: "1" },
+    provider: scriptedProvider([{ kind: "tool_use", calls: [{ id: "fixture-call", name: "Bash", input: { command: "echo fixture" } }] }, { kind: "text", text: "done" }]),
+    tools: { async execute() {
+      observed = true;
+      expect(hostCodeProcessBrokerRequired()).toBe(true);
+      const restore = installHostCodeProcessClient(undefined);
+      try {
+        await expect(runCommand({ command: `touch '${f.marker}'`, cwd: f.dir, env: {}, timeoutMs: 1000, settings: { enabled: false } })).rejects.toThrow("no local execution fallback");
+        return { output: "fixture refused" };
+      } finally { restore(); }
+    } } });
+  host.output.write({ type: "user", text: "fixture" });
+  host.output.write({ type: "control_request", requestId: "fixture-end", subtype: "end_input", payload: undefined });
+  for await (const _frame of host.input) {}
+  expect(await completion).toBe(0);
+  expect(observed).toBe(true);
+  expect(existsSync(f.marker)).toBe(false);
+  expect(hostCodeProcessBrokerRequired()).toBe(false);
+});

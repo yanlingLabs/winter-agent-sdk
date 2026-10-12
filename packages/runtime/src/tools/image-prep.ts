@@ -13,6 +13,7 @@ import { GuestFileHelperError } from "../guest/file-helper.ts";
 // no `sips` (another platform, a failed run) an image that is already within every limit is sent as it
 // is, and anything else is refused with a text that says why.
 import { execFile } from "node:child_process";
+import { prepareHostChildLaunch } from "../sandbox/host-child-floor.ts";
 import { closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -308,7 +309,8 @@ export function describePreparedImage(image: PreparedImage): string {
 
 function runSips(sips: string, args: string[], signal: AbortSignal | undefined): Promise<{ ok: boolean; stdout: string }> {
   return new Promise((resolve) => {
-    execFile(sips, args, { timeout: SIPS_TIMEOUT_MS, maxBuffer: 1024 * 1024, ...(signal !== undefined ? { signal } : {}) }, (err, stdout) => resolve({ ok: err === null, stdout: String(stdout ?? "") }));
+    const launch = prepareHostChildLaunch(sips, args);
+    execFile(launch.command, launch.args, { timeout: SIPS_TIMEOUT_MS, maxBuffer: 1024 * 1024, ...(signal !== undefined ? { signal } : {}) }, (err, stdout) => resolve({ ok: err === null, stdout: String(stdout ?? "") }));
   });
 }
 

@@ -23,6 +23,7 @@ import type { GlobDenyEntry } from "../permissions/file-rules.ts";
 import { trackProcessGroup } from "../process-groups.ts";
 import { buildMandatoryFloorProfile, hasMandatoryFloor, type HostExecutionFloor, type HostCodeProcessScope, type HostCodeProcessHandle } from "@yanlinglabs/winter-agent-sdk";
 import { currentHostCodeProcessClient, hostCodeProcessBrokerRequired, requireBoundHandle } from "./host-code-process.ts";
+import { currentHostChildFloorProfile, prepareHostChildLaunch } from "./host-child-floor.ts";
 
 // ---------------------------------------------------------------------------------------------
 // §3: sandbox availability (darwin + /usr/bin/sandbox-exec present)
@@ -65,7 +66,8 @@ export function resolveDarwinUserTempDir(): string | null {
   darwinTempDirCache = null;
   if (process.platform === "darwin") {
     try {
-      const out = spawnSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], { encoding: "utf8" });
+      const launch = prepareHostChildLaunch("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"]);
+      const out = spawnSync(launch.command, launch.args, { encoding: "utf8" });
       const raw = out.stdout?.trim();
       if (raw) darwinTempDirCache = canonicalizePath(raw.replace(/\/+$/, ""));
     } catch {
@@ -362,9 +364,11 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
     spawnFile = "/bin/bash";
     spawnArgs = ["-c", opts.command];
   }
-  if (opts.mandatoryFloor && hasMandatoryFloor(opts.mandatoryFloor)) {
+  const hostFloor = currentHostChildFloorProfile();
+  if (hostFloor || (opts.mandatoryFloor && hasMandatoryFloor(opts.mandatoryFloor))) {
     if (!isSandboxAvailable()) throw new SandboxUnavailableError("mandatory host control floor unavailable");
-    const floor = buildMandatoryFloorProfile(opts.mandatoryFloor);
+    const profiles = [hostFloor, opts.mandatoryFloor && hasMandatoryFloor(opts.mandatoryFloor) ? buildMandatoryFloorProfile(opts.mandatoryFloor) : undefined].filter((value): value is string => value !== undefined);
+    const floor = profiles[0]! + profiles.slice(1).map(value => `\n${value.split("\n").slice(2).join("\n")}`).join("");
     profile = profile === undefined ? floor : `${profile}\n${floor.split("\n").slice(2).join("\n")}`;
     spawnFile = REAL_SANDBOX_EXEC_PATH;
     spawnArgs = ["-p", profile, "/bin/bash", "-c", opts.command];

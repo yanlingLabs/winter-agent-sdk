@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
-import { createHostCodeProcessClient, installHostCodeProcessClient } from "./sandbox/host-code-process.ts";
+import { createHostCodeProcessClient, installHostCodeProcessClient, requireHostCodeProcessBroker } from "./sandbox/host-code-process.ts";
 import { homedir, release as osRelease, type as osType } from "node:os";
 // Phase 5 fix wave, I1: `buildBaselineDenyRules` compares the resolved winter root against the
 // literal default, so it needs path resolution.
@@ -2567,6 +2567,9 @@ function withLegacyToolNameRules(opts: EngineOptions): EngineOptions {
 
 export async function runEngine(opts: EngineOptions): Promise<number> {
   assertRuntimeExecutionPosture(opts.config);
+  // Host broker construction narrows this generation's execution authority. Removing its
+  // client cannot restore local execution, and no settings/env/model boolean can opt out.
+  const releaseBrokerRequirement = opts.config.hostCodeProcessBroker !== undefined ? requireHostCodeProcessBroker() : undefined;
   const facetDisposers: Array<() => void | Promise<void>> = [];
   // Review r2 finding 9 (whole-branch): `runEngineBody`'s own background-shell sweep
   // (`stopSessionShellTasks`, review r1 finding 2's own "the session going away" kill door) sits
@@ -2584,28 +2587,30 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       sweepBackgroundShellTasksOnExit = fn;
     });
   } finally {
-    // Idempotent either way: on the ORDINARY return path `runEngineBody`'s own sweep already ran
-    // (this finds nothing left to stop, since `stopSessionShellTasks` filters to `status ===
-    // "running"` rows), so calling it again here is a harmless no-op. On a THROW, this is the only
-    // place the sweep ever runs -- closing the exact gap the review flags: a `detached: true`
-    // process group this run started would otherwise survive `runEngine` returning (and even
-    // `process.exit`, until this fix's `main.ts` half) with no live turn left to ever clean it up.
     try {
-      sweepBackgroundShellTasksOnExit?.();
-    } catch {
-      opts.onTeardownUncertain?.();
-      /* a teardown failure must never replace the run's own outcome */
-    }
-    // Each guarded on its own: one disposer throwing must not strand the others, and a teardown
-    // failure must never replace the run's own outcome.
-    for (const dispose of facetDisposers.splice(0)) {
+      // Idempotent either way: on the ORDINARY return path `runEngineBody`'s own sweep already ran
+      // (this finds nothing left to stop, since `stopSessionShellTasks` filters to `status ===
+      // "running"` rows), so calling it again here is a harmless no-op. On a THROW, this is the only
+      // place the sweep ever runs -- closing the exact gap the review flags: a `detached: true`
+      // process group this run started would otherwise survive `runEngine` returning (and even
+      // `process.exit`, until this fix's `main.ts` half) with no live turn left to ever clean it up.
       try {
-        await dispose();
+        sweepBackgroundShellTasksOnExit?.();
       } catch {
         opts.onTeardownUncertain?.();
-        /* a withdrawal that throws has, at worst, left the entry it was removing */
+        /* a teardown failure must never replace the run's own outcome */
       }
-    }
+      // Each guarded on its own: one disposer throwing must not strand the others, and a teardown
+      // failure must never replace the run's own outcome.
+      for (const dispose of facetDisposers.splice(0)) {
+        try {
+          await dispose();
+        } catch {
+          opts.onTeardownUncertain?.();
+          /* a withdrawal that throws has, at worst, left the entry it was removing */
+        }
+      }
+    } finally { releaseBrokerRequirement?.(); }
   }
 }
 

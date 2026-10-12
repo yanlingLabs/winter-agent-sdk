@@ -33,6 +33,7 @@
 // omitted means all three tiers, which is the pinned CLI default; `[]` is the hermetic-host mode
 // and reads nothing from the filesystem.
 import { execFileSync } from "node:child_process";
+import { prepareHostChildLaunch } from "../sandbox/host-child-floor.ts";
 import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
@@ -120,7 +121,8 @@ export function projectInstructionRoot(cwd: string): string | null {
   if (cached !== undefined) return cached;
   let root: string | null = null;
   try {
-    const out = execFileSync("git", ["-C", key, "rev-parse", "--show-toplevel"], {
+    const launch = prepareHostChildLaunch("git", ["-C", key, "rev-parse", "--show-toplevel"], { cwd: key });
+    const out = execFileSync(launch.command, launch.args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();

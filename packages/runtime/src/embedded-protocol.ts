@@ -13,6 +13,7 @@
 // code out. The wire INSIDE those chunks is the unchanged NDJSON frame stream (WS-04 §2), so the
 // wrapper's `query()`, the projector, the approval bridge and `sdk_mcp_call` cannot tell a Worker
 // from a spawned `winter` -- which is the whole point: one protocol, two topologies.
+import type { HostExecutionFloor } from "@yanlinglabs/winter-agent-sdk";
 
 /** A worker-side spawn command (the workflow worker's `(file, args)`), structurally `workflows/sandbox.ts`'s `WorkerCommand`. */
 export interface EmbeddedWorkflowWorkerCommand {
@@ -34,6 +35,8 @@ export type EmbeddedHostMessage =
       workflowWorkerCommand?: EmbeddedWorkflowWorkerCommand;
       /** Trusted host Worker lifecycle channel only; never RuntimeConfig or environment. */
       brokerRequired?: true;
+      /** Trusted host lifecycle channel, distinct from serialized RuntimeConfig. */
+      hostChildFloor?: HostExecutionFloor;
     }
   | { kind: "stdin"; chunk: string }
   | { kind: "stdin-end" }
