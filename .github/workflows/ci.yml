@@ -21,6 +21,8 @@ jobs:
         run: bun build --compile scripts/guest-supervisor/client.ts --outfile /tmp/winter-supervisor-ci-client
       - name: real Linux supervisor UID/mount/PID/private-channel boundary
         run: sudo -n python3 -I -S scripts/guest-supervisor/verify.py --runtime-client /tmp/winter-supervisor-ci-client
+      - name: supervisor saturation, absolute deadlines and descriptor refusal cleanup
+        run: python3 -I -S scripts/guest-supervisor/test_protocol.py
 
   # --- P9a-4: the SAME macOS build as release.yml's `build-platform`, minus the tag pin, on EVERY
   # push -- so a broken darwin build fails here, before a `v*` tag ever exists to discover it at

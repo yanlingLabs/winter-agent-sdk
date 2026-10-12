@@ -13,7 +13,9 @@ an explicit logical conversation→SDK backend mapping, distinct runtime/tool UI
 helper hashes. Socket/control directories use the logical conversation ID; request authority and ToolExecutionContext use only the SDK backend ID. The store path remains `/workspace/.winter/conversations/<logical-id>`, separate from that backend ID. Each socket admits exactly its runtime UID via SO_PEERCRED. Tool
 requests cannot pick a different identity, UID, root, policy, command argv or env.
 Source root entries are compared exactly with the captured admitted mappings;
-control, artifact/environment and declared protected-store overlaps refuse.
+control, artifact/environment and declared protected-store overlaps refuse. Bootstrap
+source directory spellings must be canonical: every component is opened without
+following symlinks and the held descriptor must match its checked identity.
 The private root-controlled admin socket can revoke a session and inspect
 invocation cleanup status; runtime/tool UIDs cannot use it.
 
@@ -37,10 +39,14 @@ file effects after cancellation; such commands/writes are never replayed.
 
 The service bounds request/response frames at 2 MiB, file/combined process output
 at 1 MiB, command input at 64 KiB, stderr diagnostics at 16 KiB, active connections
-and invocations at eight, roots at sixteen per conversation and conversations at
+and invocations at eight, a separate reserved admin connection pool at two,
+roots at sixteen per conversation and conversations at
 sixteen. Stdin delivery and post-kill cleanup have separate two-second deadlines.
 Request IDs are never replayed; exhausted duplicate tracking refuses new effects
-rather than evicting replay protection. Socket/input/capture loops are bounded.
+rather than evicting replay protection. The entire request header and body share
+one three-second monotonic deadline; trickled bytes cannot renew it. Ancillary
+descriptors are owned before native admission parsing and closed on refusal.
+Socket/input/capture loops are bounded.
 
 ## Linux CI
 

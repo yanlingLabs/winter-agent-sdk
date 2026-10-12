@@ -6,6 +6,9 @@ import array, base64, hashlib, json, os, re, selectors, select, signal, socket, 
 from pathlib import Path
 
 FRAME_LIMIT=2*1024*1024
+FRAME_READ_SECONDS=3
+TOOL_CONNECTION_LIMIT=8
+ADMIN_CONNECTION_LIMIT=2
 AUTH_KEYS=('workspaceId','sessionId','incarnationId','leaseEpoch','configRevision','grantRevision','policyRevision')
 ID=re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$')
 class Refusal(Exception):pass
@@ -45,17 +48,25 @@ def verify_held_artifact(fd,pin):
         digest.update(data);offset+=len(data)
     if digest.hexdigest()!=pin:raise Refusal('artifact_changed')
 
-def frame_read(channel):
+def frame_read(channel,timeout=FRAME_READ_SECONDS):
+    deadline=time.monotonic()+timeout;original_timeout=channel.gettimeout()
     def exact(count):
         result=bytearray()
         while len(result)<count:
-            data=channel.recv(count-len(result))
+            remaining=deadline-time.monotonic()
+            if remaining<=0:raise Refusal('frame_deadline')
+            channel.settimeout(remaining)
+            try:data=channel.recv(count-len(result))
+            except socket.timeout:raise Refusal('frame_deadline')
+            if time.monotonic()>=deadline:raise Refusal('frame_deadline')
             if not data:raise Refusal('channel_closed')
             result.extend(data)
         return bytes(result)
-    size=struct.unpack('!I',exact(4))[0]
-    if size<1 or size>FRAME_LIMIT:raise Refusal('frame_limit')
-    return json.loads(exact(size))
+    try:
+        size=struct.unpack('!I',exact(4))[0]
+        if size<1 or size>FRAME_LIMIT:raise Refusal('frame_limit')
+        return json.loads(exact(size))
+    finally:channel.settimeout(original_timeout)
 def frame_write(channel,value):
     data=canonical(value).encode()
     if len(data)>FRAME_LIMIT:raise Uncertain('response_limit')
@@ -63,12 +74,48 @@ def frame_write(channel,value):
 
 def peer_uid(channel):return struct.unpack('3i',channel.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))[1]
 
+def source_directory(source,protected):
+    # Bootstrap roots must be canonical, with no symlink at ANY path component.
+    # Compare the admitted identity to the held descriptor after the walk, so a
+    # rename/replacement between policy check and open cannot redirect the root.
+    spelling=Path(source)
+    if not spelling.is_absolute() or any(part in ('.','..') for part in spelling.parts):raise Refusal('source_path')
+    resolved=spelling.resolve(strict=True);expected=resolved.stat()
+    if spelling!=resolved:raise Refusal('source_alias')
+    if any(resolved==path or resolved in path.parents or path in resolved.parents for path in protected):raise Refusal('protected_source_overlap')
+    fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC)
+    try:
+        for component in spelling.parts[1:]:
+            next_fd=os.open(component,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd)
+            os.close(fd);fd=next_fd
+        actual=os.fstat(fd)
+        if (actual.st_dev,actual.st_ino)!=(expected.st_dev,expected.st_ino):raise Refusal('source_changed')
+        result=fd;fd=None;return result
+    finally:
+        if fd is not None:os.close(fd)
+
+def receive_init_pidfd(control):
+    owned=[]
+    try:
+        marker,ancillary,flags,_=control.recvmsg(16,socket.CMSG_SPACE(16*array.array('i').itemsize),getattr(socket,'MSG_CMSG_CLOEXEC',0))
+        # recvmsg installs descriptors even if the envelope is malformed. Own
+        # every delivered descriptor BEFORE validating marker/count/truncation.
+        for level,kind,data in ancillary:
+            if (level,kind)==(socket.SOL_SOCKET,socket.SCM_RIGHTS):
+                usable=len(data)-len(data)%array.array('i').itemsize
+                owned.extend(array.array('i',data[:usable]))
+        for fd in owned:os.set_inheritable(fd,False)
+        if marker!=b'I' or flags&~getattr(socket,'MSG_CMSG_CLOEXEC',0) or len(ancillary)!=1 or ancillary[0][:2]!=(socket.SOL_SOCKET,socket.SCM_RIGHTS) or len(ancillary[0][2])!=array.array('i').itemsize or len(owned)!=1:raise Uncertain('init_admission_lost')
+        return owned.pop()
+    finally:
+        for fd in owned:os.close(fd)
+
 class ToolService:
     def __init__(self,config):
         if sys.platform!='linux' or os.geteuid()!=0:raise Refusal('protected_linux_root_required')
         if not sys.flags.isolated or not sys.flags.no_site:raise Refusal('isolated_interpreter_required')
         if config.get('guestBootId')!=Path('/proc/sys/kernel/random/boot_id').read_text().strip():raise Refusal('stale_guest_boot')
-        self.lock=threading.RLock();self.stop_event=threading.Event();self.conversations={};self.active={};self.debt=set();self.seen={};self.retained_children=[];self.connections=threading.BoundedSemaphore(8)
+        self.lock=threading.RLock();self.stop_event=threading.Event();self.conversations={};self.active={};self.debt=set();self.seen={};self.retained_children=[];self.tool_connections=threading.BoundedSemaphore(TOOL_CONNECTION_LIMIT);self.admin_connections=threading.BoundedSemaphore(ADMIN_CONNECTION_LIMIT)
         self.artifacts={};self.artifact_pins={};self.owned=[];self.listeners=[];self.threads=[]
         try:
             for name in ('launcher','fileWorker','processWorker'):self.artifacts[name]=pinned_artifact(config['artifacts'][name]);self.artifact_pins[name]=config['artifacts'][name]['sha256'];self.owned.append(self.artifacts[name])
@@ -99,9 +146,7 @@ class ToolService:
                     parts=guest[1:].split('/')
                     allowed=(len(parts)>=3 and parts[:2] in (['workspace','folders'],['workspace','repos'])) or parts==['workspace','.winter','memory'] or parts==['workspace','.winter','scratch',sid] or parts==['workspace','outputs',sid]
                     if not allowed:raise Refusal('protected_root')
-                    source_path=Path(root['source']).resolve(strict=True)
-                    if any(source_path==path or source_path in path.parents or path in source_path.parents for path in protected):raise Refusal('protected_source_overlap')
-                    fd=os.open(root['source'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);self.owned.append(fd)
+                    fd=source_directory(root['source'],protected);self.owned.append(fd)
                     roots[root['id']]={'root':{'id':root['id'],'guestPath':guest,'readOnly':root['readOnly']},'fd':fd}
                 views=[v['root']['guestPath'] for v in roots.values()]
                 if len(set(views))!=len(views) or any(a!=b and b.startswith(a+'/') for a in views for b in views):raise Refusal('overlapping_roots')
@@ -110,27 +155,28 @@ class ToolService:
                 self.seen[sid]=set()
         except BaseException:
             self.close();raise
-    def _listener(self,path,uid,handler):
-        server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);server.bind(str(path));os.chmod(path,0o660 if uid else 0o600);os.chown(path,0,uid);server.listen(8);server.settimeout(.1);self.listeners.append(server)
+    def _listener(self,path,uid,handler,*,admin=False):
+        capacity=self.admin_connections if admin else self.tool_connections
+        server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);server.bind(str(path));os.chmod(path,0o660 if uid else 0o600);os.chown(path,0,uid);server.listen(ADMIN_CONNECTION_LIMIT if admin else TOOL_CONNECTION_LIMIT);server.settimeout(.1);self.listeners.append(server)
         def accept():
             while not self.stop_event.is_set():
                 try:connection,_=server.accept()
                 except socket.timeout:continue
                 except OSError:break
-                if not self.connections.acquire(False):connection.close();continue
+                if not capacity.acquire(False):connection.close();continue
                 def serve(connection=connection):
                     try:
                         connection.settimeout(3)
                         if peer_uid(connection)!=uid:raise Refusal('peer_identity')
                         handler(connection)
                     except (OSError,ValueError,Refusal,Uncertain):pass
-                    finally:connection.close();self.connections.release()
+                    finally:connection.close();capacity.release()
                 thread=threading.Thread(target=serve,daemon=True);thread.start()
                 with self.lock:self.threads=[t for t in self.threads if t.is_alive()]+[thread]
         thread=threading.Thread(target=accept,daemon=True);thread.start();self.threads.append(thread)
     def start(self):
         for sid,item in self.conversations.items():self._listener(item['socket'],item['runtimeUid'],lambda channel,sid=sid:self._request(sid,channel))
-        self._listener(self.directory/'admin.sock',0,self._admin)
+        self._listener(self.directory/'admin.sock',0,self._admin,admin=True)
     def _admin(self,channel):
         request=frame_read(channel)
         if set(request)!={'operation','sessionId'} or request['operation'] not in ('revoke','status'):raise Refusal('admin_request')
@@ -208,9 +254,7 @@ class ToolService:
             for binding in item['roots'].values():arguments.extend((str(binding['fd']),binding['root']['guestPath'],'1' if binding['root']['readOnly'] else '0'));descriptors.append(binding['fd'])
             child=subprocess.Popen(arguments,executable=f"/proc/self/fd/{self.artifacts['launcher']}",stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=descriptors,close_fds=True,env={'LANG':'C','LC_ALL':'C'},start_new_session=True,bufsize=0)
             parent.close();control.settimeout(2)
-            marker,ancillary,flags,_=control.recvmsg(16,socket.CMSG_SPACE(4))
-            if marker!=b'I' or flags or len(ancillary)!=1 or ancillary[0][:2]!=(socket.SOL_SOCKET,socket.SCM_RIGHTS) or len(ancillary[0][2])!=4:raise Uncertain('init_admission_lost')
-            pidfd=array.array('i',ancillary[0][2])[0];os.set_inheritable(pidfd,False)
+            pidfd=receive_init_pidfd(control)
             selector=selectors.DefaultSelector();remaining=memoryview(payload);out=bytearray();err=bytearray();terminal=None;start=time.monotonic();terminated=False;kill_deadline=None
             for stream,event in ((child.stdin,selectors.EVENT_WRITE),(child.stdout,selectors.EVENT_READ),(child.stderr,selectors.EVENT_READ)):
                 os.set_blocking(stream.fileno(),False);selector.register(stream,event)

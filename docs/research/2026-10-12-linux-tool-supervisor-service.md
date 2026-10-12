@@ -31,3 +31,26 @@ The updated existing Linux `guest-file-boundary` CI job first runs the prior ker
 The service's numeric roles/authentication and native tool lifetime are implemented; automatic UID allocation and old-runtime reconciliation, launching/restoring actual SDK conversation processes, immutable Python/shell/library image packaging, protected SDK-store native ownership, provider/approval/context/extension routes and actual full confined startup remain open. The verified private-volume pair/readiness envelope is an external mandatory bootstrap prerequisite; config bytes, allocated files or ext4 signatures never grant production availability. No formatter/volume descriptor is exposed on the tool channel. The filesystem bootstrap protocol-2 feature set and provenance-bound noinit_itable mount rule must be enforced by the future immutable mount adapter before service construction; the directory-based CI fixture proves none of that raw-volume mount readiness.
 
 `supportsConfinedGuestExecution` remains false and every actual engine/embedded confined startup entry still refuses. No Code outer floor, encryption requirement, host execution override or guest mode availability was introduced.
+
+## Independent-review correction
+
+The original `30bb3f18` source had four reproduced blockers: the shared eight-slot
+connection pool starved admin revocation, per-recv timeout accepted endless
+trickle, source resolve/check followed by leaf-only O_NOFOLLOW allowed an ancestor
+swap, and malformed initial SCM_RIGHTS leaked installed descriptors. This leaf
+correction reserves a separate bounded two-slot admin pool, enforces one
+monotonic three-second header/body deadline, walks every source component with
+O_NOFOLLOW and compares the held inode/device to the checked identity, and owns
+all received descriptors before envelope validation (including truncation).
+Bootstrap source aliases now refuse; ordinary in-root file-tool symlink behavior
+is unchanged. No native launcher, helper, workload or confinement policy changed.
+
+Correction evidence: **10 platform-neutral Python tests** exercise actual Unix
+listener saturation with eight held tool connections plus status/revoke, absolute
+trickle timeout and allowed fragments, real ancestor-symlink/rename races, and
+actual malformed/multiple/truncated SCM_RIGHTS transfers with descriptor closure.
+Only peer identity/chown are mocked in the local listener test; it does not prove
+Linux UID enforcement. **67 SDK tests, zero failures, 398 expectations across six
+suites**, plus both typecheck projects pass. The protocol regression runs in the
+existing Linux CI job as well. Linux privileged fixture execution remains pending
+review/push; no VM, native worker, privileged service or provider was launched.
