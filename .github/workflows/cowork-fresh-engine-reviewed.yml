@@ -22,7 +22,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: fresh-engine-linux-review
-          run-id: 38297363437
+          run-id: 38300387281
           github-token: ${{ github.token }}
           path: out/fresh-engine-approved
       - name: Verify and unpack the measured source as the ordinary runner
@@ -45,8 +45,8 @@ jobs:
               if len(wire) != identity.st_size or hashlib.sha256(wire).hexdigest() != expected:
                   raise SystemExit('approved input bytes changed')
               return wire
-          compiled = json.loads(bounded('compile-receipt.json', 16 * 1024 * 1024, '002a0612037889b2488a21943b77828433b12d0872440c4310c756321ebe3902'))
-          native = json.loads(bounded('receipt.json', 16 * 1024 * 1024, '3126fe58cf65385efbaa465820e2614da5abf1e55caf5c9b7fff92f2bf8c3120'))
+          compiled = json.loads(bounded('compile-receipt.json', 16 * 1024 * 1024, 'f7a07e1e874518ac051547ebd7fd61eef99296f44b595ce4d6005c3cddedca2d'))
+          native = json.loads(bounded('receipt.json', 16 * 1024 * 1024, '4a6037468ba3e632e87182c8004f133f3b13dd8d9ad7be73b1349d7fae5db6ea'))
           # Refuse stale fixture runs on subsequent source changes. The approved
           # snapshot remains frozen; a new source needs a new reviewed build.
           for name, digest in native['sources'].items():
@@ -54,7 +54,7 @@ jobs:
               if path.is_absolute() or str(path) != name or any(part in ('.', '..') for part in path.parts):
                   raise SystemExit('approved current source path')
               bounded(name, 16 * 1024 * 1024, digest, root=Path.cwd())
-          archive = bounded('source.tar.gz', 64 * 1024 * 1024, '8ea88b897ae4ecf5926716e43c207b5f967bfb329b70a65d3e13b4a6fdd203c7')
+          archive = bounded('source.tar.gz', 64 * 1024 * 1024, '57231584be79a7ba3c5301e0f953a01ad1a82bf24970aede7b3c8d90ba95fa2c')
           import io
           destination = folder / 'unpacked'
           destination.mkdir(mode=0o700)
@@ -107,4 +107,4 @@ jobs:
           if len(data)!=identity.st_size or hashlib.sha256(data).hexdigest()!=digest:raise SystemExit("unreviewed parent refused")
           sys.argv=[source,*arguments]
           exec(compile(data,"<reviewed-fresh-parent>","exec"),{"__name__":"__main__","__file__":source})
-          ' out/fresh-engine-approved/unpacked/source/scripts/guest-engine/stage.py a801bc4fe5d6c207ee5b09a471f9c5bb79379f6106fa0a4e19e70f2c8a3d6496 --source out/fresh-engine-approved/unpacked/source --artifacts out/fresh-engine-approved --receipt out/fresh-engine-approved/receipt.json --approved-receipt-sha256 3126fe58cf65385efbaa465820e2614da5abf1e55caf5c9b7fff92f2bf8c3120 --approved-parent-sha256 a801bc4fe5d6c207ee5b09a471f9c5bb79379f6106fa0a4e19e70f2c8a3d6496
+          ' out/fresh-engine-approved/unpacked/source/scripts/guest-engine/stage.py a801bc4fe5d6c207ee5b09a471f9c5bb79379f6106fa0a4e19e70f2c8a3d6496 --source out/fresh-engine-approved/unpacked/source --artifacts out/fresh-engine-approved --receipt out/fresh-engine-approved/receipt.json --approved-receipt-sha256 4a6037468ba3e632e87182c8004f133f3b13dd8d9ad7be73b1349d7fae5db6ea --approved-parent-sha256 a801bc4fe5d6c207ee5b09a471f9c5bb79379f6106fa0a4e19e70f2c8a3d6496
