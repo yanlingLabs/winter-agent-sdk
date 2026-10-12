@@ -28,11 +28,14 @@ static void directory_fd(int fd) {
 /* Inherited descriptors retain paths in the parent's mount namespace. A legacy
  * MS_BIND of /proc/self/fd/N can therefore fail EINVAL after unshare. Clone the
  * exact admitted descriptor into a detached mount, then attach that object. */
-static void bind_descriptor(int fd,const char *target,int readonly,int executable) {
+static int clone_descriptor(int fd,int readonly,int executable) {
     int tree=(int)syscall(SYS_open_tree,fd,"",OPEN_TREE_CLONE|OPEN_TREE_CLOEXEC|AT_EMPTY_PATH);
     require(tree,"clone admitted mount");
     struct mount_attr attributes={.attr_set=MOUNT_ATTR_NOSUID|MOUNT_ATTR_NODEV|(readonly?MOUNT_ATTR_RDONLY:0)|(executable?0:MOUNT_ATTR_NOEXEC)};
     require((int)syscall(SYS_mount_setattr,tree,"",AT_EMPTY_PATH,&attributes,sizeof attributes),"admitted mount flags");
+    return tree;
+}
+static void attach_descriptor(int tree,const char *target) {
     require((int)syscall(SYS_move_mount,tree,"",AT_FDCWD,target,MOVE_MOUNT_F_EMPTY_PATH),"attach admitted mount");
     close(tree);
 }
@@ -58,6 +61,17 @@ int main(int argc,char **argv) {
     if(poll(&supervisor,1,0)!=0)_exit(77);
     close(supervisor_pidfd);
     int parent_pidfd=(int)syscall(SYS_pidfd_open,getpid(),0);require(parent_pidfd,"parent pidfd");
+    /* Clone while admitted descriptors still belong to the current mount namespace.
+     * Detached mount objects can then cross into the child's private namespace. */
+    int root_trees[16],environment_trees[4]={-1,-1,-1,-1};
+    const char *environment_parts[]={"bin","lib","lib64","usr"};
+    for(int i=0;i<roots;i++)root_trees[i]=clone_descriptor(descriptor(argv[15+3*i]),number(argv[17+3*i],0,1)||!strcmp(argv[7],"plan"),0);
+    int worker_tree=clone_descriptor(worker,1,1);
+    if(process)for(int i=0;i<4;i++){
+        int part=openat(environment,environment_parts[i],O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+        if(part<0){if(errno==ENOENT)continue;require(-1,"environment identity");}
+        environment_trees[i]=clone_descriptor(part,1,1);close(part);
+    }
     require(unshare(CLONE_NEWNS|CLONE_NEWIPC|CLONE_NEWUTS|CLONE_NEWNET|CLONE_NEWPID),"namespace admission");
     require(mount(NULL,"/",NULL,MS_REC|MS_PRIVATE,NULL),"private mounts");
     pid_t child=fork();require(child,"namespace init");
@@ -80,19 +94,17 @@ int main(int argc,char **argv) {
     require(mount("tmpfs",root,"tmpfs",MS_NOSUID|MS_NODEV,"mode=0755,size=16m"),"tool view");
     for(int i=0;i<roots;i++){
         point(root,argv[16+3*i],target,sizeof target);
-        bind_descriptor(descriptor(argv[15+3*i]),target,number(argv[17+3*i],0,1)||!strcmp(argv[7],"plan"),0);
+        attach_descriptor(root_trees[i],target);
     }
     if(process){
-        const char *parts[]={"bin","lib","lib64","usr"};
         for(int i=0;i<4;i++){
-            int part=openat(environment,parts[i],O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
-            if(part<0){if(errno==ENOENT)continue;require(-1,"environment identity");}
-            path(target,sizeof target,root,parts[i]);require(mkdir(target,0755),"environment mountpoint");bind_descriptor(part,target,1,1);close(part);
+            if(environment_trees[i]<0)continue;
+            path(target,sizeof target,root,environment_parts[i]);require(mkdir(target,0755),"environment mountpoint");attach_descriptor(environment_trees[i],target);
         }
         path(target,sizeof target,root,"tmp");require(mkdir(target,0755),"scratch mountpoint");
         require(mount("tmpfs",target,"tmpfs",MS_NOSUID|MS_NODEV|MS_NOEXEC,"mode=1777,size=8m"),"private scratch");
     }
-    path(target,sizeof target,root,"file-worker");require(close(open(target,O_WRONLY|O_CREAT|O_EXCL,0555)),"helper point");bind_descriptor(worker,target,1,1);
+    path(target,sizeof target,root,"file-worker");require(close(open(target,O_WRONLY|O_CREAT|O_EXCL,0555)),"helper point");attach_descriptor(worker_tree,target);
     require(mount(NULL,root,NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NODEV,NULL),"protected skeleton");
     require(chdir(root),"view cwd");require(chroot("."),"view root");require(chdir(argv[10]),"admitted source cwd");
     require(prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0),"no new privileges");
