@@ -19,7 +19,8 @@ import {
   resolveNetworkPosture,
   type SandboxSettings,
 } from "./profile.ts";
-import type { GlobDenyEntry } from "../permissions/file-rules.ts";
+import { globDenyEntriesOf, splitDenyPathsByGlobShape, type GlobDenyEntry } from "../permissions/file-rules.ts";
+import { currentHostCodeProtectionPaths } from "./host-code-protection.ts";
 import { trackProcessGroup } from "../process-groups.ts";
 import { buildMandatoryFloorProfile, hasMandatoryFloor, type HostExecutionFloor, type HostCodeProcessScope, type HostCodeProcessHandle } from "@yanlinglabs/winter-agent-sdk";
 import { currentHostCodeProcessClient, hostCodeProcessBrokerRequired, requireBoundHandle } from "./host-code-process.ts";
@@ -336,16 +337,18 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
     }
     const allowNetwork = resolveNetworkPosture(opts.settings.network); // throws SandboxConfigError on a domain-list config -- propagates to the caller uncaught, by design (§2/§12)
     const darwinUserTempDir = resolveDarwinUserTempDir();
+    const protection = currentHostCodeProtectionPaths();
+    const read = splitDenyPathsByGlobShape(protection.denyReadPaths), write = splitDenyPathsByGlobShape(protection.denyWritePaths);
     profile = buildSeatbeltProfile({
       cwd: opts.cwd,
       ...(opts.writableRoots !== undefined ? { writableRoots: opts.writableRoots } : {}),
-      ...(opts.denyWritePaths !== undefined ? { denyWritePaths: opts.denyWritePaths } : {}),
-      ...(opts.denyReadPaths !== undefined ? { denyReadPaths: opts.denyReadPaths } : {}),
-      ...(opts.denyWriteRegexes !== undefined ? { denyWriteRegexes: opts.denyWriteRegexes } : {}),
-      ...(opts.denyReadRegexes !== undefined ? { denyReadRegexes: opts.denyReadRegexes } : {}),
-      ...(opts.denyWriteGlobFixedPrefixes !== undefined ? { denyWriteGlobFixedPrefixes: opts.denyWriteGlobFixedPrefixes } : {}),
-      ...(opts.denyReadGlobFixedPrefixes !== undefined ? { denyReadGlobFixedPrefixes: opts.denyReadGlobFixedPrefixes } : {}),
-      ...(opts.denyReadGlobEntries !== undefined ? { denyReadGlobEntries: opts.denyReadGlobEntries } : {}),
+      denyWritePaths: [...(opts.denyWritePaths ?? []), ...new Set([...protection.denyWritePaths, ...write.paths])],
+      denyReadPaths: [...(opts.denyReadPaths ?? []), ...new Set([...protection.denyReadPaths, ...read.paths])],
+      denyWriteRegexes: [...(opts.denyWriteRegexes ?? []), ...write.regexes],
+      denyReadRegexes: [...(opts.denyReadRegexes ?? []), ...read.regexes],
+      denyWriteGlobFixedPrefixes: [...(opts.denyWriteGlobFixedPrefixes ?? []), ...write.globFixedPrefixes],
+      denyReadGlobFixedPrefixes: [...(opts.denyReadGlobFixedPrefixes ?? []), ...read.globFixedPrefixes],
+      denyReadGlobEntries: [...(opts.denyReadGlobEntries ?? []), ...globDenyEntriesOf(protection.denyReadPaths)],
       allowNetwork,
       ...(darwinUserTempDir !== null ? { darwinUserTempDir } : {}),
       ...(opts.home !== undefined ? { home: opts.home } : {}),

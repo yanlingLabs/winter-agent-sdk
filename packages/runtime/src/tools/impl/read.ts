@@ -1,4 +1,5 @@
 import { guestFileSessionOf, guestFileError } from "../../guest/file-session.ts";
+import { assertHostCodePathAccess } from "../../sandbox/host-code-protection.ts";
 import { guestTarget, guestText } from "../../guest/file-tools.ts";
 // WS-06 §3.1 "Read" -- the real executor (Phase 3, Lane A / Task 4). Registers over the stub
 // descriptors/read.ts already put in the registry (see registry.ts's own header: "every later
@@ -421,8 +422,10 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
   const target = resolve(ctx.cwd, input.file_path.trim());
   let st: Stats;
   try {
+    assertHostCodePathAccess(target, "read", ctx.sandboxSettings, ctx.cwd);
     st = statSync(target);
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === "HostCodeProtectionError") return { output: `Error: ${error.message}`, isError: true };
     return { output: `Error: file not found: ${input.file_path}`, isError: true };
   }
   if (st.isDirectory()) {

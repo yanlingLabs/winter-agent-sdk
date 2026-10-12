@@ -23,10 +23,12 @@
 // and every Worker shares the host's pid, so the lock itself cannot tell them apart.
 import type { HostExecutionFloor, SpawnedRuntimeProcess, SpawnRuntimeOptions } from "@yanlinglabs/winter-agent-sdk";
 import { MandatoryFloorUnavailableError } from "@yanlinglabs/winter-agent-sdk";
+import { copyHostCodeProtection, type HostCodeProtection } from "./sandbox/host-code-protection.ts";
 import { Queue } from "./protocol/channel.ts";
 import type { EmbeddedHostMessage, EmbeddedWorkerMessage, EmbeddedWorkflowWorkerCommand } from "./embedded-protocol.ts";
 
 export type { EmbeddedHostMessage, EmbeddedWorkerMessage, EmbeddedWorkflowWorkerCommand } from "./embedded-protocol.ts";
+export type { HostCodeProtection } from "./sandbox/host-code-protection.ts";
 
 /**
  * How long `kill()` lets an aborted session unwind before `terminate()`.
@@ -50,6 +52,8 @@ export interface SpawnEmbeddedWorkerOptions {
   brokerRequired?: boolean;
   /** Trusted subprocess-only floor. Does not enroll in-process Worker filesystem access. */
   hostChildFloor?: HostExecutionFloor;
+  /** Trusted current host path policy. Does not wrap approved Code/third-party execution. */
+  hostCodeProtection?: HostCodeProtection;
   /**
    * The Worker entry as THIS host must spell it. In a `bun build --compile` binary that is the plain
    * relative path of the host's own worker file as it was passed to `--compile` (`"./embedded-worker.ts"`
@@ -74,6 +78,9 @@ export interface SpawnEmbeddedWorkerOptions {
 }
 
 export interface EmbeddedWorkerProcess extends SpawnedRuntimeProcess {
+  /** Resolves only on this Worker's applied (or pre-start retained) revision acknowledgement.
+   * Applies to subsequent operation checks/launches, not already-running native children. */
+  updateHostCodeProtection(protection: HostCodeProtection): Promise<number>;
   /** Hard stop NOW -- the backstop `kill()` arms, exposed for a host whose own budget ran out. Idempotent. */
   terminate(): void;
   /** `running` → (`kill()`) `stopping` → `closed`. `closed` means `exited` has settled. */
@@ -120,6 +127,9 @@ export function spawnEmbeddedWorker(opts: SpawnEmbeddedWorkerOptions): EmbeddedW
     throw new MandatoryFloorUnavailableError("embedded Workers cannot satisfy a required host floor; launch a native floored runtime");
   }
   const hostChildFloor = opts.hostChildFloor ? structuredClone(opts.hostChildFloor) : undefined;
+  const hostCodeProtection = opts.hostCodeProtection === undefined ? undefined : copyHostCodeProtection(opts.hostCodeProtection);
+  let nextProtectionRequest = 1;
+  const protectionUpdates = new Map<number, { revision: number; resolve(value: number): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
   const stdout = new Queue<string>();
   const stderr = new Queue<string>();
   const graceMs = opts.killGraceMs ?? EMBEDDED_KILL_GRACE_MS;
@@ -153,6 +163,8 @@ export function spawnEmbeddedWorker(opts: SpawnEmbeddedWorkerOptions): EmbeddedW
   const onClosed = (): void => {
     if (state === "closed") return;
     state = "closed";
+    for (const pending of protectionUpdates.values()) { clearTimeout(pending.timer); pending.reject(new Error("embedded host path-policy channel closed")); }
+    protectionUpdates.clear();
     if (graceTimer !== undefined) clearTimeout(graceTimer);
     if (closeTimer !== undefined) clearTimeout(closeTimer);
     // Ordering, as `inMemoryProcess` documents it: end the streams first (buffered chunks still drain
@@ -183,6 +195,14 @@ export function spawnEmbeddedWorker(opts: SpawnEmbeddedWorkerOptions): EmbeddedW
   worker.onmessage = (event: MessageEvent) => {
     const message = event.data as EmbeddedWorkerMessage;
     switch (message.kind) {
+      case "host-code-protection-updated": {
+        const pending = protectionUpdates.get(message.requestId);
+        if (!pending) return;
+        protectionUpdates.delete(message.requestId); clearTimeout(pending.timer);
+        if (message.ok === true && message.revision === pending.revision) pending.resolve(message.revision);
+        else pending.reject(new Error("embedded host path-policy update refused"));
+        return;
+      }
       case "stdout":
         stdout.write(message.chunk);
         return;
@@ -225,7 +245,7 @@ export function spawnEmbeddedWorker(opts: SpawnEmbeddedWorkerOptions): EmbeddedW
   });
   worker.addEventListener("close", onClosed);
 
-  const start: EmbeddedHostMessage = { kind: "start", argv: [...opts.spawn.args], ...(opts.brokerRequired ? { brokerRequired: true } : {}), ...(hostChildFloor ? { hostChildFloor } : {}), ...(opts.workflowWorkerCommand !== undefined ? { workflowWorkerCommand: opts.workflowWorkerCommand } : {}) };
+  const start: EmbeddedHostMessage = { kind: "start", argv: [...opts.spawn.args], ...(opts.brokerRequired ? { brokerRequired: true } : {}), ...(hostChildFloor ? { hostChildFloor } : {}), ...(hostCodeProtection ? { hostCodeProtection } : {}), ...(opts.workflowWorkerCommand !== undefined ? { workflowWorkerCommand: opts.workflowWorkerCommand } : {}) };
   if (opts.startAfter === undefined) send(start);
   // Messages to a Worker are ordered, and the Worker entry buffers `stdin`/`stdin-end`/`abort` that
   // arrive before `start` -- so holding `start` alone holds the engine without losing anything.
@@ -256,6 +276,15 @@ export function spawnEmbeddedWorker(opts: SpawnEmbeddedWorkerOptions): EmbeddedW
   }
 
   return {
+    async updateHostCodeProtection(value) {
+      if (state !== "running" || protectionUpdates.size >= 64) throw new Error("embedded host path-policy channel unavailable");
+      const protection = copyHostCodeProtection(value), requestId = nextProtectionRequest++;
+      return new Promise<number>((resolve, reject) => {
+        const timer = setTimeout(() => { protectionUpdates.delete(requestId); reject(new Error("embedded host path-policy acknowledgement timed out")); }, 5000);
+        protectionUpdates.set(requestId, { revision: protection.revision, resolve, reject, timer });
+        send({ kind: "host-code-protection-update", requestId, protection });
+      });
+    },
     stdin: {
       write(chunk: string) {
         if (stdinEnded) return;

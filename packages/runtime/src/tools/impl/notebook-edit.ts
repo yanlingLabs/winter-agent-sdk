@@ -1,4 +1,5 @@
 import { guestToolUnsupported } from "../../guest/file-session.ts";
+import { assertHostCodePathAccess } from "../../sandbox/host-code-protection.ts";
 // WS-06 §3.1 "NotebookEdit" -- implement-now, pinned schema `{notebook_path, cell_id?, new_source,
 // cell_type?, edit_mode?}`. `edit_mode` defaults to "replace"; "insert" places a cell after `cell_id`
 // (or at the start when omitted) and REQUIRES `cell_type`; "delete" removes the targeted cell.
@@ -151,6 +152,8 @@ const notebookEditExecutor: ToolExecutor = {
     const resolvedPath = resolve(ctx.cwd, parsed.notebook_path.trim());
 
     try {
+      assertHostCodePathAccess(resolvedPath, "read", ctx.sandboxSettings, ctx.cwd);
+      assertHostCodePathAccess(resolvedPath, "write", ctx.sandboxSettings, ctx.cwd);
       if (!existsSync(resolvedPath)) return errorResult(`"${resolvedPath}" does not exist -- NotebookEdit can only modify an existing notebook`);
       const stat = statSync(resolvedPath);
       if (stat.isDirectory()) return errorResult(`"${resolvedPath}" is a directory, not a file`);
@@ -222,6 +225,7 @@ const notebookEditExecutor: ToolExecutor = {
 
       // nbformat/nbformat_minor/top-level metadata are carried verbatim -- only `cells` was mutated,
       // in place, above.
+      assertHostCodePathAccess(resolvedPath, "write", ctx.sandboxSettings, ctx.cwd);
       writeFileSync(resolvedPath, JSON.stringify(notebook, null, 1), "utf8");
       const newMtimeMs = statSync(resolvedPath).mtimeMs;
       recordPostOperationRead(deps, resolvedPath, "carryForward", newMtimeMs);

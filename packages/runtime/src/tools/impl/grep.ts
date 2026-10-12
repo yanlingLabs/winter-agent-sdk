@@ -1,4 +1,5 @@
 import { guestToolUnsupported } from "../../guest/file-session.ts";
+import { hostCodePathAllowed } from "../../sandbox/host-code-protection.ts";
 // WS-06 §3.1 "Grep" -- the real executor (Phase 3, Lane A / Task 4). Registers over the stub
 // descriptors/grep.ts already put in the registry.
 //
@@ -294,7 +295,9 @@ async function loadGitignoreRules(searchRoot: string, ctx: ToolExecutionContext)
       const dir = dirname(relPosix);
       const relDir = dir === "." ? "" : dir;
       try {
-        const content = readFileSync(resolve(searchRoot, rel), "utf8");
+        const path = resolve(searchRoot, rel);
+        if (!hostCodePathAllowed(path, "read", ctx.sandboxSettings, ctx.cwd)) continue;
+        const content = readFileSync(path, "utf8");
         found.push({ relDir, depth: relDir.length === 0 ? 0 : relDir.split("/").length, content });
       } catch {
         // Unreadable .gitignore -- skip it, never abort the whole search over one bad file.
@@ -330,7 +333,8 @@ function isIgnored(relPathPosix: string, rules: readonly IgnoreRule[]): boolean 
 async function discoverCandidateFiles(searchRoot: string, globPattern: string, ctx: ToolExecutionContext): Promise<string[]> {
   const rules = await loadGitignoreRules(searchRoot, ctx);
   const out: string[] = [];
-  for (const p of await scanReadableFiles(globPattern, searchRoot, false)) {
+  const extra = ctx.sandboxSettings?.filesystem?.denyRead?.length ? (path: string) => hostCodePathAllowed(path, "read", ctx.sandboxSettings, ctx.cwd) : undefined;
+  for (const p of await scanReadableFiles(globPattern, searchRoot, false, extra)) {
     // Same absolute-yield quirk as Glob's own scan() (see glob.ts's header): join only a RELATIVE
     // match onto searchRoot. Either way, the gitignore matcher needs a path relative to searchRoot
     // (every compiled rule is anchored that way) -- computed via `relative()` from the final
@@ -484,6 +488,7 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
 
   // Fix round 10, item B: trim FIRST, as claude does -- see write.ts's identical comment.
   const scanRoot = input.path !== undefined ? resolve(ctx.cwd, input.path.trim()) : ctx.cwd;
+  if (!hostCodePathAllowed(scanRoot, "read", ctx.sandboxSettings, ctx.cwd)) return { output: "Error: protected host path access refused", isError: true };
   let candidateFiles: string[];
   try {
     const st = statSync(scanRoot);
@@ -511,7 +516,7 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
   // still walk INTO the run dir and surface its contents. Filtering every discovered candidate
   // through `ctx.permissions.probeReadAccess` closes that: a file the standing evaluator would deny
   // reading directly is never listed here either, regardless of how it was reached.
-  candidateFiles = candidateFiles.filter((f) => ctx.permissions.probeReadAccess(f) !== "deny");
+  candidateFiles = candidateFiles.filter((f) => hostCodePathAllowed(f, "read", ctx.sandboxSettings, ctx.cwd) && ctx.permissions.probeReadAccess(f) !== "deny");
   candidateFiles.sort((a, b) => a.localeCompare(b));
 
   const mode: OutputMode = input.output_mode ?? "files_with_matches";
@@ -554,6 +559,7 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
     }
     let buf: Buffer;
     try {
+      if (!hostCodePathAllowed(file, "read", ctx.sandboxSettings, ctx.cwd)) continue;
       buf = readFileSync(file);
     } catch {
       continue; // vanished mid-scan / unreadable -- skip, never abort the whole call

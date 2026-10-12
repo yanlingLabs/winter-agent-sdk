@@ -23,6 +23,7 @@
 import { isMainThread } from "node:worker_threads";
 import { Queue } from "./protocol/channel.ts";
 import { runEmbeddedSession } from "./embedded.ts";
+import { copyHostCodeProtection, type HostCodeProtection, type HostCodeProtectionLease } from "./sandbox/host-code-protection.ts";
 import type { EmbeddedHostMessage, EmbeddedWorkerMessage } from "./embedded-protocol.ts";
 import { liveProcessGroups, onProcessGroupChange } from "./process-groups.ts";
 
@@ -79,10 +80,15 @@ function installEmbeddedWorker(): void {
   const input = new Queue<string>();
   const abort = new AbortController();
   let started = false;
+  let protection: Readonly<HostCodeProtection> | undefined;
+  let protectionLease: HostCodeProtectionLease | undefined;
 
   const run = async (start: Extract<EmbeddedHostMessage, { kind: "start" }>): Promise<void> => {
     let code = 1;
     try {
+      const initial = start.hostCodeProtection === undefined ? undefined : copyHostCodeProtection(start.hostCodeProtection);
+      if (initial && (!protection || initial.revision > protection.revision)) protection = initial;
+      else if (initial && protection && initial.revision === protection.revision && JSON.stringify(initial) !== JSON.stringify(protection)) throw new Error("conflicting initial host path-policy revision");
       code = await runEmbeddedSession({
         argv: start.argv,
         env: process.env,
@@ -93,6 +99,8 @@ function installEmbeddedWorker(): void {
         ...(start.workflowWorkerCommand !== undefined ? { workflowWorkerCommand: start.workflowWorkerCommand } : {}),
         ...(start.brokerRequired ? { brokerRequired: true } : {}),
         ...(start.hostChildFloor ? { hostChildFloor: start.hostChildFloor } : {}),
+        ...(protection ? { hostCodeProtection: protection } : {}),
+        onHostCodeProtectionBound(lease) { protectionLease = lease; },
       });
     } catch (err) {
       // `runEmbeddedSession` never throws by contract; this is the belt for a host that would
@@ -108,6 +116,16 @@ function installEmbeddedWorker(): void {
   self.onmessage = (event: MessageEvent) => {
     const message = event.data as EmbeddedHostMessage;
     switch (message.kind) {
+      case "host-code-protection-update":
+        try {
+          if (!Number.isSafeInteger(message.requestId) || message.requestId < 1) throw new Error("invalid host path-policy request");
+          const next = copyHostCodeProtection(message.protection);
+          if (protection && (next.revision < protection.revision || (next.revision === protection.revision && JSON.stringify(next) !== JSON.stringify(protection)))) throw new Error("stale host path-policy revision");
+          const revision = protectionLease ? protectionLease.update(next) : next.revision;
+          protection = next;
+          post({ kind: "host-code-protection-updated", requestId: message.requestId, ok: true, revision });
+        } catch { post({ kind: "host-code-protection-updated", requestId: message.requestId, ok: false }); }
+        return;
       case "start":
         if (started) return; // exactly once; a second start is a host bug, never a second session in this realm
         started = true;

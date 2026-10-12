@@ -1,8 +1,10 @@
 import { readdirSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative as pathRelative, resolve } from "node:path";
+import { currentHostCodeProtectionPaths, hostCodePathAllowed } from "../sandbox/host-code-protection.ts";
 
 const permissionFailure = (error: unknown): boolean => typeof error === "object" && error !== null && ["EPERM", "EACCES"].includes((error as { code?: string }).code ?? "");
 function readableMetadata(path: string): boolean {
+  if (!hostCodePathAllowed(path, "read")) return false;
   try { statSync(path); return true; } catch (error) { return !permissionFailure(error); }
 }
 function fallbackStart(pattern: string, root: string): string {
@@ -18,10 +20,11 @@ function fallbackStart(pattern: string, root: string): string {
 /** Bun's native scanner aborts a whole scan on an inaccessible subtree. Retry that case
  * with directory-local errors so a protected sibling cannot hide allowed shared results.
  * Never follows a directory symlink, matching the native followSymlinks:false contract. */
-export async function scanReadableFiles(pattern: string, root: string, dot: boolean): Promise<string[]> {
+export async function scanReadableFiles(pattern: string, root: string, dot: boolean, extraReadCheck?: (path: string) => boolean): Promise<string[]> {
+  const allowed = (path: string) => hostCodePathAllowed(path, "read") && (extraReadCheck?.(path) ?? true);
   const glob = new Bun.Glob(pattern);
   const found = new Set<string>();
-  try {
+  if (!extraReadCheck && currentHostCodeProtectionPaths().denyReadPaths.length === 0) try {
     for await (const path of glob.scan({ cwd: root, onlyFiles: true, dot, followSymlinks: false })) found.add(isAbsolute(path) ? resolve(path) : resolve(root, path));
     return [...found].filter(readableMetadata);
   } catch (error) {
@@ -29,16 +32,19 @@ export async function scanReadableFiles(pattern: string, root: string, dot: bool
   }
   found.clear();
   const start=fallbackStart(pattern,root);
+  if (!allowed(start)) return [];
   const pending = [""];
   while (pending.length) {
     const relative = pending.pop()!;
     let entries;
+    if (!allowed(resolve(start, relative))) continue;
     try { entries = readdirSync(resolve(start, relative), { withFileTypes: true }); }
     catch (error) { if (permissionFailure(error) || (error as { code?: string }).code === "ENOENT") continue; throw error; }
     for (const entry of entries) {
       if (!dot && entry.name.startsWith(".")) continue;
       const child = relative ? `${relative}/${entry.name}` : entry.name;
       const absolute = resolve(start, child);
+      if (!allowed(absolute)) continue;
       if (entry.isDirectory()) { pending.push(child); continue; }
       let file = entry.isFile();
       if (entry.isSymbolicLink()) {

@@ -1,4 +1,5 @@
 import { guestFileSessionOf, guestFileError } from "../../guest/file-session.ts";
+import { assertHostCodePathAccess } from "../../sandbox/host-code-protection.ts";
 import { guestWrite } from "../../guest/file-tools.ts";
 // WS-06 §3.1 "Write" -- implement-now, pinned schema `{file_path, content}`. Create or COMPLETE
 // overwrite, never append/merge; same read-before-overwrite ladder as Edit for EXISTING files (via
@@ -90,10 +91,12 @@ const writeExecutor: ToolExecutor = {
     const deps: ReadLadderDeps = { readState: ctx.readState, probeReadAccess: ctx.permissions.probeReadAccess };
 
     try {
+      assertHostCodePathAccess(resolvedPath, "write", ctx.sandboxSettings, ctx.cwd);
       let previousContent: string | undefined;
       let type: "create" | "update";
 
       if (existsSync(resolvedPath)) {
+        assertHostCodePathAccess(resolvedPath, "read", ctx.sandboxSettings, ctx.cwd);
         const stat = statSync(resolvedPath);
         if (stat.isDirectory()) return errorResult(`"${resolvedPath}" is a directory, not a file`);
 
@@ -104,6 +107,7 @@ const writeExecutor: ToolExecutor = {
         const decision = evaluateReadLadder({ filePath: resolvedPath, currentMtimeMs: stat.mtimeMs, operation: "overwrite" }, deps);
         if (!decision.eligible) return errorResult(decision.reason);
 
+        assertHostCodePathAccess(resolvedPath, "read", ctx.sandboxSettings, ctx.cwd);
         previousContent = readFileSync(resolvedPath, "utf8");
         type = "update";
       } else {
@@ -112,6 +116,7 @@ const writeExecutor: ToolExecutor = {
         mkdirSync(dirname(resolvedPath), { recursive: true });
       }
 
+      assertHostCodePathAccess(resolvedPath, "write", ctx.sandboxSettings, ctx.cwd);
       writeFileSync(resolvedPath, parsed.content, "utf8");
       const newMtimeMs = statSync(resolvedPath).mtimeMs;
       // Write always ends up knowing the COMPLETE new content, regardless of how much of the

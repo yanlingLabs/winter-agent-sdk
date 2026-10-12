@@ -14,6 +14,7 @@
 // wrapper's `query()`, the projector, the approval bridge and `sdk_mcp_call` cannot tell a Worker
 // from a spawned `winter` -- which is the whole point: one protocol, two topologies.
 import type { HostExecutionFloor } from "@yanlinglabs/winter-agent-sdk";
+import type { HostCodeProtection } from "./sandbox/host-code-protection.ts";
 
 /** A worker-side spawn command (the workflow worker's `(file, args)`), structurally `workflows/sandbox.ts`'s `WorkerCommand`. */
 export interface EmbeddedWorkflowWorkerCommand {
@@ -37,14 +38,18 @@ export type EmbeddedHostMessage =
       brokerRequired?: true;
       /** Trusted host lifecycle channel, distinct from serialized RuntimeConfig. */
       hostChildFloor?: HostExecutionFloor;
+      /** Host path policy only; no persistent native floor on ordinary Code or third-party tools. */
+      hostCodeProtection?: HostCodeProtection;
     }
   | { kind: "stdin"; chunk: string }
   | { kind: "stdin-end" }
+  | { kind: "host-code-protection-update"; requestId: number; protection: HostCodeProtection }
   /** The embedded SIGTERM: kill background process groups, end the turn, let the engine return. */
   | { kind: "abort" };
 
 /** Worker → Host. `exit` is the last message a healthy Worker posts; the Worker closes right after it. */
 export type EmbeddedWorkerMessage =
+  | { kind: "host-code-protection-updated"; requestId: number; ok: boolean; revision?: number }
   | { kind: "stdout"; chunk: string }
   | { kind: "stderr"; chunk: string }
   | EmbeddedProcessGroupMessage
