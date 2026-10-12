@@ -1,0 +1,2 @@
+cat: /private/var/folders/xx/yyyy/T/winter-host-floor-compat-e41muW/protected/synthetic.txt: Operation not permitted
+/bin/sh: /private/var/folders/xx/yyyy/T/winter-host-floor-compat-e41muW/protected/synthetic.txt: Operation not permitted

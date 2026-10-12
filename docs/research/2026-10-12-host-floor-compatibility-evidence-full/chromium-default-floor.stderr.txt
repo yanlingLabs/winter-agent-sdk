@@ -1,0 +1,19 @@
+sandbox initialization failed: Operation not permitted
+[1012/022729.470581:ERROR:content/browser/gpu/gpu_process_host.cc:1044] GPU process exited unexpectedly: exit_code=5
+[1012/022729.470596:WARNING:content/browser/gpu/gpu_process_host.cc:1503] The GPU process has crashed 1 time(s)
+sandbox initialization failed: Operation not permitted
+[1012/022729.487686:ERROR:content/browser/gpu/gpu_process_host.cc:1044] GPU process exited unexpectedly: exit_code=5
+[1012/022729.487697:WARNING:content/browser/gpu/gpu_process_host.cc:1503] The GPU process has crashed 2 time(s)
+sandbox initialization failed: Operation not permitted
+[1012/022729.503253:ERROR:content/browser/gpu/gpu_process_host.cc:1044] GPU process exited unexpectedly: exit_code=5
+[1012/022729.503264:WARNING:content/browser/gpu/gpu_process_host.cc:1503] The GPU process has crashed 3 time(s)
+sandbox initialization failed: Operation not permitted
+[1012/022729.520094:ERROR:content/browser/gpu/gpu_process_host.cc:1044] GPU process exited unexpectedly: exit_code=5
+[1012/022729.520105:WARNING:content/browser/gpu/gpu_process_host.cc:1503] The GPU process has crashed 4 time(s)
+sandbox initialization failed: Operation not permitted
+[1012/022729.537157:ERROR:content/browser/gpu/gpu_process_host.cc:1044] GPU process exited unexpectedly: exit_code=5
+[1012/022729.537168:WARNING:content/browser/gpu/gpu_process_host.cc:1503] The GPU process has crashed 5 time(s)
+sandbox initialization failed: Operation not permitted
+[1012/022729.554405:ERROR:content/browser/gpu/gpu_process_host.cc:1044] GPU process exited unexpectedly: exit_code=5
+[1012/022729.554418:WARNING:content/browser/gpu/gpu_process_host.cc:1503] The GPU process has crashed 6 time(s)
+[1012/022729.554440:FATAL:content/browser/gpu/gpu_data_manager_impl_private.cc:389] GPU process isn't usable. Goodbye.
