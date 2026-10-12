@@ -9,8 +9,13 @@ let registration: { readonly profile: string } | undefined;
 export function installHostChildFloor(floor: HostExecutionFloor): () => void {
   if (!hasMandatoryFloor(floor)) throw new MandatoryFloorUnavailableError("host child floor requires a nonempty registration");
   if (process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")) throw new MandatoryFloorUnavailableError("native host child floor unavailable");
-  const next = Object.freeze({ profile: buildMandatoryFloorProfile(floor) });
   const previous = registration;
+  const profile = buildMandatoryFloorProfile(floor);
+  // Nested trusted owners may add restrictions, but cannot suspend a still-live owner's
+  // floor. Each profile has the same fixed version/default header; compose only its denies.
+  const next = Object.freeze({ profile: previous
+    ? `${previous.profile}\n${profile.split("\n").slice(2).join("\n")}`
+    : profile });
   registration = next;
   let released = false;
   return () => {

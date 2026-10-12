@@ -52,6 +52,24 @@ describe.skipIf(process.platform !== "darwin")("native floor on actual embedded 
     expect(currentHostChildFloorProfile()).toBeUndefined();
   });
 
+  test("nested registrations cannot weaken a live outer owner's floor", async () => {
+    const first = fixture(), second = fixture();
+    const outer = installHostChildFloor(first.floor);
+    const inner = installHostChildFloor(second.floor);
+    try {
+      for (const path of [first.secret, second.secret]) {
+        const launch = prepareHostChildLaunch("/bin/cat", [path]);
+        const result = await execute(launch.command, launch.args, first.source);
+        expect(result.ok).toBe(false); expect(result.stdout).not.toContain("synthetic-floor-needle");
+      }
+      inner();
+      const stillDenied = prepareHostChildLaunch("/bin/cat", [first.secret]);
+      expect((await execute(stillDenied.command, stillDenied.args, first.source)).ok).toBe(false);
+      const released = prepareHostChildLaunch("/bin/cat", [second.secret]);
+      expect(await execute(released.command, released.args, first.source)).toEqual({ ok: true, stdout: "synthetic-floor-needle" });
+    } finally { inner(); outer(); }
+  });
+
   test("actual PATH-resolved native child cannot read/write protected data and can use ordinary files", async () => {
     const f = fixture();
     const release = installHostChildFloor(f.floor);
