@@ -86,6 +86,12 @@ enforcement or native utility availability.
 
 ## Pending disposable Linux smoke recipe (not executed)
 
+The separately measured preparation components now live in
+[`scripts/guest-utilities`](../../scripts/guest-utilities/README.md). Its fixed
+payload adds private-proc/capability/descriptor refusal checks and has its own
+exact result oracle. Utility closure capture, runner integration and independent
+native admission are separate steps; no utility execution is implied here.
+
 An independent reviewer must admit the matching changed source/artifact closure
 before later native execution. Rebuild all receipts: prior hashes cannot admit
 this changed launcher. Keep the existing isolated system-Python staging entry,
