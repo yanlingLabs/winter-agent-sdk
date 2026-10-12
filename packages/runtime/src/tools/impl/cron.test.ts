@@ -7,7 +7,8 @@
 // needed for the durable half; the in-memory (non-durable) half IS a shared, process-wide module
 // singleton and gets the house beforeEach+afterEach reset (background-tasks.ts precedent).
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { installHostCodeProtection } from "../../sandbox/host-code-protection.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import "./cron.ts";
@@ -49,6 +50,32 @@ beforeEach(() => {
 });
 afterEach(() => {
   resetInMemoryCronStoreForTest();
+});
+
+test("durable prompt aliases cannot read protected host content or mutate it", async () => {
+  const f = tempProjectDir();
+  const protectedRoot = join(f.dir, "protected"), source = join(protectedRoot, "jobs.json");
+  mkdirSync(protectedRoot); mkdirSync(join(f.dir, ".winter"));
+  const bytes = JSON.stringify({ jobs: [{ id: "hidden", cron: "* * * * *", prompt: "protected-fixture-prompt", recurring: true, durable: true }] });
+  writeFileSync(source, bytes); symlinkSync(source, join(f.dir, ".winter", "scheduled_tasks.json"));
+  const lease = installHostCodeProtection({ revision: 1, denyReadPaths: [protectedRoot], denyWritePaths: [protectedRoot] });
+  try {
+    for (const [name, input] of [["CronList", {}], ["CronDelete", { id: "hidden" }], ["CronCreate", { cron: "* * * * *", prompt: "new", durable: true }]] as const) {
+      const result = await run(name, input, makeCtx(f.dir));
+      expect(result.isError).toBe(true); expect(result.output).not.toContain("protected-fixture-prompt");
+    }
+    expect(readFileSync(source, "utf8")).toBe(bytes);
+  } finally { lease.close(); f.cleanup(); }
+});
+
+test("durable creation honors native write denial through an empty parent-directory alias", async () => {
+  const f = tempProjectDir(), protectedRoot = join(f.dir, "protected");
+  mkdirSync(protectedRoot); symlinkSync(protectedRoot, join(f.dir, ".winter"));
+  const ctx = makeCtx(f.dir); ctx.sandboxSettings = { filesystem: { denyWrite: [protectedRoot] } };
+  try {
+    const result = await run("CronCreate", { cron: "* * * * *", prompt: "new", durable: true }, ctx);
+    expect(result.isError).toBe(true); expect(readdirSync(protectedRoot)).toEqual([]);
+  } finally { f.cleanup(); }
 });
 
 describe("validateCronExpression", () => {
