@@ -81,6 +81,8 @@ def persisted_evidence(fixture):
     states=[path for path in store.rglob('*.jsonl') if path.name==BACKEND+'.provider-state.jsonl']
     if len(transcripts)!=1 or len(states)!=1:raise AssertionError('actual SDK root transcript/provider-state inventory')
     records=[json.loads(line) for line in transcripts[0].read_text().splitlines()];state_records=[json.loads(line) for line in states[0].read_text().splitlines()]
+    for path in store.rglob('*.jsonl'):
+        if path.stat().st_size>8*1024*1024 or b'DISPOSABLE-HOST-CREDENTIAL-NOT-A-REAL-SECRET' in path.read_bytes():raise AssertionError('fixture credential leaked or store evidence bound')
     calls={};results={};assistant_ids=set();final=False
     for record in records:
         if record.get('sessionId')!=BACKEND:raise AssertionError('cross-session transcript record')

@@ -27,6 +27,9 @@ class EvidenceTests(unittest.TestCase):
             original=self.states[0][key];self.states[0][key]=value;self.write()
             with self.assertRaisesRegex(AssertionError,'state binding'):verify.persisted_evidence(self.fixture)
             self.states[0][key]=original
+    def test_host_fixture_credential_in_transcript_refuses(self):
+        self.records[-1]['message']['content'].append({'type':'text','text':'DISPOSABLE-HOST-CREDENTIAL-NOT-A-REAL-SECRET'});self.write()
+        with self.assertRaisesRegex(AssertionError,'credential leaked'):verify.persisted_evidence(self.fixture)
     def test_group_readable_store_refuses_even_with_valid_transcript(self):
         self.state.chmod(0o640)
         with self.assertRaisesRegex(AssertionError,'owner/mode'):verify.persisted_evidence(self.fixture)

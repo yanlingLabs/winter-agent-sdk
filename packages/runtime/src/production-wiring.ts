@@ -1,3 +1,4 @@
+import { assertLinuxSession, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
 import { installSourceReadRestrictions } from "./sandbox/source-read.ts";
 // Phase 5 Task 8: THE ONE PLACE every P5 lane's implementation is wired into a live session.
 //
@@ -453,6 +454,8 @@ function unionStrings(a: readonly string[] | undefined, b: readonly string[] | u
 }
 
 export interface ProductionWiringOptions {
+  /** Native fresh-only capability disables unsupported extension/source routes. */
+  linuxSessionAdmission?: LinuxSessionAdmission;
   /** The session's EFFECTIVE config (post-`resolveEngineSession`), never the raw pre-resolution one. */
   config: RuntimeConfig;
   /** The environment governing `WINTER_HOME` and every env-derived read below. Explicit at both entrypoints. */
@@ -761,6 +764,8 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
 
 async function buildProductionWiringImpl(opts: ProductionWiringOptions, restrictReads: (paths: readonly string[] | undefined) => void): Promise<ProductionWiring> {
   const { config, env } = opts;
+  const freshLinux = opts.linuxSessionAdmission !== undefined;
+  if (freshLinux) assertLinuxSession(opts.linuxSessionAdmission, config);
   // (0) THE BRAND (P7a, D19). THE ONE FALLBACK IN THE RUNTIME, and it is here rather than at each
   // reader for a reason worth stating: `query()` always puts the resolved profile on the wire, so a
   // live session's `config.brand` is never absent -- the only configs without one are the ones this
@@ -926,7 +931,7 @@ async function buildProductionWiringImpl(opts: ProductionWiringOptions, restrict
   // OQ2). Computed HERE, before `skillIndex` below, because fix round 4 (I-E) registers each
   // discovered workflow AS a synthetic skill entry -- the index itself is now this listing's one
   // consumer for `initSkills`/the Skill listing, not a second, parallel splice.
-  const workflowListing = listWorkflowsForListing({
+  const workflowListing = freshLinux ? [] : listWorkflowsForListing({
     cwd: config.cwd,
     trustedWorkspace,
     brand,
@@ -965,7 +970,7 @@ async function buildProductionWiringImpl(opts: ProductionWiringOptions, restrict
     brand,
     ...(settingSources !== undefined ? { settingSources } : {}),
     plugins: pluginSkillContributions(plugins.bundles),
-    ...(disableBundledSkills !== undefined ? { disableBundledSkills } : {}),
+    ...(freshLinux ? { disableBundledSkills: true } : disableBundledSkills !== undefined ? { disableBundledSkills } : {}),
     ...(strictPluginOnlyCustomization !== undefined ? { strictPluginOnlyCustomization } : {}),
     // Fix round 4 (I-E): every discovered workflow, registered as a synthetic skill -- see
     // `workflowSyntheticSkills`'s own comment just above for why this makes Skill("<name>") and the
@@ -1078,7 +1083,7 @@ async function buildProductionWiringImpl(opts: ProductionWiringOptions, restrict
   // SOURCE` design, not something this fix introduces) -- what this fix DOES implement is the part
   // that array order can express: `.local` is placed BEFORE `.user` in the "settings"-origin list,
   // so a name clash between the two resolves local-wins, matching "local > ... > user" for that pair.
-  const globalMcp = loadGlobalConfigMcp({
+  const globalMcp = freshLinux ? { local: {}, user: {}, rejected: [] } : loadGlobalConfigMcp({
     home: winterHome,
     cwd: config.cwd,
     gitRoot: projectInstructionRoot(config.cwd),
