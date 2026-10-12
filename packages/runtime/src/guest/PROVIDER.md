@@ -23,10 +23,16 @@ prove host adapter/native descendants stopped; the host broker retains uncertain
 work independently. A terminal turn leaves the acknowledged private binding usable
 for a later turn. Root owns child-task delegation and production channel wiring.
 
-Five focused SDK tests verify real fold/native state/tool triples, sealed model/
+Seven focused SDK tests verify real fold/native state/tool triples, sealed model/
 backend matching, framing/sequence failure without retries, and cancellation with
-late-response fencing, and pending polls without request replay. Companion Core tests exercise actual shipped Responses
+late-response fencing, pending polls without request replay, actual exchange
+deadline enforcement and oversized/malformed response refusal. Companion Core tests exercise actual shipped Responses
 and Anthropic adapters plus sidecar/tool-result continuation over fixture Worker
 bytes. That Worker is not a production sandbox, and scripted tool results are not
 Linux tool execution. Global confined startup remains refused. No SDK release,
 consumer pin, environment authorization flag or broad fallback was introduced.
+
+Final validation: 166 proxy/posture/bridge/session-provider/credential regressions
+pass (513 assertions), and both SDK typecheck projects pass. Companion Core
+validation passes 13 tests (109 assertions), including actual partial Responses
+output that fails without another upstream request or leaked fixture credential.
