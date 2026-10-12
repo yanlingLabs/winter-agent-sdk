@@ -47,22 +47,24 @@ export function createLinuxSupervisorSession(binding: LinuxSupervisorBinding) {
       }
     });
   });
-  let active = 0;
-  const queue: Array<() => void> = [];
-  const acquire = (deadline: number, signal?: AbortSignal): Promise<boolean> => new Promise(resolve => {
-    if (signal?.aborted || performance.now() >= deadline || queue.length >= 128) { resolve(false); return; }
-    if (active < 2 && queue.length === 0) { active++; resolve(true); return; }
+  const active = { file: 0, process: 0 };
+  const queues: Record<"file" | "process", Array<() => void>> = { file: [], process: [] };
+  const limits = { file: 4, process: 2 };
+  const acquire = (kind: "file" | "process", deadline: number, signal?: AbortSignal): Promise<boolean> => new Promise(resolve => {
+    const queue = queues[kind];
+    if (signal?.aborted || performance.now() >= deadline || queues.file.length + queues.process.length >= 128) { resolve(false); return; }
+    if (active[kind] < limits[kind] && queue.length === 0) { active[kind]++; resolve(true); return; }
     const finish = (admitted: boolean) => {
       clearTimeout(timer); signal?.removeEventListener("abort", abort);
       const index = queue.indexOf(grant); if (index >= 0) queue.splice(index, 1);
-      if (admitted) active++; resolve(admitted);
+      if (admitted) active[kind]++; resolve(admitted);
     };
     const grant = () => finish(!signal?.aborted && performance.now() < deadline);
     const abort = () => finish(false);
     const timer = setTimeout(abort, Math.max(1, deadline - performance.now()));
     queue.push(grant); signal?.addEventListener("abort", abort, { once: true });
   });
-  const release = () => { active--; while (active < 2 && queue.length) queue.shift()!(); };
+  const release = (kind: "file" | "process") => { active[kind]--; while (active[kind] < limits[kind] && queues[kind].length) queues[kind].shift()!(); };
   const pause = (milliseconds: number, signal?: AbortSignal): Promise<void> => new Promise(resolve => {
     const done = () => { clearTimeout(timer); signal?.removeEventListener("abort", done); resolve(); };
     const timer = setTimeout(done, milliseconds);
@@ -82,7 +84,7 @@ export function createLinuxSupervisorSession(binding: LinuxSupervisorBinding) {
       if (!matching(reply) || reply.exitCode !== 1) return false;
       try { const result = JSON.parse(reply.stdout); return result.version === 1 && result.ok === false && result.code === "capacity_busy"; } catch { return false; }
     };
-    if (!await acquire(deadline, signal)) return denial();
+    if (!await acquire(kind, deadline, signal)) return denial();
     try {
       // Only an explicit, authenticated no-effect busy reply permits resubmission.
       // The effect envelope keeps its one-use ticket; unknown/lost replies throw.
@@ -100,7 +102,7 @@ export function createLinuxSupervisorSession(binding: LinuxSupervisorBinding) {
       if (!matching(reserved) || typeof ticket !== "string" || !/^[a-f0-9-]{36}$/.test(ticket)) throw new Error("supervisor reservation unavailable");
       // Stop busy waiting before the server's 15s ticket expiry; never replace it.
       return await available({ kind, request: owned, ticket }, Math.min(deadline, performance.now() + 14_000));
-    } finally { release(); }
+    } finally { release(kind); }
   };
   const port: GuestFileHelperPort = { execute: (request, signal) => exchange("file", request, signal) as Promise<GuestFileReply> };
   const processPort: GuestProcessPort = { execute: (request, signal) => exchange("process", request, signal) as Promise<GuestProcessReply> };

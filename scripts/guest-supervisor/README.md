@@ -39,7 +39,7 @@ file effects after cancellation; such commands/writes are never replayed.
 
 The service bounds request/response frames at 2 MiB, file/combined process output
 at 1 MiB, command input at 64 KiB, stderr diagnostics at 16 KiB, active connections
-and invocations at eight, a separate reserved admin connection pool at two,
+at 24 (six per conversation), a separate reserved admin connection pool at two,
 roots at sixteen per conversation and conversations at
 sixteen. Stdin delivery and post-kill cleanup have separate two-second deadlines.
 Request IDs correlate responses; actual invocation admission uses root-service-issued,
@@ -48,14 +48,16 @@ bounded at 16 per conversation/128 total. Consumed tickets are removed; an absen
 expired, altered or already-used ticket never executes, even after thousands of
 later calls. No cache eviction makes an old frame valid. The client never reserves
 a replacement ticket or resends an effect after response loss. The client queues
-up to 128 waiting calls in FIFO order with two in flight, honoring abort and the
+up to 128 waiting calls in separate FIFO queues, with four file operations and two
+process operations in flight per conversation, honoring abort and the
 original overall deadline. Only an explicit no-effect capacity_busy reply permits
 bounded waiting/resubmission; effect retries keep the same one-use ticket and
 stop before its expiry. Unknown replies are never retried. All current scope
 checks still run before consuming the ticket. This replaces the lifetime 4096-call
 refusal without retaining an unbounded request history. Active work is bounded at
-eight globally and two per conversation, including connection slots so one conversation
-cannot exhaust the global pool. Pre-admission saturation is capacity_busy,
+sixteen file operations and eight process operations globally, with four file and
+two process operations per conversation. Long builds cannot take the reserved file
+quota. Connection limits also prevent one conversation exhausting the global pool. Pre-admission saturation is capacity_busy,
 not a permission refusal. The entire request header and body share
 one three-second monotonic deadline; trickled bytes cannot renew it. Ancillary
 descriptors are owned before native admission parsing and closed on refusal.

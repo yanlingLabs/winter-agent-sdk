@@ -41,7 +41,7 @@ class ProtocolTests(unittest.TestCase):
     def test_admin_status_and_revoke_survive_eight_busy_tool_connections(self):
         obj=service.ToolService.__new__(service.ToolService);obj.lock=threading.RLock();obj.stop_event=threading.Event();obj.listeners=[];obj.threads=[];obj.owned=[];obj.debt=set()
         obj.tool_connections=threading.BoundedSemaphore(8);obj.admin_connections=threading.BoundedSemaphore(2)
-        cancels=[threading.Event() for _ in range(8)];obj.active={('logical',str(i)):('logical',cancel) for i,cancel in enumerate(cancels)};obj.conversations={'logical':{'revoked':False}}
+        cancels=[threading.Event() for _ in range(8)];obj.active={('logical',str(i)):('logical',cancel,'process') for i,cancel in enumerate(cancels)};obj.conversations={'logical':{'revoked':False}}
         release=threading.Event();busy=threading.Condition();entered=[];clients=[]
         def hold(channel):
             with busy:entered.append(channel);busy.notify_all()
@@ -181,11 +181,17 @@ class ProtocolTests(unittest.TestCase):
         for _ in range(16):self.assertIn('ticket',call({'kind':'reserve','toolKind':'file','request':request}))
         refused=call({'kind':'reserve','toolKind':'file','request':request})
         self.assertEqual(json.loads(refused['stdout'])['code'],'capacity_busy');self.assertEqual(len(obj.tickets['logical']),16)
+    def test_two_long_processes_do_not_consume_file_quota(self):
+        obj,request,effects,call=self.ticket_fixture()
+        obj.active={('logical',str(i)):('logical',threading.Event(),'process') for i in range(2)}
+        issued=call({'kind':'reserve','toolKind':'file','request':request})['ticket']
+        self.assertEqual(call({'kind':'file','request':request,'ticket':issued})['exitCode'],0);self.assertEqual(len(effects),1)
     def test_conversation_active_share_refuses_before_consuming_ticket(self):
         obj,request,effects,call=self.ticket_fixture()
         issued=call({'kind':'reserve','toolKind':'file','request':request})['ticket']
-        obj.active={('logical','one'):('logical',threading.Event()),('logical','two'):('logical',threading.Event())}
+        obj.active={('logical',str(i)):('logical',threading.Event(),'file') for i in range(4)}
         result=call({'kind':'file','request':request,'ticket':issued})
         self.assertEqual(json.loads(result['stdout'])['code'],'capacity_busy');self.assertIn(issued,obj.tickets['logical']);self.assertFalse(effects)
 
 if __name__=='__main__':unittest.main()
+
