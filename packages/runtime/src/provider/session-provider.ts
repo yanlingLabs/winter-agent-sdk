@@ -60,6 +60,7 @@ import { createKeychainCredentialStore, createKeychainSecretReader, type Keychai
 import { createToolSecretResolver, type ToolSecretResolver } from "./tool-secret.ts";
 import { providerCredentialRef } from "./credential-api.ts";
 import { adapterAsProvider, type HistoryRenderer } from "./bridge.ts";
+import { assertGuestProviderClient, guestProviderFor, type GuestProviderClient } from "../guest/provider-client.ts";
 import { testProviderForNamespace } from "./mock.ts";
 import { createProviderContext, redactCredentialRef, resolveSessionProvider, type SelectionDeps, type SessionProviderSelection, type WinterProviderIdentity } from "./selection.ts";
 import { createModelClassifier, selectClassifierRoute, type ClassifierRoute } from "./classifier/model-classifier.ts";
@@ -129,6 +130,8 @@ export function apiProviderFor(providerId: string | undefined): AccountInfo["api
 }
 
 export interface SessionProviderOptions {
+  /** Trusted immutable-bootstrap binding only. Never carried by RuntimeConfig/env/control frames. */
+  guestProvider?: GuestProviderClient;
   /** The session's EFFECTIVE config. */
   config: RuntimeConfig;
   /** The environment governing R6-13's harness alias and the `env` credential store. Explicit at every entrypoint. */
@@ -575,15 +578,23 @@ export { DECORATION_CHAR_BUDGET, MAX_DECORATION_CHARS };
 
 export function buildSessionProvider(opts: SessionProviderOptions): SessionProviderWiring {
   const { config, env } = opts;
+  if (opts.guestProvider !== undefined) {
+    assertGuestProviderClient(opts.guestProvider);
+    if (opts.guestProvider.scope.backendSessionId !== config.sessionId) throw new Error("guest provider session mismatch");
+  }
   const sessionKeychainService = resolveSessionKeychainService(config);
   const catalog = opts.catalog ?? loadCatalog();
-  const credentials = opts.credentials ?? createProductionCredentialStore(config, env, opts.home ?? env["HOME"] ?? "");
+  const credentials = opts.guestProvider !== undefined ? {
+    get: async () => null,
+    set: async () => { throw new Error("guest credential writes unavailable"); },
+    delete: async () => { throw new Error("guest credential writes unavailable"); },
+  } : opts.credentials ?? createProductionCredentialStore(config, env, opts.home ?? env["HOME"] ?? "");
   const registry = createRegistry(catalog);
   for (const adapter of createShippedAdapters(catalog)) registry.register(adapter);
 
   // A TOOL's secret. The raw keychain reader is the REAL one only when the credential store is the
   // production one too -- see `SessionProviderOptions.readKeychainSecret`.
-  const readKeychainSecret = opts.readKeychainSecret ?? (opts.credentials === undefined ? createKeychainSecretReader(sessionKeychainService) : undefined);
+  const readKeychainSecret = opts.guestProvider !== undefined ? undefined : opts.readKeychainSecret ?? (opts.credentials === undefined ? createKeychainSecretReader(sessionKeychainService) : undefined);
   const resolveToolSecret = createToolSecretResolver({ credentials, ...(readKeychainSecret !== undefined ? { readKeychainSecret } : {}) });
 
   // Lane C's renderer, NOT `createIdentityHistoryRenderer` — the T3 identity renderer is the
@@ -708,6 +719,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   };
 
   const buildProvider = (resolved: ResolvedModel, buildOpts: BuildProviderOptions = {}): Provider => {
+    if (opts.guestProvider !== undefined) return guestProviderFor(opts.guestProvider, resolved, { renderer, chain });
     const material = describeTargetMaterial(resolved, buildOpts);
     // The config handed to `createProviderContext` carries the TARGET's material and nothing of the
     // session's selection beyond `allowUnlisted`: `providerId` is the resolved model's own (a
