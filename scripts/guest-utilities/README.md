@@ -1,8 +1,9 @@
 # Measured real-utility fixture preparation
 
 This is an independent source/capture/oracle slice. It prepares a disposable
-Linux tool-compatibility fixture; it does not provide a runnable admitted native
-runner yet. Nothing here launches a utility, native helper, namespace or VM.
+Linux tool-compatibility fixture. The native runner is implemented as source and
+requires separate exact source/artifact admission before execution. No native
+runner, utility, helper, namespace or VM was executed for this slice.
 The existing strict five-provider-turn/four-tool fresh-engine oracle is unchanged.
 General tool availability and production activation remain false.
 
@@ -73,29 +74,80 @@ target:"linux-arm64-gnu", files:{"/guest/path":{role,source,sha256,bytes}}}`.
 `source` is relative to the fixture origin tree. No origin discovery or default
 manifest is installed. No real Linux utility closure was captured in this task.
 
-## Required next integration and admission
+## Separate executable fixture and admission
 
-The current `scripts/guest-engine/stage.py` explicitly admits seven artifact
-names and the original runtime/provider entry paths. This module does not mutate
-that allowlist, monkeypatch global recipe constants, replace a measured copy with
-an unmeasured host copy, or change its strict oracle. An independently reviewed
-extension must bind the new utility receipt and every utility output to an
-externally approved hash before privileged imports/staging. Copy via held FDs
-into the existing root-owned immutable sealed tree and revalidate the closure.
-Do not discover new host paths or run ldd in that privileged step.
+`utilityClient` is an explicitly named compiled Bun client for direct native tool
+views. It is neither `runtimeEntry` nor the actual SDK/provider loop. It uses the
+existing UID-authenticated supervisor's file/process port with fixed scopes,
+roots and tool/runtime UIDs. The first SDK fixture's strict five provider turns,
+four tool results and transcript/native-state oracle remain unchanged.
 
-The separate native utility entry must use the real inherited immutable owner
-library and bootstrap FDs with `admitFreshLinuxSession`; execute this fixed payload
-through its admitted file/process binding. Its user-facing model loop need not
-replace or weaken the independent strict SDK fixture. Bind the command digest,
-scope/revisions, native artifacts, utility capture receipt, compiled entry and
-exact result to retained evidence. A second invocation must prove fresh private
-tmp/shm. Require actual namespace-init wait receipt, service-owned native cleanup,
-zero active/debt state and parent reaping before reporting fixture success.
-The file-tool refusal and plan/read-only-source gates remain separate requirements.
+The client runs the fixed smoke payload twice; each starts with empty private
+tmp/shm. The first leaves private canaries that cannot enter the second view.
+Additional requests check file-helper runtime/control/store and source-symlink
+refusal, readonly and plan mounts, a setsid descendant after foreground exit,
+and cancellation with uncertain effects. Success also requires positive source
+canaries, absent orphan writes after a bounded delay, exact zero active/debt
+status, the existing supervisor's immutable namespace-init wait receipts, client
+reaping and a clean service close/wait. No timeout, EOF or kill() substitutes for
+native wait confirmation. Result/client records and every failure directory are
+retained; no automatic unmount or ignoring EROFS is available.
 
-Merge the independently reviewed fresh-input correction into the runner build
-closure before relying on its existing five-turn/four-tool evidence. Native
-utility admission, utilities actually staged, real Linux enforcement, cold
-continuity, VM resource/storage integration and production availability remain
-open. Neither held Mac two-disk nor native egress work is resumed by this slice.
+`stage.py` is a separate stdlib-only externally hash-admitted parent. Its archive
+contains the entire measured SDK source/dependency closure, utilityClient and
+normalized metafile, three native tool artifacts and their source/header/scripts,
+fixed smoke bytes, native/Bun compiler recipes and identities, build workflow,
+utility capture/origin receipts and only the fixed utility environment. It
+checks exact archive/receipt/parent hashes, bounded unique paths and bytes, no
+archive hardlinks/devices/traversal, internal source-only symlinks, exact compiler
+and utility roles, compile graph and fixed six-executable ceiling. Only after
+those checks does it create a root-owned immutable sealed tree and revalidate
+all owners/modes/links/bytes. The runner rechecks that tree before loading any
+project module. The source bootstrap itself must be byte-checked by an external
+isolated system-Python invocation before executing the parent; unsigned hashes
+reported by an untrusted build are not authority.
+
+The changed native launcher now makes each detached admitted/device mount
+explicitly `MS_PRIVATE` before namespace transfer. The destination namespace's
+existing recursive private-root operation remains. The runner records the
+original outer mountinfo before launch, samples it during work, and compares it
+after service wait. Any observed addition/change or reader failure is retained
+as failure; a later equal snapshot cannot erase an observed transient change.
+This sampled observer is an additional regression oracle, not a continuous
+kernel trace. No native enforcement claim follows from its portable tests.
+
+## Ordinary build-only workflow
+
+`.github/workflows/cowork-tool-utilities-build.yml` runs ordinary Linux ARM64 build
+steps only. Its fixed input collector copies just the six existing utilities,
+selected explicit Python 3.12 modules/packages/extensions and recursively needed
+libraries identified by bounded readelf metadata. It never executes those input
+ELFs or copies a general host root/usr tree. The origin receipt records readelf
+and Python identities and metadata command hashes. Dependency completeness
+remains false until the admitted smoke actually passes.
+
+The workflow verifies the existing pinned Bun archive/base hashes, compiles only
+the named utilityClient with no autoload flags, captures the explicit utility
+manifest, compiles three native helpers, and constructs/revalidates the complete
+receipt/archive. No sudo, native fixture run or production activation is wired
+into that workflow. Linux C toolchain system headers are supplied by the trusted
+ordinary CI build environment; this is measured build provenance, not a fully
+hermetic toolchain claim. A local Mac ARM64 client cross-compile is compile-only
+and is refused for native admission by the parent, which requires a fresh Linux
+ARM64 builder identity in the client receipt.
+
+Portable source validation:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/guest-utilities -p 'test_*.py'
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/guest-engine/test_tool_devices.py scripts/guest-engine/test_shell_stdin.py scripts/guest-engine/test_runtime_entropy.py scripts/guest-engine/test_parent_remap.py -v
+pnpm exec tsc --noEmit -p tsconfig.typecheck.json
+```
+
+A later externally byte-checked parent may receive only the exact independently
+approved archive/receipt/parent hashes and `--run` for an isolated disposable
+Linux runner. No execution command or approval identity is preinstalled. The
+new native utility fixture remains unexecuted and unadmitted. General tool
+availability stays false even if this limited fixture later passes; first SDK,
+VM integration, cold continuity and resource/storage acceptance are separate.
+Neither held Mac two-disk nor native egress work is resumed by this slice.

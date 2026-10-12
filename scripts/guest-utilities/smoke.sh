@@ -1,6 +1,7 @@
 #!/bin/bash
 # Reviewed source payload only; submit through the admitted Linux process port.
 set -euo pipefail
+python3 -c 'import os; assert os.listdir("/tmp")==[] and os.listdir("/dev/shm")==[]'
 python3 -c 'import errno,os,stat; s=os.fstat(0); assert stat.S_ISCHR(s.st_mode) and (os.major(s.st_rdev),os.minor(s.st_rdev))==(1,3); assert os.read(0,1)==b""; extra=[]
 for name in os.listdir("/proc/self/fd"):
     if int(name)<3: continue
@@ -124,6 +125,8 @@ if __name__ == '__main__':
     finally:
         view.close(); view.unlink()
 print('tool-entropy-multiprocessing-ok')
+with open('/dev/shm/winter-utility-private-canary','wb') as stream:
+    stream.write(b'private-first-view-marker')
 PY
 fixture_repo=$(mktemp -d "$PWD/.winter-tool-device-smoke.XXXXXX")
 python3 -c 'import os,sys; os.mkdir(sys.argv[1])' "$fixture_repo/templates"

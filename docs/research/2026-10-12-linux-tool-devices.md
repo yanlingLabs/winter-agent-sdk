@@ -62,7 +62,7 @@ Run from the SDK repository root:
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/guest-engine/test_shell_stdin.py scripts/guest-engine/test_tool_devices.py scripts/guest-engine/test_runtime_entropy.py scripts/guest-engine/test_parent_remap.py -v
 ```
 
-Eight unittest methods pass. Device/view helpers cover 94 portable cases: all five exact
+Nine unittest methods pass. Device/view helpers cover 94 portable cases: all five exact
 inventory entries against thirteen refusal/failure modes and success, plus held
 FD positions 3, 4, 64 and 97; the exact view's successful inventory/flags/links
 and three construction failures. Existing entropy and parent-remap tests add
@@ -73,6 +73,10 @@ device metadata: existing live command fd0, fd0 alias and close-on-exec behavior
 wrong regular/block/major/minor identities, non-readonly or invalid access-mode
 lookup, missing input, failed identity lookup, remap failure and close-on-exec
 clearing failure at descriptor positions 3, 4 and 64. No real device is opened.
+The detached-mount correction adds 12 exact general-clone cases and requires
+`MS_PRIVATE` propagation on both admitted roots and fixed device clones, with
+flag-setting failure remaining fatal. The destination namespace's recursive
+private-root operation remains unchanged. Native enforcement is still pending.
 
 Zig 0.14.1 cross-compiles the complete tool launcher, runtime launcher, file
 worker and process worker with `-target aarch64-linux-musl -std=c11 -O2 -Wall
