@@ -1,0 +1,18 @@
+bun test v1.3.14 (0d9b296a)
+
+packages/runtime/src/guest/supervisor-client.test.ts:
+(pass) private framed client feeds existing guest file/process receipt validators [9.50ms]
+(pass) supervisor uncertain/error replies cannot become a successful file mutation [2.35ms]
+(pass) private client cancels without retrying or accepting a later response [13.50ms]
+(pass) actual registry binds backend authority independently of the logical conversation endpoint [2.73ms]
+
+ 4 pass
+ 0 fail
+ 14 expect() calls
+Ran 4 tests across 1 file. [148.00ms]
+
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.000s
+
+OK

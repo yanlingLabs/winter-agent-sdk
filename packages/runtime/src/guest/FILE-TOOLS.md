@@ -12,8 +12,10 @@ The port is supplied by the protected guest supervisor. It must authenticate the
 current workspace/session/incarnation and all authority revisions, verify the
 immutable worker artifact and admitted roots, and execute the C worker in the
 same confined tool UID/mount/PID view as Bash. The TypeScript object checks do
-not establish these OS properties. No production port or supervisor is supplied
-by this slice.
+not establish these OS properties. A reusable Linux service/client now connects these ports for the bounded
+Read/Write/Edit/foreground Bash slice; see `scripts/guest-supervisor/README.md`.
+Its exact Linux CI fixture and immutable-image/bootstrap integration still require
+acceptance, and full engine/embedded startup remains refused.
 
 ## Implemented routes
 
@@ -90,7 +92,7 @@ UID, root and mount identities before launch, and destroy affected running
 invocations when grants or policy are revoked. Receipts and TypeScript object
 identity are not OS enforcement. The fixture constructs equivalent admitted
 file/process mount and UID views per invocation, with a separate private PID
-namespace for owned process cleanup. No production supervisor/port is supplied.
+namespace for owned process cleanup. The new Linux supervisor/client implements these port calls with private socket UID authentication, immutable helper descriptors and independently bounded outer cleanup; source acceptance and the exact Linux CI run remain pending.
 
 Responses bind the request UUID and every authority revision. Missing, stale,
 malformed or oversized post-admission responses report uncertain effects and

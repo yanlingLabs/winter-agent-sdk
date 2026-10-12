@@ -5,13 +5,31 @@ jobs:
     # Real file worker and foreground Bash in disposable Linux process/mount namespaces,
     # no real VM or secrets. A missing
     # required kernel boundary fails this job rather than turning into a skip.
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
+      - name: record native Linux architecture and page size
+        run: uname -m && getconf PAGESIZE
       - run: sudo -n python3 scripts/guest-files/verify.py
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.4.2" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - run: pnpm install
+      - name: compile disposable runtime-UID tool client
+        run: bun build --compile scripts/guest-supervisor/client.ts --outfile /tmp/winter-supervisor-ci-client
+      - name: real Linux supervisor UID/mount/PID/private-channel boundary
+        run: sudo -n python3 -I -S scripts/guest-supervisor/verify.py --runtime-client /tmp/winter-supervisor-ci-client
+      - name: supervisor saturation, absolute deadlines and descriptor refusal cleanup
+        run: python3 -I -S scripts/guest-supervisor/test_protocol.py
 
   # --- P9a-4: the SAME macOS build as release.yml's `build-platform`, minus the tag pin, on EVERY
   # push -- so a broken darwin build fails here, before a `v*` tag ever exists to discover it at

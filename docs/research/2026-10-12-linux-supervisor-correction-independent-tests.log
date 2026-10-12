@@ -1,0 +1,14 @@
+test_admin_status_and_revoke_survive_eight_busy_tool_connections (test_protocol.ProtocolTests.test_admin_status_and_revoke_survive_eight_busy_tool_connections) ... ok
+test_bounded_framing_roundtrip_and_oversize_reject_before_body_read (test_protocol.ProtocolTests.test_bounded_framing_roundtrip_and_oversize_reject_before_body_read) ... ok
+test_fixed_authority_copies_all_revisions_and_rejects_extra_identity (test_protocol.ProtocolTests.test_fixed_authority_copies_all_revisions_and_rejects_extra_identity) ... ok
+test_fragmented_frame_inside_deadline_succeeds (test_protocol.ProtocolTests.test_fragmented_frame_inside_deadline_succeeds) ... ok
+test_no_privileged_service_fallback_off_linux (test_protocol.ProtocolTests.test_no_privileged_service_fallback_off_linux) ... ok
+test_source_ancestor_swap_and_leaf_alias_refused (test_protocol.ProtocolTests.test_source_ancestor_swap_and_leaf_alias_refused) ... ok
+test_source_replacement_after_check_refused (test_protocol.ProtocolTests.test_source_replacement_after_check_refused) ... ok
+test_trickle_has_one_header_and_body_deadline_and_restores_timeout (test_protocol.ProtocolTests.test_trickle_has_one_header_and_body_deadline_and_restores_timeout) ... ok
+test_valid_descriptor_transfers_single_noninheritable_owner (test_protocol.ProtocolTests.test_valid_descriptor_transfers_single_noninheritable_owner) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.345s
+
+OK
