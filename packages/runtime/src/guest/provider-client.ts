@@ -37,7 +37,7 @@ class InvocationRefused extends Error { constructor(readonly capacity: boolean) 
 const EVENTS = new Set(["message_start", "text_delta", "thinking_summary_delta", "thinking_exposed_delta", "native_thinking_block", "reasoning_progress", "tool_call_start", "tool_call_delta", "tool_call_end", "native_state", "usage", "rate_limit", "retry", "auth_status", "done", "error"]);
 export function createGuestProviderClient(input: { scope: GuestProviderScope; selection: GuestProviderSelection; port: GuestProviderPort }): GuestProviderClient {
   const scope = Object.freeze({ ...input.scope }), selection = Object.freeze({ ...input.selection, capabilities: Object.freeze({ ...input.selection.capabilities }) }), port = input.port;
-  let closed = false;
+  let closed = false, nextInvocation = 0;
   const active = new Map<string, AbortController>();
   const close = (): void => { if (!closed) { closed = true; for (const controller of active.values()) controller.abort(); try { port.close(); } catch { /* No error contents or inferred termination proof. */ } } };
   const adapter: ProviderAdapter = {
@@ -48,13 +48,16 @@ export function createGuestProviderClient(input: { scope: GuestProviderScope; se
     async *streamTurn(request: TurnRequest) {
       if (closed || request.model !== selection.providerModelId) { yield errorEvent(); return; }
       if (active.size >= GUEST_PROVIDER_LIMITS.activeInvocations) { yield { type: "error", error: { code: "rate_limit", message: "guest provider capacity unavailable", retryable: true } }; return; }
+      if (request.signal?.aborted) { yield errorEvent(true); return; }
+      if (nextInvocation >= Number.MAX_SAFE_INTEGER) { close(); yield errorEvent(); return; }
+      const invocationOrdinal = ++nextInvocation;
       const invocationId = randomUUID(), controller = new AbortController(); let sequence = 0, terminal = false;
       active.set(invocationId, controller);
       const onAbort = (): void => controller.abort(); request.signal?.addEventListener("abort", onAbort, { once: true });
       if (request.signal?.aborted) controller.abort();
       const exchange = async (operation: "begin" | "next", turn?: Omit<TurnRequest, "signal">): Promise<Record<string, unknown>> => {
         if (controller.signal.aborted || closed) throw new Error("guest provider cancelled");
-        const expected = sequence++, frame = encode({ version: 1, operation, invocationId, scope, sequence: expected, ...(turn ? { turn } : {}) }, GUEST_PROVIDER_LIMITS.requestBytes + GUEST_PROVIDER_LIMITS.responseHeadroom);
+        const expected = sequence++, frame = encode({ version: 1, operation, invocationId, invocationOrdinal, scope, sequence: expected, ...(turn ? { turn } : {}) }, GUEST_PROVIDER_LIMITS.requestBytes + GUEST_PROVIDER_LIMITS.responseHeadroom);
         let deadline: ReturnType<typeof setTimeout> | undefined, abort: (() => void) | undefined;
         try {
           const result = await Promise.race([port.exchange(frame, controller.signal), new Promise<never>((_, reject) => {
@@ -74,7 +77,7 @@ export function createGuestProviderClient(input: { scope: GuestProviderScope; se
         const expected = sequence++, cancellation = new AbortController();
         let timer: ReturnType<typeof setTimeout> | undefined, received = false;
         try {
-          const frame = encode({ version: 1, operation: "cancel", invocationId, scope, sequence: expected }, GUEST_PROVIDER_LIMITS.responseHeadroom);
+          const frame = encode({ version: 1, operation: "cancel", invocationId, invocationOrdinal, scope, sequence: expected }, GUEST_PROVIDER_LIMITS.responseHeadroom);
           const result = await Promise.race([port.exchange(frame, cancellation.signal), new Promise<undefined>(resolve => { timer = setTimeout(() => { cancellation.abort(); resolve(undefined); }, GUEST_PROVIDER_LIMITS.cancelMs); })]);
           if (result === undefined) return; // Best effort; host retains uncertain invocation ownership.
           received = true; const value = decode(result);
