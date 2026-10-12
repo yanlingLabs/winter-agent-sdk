@@ -22,7 +22,7 @@ import {
 import type { GlobDenyEntry } from "../permissions/file-rules.ts";
 import { trackProcessGroup } from "../process-groups.ts";
 import { buildMandatoryFloorProfile, hasMandatoryFloor, type HostExecutionFloor, type HostCodeProcessScope, type HostCodeProcessHandle } from "@yanlinglabs/winter-agent-sdk";
-import { currentHostCodeProcessClient, requireBoundHandle } from "./host-code-process.ts";
+import { currentHostCodeProcessClient, hostCodeProcessBrokerRequired, requireBoundHandle } from "./host-code-process.ts";
 
 // ---------------------------------------------------------------------------------------------
 // §3: sandbox availability (darwin + /usr/bin/sandbox-exec present)
@@ -308,6 +308,7 @@ export interface RunCommandResult {
 export async function runCommand(opts: RunCommandOptions): Promise<RunCommandResult> {
   const bound = currentHostCodeProcessClient();
   if (bound) return runBrokeredCommand(opts, bound);
+  if (hostCodeProcessBrokerRequired()) throw new SandboxUnavailableError("required host Code broker unavailable; no local execution fallback");
   return runCommandLocally(opts);
 }
 

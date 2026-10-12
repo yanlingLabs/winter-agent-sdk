@@ -25,7 +25,8 @@
 // COMPILED-BINARY CONSTRAINTS apply exactly as in `main.ts` (a host compiles this into its own
 // single-file binary): static, literal imports only.
 import type { RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
-import { splitFrames, encodeFrame } from "@yanlinglabs/winter-agent-sdk";
+import { splitFrames, encodeFrame, MandatoryFloorUnavailableError } from "@yanlinglabs/winter-agent-sdk";
+import { requireHostCodeProcessBroker } from "./sandbox/host-code-process.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider } from "./engine.ts";
 import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
@@ -47,6 +48,12 @@ import { EMBEDDED_ABORT_END_INPUT_REQUEST_ID, EMBEDDED_ABORT_INTERRUPT_REQUEST_I
 import { acquireProtectedStoreBootstrap, createProtectedRuntimeStore, protectedStoreOwnerSignal, protectedStoreStartupOutcome, releaseProtectedStoreBootstrap, retainProtectedStoreBootstrap, type ProtectedStoreBootstrap, type OpenedProtectedStoreBootstrap, type ProtectedStoreOwnershipOutcome } from "./guest/store-bootstrap.ts";
 
 export interface EmbeddedSessionOptions {
+  /** Trusted direct-call requirement. The embedded entry cannot establish a process floor and
+   * refuses before config, store, hooks, MCP or tools start. Not read from argv or env. */
+  requireHostFloor?: boolean;
+  /** Trusted command-broker enrollment for this realm's lifetime. This gates Bash/Monitor only;
+   * it does not supply an embedded filesystem/subprocess floor. */
+  brokerRequired?: boolean;
   /** The spawn argv (`--run --config-json <json>`, any leading slots); flags are found by NAME. */
   argv: readonly string[];
   /**
@@ -189,6 +196,7 @@ function isSyntheticAbortAck(frame: WinterFrame): boolean {
  * init -- WS-04 §6.1). Never throws.
  */
 export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<number> {
+  let releaseBrokerRequirement: (() => void) | undefined;
   const { env, write, writeErr } = opts;
   let signal = opts.signal;
   let ownerSignal: AbortSignal | undefined;
@@ -230,6 +238,8 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
   };
 
   try {
+    if (opts.requireHostFloor) throw new MandatoryFloorUnavailableError("embedded sessions cannot satisfy a required host floor; launch a native floored runtime");
+    releaseBrokerRequirement = opts.brokerRequired ? requireHostCodeProcessBroker() : undefined;
     const config = parseConfigFromArgv(opts.argv);
     assertRuntimeExecutionPosture(config);
     if (opts.protectedStoreBootstrap !== undefined) {
@@ -383,24 +393,26 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
     }
     return 1;
   } finally {
-    opts.signal?.removeEventListener("abort", onAbort);
-    ownerSignal?.removeEventListener("abort", onAbort);
-    try { restoreWorkflowCommand?.(); }
-    catch { if (protectedStoreBootstrap !== undefined) teardownUncertain = true; }
-    // A thrown engine/descendant teardown is unknown, not proof it stopped. Retain native
-    // ownership for explicit recovery; never release on a timer or as part of an error fallback.
-    let outcome: ProtectedStoreOwnershipOutcome;
-    if (protectedStoreBootstrap !== undefined) {
-      outcome = !teardownUncertain && (!runtimeStarted || runtimeReturned)
-        ? await releaseProtectedStoreBootstrap(protectedStoreBootstrap)
-        : retainProtectedStoreBootstrap(protectedStoreBootstrap, "teardown-uncertain");
-    } else outcome = opts.protectedStoreBootstrap === undefined
-      ? Object.freeze({ status: "not-acquired", reason: "not-requested", scope: null })
-      : protectedStoreStartupOutcome(opts.protectedStoreBootstrap, startupError);
-    if (outcome.status === "retained" || outcome.status === "release-failed") {
-      try { writeErr(`winter: protected store ${outcome.reason}; ownership retained, recovery required\n`); } catch {}
-    }
-    try { opts.onProtectedStoreOwnershipOutcome?.(outcome); }
-    catch { try { writeErr("winter: terminal ownership observer failed\n"); } catch {} }
+    try {
+      opts.signal?.removeEventListener("abort", onAbort);
+      ownerSignal?.removeEventListener("abort", onAbort);
+      try { restoreWorkflowCommand?.(); }
+      catch { if (protectedStoreBootstrap !== undefined) teardownUncertain = true; }
+      // A thrown engine/descendant teardown is unknown, not proof it stopped. Retain native
+      // ownership for explicit recovery; never release on a timer or as part of an error fallback.
+      let outcome: ProtectedStoreOwnershipOutcome;
+      if (protectedStoreBootstrap !== undefined) {
+        outcome = !teardownUncertain && (!runtimeStarted || runtimeReturned)
+          ? await releaseProtectedStoreBootstrap(protectedStoreBootstrap)
+          : retainProtectedStoreBootstrap(protectedStoreBootstrap, "teardown-uncertain");
+      } else outcome = opts.protectedStoreBootstrap === undefined
+        ? Object.freeze({ status: "not-acquired", reason: "not-requested", scope: null })
+        : protectedStoreStartupOutcome(opts.protectedStoreBootstrap, startupError);
+      if (outcome.status === "retained" || outcome.status === "release-failed") {
+        try { writeErr(`winter: protected store ${outcome.reason}; ownership retained, recovery required\n`); } catch {}
+      }
+      try { opts.onProtectedStoreOwnershipOutcome?.(outcome); }
+      catch { try { writeErr("winter: terminal ownership observer failed\n"); } catch {} }
+    } finally { releaseBrokerRequirement?.(); }
   }
 }

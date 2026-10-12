@@ -80,6 +80,7 @@ export function buildMandatoryFloorProfile(floor: HostExecutionFloor): string {
 }
 /** Apply AFTER the existing host hook has resolved its executable, immediately before OS spawn. */
 export function applyMandatoryFloorToSpawnOptions(resolved: SpawnRuntimeOptions, floor?: HostExecutionFloor): SpawnRuntimeOptions {
+  if (resolved.requireHostFloor && (!floor || !hasMandatoryFloor(floor))) throw new MandatoryFloorUnavailableError("required host floor has no registered paths; refusing unprotected process creation");
   if (!floor || !hasMandatoryFloor(floor)) return resolved;
   if (process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")) throw new MandatoryFloorUnavailableError("registered host control floor requires macOS sandbox-exec; refusing unprotected process creation");
   if (!isAbsolute(resolved.command)) throw new MandatoryFloorUnavailableError("resolve the runtime executable before applying the host floor");
@@ -90,11 +91,12 @@ export function applyMandatoryFloorToSpawnOptions(resolved: SpawnRuntimeOptions,
     if (config.executionPosture === "confined-guest" || typeof config.hostCodeProcessBroker?.generationId !== "string") throw new MandatoryFloorUnavailableError("enrolling a Code runtime in the floor requires its trusted-parent process broker");
   }
   const profile = buildMandatoryFloorProfile(floor);
-  return { ...resolved, command: "/usr/bin/sandbox-exec", args: ["-p", profile, resolved.command, ...resolved.args] };
+  return { ...resolved, requireHostFloor: true, command: "/usr/bin/sandbox-exec", args: ["-p", profile, resolved.command, ...resolved.args] };
 }
 /** The runtime and all descendants inherit this floor; excluded/override shell settings cannot remove it.
  * Existing unwrapped generations MUST be drained/recreated before registration becomes usable. */
-export function createMandatoryFloorSpawn(input: { spawn: SpawnClaudeCodeProcess; floor?: HostExecutionFloor }): SpawnClaudeCodeProcess {
+export function createMandatoryFloorSpawn(input: { spawn: SpawnClaudeCodeProcess; floor?: HostExecutionFloor; requireHostFloor?: boolean }): SpawnClaudeCodeProcess {
   const floor = input.floor === undefined ? undefined : copyFloor(input.floor);
+  if (input.requireHostFloor && (!floor || !hasMandatoryFloor(floor))) throw new MandatoryFloorUnavailableError("required host floor has no registered paths; refusing unprotected process creation");
   return (resolved) => input.spawn(applyMandatoryFloorToSpawnOptions(resolved, floor));
 }

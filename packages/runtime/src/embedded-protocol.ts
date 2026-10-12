@@ -32,6 +32,8 @@ export type EmbeddedHostMessage =
        * whose main routes `__workflow-worker` somewhere else -- see `workflows/sandbox.ts`.
        */
       workflowWorkerCommand?: EmbeddedWorkflowWorkerCommand;
+      /** Trusted host Worker lifecycle channel only; never RuntimeConfig or environment. */
+      brokerRequired?: true;
     }
   | { kind: "stdin"; chunk: string }
   | { kind: "stdin-end" }

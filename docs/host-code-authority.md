@@ -20,7 +20,64 @@ Brokered command `onSpawned` callbacks carry `stopOwnedProcess`, bound to that e
 
 Query abort and actual runtime process exit dispose the captured host registration once, independently of consumer iteration. Pending admission observes the query abort signal, and ordinary iterator cleanup uses the same disposal latch. Workflow enforces a positive host-supplied deadline, clears that timer at actual OS close, and preserves `timedOut` while output completion is pending. Zero remains the host's explicit no-deadline policy; the SDK adds no new default.
 
-These changes do not close the SDK review's H1 service-delegation escape or H2 embedded execution-floor coverage, prove ownership of escaped setsid grandchildren, or implement VM isolation, active memory return, publication policy or Cowork production integration. The guest file-helper experiment remains unactivated.
+The persistent host floor is defense in depth for enrolled processes. It constrains
+their direct filesystem operations and inherited subprocesses, including approved
+Code shell escapes; it does not establish confidentiality against other processes
+running as the same macOS user. Delegation to an unfloored service, authenticated
+Winter API access to guest plaintext, and arbitrary same-user deletion/corruption
+are outside that claim. The selected protection for private Cowork disks is
+encryption at rest, with keys held by the hardened native storage helper. Shared
+Mac folders, instructions, memory and outputs remain plaintext. An unrelated
+approved Code escape does not have to be disabled merely because Cowork exists.
+
+`createMandatoryFloorSpawn({ spawn, floor, requireHostFloor: true })` is a trusted
+host launch requirement. Missing/empty registration refuses before spawn. The
+wrapper snapshots host floor paths, validates its profile and sets the host-only
+`SpawnRuntimeOptions.requireHostFloor` marker on the native launch. Custom
+transports must preserve the actual `sandbox-exec` command and arguments or refuse;
+the SDK cannot validate an arbitrary custom spawner's kernel behavior. Existing
+unfloored generations and child servers must be drained/recreated before the host
+marks a floor registration usable. Neither configuration text nor environment
+variables install this authority.
+
+`spawnEmbeddedWorker({ requireHostFloor: true, ... })` refuses before constructing
+the Worker. It also refuses the required marker or a native `sandbox-exec` launch
+passed through a custom Worker adapter, which previously discarded that native
+wrapper. `runEmbeddedSession({ requireHostFloor: true, ... })` refuses before
+parsing config or starting stores, hooks, MCP or tools. Ordinary embedded modes
+remain supported. This is an explicit unsupported-mode gate, not implemented
+embedded floor coverage: Bun Workers share Core's OS process and cannot establish
+a per-session Seatbelt floor.
+
+The host-only `brokerRequired` option on the embedded spawn/session lifecycle
+enrolls Bash/Monitor command execution independently of the RPC client's presence.
+The trusted Worker `start` message carries that requirement; `RuntimeConfig`, SDK
+`Options`, model inputs and environment do not. Engine client removal does not
+remove enrollment, and a missing/refused broker produces no local execution
+fallback. Enrollment ends only after the session has returned and its terminal
+cleanup has completed. The trusted parent broker's `runCommandLocally` entry is
+separate: it requires the canonical host floor at admission and native spawn.
+This command-only requirement does not floor other embedded consumers.
+
+Full H2 embedded support remains open. Direct in-process file consumers include
+`tools/impl/read.ts`, `write.ts`, `edit.ts`, `glob.ts`, `grep.ts`, their
+`tools/safe-glob-scan.ts` walker and read-state/image/notebook helpers. Existing
+permission path checks alone are not descriptor-bound protection against path
+replacement races. Direct subprocess families include
+`hooks/command-invoker.ts` (hook shell), `mcp/transports/stdio.ts` (stdio servers),
+`tools/image-prep.ts` (sips), `tools/impl/enter-worktree.ts` (git),
+`context/git-status.ts`, `context/winter-md.ts` and `subagents/git-root.ts`.
+LSP is a host capability (`winter.lsp-server`); its Core adapter needs its own
+read/launch coverage. Bash/Monitor use `sandbox/spawn.ts`; Workflow uses its
+existing host broker. The SDK slash-command seam recognizes `/compact` only;
+Core's `!` user-shell routing must preserve its own applicable launch contract.
+Production embedded support needs protected descriptor/path access and native
+floor-preserving transports for those launch families, plus transition drain
+evidence. Refusing required embedding does not implement those mechanisms.
+
+These changes do not prove ownership of escaped setsid grandchildren or implement
+VM isolation, active memory return, publication policy or Cowork production
+integration. The guest file-helper experiment remains unactivated.
 
 All trusted writers of one store must use the same PID namespace and exclusive
 host-established store tenancy. A boot ID is shared by container PID namespaces;

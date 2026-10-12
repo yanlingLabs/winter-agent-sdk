@@ -25,6 +25,9 @@ export interface SpawnedRuntimeProcess {
 }
 
 export interface SpawnRuntimeOptions {
+  /** Trusted launcher requirement, never RuntimeConfig/environment authority. Custom transports
+   * must refuse if they cannot preserve the native floor; embedded Workers cannot satisfy it. */
+  requireHostFloor?: true;
   command: string;
   args: string[];
   cwd: string;

@@ -19,6 +19,15 @@ export function createHostCodeProcessClient(bridge: RpcBridge): HostCodeProcessC
 }
 /** One runtime process / embedded Worker realm. Never installed from settings or model inputs. */
 let broker: { client: HostCodeProcessClient; generationId: string } | undefined;
+let requiredOwners = 0;
+/** Trusted lifecycle enrollment, independent of the client's availability. Never sourced from
+ * RuntimeConfig, environment or tool arguments. Removing a client cannot permit local fallback. */
+export function requireHostCodeProcessBroker(): () => void {
+  requiredOwners++;
+  let released = false;
+  return () => { if (!released) { released = true; requiredOwners--; } };
+}
+export function hostCodeProcessBrokerRequired(): boolean { return requiredOwners > 0; }
 export function installHostCodeProcessClient(value: { client: HostCodeProcessClient; generationId: string } | undefined): () => void {
   const previous = broker; broker = value;
   return () => { broker = previous; };

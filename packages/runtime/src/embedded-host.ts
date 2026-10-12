@@ -22,6 +22,7 @@
 // with this stream) must not overlap two engines on one transcript: the lease is stamped with the pid,
 // and every Worker shares the host's pid, so the lock itself cannot tell them apart.
 import type { SpawnedRuntimeProcess, SpawnRuntimeOptions } from "@yanlinglabs/winter-agent-sdk";
+import { MandatoryFloorUnavailableError } from "@yanlinglabs/winter-agent-sdk";
 import { Queue } from "./protocol/channel.ts";
 import type { EmbeddedHostMessage, EmbeddedWorkerMessage, EmbeddedWorkflowWorkerCommand } from "./embedded-protocol.ts";
 
@@ -42,6 +43,11 @@ export const EMBEDDED_KILL_GRACE_MS = 1500;
 const CLOSE_AFTER_EXIT_MS = 2000;
 
 export interface SpawnEmbeddedWorkerOptions {
+  /** Host-only floor requirement. Workers share their parent's process and cannot establish a
+   * per-session kernel floor. When required, use a native floored runtime instead. */
+  requireHostFloor?: boolean;
+  /** Host-only Bash/Monitor broker requirement. Does not establish a Worker process floor. */
+  brokerRequired?: boolean;
   /**
    * The Worker entry as THIS host must spell it. In a `bun build --compile` binary that is the plain
    * relative path of the host's own worker file as it was passed to `--compile` (`"./embedded-worker.ts"`
@@ -108,6 +114,9 @@ function describeError(event: unknown): string {
  * exit with code 1 and the reason on `stderr`, which the wrapper maps to "exited before init".
  */
 export function spawnEmbeddedWorker(opts: SpawnEmbeddedWorkerOptions): EmbeddedWorkerProcess {
+  if (opts.requireHostFloor || opts.spawn.requireHostFloor || opts.spawn.command === "/usr/bin/sandbox-exec") {
+    throw new MandatoryFloorUnavailableError("embedded Workers cannot satisfy a required host floor; launch a native floored runtime");
+  }
   const stdout = new Queue<string>();
   const stderr = new Queue<string>();
   const graceMs = opts.killGraceMs ?? EMBEDDED_KILL_GRACE_MS;
@@ -213,7 +222,7 @@ export function spawnEmbeddedWorker(opts: SpawnEmbeddedWorkerOptions): EmbeddedW
   });
   worker.addEventListener("close", onClosed);
 
-  const start: EmbeddedHostMessage = { kind: "start", argv: [...opts.spawn.args], ...(opts.workflowWorkerCommand !== undefined ? { workflowWorkerCommand: opts.workflowWorkerCommand } : {}) };
+  const start: EmbeddedHostMessage = { kind: "start", argv: [...opts.spawn.args], ...(opts.brokerRequired ? { brokerRequired: true } : {}), ...(opts.workflowWorkerCommand !== undefined ? { workflowWorkerCommand: opts.workflowWorkerCommand } : {}) };
   if (opts.startAfter === undefined) send(start);
   // Messages to a Worker are ordered, and the Worker entry buffers `stdin`/`stdin-end`/`abort` that
   // arrive before `start` -- so holding `start` alone holds the engine without losing anything.
