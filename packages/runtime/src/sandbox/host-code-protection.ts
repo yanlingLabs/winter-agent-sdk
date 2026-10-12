@@ -3,6 +3,16 @@ import { splitDenyPathsByGlobShape } from "../permissions/file-rules.ts";
 import { resolveSymlinkEnds } from "../permissions/paths.ts";
 import type { SandboxSettings } from "./profile.ts";
 
+export const HOST_CODE_PROTECTION_CONTRACT_VERSION = 1;
+export const HOST_CODE_PROTECTION_CAPABILITY = "host-code-path-protection-v1";
+/** Explicitly partial: context/plugin discovery is a separate consumer inventory. */
+export const HOST_CODE_PROTECTION_COVERAGE = Object.freeze({
+  fileTools: Object.freeze(["Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep"]),
+  ordinarySandboxPathChecks: true,
+  approvedEscapesKeepMainBehavior: true,
+  contextReadChecksVersion: 0,
+});
+
 /** Host-owned path policy, not an execution floor. Does not wrap approved escapes or third-party
  * subprocesses. NEVER construct from RuntimeConfig, settings, environment or model arguments. */
 export interface HostCodeProtection {

@@ -29,6 +29,7 @@ import type { EmbeddedHostMessage, EmbeddedWorkerMessage, EmbeddedWorkflowWorker
 
 export type { EmbeddedHostMessage, EmbeddedWorkerMessage, EmbeddedWorkflowWorkerCommand } from "./embedded-protocol.ts";
 export type { HostCodeProtection } from "./sandbox/host-code-protection.ts";
+export { HOST_CODE_PROTECTION_CONTRACT_VERSION, HOST_CODE_PROTECTION_CAPABILITY, HOST_CODE_PROTECTION_COVERAGE } from "./sandbox/host-code-protection.ts";
 
 /**
  * How long `kill()` lets an aborted session unwind before `terminate()`.
