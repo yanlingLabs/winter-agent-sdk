@@ -145,7 +145,7 @@ class ToolService:
                 backends.add(scope['sessionId']);runtime=item['runtimeUid'];tool=item['toolUid'];group=item['workspaceGid']
                 if sid in self.conversations or any(type(n)!=int or n<1000 or n>65535 for n in (runtime,tool,group)) or runtime==tool or runtime in uids or tool in uids:raise Refusal('identity_collision')
                 uids.update((runtime,tool))
-                if item['policy'] not in ('auto','plan') or not 1<=len(item['roots'])<=16:raise Refusal('admitted_policy')
+                if item['policy'] not in ('auto','plan','ask','accept-edits','dont-ask','bypass') or not 1<=len(item['roots'])<=16:raise Refusal('admitted_policy')
                 roots={}
                 for root in item['roots']:
                     guest=root['guestPath']
@@ -263,7 +263,7 @@ class ToolService:
         view=tempfile.mkdtemp(prefix='view-',dir=self.directory);control,parent=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET);child=None;pidfd=None;cleanup=False
         try:
             worker=self.artifacts['processWorker' if kind=='process' else 'fileWorker']
-            arguments=[str(self.artifacts['launcher']),str(worker),view,str(parent.fileno()),str(self.environment),str(item['toolUid']),str(item['workspaceGid']),item['policy'],kind,operation,root['root']['guestPath'],relative,str(limit),extra,str(len(item['roots']))]
+            arguments=[str(self.artifacts['launcher']),str(worker),view,str(parent.fileno()),str(self.environment),str(item['toolUid']),str(item['workspaceGid']),'plan' if item['policy']=='plan' else 'auto',kind,operation,root['root']['guestPath'],relative,str(limit),extra,str(len(item['roots']))]
             descriptors=[self.artifacts['launcher'],worker,parent.fileno(),self.environment]
             for binding in item['roots'].values():arguments.extend((str(binding['fd']),binding['root']['guestPath'],'1' if binding['root']['readOnly'] else '0'));descriptors.append(binding['fd'])
             child=subprocess.Popen(arguments,executable=f"/proc/self/fd/{self.artifacts['launcher']}",stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=descriptors,close_fds=True,env={'LANG':'C','LC_ALL':'C'},start_new_session=True,bufsize=0)

@@ -20,6 +20,7 @@ if(scenario==="ordinary"){
  require(!(await run("Edit",{file_path:"seed",old_string:"hello",new_string:"edited"})).isError,"actual Edit");
  require(!(await run("Write",{file_path:"seed",content:"written\n"})).isError,"actual Write");
  const shell=await run("Bash",{command:"printf shell > from-shell; printf '%s' \"$PWD\"; printf err >&2"});require(!shell.isError&&shell.output.includes(cwd)&&shell.output.includes("err"),"actual foreground Bash");
+ const glibc=await run("Bash",{command:"/bin/glibc-tools"});require(!glibc.isError&&glibc.output.includes("glibc-thread-spawn-local-ipc-ok"),"glibc threads/spawn/local IPC: "+JSON.stringify(glibc));
  const bounded=await run("Bash",{command:"exit 7"});require(bounded.isError&&bounded.output.includes("Exit code: 7"),"shell nonzero receipt");
  require((await run("Read",{file_path:"escape"})).isError,"out-of-root symlink");
  require((await run("Bash",{command:"test ! -e /proc && test ! -e /run && test ! -e /protected/runtime && test -z \"$SECRET_SHOULD_NOT_TRAVEL\""})).output.includes("0"),"no runtime/proc/env surface");
@@ -34,6 +35,8 @@ if(scenario==="ordinary"){
 }else if(scenario==="plan"){
  await run("Read",{file_path:"seed"});require((await run("Write",{file_path:"seed",content:"forbidden"})).isError,"plan Write denied");
  const value=await run("Bash",{command:"printf forbidden > plan-shell"});require(!value.output.includes("Exit code: 0"),"plan Bash readonly");results.push("plan-kernel-readonly");
+}else if(scenario==="writable-policy"){
+ require(!(await run("Write",{file_path:`policy-${uid}`,content:"approved-runtime-write"})).isError,"approved non-plan policy native write");results.push("non-plan-native-write");
 }else if(scenario==="cancel"||scenario==="revoke"){
  const abort=new AbortController();
  const command=guest.executeProcess!("setsid /bin/bash -c 'printf ready > cancellation-ready; sleep 1; printf escaped > cancellation-orphan' >/tmp/orphan 2>&1 & while [ ! -e cancellation-ready ]; do sleep 0.01; done; sleep 5",cwd,6000,abort.signal);void command.catch(()=>{});

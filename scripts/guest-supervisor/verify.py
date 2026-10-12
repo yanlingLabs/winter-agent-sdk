@@ -41,14 +41,15 @@ def main():
             libraries=set(re.findall(r'(/[^\s()]+)',checked(['ldd',executable]).decode()))
             for library in libraries:
                 path=environment/library.lstrip('/');path.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(library,path);path.chmod(0o555)
+        checked([compiler,'-O2','-Wall','-Wextra','-Werror','-pthread',ROOT/'scripts/guest-supervisor/glibc-tools.c','-o',environment/'bin/glibc-tools']);(environment/'bin/glibc-tools').chmod(0o555)
         source=root/'source';source.mkdir(mode=0o2770);os.chown(source,10001,10000);source.chmod(0o2770)
         readonly=root/'readonly';readonly.mkdir();(readonly/'sentinel').write_bytes(b'private-other-root');(readonly/'sentinel').chmod(0o644)
         (source/'seed').write_bytes(b'hello\n');os.chown(source/'seed',10001,10000);(source/'seed').chmod(0o660);(source/'escape').symlink_to('../readonly/sentinel')
         scopes=[]
-        for number,policy in [(1,'auto'),(2,'plan')]:
+        for number,policy in enumerate(('auto','plan','ask','accept-edits','dont-ask','bypass'),1):
             scopes.append({'authority':{'workspaceId':'workspace','sessionId':f'backend-{number}','incarnationId':'boot','leaseEpoch':1,'configRevision':1,'grantRevision':1,'policyRevision':1},'logicalSessionId':f'conversation-{number}','runtimeUid':20000+number,'toolUid':10000+number,'workspaceGid':10000,'policy':policy,'roots':[{'id':'source','guestPath':'/workspace/folders/source','readOnly':False,'source':str(source)},{'id':'readonly','guestPath':'/workspace/folders/readonly','readOnly':True,'source':str(readonly)}]})
         stores=root/'stores';stores.mkdir();protected=[]
-        for number in [1,2]:
+        for number in range(1,7):
             store=stores/f'conversation-{number}';store.mkdir();os.chown(store,20000+number,20000+number);store.chmod(0o700);protected.append(str(store))
         config={'protectedStoreDirectories':protected,'guestBootId':Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'artifacts':compiled,'environment':str(environment),'controlDirectory':str(control),'conversations':scopes}
         config_path=root/'bootstrap.json';config_path.write_text(json.dumps(config));config_path.chmod(0o400);fd=os.open(config_path,os.O_RDONLY|os.O_CLOEXEC)
@@ -91,6 +92,9 @@ def main():
             assert (source/'seed').read_bytes()==b'written\n';assert (source/'from-shell').read_bytes()==b'shell';assert not (readonly/'new').exists()
             assert (replacement_source/'seed').read_bytes()==b'replacement-must-not-be-read-or-written\n' and not (replacement_source/'from-shell').exists()
             assert finish(start(2,'plan'))['uid']==20002;assert (source/'seed').read_bytes()==b'written\n';assert not (source/'plan-shell').exists()
+            for number in range(3,7):
+                finish(start(number,'writable-policy'))
+                assert (source/f'policy-{10000+number}').read_bytes()==b'approved-runtime-write'
             finish(start(1,'cancel'))
             def quiescent():
                 deadline=time.monotonic()+3
