@@ -26,7 +26,8 @@ General tool availability and production activation remain false.
   and running Python builder identity. There is no compiler in this byte-copy
   step. Native C and compiled SDK inputs/compiler/artifacts still require the
   separate existing compile/native receipts. `validate_capture` rejects changed,
-  writable, missing, extra or linked output leaves and unmeasured directories.
+  writable, missing, extra, symlinked or multiply linked output leaves and
+  unmeasured directories. Each captured output leaf must retain link count one.
   It requires all completeness/execution/availability claims to remain false.
 - `smoke.sh` is a non-executable source payload for a later bounded admitted
   process request. It checks the exact device inventory and flags, readable EOF
@@ -55,10 +56,10 @@ Run from the SDK root, unprivileged:
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/guest-utilities/test_fixture.py -v
 ```
 
-Five portable tests check isolated CLI capture/refusal, exact synthetic-byte
-capture and receipts, source/target
-and nofollow/FIFO refusals, extra/writable output refusal, exact result negatives,
-Bash/Python syntax only, and preservation of the existing oracle assertions.
+Six portable tests check isolated CLI capture/refusal, exact synthetic-byte
+capture and receipts, source/target and nofollow/FIFO refusals,
+extra/writable/multiply linked output refusal, exact result negatives, Bash/Python
+syntax only, and preservation of the existing oracle assertions.
 The capture CLI itself requires isolated system Python `-I -S -B` and refuses
 root before project imports. For a future explicit manifest and fixture-only
 origin tree, its ordinary capture command is:

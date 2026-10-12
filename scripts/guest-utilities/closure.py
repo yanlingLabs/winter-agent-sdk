@@ -107,7 +107,7 @@ def leaf(root, name):
 
 
 def identity(info):
-    return info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+    return info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
 def measure(fd, output=None, limit=MAX_FILE):
@@ -225,8 +225,13 @@ def validate_capture(receipt, environment):
         for guest, item in expected.items():
             fd = leaf(root, guest[1:])
             try:
+                if os.fstat(fd).st_nlink != 1:
+                    raise ValueError('captured utility multiply linked')
                 measured, header = measure(fd)
-                if measured != {key: item[key] for key in ('sha256', 'bytes')} or os.fstat(fd).st_mode & 0o222:
+                after = os.fstat(fd)
+                if after.st_nlink != 1:
+                    raise ValueError('captured utility multiply linked')
+                if measured != {key: item[key] for key in ('sha256', 'bytes')} or after.st_mode & 0o222:
                     raise ValueError('captured utility changed/writable')
                 if item['role'] != 'stdlib' and (len(header) != 20 or header[:6] != b'\x7fELF\x02\x01' or int.from_bytes(header[18:20], 'little') != 183):
                     raise ValueError('captured utility target')

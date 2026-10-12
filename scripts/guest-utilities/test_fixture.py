@@ -86,6 +86,18 @@ class UtilityFixtureTests(unittest.TestCase):
             path.unlink(); os.mkfifo(path)
             with self.assertRaisesRegex(ValueError, 'regular leaf'): closure.capture(source, manifest, root / 'fifo')
 
+    def test_external_hardlink_refused_despite_unchanged_inventory_and_bytes(self):
+        with tempfile.TemporaryDirectory(prefix='winter-utility-hardlink-source-') as temp:
+            root = Path(temp).resolve(); source = root / 'source'; source.mkdir(); manifest = fixture(source)
+            receipt = closure.capture(source, manifest, root / 'capture')
+            output = root / 'capture/environment'; leaf = output / 'bin/bash'; alias = root / 'outside-capture-hardlink'
+            os.link(leaf, alias)
+            self.assertEqual(leaf.stat().st_nlink, 2)
+            with self.assertRaisesRegex(ValueError, 'multiply linked'):
+                closure.validate_capture(receipt, output)
+            alias.unlink()
+            self.assertEqual(closure.validate_capture(receipt, output), receipt)
+
     def test_exact_oracle_rejects_failed_truncated_extra_or_unbound_markers(self):
         result = {'stdout': oracle.EXPECTED_STDOUT, 'stderr': '', 'exitCode': 0, 'termination': 'exit'}
         validated = oracle.validate_result(result)
@@ -106,6 +118,8 @@ class UtilityFixtureTests(unittest.TestCase):
         for marker in oracle.EXPECTED_STDOUT.strip().splitlines(): self.assertIn(marker, smoke)
         for check in ('cat /dev/stdin', 'NoNewPrivs', 'CapAmb', 'os.urandom', 'shared_memory.SharedMemory', 'context.Semaphore', 'openssl rand', 'process-substitution-ok', 'mktemp -d', 'commit -m', "'/proc/1/status'", 'receipt/bootstrap socket leaked'):
             self.assertIn(check, smoke)
+        self.assertIn('os.mkdir(sys.argv[1])', smoke)
+        self.assertNotIn('\nmkdir ', smoke)
         existing = (closure.ROOT / 'scripts/guest-engine/verify.py').read_text()
         self.assertIn("{'passed':True,'turns':5,'peerValidated':True}", existing)
         self.assertIn("if len(calls)!=4 or len(results)!=4 or len(anchors)!=5", existing)

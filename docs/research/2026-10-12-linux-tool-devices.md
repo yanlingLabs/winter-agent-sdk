@@ -199,7 +199,7 @@ if __name__ == '__main__':
 print('tool-entropy-multiprocessing-ok')
 PY
 fixture_repo=$(mktemp -d "$PWD/.winter-tool-device-smoke.XXXXXX")
-mkdir "$fixture_repo/templates"
+python3 -c 'import os,sys; os.mkdir(sys.argv[1])' "$fixture_repo/templates"
 git -c init.templateDir="$fixture_repo/templates" init --initial-branch=fixture-tool-smoke "$fixture_repo/repo" >/dev/null
 printf fixture-only >"$fixture_repo/repo/fixture.txt"
 git -C "$fixture_repo/repo" add fixture.txt
