@@ -18,6 +18,8 @@ This is a fixture launch boundary. It is not signed Cowork worker admission, Hom
 
 ## Fresh Linux build/run recipe
 
+The S1 review correction uses nonblocking nofollow input opens and checks regular-file identity before returning an input descriptor. This covers initial receipt/artifact admission, a leaf replaced before copy, the sealed bootstrap and the initial external wrapper. A FIFO is refused without waiting for a writer, creating a destination, staging or spawning a runner. Owned descriptors close on type/stat refusal.
+
 Root owns CI execution planning. The following is a **source recipe for a future separately admitted disposable ARM64 Linux job**, not an authorization or command executed here:
 
 1. Use a pinned trusted Linux ARM64 image/system Python, Bun1.3.14 and native compiler. Install the locked SDK dependencies as the ordinary builder UID. Preserve the exact source/dependency snapshot.
@@ -31,7 +33,7 @@ Initial wrapper body (supply argv and externally approved digests through the tr
 ```python
 import hashlib, os, stat, sys
 parent_path, approved_parent_sha = sys.argv[1:3]
-fd = os.open(parent_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+fd = os.open(parent_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
 try:
     info = os.fstat(fd)
     if not stat.S_ISREG(info.st_mode) or info.st_size > 16 * 1024 * 1024:
@@ -49,8 +51,8 @@ The job must obtain the approved hash from the independent admission record rath
 
 ## Validation and limits
 
-- `python3 -I -S -B scripts/guest-engine/test_stage.py`: **37 passed**. Synthetic ELF bytes are never executed; Root checks use injected metadata on disposable trees.
-- `python3 -I -S -B -m unittest discover -s scripts/guest-engine -p 'test_*.py' -v`: **73 passed**. Includes the earlier portable exact-source C framing harness with substituted kernel authority; no actual native owner/helper admission follows from it.
+- `python3 -I -S -B scripts/guest-engine/test_stage.py`: **41 passed** after S1. Synthetic ELF bytes are never executed; Root checks use injected metadata on disposable trees. Real FIFO probes run in ordinary isolated Python children with three-second deadlines.
+- `python3 -I -S -B -m unittest discover -s scripts/guest-engine -p 'test_*.py'`: **77 passed** after S1. Includes the earlier portable exact-source C framing harness with substituted kernel authority; no actual native owner/helper admission follows from it.
 - `python3 -I -S -B -m unittest discover -s scripts/guest-supervisor -p 'test_*.py' -v`: **32 run,31 passed,1 Linux-only skip**.
 - `bun run typecheck`: both projects passed, exit0. Dependency inputs were read-only copies from the frozen prior worktree; no install/global modification.
 - Isolated bootstrap Python syntax parsed without execution. `git diff --check` passed.
@@ -59,7 +61,7 @@ Tests cover complete synthetic closure; all seven artifact mutations; changed/mi
 
 Retained logs are under ignored/untracked `out/fresh-engine-staging/`. The final parent source hash and log digests are recorded below after freezing. The reviewed prior worktree and all earlier ELF/receipt artifacts remain untouched. A real fresh ARM64 Linux compile/native receipt, privileged staging, actual kernel/native fixture run and full Cowork production acceptance remain unexecuted gates. No push, SDK release/pin or activation occurred.
 
-Parent SHA256: `a5bfb29aac22bfce3cb218c16e39ea18c183812da6507cf8ac228012db0cd566`. This records source bytes for independent review; it does not admit execution.
+Parent SHA256 after S1: `a801bc4fe5d6c207ee5b09a471f9c5bb79379f6106fa0a4e19e70f2c8a3d6496`. This records source bytes for independent review; it does not admit execution. The original `b1dd50ba` logs below remain retained alongside the correction logs.
 
 | Log | SHA256 |
 | --- | --- |
@@ -68,3 +70,7 @@ Parent SHA256: `a5bfb29aac22bfce3cb218c16e39ea18c183812da6507cf8ac228012db0cd566
 | `supervisor-tests.log` | `d8549182c0500781b110ad9bbb044534477b5a102875e1ab6d1a78059d7eb033` |
 | `typecheck.log` | `2eae81d9ee3f6489a4e1723a6da7ded9e731f52ff61c48cae3cfba7be45ea5b3` |
 | `bootstrap-syntax.log` | `4afaafd07edfe4c3dfcd6cd493580574a646b606f7b5d90ded32d71dbcb28b83` |
+| `staging-s1-tests.log` | `84eb5794d7b8e49f4dd2b81736750bc68b24ab6e01c6d3f6ad16cfdc9ea758e0` |
+| `engine-s1-tests.log` | `ea704f4d8aaad5183eb864877cbb92b1d4f34b420875e22d9635887a3d7ca7a2` |
+
+`.github/workflows/cowork-fresh-engine-build.yml` prepares fresh Linux ARM64 artifacts, complete measured source/dependency archive, receipts and portable tests as an ordinary builder. Its upload includes the exact installed dependency bytes so subsequent review does not depend on recreating them with another install. The workflow performs no privileged staging or guest/native execution; execution admission remains a separate step.

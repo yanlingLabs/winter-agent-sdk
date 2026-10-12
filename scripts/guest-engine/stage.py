@@ -38,7 +38,13 @@ def leaf(root,name,flags=os.O_RDONLY):
     try:
         for part in parts[:-1]:
             child=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=folder);os.close(folder);folder=child
-        return os.open(parts[-1],flags|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=folder)
+        # A FIFO must refuse before waiting for a writer, including if a checked
+        # regular input is substituted between inventory and copy.
+        fd=os.open(parts[-1],flags|os.O_NOFOLLOW|os.O_CLOEXEC|os.O_NONBLOCK,dir_fd=folder)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):raise ValueError('closure leaf type')
+            return fd
+        except BaseException:os.close(fd);raise
     finally:os.close(folder)
 
 def measure(root,name,limit,expected=None,retain=False,immutable=False,unique=True):
@@ -360,7 +366,7 @@ try:
   child=os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=folder);os.close(folder);folder=child
   st=os.fstat(folder)
   if st.st_uid!=0 or stat.S_IMODE(st.st_mode)!=0o500:raise SystemExit('bootstrap immutable source')
- leaf=os.open('stage.py',os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=folder)
+ leaf=os.open('stage.py',os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC|os.O_NONBLOCK,dir_fd=folder)
  try:
   st=os.fstat(leaf)
   if not stat.S_ISREG(st.st_mode) or st.st_uid!=0 or st.st_nlink!=1 or stat.S_IMODE(st.st_mode)!=0o400 or st.st_size>16*1024*1024:raise SystemExit('bootstrap parent identity')

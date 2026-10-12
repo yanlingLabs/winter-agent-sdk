@@ -1,7 +1,7 @@
 """Adversarial trusted-parent tests. Synthetic Linux bytes are never executed.
 
 No root ownership is changed; positive ownership checks use injected stat metadata.
-Only the isolated direct-verifier refusal test starts an interpreter.
+Only deadline-bounded refusal probes start isolated interpreters; no native effect runs.
 """
 import copy
 from contextlib import contextmanager
@@ -228,6 +228,91 @@ class StageTests(unittest.TestCase):
             stage.assert_not_called()
             runner.assert_not_called()
             process.assert_not_called()
+
+    def run_fifo_probe(self, operation, paths):
+        """Real FIFO admission with a hard child deadline; no writer or native effect."""
+        probe = r"""
+import importlib.util,json,os,sys
+from pathlib import Path
+module=Path(sys.argv[1]);paths=json.loads(sys.argv[2]);operation=sys.argv[3]
+spec=importlib.util.spec_from_file_location('fifo_admission_probe',module)
+s=importlib.util.module_from_spec(spec);spec.loader.exec_module(s)
+def forbidden(*args,**kwargs):raise AssertionError('staging/spawn must never occur')
+s.stage=forbidden;s.run_staged=forbidden;s.subprocess.run=forbidden
+if operation=='capture':
+ sys.argv=['stage.py','--source',paths['source'],'--artifacts',paths['artifacts'],'--receipt',paths['receipt'],'--approved-receipt-sha256',paths['approved'],'--approved-parent-sha256',s.own_parent_hash()]
+ try:s.main()
+ except (ValueError,OSError) as error:
+  if isinstance(error,ValueError) and str(error)!='closure leaf type':raise
+  print(json.dumps({'refused':True,'staged':False,'spawned':False}))
+ else:raise AssertionError('FIFO admitted')
+elif operation=='copy-replacement':
+ with s.capture(Path(paths['source']),Path(paths['artifacts']),Path(paths['receipt']),paths['approved']) as snapshot:
+  name='scripts/guest-engine/runtime.ts';target=Path(paths['source'])/name
+  target.unlink();os.mkfifo(target)
+  destination=Path(paths['destination'])
+  try:s.copy_leaf(snapshot.source,name,destination,snapshot.compiled['inputs'][name]['sha256'],s.MAX_FILE,0o400)
+  except ValueError as error:
+   if str(error)!='closure leaf type':raise
+  else:raise AssertionError('FIFO copy admitted')
+  if destination.exists():raise AssertionError('destination created before FIFO refusal')
+  print(json.dumps({'refused':True,'destinationWritten':False,'spawned':False}))
+else:raise AssertionError('unknown probe')
+"""
+        result=subprocess.run([sys.executable,'-I','-S','-B','-c',probe,str(MODULE),json.dumps(paths),operation],
+                              capture_output=True,text=True,timeout=3,
+                              env={'PATH':os.environ.get('PATH',''),'LANG':'C','LC_ALL':'C'})
+        self.assertEqual(result.returncode,0,result.stderr)
+        return json.loads(result.stdout)
+
+    def test_real_fifo_receipt_compile_receipt_and_artifact_refuse_before_staging(self):
+        paths={'source':str(self.source),'artifacts':str(self.artifacts),'receipt':str(self.receipt_path),'approved':self.approved}
+        for path in (self.receipt_path,self.artifacts/'compile-receipt.json',self.artifacts/'runtimeEntry'):
+            with self.subTest(input=path.name):
+                original=path.read_bytes();path.unlink();os.mkfifo(path)
+                try:
+                    observed=self.run_fifo_probe('capture',paths)
+                    self.assertEqual(observed,{'refused':True,'staged':False,'spawned':False})
+                finally:path.unlink();path.write_bytes(original)
+
+    def test_real_fifo_substituted_copy_input_refuses_without_destination_write(self):
+        destination=self.root/'fifo-copy-destination'
+        paths={'source':str(self.source),'artifacts':str(self.artifacts),'receipt':str(self.receipt_path),'approved':self.approved,'destination':str(destination)}
+        observed=self.run_fifo_probe('copy-replacement',paths)
+        self.assertEqual(observed,{'refused':True,'destinationWritten':False,'spawned':False})
+        self.assertFalse(destination.exists())
+
+    def test_documented_external_wrapper_fifo_parent_refuses_before_exec_with_deadline(self):
+        # Exercise the actual documented initial wrapper, not a rewritten equivalent.
+        document=MODULE.parents[2]/'guest/FRESH-ENGINE-STAGING.md'
+        markdown=document.read_text()
+        wrapper=markdown.split('```python\n',1)[1].split('\n```',1)[0]
+        parent=self.root/'fifo-parent';os.mkfifo(parent)
+        result=subprocess.run([sys.executable,'-I','-S','-B','-c',wrapper,str(parent),'0'*64],
+                              capture_output=True,text=True,timeout=3,
+                              env={'PATH':os.environ.get('PATH',''),'LANG':'C','LC_ALL':'C'})
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('parent input identity/limit',result.stderr)
+        self.assertNotIn('external parent byte admission refused',result.stderr)
+
+    def test_leaf_fstat_refusal_closes_opened_fifo_and_failed_stat_descriptors(self):
+        folder=s.open_root(self.source);original_open=os.open;opened=[]
+        fifo=self.source/'fifo';os.mkfifo(fifo)
+        def capture_open(name,*args,**kwargs):
+            fd=original_open(name,*args,**kwargs)
+            if name in ('fifo','runtime.ts'):opened.append(fd)
+            return fd
+        try:
+            with patch.object(s.os,'open',side_effect=capture_open):
+                with self.assertRaisesRegex(ValueError,'closure leaf type'):s.leaf(folder,'fifo')
+            self.assertEqual(len(opened),1)
+            with self.assertRaises(OSError):os.fstat(opened[-1])
+            opened.clear()
+            with patch.object(s.os,'open',side_effect=capture_open),patch.object(s.os,'fstat',side_effect=OSError('injected stat refusal')):
+                with self.assertRaisesRegex(OSError,'injected stat refusal'):s.leaf(folder,'scripts/guest-engine/runtime.ts')
+            self.assertEqual(len(opened),1)
+            with self.assertRaises(OSError):os.fstat(opened[-1])
+        finally:os.close(folder)
 
     def test_complete_synthetic_closure_captures_without_execution(self):
         with patch.object(s.subprocess, 'run') as run:
