@@ -7,7 +7,7 @@ from pathlib import Path
 
 FRAME_LIMIT=2*1024*1024
 FRAME_READ_SECONDS=3
-TOOL_CONNECTION_LIMIT=8
+TOOL_CONNECTION_LIMIT=24
 ADMIN_CONNECTION_LIMIT=2
 AUTH_KEYS=('workspaceId','sessionId','incarnationId','leaseEpoch','configRevision','grantRevision','policyRevision')
 ID=re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$')
@@ -157,7 +157,7 @@ class ToolService:
             self.close();raise
     def _listener(self,path,uid,handler,*,admin=False):
         capacity=self.admin_connections if admin else self.tool_connections
-        local_capacity=None if admin else threading.BoundedSemaphore(2)
+        local_capacity=None if admin else threading.BoundedSemaphore(6)
         server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);server.bind(str(path));os.chmod(path,0o660 if uid else 0o600);os.chown(path,0,uid);server.listen(ADMIN_CONNECTION_LIMIT if admin else TOOL_CONNECTION_LIMIT);server.settimeout(.1);self.listeners.append(server)
         def accept():
             while not self.stop_event.is_set():
@@ -193,11 +193,11 @@ class ToolService:
         if request['operation']=='revoke':
             self.revoke(request['sessionId']);frame_write(channel,{'revoked':True})
         else:
-            with self.lock:frame_write(channel,{'active':sum(sid==request['sessionId'] for sid,_ in self.active.values()),'uncertain':request['sessionId'] in self.debt})
+            with self.lock:frame_write(channel,{'active':sum(sid==request['sessionId'] for sid,_,_ in self.active.values()),'uncertain':request['sessionId'] in self.debt})
     def revoke(self,sid):
         with self.lock:
             self.conversations[sid]['revoked']=True
-            for active_sid,cancel in self.active.values():
+            for active_sid,cancel,_ in self.active.values():
                 if active_sid==sid:cancel.set()
     def _deny(self,request,item,code):
         return {'protocolVersion':1,'requestId':request.get('requestId'),'authority':dict(item['authority']),'exitCode':1,'stdout':canonical({'version':1,'ok':False,'code':code,'errno':1})}
@@ -239,7 +239,7 @@ class ToolService:
                 key=request.get('requestId')
                 if not isinstance(key,str) or not re.fullmatch('[a-f0-9-]{36}',key):raise Refusal('invalid_request')
                 if (sid,key) in self.active:raise Uncertain('request_already_admitted')
-                if len(self.active)>=8 or sum(active_sid==sid for active_sid,_ in self.active.values())>=2:raise Refusal('capacity_busy')
+                if sum(active_kind==kind for _,_,active_kind in self.active.values()) >= (16 if kind=='file' else 8) or sum(active_sid==sid and active_kind==kind for active_sid,_,active_kind in self.active.values()) >= (4 if kind=='file' else 2):raise Refusal('capacity_busy')
                 requested_root=request.get('root')
                 if not isinstance(requested_root,dict) or not isinstance(requested_root.get('id'),str):raise Refusal('invalid_request')
                 root=item['roots'].get(requested_root['id'])
@@ -265,7 +265,7 @@ class ToolService:
                     if not isinstance(command,str) or '\0' in command or not 1<=len(command.encode())<=65536 or type(timeout)!=int or not 1<=timeout<=600000:raise Refusal('invalid_request')
                     operation=str(timeout);payload=command.encode();extra='-';deadline=timeout/1000+3
                 self._consume_ticket(sid,envelope.get('ticket'),kind,request)
-                self.active[(sid,key)]=(sid,cancel);admitted=True
+                self.active[(sid,key)]=(sid,cancel,kind);admitted=True
             code,out=self._run(item,kind,operation,root,relative,limit,extra,payload,deadline,cancel,channel)
             with self.lock:
                 if item['revoked']:raise Uncertain('authority_revoked')
@@ -277,7 +277,7 @@ class ToolService:
         finally:
             if admitted:
                 with self.lock:
-                    if self.active.get((sid,key))==(sid,cancel):self.active.pop((sid,key),None)
+                    if self.active.get((sid,key))==(sid,cancel,kind):self.active.pop((sid,key),None)
     def _run(self,item,kind,operation,root,relative,limit,extra,payload,seconds,cancel,channel):
         sid=item['logicalSessionId']
         for name in ('launcher','processWorker' if kind=='process' else 'fileWorker'):verify_held_artifact(self.artifacts[name],self.artifact_pins[name])
@@ -357,7 +357,7 @@ class ToolService:
     def close(self):
         self.stop_event.set()
         with self.lock:
-            for _,cancel in self.active.values():cancel.set()
+            for _,cancel,_ in self.active.values():cancel.set()
         for listener in self.listeners:listener.close()
         deadline=time.monotonic()+3
         for thread in self.threads:
