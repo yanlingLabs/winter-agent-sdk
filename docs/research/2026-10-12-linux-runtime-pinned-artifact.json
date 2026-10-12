@@ -1,0 +1,22 @@
+{
+  "runtimeSourceCommit": "bbab87d9a748c57ff80e1f28cce2c8972c249a34",
+  "builderGitBase": "d3dda5b9c3279bf8860b0c88a41d485379dd42d0",
+  "buildScriptSha256": "dd4c50980ca925cc2db0b72ca72e54731cfe4581ed00c898c0e45b8c56c5ef84",
+  "bunVersion": "1.3.14",
+  "basePin": {
+    "version": "1.3.14",
+    "target": "bun-linux-arm64",
+    "archiveUrl": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-aarch64.zip",
+    "archiveSha256": "a27ffb63a8310375836e0d6f668ae17fa8d8d18b88c37c821c65331973a19a3b",
+    "archiveEntry": "bun-linux-aarch64/bun",
+    "executableSha256": "37141662ebed915a2ab89313156e455e2a1374395f5f6760d06407f49406f086"
+  },
+  "baseCopiedAfterHashVerification": true,
+  "compileExecutablePathExplicit": true,
+  "artifactSha256": "c476bb7a49254302870aca0248ab7916a449ac1ddec7ebc9bfce918de8c7d33d",
+  "artifactBytes": 102344848,
+  "checkoutPathExclusionPassed": true,
+  "linuxExecutionVerified": false,
+  "guestExecutionEnabled": false,
+  "vmLaunched": false
+}

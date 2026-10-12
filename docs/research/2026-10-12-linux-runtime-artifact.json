@@ -1,0 +1,22 @@
+{
+  "sourceCommit": "bbab87d9a748c57ff80e1f28cce2c8972c249a34",
+  "buildScriptSha256": "af92ec5340966c7c717ae85378670816ebbd11138955f833f8ff248995dc5f62",
+  "bunVersion": "1.3.14",
+  "target": "bun-linux-arm64",
+  "format": "ELF64 AArch64",
+  "interpreter": "/lib/ld-linux-aarch64.so.1",
+  "needed": [
+    "libc.so.6",
+    "ld-linux-aarch64.so.1",
+    "libpthread.so.0",
+    "libdl.so.2",
+    "libm.so.6"
+  ],
+  "observedGlibcVersionRequirement": "GLIBC_2.17",
+  "artifactSha256": "9d0989412896ba9055fc1bb17f766ee6709de21bc7dc58b4b4047e68e5b7790d",
+  "artifactBytes": 102344848,
+  "checkoutPathExclusionPassed": true,
+  "linuxExecutionVerified": false,
+  "guestExecutionEnabled": false,
+  "vmLaunched": false
+}

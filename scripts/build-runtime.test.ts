@@ -96,6 +96,21 @@ describe("assertBinaryDoesNotEmbedPath (P9a-7's release-blocking gate)", () => {
 });
 
 describe("buildRuntime's mutual-exclusivity guard (no build triggered)", () => {
+  test("guest compilation refuses missing, unpinned and host-only base inputs before building", async () => {
+    const { buildRuntime } = await import("./build-runtime.ts");
+    const dir = mkdtempSync(join(tmpdir(), "build-runtime-badbase-")); temps.push(dir);
+    const badBase = join(dir, "base"), out = join(dir, "guest"); writeFileSync(badBase, "not the pinned Linux executable");
+    await expect(buildRuntime({ target: "bun-linux-arm64", out })).rejects.toThrow(/requires a pinned/);
+    await expect(buildRuntime({ guestBaseExecutable: badBase, out })).rejects.toThrow(/requires the guest target/);
+    await expect(buildRuntime({ target: "bun-linux-arm64", guestBaseExecutable: badBase, out })).rejects.toThrow(/hash mismatch|compiler version differs/);
+    expect(existsSync(out)).toBe(false);
+  });
+  test("guest artifacts cannot replace implicit host output or the host platform package", async () => {
+    const { buildRuntime } = await import("./build-runtime.ts");
+    await expect(buildRuntime({ target: "bun-linux-arm64" })).rejects.toThrow(/requires explicit out/);
+    await expect(buildRuntime({ target: "bun-linux-arm64", out: "/tmp/fixture-linux", platformPackage: true })).rejects.toThrow(/cannot stage a host platform package/);
+    await expect(buildRuntime({ target: "bun-unknown" as "bun-linux-arm64", out: "/tmp/fixture-linux" })).rejects.toThrow(/unsupported cross-compile target/);
+  });
   test("`out` and `platformPackage` together throw before any compile is attempted", async () => {
     const { buildRuntime } = await import("./build-runtime.ts");
     await expect(buildRuntime({ out: "/tmp/x", platformPackage: true })).rejects.toThrow(/mutually exclusive/);
