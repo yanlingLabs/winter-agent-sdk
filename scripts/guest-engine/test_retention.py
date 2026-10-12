@@ -1,8 +1,9 @@
 """No process launch: uncertain fixture unwinding retains its exact disposable files."""
-import importlib.util,io,json,tempfile,unittest
+import hashlib,importlib.util,io,json,os,socket,tempfile,unittest
 from unittest.mock import MagicMock
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
 MODULE=Path(__file__).with_name('verify.py');spec=importlib.util.spec_from_file_location('retention_verify',MODULE);verify=importlib.util.module_from_spec(spec);spec.loader.exec_module(verify)
 class RetentionTests(unittest.TestCase):
     def test_uncertain_unwind_retains_files_and_reports_only_normalized_id(self):
@@ -14,7 +15,10 @@ class RetentionTests(unittest.TestCase):
                     with verify.retained_fixture_directory() as root:
                         self.assertEqual(root,directory);raise RuntimeError('uncertain')
             self.assertEqual((directory/'store').read_text(),'must retain')
-            self.assertEqual(json.loads(errors.getvalue()),{'fixtureRetained':True,'retentionId':directory.name,'nativeCleanupConfirmed':False,'ownershipReleased':False})
+            records=[json.loads(line) for line in errors.getvalue().splitlines()]
+            self.assertEqual(records[0]['kind'],'fixture-failure-diagnostic');self.assertEqual(records[0]['failure'],{'class':'RuntimeError'});self.assertFalse(records[0]['ownershipReleased'])
+            self.assertLessEqual(len(errors.getvalue().splitlines()[0].encode()),32768)
+            self.assertEqual(records[1],{'fixtureRetained':True,'retentionId':directory.name,'nativeCleanupConfirmed':False,'ownershipReleased':False})
             self.assertNotIn(temporary,errors.getvalue())
     def test_context_does_not_delete_even_after_normal_return_without_receipt(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -62,4 +66,87 @@ class RetentionTests(unittest.TestCase):
         for private in ('/private','runtime-view-abc','synthetic-token','another-secret','f'*64,'DISPOSABLE-HOST-CREDENTIAL'):self.assertNotIn(private,text)
         self.assertLessEqual(len(verify.normalized_stderr(b'x'*16384).encode()),4096)
         self.assertNotIn('normalizedText',verify.BoundedCapture(io.BytesIO(data),16384).metadata())
+    def runtime_record(self,cleanup=False):
+        stderr=b'Native initialization failed [fixture-path]'
+        return {'version':1,'kind':'fixture-runtime-diagnostic','failure':{'class':'Uncertain','code':'runtime_native_owner_closed'},
+                'observations':{'phase':'native-startup','nativeReceiptObserved':False,'nativeExitCode':None,'parentReaped':False,'parentExitCode':None,'toolDrainConfirmed':False,'nativeCleanupConfirmed':cleanup,'ownershipReleased':False},
+                'stdout':{'capturedBytes':0,'captureLimit':1024*1024,'truncated':False,'sha256':hashlib.sha256(b'').hexdigest()},
+                'stderr':{'capturedBytes':len(stderr),'captureLimit':16384,'truncated':False,'sha256':hashlib.sha256(stderr).hexdigest(),'normalizedText':stderr.decode(),'textLimit':4096}}
+    def diagnostic_fixture(self,directory,record=None):
+        control=directory/'control';control.mkdir(mode=0o700);private=control/verify.LOGICAL;private.mkdir(mode=0o700)
+        path=private/'runtime-diagnostic.json'
+        if record is not None:path.write_text(json.dumps(record));path.chmod(0o600)
+        return {'control':control},path
+    def test_failure_snapshot_is_printed_bounded_without_promoting_runtime_cleanup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory=Path(temp)/'winter-fresh-engine-fixture';directory.mkdir();fixture,path=self.diagnostic_fixture(directory,self.runtime_record(cleanup=True));observations={'phase':'native-admission','nativeCleanupConfirmed':False};errors=io.StringIO()
+            with patch.object(verify.tempfile,'mkdtemp',return_value=str(directory)),patch.object(verify.sys,'stderr',errors):
+                with self.assertRaisesRegex(AssertionError,'terminal before owner'):
+                    with verify.retained_fixture_directory(observations):
+                        verify.snapshot_runtime_diagnostic(fixture,observations);raise AssertionError('terminal before owner')
+            lines=[json.loads(line) for line in errors.getvalue().splitlines()];self.assertEqual(lines[0]['observations']['runtimeDiagnostic'],self.runtime_record(cleanup=True));self.assertFalse(lines[0]['observations']['nativeCleanupConfirmed']);self.assertFalse(lines[0]['ownershipReleased']);self.assertFalse(lines[1]['nativeCleanupConfirmed'])
+            self.assertLessEqual(len(errors.getvalue().splitlines()[0].encode()),32768);self.assertNotIn(temp,errors.getvalue());self.assertTrue(path.exists())
+    def test_missing_runtime_diagnostic_is_explicit_without_claim_or_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            fixture,path=self.diagnostic_fixture(Path(temp));observations={'nativeCleanupConfirmed':False};verify.snapshot_runtime_diagnostic(fixture,observations)
+            self.assertFalse(observations['runtimeDiagnosticAvailable']);self.assertNotIn('runtimeDiagnostic',observations);self.assertFalse(observations['nativeCleanupConfirmed'])
+    def test_runtime_snapshot_refuses_symlink_fifo_and_wrong_mode_with_owned_fd_cleanup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory=Path(temp);fixture,path=self.diagnostic_fixture(directory,self.runtime_record());original=path.read_bytes()
+            for kind in ('symlink','fifo','mode','hardlink'):
+                with self.subTest(kind=kind):
+                    path.unlink()
+                    if kind=='symlink':target=directory/'outside';target.write_bytes(original);path.symlink_to(target)
+                    elif kind=='fifo':os.mkfifo(path,0o600)
+                    else:path.write_bytes(original);path.chmod(0o644 if kind=='mode' else 0o600)
+                    if kind=='hardlink':os.link(path,directory/'alias')
+                    opened=[];real_open=os.open
+                    def track(name,*args,**kwargs):
+                        fd=real_open(name,*args,**kwargs);opened.append(fd);return fd
+                    observed={}
+                    with patch.object(verify.os,'open',side_effect=track):verify.snapshot_runtime_diagnostic(fixture,observed)
+                    self.assertNotIn('runtimeDiagnostic',observed);self.assertIn('runtimeDiagnosticReadFailure',observed)
+                    for fd in opened:
+                        with self.assertRaises(OSError):os.fstat(fd)
+    def test_runtime_snapshot_wrong_owner_or_oversize_refuses_before_json_parsing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            fixture,path=self.diagnostic_fixture(Path(temp),self.runtime_record());observed={}
+            real_stat=os.fstat;inode=path.stat().st_ino
+            def stat(fd):
+                value=real_stat(fd)
+                if value.st_ino==inode:return SimpleNamespace(st_mode=value.st_mode,st_uid=value.st_uid+1,st_nlink=value.st_nlink,st_size=value.st_size)
+                return value
+            with patch.object(verify.os,'fstat',side_effect=stat),patch.object(verify.json,'loads') as parse:verify.snapshot_runtime_diagnostic(fixture,observed);parse.assert_not_called()
+            self.assertNotIn('runtimeDiagnostic',observed);self.assertIn('runtimeDiagnosticReadFailure',observed)
+            path.write_bytes(b'x'*16385);observed={}
+            with patch.object(verify.json,'loads') as parse:verify.snapshot_runtime_diagnostic(fixture,observed);parse.assert_not_called()
+            self.assertNotIn('runtimeDiagnostic',observed)
+    def test_runtime_snapshot_rejects_malformed_or_duplicate_records(self):
+        with tempfile.TemporaryDirectory() as temp:
+            fixture,path=self.diagnostic_fixture(Path(temp),self.runtime_record())
+            for wire in ('{}','{"version":1,"version":1}',json.dumps({**self.runtime_record(),'stderr':{'normalizedText':'secret /path'}})):
+                path.write_text(wire);observed={};verify.snapshot_runtime_diagnostic(fixture,observed);self.assertNotIn('runtimeDiagnostic',observed);self.assertIn('runtimeDiagnosticReadFailure',observed)
+    def test_terminal_owner_status_fails_promptly_without_handoff_or_cleanup_claim(self):
+        fixture={'control':Path('/unused-fixture-control')};channel=MagicMock();channel.__enter__.return_value=channel;channel.recvmsg.return_value=(b'',[],0,None);admission=MagicMock();observations={'nativeCleanupConfirmed':False}
+        status={'active':0,'uncertain':True,'runtime':{'state':'retained','exitCode':None,'cleanupConfirmed':False},'unsafe':'secret /private/path'}
+        def wait(check,seconds,children):self.assertEqual(seconds,2);return check()
+        with patch.object(verify.socket,'MSG_CMSG_CLOEXEC',0x40000000,create=True),patch.object(verify.socket,'socket',return_value=channel),patch.object(verify,'wait_for',side_effect=wait),patch.object(verify,'exchange',return_value=status) as exchange,patch.object(verify,'snapshot_runtime_diagnostic') as snapshot:
+            with self.assertRaisesRegex(AssertionError,'terminal before owner'):verify.admit_provider(fixture,admission,[],observations)
+        self.assertEqual(observations['ownerAdmissionFailure'],'terminal-runtime-before-owner');self.assertEqual(observations['nativeStatus'],{'state':'retained','exitCode':None,'cleanupConfirmed':False,'active':0,'uncertain':True});self.assertFalse(observations['nativeCleanupConfirmed']);admission.sendmsg.assert_not_called();snapshot.assert_called_once_with(fixture,observations);self.assertLessEqual(exchange.call_args.kwargs['seconds'],.25);self.assertNotIn('secret',json.dumps(observations))
+    def test_execute_failure_snapshots_runtime_diagnostic_before_and_after_existing_cleanup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory=Path(temp);fixture,path=self.diagnostic_fixture(directory,self.runtime_record());config=directory/'bootstrap.json';config.write_text('{}');fixture.update(config=config,binary=directory)
+            server=MagicMock();server.stdin=io.BytesIO();server.stdout=io.BytesIO();server.stderr=io.BytesIO();server.returncode=1;server.poll.return_value=1
+            provider=MagicMock();provider.stdin=None;provider.stdout=io.BytesIO(b'{"passed":false,"turns":0,"peerValidated":false}');provider.stderr=io.BytesIO();provider.returncode=1;provider.poll.return_value=1
+            observations={'nativeCleanupConfirmed':False}
+            with patch.object(verify.subprocess,'Popen',return_value=server),patch.object(verify,'start_provider',return_value=(provider,MagicMock())),patch.object(verify,'wait_for',return_value=True),patch.object(verify,'exchange',return_value={'started':True}),patch.object(verify,'admit_provider',side_effect=AssertionError('owner admission failed')),patch.object(verify,'snapshot_runtime_diagnostic',wraps=verify.snapshot_runtime_diagnostic) as snapshot:
+                with self.assertRaisesRegex(AssertionError,'owner admission failed'):verify.execute_fixture(directory,fixture,{'artifacts':{}},observations)
+            self.assertEqual(snapshot.call_count,2);self.assertEqual(observations['runtimeDiagnostic'],self.runtime_record());self.assertFalse(observations['nativeCleanupConfirmed']);self.assertTrue(path.exists());self.assertTrue(observations['serviceReaped']);self.assertTrue(observations['providerReaped'])
+
+    def test_nonterminal_owner_status_keeps_original_wait_and_has_no_handoff_effect(self):
+        fixture={'control':Path('/unused-fixture-control')};channel=MagicMock();channel.__enter__.return_value=channel;channel.recvmsg.return_value=(b'',[],0,None);admission=MagicMock();observations={}
+        def wait(check,seconds,children):self.assertEqual(seconds,2);self.assertFalse(check());raise AssertionError('bounded fixture wait failed')
+        with patch.object(verify.socket,'MSG_CMSG_CLOEXEC',0x40000000,create=True),patch.object(verify.socket,'socket',return_value=channel),patch.object(verify,'wait_for',side_effect=wait),patch.object(verify,'exchange',return_value={'runtime':{'state':'starting'}}):
+            with self.assertRaisesRegex(AssertionError,'bounded fixture wait'):verify.admit_provider(fixture,admission,[],observations)
+        self.assertNotIn('nativeStatus',observations);admission.sendmsg.assert_not_called()
 if __name__=='__main__':unittest.main()

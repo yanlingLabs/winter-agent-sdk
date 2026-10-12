@@ -202,19 +202,34 @@ def start_provider(fixture,server):
         for fd in [library,metadata,*copies,*fillers]:os.close(fd)
         listener.close();worker.close()
 
-def admit_provider(fixture,admission,children):
+def admit_provider(fixture,admission,children,observations=None):
     # Root-only admin sends the actual live namespace-init pidfd. Own all installed
     # rights before validating the bounded framed response; malformed packets leak
     # neither descriptors nor guessed PID authority.
+    deadline=time.monotonic()+2
     def obtain():
         fds=[]
         try:
             with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as channel:
-                channel.settimeout(1);channel.connect(str(fixture['control']/'admin.sock'));request=json.dumps({'operation':'runtime-owner','sessionId':LOGICAL}).encode();channel.sendall(struct.pack('!I',len(request))+request)
+                channel.settimeout(max(.001,min(1,deadline-time.monotonic())));channel.connect(str(fixture['control']/'admin.sock'));request=json.dumps({'operation':'runtime-owner','sessionId':LOGICAL}).encode();channel.sendall(struct.pack('!I',len(request))+request)
                 data,ancillary,flags,_=channel.recvmsg(65536,socket.CMSG_SPACE(16*array.array('i').itemsize),socket.MSG_CMSG_CLOEXEC)
                 for level,kind,body in ancillary:
                     if (level,kind)==(socket.SOL_SOCKET,socket.SCM_RIGHTS):fds.extend(array.array('i',body[:len(body)-len(body)%array.array('i').itemsize]))
-                if not data:return False # owner not running yet; no admission/effect retried
+                if not data:
+                    # Status is diagnostic only: no owner/effect is retried or manufactured.
+                    remaining=deadline-time.monotonic()
+                    if remaining>0:
+                        try:status=exchange(fixture['control']/'admin.sock',{'operation':'status','sessionId':LOGICAL},seconds=min(.25,remaining))
+                        except (OSError,ValueError,AssertionError) as error:
+                            if observations is not None:observations['ownerStatusProbeFailure']=failure_metadata(error)
+                        else:
+                            observed=native_status_observation(status)
+                            if observed['state'] in ('stopped','retained'):
+                                if observations is not None:
+                                    observations['nativeStatus']=observed;observations['ownerAdmissionFailure']='terminal-runtime-before-owner'
+                                    snapshot_runtime_diagnostic(fixture,observations)
+                                raise AssertionError('native runtime terminal before owner admission')
+                    return False # owner not running yet; unchanged two-second budget
                 if flags&~socket.MSG_CMSG_CLOEXEC or len(ancillary)!=1 or ancillary[0][:2]!=(socket.SOL_SOCKET,socket.SCM_RIGHTS) or len(fds)!=1:raise AssertionError('native owner rights inventory')
                 while len(data)<4:
                     part=channel.recv(4-len(data))
@@ -282,6 +297,79 @@ def provider_receipt_observation(data):
     if isinstance(failure,dict) and failure.get('phase')=='provider_exchange' and failure.get('code') in ('scope','turn','pull','end','native_continuation','framing','write','provider_failure'):observed['failure']={'phase':'provider_exchange','code':failure['code']}
     return observed
 
+def native_status_observation(status):
+    runtime=status.get('runtime',{}) if type(status) is dict else {}
+    if type(runtime) is not dict:runtime={}
+    def integer(value):return value if type(value) is int and -2147483648<=value<=2147483647 else None
+    return {'state':runtime.get('state') if runtime.get('state') in ('configured','starting','running','cleaning','stopped','retained') else 'unknown',
+            'exitCode':integer(runtime.get('exitCode')),'cleanupConfirmed':runtime.get('cleanupConfirmed') is True,
+            'active':integer(status.get('active')) if type(status) is dict else None,
+            'uncertain':type(status) is not dict or status.get('uncertain') is not False}
+
+def runtime_diagnostic_observation(value):
+    # Root's fixed control record is already normalized; keep only its documented schema.
+    if type(value) is not dict or set(value)!={'version','kind','observations','failure','stdout','stderr'} or type(value['version']) is not int or value['version']!=1 or value['kind']!='fixture-runtime-diagnostic':raise ValueError('runtime diagnostic schema')
+    source=value['observations']
+    if type(source) is not dict or source.get('phase') not in ('artifact-admission','native-startup','sdk-runtime','native-cleanup','complete'):raise ValueError('runtime diagnostic phase')
+    observed={'phase':source['phase']}
+    booleans=('nativeReceiptObserved','parentReaped','toolDrainConfirmed','nativeCleanupConfirmed','ownershipReleased','toolDebtObserved')
+    integers=('nativeWaitStatus','nativeExitCode','parentExitCode')
+    for key in booleans:
+        if key in source:
+            if type(source[key]) is not bool:raise ValueError('runtime diagnostic observation')
+            observed[key]=source[key]
+    for key in integers:
+        if key in source:
+            if source[key] is not None and (type(source[key]) is not int or not -2147483648<=source[key]<=2147483647):raise ValueError('runtime diagnostic observation')
+            observed[key]=source[key]
+    def failure(record):
+        if record is None:return None
+        if type(record) is not dict or not isinstance(record.get('class'),str) or not re.fullmatch('[A-Za-z][A-Za-z0-9_]{0,63}',record['class']):raise ValueError('runtime diagnostic failure')
+        output={'class':record['class']}
+        if 'code' in record:
+            if not isinstance(record['code'],str) or not re.fullmatch('[a-z][a-z_]{0,63}',record['code']):raise ValueError('runtime diagnostic failure')
+            output['code']=record['code']
+        if type(record.get('errno')) is int:output['errno']=record['errno']
+        return output
+    if 'cleanupFailure' in source:observed['cleanupFailure']=failure(source['cleanupFailure'])
+    def capture(record,limit,stderr=False):
+        if type(record) is not dict or type(record.get('capturedBytes')) is not int or not 0<=record['capturedBytes']<=limit or record.get('captureLimit')!=limit or type(record.get('truncated')) is not bool or not isinstance(record.get('sha256'),str) or not re.fullmatch('[a-f0-9]{64}',record['sha256']):raise ValueError('runtime diagnostic capture')
+        output={key:record[key] for key in ('capturedBytes','captureLimit','truncated','sha256')}
+        if stderr:
+            if type(record.get('normalizedText')) is not str or record.get('textLimit')!=4096 or len(record['normalizedText'].encode())>4096:raise ValueError('runtime diagnostic stderr')
+            output.update(normalizedText=normalized_stderr(record['normalizedText'].encode()),textLimit=4096)
+        return output
+    return {'version':1,'kind':'fixture-runtime-diagnostic','observations':observed,'failure':failure(value['failure']),
+            'stdout':capture(value['stdout'],1024*1024),'stderr':capture(value['stderr'],16384,True)}
+
+def snapshot_runtime_diagnostic(fixture,observations):
+    folder=private=fd=None
+    try:
+        folder=os.open(fixture['control'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        private=os.open(LOGICAL,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=folder)
+        for directory in (folder,private):
+            info=os.fstat(directory)
+            if info.st_uid!=os.geteuid() or info.st_mode&0o022:raise ValueError('runtime diagnostic directory identity')
+        fd=os.open('runtime-diagnostic.json',os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=private);before=os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode) or before.st_uid!=os.geteuid() or before.st_nlink!=1 or stat.S_IMODE(before.st_mode)!=0o600 or before.st_size>16384:raise ValueError('runtime diagnostic identity/limit')
+        wire=os.read(fd,16385);after=os.fstat(fd)
+        if len(wire)!=before.st_size or len(wire)>16384 or (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns)!=(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns):raise ValueError('runtime diagnostic changed')
+        def unique(pairs):
+            result={}
+            for key,value in pairs:
+                if key in result:raise ValueError('runtime diagnostic duplicate field')
+                result[key]=value
+            return result
+        observations['runtimeDiagnostic']=runtime_diagnostic_observation(json.loads(wire,object_pairs_hook=unique))
+        observations.pop('runtimeDiagnosticReadFailure',None)
+    except FileNotFoundError:
+        if 'runtimeDiagnostic' not in observations:observations['runtimeDiagnosticAvailable']=False
+    except (OSError,ValueError,TypeError) as error:observations['runtimeDiagnosticReadFailure']=failure_metadata(error)
+    finally:
+        for descriptor in (fd,private,folder):
+            if descriptor is not None:os.close(descriptor)
+    if 'runtimeDiagnostic' in observations:observations['runtimeDiagnosticAvailable']=True
+
 def persist_fixture_diagnostic(directory,observations,failure):
     # Exceptions/packets stay metadata only; normalized stderr has a separate cap.
     record={'version':1,'kind':'fixture-failure-diagnostic','failure':failure,'observations':observations,'ownershipReleased':False}
@@ -292,6 +380,7 @@ def persist_fixture_diagnostic(directory,observations,failure):
         os.fchmod(fd,0o600)
         with os.fdopen(fd,'wb',closefd=False) as stream:stream.write(wire);stream.flush();os.fsync(fd)
     finally:os.close(fd)
+    return record
 
 @contextmanager
 def retained_fixture_directory(observations=None):
@@ -303,7 +392,8 @@ def retained_fixture_directory(observations=None):
         failure=failure_metadata(error);raise
     finally:
         if directory.exists():
-            persist_fixture_diagnostic(directory,observations,failure)
+            record=persist_fixture_diagnostic(directory,observations,failure)
+            if failure is not None:print(json.dumps(record,sort_keys=True,separators=(',',':')),file=sys.stderr)
             print(json.dumps({'fixtureRetained':True,'retentionId':directory.name,'nativeCleanupConfirmed':observations.get('nativeCleanupConfirmed') is True,'ownershipReleased':False}),file=sys.stderr)
 
 def finish_child(child,captures,observations,label):
@@ -325,7 +415,7 @@ def finish_child(child,captures,observations,label):
     if child.stdin is not None and not child.stdin.closed:child.stdin.close()
 
 def execute_fixture(directory,fixture,receipt,observations):
-    server=None;provider=None;admission=None;server_captures={};provider_captures={}
+    server=None;provider=None;admission=None;server_captures={};provider_captures={};failed=False
     try:
         observations['phase']='service-startup'
         fd=os.open(fixture['config'],os.O_RDONLY|os.O_CLOEXEC)
@@ -336,7 +426,7 @@ def execute_fixture(directory,fixture,receipt,observations):
         provider_captures={name:BoundedCapture(getattr(provider,name),limit,(directory,) if name=='stderr' else None) for name,limit in (('stdout',65536),('stderr',16384))}
         observations['phase']='native-admission'
         if exchange(fixture['control']/'admin.sock',{'operation':'launch-runtime','sessionId':LOGICAL})!={'started':True}:raise AssertionError('root fresh runtime launch refused')
-        admit_provider(fixture,admission,[server,provider]);admission=None;observations['phase']='sdk-runtime'
+        admit_provider(fixture,admission,[server,provider],observations);admission=None;observations['phase']='sdk-runtime'
         status=wait_for(lambda:(lambda value:value if value.get('runtime',{}).get('state') in ('stopped','retained') else None)(exchange(fixture['control']/'admin.sock',{'operation':'status','sessionId':LOGICAL})),35,[server])
         runtime=status.get('runtime',{})
         observations['nativeCleanupConfirmed']=runtime.get('cleanupConfirmed') is True
@@ -355,10 +445,13 @@ def execute_fixture(directory,fixture,receipt,observations):
         # Diagnostic or parser errors can never reach this explicit release path.
         observations['phase']='complete'
         return {'passed':True,'freshEngineExecutionVerified':True,'linuxExecutionVerified':True,'vmExecutionVerified':False,'coldContinuityVerified':False,'productionAvailabilityEnabled':False,'reviewedArtifactDigests':receipt['artifacts'],'compileReceiptSha256':receipt['compileReceiptSha256'],**evidence}
+    except BaseException:
+        failed=True;snapshot_runtime_diagnostic(fixture,observations);raise
     finally:
         if admission is not None:admission.close()
         finish_child(provider,provider_captures,observations,'provider')
         finish_child(server,server_captures,observations,'service')
+        if failed:snapshot_runtime_diagnostic(fixture,observations)
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--artifacts',type=Path,required=True);parser.add_argument('--reviewed-receipt',type=Path,required=True);args=parser.parse_args()
