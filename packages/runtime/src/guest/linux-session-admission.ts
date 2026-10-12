@@ -7,7 +7,7 @@ import type { ToolExecutionContext } from "../tools/registry.ts";
 import { createLinuxSupervisorSession } from "./supervisor-client.ts";
 import type { GuestFileSession } from "./file-session.ts";
 import { bindGuestFileSession } from "./file-session.ts";
-import { createGuestProviderClient, assertGuestProviderRoute, type GuestProviderClient, type GuestProviderScope, type GuestProviderSelection } from "./provider-client.ts";
+import { createGuestProviderClient, assertGuestProviderRoute, type GuestProviderClient, type GuestProviderScope, type GuestProviderSelection, type GuestProviderPort } from "./provider-client.ts";
 import { createProtectedStoreBootstrap, type ProtectedStoreBootstrap, type ProtectedStoreScope, type ProtectedStoreOwner } from "./store-bootstrap.ts";
 import type { GuestFileAuthority, GuestFileRoot } from "./file-helper.ts";
 
@@ -69,16 +69,7 @@ export function admitFreshLinuxSession(bootstrapFd: number, ownerLibraryFd: numb
     };
     const store = createProtectedStoreBootstrap(record.scope, { acquire: async scope => { check(); if (!same(scope, record.scope)) return unavailable(); return owner; } });
     const files = createLinuxSupervisorSession({ socketPath: record.toolSocketPath, authority: record.authority, roots: record.roots, toolUid: record.toolUid });
-    const sockets = new Set<ReturnType<typeof createConnection>>(); const providerPath = `${record.runtimeConfig.winterHome}/.control/provider.sock`;
-    const provider = createGuestProviderClient({ scope: record.provider.scope, selection: record.provider.selection, port: {
-      close() { for (const socket of sockets) socket.destroy(); sockets.clear(); },
-      exchange(frame) { check(); return new Promise<Uint8Array>((resolve, reject) => {
-        const socket = createConnection({ path: providerPath }); sockets.add(socket); let bytes = Buffer.alloc(0), expected: number | undefined, ended = false;
-        const finish = (error?: Error, result?: Uint8Array): void => { if (ended) return; ended = true; socket.destroy(); sockets.delete(socket); if (error) reject(error); else resolve(result!); };
-        socket.on("connect", () => socket.write(frame)); socket.on("error", () => finish(new Error("private provider unavailable"))); socket.on("end", () => finish(new Error("private provider closed")));
-        socket.on("data", chunk => { if (bytes.length + chunk.length > 256 * 1024 + 4100) { finish(new Error("private provider bound")); return; } bytes = Buffer.concat([bytes, Buffer.from(chunk)]); if (bytes.length >= 4) expected ??= bytes.readUInt32BE(); if (expected !== undefined && (expected < 1 || expected > 256 * 1024 + 4096 || bytes.length > expected + 4)) { finish(new Error("private provider framing")); return; } if (expected !== undefined && bytes.length === expected + 4) { try { check(); finish(undefined, bytes); } catch { finish(new Error("private provider owner lost")); } } });
-      }); },
-    } });
+    const provider = createGuestProviderClient({ scope: record.provider.scope, selection: record.provider.selection, port: createLinuxProviderPort(`${record.runtimeConfig.winterHome}/.control/provider.sock`, check) });
     poll = setInterval(() => { try { check(); } catch { provider.close(); } }, 100); poll.unref?.();
     const admission = Object.freeze({}) as LinuxSessionAdmission;
     admissions.set(admission, { record, signal: controller.signal, check, files, provider, store, phase: "ready", dispose() { provider.close(); closeOwner(); } }); return admission;
@@ -91,3 +82,17 @@ export function assertRunningLinuxSession(value: LinuxSessionAdmission | undefin
 export function linuxSessionBindings(value: LinuxSessionAdmission) { const state = stateOf(value); return { store: state.store, files: state.files, provider: state.provider, signal: state.signal }; }
 export function bindLinuxSessionContext(value: LinuxSessionAdmission, ctx: ToolExecutionContext): void { const state = stateOf(value); if (state.phase !== "running") unavailable(); bindGuestFileSession(ctx, state.files); }
 export function closeLinuxSession(value: LinuxSessionAdmission): void { const state = admissions.get(value); if (!state || state.phase === "closed") return; state.phase = "closed"; state.dispose(); }
+
+/** Bounded transport only; this does not grant a Linux startup/store capability. */
+export function createLinuxProviderPort(socketPath: string, assertHeld: () => void): GuestProviderPort {
+  const sockets = new Set<ReturnType<typeof createConnection>>(); let closed = false;
+  return {
+      close() { closed = true; for (const socket of sockets) socket.destroy(); sockets.clear(); },
+      exchange(frame) { if (closed) return Promise.reject(new Error("private provider closed")); assertHeld(); return new Promise<Uint8Array>((resolve, reject) => {
+        const socket = createConnection({ path: socketPath }); sockets.add(socket); let bytes = Buffer.alloc(0), expected: number | undefined, ended = false;
+        const finish = (error?: Error, result?: Uint8Array): void => { if (ended) return; ended = true; socket.destroy(); sockets.delete(socket); if (error) reject(error); else resolve(result!); };
+        socket.on("connect", () => socket.write(frame)); socket.on("error", () => finish(new Error("private provider unavailable"))); socket.on("end", () => finish(new Error("private provider closed"))); socket.on("close", () => finish(new Error("private provider closed")));
+        socket.on("data", chunk => { if (bytes.length + chunk.length > 256 * 1024 + 4100) { finish(new Error("private provider bound")); return; } bytes = Buffer.concat([bytes, Buffer.from(chunk)]); if (bytes.length >= 4) expected ??= bytes.readUInt32BE(); if (expected !== undefined && (expected < 1 || expected > 256 * 1024 + 4096 || bytes.length > expected + 4)) { finish(new Error("private provider framing")); return; } if (expected !== undefined && bytes.length === expected + 4) { try { assertHeld(); finish(undefined, bytes); } catch { finish(new Error("private provider owner lost")); } } });
+      }); },
+  };
+}

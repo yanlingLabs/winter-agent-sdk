@@ -3,6 +3,7 @@
 Only a root-reviewed matching source/artifact receipt can reach privileged staging.
 Guest provider packet parsing belongs to the separate fixture worker, not this root harness.
 """
+from contextlib import contextmanager
 import argparse,array,fcntl,importlib.util,json,os,re,shutil,socket,struct,subprocess,sys,tempfile,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
@@ -165,13 +166,26 @@ def admit_provider(fixture,admission,children):
     wait_for(obtain,2,children)
     admission.close()
 
+@contextmanager
+def retained_fixture_directory():
+    """Never infer descendant exit from Python unwinding, kill delivery, or EOF.
+    Only main's explicit native/service/store receipt path may remove this directory.
+    """
+    directory=Path(tempfile.mkdtemp(prefix='winter-fresh-engine-'))
+    try:yield directory
+    finally:
+        if directory.exists():
+            print(json.dumps({'fixtureRetained':True,'retentionId':directory.name,'nativeCleanupConfirmed':False}),file=sys.stderr)
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--artifacts',type=Path,required=True);parser.add_argument('--reviewed-receipt',type=Path,required=True);args=parser.parse_args()
     receipt=build.validate_receipt(json.loads(args.reviewed_receipt.read_text()),args.artifacts)
     if sys.platform!='linux' or os.geteuid()!=0 or not sys.flags.isolated or not sys.flags.no_site:raise SystemExit('Explicit Linux root fixture via python -I -S required; no fallback')
-    with tempfile.TemporaryDirectory(prefix='winter-fresh-engine-') as directory:
+    with retained_fixture_directory() as directory:
         fixture=create_fixture(Path(directory),args.artifacts,receipt);fd=os.open(fixture['config'],os.O_RDONLY|os.O_CLOEXEC)
-        server=subprocess.Popen([sys.executable,'-I','-S',str(fixture['binary']/'linux-supervisor.py'),'--trusted-config-fd',str(fd)],pass_fds=(fd,),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env={'LANG':'C','LC_ALL':'C'},bufsize=0);os.close(fd);provider=None;admission=None
+        try:server=subprocess.Popen([sys.executable,'-I','-S',str(fixture['binary']/'linux-supervisor.py'),'--trusted-config-fd',str(fd)],pass_fds=(fd,),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env={'LANG':'C','LC_ALL':'C'},bufsize=0)
+        finally:os.close(fd)
+        provider=None;admission=None
         try:
             wait_for(lambda:(fixture['control']/'admin.sock').exists(),3,[server]);provider,admission=start_provider(fixture,server)
             if exchange(fixture['control']/'admin.sock',{'operation':'launch-runtime','sessionId':LOGICAL})!={'started':True}:raise AssertionError('root fresh runtime launch refused')
@@ -186,6 +200,9 @@ def main():
             if provider_receipt.get('passed') is not True or provider_receipt.get('turns')!=5 or provider_receipt.get('peerValidated') is not True:raise AssertionError('provider worker execution receipt')
             server.stdin.close();server.wait(timeout=5)
             if server.returncode!=0:raise AssertionError('root service retained cleanup obligation')
+            # Exact native cleanup status + successful service reap and provider
+            # receipt above are required. No exception/finalizer can reach this.
+            shutil.rmtree(directory)
             print(json.dumps({'passed':True,'freshEngineExecutionVerified':True,'linuxExecutionVerified':True,'vmExecutionVerified':False,'coldContinuityVerified':False,'productionAvailabilityEnabled':False,'reviewedArtifactDigests':receipt['artifacts'],**evidence}))
         finally:
             if admission is not None:admission.close()

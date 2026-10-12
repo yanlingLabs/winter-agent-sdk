@@ -38,3 +38,25 @@ test("embedded refusal precedes fake protected store acquisition and engine outp
   expect(code).toBe(1); expect(acquired).toBe(0); expect(output).toEqual([]);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+test("actual private Unix socket exchange rejects promptly when its port closes", async () => {
+  const { createServer } = await import("node:net");
+  const { createLinuxProviderPort } = await import("./linux-session-admission.ts");
+  const directory = mkdtempSync(join(tmpdir(), "winter-private-provider-")), path = join(directory, "socket");
+  const peers = new Set<import("node:net").Socket>(); let accept!: () => void;
+  const accepted = new Promise<void>(resolve => { accept = resolve; });
+  const server = createServer(socket => { peers.add(socket); socket.on("error", () => {}); socket.on("close", () => peers.delete(socket)); accept(); });
+  await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(path, resolve); });
+  const port = createLinuxProviderPort(path, () => {}); // transport test; no native admission minted.
+  try {
+    const pending = port.exchange(new Uint8Array([0, 0, 0, 2, 123, 125]));
+    await accepted; const before = performance.now(); port.close();
+    await expect(pending).rejects.toThrow("private provider closed");
+    expect(performance.now() - before).toBeLessThan(500);
+    await expect(port.exchange(new Uint8Array())).rejects.toThrow("private provider closed");
+  } finally {
+    port.close(); for (const socket of peers) socket.destroy();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
