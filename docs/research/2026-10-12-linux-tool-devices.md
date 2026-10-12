@@ -42,23 +42,37 @@ Tools are pipe-only. There is no `/dev/tty`, ptmx, pts or devpts mount; opening
 `/dev/tty` fails because the node is absent. This slice does not provide a PTY,
 terminal dimensions, terminal input or a controlling terminal. No block devices,
 kmsg, mem, port, vsock, virtio-ports or whole guest `/dev` tree are admitted.
-There are no new fixed FD remaps; each held device descriptor closes after its
-detached mount clone, and all private inherited descriptors close before exec.
+Each held device descriptor closes after its detached mount clone, and all
+private inherited descriptors close before exec. The launcher adds no fixed FD
+remaps. The process worker consumes the supervisor-owned command pipe before
+forking, then gives only the shell child EOF stdin from the admitted `/dev/null`.
+The tool UID opens the node once with readonly/nofollow/nonblocking/close-on-exec
+flags and checks its held descriptor is character 1:3 with readonly access before
+remapping it to fd0. It explicitly clears close-on-exec even when open returns
+fd0, and preserves that alias. This avoids retaining a root-owned pipe whose
+permissions could prevent reopening `/dev/stdin`. No interactive input or PTY is
+added; command ingestion, output pipes, parent checks and wait/cleanup remain
+unchanged.
 
 ## Local evidence
 
 Run from the SDK repository root:
 
 ```sh
-python3 -m unittest scripts/guest-engine/test_tool_devices.py scripts/guest-engine/test_runtime_entropy.py scripts/guest-engine/test_parent_remap.py -v
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/guest-engine/test_shell_stdin.py scripts/guest-engine/test_tool_devices.py scripts/guest-engine/test_runtime_entropy.py scripts/guest-engine/test_parent_remap.py -v
 ```
 
-Six unittest methods pass. New helpers cover 94 portable cases: all five exact
+Eight unittest methods pass. Device/view helpers cover 94 portable cases: all five exact
 inventory entries against thirteen refusal/failure modes and success, plus held
 FD positions 3, 4, 64 and 97; the exact view's successful inventory/flags/links
 and three construction failures. Existing entropy and parent-remap tests add
 20 executable stand-in cases. These execute portable C harnesses with substituted
-metadata and syscall/filesystem functions, never actual Linux confinement.
+metadata and syscall/filesystem functions, never actual Linux confinement. The
+shell-stdin follow-up adds 36 portable cases using ordinary pipes with injected
+device metadata: existing live command fd0, fd0 alias and close-on-exec behavior,
+wrong regular/block/major/minor identities, non-readonly or invalid access-mode
+lookup, missing input, failed identity lookup, remap failure and close-on-exec
+clearing failure at descriptor positions 3, 4 and 64. No real device is opened.
 
 Zig 0.14.1 cross-compiles the complete tool launcher, runtime launcher, file
 worker and process worker with `-target aarch64-linux-musl -std=c11 -O2 -Wall
@@ -94,6 +108,11 @@ together; do not weaken the existing receipt or result assertions.
 
 ```bash
 set -euo pipefail
+python3 -c 'import os,stat; s=os.fstat(0); assert stat.S_ISCHR(s.st_mode) and (os.major(s.st_rdev),os.minor(s.st_rdev))==(1,3); assert os.read(0,1)==b""'
+test -z "$(cat /dev/stdin)"
+if IFS= read -r unexpected_input; then
+    exit 1
+fi
 python3 - <<'PY'
 import errno, os, stat
 nodes = {'null':3, 'zero':5, 'full':7, 'random':8, 'urandom':9}
