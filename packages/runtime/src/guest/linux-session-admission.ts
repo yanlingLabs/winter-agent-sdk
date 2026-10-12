@@ -88,10 +88,12 @@ export function createLinuxProviderPort(socketPath: string, assertHeld: () => vo
   const sockets = new Set<ReturnType<typeof createConnection>>(); let closed = false;
   return {
       close() { closed = true; for (const socket of sockets) socket.destroy(); sockets.clear(); },
-      exchange(frame) { if (closed) return Promise.reject(new Error("private provider closed")); assertHeld(); return new Promise<Uint8Array>((resolve, reject) => {
+      exchange(frame, signal) { if (closed || signal?.aborted) return Promise.reject(new Error("private provider closed")); assertHeld(); return new Promise<Uint8Array>((resolve, reject) => {
         const socket = createConnection({ path: socketPath }); sockets.add(socket); let bytes = Buffer.alloc(0), expected: number | undefined, ended = false;
-        const finish = (error?: Error, result?: Uint8Array): void => { if (ended) return; ended = true; socket.destroy(); sockets.delete(socket); if (error) reject(error); else resolve(result!); };
-        socket.on("connect", () => socket.write(frame)); socket.on("error", () => finish(new Error("private provider unavailable"))); socket.on("end", () => finish(new Error("private provider closed"))); socket.on("close", () => finish(new Error("private provider closed")));
+        const finish = (error?: Error, result?: Uint8Array): void => { if (ended) return; ended = true; signal?.removeEventListener("abort", abort); socket.destroy(); sockets.delete(socket); if (error) reject(error); else resolve(result!); };
+        const abort = () => finish(new Error("private provider invocation cancelled"));
+        signal?.addEventListener("abort", abort, { once: true }); if (signal?.aborted) abort();
+        socket.on("connect", () => { if (!ended) socket.write(frame); }); socket.on("error", () => finish(new Error("private provider unavailable"))); socket.on("end", () => finish(new Error("private provider closed"))); socket.on("close", () => finish(new Error("private provider closed")));
         socket.on("data", chunk => { if (bytes.length + chunk.length > 256 * 1024 + 4100) { finish(new Error("private provider bound")); return; } bytes = Buffer.concat([bytes, Buffer.from(chunk)]); if (bytes.length >= 4) expected ??= bytes.readUInt32BE(); if (expected !== undefined && (expected < 1 || expected > 256 * 1024 + 4096 || bytes.length > expected + 4)) { finish(new Error("private provider framing")); return; } if (expected !== undefined && bytes.length === expected + 4) { try { assertHeld(); finish(undefined, bytes); } catch { finish(new Error("private provider owner lost")); } } });
       }); },
   };

@@ -60,3 +60,15 @@ test("actual private Unix socket exchange rejects promptly when its port closes"
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("cancelling one actual Unix exchange leaves other and later exchanges usable",async()=>{
+ const {createServer}=await import("node:net"),{createLinuxProviderPort}=await import("./linux-session-admission.ts");
+ const directory=mkdtempSync(join(tmpdir(),"winter-private-provider-")),path=join(directory,"socket"),peers=new Set<import("node:net").Socket>();let first=true,accepted!:()=>void;
+ const ready=new Promise<void>(resolve=>{accepted=resolve;});
+ const server=createServer(socket=>{peers.add(socket);socket.on("error",()=>{});socket.on("close",()=>peers.delete(socket));const held=first;first=false;socket.on("data",data=>{if(held)accepted();else socket.end(data);});});
+ await new Promise<void>(resolve=>server.listen(path,resolve));const port=createLinuxProviderPort(path,()=>{}),abort=new AbortController(),frame=new Uint8Array([0,0,0,2,123,125]);
+ try {
+  const held=port.exchange(frame,abort.signal);void held.catch(()=>{});await ready;
+  expect(await port.exchange(frame)).toEqual(frame);abort.abort();await expect(held).rejects.toThrow("invocation cancelled");expect(await port.exchange(frame)).toEqual(frame);
+ } finally {port.close();for(const socket of peers)socket.destroy();await new Promise<void>(resolve=>server.close(()=>resolve()));rmSync(directory,{recursive:true,force:true});}
+});
