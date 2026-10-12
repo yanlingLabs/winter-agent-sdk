@@ -47,7 +47,11 @@ request-bound single-use tickets. Pending tickets expire after 15 seconds and ar
 bounded at 16 per conversation/128 total. Consumed tickets are removed; an absent,
 expired, altered or already-used ticket never executes, even after thousands of
 later calls. No cache eviction makes an old frame valid. The client never reserves
-a replacement ticket or resends an effect after response loss. All current scope
+a replacement ticket or resends an effect after response loss. The client queues
+up to 128 waiting calls in FIFO order with two in flight, honoring abort and the
+original overall deadline. Only an explicit no-effect capacity_busy reply permits
+bounded waiting/resubmission; effect retries keep the same one-use ticket and
+stop before its expiry. Unknown replies are never retried. All current scope
 checks still run before consuming the ticket. This replaces the lifetime 4096-call
 refusal without retaining an unbounded request history. Active work is bounded at
 eight globally and two per conversation, including connection slots so one conversation
