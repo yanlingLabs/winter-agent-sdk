@@ -25,7 +25,7 @@ if(scenario==="ordinary"){
   const during=await Promise.all(Array.from({length:10},()=>run("Read",{file_path:"seed"})));
   require(buildsFinished===0&&during.every(value=>!value.isError&&value.output==="hello\n"),"file reads remain available while two Bash processes run");
  } finally {
-  try {await guest.write(`${cwd}/parallel-build-release`,new TextEncoder().encode("release"),"absent");} finally {buildAbort.abort();await Promise.allSettled(builds);}
+  try {await guest.write(`${cwd}/parallel-build-release`,new TextEncoder().encode("release"),"absent");const finished=await Promise.all(builds);require(finished.every(result=>result.exitCode===0&&result.termination==="exit"),"parallel builds exit after barrier release");} finally {buildAbort.abort();await Promise.allSettled(builds);}
  }
  require(!(await run("Edit",{file_path:"seed",old_string:"hello",new_string:"edited"})).isError,"actual Edit");
  require(!(await run("Write",{file_path:"seed",content:"written\n"})).isError,"actual Write");
