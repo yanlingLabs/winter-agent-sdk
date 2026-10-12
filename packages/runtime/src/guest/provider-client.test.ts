@@ -44,3 +44,17 @@ test("pending polls keep the same invocation and never resend the turn", async (
   }, close() {} } });
   const turn = await guestProviderFor(client, resolved).generate({ messages: [{ role: "user", content: "hello" }] }); expect(turn.kind).toBe("text"); if (turn.kind === "text") expect(turn.text).toBe("slow valid result"); expect(seen.map(value => value.operation)).toEqual(["begin", "next", "next", "next", "next"]); expect(new Set(seen.map(value => value.invocationId)).size).toBe(1); expect(seen.filter(value => value.turn !== undefined)).toHaveLength(1); client.close();
 });
+
+test("ignored transport cancellation is bounded by the exchange deadline and is never retried", async () => {
+  let calls = 0, closed = 0;
+  const client = createGuestProviderClient({ scope, selection, port: { exchange: async () => { calls++; return new Promise<Uint8Array>(() => {}); }, close: () => { closed++; } } });
+  const before = performance.now(); await expect(guestProviderFor(client, resolved).generate({ messages: [] })).rejects.toThrow("guest provider channel unavailable"); expect(performance.now() - before).toBeGreaterThan(5900); expect(performance.now() - before).toBeLessThan(9000); expect(calls).toBe(1); expect(closed).toBe(1);
+}, 12_000);
+
+test("oversized and incorrectly delimited response bytes refuse before fold or local fallback", async () => {
+  for (const malformed of [new Uint8Array(256 * 1024 + 4096 + 5), new Uint8Array([0, 0, 0, 2, 123])]) {
+    let calls = 0;
+    const client = createGuestProviderClient({ scope, selection, port: { exchange: async () => { calls++; return malformed; }, close() {} } });
+    await expect(guestProviderFor(client, resolved).generate({ messages: [] })).rejects.toThrow("guest provider channel unavailable"); expect(calls).toBe(1);
+  }
+});
