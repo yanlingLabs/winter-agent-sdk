@@ -35,12 +35,7 @@ def main():
             target=binary/name;checked([compiler,'-std=c11','-O2','-Wall','-Wextra','-Werror','-static',ROOT/'packages/runtime/src/guest'/source,'-o',target]);target.chmod(0o555)
             compiled[name]={'path':str(target),'sha256':hashlib.sha256(target.read_bytes()).hexdigest()}
         client=binary/'runtime-client';shutil.copyfile(args.runtime_client,client);client.chmod(0o555)
-        service=binary/'linux-supervisor.py'
-        service_source=(ROOT/'packages/runtime/src/guest/linux-supervisor.py').read_text()
-        marker='            return returncode,bytes(out)'
-        assert service_source.count(marker)==1
-        # Temporary fixture-only diagnostics; never shipped or enabled in production service.
-        service.write_text(service_source.replace(marker,'            if returncode: print(\"fixture native stderr\",bytes(err[:1024]),flush=True,file=sys.stderr)\n'+marker));service.chmod(0o555)
+        service=binary/'linux-supervisor.py';shutil.copyfile(ROOT/'packages/runtime/src/guest/linux-supervisor.py',service);service.chmod(0o555)
         for executable in ['/bin/bash','/bin/sleep','/bin/cat','/usr/bin/setsid']:
             target=environment/executable.lstrip('/');target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(executable,target);target.chmod(0o555)
             libraries=set(re.findall(r'(/[^\s()]+)',checked(['ldd',executable]).decode()))
@@ -123,8 +118,6 @@ def main():
                 if child.poll() is None:child.kill();child.wait(timeout=2)
                 child.stdout.close();child.stderr.close()
             if server.poll() is None:server.kill();server.wait(timeout=2)
-            diagnostic=server.stderr.read(4096)
-            if diagnostic:print('fixture service diagnostic:',diagnostic,file=sys.stderr)
             server.stdout.close();server.stderr.close()
             if not server.stdin.closed:server.stdin.close()
 if __name__=='__main__':main()
