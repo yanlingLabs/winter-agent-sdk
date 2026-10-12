@@ -1,3 +1,4 @@
+import { readSourceFileSync, statSourceSync } from "../sandbox/source-read.ts";
 // Phase 5 Lane C (task 6) -- the injection-safety primitives every file-sourced block shares.
 //
 // WINTER.md, the MEMORY.md index and an output-style body are all FILE CONTENT that ends up in a
@@ -19,7 +20,7 @@
 //
 // (1) and (2) are Norma's shipped `context.ts` semantics, ported. The caps themselves are each
 // owner's -- memory's 200 lines / 25 KB are pinned by WS-05 §11; WINTER.md's is Winter's own.
-import { readFileSync, statSync } from "node:fs";
+
 
 /** Appended to a block that was cut short, so the model knows it is reading a prefix. */
 export const TRUNCATION_MARKER = "\n[…truncated]";
@@ -70,8 +71,8 @@ export function systemReminder(label: string, body: string): string {
  */
 export function readCapped(path: string, maxBytes: number): string | null {
   try {
-    if (!statSync(path).isFile()) return null;
-    const raw = readFileSync(path, "utf8");
+    if (!statSourceSync(path).isFile()) return null;
+    const raw = readSourceFileSync(path, "utf8");
     if (raw.length === 0) return null;
     const { text, truncated } = capBytes(raw, maxBytes);
     return truncated ? text + TRUNCATION_MARKER : text;
@@ -91,8 +92,8 @@ export function readCapped(path: string, maxBytes: number): string | null {
  */
 export function readWhole(path: string): string | null {
   try {
-    if (!statSync(path).isFile()) return null;
-    const raw = readFileSync(path, "utf8");
+    if (!statSourceSync(path).isFile()) return null;
+    const raw = readSourceFileSync(path, "utf8");
     return raw.length === 0 ? null : raw;
   } catch {
     return null;
@@ -106,8 +107,8 @@ export function readWhole(path: string): string | null {
  */
 export function readCappedLinesAndBytes(path: string, maxLines: number, maxBytes: number): string | null {
   try {
-    if (!statSync(path).isFile()) return null;
-    let raw = readFileSync(path, "utf8");
+    if (!statSourceSync(path).isFile()) return null;
+    let raw = readSourceFileSync(path, "utf8");
     if (raw.length === 0) return null;
     let truncated = false;
     const lines = raw.split("\n");

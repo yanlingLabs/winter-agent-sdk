@@ -25,11 +25,14 @@ a general settings hot-reload API.
 The `/embedded-host` export advertises
 `HOST_CODE_PROTECTION_CONTRACT_VERSION = 1`, capability
 `host-code-path-protection-v1` and a frozen explicit coverage object. Coverage
-currently comprises Read/Write/Edit/NotebookEdit/Glob/Grep and ordinary sandbox
-path additions; `contextReadChecksVersion = 0` honestly leaves auxiliary
-context/plugin/Skill/Agent/settings/workflow-source discovery unclaimed. The
-marker alone is not a Worker acknowledgement and does not authorize lifting
-an activation gate requiring those consumers. In-process path checks are
+comprises Read/Write/Edit/NotebookEdit/Glob/Grep, ordinary sandbox path additions,
+and candidate source-reader checks (`contextReadChecksVersion = 1`) with an
+explicit frozen family inventory. Native production startup captures read denies
+before settings/content loads; live updates also invalidate cached instruction
+context. The fixed own global MCP control read and durable-store distinction are
+specified in the [source-reader coverage report](research/2026-10-12-host-context-read-coverage.md).
+The marker alone is not independent review acceptance or a Worker acknowledgement
+and does not authorize lifting an activation gate requiring those checks. In-process path checks are
 defense in depth, with same-user, hardlink and post-check race residuals.
 
 The first version now defers per-workspace disk encryption by explicit user

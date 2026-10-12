@@ -1,3 +1,4 @@
+import { sourceReadRestrictionGeneration } from "./sandbox/source-read.ts";
 import { randomUUID } from "node:crypto";
 import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
 import { createHostCodeProcessClient, installHostCodeProcessClient, requireHostCodeProcessBroker } from "./sandbox/host-code-process.ts";
@@ -8001,11 +8002,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     date: string | undefined;
   }
   let sessionContext: SessionContext | undefined;
+  let sessionContextSourceGeneration = sourceReadRestrictionGeneration();
   /** Cleared by a compaction and by `reloadSessionContext`; the next request rebuilds it. */
   const clearSessionContext = (): void => {
     sessionContext = undefined;
   };
   const ensureSessionContext = async (assembled: AssembledPrompt, input: SystemPromptInput): Promise<SessionContext> => {
+    const sourceGeneration = sourceReadRestrictionGeneration();
+    if (sourceGeneration !== sessionContextSourceGeneration) { clearSessionContext(); sessionContextSourceGeneration = sourceGeneration; }
     if (sessionContext !== undefined) return sessionContext;
     // SDK 0.0.16 (P16-7): a fork's own exact userContext -- the PARENT's captured entries, rendered
     // through the SAME `renderUserContext` the parent's own request used, so the text is

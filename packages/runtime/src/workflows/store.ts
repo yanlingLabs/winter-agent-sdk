@@ -1,3 +1,4 @@
+import { readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
 // Phase 5 Lane W (task 4), WS-11 §1.3: where a workflow's SOURCE comes from, and where a run's
 // script GOES.
 //
@@ -18,7 +19,7 @@
 // `settingSources` ("user" ∈ settingSources), NOT by `trustedWorkspace` -- claude's user tier
 // carries no trust condition, matching skills' "source gating, not trust gating" rule
 // (skills/store.ts's own header) rather than the project tier's R4-7 trust gate.
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { parseWorkflowMeta, type WorkflowMetaPhase } from "./meta.ts";
@@ -235,9 +236,9 @@ interface DiscoveredWorkflowFile {
 function discoverWorkflowFile(path: string): DiscoveredWorkflowFile | undefined {
   let source: string;
   try {
-    const stat = statSync(path);
+    const stat = statSourceSync(path);
     if (!stat.isFile() || stat.size > WORKFLOW_SCRIPT_MAX_BYTES) return undefined;
-    source = readFileSync(path, "utf8");
+    source = readSourceFileSync(path, "utf8");
   } catch {
     return undefined;
   }
@@ -257,7 +258,7 @@ function discoverWorkflowsInDir(dir: string): Map<string, DiscoveredWorkflowFile
   const out = new Map<string, DiscoveredWorkflowFile>();
   let entries: string[];
   try {
-    entries = readdirSync(dir);
+    entries = readSourceDirectorySync(dir);
   } catch {
     return out;
   }
@@ -283,7 +284,7 @@ function discoverWorkflowsAt(paths: readonly string[]): Map<string, DiscoveredWo
   for (const path of paths) {
     let isDir: boolean;
     try {
-      isDir = statSync(path).isDirectory();
+      isDir = statSourceSync(path).isDirectory();
     } catch {
       continue; // vanished between bundle-build and this scan -- silently skipped, like every other unreadable entry in this file
     }

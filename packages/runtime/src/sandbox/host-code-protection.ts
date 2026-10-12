@@ -5,12 +5,13 @@ import type { SandboxSettings } from "./profile.ts";
 
 export const HOST_CODE_PROTECTION_CONTRACT_VERSION = 1;
 export const HOST_CODE_PROTECTION_CAPABILITY = "host-code-path-protection-v1";
-/** Explicitly partial: context/plugin discovery is a separate consumer inventory. */
+/** Versioned source-reader inventory; does not promise transcript scrubbing or a child drain. */
 export const HOST_CODE_PROTECTION_COVERAGE = Object.freeze({
   fileTools: Object.freeze(["Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep"]),
   ordinarySandboxPathChecks: true,
   approvedEscapesKeepMainBehavior: true,
-  contextReadChecksVersion: 0,
+  contextReadChecksVersion: 1,
+  sourceReaderFamilies: Object.freeze(["instructions-imports-memory", "rules", "output-styles", "settings-mcp", "skills", "agent-definitions", "plugin-components-manifests-installed", "commands", "workflow-source"]),
 });
 
 /** Host-owned path policy, not an execution floor. Does not wrap approved escapes or third-party
@@ -36,6 +37,8 @@ export function copyHostCodeProtection(value: HostCodeProtection): Readonly<Host
   return Object.freeze({ revision: value.revision, denyReadPaths: copy(value.denyReadPaths), denyWritePaths: copy(value.denyWritePaths) });
 }
 const owners = new Map<object, Readonly<HostCodeProtection>>();
+let generation = 0;
+export function hostCodeProtectionGeneration(): number { return generation; }
 export interface HostCodeProtectionLease {
   update(value: HostCodeProtection): number;
   close(): void;
@@ -43,15 +46,17 @@ export interface HostCodeProtectionLease {
 export function installHostCodeProtection(value: HostCodeProtection): HostCodeProtectionLease {
   const owner = {}, initial = copyHostCodeProtection(value);
   owners.set(owner, initial);
+  generation++;
   return Object.freeze({
     update(value: HostCodeProtection) {
       const previous = owners.get(owner);
       if (!previous) throw new HostCodeProtectionError("host path-policy owner is closed");
       const next = copyHostCodeProtection(value);
       if (next.revision < previous.revision || (next.revision === previous.revision && JSON.stringify(next) !== JSON.stringify(previous))) throw new HostCodeProtectionError("stale or conflicting host path-policy revision");
+      if (JSON.stringify(next) !== JSON.stringify(previous)) generation++;
       owners.set(owner, next); return next.revision;
     },
-    close() { owners.delete(owner); },
+    close() { if (owners.delete(owner)) generation++; },
   });
 }
 export function currentHostCodeProtectionPaths(): Pick<HostCodeProtection, "denyReadPaths" | "denyWritePaths"> {

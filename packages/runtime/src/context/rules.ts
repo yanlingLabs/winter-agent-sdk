@@ -1,3 +1,4 @@
+import { sourcePathAllowed, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
 // WS-21 §6.3 item 2 (F17): a `rules/` loader for the user tier and the (trusted) project tier, with
 // claude's `paths:` conditional-attachment semantics.
 //
@@ -23,7 +24,7 @@
 // real YAML list (`[a/**, b/**]`), a bracketed comma STRING, or a bare comma string, exactly
 // `splitList`'s sibling logic in that file accepts for `tools:`/`skills:`. A rule file with no
 // frontmatter at all is entirely valid -- the whole file is its content, unconditionally.
-import { readFileSync, readdirSync, statSync, type Dirent } from "node:fs";
+import { type Dirent } from "node:fs";
 import { join, resolve } from "node:path";
 import type { BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import type { AttachmentProducer, ProviderMessage } from "../engine.ts";
@@ -92,7 +93,7 @@ function isDirEntry(root: string, e: Dirent): boolean {
   if (e.isDirectory()) return true;
   if (!e.isSymbolicLink()) return false;
   try {
-    return statSync(join(root, e.name)).isDirectory();
+    return statSourceSync(join(root, e.name)).isDirectory();
   } catch {
     return false;
   }
@@ -101,7 +102,7 @@ function isFileEntry(root: string, e: Dirent): boolean {
   if (e.isFile()) return true;
   if (!e.isSymbolicLink()) return false;
   try {
-    return statSync(join(root, e.name)).isFile();
+    return statSourceSync(join(root, e.name)).isFile();
   } catch {
     return false;
   }
@@ -111,7 +112,7 @@ function isFileEntry(root: string, e: Dirent): boolean {
 function walkMdFiles(root: string): string[] {
   let entries: Dirent[];
   try {
-    entries = readdirSync(root, { withFileTypes: true });
+    entries = readSourceDirectorySync(root, { withFileTypes: true });
   } catch {
     return [];
   }
@@ -127,8 +128,8 @@ function walkMdFiles(root: string): string[] {
 function readRuleFile(path: string, tier: "user" | "project", projectBase?: string): LoadedRule | null {
   let raw: string;
   try {
-    if (!statSync(path).isFile()) return null;
-    raw = readFileSync(path, "utf8");
+    if (!statSourceSync(path).isFile()) return null;
+    raw = readSourceFileSync(path, "utf8");
   } catch {
     return null;
   }
@@ -271,7 +272,8 @@ export function conditionalRuleAttachmentProducer(rules: readonly LoadedRule[], 
     const produced: ConditionalRuleAttachment[] = [];
     for (const rule of pending) {
       if (touched.some((filePath) => ruleMatches(rule, filePath, opts.originalCwd))) {
-        produced.push({ type: "conditional_rule", path: rule.path, content: rule.content });
+        // A rule is source content even when its metadata was discovered before activation.
+        if (sourcePathAllowed(rule.path)) produced.push({ type: "conditional_rule", path: rule.path, content: rule.content });
       }
     }
     return produced;

@@ -1,3 +1,4 @@
+import { sourcePathAllowed } from "../sandbox/source-read.ts";
 // Phase 5 Lane S (WS-11 §2.1/§2.5): the SKILL INDEX -- a name+description metadata index built at
 // startup, with bodies loaded lazily on invocation.
 //
@@ -247,22 +248,23 @@ export class SkillIndex {
 
   /** Every skill, in precedence order, by PRIMARY name. Aliases are not separate entries. */
   list(): SkillMeta[] {
-    return this.entries.slice();
+    return this.entries.filter(meta => sourcePathAllowed(meta.path));
   }
 
   /** Primary names only, in precedence order -- the `system/init.skills` producer's input. */
   names(): string[] {
-    return this.entries.map((s) => s.name);
+    return this.list().map((s) => s.name);
   }
 
   /** Resolve a name OR an alias to its metadata. */
   get(name: string): SkillMeta | undefined {
-    return this.byName.get(name);
+    const meta = this.byName.get(name);
+    return meta && sourcePathAllowed(meta.path) ? meta : undefined;
   }
 
   /** Every name a skill answers to (primary first) -- what a permission rule is matched against. */
   identities(name: string): string[] {
-    const meta = this.byName.get(name);
+    const meta = this.get(name);
     if (!meta) return [];
     return [meta.name, ...(meta.aliases ?? [])];
   }
@@ -285,7 +287,7 @@ export class SkillIndex {
    * workflow" from the name or path.
    */
   load(name: string): { name: string; body: string; source: SkillTier; path: string; isSynthetic: boolean } | null {
-    const meta = this.byName.get(name);
+    const meta = this.get(name);
     if (!meta) return null;
     const synthetic = this.syntheticBodies.get(meta.name);
     if (synthetic !== undefined) return { name: meta.name, body: capBytes(synthetic, this.bodyBytes), source: meta.source, path: meta.path, isSynthetic: true };

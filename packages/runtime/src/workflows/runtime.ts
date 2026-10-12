@@ -1,3 +1,4 @@
+import { readSourceFileSync } from "../sandbox/source-read.ts";
 // Phase 5 Lane W (task 4): the PARENT half of the workflow runtime -- WS-11 §1.4/§1.5/§1.8. Ported
 // from Norma's `workflows/runtime.ts` (D8/D11) with every `NORMA_HOME`/SessionEvent coupling removed:
 // this class emits nothing of its own, holds no notion of a daemon, and reaches the session through
@@ -16,7 +17,7 @@ import { spawn as spawnProcess } from "node:child_process";
 // single-file executable, where a dynamic import of a computed-or-not path is exactly the failure
 // class main.ts's own header warns about -- and no gate in this repo exercises a nested `workflow()`
 // through the compiled binary, so that leg would have been unproven as well as fragile.
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { RunJournal, promptKey, type JournalEntry } from "./journal.ts";
 import { RunTranscript, capTranscriptField, renderTranscriptValue } from "./transcript.ts";
 import { WorkflowRegistry } from "./registry.ts";
@@ -927,7 +928,7 @@ async function defaultNestedResolver(
     return resolved.ok ? { ok: true, source: resolved.source } : { ok: false, error: resolved.error };
   }
   try {
-    return { ok: true, source: readFileSync(ref.scriptPath, "utf8") };
+    return { ok: true, source: readSourceFileSync(ref.scriptPath, "utf8") };
   } catch (err) {
     return { ok: false, error: `unreadable workflow script ${JSON.stringify(ref.scriptPath)}: ${err instanceof Error ? err.message : String(err)}` };
   }

@@ -1,3 +1,4 @@
+import { sourceReadRestrictionGeneration, sourcePathAllowed, readSourceFileSync, readSourceDirectorySync, statSourceSync } from "../sandbox/source-read.ts";
 // Phase 5 Lane S (WS-11 §2.4, RULING R5-14): the FILESYSTEM `CommandResolver` -- a project
 // `commands/<name>.md` and a project `skills/<name>/SKILL.md` both create `/name`.
 //
@@ -34,7 +35,7 @@
 // into a template; the tool door is a model that already has the arguments in its own context.
 // CAPTURE-PENDING: if a differential capture shows the pinned Skill tool substituting, this becomes a
 // one-line change in tools/impl/skill.ts and the two doors converge.
-import { readFileSync, readdirSync, statSync, type Dirent } from "node:fs";
+import { type Dirent } from "node:fs";
 import { basename, join } from "node:path";
 import type { BrandProfile, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { escapeRegExpLiteral, shellWords } from "../permissions/grammar.ts";
@@ -113,7 +114,7 @@ function parseCommandFile(raw: string): { body: string; description?: string; ar
 }
 
 /**
- * Admit a `readdirSync` entry as a command file, WS-21 §6.3 item 1 (F6, F7): claude follows a
+ * Admit a `readSourceDirectorySync` entry as a command file, WS-21 §6.3 item 1 (F6, F7): claude follows a
  * symlinked command `.md` the same way it follows a symlinked skill directory. A dangling link, or
  * a link to a non-file, is excluded silently.
  */
@@ -121,7 +122,7 @@ function isFileEntry(dir: string, e: Dirent): boolean {
   if (e.isFile()) return true;
   if (!e.isSymbolicLink()) return false;
   try {
-    return statSync(join(dir, e.name)).isFile();
+    return statSourceSync(join(dir, e.name)).isFile();
   } catch {
     return false;
   }
@@ -137,7 +138,7 @@ function isFileEntry(dir: string, e: Dirent): boolean {
 function scanCommandDir(dir: string, source: SlashCommandOrigin): CommandFile[] {
   let names: string[];
   try {
-    names = readdirSync(dir, { withFileTypes: true })
+    names = readSourceDirectorySync(dir, { withFileTypes: true })
       .filter((e) => e.name.endsWith(".md") && isFileEntry(dir, e))
       .map((e) => e.name)
       .sort();
@@ -160,7 +161,7 @@ function scanCommandDir(dir: string, source: SlashCommandOrigin): CommandFile[] 
     // `Fix_Bug.md`, `Deploy.md` or `run_tests.md` that works today. Those names claim nothing and
     // endanger nothing; the colon is the entire vulnerability, because the colon is the only
     // character that carries namespace meaning. A jail should cost exactly what the threat costs.
-    // (Path traversal needs no rule here: every `path` is built from `readdirSync` output, never
+    // (Path traversal needs no rule here: every `path` is built from `readSourceDirectorySync` output, never
     // from a declared name.) The second m2 fixture pins the non-regression.
     if (stem.includes(":")) continue;
     const path = join(dir, file);
@@ -186,8 +187,8 @@ function readCommandMeta(path: string): { description?: string; argumentHint?: s
 
 function readCommandBody(path: string): string | undefined {
   try {
-    if (!statSync(path).isFile()) return undefined;
-    return readFileSync(path, "utf8");
+    if (!statSourceSync(path).isFile()) return undefined;
+    return readSourceFileSync(path, "utf8");
   } catch {
     return undefined;
   }
@@ -464,7 +465,10 @@ export class FilesystemCommandResolver implements CommandResolver {
    * command nothing could run. Two orders over one namespace cannot be kept in agreement by care;
    * they have to be one enumeration.
    */
+  private sourceGeneration = sourceReadRestrictionGeneration();
   private enumerate(cwd: string): Map<string, EnumeratedCommand> {
+    const generation = sourceReadRestrictionGeneration();
+    if (generation !== this.sourceGeneration) { this.byCwd.clear(); this.sourceGeneration = generation; }
     const cached = this.byCwd.get(cwd);
     if (cached) return cached;
     const map = new Map<string, EnumeratedCommand>();
@@ -524,6 +528,7 @@ export class FilesystemCommandResolver implements CommandResolver {
         continue;
       }
       const { file } = entry;
+      if (!sourcePathAllowed(file.path)) continue;
       out.push({
         name: file.name,
         ...(file.description !== undefined ? { description: file.description } : {}),

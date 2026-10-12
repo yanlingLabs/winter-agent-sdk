@@ -1,3 +1,6 @@
+import { readSourceFileSync, statSourceSync, nativeSourceReadDenyPaths } from "../../sandbox/source-read.ts";
+import { lstatSync, realpathSync, readFileSync } from "node:fs";
+import { assertHostCodePathAccess } from "../../sandbox/host-code-protection.ts";
 // Phase 5 Lane S: the MCP CONFIG LOADERS -- the project `mcp.json` and `Settings.mcpServers`.
 //
 // THESE PRODUCE INPUT AND NOTHING ELSE. `mcp/lifecycle.ts`'s `resolveMcpServerSources` is the
@@ -11,7 +14,7 @@
 // on `origin === "project"` for EVERY transport (RULING P5-K, fix wave -- it was stdio-only through
 // P4, when only process spawning looked dangerous). So the only thing a loader can get wrong about
 // trust is which ORIGIN it tags a source with -- and that is exactly the judgment call below.
-import { readFileSync, statSync } from "node:fs";
+
 import { join, normalize, resolve } from "node:path";
 import { globalConfigFileName, WINTER_BRAND, type BrandProfile, type McpServerConfig, type ResolvedSettingSource, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import type { McpConfigSourceOrigin, McpServerSource } from "../../mcp/lifecycle.ts";
@@ -81,8 +84,8 @@ export function loadProjectMcpConfig(opts: { cwd: string; settingSources?: Setti
   const path = join(opts.cwd, projectMcpConfigRelative(opts.brand));
   let raw: string;
   try {
-    if (!statSync(path).isFile()) return { sources: [], rejected: [] };
-    raw = readFileSync(path, "utf8");
+    if (!statSourceSync(path).isFile()) return { sources: [], rejected: [] };
+    raw = readSourceFileSync(path, "utf8");
   } catch {
     return { sources: [], rejected: [] }; // absent -- not a rejection
   }
@@ -195,12 +198,35 @@ function normalizeConfigKey(path: string): string {
 
 const EMPTY_GLOBAL_CONFIG_MCP: GlobalConfigMcpResult = { user: {}, local: {}, rejected: [] };
 
+/** Fixed runtime control read, never a general source exception. Production passes the already established
+ * runtime discovery/run-home (never a source-derived path or the shared store home). The exact own config denial belongs to the tool sandbox, while this
+ * loader must consume its MCP fields. All live host restrictions and broader native denies still
+ * apply. A repo import, manifest or Read uses the ordinary source/tool reader instead. */
+function readOwnGlobalMcpControl(home: string, basename: string): string {
+  if (!basename || basename.includes("/") || basename.includes("\\") || basename === "." || basename === "..") throw new Error("invalid global MCP control name");
+  const path = resolve(home, basename);
+  const canonicalHome = realpathSync(home);
+  const exactOwnDenial = (denied: string) => normalize(denied) === path || normalize(denied) === join(canonicalHome, basename);
+  if (!nativeSourceReadDenyPaths().some(exactOwnDenial)) {
+    if (!statSourceSync(path).isFile()) throw new Error("global MCP config is not a file");
+    return readSourceFileSync(path, "utf8");
+  }
+  const check = () => {
+    if (!lstatSync(path).isFile() || realpathSync(path) !== join(canonicalHome, basename)) throw new Error("global MCP control must be an own regular file");
+    const broaderDenies = nativeSourceReadDenyPaths().filter(denied => !exactOwnDenial(denied));
+    assertHostCodePathAccess(path, "read", { filesystem: { denyRead: [...broaderDenies] } });
+  };
+  check();
+  const raw = readFileSync(path, "utf8");
+  check();
+  return raw;
+}
+
 export function loadGlobalConfigMcp(input: GlobalConfigMcpInput): GlobalConfigMcpResult {
   const path = join(input.home, globalConfigFileName(input.brand));
   let raw: string;
   try {
-    if (!statSync(path).isFile()) return EMPTY_GLOBAL_CONFIG_MCP;
-    raw = readFileSync(path, "utf8");
+    raw = readOwnGlobalMcpControl(input.home, globalConfigFileName(input.brand));
   } catch {
     return EMPTY_GLOBAL_CONFIG_MCP; // absent -- not a rejection, exactly like every sibling loader here
   }

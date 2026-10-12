@@ -1,3 +1,4 @@
+import { readSourceFileSync } from "../sandbox/source-read.ts";
 // WS-21 lane L1b, Task L1b.2 (spec §5.2/§6.3 item 5, Contract B): reads `<pluginsRoot>/installed_plugins.json`
 // -- the SAME V2 document `@yanlinglabs/winter-agent-sdk`'s `packages/sdk/src/plugins/manage.ts`
 // writes (`{version:2, plugins: {"<key>": [<record>, ...]}}`, one array per compound key because the
@@ -14,7 +15,7 @@
 // `loadPlugins`'s own manifest-or-basename rule, independent of this id: a marketplace-qualified
 // `installPath` like `<marketplace>/plugins/p` resolves to the basename `p`, exactly the bare name
 // test coverage expects.
-import { readFileSync } from "node:fs";
+
 import { join } from "node:path";
 import { resolveMarketplacePluginPath } from "@yanlinglabs/winter-agent-sdk";
 
@@ -59,7 +60,7 @@ function normalizeScope(raw: unknown): PluginRecord["scope"] {
 export function readInstalledPlugins(pluginsRoot: string): PluginRecord[] {
   let raw: string;
   try {
-    raw = readFileSync(join(pluginsRoot, "installed_plugins.json"), "utf8");
+    raw = readSourceFileSync(join(pluginsRoot, "installed_plugins.json"), "utf8");
   } catch {
     return [];
   }
@@ -99,7 +100,7 @@ export function readInstalledPlugins(pluginsRoot: string): PluginRecord[] {
 // silently never loaded.
 //
 // MIRRORS `manage.ts`'s OWN `resolvePluginSourcePath`/`readKnownMarketplacesFile`/
-// `readDirectoryMarketplaceManifest` algorithm and on-disk shapes -- SYNCHRONOUSLY (`readFileSync`,
+// `readDirectoryMarketplaceManifest` algorithm and on-disk shapes -- SYNCHRONOUSLY (`readSourceFileSync`,
 // matching this file's own "called synchronously from production-wiring.ts" posture, `manage.ts`'s
 // own header), a SEPARATE implementation rather than a shared import because that module is
 // entirely `fs/promises`-based (the CLI's own async writer/reader, under its own locking
@@ -115,7 +116,7 @@ interface KnownMarketplaceRecordRaw {
 function readKnownDirectoryMarketplaces(pluginsRoot: string): Record<string, string> {
   let raw: string;
   try {
-    raw = readFileSync(join(pluginsRoot, "known_marketplaces.json"), "utf8");
+    raw = readSourceFileSync(join(pluginsRoot, "known_marketplaces.json"), "utf8");
   } catch {
     return {};
   }
@@ -148,7 +149,7 @@ interface MarketplaceManifestPluginEntryRaw {
 function resolveDirectoryMarketplacePluginPath(installLocation: string, pluginName: string): string | undefined {
   let raw: string;
   try {
-    raw = readFileSync(join(installLocation, ".claude-plugin", "marketplace.json"), "utf8");
+    raw = readSourceFileSync(join(installLocation, ".claude-plugin", "marketplace.json"), "utf8");
   } catch {
     return undefined;
   }

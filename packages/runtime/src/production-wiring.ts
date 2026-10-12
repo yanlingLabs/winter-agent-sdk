@@ -1,3 +1,4 @@
+import { installSourceReadRestrictions } from "./sandbox/source-read.ts";
 // Phase 5 Task 8: THE ONE PLACE every P5 lane's implementation is wired into a live session.
 //
 // WHY A SHARED HELPER AND NOT TWO CALL SITES. Winter runs on three transport legs -- the in-memory
@@ -742,6 +743,23 @@ export function describeCatalogModel(catalog: WinterCatalog, model: string, prov
  * `/name` set disagrees with the model's own listing.
  */
 export async function buildProductionWiring(opts: ProductionWiringOptions): Promise<ProductionWiring> {
+  // Native Code supplies sandbox denyRead via its host-generated config. Capture those narrowing
+  // restrictions before ANY settings/plugin/context load. Nothing in config can remove a live
+  // private host policy or exempt an arbitrary source path. Keep these owners through teardown.
+  const releases: Array<() => void> = [];
+  const restrictReads = (paths: readonly string[] | undefined) => {
+    if (paths?.length) releases.push(installSourceReadRestrictions(paths, opts.config.cwd));
+  };
+  restrictReads(opts.config.sandbox?.filesystem?.denyRead);
+  try {
+    const wiring = await buildProductionWiringImpl(opts, restrictReads);
+    const dispose = wiring.dispose;
+    wiring.dispose = () => { try { dispose(); } finally { for (const release of releases) release(); } };
+    return wiring;
+  } catch (error) { for (const release of releases) release(); throw error; }
+}
+
+async function buildProductionWiringImpl(opts: ProductionWiringOptions, restrictReads: (paths: readonly string[] | undefined) => void): Promise<ProductionWiring> {
   const { config, env } = opts;
   // (0) THE BRAND (P7a, D19). THE ONE FALLBACK IN THE RUNTIME, and it is here rather than at each
   // reader for a reason worth stating: `query()` always puts the resolved profile on the wire, so a
@@ -819,6 +837,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // outputStyle, ...), nothing to do with `apiKeyHelper`, so filtering afterward cannot mask a
   // regression that guard exists to catch.
   const effective = applyHostManagedSettingsFilter(resolved.effective, hostManaged) as Settings;
+  restrictReads(effective.sandbox?.filesystem?.denyRead);
 
   // NEW-1 (residual round): THE TIER `error` CHANNEL HAD NO PRODUCTION CONSUMER.
   //

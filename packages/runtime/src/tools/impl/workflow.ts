@@ -1,3 +1,4 @@
+import { readSourceFileSync } from "../../sandbox/source-read.ts";
 import { guestToolUnsupported } from "../../guest/file-session.ts";
 // Phase 5 Lane W (task 4): the Workflow TOOL executor -- WS-11 §1.1/§1.3/§1.4, and the pinned
 // `WorkflowInput`/`WorkflowOutput` of derived-shapes-p5 item (g).
@@ -13,7 +14,7 @@ import { guestToolUnsupported } from "../../guest/file-session.ts";
 // `projectKey` -- come from `workflows/host-registry.ts`, the registration seam this lane had to add
 // because `tools/registry.ts` and `engine.ts` are both frozen (R5-12). See that module's header.
 import { randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import "../descriptors/workflow.ts"; // self-sufficiency: the "Workflow" stub must be registered before replaceExecutor runs
@@ -279,7 +280,7 @@ function resolveSource(input: WorkflowInput, ctx: ToolExecutionContext): { ok: t
   if (typeof input.scriptPath === "string" && input.scriptPath !== "") {
     const path = isAbsolute(input.scriptPath) ? input.scriptPath : join(ctx.cwd, input.scriptPath);
     try {
-      return { ok: true, source: readFileSync(path, "utf8") };
+      return { ok: true, source: readSourceFileSync(path, "utf8") };
     } catch (err) {
       return { ok: false, error: `could not read the workflow script at ${input.scriptPath}: ${err instanceof Error ? err.message : String(err)}` };
     }
