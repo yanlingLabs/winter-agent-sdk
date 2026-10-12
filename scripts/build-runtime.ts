@@ -152,12 +152,14 @@ export async function buildRuntime(opts: BuildRuntimeOptions = {}): Promise<Buil
   // stray file out of the repo tree entirely regardless of bun's cleanup behavior in a given
   // version — the entrypoint and `outPath` are both absolute, so cwd has no bearing on where the
   // bundler resolves imports from or where the real output lands.
-  const scratchCwd = mkdtempSync(join(tmpdir(), "winter-build-runtime-"));
-  // P9a-7: the path-neutral copy of the checkout the compile actually runs against. A SEPARATE
-  // mkdtemp from `scratchCwd` above — that one is bun's own staging cwd, this one is the source
-  // tree — kept apart so a failure in one cleanup path never masks the other's.
-  const copyRoot = mkdtempSync(join(tmpdir(), "winter-build-runtime-copy-"));
+  // One private random parent, deterministic child names. Bun emits module-boundary comments
+  // relative to its staging cwd; independently random cwd/source names broke byte reproducibility.
+  // Staging stays separate and empty, preserving build-time bunfig/dotenv/preload isolation.
+  const buildRoot = mkdtempSync(join(tmpdir(), "winter-build-runtime-"));
+  const scratchCwd = join(buildRoot, "stage"), copyRoot = join(buildRoot, "source");
   try {
+    mkdirSync(scratchCwd, { mode: 0o700 });
+    mkdirSync(copyRoot, { mode: 0o700 });
     // Compile from the bytes we verified, not a cache/path that may be replaced after the check.
     const pinnedBase = join(scratchCwd, "linux-bun-base");
     if (baseBytes) writeFileSync(pinnedBase, baseBytes, { flag: "wx", mode: 0o500 });
@@ -198,8 +200,7 @@ export async function buildRuntime(opts: BuildRuntimeOptions = {}): Promise<Buil
   } finally {
     // Runs on every path, failures included — a partial/failed copy or scratch dir has no reason
     // to survive.
-    rmSync(scratchCwd, { recursive: true, force: true });
-    rmSync(copyRoot, { recursive: true, force: true });
+    rmSync(buildRoot, { recursive: true, force: true });
   }
 }
 
