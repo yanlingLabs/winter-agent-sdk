@@ -1,6 +1,6 @@
 {
   "sourceHead": "bbab87d9",
-  "normalization": "macOS per-user temporary directory prefix only; published hashes updated separately",
+  "normalization": "All per-user macOS temporary ancestors (including quoted T, user directory and bucket) replaced by synthetic xx/yyyy; published hashes updated, outcomes unchanged.",
   "rawOriginalsRetainedLocally": true,
   "workloadsRerun": false,
   "files": {
@@ -26,7 +26,7 @@
     },
     "docs/research/2026-10-12-code-policy-candidate-extra-evidence/results.json": {
       "beforePublishedSha256": "ff15fad149ec41215b7f82a6eb08329c32b478554af340c20857c2ee54b1575f",
-      "afterPublishedSha256": "80815c060b5751f884f37dac2d7f0f3e11aacb2c9a6ecd605b2ab04450d8ffaa"
+      "afterPublishedSha256": "90010877216000d2d201907e2e84e51615db2be63b006b66ce8b1b6b709bad9e"
     },
     "docs/research/2026-10-12-code-policy-candidate-extra-evidence/playwright-sandboxed.stderr.txt": {
       "beforePublishedSha256": "6d9f9d60614f7a331a5010d11bba73230ffa22fad0975f756f963f5ffa7601f2",
@@ -46,7 +46,7 @@
     },
     "docs/research/2026-10-12-host-floor-sourcekit-evidence/results.json": {
       "beforePublishedSha256": "c083f6dc50318d0f154ff769416fa389d5da5c1abe17700957d22c65883fa3ef",
-      "afterPublishedSha256": "0018c1cdc61513ea0fde37c5e34f1ebd31067672c02db122a5a750964ccaa192"
+      "afterPublishedSha256": "e2e81ef10ca0705dffa9519e4bab4ca33100313e578d871eecb2d89e94c7fff1"
     },
     "docs/research/2026-10-12-host-floor-sourcekit-evidence/floor.sb": {
       "beforePublishedSha256": "c6719338709cba2c2085b8f4c025abb2397f40105d21e98eae61b7e6f7b38e0f",
@@ -106,7 +106,7 @@
     },
     "docs/research/2026-10-12-code-policy-main-evidence/results.json": {
       "beforePublishedSha256": "e55f86ddcdfe351214f273e7df02e2219e34f90e2f7dbae97b9a55c8e6466ba1",
-      "afterPublishedSha256": "949151a9080fcee3929201959315d1cd1300a4f57ccce0a0e4335b711277f310"
+      "afterPublishedSha256": "ee8587e8ec1cf16aaa0248d78b0125b5019db3648303171e9b91e1e6f72ef7d3"
     },
     "docs/research/2026-10-12-code-policy-main-evidence/swift-build-sandboxed.stderr.txt": {
       "beforePublishedSha256": "11b4c9b321e9a95867deb326ac539b2d4e079f8d391a2d0434e1d2d0b033c6ba",
@@ -142,7 +142,7 @@
     },
     "docs/research/2026-10-12-code-policy-main-extra-evidence/results.json": {
       "beforePublishedSha256": "5603d1b474af4158bb789e724baf74fe6e5d09ecdacff98754cd8184aa437ba3",
-      "afterPublishedSha256": "fb64e1c5dae2fa50be940ae1cd9fc300bd53f1f9e43973716760f15d29c08785"
+      "afterPublishedSha256": "cf93a9aa218a27e6f2c7bad28898eed24f623216411c6a11c7ff66e85dcfd51e"
     },
     "docs/research/2026-10-12-code-policy-main-extra-evidence/playwright-sandboxed.stderr.txt": {
       "beforePublishedSha256": "2f36423e6b6a0912bb01f797894fdd679030c74896a10f0f87f61a4841d06b03",
@@ -186,7 +186,7 @@
     },
     "docs/research/2026-10-12-code-policy-candidate-final-evidence/results.json": {
       "beforePublishedSha256": "3bae95332ffbc6aa990a3cb1966bcec49b09c001428d218f923f0144c1edc531",
-      "afterPublishedSha256": "6a7474dd987444300fbbbc2f299b94ab2484bafce41be95c77d6c7c9653c9039"
+      "afterPublishedSha256": "25cea22a8978e2f5c7eea8ba6715440c6ac2732aa746661a7d8b2afce17c4eac"
     },
     "docs/research/2026-10-12-code-policy-candidate-final-evidence/swift-build-sandboxed.stderr.txt": {
       "beforePublishedSha256": "928a1d0ff0d2f9c943187c02b5692fac4d8706209d14115e6f073bcbcbba1087",
@@ -226,7 +226,7 @@
     },
     "docs/research/2026-10-12-host-floor-compatibility-evidence-full/results.json": {
       "beforePublishedSha256": "cea3e41ab8ffc407759b5e397839020749a27deb60d513c5b44b3a05f942121d",
-      "afterPublishedSha256": "f737eff254438786c80fabb656fe853af73110d0ccb554f0e049c7e98fdda017"
+      "afterPublishedSha256": "38680a18451d09a74c6c965b18b7401e259229d9867fa300ad0bb7e4a5fe878b"
     },
     "docs/research/2026-10-12-host-floor-compatibility-evidence-full/floor-probe-floor.stderr.txt": {
       "beforePublishedSha256": "eb9a5ff1f8d534deb2b3145b05fd4a425a68e3386c51bf386fd606b33bd8eec7",

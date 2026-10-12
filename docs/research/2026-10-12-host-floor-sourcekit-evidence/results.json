@@ -153,5 +153,5 @@
     }
   ],
   "preTempNormalizationSavedProfileSha256": "c6719338709cba2c2085b8f4c025abb2397f40105d21e98eae61b7e6f7b38e0f",
-  "publicEvidenceNormalization": "Public path prefixes and ancestor literals are synthetic; published stream/saved-profile hashes bind normalized copies. Raw/native and earlier published hashes remain historical. No measurement rerun."
+  "publicEvidenceNormalization": "Published copies use a synthetic macOS temp prefix. Raw native profileSha256 stays historical; savedProfileSha256 and stream hashes bind normalized copies. No measurements rerun."
 }

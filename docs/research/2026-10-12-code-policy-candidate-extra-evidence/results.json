@@ -207,5 +207,5 @@
       "preTempNormalizationStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
   ],
-  "publicEvidenceNormalization": "Public path prefixes and ancestor literals are synthetic; published stream/saved-profile hashes bind normalized copies. Raw/native and earlier published hashes remain historical. No measurement rerun."
+  "publicEvidenceNormalization": "Per-user macOS temporary-directory prefix replaced with /private/var/folders/xx/yyyy/T; published capture/profile hashes recomputed, prior published and raw hashes retained. Measurements unchanged."
 }
