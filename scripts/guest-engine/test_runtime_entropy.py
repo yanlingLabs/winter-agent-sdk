@@ -83,12 +83,16 @@ int main(int argc,char **argv){assert(argc==2);mode=atoi(argv[1]);int tree=urand
                     result=subprocess.run([str(binary),str(mode)],capture_output=True,text=True,timeout=3)
                     expected=0 if mode==0 else 64 if mode in range(1,7) else 77
                     self.assertEqual(result.returncode,expected,result.stderr)
-    def test_runtime_only_attachment_keeps_general_nodev_and_existing_checks(self):
+    def test_runtime_entropy_attachment_keeps_general_nodev_and_existing_checks(self):
         source=(ROOT/'packages/runtime/src/guest/linux-runtime-compartment.c').read_text()
         self.assertEqual(source.count('int entropytree=urandom_mount();'),1)
         self.assertEqual(source.count('point(root,"/dev/urandom",target,1);attach(entropytree,target);'),1)
         self.assertLess(source.index('int entropytree=urandom_mount();'),source.index('require(unshare('))
         self.assertIn('.attr_set=MOUNT_ATTR_NOSUID|MOUNT_ATTR_NODEV|(ro?MOUNT_ATTR_RDONLY:0)',source)
         self.assertIn('MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NODEV',source)
-        tool=(ROOT/'packages/runtime/src/guest/linux-tool-compartment.c').read_text();self.assertNotIn('/dev/urandom',tool)
+        # Tool compatibility has its own fixed descriptor-pinned device inventory;
+        # it must not reuse the runtime mount or relax general NODEV mounts.
+        tool=(ROOT/'packages/runtime/src/guest/linux-tool-compartment.c').read_text()
+        self.assertNotIn('urandom_mount(',tool)
+        self.assertIn('.attr_set=MOUNT_ATTR_NOSUID|MOUNT_ATTR_NODEV|(readonly?MOUNT_ATTR_RDONLY:0)',tool)
 if __name__=='__main__':unittest.main()

@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <sys/socket.h>
 #include <linux/mount.h>
+#include <sys/sysmacros.h>
 
 static int descriptor(const char *text) {
     char *end;long number=strtol(text,&end,10);
@@ -39,12 +40,54 @@ static void attach_descriptor(int tree,const char *target) {
     require((int)syscall(SYS_move_mount,tree,"",AT_FDCWD,target,MOVE_MOUNT_F_EMPTY_PATH),"attach admitted mount");
     close(tree);
 }
+/* Fixed process-tool inventory only. Never bind the guest's whole /dev tree or
+ * reopen a device pathname after checking its descriptor's kernel identity. */
+struct tool_device { const char *name; unsigned int minor; };
+static const struct tool_device tool_devices[]={
+    {"/dev/null",3},{"/dev/zero",5},{"/dev/full",7},{"/dev/random",8},{"/dev/urandom",9}
+};
+#define TOOL_DEVICE_COUNT (sizeof tool_devices/sizeof tool_devices[0])
+static int tool_device_mount(const struct tool_device *device) {
+    int fd=open(device->name,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);require(fd,"tool device");
+    struct stat info;require(fstat(fd,&info),"tool device identity");
+    if(!S_ISCHR(info.st_mode)||major(info.st_rdev)!=1||(unsigned int)minor(info.st_rdev)!=device->minor||(fcntl(fd,F_GETFL)&O_ACCMODE)!=O_RDONLY)_exit(64);
+    int tree=(int)syscall(SYS_open_tree,fd,"",OPEN_TREE_CLONE|OPEN_TREE_CLOEXEC|AT_EMPTY_PATH);require(tree,"clone tool device");
+    /* NODEV must be cleared on these five mounts for character-device use.
+     * RDONLY protects mount metadata; it does not prohibit device writes:
+     * /dev/null discards them, /dev/full refuses them with ENOSPC. */
+    struct mount_attr attributes={.attr_set=MOUNT_ATTR_RDONLY|MOUNT_ATTR_NOSUID|MOUNT_ATTR_NOEXEC,.attr_clr=MOUNT_ATTR_NODEV};
+    require((int)syscall(SYS_mount_setattr,tree,"",AT_EMPTY_PATH,&attributes,sizeof attributes),"tool device flags");
+    close(fd);return tree;
+}
+struct tool_fd_link { const char *name; const char *target; };
+static const struct tool_fd_link tool_fd_links[]={
+    {"fd","/proc/self/fd"},{"stdin","/proc/self/fd/0"},{"stdout","/proc/self/fd/1"},{"stderr","/proc/self/fd/2"}
+};
 static void point(const char *root,const char *guest,char *out,size_t size) {
     if(guest[0]!='/' || !guest[1] || strstr(guest,"..") || strlen(guest)>1024)_exit(64);
     path(out,size,root,guest+1);
     char parent[4096];strcpy(parent,out);
     for(char *p=parent+strlen(root)+1;*p;p++)if(*p=='/'){*p=0;if(mkdir(parent,0755)&&errno!=EEXIST)require(-1,"root skeleton");*p='/';}
     require(mkdir(out,0755),"root mountpoint");
+}
+static void tool_device_view(const char *root,int trees[TOOL_DEVICE_COUNT]) {
+    char target[4096];point(root,"/dev",target,sizeof target);
+    for(size_t i=0;i<TOOL_DEVICE_COUNT;i++) {
+        path(target,sizeof target,root,tool_devices[i].name+1);
+        require(close(open(target,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0666)),"tool device mountpoint");
+        attach_descriptor(trees[i],target);
+    }
+    /* Mounted only after fork into the private tool PID namespace. The runtime
+     * and supervisor are outside it. No trusted inherited FDs survive exec. */
+    point(root,"/proc",target,sizeof target);
+    require(mount("proc",target,"proc",MS_RDONLY|MS_NOSUID|MS_NODEV|MS_NOEXEC,NULL),"tool private proc");
+    for(size_t i=0;i<sizeof tool_fd_links/sizeof tool_fd_links[0];i++) {
+        char name[64];snprintf(name,sizeof name,"dev/%s",tool_fd_links[i].name);
+        path(target,sizeof target,root,name);require(symlink(tool_fd_links[i].target,target),"tool descriptor link");
+    }
+    point(root,"/dev/shm",target,sizeof target);
+    require(mount("tmpfs",target,"tmpfs",MS_NOSUID|MS_NODEV|MS_NOEXEC,"mode=1777,size=8m"),"tool private shared memory");
+    /* Pipe-only tools have no /dev/tty, ptmx or shared devpts. */
 }
 int main(int argc,char **argv) {
     if(geteuid()!=0 || argc<15)_exit(64);
@@ -67,6 +110,8 @@ int main(int argc,char **argv) {
     const char *environment_parts[]={"bin","lib","lib64","usr"};
     for(int i=0;i<roots;i++)root_trees[i]=clone_descriptor(descriptor(argv[15+3*i]),number(argv[17+3*i],0,1)||!strcmp(argv[7],"plan"),0);
     int worker_tree=clone_descriptor(worker,1,1);
+    int device_trees[TOOL_DEVICE_COUNT];
+    if(process)for(size_t i=0;i<TOOL_DEVICE_COUNT;i++)device_trees[i]=tool_device_mount(&tool_devices[i]);
     if(process)for(int i=0;i<4;i++){
         int part=openat(environment,environment_parts[i],O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
         if(part<0){if(errno==ENOENT)continue;require(-1,"environment identity");}
@@ -103,6 +148,7 @@ int main(int argc,char **argv) {
         }
         path(target,sizeof target,root,"tmp");require(mkdir(target,0755),"scratch mountpoint");
         require(mount("tmpfs",target,"tmpfs",MS_NOSUID|MS_NODEV|MS_NOEXEC,"mode=1777,size=8m"),"private scratch");
+        tool_device_view(root,device_trees);
     }
     path(target,sizeof target,root,"file-worker");require(close(open(target,O_WRONLY|O_CREAT|O_EXCL,0555)),"helper point");attach_descriptor(worker_tree,target);
     require(mount(NULL,root,NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NODEV,NULL),"protected skeleton");
