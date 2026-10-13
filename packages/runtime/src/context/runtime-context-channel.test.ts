@@ -67,6 +67,31 @@ test("required startup cannot advertise an RPC feature without its matching adap
   expect(frames).toEqual([]);
 });
 
+test("composed host-query configuration refuses current-context opt-in before admission or bridge access", async () => {
+  const { runEngine } = await import("../engine.ts");
+  const { assertLinuxHostQueryConfig } = await import("../guest/linux-host-query-profile.ts");
+  const config = {
+    executionPosture: "confined-guest" as const, sessionId: "backend", model: "winter-test/echo",
+    cwd: "/workspace/source", winterHome: "/run/winter/conversations/logical",
+    storeHome: "/workspace/.winter/conversations/logical", persistSession: true,
+    tools: ["Read", "Edit", "Write", "Bash"], allowedTools: [], settingSources: [], skills: [],
+    plugins: [], strictMcpConfig: true, mcpServers: {}, permissionMode: "default" as const,
+    permissions: { disableBypassPermissionsMode: true }, allowDangerouslySkipPermissions: false,
+  };
+  expect(() => assertLinuxHostQueryConfig(config)).not.toThrow();
+  const optedIn = { ...config, requiredRuntimeContext: { version: 1 as const, bindingId: "one" } };
+  expect(() => assertLinuxHostQueryConfig(optedIn)).toThrow();
+  let admissionReads = 0, inputReads = 0, writes = 0, generations = 0;
+  await expect(runEngine({
+    config: optedIn,
+    get linuxSessionAdmission(): never { admissionReads++; throw new Error("native admission must not be read"); },
+    input: { [Symbol.asyncIterator]() { inputReads++; throw new Error("input must not be read"); } },
+    output: { write() { writes++; }, end() { writes++; } },
+    provider: { generate: async () => { generations++; return { kind: "text" as const, text: "must not dispatch" }; } },
+  })).rejects.toThrow("required_context_unavailable");
+  expect({ admissionReads, inputReads, writes, generations }).toEqual({ admissionReads: 0, inputReads: 0, writes: 0, generations: 0 });
+});
+
 test("closing the parent after wire settlement but before snapshot delivery refuses the raced snapshot", async () => {
   const frames: WinterFrame[] = [], bridge = createRpcBridge({ write: frame => frames.push(frame), end() {} });
   const source = createRuntimeContextChannel({ version: 1, bindingId: "one" }); source.bind(bridge);

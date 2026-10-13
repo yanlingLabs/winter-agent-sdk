@@ -234,3 +234,9 @@ export { createGuestFileSession, bindGuestFileSession } from "./guest/file-sessi
 export type { GuestFileSession } from "./guest/file-session.ts";
 
 export { HOST_CODE_EXECUTION_LIMITS_VERSION, hostCodeExecutionLimitsFor } from "./sandbox/execution-limits.ts";
+
+// Fresh-store native Linux entry; admission remains inherited-descriptor-only.
+export { runAdmittedLinuxSession } from "./guest/linux-session-entry.ts";
+export type { AdmittedLinuxSessionOptions } from "./guest/linux-session-entry.ts";
+export { admitFreshLinuxSession, admitHostQueryLinuxSession } from "./guest/linux-session-admission.ts";
+export type { LinuxSessionAdmission } from "./guest/linux-session-admission.ts";

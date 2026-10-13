@@ -39,7 +39,8 @@ export interface RpcBridge {
   // child-routed answer logged "dropping control_response for unknown or already-settled requestId"
   // on the SUCCESS path -- a misleading diagnostic that also masked the genuine unclaimed case the
   // message exists to report.
-  ownsRequest(requestId: string): boolean;
+  /** Optional subtype restriction is used by the closed Linux host-query input gate. */
+  ownsRequest(requestId: string, subtype?: string): boolean;
   // Task 8 (termination edge, WS-04 §3's no-park-timeout combined with P2-B's inverted pump
   // direction): rejects every still-pending request. Call this when the underlying transport is
   // PROVABLY dead (the pump's input hit true EOF, not just end_input) — a no-timeout RPC like
@@ -86,9 +87,13 @@ export interface RpcBridgeOptions {
   // by `rejectAllPending` -- is dropped from the queue and NEVER written, and no `control_cancel_request`
   // is sent for it: the host never saw the request it would cancel.
   holdUntilOpen?: boolean;
+  /** Optional restriction only: never grants authority. The Linux engine derives this from
+   * its genuine native admission, not RuntimeConfig, argv, environment or a profile claim. */
+  allowedSubtypes?: readonly string[];
 }
 
 interface PendingRpc {
+  subtype: string;
   resolve(payload: unknown): void;
   reject(err: unknown): void;
   timer?: ReturnType<typeof setTimeout>;
@@ -109,6 +114,7 @@ interface PendingRpc {
 // never imports the runtime (WS-02 §3), even though the shape rhymes.
 export function createRpcBridge(output: FrameSink, bridgeOpts: RpcBridgeOptions = {}): RpcBridge {
   const pending = new Map<string, PendingRpc>();
+  const allowedSubtypes = bridgeOpts.allowedSubtypes === undefined ? undefined : new Set(bridgeOpts.allowedSubtypes);
   // The requests written nowhere yet, keyed by requestId in ISSUE order (a Map iterates in insertion
   // order), or `undefined` once the bridge is open. See `RpcBridgeOptions.holdUntilOpen`.
   let held: Map<string, ControlRequestFrame> | undefined = bridgeOpts.holdUntilOpen === true ? new Map() : undefined;
@@ -128,12 +134,16 @@ export function createRpcBridge(output: FrameSink, bridgeOpts: RpcBridgeOptions 
       if (closed) {
         return Promise.reject(new WinterRpcError("connection_closed", `rpc bridge is closed: cannot issue a '${subtype}' request`));
       }
+      if (allowedSubtypes !== undefined && !allowedSubtypes.has(subtype)) {
+        // Refuse before IDs, timers, signal listeners, held frames or pending entries exist.
+        return Promise.reject(new WinterRpcError("unsupported_subtype", "rpc subtype unavailable for this session"));
+      }
       if (opts?.signal?.aborted === true) {
         return Promise.reject(new WinterRpcError("cancelled", `the '${subtype}' request was cancelled before it was issued`));
       }
       const requestId = opts?.requestId ?? randomUUID();
       return new Promise<T>((resolve, reject) => {
-        const entry: PendingRpc = { resolve: resolve as (payload: unknown) => void, reject };
+        const entry: PendingRpc = { subtype, resolve: resolve as (payload: unknown) => void, reject };
         if (opts?.timeoutMs !== undefined) {
           const timeoutMs = opts.timeoutMs;
           entry.timer = setTimeout(() => {
@@ -181,8 +191,9 @@ export function createRpcBridge(output: FrameSink, bridgeOpts: RpcBridgeOptions 
       held = undefined;
       for (const frame of queued) output.write(frame);
     },
-    ownsRequest(requestId: string): boolean {
-      return pending.has(requestId);
+    ownsRequest(requestId: string, subtype?: string): boolean {
+      const entry = pending.get(requestId);
+      return entry !== undefined && (subtype === undefined || entry.subtype === subtype);
     },
     handleResponse(frame: ControlResponseFrame): boolean {
       const entry = pending.get(frame.requestId);

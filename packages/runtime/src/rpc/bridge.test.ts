@@ -386,3 +386,37 @@ test("a bridge built without holdUntilOpen writes at once (every pre-existing ca
   bridge.open();
   expect(written.length).toBe(1);
 });
+
+test("restricted bridge rejects unsupported RPCs immediately without frames, options callbacks or pending entries", async () => {
+  for (const holdUntilOpen of [false, true]) {
+    const { sink, written } = recordingSink(), allowedSubtypes = ["permission"];
+    const bridge = createRpcBridge(sink, { holdUntilOpen, allowedSubtypes });
+    allowedSubtypes.push("hook"); // The restriction is captured, not a mutable caller list.
+    let optionReads = 0;
+    for (const subtype of ["credential_resolve", "hook", "sdk_mcp_call", "mcp_oauth_refresh", "unknown"]) {
+      let observed = false;
+      const refusal = bridge.request(subtype, {}, {
+        get requestId(): string { optionReads++; throw new Error("must not allocate an ID"); },
+        get timeoutMs(): number { optionReads++; throw new Error("must not create a timer"); },
+        get signal(): AbortSignal { optionReads++; throw new Error("must not attach a listener"); },
+      }).catch(error => { observed = true; return error; });
+      // This microtask settles without transport, response, cancellation or a timeout.
+      await Promise.resolve();
+      expect(observed).toBe(true);
+      const error = await refusal;
+      expect(error).toBeInstanceOf(WinterRpcError);
+      if (!(error instanceof WinterRpcError)) throw new Error("expected immediate typed refusal");
+      expect(error.code).toBe("unsupported_subtype");
+      expect(optionReads).toBe(0); expect(written).toEqual([]);
+      expect(bridge.ownsRequest("forbidden")).toBe(false);
+    }
+    bridge.open(); expect(written).toEqual([]); // No refused request was held for later emission.
+    const permission = bridge.request("permission", {}, { requestId: "permission-ok" });
+    expect(bridge.ownsRequest("permission-ok", "permission")).toBe(true);
+    expect(written.length).toBe(1);
+    bridge.handleResponse({ type: "control_response", requestId: "permission-ok", ok: true, payload: { behavior: "deny", message: "fixture" } });
+    expect(await permission).toEqual({ behavior: "deny", message: "fixture" });
+    expect(bridge.ownsRequest("permission-ok")).toBe(false);
+    bridge.rejectAllPending(new Error("finished"));
+  }
+});
