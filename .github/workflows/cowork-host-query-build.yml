@@ -61,11 +61,13 @@ jobs:
           finally:
               os.close(fd)
           PY
+      - name: Capture the fixed utility environment without executing utilities
+        run: python3 -I -S -B scripts/guest-host-query/utility-environment.py --out out/host-query-utility-capture
       - name: Freshly compile the real SDK engine and scripted provider fixture
         run: bun run scripts/guest-host-query/compile.ts --guest-base out/linux-bun-base --out out/host-query-entries
       - name: Build the native owners without executing them
         run: |
-          python3 -I -S -B scripts/guest-host-query/build.py --output out/host-query-linux-review --runtime-entry out/host-query-entries/runtimeEntry --provider-worker out/host-query-entries/providerWorker --host-client out/host-query-entries/hostClient --compile-receipt out/host-query-entries/compile-receipt.json
+          python3 -I -S -B scripts/guest-host-query/build.py --output out/host-query-linux-review --runtime-entry out/host-query-entries/runtimeEntry --provider-worker out/host-query-entries/providerWorker --host-client out/host-query-entries/hostClient --compile-receipt out/host-query-entries/compile-receipt.json --utility-capture out/host-query-utility-capture/capture --utility-origin out/host-query-utility-capture/utility-origin-receipt.json
       - name: Verify portable staging and evidence cases without native effects
         run: python3 -I -S -B -m unittest discover -s scripts/guest-host-query -p 'test_*.py'
       - name: Retain the exact measured source and installed dependency closure

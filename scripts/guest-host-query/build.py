@@ -10,7 +10,8 @@ PROVENANCE_PATH=Path(__file__).with_name('provenance.py')
 _spec=importlib.util.spec_from_file_location('fresh_provenance',PROVENANCE_PATH);provenance=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(provenance)
 ENTRIES=('runtimeEntry','providerWorker','hostClient')
 NATIVE={'toolLauncher':'linux-tool-compartment.c','runtimeLauncher':'linux-runtime-compartment.c','fileWorker':'file-worker.c','processWorker':'process-worker.c','ownerLibrary':'linux-session-owner.c'}
-SOURCES=['packages/runtime/src/guest/linux-supervisor.py','packages/runtime/src/guest/linux-compartment.h',*[f'packages/runtime/src/guest/{name}' for name in NATIVE.values()],'packages/runtime/src/guest/linux-session-admission.ts','scripts/guest-host-query/runtime.ts','scripts/guest-host-query/provider.ts','scripts/guest-host-query/host-client.ts','scripts/guest-host-query/cases.ts','scripts/guest-host-query/compile.ts','scripts/build-runtime.ts','scripts/linux-runtime-base.json','scripts/guest-host-query/verify.py','scripts/guest-host-query/build.py','scripts/guest-host-query/provenance.py','scripts/guest-host-query/stage.py','scripts/guest-engine/verify.py']
+UTILITY_SOURCES=['scripts/guest-utilities/utility_inputs.py','scripts/guest-utilities/closure.py','scripts/guest-utilities/stdlib_graph.py','scripts/guest-utilities/smoke.sh','scripts/guest-utilities/descendant.py','scripts/guest-utilities/oracle.py','scripts/guest-host-query/utility-environment.py','scripts/guest-host-query/utility-data.py','scripts/guest-host-query/utilities.sh','scripts/guest-host-query/utilities-plan.sh']
+SOURCES=[*UTILITY_SOURCES,'packages/runtime/src/guest/linux-supervisor.py','packages/runtime/src/guest/linux-compartment.h',*[f'packages/runtime/src/guest/{name}' for name in NATIVE.values()],'packages/runtime/src/guest/linux-session-admission.ts','scripts/guest-host-query/runtime.ts','scripts/guest-host-query/provider.ts','scripts/guest-host-query/host-client.ts','scripts/guest-host-query/cases.ts','scripts/guest-host-query/compile.ts','scripts/build-runtime.ts','scripts/linux-runtime-base.json','scripts/guest-host-query/verify.py','scripts/guest-host-query/build.py','scripts/guest-host-query/provenance.py','scripts/guest-host-query/stage.py','scripts/guest-engine/verify.py']
 def digest(path):
     return provenance.sha(path,256*1024*1024)['sha256']
 def source_inventory(extra=()):
@@ -30,7 +31,7 @@ def source_inventory(extra=()):
 def capture_sources(extra=()):
     return {relative:provenance.sha(ROOT/relative)['sha256'] for relative in source_inventory(extra)}
 def validate_receipt(receipt,directory):
-    if not isinstance(receipt,dict) or receipt.get('formatVersion')!=2 or not isinstance(receipt.get('sources'),dict) or not isinstance(receipt.get('artifacts'),dict):raise ValueError('review receipt shape')
+    if not isinstance(receipt,dict) or receipt.get('formatVersion')!=3 or receipt.get('kind')!='winter-host-query-utilities' or not isinstance(receipt.get('sources'),dict) or not isinstance(receipt.get('artifacts'),dict):raise ValueError('review receipt shape')
     if not set(source_inventory())<=set(receipt['sources']) or set(receipt['artifacts'])!=set(NATIVE)|set(ENTRIES):raise ValueError('review receipt inventory')
     for relative,expected in receipt['sources'].items():
         path=Path(relative)
@@ -41,7 +42,21 @@ def validate_receipt(receipt,directory):
     compile_path=Path(directory)/'compile-receipt.json'
     if digest(compile_path)!=receipt.get('compileReceiptSha256'):raise ValueError('compile receipt changed')
     validate_compile_receipt(provenance.json_read(compile_path),directory)
+    parent=load_parent()
+    with parent.capture(ROOT,directory,Path(directory)/'receipt.json',digest(Path(directory)/'receipt.json'),environment=Path(directory)/'environment'):pass
     return receipt
+
+def validate_staged_receipt(directory,receipt_path):
+    admission=getattr(sys,'_winter_host_query_stage_admission',None)
+    if admission is None:raise ValueError('sealed bootstrap admission required')
+    staged=Path(admission.directory)
+    if ROOT!=staged/'source' or Path(directory)!=staged/'artifacts' or Path(receipt_path)!=staged/'artifacts/receipt.json':raise ValueError('closed sealed runner paths')
+    parent=load_parent();native,environment=parent.open_admitted_environment()
+    try:return native
+    finally:os.close(environment)
+
+def load_parent():
+    spec=importlib.util.spec_from_file_location('host_query_utility_parent',Path(__file__).with_name('stage.py'));module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 
 def validate_compile_receipt(receipt,directory,entries=None):
     directory=Path(directory)
@@ -50,7 +65,7 @@ def validate_compile_receipt(receipt,directory,entries=None):
     return provenance.validate_compile(receipt,ROOT,entries,pin,{name:directory/f'{name}.metafile.json' for name in entries})
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);parser.add_argument('--runtime-entry',type=Path,required=True);parser.add_argument('--provider-worker',type=Path,required=True);parser.add_argument('--host-client',type=Path,required=True);parser.add_argument('--compile-receipt',type=Path,required=True);parser.add_argument('--provider-source',action='append',default=[]);parser.add_argument('--cc',default='cc');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);parser.add_argument('--runtime-entry',type=Path,required=True);parser.add_argument('--provider-worker',type=Path,required=True);parser.add_argument('--host-client',type=Path,required=True);parser.add_argument('--compile-receipt',type=Path,required=True);parser.add_argument('--utility-capture',type=Path,required=True);parser.add_argument('--utility-origin',type=Path,required=True);parser.add_argument('--provider-source',action='append',default=[]);parser.add_argument('--cc',default='cc');args=parser.parse_args()
     if sys.platform!='linux':raise SystemExit('Native Linux build only; local cross-compilation does not establish fixture execution')
     if args.output.exists():raise SystemExit('Use a new isolated artifact directory')
     compile_receipt=provenance.json_read(args.compile_receipt)
@@ -79,7 +94,18 @@ def main():
     validate_compile_receipt(provenance.json_read(args.output/'compile-receipt.json'),args.output)
     if provenance.sha(cc,256*1024*1024)!=compiler_identity:raise SystemExit('Native compiler changed during build')
     if capture_sources(args.provider_source)!=source_hashes:raise SystemExit('Sources changed during artifact build')
-    receipt={'formatVersion':2,'compileReceiptSha256':digest(args.output/'compile-receipt.json'),'sources':source_hashes,'artifacts':{name:digest(args.output/name) for name in [*NATIVE,*ENTRIES]},'nativeBuildCommands':commands,'nativeCompiler':{**compiler_identity,'version':version_line},'nativeBuildEnvironment':{'PATH':'/usr/bin:/bin','LANG':'C','LC_ALL':'C','TZ':'UTC'},'linuxExecutionVerified':False,'vmExecutionVerified':False}
+    parent=load_parent()
+    capture=provenance.json_read(args.utility_capture/'utility-receipt.json');origin=provenance.json_read(args.utility_origin)
+    spec=importlib.util.spec_from_file_location('utility_capture_validation',ROOT/'scripts/guest-utilities/closure.py');closure=importlib.util.module_from_spec(spec);spec.loader.exec_module(closure);closure.validate_capture(capture,args.utility_capture/'environment')
+    shutil.copytree(args.utility_capture/'environment',args.output/'environment',symlinks=False)
+    for source,name in ((args.utility_capture/'utility-receipt.json','utility-receipt.json'),(args.utility_origin,'utility-origin-receipt.json')):shutil.copyfile(source,args.output/name);(args.output/name).chmod(0o444)
+    dependencies={}
+    for name in ('runtimeEntry','ownerLibrary'):
+        fd=os.open(args.output/name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
+        try:dependencies[name]=parent.elf_dependencies(fd)
+        finally:os.close(fd)
+    receipt={'formatVersion':3,'kind':'winter-host-query-utilities','utilityCapture':capture,'utilityOrigin':origin,'environment':capture['outputs'],'utilityCaptureSha256':digest(args.output/'utility-receipt.json'),'utilityOriginSha256':digest(args.output/'utility-origin-receipt.json'),'elfDependencies':dependencies,'compileReceiptSha256':digest(args.output/'compile-receipt.json'),'sources':source_hashes,'artifacts':{name:digest(args.output/name) for name in [*NATIVE,*ENTRIES]},'nativeBuildCommands':commands,'nativeCompiler':{**compiler_identity,'version':version_line},'nativeBuildEnvironment':{'PATH':'/usr/bin:/bin','LANG':'C','LC_ALL':'C','TZ':'UTC'},'linuxExecutionVerified':False,'vmExecutionVerified':False}
     (args.output/'receipt.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n');(args.output/'receipt.json').chmod(0o444)
+    with parent.capture(ROOT,args.output,args.output/'receipt.json',digest(args.output/'receipt.json'),environment=args.output/'environment'):pass
     print(json.dumps({'receiptFile':'receipt.json','nativeArtifactsBuilt':True,'linuxExecutionVerified':False,'vmExecutionVerified':False}))
 if __name__=='__main__':main()

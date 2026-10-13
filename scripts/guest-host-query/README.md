@@ -356,3 +356,197 @@ path and the exact suffix after `/tmp`, covering a separate tmpfs mount without
 rejecting legitimate source/environment paths sharing the run ID. Generated
 guard-only tests cover these failures and clean synthetic records; no proc/mount
 probe executes. Native private-mount code remains unchanged.
+
+### Phase B daily utilities — source-only v3 candidate
+
+This stacked source candidate extends Phase A with the real SDK's existing Bash
+executor running fixed Python, cat, mktemp, OpenSSL and Git payloads. It retains
+three entries (`runtimeEntry`, `providerWorker`, `hostClient`), eight measured ELF
+artifacts, the native owner/grant/teardown ABI, four/seven calls, three/zero
+permission exchanges, the exact Phase A second-Bash prefix and its two stderr
+lines. No helper, native launcher, permission floor, production capability or
+runtime timeout changes. Ask-deny must return the exact denial for all three
+non-Read calls; it executes none of these payloads. Plan deliberately allows its
+callbacks, then requires read-only helper results and actual EROFS mutations.
+
+The ordinary Linux builder calls the unchanged SDK9 `utility_inputs.prepare`
+and `closure.capture/validate_capture`. Its measured 272-leaf base is preserved.
+`utility-environment.py` adds exactly `libpthread.so.0` and `libdl.so.2`, which the
+SDK runtime requires and the old utility-only closure lacked. These two DSO
+inputs and the base libc/loader inputs must belong to the same observed
+`libc6:arm64` version in the same sysroot. Captured bytes, package records, actual
+ARM64 ET_DYN/SONAME metadata, no RPATH/RUNPATH, allowed dependencies and recursive
+whole-environment closure are validated. Missing additional dependencies refuse;
+there is no ldd, package install or implicit fallback. The old base origin does
+**not** attest package version: the new wrapper records it separately. It checks
+held bytes/package versions and source inputs again after intake/copy/graph work.
+
+The v3 native receipt has kind `winter-host-query-utilities`. It binds the new
+capture/origin JSON hashes and contents, exact environment leaf roles, execution
+intent, bytes and hashes, actual SDK runtime/owner-library dependencies, helper
+and payload source hashes and the unchanged three-entry compile receipt. The
+externally hash-admitted stdlib-only parent validates the entire source,
+dependency, artifact and environment tree before project imports; it copies and
+seals the measured environment as a third **staging directory**, not a third VM
+device. Limits remain explicit: 32 MiB per environment leaf, 128 MiB environment,
+2,048 environment leaves and 768 MiB combined closure; source and artifact limits
+remain 256/384 MiB. Unsigned metadata provides no privilege authority. Old v2
+artifacts/receipts and workflows cannot be relabeled or reused for this candidate.
+The build-only workflow collects the environment before compile and retains it
+with the new receipt. The reviewed execution workflow is unchanged and unadmitted
+for these new source bytes until a fresh complete build/audit/pin review.
+
+All environment files remain Root-owned 0555/0444 (500/400 while sealed). A second
+read-only DATA root contains a fixed marker and pure-byte deterministic Git
+fixture. Its sole DAC exception is existing tool-owned UID10001/GID10000 0660
+`dac-canary`. Before any threads, a fixed child drops every bounding capability,
+changes all UID/GID values to10001, retains only supplementary10000 and observes
+all five capability fields zero. It writes identical canary bytes through the
+held directory FD with O_WRONLY|O_NOFOLLOW and no O_CREAT, fsyncs and is actually
+reaped. The Root observes exact inode/dev/owner/group/mode/link/bytes before and
+after that preflight and after the run. Both positive and plan require exact
+EROFS for canary open-write/chmod; plan also requires both on tool-owned source
+seed. EACCES/EPERM cannot satisfy these mount oracles. Closed DATA inventory,
+mode/byte/leaf identity and absence of extra directories are checked after run.
+
+The first Bash view now prints **observed** version2 counters:
+`host-query-view-v2-counts:2:5:3:10:1:1:1:5:3:1`. The last two values require exactly
+three RO/nosuid/nodev environment mounts and one RO/nosuid/nodev/noexec DATA mount.
+Both wire and persisted oracles pin this line. The native helper source creates
+its tool-root `/` skeleton as a 16 MiB tmpfs, then remounts it read-only with
+nosuid/nodev. The current probe does not separately assert the `/` mount flags
+or size, so that configuration is a source fact, not an observed root-mount
+oracle. Writable private `/tmp` and `/dev/shm` each have an 8 MiB tmpfs ceiling;
+admitted writable source roots have their own backing storage and do not share
+that skeleton limit. No unspecified writable root or unlimited private scratch
+is assumed. The second Bash appends one fixed
+inline payload after the byte-identical Phase A prefix. It pins five ordered
+utility markers plus the end marker and exact stderr/exit status in both oracles.
+Git/Python/temp work stays in private8MiB `/dev/shm`; HOME/TMPDIR and Git identity,
+dates, global/system config are fixed, Git's commit is exact, and all scratch and
+shared memory must be removed before the final marker. Fork/shared-memory adds a
+bounded child and Python resource-tracker process; joins/reaping and no additional
+stderr are required. The existing 5s Bash deadline is unchanged. Runtime duration
+and deadline margin are **unmeasured** until the separately admitted Linux run;
+portable tests provide no native child/reap/mount/capability proof.
+
+The initial local portable routing test incorrectly put cwd inside WINTER_HOME
+and produced one bypass callback for inline A+B (A alone remained zero). Its
+reported `/dev/full` path was only the first candidate, not proof of the matched
+protected write. Root's comparison and the retained regression show the intended
+native-shaped disjoint source/home/store topology allows inline A+B with zero
+callbacks, while colocated protected-home writes still prompt and fail closed.
+No evaluator/parser change, permission exemption, obscured path or sandbox flag
+was added. The temporary sealed-script proposal was removed. This does not claim
+inline equivalence in arbitrary cwd/home layouts. The separate misleading
+blockedPath consent diagnostic remains a Root-owned SDK review item.
+
+Local evidence lives under `out/phase-b-source-check/`: exact Python discovery
+covers inert ELF/package/source mutations, pinned copy/FD lifetime, injected
+Root ownership/capability/reap observations, readonly data replacement/extra
+inventory and existing source/staging/history/diagnostics cases; actual local SDK
+query uses injected provider/tools and no native admission. Bash tests parse
+syntax or execute extracted inert guards only, never a proc/device/utility body.
+Superseded sealed-caller and earlier failed inline logs are retained separately.
+The FD8 K cancellation path remains portable/source coverage only. Cold resume,
+actual native utilities, duration, production VM/resources and full Code parity
+remain unproved for this candidate. Earlier failed native fixture cleanup is not
+changed or reclassified by these tests.
+
+Phase B local freeze checks (2026-10-13):
+
+```sh
+python3 -B -m unittest discover -s scripts/guest-host-query -p 'test_*.py'
+bun test ./scripts/guest-host-query/cases.test.ts
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.typecheck.json
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.sdk-fence.json
+bun build scripts/guest-host-query/runtime.ts scripts/guest-host-query/provider.ts scripts/guest-host-query/host-client.ts --target=bun --outdir out/phase-b-source-check/unexecuted-bundle
+```
+
+Exact retained final logs: `python-final-freeze.log` (76 pass),
+`bun-inline-final.log` (16 pass, 218 assertions), `types-final.log` and
+`types-fence-final.log` (both exit0), `bundle-inline-final.log` (697 modules;
+three unexecuted JavaScript entry outputs). These used read-only frozen external
+package dependencies with workspace aliases pointing to this candidate's own
+packages; no dependency install or lifecycle scripts ran. This local bundle is
+not the immutable Linux compile receipt or an artifact/native acceptance. The
+superseded `python-inline-final.log` has one obsolete sealed-script test assertion
+from the removed proposal; `python-inline-final-corrected.log` (75 pass) closed
+that before the final additional FIFO/link regression. Other superseded logs are
+retained as history, not relabeled final evidence.
+
+The narrow Root-binding follow-up uses explicit setresgid/setresuid for all three
+IDs in the new canary child (the original Phase A DAC control is unchanged).
+Immediately after service construction, before threads/launch, and again before
+service.close while its FD remains live, the fixture requires its held readonly
+DATA directory to match the exact ToolService `roots['readonly']['fd']` by dev,
+inode, directory kind, Root owner and0555 mode. This is the descriptor the existing
+supervisor passes directly to the native clone; a matching pathname alone does
+not satisfy the check. `bound-readonly-root.log` records four passing selected
+portable tests, including different-directory, regular-file, boolean-FD, wrong
+readonly metadata and changed-mode refusals, with injected ownership only. No
+fork, Root identity transition, service construction or native operation executed
+in these tests. The earlier76-test full-suite record and both typechecks describe
+the prior freeze; this follow-up changed only verifier/test/docs and ran the exact
+new data-test module (four pass), without repeating unaffected checks.
+
+### Required sealed-stage handoff correction
+
+Astra found a blocking source error in c86173a1 before any native attempt: the
+ordinary build output holds `artifacts/environment`, but `stage()` creates
+`source`, `artifacts` and `environment` as siblings. The bootstrap passed the
+sealed artifacts directory to the old build validator, which recaptured an
+absent `artifacts/environment`. The c861 source/build data inventory remains
+historical data evidence; its launch admission is revoked and its pins are stale.
+
+Ordinary `capture()` now requires an explicit environment argument. Its build
+callers pass the ordinary output's nested environment. The trusted runner instead
+calls `build.validate_staged_receipt`: argv paths must match the admitted fixed
+source/artifacts/receipt layout, but paths do not select authority. It invokes the
+stdlib parent's `open_admitted_environment`, which checks the current isolated
+Root bootstrap admission, PID and held directory FD identity against its sealed
+name and then validates the complete tree through `verify_staged_fd`. The
+returned environment FD is the already validated sibling opened relative to
+that admission FD with O_DIRECTORY|O_NOFOLLOW. Runtime environment copying uses
+this same helper and receipt, with no reconstructed environment path, existence
+fallback or checkout recapture. All source/dependency/artifact/environment closure
+and ownership/mode checks remain mandatory before service/native work.
+
+`test_staged_handoff.py` calls actual `stage()` to copy synthetic inert inputs
+into the real sibling layout; privileged ownership/ancestry are injected and the
+creation-time final ownership check is deferred to actual full FD handoff
+validation. It then invokes actual `verify.main` and stops at the next phase
+before any service/native work. The former nested-environment path reproduces
+ENOENT. Missing sibling, wrong admission identity, nested artifact decoy, foreign
+CLI path and absent admission all refuse; a sentinel fails if checkout capture is
+called. This is portable API/byte validation, not Root/native acceptance. Its first
+setup attempts exposed macOS's `/tmp` symlink and incomplete injected Python3.14
+flags; corrected canonical private staging/fake flag metadata now pass. Those
+failed portable logs remain retained without any native cleanup claim.
+
+The fixture also delegates unchanged `ToolService._run` through a metrology-only
+subclass. It records at most16 SHA256/process/outcome observations and the ceiling
+of Root monotonic elapsed nanoseconds divided by1e6, including native init, body,
+reap and drain. The second Bash's actual wire/persisted input hash must match the
+observed process payload hash; ask-deny requires zero process execution records.
+An observed total below2500ms proves a conservative at-least2x margin against the
+unchanged5000ms body deadline. At/above that threshold or unavailable clocks the
+margin stays unknown/review-required; no timeout is increased. Return values and
+original delegated failures are preserved; bounded failure diagnostics retain
+these observations without turning them into native cleanup authority. Injected
+clock/base tests cover ceil rounding, exact argument/return identity, original
+failure preservation, unknown margin and denied-case zero execution. Timing
+remains unmeasured until the new separately admitted Linux run.
+
+The correction requires a fresh ordinary build, changed parent/receipt/archive
+pins, a complete independent artifact audit and a new one-run review. The old
+uncommitted execution workflow remains untouched and unadmitted.
+
+Correction freeze evidence: exact owned-directory Python discovery is97 pass in
+`out/phase-b-source-check/handoff-metrology-freeze.log` (including three new
+handoff cases, five metrology cases and existing/inherited fixture cases).
+`staged-handoff-final.log` retains the selected15-case handoff run. No TypeScript,
+helper/C, supervisor, tool payload, grant, timeout or workflow source changed in
+this correction; prior TypeScript/Bun checks are unchanged-scope evidence and were
+not relabeled a native result. No ordinary build, push, service or privileged
+execution was performed by this source lane.

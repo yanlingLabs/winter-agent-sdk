@@ -1,3 +1,4 @@
+import type { EvaluationContext } from "../../packages/runtime/src/permissions/evaluator.ts";
 import { expect, test } from "bun:test";
 import { CASES, fixtureCase, toolScript, boundaryCommand, procWriteCommand, PLAN_BOUNDARY_RESULT, PROC_WRITE_RESULT, VIEW_RESULT, fixtureProbePaths, type ProbePaths } from "./cases.ts";
 import { fixturePermission, fixtureTranscript, hostOptions, hostFailure } from "./host-client.ts";
@@ -38,22 +39,22 @@ test("host SDK options never derive native config authority from environment or 
 test("actual local SDK query/engine callback routing matches fixed allow/deny/plan/bypass cases", async () => {
   const { query, splitFrames } = await import("@yanlinglabs/winter-agent-sdk");
   const { inMemoryProcess } = await import("../../packages/runtime/src/testing.ts");
-  const { mkdtempSync, rmSync } = await import("node:fs"), { tmpdir } = await import("node:os"), { join } = await import("node:path");
+  const { mkdtempSync, mkdirSync, rmSync } = await import("node:fs"), { tmpdir } = await import("node:os"), { join } = await import("node:path");
   for (const kind of CASES) {
-    const home = mkdtempSync(join(tmpdir(), "winter-host-case-")); let at = 0, callbacks = 0, requests = 0, responses = 0; const observed: unknown[] = [], script = toolScript(kind, PATHS);
+    const root = mkdtempSync(join(tmpdir(), "winter-host-case-")), home = join(root, "home"), cwd = join(root, "source"), store = join(root, "store"); for (const path of [home, cwd, store]) mkdirSync(path); let at = 0, callbacks = 0, requests = 0, responses = 0; const observed: unknown[] = [], script = toolScript(kind, PATHS);
     const provider: any = { async generate() { const call = script[at]; return call ? { kind: "tool_use", calls: [{ id: `call-${at++}`, ...call }] } : { kind: "text", text: `host-query-${kind}-complete` }; } };
     const tools: any = { async execute(call: any) { const index = Number(call.id.slice(5)); return { isError: (kind === "bypass" && index >= 4) || (kind === "plan" && index === 1), output: kind === "plan" && index === 1 ? "Error [read_only]: guest file operation refused" : kind === "plan" && index === 2 ? PLAN_BOUNDARY_RESULT : index === 3 ? PROC_WRITE_RESULT : index === 0 ? "hello\n" : index === 2 ? VIEW_RESULT : "fixture" }; } };
-    const q = query({ prompt: "fixed local test", options: { model: "winter-test/echo", cwd: home, env: { WINTER_HOME: home, WINTER_DISABLE_GIT_INSTRUCTIONS: "1" }, persistSession: false, settingSources: [], tools: ["Read", "Edit", "Write", "Bash"], allowedTools: [], permissionMode: kind === "bypass" ? "bypassPermissions" : kind === "plan" ? "plan" : "default", permissions: { disableBypassPermissionsMode: kind !== "bypass" }, allowDangerouslySkipPermissions: kind === "bypass",
+    const q = query({ prompt: "fixed local test", options: { model: "winter-test/echo", cwd, env: { WINTER_HOME: home, WINTER_STORE_HOME: store, WINTER_DISABLE_GIT_INSTRUCTIONS: "1" }, persistSession: false, settingSources: [], tools: ["Read", "Edit", "Write", "Bash"], allowedTools: [], permissionMode: kind === "bypass" ? "bypassPermissions" : kind === "plan" ? "plan" : "default", permissions: { disableBypassPermissionsMode: kind !== "bypass" }, allowDangerouslySkipPermissions: kind === "bypass",
       canUseTool: async (tool, input) => { callbacks++; return fixturePermission(kind, tool, input, PATHS); },
       spawnClaudeCodeProcess(options) {
         // Explicit local testing leg with injected provider/executor, NEVER a native admission.
-        const proc = inMemoryProcess(options.args, provider, tools, { WINTER_HOME: home });
+        const proc = inMemoryProcess(options.args, provider, tools, { WINTER_HOME: home, WINTER_STORE_HOME: store });
         let inputCarry = "";
         return { ...proc, stdin: { ...proc.stdin, write(chunk) { const split = splitFrames(chunk, inputCarry); inputCarry = split.carry; responses += split.frames.filter(frame => frame.type === "control_response").length; proc.stdin.write(chunk); } }, stdout: (async function* () { let carry = ""; for await (const chunk of proc.stdout) { const split = splitFrames(chunk, carry); carry = split.carry; for (const frame of split.frames) { if (frame.type === "data") observed.push(frame.message); if (frame.type === "control_request") requests++; } yield chunk; } })() };
       },
     } });
     try { for await (const _ of q) {} expect(callbacks).toBe(kind === "bypass" ? 0 : 3); expect(requests).toBe(callbacks); expect(responses).toBe(callbacks); expect(fixtureTranscript(kind, observed, PATHS).toolResults).toBe(script.length); }
-    finally { await q.return(undefined); rmSync(home, { recursive: true, force: true }); }
+    finally { await q.return(undefined); rmSync(root, { recursive: true, force: true }); }
   }
 });
 
@@ -163,15 +164,15 @@ test("generated mandatory-check failures exit before counters even in conditiona
 
 test("generated view summary emits actual synthetic counters in the fixed order", async () => {
   const { spawnSync } = await import("node:child_process");
-  const line = boundaryCommand("bypass", PATHS).split("\n").find(value => value.startsWith('printf "host-query-view-counts:'))!;
+  const line = boundaryCommand("bypass", PATHS).split("\n").find(value => value.startsWith('printf "host-query-view-v2-counts:'))!;
   expect(line).toBeDefined();
-  for (const values of [[2,5,3,10,1,1,1,5], [7,8,9,11,12,13,14,15]]) {
-    const names = ["phase_pid_count", "phase_worker_fds", "phase_self_fds", "phase_dev_count", "phase_proc_mount", "phase_shm_mount", "phase_source_mount", "phase_device_mounts"];
+  for (const values of [[2,5,3,10,1,1,1,5,3,1], [7,8,9,11,12,13,14,15,16,17]]) {
+    const names = ["phase_pid_count", "phase_worker_fds", "phase_self_fds", "phase_dev_count", "phase_proc_mount", "phase_shm_mount", "phase_source_mount", "phase_device_mounts", "phase_env_mounts", "phase_rodata_mounts"];
     // Only the generated printf and inert variable assignments execute, never the probe.
     const command = names.map((name, index) => `${name}=${values[index]}`).join(";") + ";" + line;
     const result = spawnSync("/bin/bash", ["-c", command], { encoding: "utf8" });
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe(`host-query-view-counts:${values.join(":")}\n`);
+    expect(result.stdout).toBe(`host-query-view-v2-counts:${values.join(":")}\n`);
   }
 });
 
@@ -209,5 +210,34 @@ test("generated mount guards reject first propagation tags and exact protected r
     const result = evaluate("- tmpfs tmpfs rw", root);
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("clean");
+  }
+});
+
+test("generated environment/data mount guards independently reject missing readonly flags", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const command = boundaryCommand("bypass", PATHS), lines = command.split("\n");
+  const fail = lines.find(line => line.startsWith("phase_fail()"))!;
+  for (const [label, prefix, flags] of [["environment_flags", "/bin|/lib|/usr)", ["ro", "nosuid", "nodev"]], ["readonly_data_flags", "/workspace/folders/readonly)", ["ro", "nosuid", "nodev", "noexec"]]] as const) {
+    const guard = lines.find(line => line.startsWith(prefix))!.slice(prefix.length).split("; phase_")[0]!;
+    for (const missing of [null, ...flags]) {
+      const options = flags.filter(flag => flag !== missing).join(",");
+      const result = spawnSync("/bin/bash", ["-c", fail + `\nphase_options=${options}\n` + guard], { encoding: "utf8" });
+      expect(result.status).toBe(missing === null ? 0 : 90);
+      expect(result.stdout).toBe(missing === null ? "" : `phase-a-check-failed:${label}\n`);
+    }
+  }
+});
+
+test("real permission evaluator keeps colocated protected-home writes gated and disjoint inline routing clear", async () => {
+  const { evaluate, REAL_SPECIAL_CHECKS, NO_OPINION_HOOK_STAGE, NO_OPINION_AUTO_ENGINE } = await import("../../packages/runtime/src/permissions/evaluator.ts");
+  const { emptyRuleSet } = await import("../../packages/runtime/src/permissions/ruleset.ts");
+  for (const colocated of [false, true]) {
+    let prompts = 0;
+    const cwd = "/synthetic/phase-b/source", home = colocated ? cwd : "/synthetic/phase-b/home", store = colocated ? cwd : "/synthetic/phase-b/store";
+    const context: EvaluationContext = { policy: { mode: "bypassPermissions", version: 0, rules: emptyRuleSet() }, cwd, sessionRoot: cwd, home: "/synthetic/user", winterHome: home, storeHome: store, trustedWorkspace: false, sessionBypassEnabled: true, hookStage: NO_OPINION_HOOK_STAGE, autoEngine: NO_OPINION_AUTO_ENGINE, specialChecks: REAL_SPECIAL_CHECKS, promptStage: { async prompt(_call, _context, meta) { prompts++; expect(meta.decisionReason).toContain("protected path write"); return null; } } };
+    const first = await evaluate({ toolName: "Bash", input: { command: procWriteCommand() } }, context);
+    expect(first.decision).toBe("allow"); expect(prompts).toBe(0);
+    const combined = await evaluate({ toolName: "Bash", input: toolScript("bypass", PATHS)[3]!.input }, context);
+    expect(combined.decision).toBe(colocated ? "deny" : "allow"); expect(prompts).toBe(colocated ? 1 : 0);
   }
 });

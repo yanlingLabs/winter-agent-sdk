@@ -1,3 +1,5 @@
+import utilities from "./utilities.sh" with { type: "text" };
+import planUtilities from "./utilities-plan.sh" with { type: "text" };
 /** Closed disposable fixture cases. No model-supplied policy, shell, path or native admission. */
 export const CASES = ["ask-allow", "ask-deny", "plan", "bypass"] as const;
 export type Case = typeof CASES[number];
@@ -59,13 +61,15 @@ export function boundaryCommand(kind: Case, inputPaths: ProbePaths): string {
     '1|2) ' + check('test -p "$phase_fd" && test ! -S "$phase_fd"', 'stdio_type') + '; phase_self_fds=$((phase_self_fds+1));;',
     '*) ' + check('test ! -e "$phase_fd" && test ! -L "$phase_fd"', 'extra_fd') + '; phase_gone_fds=$((phase_gone_fds+1)); ' + check('test "$phase_gone_fds" -le 1', 'extra_fd') + ';;',
     'esac; done; ' + check('test "$phase_self_fds" = 3', 'stdio_inventory') + '; shopt -u nullglob',
-    'phase_proc_mount=0; phase_shm_mount=0; phase_source_mount=0; phase_device_mounts=0; phase_mounts=0; while IFS=" " read -r phase_mid phase_parent phase_dev phase_root phase_point phase_options phase_tail || test -n "$phase_mid"; do phase_mounts=$((phase_mounts+1)); ' + check('test "$phase_mounts" -le 128', 'mount_limit') + '; case " $phase_tail" in *" shared:"*|*" master:"*|*" propagate_from:"*) phase_fail mount_propagation;; esac; for phase_protected in ' + Object.values(paths).flatMap(path => [path, path.slice(4)]).map(path => "'" + path + "'").join(' ') + '; do case "$phase_root" in *"$phase_protected"*) phase_fail protected_mount_root;; esac; done; case "$phase_point" in',
+    'phase_proc_mount=0; phase_shm_mount=0; phase_source_mount=0; phase_device_mounts=0; phase_env_mounts=0; phase_rodata_mounts=0; phase_mounts=0; while IFS=" " read -r phase_mid phase_parent phase_dev phase_root phase_point phase_options phase_tail || test -n "$phase_mid"; do phase_mounts=$((phase_mounts+1)); ' + check('test "$phase_mounts" -le 128', 'mount_limit') + '; case " $phase_tail" in *" shared:"*|*" master:"*|*" propagate_from:"*) phase_fail mount_propagation;; esac; for phase_protected in ' + Object.values(paths).flatMap(path => [path, path.slice(4)]).map(path => "'" + path + "'").join(' ') + '; do case "$phase_root" in *"$phase_protected"*) phase_fail protected_mount_root;; esac; done; case "$phase_point" in',
     '/proc) for phase_flag in ro nosuid nodev noexec; do ' + check('[[ ",$phase_options," = *",$phase_flag,"* ]]', 'proc_flags') + '; done; ' + check('[[ "$phase_tail" = *"- proc proc "* ]]', 'proc_type') + '; phase_proc_mount=$((phase_proc_mount+1));;',
     '/dev/shm) for phase_flag in rw nosuid nodev noexec; do ' + check('[[ ",$phase_options," = *",$phase_flag,"* ]]', 'shm_flags') + '; done; ' + check('[[ "$phase_tail" = *"- tmpfs tmpfs "* && ",$phase_tail," = *",size=8192k,"* ]]', 'shm_size') + '; phase_shm_mount=$((phase_shm_mount+1));;',
     '/workspace/folders/source) for phase_flag in ' + (kind === 'plan' ? 'ro' : 'rw') + ' nosuid nodev noexec; do ' + check('[[ ",$phase_options," = *",$phase_flag,"* ]]', 'source_flags') + '; done; phase_source_mount=$((phase_source_mount+1));;',
+    '/bin|/lib|/usr) for phase_flag in ro nosuid nodev; do ' + check('[[ ",$phase_options," = *",$phase_flag,"* ]]', 'environment_flags') + '; done; phase_env_mounts=$((phase_env_mounts+1));;',
+    '/workspace/folders/readonly) for phase_flag in ro nosuid nodev noexec; do ' + check('[[ ",$phase_options," = *",$phase_flag,"* ]]', 'readonly_data_flags') + '; done; phase_rodata_mounts=$((phase_rodata_mounts+1));;',
     '/dev/null|/dev/zero|/dev/full|/dev/random|/dev/urandom) for phase_flag in ro nosuid noexec; do ' + check('[[ ",$phase_options," = *",$phase_flag,"* ]]', 'device_flags') + '; done; ' + check('[[ ",$phase_options," != *",nodev,"* ]]', 'device_nodev') + '; phase_device_mounts=$((phase_device_mounts+1));;',
-    'esac; done < /proc/self/mountinfo || phase_fail mount_read; ' + check('test "$phase_proc_mount:$phase_shm_mount:$phase_source_mount:$phase_device_mounts" = 1:1:1:5', 'mount_inventory') + ';',
-    'printf "host-query-view-counts:%s:%s:%s:%s:%s:%s:%s:%s\\n" "$phase_pid_count" "$phase_worker_fds" "$phase_self_fds" "$phase_dev_count" "$phase_proc_mount" "$phase_shm_mount" "$phase_source_mount" "$phase_device_mounts"',
+    'esac; done < /proc/self/mountinfo || phase_fail mount_read; ' + check('test "$phase_proc_mount:$phase_shm_mount:$phase_source_mount:$phase_device_mounts:$phase_env_mounts:$phase_rodata_mounts" = 1:1:1:5:3:1', 'mount_inventory') + ';',
+    'printf "host-query-view-v2-counts:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s\\n" "$phase_pid_count" "$phase_worker_fds" "$phase_self_fds" "$phase_dev_count" "$phase_proc_mount" "$phase_shm_mount" "$phase_source_mount" "$phase_device_mounts" "$phase_env_mounts" "$phase_rodata_mounts"',
     'printf host-query-boundary-ok',
   ].join('\n');
   if (kind !== 'plan') return probe;
@@ -83,15 +87,16 @@ export const procWriteCommand = () => [
   'if printf forbidden > /proc/self/comm; then phase_fail proc_write; fi',
   'printf host-query-proc-device-ok',
 ].join('\n');
-export const PROC_WRITE_RESULT = "host-query-proc-device-ok\n[stderr]\n/bin/bash: line 5: printf: write error: No space left on device\n/bin/bash: line 8: /proc/self/comm: Read-only file system\n\n[Exit code: 0; cwd changes apply to this command only]";
-export const VIEW_RESULT = "host-query-view-counts:2:5:3:10:1:1:1:5\nhost-query-boundary-ok\n[Exit code: 0; cwd changes apply to this command only]";
-export const PLAN_BOUNDARY_RESULT = "host-query-view-counts:2:5:3:10:1:1:1:5\nhost-query-boundary-ok\n[stderr]\n/bin/bash: line 1: plan-denied-write: Read-only file system\n\n[Exit code: 0; cwd changes apply to this command only]";
+export const DAILY_STDOUT = "host-query-proc-device-ok\nsdk-daily-python-ok\nsdk-daily-cat-ok\nsdk-daily-temp-ok\nsdk-daily-openssl-ok\nsdk-daily-git-ok\nsdk-daily-tools-end";
+export const PROC_WRITE_RESULT = DAILY_STDOUT + "\n[stderr]\n/bin/bash: line 5: printf: write error: No space left on device\n/bin/bash: line 8: /proc/self/comm: Read-only file system\n\n[Exit code: 0; cwd changes apply to this command only]";
+export const VIEW_RESULT = "host-query-view-v2-counts:2:5:3:10:1:1:1:5:3:1\nhost-query-boundary-ok\n[Exit code: 0; cwd changes apply to this command only]";
+export const PLAN_BOUNDARY_RESULT = "host-query-view-v2-counts:2:5:3:10:1:1:1:5:3:1\nhost-query-boundary-ok\n[stderr]\n/bin/bash: line 1: plan-denied-write: Read-only file system\n\n[Exit code: 0; cwd changes apply to this command only]";
 export function toolScript(kind: Case, paths: ProbePaths) {
   const script: { name: string; input: Record<string, unknown> }[] = [
     { name: "Read", input: { file_path: "seed" } },
     { name: "Write", input: { file_path: "approved-write", content: "approved\n" } },
     { name: "Bash", input: { command: boundaryCommand(kind, paths), timeout: 5000 } },
-    { name: "Bash", input: { command: procWriteCommand(), timeout: 5000 } },
+    { name: "Bash", input: { command: procWriteCommand() + "\n" + (kind === "plan" ? planUtilities : utilities), timeout: 5000 } },
   ];
   if (kind === "bypass") script.push(
     { name: "Read", input: { file_path: "store-probe" } },
