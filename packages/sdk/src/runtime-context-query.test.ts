@@ -280,3 +280,51 @@ test("a runtime context request before the feature handshake cannot invoke the h
   expect((failure as Error).message).toBe("protocol violation: expected 'init' as the first frame, got 'control_request' (runtime_context)");
   expect(called).toBe(0); expect(writes.filter(frame => frame.type === "control_response")).toEqual([]);
 });
+
+test.each(["permission", "hook"] as const)("a cancelled %s handler's late finally cannot erase a reused context cancellation", async subtype => {
+  let enteredOld!: () => void, releaseOld!: () => void, enteredContext!: () => void;
+  const oldStarted = new Promise<void>(resolve => { enteredOld = resolve; });
+  const oldRelease = new Promise<void>(resolve => { releaseOld = resolve; });
+  const contextStarted = new Promise<void>(resolve => { enteredContext = resolve; });
+  let oldSignal!: AbortSignal, contextSignal!: AbortSignal;
+  const writes: WinterFrame[] = [];
+  const options: Options = { requireRuntimeContext: true,
+    onRuntimeContext: async (_, { signal }) => {
+      contextSignal = signal; enteredContext();
+      await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+      return snapshot;
+    },
+    canUseTool: async (_, __, { signal }) => {
+      oldSignal = signal; enteredOld(); await oldRelease;
+      return { behavior: "allow", updatedInput: {} };
+    },
+    hooks: { PreToolUse: [{ hooks: [async (_, __, { signal }) => {
+      oldSignal = signal; enteredOld(); await oldRelease; return {};
+    }] }] },
+    spawnClaudeCodeProcess(opts) {
+      const config: RuntimeConfig = JSON.parse(opts.args[opts.args.indexOf("--config-json") + 1]!);
+      const payload = subtype === "permission"
+        ? { toolName: "Fixture", input: {}, suggestions: [], toolUseID: "tool-X", requestId: "X", policyVersion: 0 }
+        : { hookId: "PreToolUse:sdk:0:0", event: "PreToolUse", sessionId: config.sessionId, toolUseID: "tool-X", toolName: "Fixture", input: {}, requestId: "X", policyVersion: "0" };
+      return transport(config, async function* (responses) {
+        yield init(config);
+        yield { type: "control_request", subtype, requestId: "X", payload }; await oldStarted;
+        yield { type: "control_cancel_request", requestId: "X" };
+        yield { type: "control_request", subtype: "runtime_context", requestId: "X", payload: request(config) }; await contextStarted;
+        expect(oldSignal.aborted).toBe(true); releaseOld();
+        // A macrotask barrier drains the settled old handler's continuation/finally.
+        await new Promise(resolve => setTimeout(resolve, 0));
+        yield { type: "control_cancel_request", requestId: "X" };
+        // This response proves the preceding cancel was processed before inspection,
+        // without waiting for teardown (which would mask a lost cancellation slot).
+        yield { type: "control_request", subtype: "fixture_barrier", requestId: "barrier", payload: {} };
+        const response = await responses[Symbol.asyncIterator]().next();
+        expect(response.value).toMatchObject({ requestId: "barrier", ok: false });
+        expect(contextSignal.aborted).toBe(true);
+        yield result;
+      }, writes);
+    },
+  };
+  await drain(options);
+  expect(writes.filter(frame => frame.type === "control_response" && frame.requestId === "X")).toEqual([]);
+});

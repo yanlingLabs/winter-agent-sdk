@@ -1218,7 +1218,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
         const message = err instanceof Error ? err.message : String(err);
         writeControlResponse({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "handler_threw", message } });
       } finally {
-        if (cf.subtype !== RUNTIME_CONTEXT_SUBTYPE || incomingRequestAborts.get(cf.requestId) === cancel) {
+        if (incomingRequestAborts.get(cf.requestId) === cancel) {
           incomingRequestAborts.delete(cf.requestId);
         }
         if (contextRequestAborts.get(cf.requestId) === cancel) contextRequestAborts.delete(cf.requestId);
