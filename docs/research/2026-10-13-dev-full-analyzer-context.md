@@ -60,9 +60,17 @@ logging concern: a prompt must identify the protected operation it asks the user
 to approve. The source correction shares `realProtectedWriteCandidate` between
 the REAL boolean check and consent path selection. It preserves the original
 order: general protected paths at either symlink end, then shell-only control-plane
-basenames at either end. The reported path names the resolved candidate that
-matched, including when its symlink target caused protection; it is not a promise
-that filesystem identity stays stable until execution.
+basenames at either end. The reported path is the lexical candidate when that
+path matches; if only a resolved target matches, it names that target instead of
+an innocent link. Existing and dangling chain targets use the existing resolver's
+path provenance. This is not a promise that filesystem identity stays stable
+until execution.
+
+`checkSymlinkBothEnds` currently exposes only its two composed booleans, not its
+local link/target/chain match fields. A private capturing matcher records the first
+matching path during that same check, preserving all matcher invocations and
+link → resolved target → chain order. It returns that path only when `denyIfEither`
+is true. No public result-shape change or additional resolution walk is needed.
 
 Only the exact REAL predicate gets that diagnostic selection. Custom boolean
 SpecialChecks keep their existing first-candidate fallback, since they supply no
@@ -86,3 +94,15 @@ Verification for the correction:
 Retained local logs are under `out/dev-full-analysis/`: `consent-red.log`,
 `consent-green.log`, `permission-query-brand.log`, `consent-typecheck.log` and
 `consent-build.log`. They are excluded from the source commit.
+
+The target-only follow-up also tests existing multi-link chains, dangling `.git`
+targets, dangling chains and dangling control-plane targets. Lexically protected
+links pointing at an ordinary target still report the protected link path. The
+lost-match regression remains unchanged: no stale or unrelated path is reported.
+
+Target-only follow-up verification: evaluator plus portable query regression
+438 pass / 918 assertions; the same permission/query/brand command above
+3279 pass / 1 existing platform skip / 6647 assertions. Both typecheck
+configurations and package emission pass. Follow-up evidence is retained locally
+as `symlink-consent-green.log`, `symlink-permission-query-brand.log`,
+`symlink-typecheck.log` and `symlink-build.log` under the same excluded log root.

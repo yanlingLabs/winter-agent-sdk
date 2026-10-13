@@ -1588,14 +1588,24 @@ describe("Task 7 — §6.7 protected-path write matrix (mode × protected write,
       symlinkSync(join(root, ".git", "config"), join(root, "innocent-link"));
       symlinkSync(join(root, "settings.json"), join(root, "config-link"));
       symlinkSync(join(root, "ordinary"), join(root, ".git", "safe-target"));
-      for (const target of ["innocent-link", "config-link", ".git/safe-target"]) {
+      symlinkSync(join(root, "innocent-link"), join(root, "chain-link"));
+      symlinkSync(join(root, ".git", "missing"), join(root, "dangling-link"));
+      symlinkSync(join(root, "dangling-link"), join(root, "dangling-chain"));
+      symlinkSync(join(root, "nested", "settings.local.json"), join(root, "dangling-config"));
+      for (const [target, expected] of [
+        ["innocent-link", ".git/config"], ["config-link", "settings.json"],
+        // Lexical link protection wins even when its destination is ordinary.
+        [".git/safe-target", ".git/safe-target"], ["chain-link", ".git/config"],
+        ["dangling-link", ".git/missing"], ["dangling-chain", ".git/missing"],
+        ["dangling-config", "nested/settings.local.json"],
+      ] as const) {
         const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
         const ctx = baseCtx({ cwd: root, sessionRoot: root, promptStage: promptSpy.stage,
           policy: policy({ mode: "bypassPermissions" }), specialChecks: { ...REAL_SPECIAL_CHECKS } });
         const record = await evaluate(call("Bash", { command: `printf x > ordinary; printf x > ${target}` }), ctx);
         expect(record.decision).toBe("deny");
         expect(promptSpy.calls).toHaveLength(1);
-        expect(promptSpy.calls[0]!.meta.blockedPath).toBe(join(root, target));
+        expect(promptSpy.calls[0]!.meta.blockedPath).toBe(join(root, expected));
       }
     } finally { rmSync(root, { recursive: true, force: true }); }
   });

@@ -205,7 +205,7 @@ export interface PromptStageMeta {
   matchedAskRule?: { source: RuleSource; toolName: string; ruleContent?: string };
   // Task 8 (WS-07 §7.1): the path boundary that forced this prompt, when T7's protected-write check
   // is what forced it — populated ONLY at the resolveProtectedWrite mustPrompt call site (a REAL
-  // matching candidate, or a custom seam's first candidate, resolved against cwd). Absent if the
+  // matching path/end, or a custom seam's first candidate, resolved against cwd). Absent if the
   // REAL filesystem recheck loses its match. Deliberately absent for the critical-removal
   // standing exception: T7's CriticalRemovalResult (protected.ts) exposes only a prose `reason`
   // string (already carried via `decisionReason`), not a structured path — extending that sealed
@@ -776,9 +776,20 @@ function shellCommandChangesDirectory(call: PermissionCall): boolean {
  * The shell-only additions to the protected set: a control-plane FILENAME at any depth (so a `cd`
  * cannot hide it), checked at both ends of a symlink like every other protected path.
  */
-function isProtectedShellTarget(path: string, ctx: EvaluationContext): boolean {
+function protectedShellTargetPath(path: string, ctx: EvaluationContext): string | undefined {
   const absPath = resolve(ctx.cwd, path);
-  return checkSymlinkBothEnds(absPath, (candidate) => CONTROL_PLANE_BASENAMES.has(candidate.slice(candidate.lastIndexOf("/") + 1).toLowerCase())).denyIfEither;
+  return matchedProtectedEnd(absPath, (candidate) => CONTROL_PLANE_BASENAMES.has(candidate.slice(candidate.lastIndexOf("/") + 1).toLowerCase()));
+}
+
+/** Capture the matching end during the existing walk: lexical link, real target, then chain target. */
+function matchedProtectedEnd(path: string, matcher: (candidate: string) => boolean): string | undefined {
+  let matched: string | undefined;
+  const result = checkSymlinkBothEnds(path, (candidate) => {
+    const matches = matcher(candidate);
+    if (matches && matched === undefined) matched = candidate;
+    return matches;
+  });
+  return result.denyIfEither ? matched : undefined;
 }
 
 /**
@@ -873,7 +884,7 @@ function shellPathConstraint(call: PermissionCall, ctx: EvaluationContext): { re
   return shellWriteNeedsApproval(call, ctx);
 }
 
-/** First REAL protected candidate, preserving path-before-shell-control-plane check order. */
+/** First REAL matching protected path/end, preserving path-before-shell-control-plane check order. */
 function realProtectedWriteCandidate(call: PermissionCall, ctx: EvaluationContext): string | undefined {
   // Ruling P2-J (rider 2) applied here too, advisor-flagged gap: `isProtectedPath` itself is
   // pure name/segment matching against the LINK text only (protected.ts has no fs access at
@@ -884,9 +895,9 @@ function realProtectedWriteCandidate(call: PermissionCall, ctx: EvaluationContex
   // is a safety check, not a grant, so the more-restrictive interpretation applies, exactly like
   // deny/ask elsewhere in this phase.
   const outputsDirs = outputsCarveOutDirs(ctx);
-  const protectedPath = extractCandidateWritePaths(call, ctx).find((p) => {
-    const absPath = resolve(ctx.cwd, p);
-    return checkSymlinkBothEnds(absPath, (candidate) =>
+  for (const path of extractCandidateWritePaths(call, ctx)) {
+    const absPath = resolve(ctx.cwd, path);
+    const protectedPath = matchedProtectedEnd(absPath, (candidate) =>
       isProtectedPath(candidate, {
         cwd: ctx.cwd,
         home: ctx.home,
@@ -895,11 +906,15 @@ function realProtectedWriteCandidate(call: PermissionCall, ctx: EvaluationContex
         ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
         ...(outputsDirs !== undefined ? { outputsDirs } : {}),
       }),
-    ).denyIfEither;
-  });
-  if (protectedPath !== undefined) return protectedPath;
-  // A SHELL write also may not name a control-plane file anywhere (see isProtectedShellTarget).
-  return shellWriteTargets(call, ctx).find((p) => isProtectedShellTarget(p, ctx));
+    );
+    if (protectedPath !== undefined) return protectedPath;
+  }
+  // A SHELL write also may not name a control-plane file anywhere (see protectedShellTargetPath).
+  for (const path of shellWriteTargets(call, ctx)) {
+    const protectedPath = protectedShellTargetPath(path, ctx);
+    if (protectedPath !== undefined) return protectedPath;
+  }
+  return undefined;
 }
 
 // The real SpecialChecks seam fill (T6's stub, NO_SPECIAL_CHECKS above, was "always no opinion").
@@ -1838,7 +1853,7 @@ function resolveProtectedWrite(mode: PermissionMode, ctx: EvaluationContext, cal
   // sessionBypassEnabled is ALREADY guaranteed false for `plan` (this line just intercepted the
   // true case), so evaluate()'s own borrow-gate never needs to re-check bypass for THIS origin.
   if (mode === "plan" && ctx.sessionBypassEnabled === true && !bypassImmune) return { kind: "allow" };
-  // Consent must name a REAL matching candidate, not an unrelated earlier write. Rechecking
+  // Consent must name a REAL matching path/end, not an unrelated earlier write. Rechecking
   // filesystem state can lose the match; keep the decision and omit the diagnostic in that case.
   // A custom boolean seam has no REAL path semantics: preserve its existing first-path fallback.
   const candidate = ctx.specialChecks.isProtectedWrite === REAL_SPECIAL_CHECKS.isProtectedWrite
