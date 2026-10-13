@@ -64,7 +64,7 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
         modules[name] = (guest, package)
     if len(modules) > MAX_MODULES or not 1 <= len(roots) <= 64:
         raise ValueError('static graph inventory limit')
-    visited = {};bindings = {};stars = {};module_imports = {};edges = [];optional = [];deferred = [];root_records = [];aliases = {};native_stars = {}
+    visited = {};bindings = {};stars = {};module_imports = {};edges = [];optional = [];deferred = [];root_records = [];aliases = {};native_stars = {};class_exports = {}
     total = 0
 
     def parse(data):
@@ -202,6 +202,82 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
         edges.append({'importer':'os', 'module':'posix', 'line':native_imports[0].lineno})
         native_stars['os'] = {'provider':'posix', 'sourceGuest':modules['os'][0], 'sourceSha256':visited['os']['sha256'], 'branchLine':branch.lineno, 'importLine':native_imports[0].lineno, 'interpreterPlatform':interpreter_platform, 'nativeAttributesVerified':False}
 
+    def multiprocessing_exports(tree):
+        # Finite accounting for the two methods imported by captured spawn.py.
+        # The exact class/glue syntax does not prove runtime exported values.
+        patterns = ("from . import context", "__all__ = [x for x in dir(context._default_context) if not x.startswith('_')]", "globals().update((name, getattr(context._default_context, name)) for name in __all__)")
+        matches = [[node for node in tree.body if ast.dump(node, include_attributes=False) == ast.dump(ast.parse(pattern).body[0], include_attributes=False)] for pattern in patterns]
+        if any(len(nodes) != 1 for nodes in matches) or not matches[0][0].lineno < matches[1][0].lineno < matches[2][0].lineno:
+            raise ValueError('fixed multiprocessing context export glue changed')
+        guest = PREFIX + 'multiprocessing/context.py'
+        if modules.get('multiprocessing.context') != (guest, False) or files[guest]['role'] != 'stdlib':
+            raise ValueError('captured multiprocessing context source required')
+        data = read_source(guest);item = files[guest]
+        if len(data) != item['bytes'] or digest(data) != item['sha256']:
+            raise ValueError('multiprocessing context source measurement changed')
+        context_tree = parse(data)
+        def scope(body):
+            for node in body:
+                yield node
+                if isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith, ast.Try, ast.TryStar)):
+                    for field in ('body', 'orelse', 'finalbody', 'handlers'):
+                        yield from scope(getattr(node, field, []))
+                elif isinstance(node, ast.ExceptHandler):
+                    yield from scope(node.body)
+                elif isinstance(node, ast.Match):
+                    for case in node.cases:
+                        yield from scope(case.body)
+        def targets(node):
+            if isinstance(node, (ast.Assign, ast.Delete)):return node.targets
+            if isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.For, ast.AsyncFor)):return [node.target]
+            if isinstance(node, (ast.With, ast.AsyncWith)):return [item.optional_vars for item in node.items if item.optional_vars is not None]
+            return []
+        def bound(node):
+            if isinstance(node, ast.Import):return {alias.asname or alias.name.split('.')[0] for alias in node.names}
+            if isinstance(node, ast.ImportFrom):return {alias.asname or alias.name for alias in node.names}
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):return {node.name}
+            if isinstance(node, ast.ExceptHandler):return {node.name} if node.name else set()
+            return {child.id for target in targets(node) for child in ast.walk(target) if isinstance(child, ast.Name) and isinstance(child.ctx, (ast.Store, ast.Del))}
+        def root_name(target):
+            while isinstance(target, (ast.Attribute, ast.Subscript)):target = target.value
+            return target.id if isinstance(target, ast.Name) else None
+        classes = {}
+        symbols = ('get_start_method', 'set_start_method')
+        for name, parent in (('BaseContext', 'object'), ('DefaultContext', 'BaseContext')):
+            candidates = [node for node in context_tree.body if isinstance(node, ast.ClassDef) and node.name == name]
+            if len(candidates) != 1 or len(candidates[0].bases) != 1 or not isinstance(candidates[0].bases[0], ast.Name) or candidates[0].bases[0].id != parent or candidates[0].keywords or candidates[0].decorator_list:
+                raise ValueError('fixed multiprocessing context class lineage changed')
+            classes[name] = candidates[0]
+            declarations = {}
+            for symbol in symbols:
+                methods = [node for node in candidates[0].body if isinstance(node, ast.FunctionDef) and node.name == symbol]
+                if len(methods) != 1 or methods[0].decorator_list:
+                    raise ValueError('fixed multiprocessing context method missing: ' + symbol)
+                declarations[symbol] = methods[0]
+            for node in scope(candidates[0].body):
+                if any(symbol in bound(node) and node is not declarations[symbol] for symbol in symbols):
+                    raise ValueError('contradictory multiprocessing context method binding')
+        defaults = []
+        for node in scope(context_tree.body):
+            if any(name in bound(node) and node is not declaration for name,declaration in classes.items()):
+                raise ValueError('contradictory multiprocessing context class binding')
+            if any(isinstance(target, (ast.Attribute, ast.Subscript)) and root_name(target) in classes for target in targets(node)):
+                raise ValueError('contradictory multiprocessing context class attribute write')
+            if '_default_context' in bound(node):
+                value = node.value if isinstance(node, ast.Assign) else None
+                if not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name) or not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name) or value.func.id != 'DefaultContext' or len(value.args) != 1 or value.keywords or not isinstance(value.args[0], ast.Subscript) or not isinstance(value.args[0].value, ast.Name) or value.args[0].value.id != '_concrete_contexts' or not isinstance(value.args[0].slice, ast.Constant) or value.args[0].slice.value not in ('fork', 'spawn'):
+                    raise ValueError('fixed multiprocessing default context binding changed')
+                defaults.append(node.lineno)
+        if not defaults:
+            raise ValueError('fixed multiprocessing default context constructor missing')
+        # Do not let later module-scope writes replace the fixed export glue.
+        allowed = {'context':matches[0][0], '__all__':matches[1][0], 'globals':None, 'dir':None, 'getattr':None}
+        for node in scope(tree.body):
+            if any(name in bound(node) and node is not declaration for name,declaration in allowed.items()) or any(isinstance(target, (ast.Attribute, ast.Subscript)) and root_name(target) in ('context','__all__') for target in targets(node)):
+                raise ValueError('contradictory multiprocessing export glue binding')
+        bindings['multiprocessing'].update(symbols)
+        class_exports['multiprocessing'] = {'symbols':list(symbols), 'packageSha256':visited['multiprocessing']['sha256'], 'contextGuest':guest, 'contextSha256':item['sha256'], 'classLineage':['DefaultContext', 'BaseContext'], 'classLines':{name:node.lineno for name,node in classes.items()}, 'glueLines':[nodes[0].lineno for nodes in matches], 'instanceAssignmentLines':defaults, 'runtimeExportsVerified':False}
+
     def exported(module, symbol, seen=None):
         module = aliases.get(module, {}).get('target', module)
         if module in builtins or module in visited and visited[module]['role'] == 'extension':
@@ -240,6 +316,8 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
         tree = parse(data);bindings[module] = declared(tree.body, module);stars[module] = []
         if module == 'os':
             linux_os_alias(tree)
+        if module == 'multiprocessing':
+            multiprocessing_exports(tree)
         walk(tree, module)
 
     def walk(tree, owner):
@@ -282,6 +360,7 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
             'exercisedSeeds':list(seeds), 'builtinInterpreter':builder_identity,
             'interpreterPlatform':interpreter_platform, 'aliases':aliases,
             'selectedNativeStarProviders':native_stars,
+            'finiteClassDerivedExports':class_exports,
             'builtinModules':sorted(builtins), 'visited':dict(sorted(visited.items())),
             'requiredEdges':edges, 'optionalImports':optional, 'deferredImports':deferred,
             'requiredStaticImportsCaptured':True, 'dynamicCompletenessVerified':False,

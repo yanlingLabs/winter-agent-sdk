@@ -233,6 +233,17 @@ the same opaque attribute limitation as direct builtin imports: no native
 attribute value/presence or runtime behavior is proved. Those flags remain
 false, and required real modules and unknown aliases continue to refuse.
 
+Build `38400134048` exposed multiprocessing's finite class-derived package
+exports. The gate accounts only for `get_start_method` and `set_start_method`,
+requiring the measured package's exact context import, filtered `dir`/`__all__`
+comprehension and `globals().update` generator. It byte-checks captured
+`context.py`, the direct `DefaultContext(BaseContext)` lineage/method declarations
+and module-scope `DefaultContext` constructor assignments. Contradictory class,
+instance, method or export-glue writes refuse. `finiteClassDerivedExports`
+records both source hashes and structural lines with `runtimeExportsVerified`
+false. This is syntax accounting, not a general dynamic export rule; other
+computed exports and genuinely missing modules remain unsupported/refused.
+
 Artifact audit of build `38333923765` found that loader bytes were measured but
 captured/copied as 0444. Execution intent now binds capture modes (0555/0444),
 bundle metadata, immutable staging modes (0500/0400), and verified runtime copy
