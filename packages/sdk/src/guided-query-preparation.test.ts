@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { prepareGuidedQuery, claimGuidedQuery, consumeGuidedQueryCorrelation as consumeCorrelation, closeGuidedQuery,
   GUIDED_QUERY_CONFIG_MAX_BYTES, GUIDED_QUERY_CORRELATION_CAPACITY, type GuidedQueryCallbacks, type GuidedQueryClaim, type GuidedQueryPreparation } from "./guided-query-preparation.ts";
 import { query } from "./query.ts";
@@ -138,15 +142,25 @@ test("binding UUID replay across preparations remains refused after close", () =
   const next = fixture(), claim = next.claim(); refusal(() => consumeGuidedQueryCorrelation(claim, input));
   refusal(() => consumeGuidedQueryCorrelation(claim, args())); refusal(() => next.claim());
 });
-test("4096 consumed correlations are retained; the next consume fails closed without releasing existing claims", () => {
-  const pending = fixture(), pendingClaim = pending.claim();
-  const held = fixture(), heldClaim = held.claim(); consumeGuidedQueryCorrelation(heldClaim, args());
-  const remaining = GUIDED_QUERY_CORRELATION_CAPACITY - successes;
-  for (let i = 0; i < remaining; i++) { const f = fixture(); consumeGuidedQueryCorrelation(f.claim(), args()); closeGuidedQuery(f.preparation); }
-  expect(successes).toBe(4096);
-  const exhausted = fixture(); refusal(() => exhausted.claim()); refusal(() => exhausted.claim());
-  refusal(() => consumeGuidedQueryCorrelation(pendingClaim, args()));
-  refusal(() => consumeGuidedQueryCorrelation(pendingClaim, args())); refusal(() => pending.claim());
-  refusal(() => claimGuidedQuery(held.preparation, held.pair)); refusal(() => consumeGuidedQueryCorrelation(heldClaim, args()));
-  closeGuidedQuery(held.preparation); expect(successes).toBe(4096);
+test("4096 consumed correlations are retained; capacity stays isolated from other query tests", async () => {
+  // Separate module realm, no reset/eviction API added to production state.
+  const home = mkdtempSync(join(tmpdir(), "winter-preparation-capacity-"));
+  const config = join(home, "empty-bunfig.toml"); writeFileSync(config, "", { mode: 0o600 });
+  const proc = Bun.spawn([process.execPath, "run", "--no-env-file", `--config=${config}`,
+    fileURLToPath(new URL("./fixtures/guided-query-capacity.ts", import.meta.url))], {
+    cwd: home, env: { PATH: process.env.PATH ?? "", HOME: home, LANG: "C", LC_ALL: "C", TZ: "UTC" },
+    stdin: "ignore", stdout: "pipe", stderr: "pipe",
+  });
+  const timer = setTimeout(() => proc.kill("SIGKILL"), 5000);
+  const bounded = async (stream: ReadableStream<Uint8Array>): Promise<string> => {
+    const reader = stream.getReader(); let total = 0, text = ""; const decoder = new TextDecoder();
+    try { for (;;) { const item = await reader.read(); if (item.done) break;
+      total += item.value.byteLength; if (total > 4096) { proc.kill("SIGKILL"); throw new Error("capacity fixture over bound"); }
+      text += decoder.decode(item.value, { stream: true });
+    } return text + decoder.decode(); } finally { reader.releaseLock(); }
+  };
+  try {
+    const [stdout, stderr, code] = await Promise.all([bounded(proc.stdout), bounded(proc.stderr), proc.exited]);
+    expect(code).toBe(0); expect(stderr).toBe(""); expect(stdout).toBe("guided-query-capacity:4096\n");
+  } finally { clearTimeout(timer); proc.kill("SIGKILL"); await proc.exited; rmSync(home, { recursive: true }); }
 });
