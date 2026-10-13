@@ -1,9 +1,9 @@
 # Admitted Linux SDK entry (source slice)
 
-Historical entry behavior at `84dc16c9` is recorded below. The stacked supervisor
-branch corrects clean physical EOF to graceful drain; see
+Historical entry behavior at `84dc16c9` is recorded below. The reviewed entry-only
+backport `aa11dc0e` now shares graceful clean EOF with this supervisor slice; see
 [`LINUX-HOST-QUERY-SUPERVISOR.md`](../guest-supervisor/LINUX-HOST-QUERY-SUPERVISOR.md).
-The original published entry branch/artifacts are not changed or relabeled.
+Previously frozen artifacts are not relabeled as the corrected source.
 
 Base: SDK main `79cdeb082eaa5cf57940d80541baf279529a2d8b`. This adds a reusable
 SDK entry and a distinct fresh-store host-query profile. It does not launch a
