@@ -412,7 +412,14 @@ mode/byte/leaf identity and absence of extra directories are checked after run.
 The first Bash view now prints **observed** version2 counters:
 `host-query-view-v2-counts:2:5:3:10:1:1:1:5:3:1`. The last two values require exactly
 three RO/nosuid/nodev environment mounts and one RO/nosuid/nodev/noexec DATA mount.
-Both wire and persisted oracles pin this line. The second Bash appends one fixed
+Both wire and persisted oracles pin this line. The native helper source creates
+its tool-root `/` skeleton as a 16 MiB tmpfs, then remounts it read-only with
+nosuid/nodev. The current probe does not separately assert the `/` mount flags
+or size, so that configuration is a source fact, not an observed root-mount
+oracle. Writable private `/tmp` and `/dev/shm` each have an 8 MiB tmpfs ceiling;
+admitted writable source roots have their own backing storage and do not share
+that skeleton limit. No unspecified writable root or unlimited private scratch
+is assumed. The second Bash appends one fixed
 inline payload after the byte-identical Phase A prefix. It pins five ordered
 utility markers plus the end marker and exact stderr/exit status in both oracles.
 Git/Python/temp work stays in private8MiB `/dev/shm`; HOME/TMPDIR and Git identity,
