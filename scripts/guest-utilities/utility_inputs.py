@@ -5,9 +5,24 @@ import argparse,hashlib,importlib.util,json,platform,re,subprocess
 from pathlib import Path
 HERE=Path(__file__).resolve().parent
 spec=importlib.util.spec_from_file_location('utility_capture',HERE/'closure.py');c=importlib.util.module_from_spec(spec);spec.loader.exec_module(c)
-PACKAGES=('collections','encodings','importlib','json','multiprocessing','re')
-MODULES=('__future__','_collections_abc','_compression','_sitebuiltins','_weakrefset','abc','argparse','base64','bisect','calendar','codecs','contextlib','copy','copyreg','datetime','decimal','dis','enum','fnmatch','functools','genericpath','getopt','gettext','hashlib','heapq','hmac','inspect','io','keyword','linecache','locale','logging','numbers','operator','os','pathlib','pickle','platform','posixpath','queue','random','reprlib','runpy','secrets','selectors','shutil','signal','site','socket','stat','string','struct','subprocess','sysconfig','tempfile','textwrap','threading','token','tokenize','traceback','types','typing','warnings','weakref','zipfile')
+PACKAGES=('collections','encodings','importlib','json','multiprocessing','re','zipfile')
+MODULES=('__future__','_collections_abc','_compression','_sitebuiltins','_weakrefset','abc','argparse','base64','bisect','calendar','codecs','contextlib','copy','copyreg','datetime','decimal','dis','enum','fnmatch','functools','genericpath','getopt','gettext','hashlib','heapq','hmac','inspect','io','keyword','linecache','locale','logging','numbers','operator','os','pathlib','pickle','platform','posixpath','queue','random','reprlib','runpy','secrets','selectors','shutil','signal','site','socket','stat','string','struct','subprocess','sysconfig','tempfile','textwrap','threading','token','tokenize','traceback','types','typing','warnings','weakref')
 EXTENSIONS=('_multiprocessing','_posixshmem','_socket','_struct','array','binascii','math','select','_random','_sha2','_hashlib','_blake2','_pickle','_heapq','_bisect','_posixsubprocess','fcntl','mmap','_csv','_datetime','_opcode','zlib')
+
+
+def stdlib_paths(base):
+    """Enumerate the fixed Python 3.12 module/package selection without importing it."""
+    base=Path(base);paths=[]
+    for name in MODULES:
+        path=base/(name+'.py')
+        if path.is_file():paths.append(path)
+        elif name=='logging' and (base/name/'__init__.py').is_file():
+            paths.extend(sorted((base/name).glob('*.py')))
+        else:raise ValueError('fixed Python module missing: '+name)
+    for package in PACKAGES:
+        if not (base/package/'__init__.py').is_file():raise ValueError('fixed Python package missing: '+package)
+        paths.extend(path for path in sorted((base/package).rglob('*.py')) if not any(part in ('test','tests','__pycache__') for part in path.relative_to(base).parts))
+    return paths
 
 
 def prepare(output):
@@ -34,15 +49,7 @@ def prepare(output):
         add(guest,source,'executable')
     add('/lib/ld-linux-aarch64.so.1','/lib/ld-linux-aarch64.so.1','library')
     base=Path('/usr/lib/python3.12')
-    for name in MODULES:
-        path=base/(name+'.py')
-        if path.is_file():add(path.as_posix(),path,'stdlib')
-        elif name=='logging':
-            for path in sorted((base/name).glob('*.py')):add(path.as_posix(),path,'stdlib')
-        else:raise ValueError('fixed Python module missing: '+name)
-    for package in PACKAGES:
-        for path in sorted((base/package).rglob('*.py')):
-            if not any(part in ('test','tests','__pycache__') for part in path.relative_to(base).parts):add(path.as_posix(),path,'stdlib')
+    for path in stdlib_paths(base):add(path.as_posix(),path,'stdlib')
     for extension in EXTENSIONS:
         found=list((base/'lib-dynload').glob(extension+'.*.so'))
         if len(found)>1:raise ValueError('ambiguous Python extension')

@@ -147,6 +147,14 @@ hermetic toolchain claim. A local Mac ARM64 client cross-compile is compile-only
 and is refused for native admission by the parent, which requires a fresh Linux
 ARM64 builder identity in the client receipt.
 
+Build `38308107043` compiled the named client, then failed during input collection
+because the selection expected `zipfile.py`. Python 3.12 supplies the
+[`zipfile` package](https://github.com/python/cpython/tree/v3.12.0/Lib/zipfile).
+The fixed package selection now captures its initializer and nested `.py` leaves
+through the same measured copy path. Missing package initializers or required
+modules still refuse; this source correction does not establish a completed
+Linux utility closure, artifact admission or native execution.
+
 Portable source validation:
 
 ```sh

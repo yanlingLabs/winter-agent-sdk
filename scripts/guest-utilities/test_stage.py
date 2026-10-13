@@ -110,6 +110,22 @@ class UtilityStageTests(unittest.TestCase):
             with self.assertRaises(ValueError):collector.prepare(self.root/'uncreated-origin')
             with self.assertRaises(ValueError):builder.build('missing','missing','missing',self.root/'uncreated-build','missing')
         self.assertFalse((self.root/'uncreated-origin').exists());self.assertFalse((self.root/'uncreated-build').exists())
+    def test_python312_zipfile_package_is_captured_and_missing_packages_refuse(self):
+        collector=load('utility_inputs');base=self.root/'python3.12';base.mkdir()
+        def source(relative):
+            path=base/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('raise RuntimeError("synthetic source must not import")\n');return path
+        for name in collector.MODULES:
+            source('logging/__init__.py' if name=='logging' else name+'.py')
+        for name in collector.PACKAGES:source(name+'/__init__.py')
+        nested=source('zipfile/_path/__init__.py');glob=source('zipfile/_path/glob.py')
+        excluded=source('zipfile/tests/should-not-copy.py')
+        paths=collector.stdlib_paths(base)
+        self.assertIn(base/'zipfile/__init__.py',paths);self.assertIn(nested,paths);self.assertIn(glob,paths)
+        self.assertNotIn(excluded,paths);self.assertFalse((base/'zipfile.py').exists())
+        (base/'zipfile/__init__.py').unlink()
+        with self.assertRaisesRegex(ValueError,'fixed Python package missing: zipfile'):collector.stdlib_paths(base)
+        source('zipfile/__init__.py');(base/'threading.py').unlink()
+        with self.assertRaisesRegex(ValueError,'fixed Python module missing: threading'):collector.stdlib_paths(base)
     def test_exact_descendant_payload_child_readiness_after_setsid_and_parent_timeout(self):
         payload=(HERE/'descendant.py').read_text()
         class Halt(Exception):pass
