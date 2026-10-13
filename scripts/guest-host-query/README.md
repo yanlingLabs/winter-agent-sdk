@@ -111,7 +111,8 @@ fixed root-owned non-user-renamable `/tmp` ancestry. Isolated -I-S-B bootstrap
 rechecks the staged parent/closure before importing the runner. Direct privileged
 checkout invocation refuses before project imports. The parent takes **source /
 artifacts / receipt directories**, not the utility lane's archive CLI. Archive
-inspection/unpack must happen unprivileged and independently before capture.
+inspection/rehydration must happen unprivileged and independently before capture;
+the separate data adapter is described below.
 
 For a future approved parent only, the external wrapper must first open the
 parent with O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC, require a bounded regular single-link
@@ -152,3 +153,47 @@ exactly two callbacks, requests and responses. The helper rejects before its Roo
 port, so this SDK Write case does not exercise the later supervisor Write guard;
 the real Bash EROFS probe is the independent readonly-mount requirement. FD8 remains
 unexecuted and is not kernel-cancellation evidence.
+
+## Unprivileged source rehydration
+
+`rehydrate.py` imports only Python stdlib. Its caller must provide externally
+reviewed SHA256 pins for `source.tar.gz` and the three-entry compile receipt;
+neither a receipt nor a successful copy grants privileged staging or execution.
+Root/effective-Root invocation refuses before opening inputs. Run using Python
+`-I -S -B`, with explicit archive, compile-receipt, destination and both hashes.
+The destination must not exist and its parent must be owned by the caller and
+not writable by others. Every path ancestor and input FD is opened nofollow;
+FIFO inputs are nonblocking and refuse before waiting for a writer.
+
+The adapter checks the closed compile inventory/digest, safe source roots,
+bounded bytes and internal symlink graph, then streams and verifies the entire
+archive before creating a private 0700 destination. Its small fixed-header tar
+reader admits only regular files, ordered internal hardlinks to already verified
+equal bytes, and declared symlinks. Local PAX metadata is capped at 16 KiB;
+unknown types, duplicate/extra/missing leaves, traversal, ancestor collisions,
+link cycles/escape and trailing data refuse. Limits remain 20,000 leaves,
+16 MiB per file/receipt and 256 MiB source/compressed archive, plus bounded tar
+header overhead. No `tar.extract`, repository imports or copied code executes.
+
+Every regular/hardlink entry becomes an independent exclusive 0600 regular file
+with nlink1; only declared internal symlinks are created, last. Directory/leaf
+writes use held descriptors. The complete current destination inventory, bytes,
+ownership, modes, nlink and destination ancestry are revalidated before success;
+the held archive and receipt are hashed again. Failure leaves partial data for
+inspection and never repairs permissions, reuses a destination or copies as Root.
+The existing externally admitted stager must still independently validate its
+full native/compiler/recipe/artifact closure before any privilege or imports.
+
+Local evidence: 13 synthetic portable tests cover independent hardlink copies,
+symlink ordering, wrong hashes/source bytes, malformed inventory/old two-entry
+receipts, missing/extra/duplicate/FIFO members and inputs, bounded metadata,
+link traversal/order/targets/ancestor hazards, destination alias/reuse, final
+bytes/nlink checks and retained partial writes. The data-only adapter also copied
+the reviewed historical build `38412365562` / source `08306c78`: 3,689 independent
+regular files plus 71 symlinks, exact 3,760-leaf closure. Archive SHA256:
+`b4afe5ef49a5f3e6bd38972724de7f1340420821d1a36fde9394b80243f1896f`;
+compile-receipt SHA256:
+`f548050e2f0cf6fbc3780e372bd469ce8116f930a516f53eae36244aeb7352b8`.
+No copied bytes were imported or executed. This does not relabel that old build
+as containing this new adapter: source review and a fresh build/archive remain
+required. No TypeScript, native helper, stager, build or workflow changed here.
