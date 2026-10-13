@@ -16,6 +16,11 @@ General tool availability and production activation remain false.
   `/usr/lib/python3.12` prefix. Site/dist packages, tests, ensurepip and caches
   are excluded. There is no whole-root copy, recursive utility discovery, ldd
   execution, utility version execution, implicit config or real user home.
+  Every input/output leaf records a strict boolean execution intent. The six
+  programs require X. Exactly two measured loader spellings also require X while
+  retaining the `library` role: `/lib/ld-linux-aarch64.so.1` and
+  `/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1`. All other libraries, extensions
+  and stdlib leaves require non-executable modes. No additional program is added.
 - The caller supplies canonical fixture-only origin paths and every file's
   SHA-256, length, source spelling, destination and role. Source paths are
   restricted to fixed executable spellings or library/stdlib paths. The capture
@@ -70,7 +75,7 @@ python3 -I -S -B scripts/guest-utilities/closure.py --utility-root /canonical/di
 ```
 
 The manifest schema is `{formatVersion:1, kind:"winter-tool-utility-inputs",
-target:"linux-arm64-gnu", files:{"/guest/path":{role,source,sha256,bytes}}}`.
+target:"linux-arm64-gnu", files:{"/guest/path":{role,source,sha256,bytes,executable}}}`.
 `source` is relative to the fixture origin tree. No origin discovery or default
 manifest is installed. No real Linux utility closure was captured in this task.
 
@@ -154,6 +159,18 @@ The fixed package selection now captures its initializer and nested `.py` leaves
 through the same measured copy path. Missing package initializers or required
 modules still refuse; this source correction does not establish a completed
 Linux utility closure, artifact admission or native execution.
+
+Artifact audit of build `38333923765` found that loader bytes were measured but
+captured/copied as 0444. Execution intent now binds capture modes (0555/0444),
+bundle metadata, immutable staging modes (0500/0400), and verified runtime copy
+modes (0555/0444). Validators reject a missing loader X bit, X on any other
+library, and mode changes even when bytes/hash are unchanged. Old mode-less
+receipts refuse and need a fresh source/build/artifact review. The first SDK
+bundle is unchanged, and no native utility fixture execution is implied here.
+The audited build's actual checkout was PR merge
+`077e6c036e472656b1aab238a7af0f5296588a4b`, not branch head `33ce2179`.
+Its measured graph must retain that identity; the new metadata requires a new
+archive and review rather than relabeling the old bundle.
 
 Portable source validation:
 

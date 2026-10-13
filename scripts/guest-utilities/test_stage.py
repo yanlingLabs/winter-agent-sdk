@@ -21,7 +21,7 @@ class UtilityStageTests(unittest.TestCase):
         bundled={name:inputs[name] for name in ('scripts/guest-utilities/client.ts','scripts/guest-utilities/smoke.sh','scripts/guest-utilities/descendant.py')};meta={'inputs':{name:{'bytes':item['bytes']} for name,item in bundled.items()},'outputs':{}}
         self.data['artifacts/utilityClient.metafile.json']=(s.canonical(meta)+'\n').encode();self.data['artifacts/utility-receipt.json']=(s.canonical(capture)+'\n').encode();self.data['artifacts/utility-origin-receipt.json']=(s.canonical({'kind':'winter-utility-origin','manifestSha256':capture['inputManifestSha256'],'utilityExecution':False,'dependencyCompletenessVerified':False})+'\n').encode()
         for guest in capture['outputs']:self.data['environment'+guest]=(self.root/'capture/environment'/guest[1:]).read_bytes()
-        files={name:{'kind':'file','sha256':s.sha(data),'bytes':len(data),'executable':name in {'artifacts/'+name for name in s.ARTIFACTS} or name.startswith('environment') and capture['outputs'][name.removeprefix('environment')]['role']=='executable'} for name,data in self.data.items()}
+        files={name:{'kind':'file','sha256':s.sha(data),'bytes':len(data),'executable':name in {'artifacts/'+name for name in s.ARTIFACTS} or name.startswith('environment') and capture['outputs'][name.removeprefix('environment')]['executable']} for name,data in self.data.items()}
         compiled={'formatVersion':1,'kind':'winter-tool-utility-compile','inputs':inputs,'inputInventorySha256':s.sha(s.canonical(inputs).encode()),'compiler':{'version':'1.3.14','sha256':'b'*64,'bytes':123,'platform':'linux','architecture':'arm64'},'base':{'version':'1.3.14','target':'bun-linux-arm64','sha256':'37141662ebed915a2ab89313156e455e2a1374395f5f6760d06407f49406f086'},'recipe':{'flags':['--compile','--no-compile-autoload-bunfig','--no-compile-autoload-dotenv','--target=bun-linux-arm64','--compile-executable-path=linux-bun-base','--metafile=<entry>.metafile.json'],'cwd':'stage','source':'../source','environment':{'PATH':'/usr/bin:/bin','LANG':'C','LC_ALL':'C','TZ':'UTC'}},'outputs':{'utilityClient':{'entry':'scripts/guest-utilities/client.ts','sha256':files['artifacts/utilityClient']['sha256'],'bytes':files['artifacts/utilityClient']['bytes'],'bundledInputs':bundled,'metafileSha256':files['artifacts/utilityClient.metafile.json']['sha256'],'command':['<compiler>','build','--compile','--no-compile-autoload-bunfig','--no-compile-autoload-dotenv','--target=bun-linux-arm64','--compile-executable-path=linux-bun-base','--metafile=utilityClient.metafile.json','../source/scripts/guest-utilities/client.ts','--outfile','<output>/utilityClient']}},'linuxExecutionVerified':False,'vmExecutionVerified':False}
         commands=[['<native-compiler>','-std=c11','-O2','-Wall','-Wextra','-Werror','-static','packages/runtime/src/guest/'+source,'-o','<artifacts>/'+name] for name,source in [('toolLauncher','linux-tool-compartment.c'),('fileWorker','file-worker.c'),('processWorker','process-worker.c')]]
         self.receipt={'formatVersion':1,'kind':'winter-tool-utility-bundle','files':files,'compile':compiled,'nativeCompiler':{'sha256':'c'*64,'bytes':456,'version':'fixture compiler'},'nativeCommands':commands,'utilityCapture':capture,'smokeSha256':files['source/scripts/guest-utilities/smoke.sh']['sha256'],'linuxExecutionVerified':False,'vmExecutionVerified':False,'generalToolAvailabilityEnabled':False};self.parent=files[s.PARENT]['sha256']
@@ -47,6 +47,32 @@ class UtilityStageTests(unittest.TestCase):
         with self.assertRaises(ValueError):s.validate_receipt(changed,self.parent)
         changed=copy.deepcopy(self.receipt);changed['compile']['compiler']['platform']='darwin'
         with self.assertRaises(ValueError):s.validate_receipt(changed,self.parent)
+    def test_loader_intent_roundtrips_bundle_sealed_and_runtime_modes(self):
+        path,a,r=self.archive();receipt,wire,data=s.read_archive(path,a,r,self.parent)
+        loaders={'/lib/ld-linux-aarch64.so.1','/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1'}
+        for guest in loaders:
+            item=receipt['utilityCapture']['outputs'][guest]
+            self.assertEqual(item['role'],'library');self.assertIs(item['executable'],True)
+            self.assertIs(receipt['files']['environment'+guest]['executable'],True)
+            self.assertEqual(v.environment_mode(guest,item),0o555)
+            # Actual portable files model the immutable staging mode, then the
+            # verified readable/executable copy mode used by the tool UID.
+            sealed=self.root/('sealed-'+guest.rsplit('/',2)[1]);s.write_file(sealed,data['environment'+guest],0o500)
+            self.assertEqual(stat.S_IMODE(sealed.stat().st_mode),0o500)
+            copied=self.root/('copy-'+guest.rsplit('/',2)[1]);s.write_file(copied,sealed.read_bytes(),v.environment_mode(guest,item))
+            self.assertEqual(stat.S_IMODE(copied.stat().st_mode),0o555)
+        library='/lib/aarch64-linux-gnu/libc.so.6';item=receipt['utilityCapture']['outputs'][library]
+        self.assertEqual(v.environment_mode(library,item),0o444)
+        changed=copy.deepcopy(receipt);changed['files']['environment'+library]['executable']=True
+        with self.assertRaises(ValueError):s.validate_receipt(changed,self.parent)
+        # Even a coherently rehashed capture cannot grant X to another library.
+        changed=copy.deepcopy(receipt);capture=changed['utilityCapture']
+        capture['inputs'][library]['executable']=True;capture['outputs'][library]['executable']=True;changed['files']['environment'+library]['executable']=True
+        manifest={'formatVersion':1,'kind':'winter-tool-utility-inputs','target':'linux-arm64-gnu','files':capture['inputs']}
+        capture['inputManifestSha256']=s.sha(s.canonical(manifest).encode());capture['outputInventorySha256']=s.sha(s.canonical(capture['outputs']).encode())
+        with self.assertRaisesRegex(ValueError,'execution intent'):s.validate_receipt(changed,self.parent)
+        with self.assertRaises(ValueError):v.environment_mode(library,{**item,'executable':True})
+        self.assertEqual({guest for guest,item in receipt['utilityCapture']['outputs'].items() if item['role']=='executable'},s.EXECUTABLES)
     def test_archive_traversal_duplicate_hardlink_and_unmeasured_bytes_refuse(self):
         for name,type_ in [('../escape',tarfile.REGTYPE),('receipt.json',tarfile.REGTYPE),('source/hardlink',tarfile.LNKTYPE)]:
             with self.subTest(name=name):
@@ -77,6 +103,8 @@ class UtilityStageTests(unittest.TestCase):
         def fake_fstat(*args,**kwargs):value=owner(real_fstat(*args,**kwargs));value.st_uid=0;return value
         with patch.object(s,'trusted_ancestry',lambda directory:None),patch.object(s.os,'stat',fake_stat),patch.object(s.os,'fstat',fake_fstat):
             self.assertEqual(s.verify_staged(sealed,s.sha(wire),self.parent),self.receipt)
+            f.closure.validate_capture(self.receipt['utilityCapture'],sealed/'environment',sealed=True)
+            with self.assertRaisesRegex(ValueError,'execution-mode'):f.closure.validate_capture(self.receipt['utilityCapture'],sealed/'environment')
             alias=self.root/'external-hardlink';os.link(sealed/'artifacts/utilityClient',alias)
             with self.assertRaises(ValueError):s.verify_staged(sealed,s.sha(wire),self.parent)
             alias.unlink()

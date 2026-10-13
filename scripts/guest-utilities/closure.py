@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[2]
 EXECUTABLES = frozenset(('/bin/bash', '/bin/cat', '/usr/bin/git', '/usr/bin/python3', '/usr/bin/openssl', '/usr/bin/mktemp'))
+ELF_LOADERS = frozenset(('/lib/ld-linux-aarch64.so.1', '/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1'))
 EXECUTABLE_SOURCES = {'/bin/bash': {'bin/bash', 'usr/bin/bash'}, '/bin/cat': {'bin/cat', 'usr/bin/cat'}, '/usr/bin/git': {'usr/bin/git'}, '/usr/bin/python3': {'usr/bin/python3.12'}, '/usr/bin/openssl': {'usr/bin/openssl'}, '/usr/bin/mktemp': {'bin/mktemp', 'usr/bin/mktemp'}}
 SOURCES = ('scripts/guest-utilities/closure.py', 'scripts/guest-utilities/oracle.py', 'scripts/guest-utilities/smoke.sh')
 MAX_FILE = 32 * 1024 * 1024
@@ -45,12 +46,15 @@ def validate_manifest(value):
         if not isinstance(guest, str) or not guest.startswith('/'):
             raise ValueError('guest closure path')
         relative(guest[1:])
-        if type(item) is not dict or set(item) != {'role', 'source', 'sha256', 'bytes'}:
+        if type(item) is not dict or set(item) != {'role', 'source', 'sha256', 'bytes', 'executable'}:
             raise ValueError('closure leaf shape')
         relative(item['source'])
         if not isinstance(item['sha256'], str) or not re.fullmatch('[a-f0-9]{64}', item['sha256']) or type(item['bytes']) is not int or not 1 <= item['bytes'] <= MAX_FILE:
             raise ValueError('closure leaf measurement')
         total += item['bytes']; role = item['role']
+        expected_execution = role == 'executable' or role == 'library' and guest in ELF_LOADERS
+        if type(item['executable']) is not bool or item['executable'] is not expected_execution:
+            raise ValueError('fixed execution-mode intent required')
         if role == 'executable':
             if guest not in EXECUTABLES or item['source'] not in EXECUTABLE_SOURCES[guest]:
                 raise ValueError('unadmitted executable')
@@ -69,7 +73,7 @@ def validate_manifest(value):
                 raise ValueError('Python closure role')
         else:
             raise ValueError('closure role')
-    if executable != EXECUTABLES or '/lib/ld-linux-aarch64.so.1' not in files or total > MAX_TOTAL:
+    if executable != EXECUTABLES or not ELF_LOADERS <= set(files) or total > MAX_TOTAL:
         raise ValueError('required utility closure/limit')
     for guest in files:
         if any(str(parent) in files for parent in PurePosixPath(guest).parents):
@@ -164,8 +168,8 @@ def capture(source, manifest, output):
                     raise ValueError('manifest input measurement changed')
                 if item['role'] in ('executable', 'library', 'extension') and (len(header) != 20 or header[:6] != b'\x7fELF\x02\x01' or int.from_bytes(header[18:20], 'little') != 183):
                     raise ValueError('ARM64 ELF utility/library required')
-                os.fsync(destination); os.fchmod(destination, 0o555 if item['role'] == 'executable' else 0o444)
-                copied[guest] = {'role': item['role'], **measured}
+                os.fsync(destination); os.fchmod(destination, 0o555 if item['executable'] else 0o444)
+                copied[guest] = {'role': item['role'], 'executable': item['executable'], **measured}
             finally:
                 os.close(fd)
                 if destination is not None:
@@ -189,12 +193,14 @@ def capture(source, manifest, output):
         os.close(root)
 
 
-def validate_capture(receipt, environment):
+def validate_capture(receipt, environment, sealed=False):
+    if type(sealed) is not bool:
+        raise ValueError('explicit capture validation context required')
     keys = {'formatVersion', 'kind', 'target', 'inputs', 'inputManifestSha256', 'sources', 'builder', 'recipe', 'outputs', 'outputInventorySha256', 'dependencyCompletenessVerified', 'linuxExecutionVerified', 'vmExecutionVerified', 'generalToolAvailabilityEnabled'}
     if type(receipt) is not dict or set(receipt) != keys or type(receipt['formatVersion']) is not int or receipt['formatVersion'] != 1 or receipt['kind'] != 'winter-tool-utility-capture':
         raise ValueError('capture receipt shape')
     manifest = validate_manifest({'formatVersion': 1, 'kind': 'winter-tool-utility-inputs', 'target': receipt['target'], 'files': receipt['inputs']})
-    expected = {guest: {key: item[key] for key in ('role', 'sha256', 'bytes')} for guest, item in manifest['files'].items()}
+    expected = {guest: {key: item[key] for key in ('role', 'executable', 'sha256', 'bytes')} for guest, item in manifest['files'].items()}
     if receipt['inputManifestSha256'] != digest(canonical(manifest).encode()) or receipt['outputs'] != expected or receipt['outputInventorySha256'] != digest(canonical(expected).encode()):
         raise ValueError('capture measurement binding')
     if type(receipt['recipe']) is not dict or receipt['recipe'] != {'operation': 'held-fd-byte-copy', 'implicitDiscovery': False, 'utilityExecution': False} or any(receipt['recipe'][key] is not False for key in ('implicitDiscovery', 'utilityExecution')) or any(receipt[key] is not False for key in ('dependencyCompletenessVerified', 'linuxExecutionVerified', 'vmExecutionVerified', 'generalToolAvailabilityEnabled')):
@@ -231,8 +237,11 @@ def validate_capture(receipt, environment):
                 after = os.fstat(fd)
                 if after.st_nlink != 1:
                     raise ValueError('captured utility multiply linked')
-                if measured != {key: item[key] for key in ('sha256', 'bytes')} or after.st_mode & 0o222:
-                    raise ValueError('captured utility changed/writable')
+                expected_mode = (0o500 if item['executable'] else 0o400) if sealed else (0o555 if item['executable'] else 0o444)
+                if sealed and after.st_uid != 0:
+                    raise ValueError('sealed captured utility root owner required')
+                if measured != {key: item[key] for key in ('sha256', 'bytes')} or stat.S_IMODE(after.st_mode) != expected_mode:
+                    raise ValueError('captured utility changed/execution-mode mismatch')
                 if item['role'] != 'stdlib' and (len(header) != 20 or header[:6] != b'\x7fELF\x02\x01' or int.from_bytes(header[18:20], 'little') != 183):
                     raise ValueError('captured utility target')
             finally:

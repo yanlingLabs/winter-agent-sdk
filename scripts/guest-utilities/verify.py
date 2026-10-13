@@ -94,6 +94,14 @@ def client_oracle(record,oracle,smoke_hash,scenario):
     for result in record['results']:oracle.validate_result(result)
 
 
+def environment_mode(guest,item):
+    programs={'/bin/bash','/bin/cat','/usr/bin/git','/usr/bin/python3','/usr/bin/openssl','/usr/bin/mktemp'}
+    loaders={'/lib/ld-linux-aarch64.so.1','/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1'}
+    allowed=item['role']=='executable' and guest in programs or item['role']=='library' and guest in loaders
+    if type(item['executable']) is not bool or item['executable'] is not allowed:raise ValueError('fixed copied execution-mode intent required')
+    return 0o555 if item['executable'] else 0o444
+
+
 def execute(directory,parent,oracle):
     receipt=ADMISSION.receipt;directory=Path(directory);directory.chmod(0o711);binary=directory/'bin';binary.mkdir(mode=0o755);environment=directory/'environment';environment.mkdir(mode=0o755);control=directory/'control';control.mkdir(mode=0o711)
     def copy(relative,target,mode):
@@ -105,7 +113,7 @@ def execute(directory,parent,oracle):
     for name in parent.ARTIFACTS:copy('artifacts/'+name,binary/name,0o555)
     copy('source/packages/runtime/src/guest/linux-supervisor.py',binary/'linux-supervisor.py',0o555)
     for guest,item in receipt['utilityCapture']['outputs'].items():
-        target=environment/guest[1:];target.parent.mkdir(parents=True,exist_ok=True,mode=0o755);copy('environment'+guest,target,0o555 if item['role']=='executable' else 0o444)
+        target=environment/guest[1:];target.parent.mkdir(parents=True,exist_ok=True,mode=0o755);copy('environment'+guest,target,environment_mode(guest,item))
     source=directory/'source';source.mkdir(mode=0o2770);os.chown(source,10001,10000);source.chmod(0o2770)
     readonly=directory/'readonly';readonly.mkdir(mode=0o2770);os.chown(readonly,10001,10000);readonly.chmod(0o2770);(readonly/'sentinel').write_text('readonly-fixture');(readonly/'sentinel').chmod(0o444)
     stores=directory/'stores';stores.mkdir(mode=0o711);store=stores/'private';store.mkdir(mode=0o700);os.chown(store,20001,20001)
@@ -159,7 +167,7 @@ def execute(directory,parent,oracle):
 
 def main():
     parent=checked_module('stage');parent.verify_staged(ADMISSION.directory,ADMISSION.receipt_sha,ADMISSION.parent_sha)
-    capture=checked_module('closure');capture.validate_capture(ADMISSION.receipt['utilityCapture'],Path(ADMISSION.directory)/'environment')
+    capture=checked_module('closure');capture.validate_capture(ADMISSION.receipt['utilityCapture'],Path(ADMISSION.directory)/'environment',sealed=True)
     oracle=checked_module('oracle');directory=Path(tempfile.mkdtemp(prefix='winter-utility-run-',dir='/tmp'))
     try:
         result=execute(directory,parent,oracle)

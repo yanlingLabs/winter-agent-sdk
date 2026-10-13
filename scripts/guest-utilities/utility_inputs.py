@@ -39,7 +39,7 @@ def prepare(output):
             else:
                 destination=os.open(target,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600);measured,header=c.measure(fd,destination);os.fsync(destination);os.fchmod(destination,0o444)
             if role!='stdlib' and (len(header)!=20 or header[:6]!=b'\x7fELF\x02\x01' or int.from_bytes(header[18:20],'little')!=183):raise ValueError('ARM64 input ELF required')
-            files[guest]={'role':role,'source':relative,**measured}
+            files[guest]={'role':role,'source':relative,'executable':role=='executable' or role=='library' and guest in c.ELF_LOADERS,**measured}
             if role!='stdlib':pending.append((guest,target))
         finally:
             os.close(fd)
@@ -47,7 +47,7 @@ def prepare(output):
     for guest in sorted(c.EXECUTABLES):
         source='/usr/bin/python3.12' if guest=='/usr/bin/python3' else guest
         add(guest,source,'executable')
-    add('/lib/ld-linux-aarch64.so.1','/lib/ld-linux-aarch64.so.1','library')
+    for loader in sorted(c.ELF_LOADERS):add(loader,'/lib/ld-linux-aarch64.so.1','library')
     base=Path('/usr/lib/python3.12')
     for path in stdlib_paths(base):add(path.as_posix(),path,'stdlib')
     for extension in EXTENSIONS:

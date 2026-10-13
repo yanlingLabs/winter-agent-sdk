@@ -16,6 +16,7 @@ MAX_ENTRIES = 24000
 MAX_JSON = 16 * 1024 * 1024
 ENV = {'PATH':'/usr/sbin:/usr/bin:/sbin:/bin','LANG':'C','LC_ALL':'C','TZ':'UTC'}
 EXECUTABLES = {'/bin/bash','/bin/cat','/usr/bin/git','/usr/bin/python3','/usr/bin/openssl','/usr/bin/mktemp'}
+ELF_LOADERS = {'/lib/ld-linux-aarch64.so.1','/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1'}
 ARTIFACTS = {'utilityClient','toolLauncher','fileWorker','processWorker'}
 
 
@@ -156,6 +157,7 @@ def validate_receipt(value,parent_hash):
     if set(capture)!=capture_keys or type(capture['formatVersion']) is not int or capture['formatVersion']!=1 or capture['recipe']!={'operation':'held-fd-byte-copy','implicitDiscovery':False,'utilityExecution':False} or capture['recipe']['implicitDiscovery'] is not False or capture['recipe']['utilityExecution'] is not False:raise ValueError('utility capture recipe')
     utilities=capture.get('outputs')
     if type(utilities) is not dict or {name for name,item in utilities.items() if item.get('role')=='executable'}!=EXECUTABLES:raise ValueError('fixed utility ceiling')
+    if not ELF_LOADERS<=set(utilities):raise ValueError('fixed measured ELF loaders required')
     if {name.removeprefix('environment') for name in files if name.startswith('environment/')}!=set(utilities):raise ValueError('utility environment inventory')
     if capture.get('outputInventorySha256')!=sha(canonical(utilities).encode()):raise ValueError('utility output inventory hash')
     source_keys={'scripts/guest-utilities/closure.py','scripts/guest-utilities/oracle.py','scripts/guest-utilities/smoke.sh'}
@@ -163,9 +165,9 @@ def validate_receipt(value,parent_hash):
     origin_manifest={'formatVersion':1,'kind':'winter-tool-utility-inputs','target':'linux-arm64-gnu','files':capture['inputs']}
     if type(capture['inputs']) is not dict or set(capture['inputs'])!=set(utilities) or capture['inputManifestSha256']!=sha(canonical(origin_manifest).encode()):raise ValueError('utility origin input manifest')
     for name,item in utilities.items():
-        if not isinstance(name,str) or not name.startswith('/') or type(item) is not dict or set(item)!={'role','sha256','bytes'}:raise ValueError('utility leaf schema')
+        if not isinstance(name,str) or not name.startswith('/') or type(item) is not dict or set(item)!={'role','sha256','bytes','executable'}:raise ValueError('utility leaf schema')
         relative(name[1:]);role=item['role'];source=capture['inputs'][name]
-        if type(source) is not dict or set(source)!={'role','source','sha256','bytes'} or {key:source[key] for key in ('role','sha256','bytes')}!=item:raise ValueError('utility input/output binding')
+        if type(source) is not dict or set(source)!={'role','source','sha256','bytes','executable'} or {key:source[key] for key in ('role','sha256','bytes','executable')}!=item:raise ValueError('utility input/output binding')
         relative(source['source'])
         if role=='executable':
             if name not in EXECUTABLES:raise ValueError('utility executable ceiling')
@@ -175,7 +177,9 @@ def validate_receipt(value,parent_hash):
             if not name.startswith('/usr/lib/python3.12/') or any(part in ('test','tests','site-packages','dist-packages','ensurepip','__pycache__') for part in PurePosixPath(name).parts) or role=='stdlib' and not name.endswith('.py') or role=='extension' and not re.fullmatch(r'/usr/lib/python3\.12/lib-dynload/[A-Za-z0-9_.+-]+\.so',name):raise ValueError('utility Python ceiling')
         else:raise ValueError('utility role')
         node=files['environment'+name]
-        if node['kind']!='file' or node['sha256']!=item.get('sha256') or node['bytes']!=item.get('bytes') or node['executable'] is not (item.get('role')=='executable'):raise ValueError('utility measured binding')
+        expected_execution=role=='executable' or role=='library' and name in ELF_LOADERS
+        if type(item['executable']) is not bool or item['executable'] is not expected_execution:raise ValueError('fixed utility execution intent')
+        if node['kind']!='file' or node['sha256']!=item.get('sha256') or node['bytes']!=item.get('bytes') or node['executable'] is not item['executable']:raise ValueError('utility measured binding')
     native=value['nativeCompiler']
     if type(native) is not dict or set(native)!={'sha256','bytes','version'} or not valid_hash(native['sha256']) or type(native['bytes']) is not int or not 1<=native['bytes']<=MAX_ARTIFACT or not isinstance(native['version'],str) or not 1<=len(native['version'])<=512 or '/' in native['version']:raise ValueError('native compiler identity')
     commands=[['<native-compiler>','-std=c11','-O2','-Wall','-Wextra','-Werror','-static','packages/runtime/src/guest/'+source,'-o','<artifacts>/'+name] for name,source in [('toolLauncher','linux-tool-compartment.c'),('fileWorker','file-worker.c'),('processWorker','process-worker.c')]]

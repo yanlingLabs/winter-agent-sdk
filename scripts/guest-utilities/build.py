@@ -42,7 +42,7 @@ def build(entries,capture,origin_receipt,output,compiler):
     for path in sorted(artifacts.iterdir()):
         name='artifacts/'+path.name;wire=s.read_path(path,s.MAX_ARTIFACT);files[name]={'kind':'file','sha256':s.sha(wire),'bytes':len(wire),'executable':path.name in s.ARTIFACTS};data[name]=wire
     for guest,item in utility['outputs'].items():
-        name='environment'+guest;wire=s.read_path(capture/'environment'/guest[1:]);files[name]={'kind':'file','sha256':s.sha(wire),'bytes':len(wire),'executable':item['role']=='executable'};data[name]=wire
+        name='environment'+guest;wire=s.read_path(capture/'environment'/guest[1:]);files[name]={'kind':'file','sha256':s.sha(wire),'bytes':len(wire),'executable':item['executable']};data[name]=wire
     receipt={'formatVersion':1,'kind':'winter-tool-utility-bundle','files':files,'compile':compiled,'nativeCompiler':{**compiler_id,'version':version},'nativeCommands':native_commands,'utilityCapture':utility,'smokeSha256':files['source/scripts/guest-utilities/smoke.sh']['sha256'],'linuxExecutionVerified':False,'vmExecutionVerified':False,'generalToolAvailabilityEnabled':False}
     parent_hash=files[s.PARENT]['sha256'];s.validate_receipt(receipt,parent_hash)
     if inputs()!=before or p.sha(compiler,s.MAX_ARTIFACT)!=compiler_id:raise ValueError('build input/compiler changed')

@@ -12,14 +12,15 @@ closure, oracle = load('closure'), load('oracle')
 def fixture(root):
     elf = bytearray(b'\x7fELF\x02\x01' + b'\0' * 14); elf[18:20] = (183).to_bytes(2, 'little')
     entries = [(guest, 'executable', sorted(closure.EXECUTABLE_SOURCES[guest])[0]) for guest in sorted(closure.EXECUTABLES)]
-    entries += [('/lib/ld-linux-aarch64.so.1', 'library', 'usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1')]
+    entries += [(guest, 'library', 'usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1') for guest in sorted(closure.ELF_LOADERS)]
+    entries += [('/lib/aarch64-linux-gnu/libc.so.6', 'library', 'usr/lib/aarch64-linux-gnu/libc.so.6')]
     entries += [('/usr/lib/python3.12/' + name, 'stdlib', 'usr/lib/python3.12/' + name) for name in ('encodings/__init__.py', 'encodings/utf_8.py', 'multiprocessing/__init__.py', 'multiprocessing/shared_memory.py', 'multiprocessing/synchronize.py', 'multiprocessing/resource_tracker.py')]
     entries += [('/usr/lib/python3.12/lib-dynload/' + name + 'cpython-312-aarch64-linux-gnu.so', 'extension', 'usr/lib/python3.12/lib-dynload/' + name + 'cpython-312-aarch64-linux-gnu.so') for name in ('_multiprocessing.', '_posixshmem.')]
     files = {}
     for guest, role, source in entries:
         data = b'raise RuntimeError("synthetic source must never execute")\n' if role == 'stdlib' else bytes(elf)
         path = root / source; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(data)
-        files[guest] = {'role': role, 'source': source, 'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
+        files[guest] = {'role': role, 'source': source, 'executable': role == 'executable' or role == 'library' and guest in closure.ELF_LOADERS, 'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
     return {'formatVersion': 1, 'kind': 'winter-tool-utility-inputs', 'target': 'linux-arm64-gnu', 'files': files}
 
 
@@ -97,6 +98,33 @@ class UtilityFixtureTests(unittest.TestCase):
                 closure.validate_capture(receipt, output)
             alias.unlink()
             self.assertEqual(closure.validate_capture(receipt, output), receipt)
+
+    def test_loader_library_execution_intent_and_real_capture_modes(self):
+        with tempfile.TemporaryDirectory(prefix='winter-utility-loader-mode-') as temp:
+            root = Path(temp).resolve(); source = root / 'source'; source.mkdir(); manifest = fixture(source)
+            receipt = closure.capture(source, manifest, root / 'capture'); output = root / 'capture/environment'
+            self.assertEqual({guest for guest, item in receipt['outputs'].items() if item['role'] == 'executable'}, set(closure.EXECUTABLES))
+            for guest in closure.ELF_LOADERS:
+                self.assertEqual(receipt['inputs'][guest]['role'], 'library')
+                self.assertIs(receipt['outputs'][guest]['executable'], True)
+                self.assertEqual((output / guest[1:]).stat().st_mode & 0o777, 0o555)
+            library = '/lib/aarch64-linux-gnu/libc.so.6'
+            self.assertEqual((output / library[1:]).stat().st_mode & 0o777, 0o444)
+            closure.validate_capture(receipt, output)
+            for guest in (*closure.ELF_LOADERS, library):
+                changed = copy.deepcopy(manifest); changed['files'][guest]['executable'] = not changed['files'][guest]['executable']
+                with self.subTest(intent=guest), self.assertRaises(ValueError): closure.validate_manifest(changed)
+            changed = copy.deepcopy(manifest); changed['files']['/lib/ld-linux-aarch64.so.1'].pop('executable')
+            with self.assertRaises(ValueError): closure.validate_manifest(changed)
+            changed = copy.deepcopy(manifest); changed['files']['/lib/ld-linux-aarch64.so.1']['executable'] = 1
+            with self.assertRaises(ValueError): closure.validate_manifest(changed)
+            # Correct bytes and readonly permissions are insufficient if an
+            # unadmitted library gained X, or a required loader lost it.
+            for guest, mode in [(library, 0o555), ('/lib/ld-linux-aarch64.so.1', 0o444)]:
+                path = output / guest[1:]; original = path.stat().st_mode & 0o777; path.chmod(mode)
+                with self.subTest(mode=guest), self.assertRaisesRegex(ValueError, 'execution-mode'): closure.validate_capture(receipt, output)
+                path.chmod(original)
+
 
     def test_exact_oracle_rejects_failed_truncated_extra_or_unbound_markers(self):
         result = {'stdout': oracle.EXPECTED_STDOUT, 'stderr': '', 'exitCode': 0, 'termination': 'exit'}
