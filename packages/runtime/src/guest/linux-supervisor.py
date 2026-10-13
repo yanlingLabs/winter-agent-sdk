@@ -2,7 +2,7 @@
 """Protected Linux tool service. Start only via immutable python -I -S and a trusted config FD.
 Not the guest engine/bootstrap. No host credentials, file paths, UIDs or policy from tool requests.
 """
-import array, base64, fcntl, hashlib, json, os, re, selectors, select, signal, socket, stat, struct, subprocess, sys, tempfile, threading, time, uuid
+import array, base64, errno, fcntl, hashlib, json, os, re, selectors, select, signal, socket, stat, struct, subprocess, sys, tempfile, threading, time, uuid
 from pathlib import Path
 
 FRAME_LIMIT=2*1024*1024
@@ -228,11 +228,18 @@ class RuntimeDuplexRelay:
     def handle(self,event):
         self.ports.verify();route=event.data[1];fd=event.fd
         name='input' if route.endswith('input') else route.split('-')[1]
-        if name=='input' and (self.terminal or route=='host-input' and self.eof['input']):return None
+        if name=='input' and (self.terminal or self.eof['input'] and (route=='host-input' or not self.buffers['input'])):return None
         writing=route=='child-input' or route.startswith('host-') and name!='input'
         if writing:
             try:count=os.write(fd,bytes(self.buffers[name][:65536]))
             except (BlockingIOError,InterruptedError):return None
+            except OSError as error:
+                if route!='child-input' or error.errno!=errno.EPIPE:raise
+                # The returned runtime may close stdin before its native receipt arrives.
+                # Unsent late input is discarded, never acknowledged or replayed. This is
+                # only input-reader closure, not native terminal/cleanup/release evidence.
+                self.buffers['input'].clear();self.eof['input']=True;self.child.stdin.close()
+                return None
             if count<=0:raise Uncertain('runtime_duplex_write_failed')
             del self.buffers[name][:count]
             if name=='input' and self.eof['input'] and not self.buffers['input']:self.child.stdin.close()

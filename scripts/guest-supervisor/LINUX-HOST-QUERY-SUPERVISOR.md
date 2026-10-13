@@ -156,3 +156,22 @@ and no SIGKILL on clean EOF in the injected supervisor loop. Local engine result
 and injected native statuses still do not prove real guest approval/owner/teardown.
 Retained follow-up logs and unexecuted bundle live separately under
 `out/linux-host-query-supervisor-eof-check/`.
+
+
+### Late-input reader closure race
+
+The immutable main can close stdin after returning before the native terminal
+receipt reaches Root. EPIPE only on the child-input write now marks that input
+reader closed, clears unsent queued input, closes its write end and stops host
+intake. It does not mark native terminal, cleanup or ownership release; output and
+native-control draining/reap checks continue. Unsent late bytes are discarded:
+no delivery/effects acknowledgement is made and they are never automatically
+replayed. EPIPE on either output, other read/write errors and missing native proof
+still fail/retain. The native owner/admission code is unchanged.
+
+Three added Python regressions cover actual FIFO reader closure with stale events,
+late-input EPIPE followed by stdout/result plus injected native receipt/reap, and
+other child-input errors retaining uncertainty. Existing output-EPIPE regression
+still fails without dropping its queued bytes. Current selected Python result:
+59 tests (58 passes, one Linux-only skip). Earlier 89b validation/logs are retained;
+Bun/TypeScript/compiled-main sources are unchanged by this narrow race correction.

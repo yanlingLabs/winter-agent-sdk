@@ -176,6 +176,18 @@ class DuplexRelayTests(unittest.TestCase):
         os.write(self.pipes.child_output,b'{"type":"init"}\n');route(self.relay,self.selector,'child-stdout');before=bytes(self.relay.buffers['stdout']);os.close(self.pipes.output_reader)
         with self.assertRaises(BrokenPipeError):route(self.relay,self.selector,'host-stdout')
         self.assertEqual(bytes(self.relay.buffers['stdout']),before);self.assertFalse(self.relay.terminal)
+    def test_child_input_epipe_stops_intake_without_inventing_native_terminal_or_effects(self):
+        os.write(self.pipes.input_writer,b'{"type":"user","text":"late"}\n');route(self.relay,self.selector,'host-input');self.relay.sync(self.selector)
+        stale=next(key for key in self.selector.get_map().values() if key.data==('duplex','child-input'))
+        os.close(self.pipes.child_input_reader);self.relay.handle(stale)
+        self.assertFalse(self.relay.buffers['input']);self.assertTrue(self.relay.eof['input']);self.assertTrue(self.pipes.child.stdin.closed)
+        self.assertFalse(self.relay.terminal);self.assertFalse(self.pipes.cancel.is_set());self.assertIsNone(self.relay.handle(stale))
+        self.relay.sync(self.selector);self.assertNotIn('host-input',{key.data[1] for key in self.selector.get_map().values()})
+    def test_other_child_input_write_errors_remain_uncertain(self):
+        os.write(self.pipes.input_writer,b'{"type":"user","text":"go"}\n');route(self.relay,self.selector,'host-input')
+        with patch.object(service.os,'write',side_effect=OSError(service.errno.EIO,'fixture write error')):
+            with self.assertRaises(OSError):route(self.relay,self.selector,'child-input')
+        self.assertTrue(self.relay.buffers['input']);self.assertFalse(self.relay.eof['input']);self.assertFalse(self.relay.terminal)
     def test_native_terminal_stops_input_and_drains_outputs_with_stale_events_harmless(self):
         os.write(self.pipes.input_writer,b'{"type":"user","text":"go"}\n');route(self.relay,self.selector,'host-input');self.relay.sync(self.selector)
         stale=next(key for key in self.selector.get_map().values() if key.data==('duplex','child-input'))
@@ -224,25 +236,32 @@ class ConfiguredHostRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime['state'],'retained');self.assertFalse(runtime['cleanupConfirmed']);self.assertIn('logical',self.obj.debt)
         diagnostic=json.loads((self.obj.directory/'logical'/'runtime-diagnostic.json').read_text())
         self.assertFalse(diagnostic['observations']['nativeReceiptObserved']);self.assertFalse(diagnostic['observations']['ownershipReleased'])
-    def run_injected(self,parent_code=0,clean_eof=False,cancel_requested=False,backpressure_cancel=False):
+    def run_injected(self,parent_code=0,clean_eof=False,cancel_requested=False,backpressure_cancel=False,late_input=False):
         runtime=self.configure();self.obj.runtime_artifacts={'launcher':10,'executable':11,'ownerLibrary':12};self.obj.runtime_pins={name:'test-pin' for name in self.obj.runtime_artifacts};self.obj.environment=-1
-        if clean_eof:
-            os.write(self.pipes.input_writer,b'{"type":"user","text":"go"}\n');os.close(self.pipes.input_writer)
+        if clean_eof or late_input:
+            os.write(self.pipes.input_writer,b'{"type":"user","text":"go"}\n')
+            if clean_eof:os.close(self.pipes.input_writer)
         control,parent,bootstrap,guest=[MagicMock() for _ in range(4)]
         for fd,channel in enumerate((control,parent,bootstrap,guest),100):channel.fileno.return_value=fd
         control.recv.side_effect=[b'R'+struct.pack('=I',0),b''];bootstrap.sendmsg.side_effect=lambda buffers,*args:len(buffers[0])
         child=self.pipes.child;child.wait=MagicMock(return_value=parent_code);child.kill=MagicMock()
         stdout_fd,stderr_fd=child.stdout.fileno(),child.stderr.fileno()
-        chunks={stdout_fd:iter([b'{"type":"init"}\n',b'']),stderr_fd:iter([b'bounded stderr\n',b''])};original_read=service.os.read;original_close=service.os.close
+        stdout_payload=b'{"type":"init"}\n'+(b'{"type":"data","message":{"type":"result","subtype":"success"}}\n' if late_input else b'')
+        chunks={stdout_fd:iter([stdout_payload,b'']),stderr_fd:iter([b'bounded stderr\n',b''])};original_read=service.os.read;original_close=service.os.close
         def read(fd,count):return next(chunks[fd],b'') if fd in chunks else original_read(fd,count)
         def event(fd,route):return SimpleNamespace(fd=fd,fileobj=fd,data=('duplex',route))
         selector=MagicMock();selector.get_map.side_effect=[True,True,True,False]
         selector.select.side_effect=[[(event(stdout_fd,'child-stdout'),1),(event(stderr_fd,'child-stderr'),1)],[(SimpleNamespace(fileobj=control,data=None),1),(event(self.pipes.ports.fds['stdout'],'host-stdout'),2),(event(self.pipes.ports.fds['stderr'],'host-stderr'),2),(event(stdout_fd,'child-stdout'),1),(event(stderr_fd,'child-stderr'),1)],[(SimpleNamespace(fileobj=control,data=None),1)]]
-        if clean_eof:
+        if clean_eof or late_input:
             selector.get_map.side_effect=[True,True,True,True,False]
             rows=list(selector.select.side_effect)
-            rows.insert(0,[(event(self.pipes.ports.fds['input'],'host-input'),1),(event(child.stdin.fileno(),'child-input'),2)])
+            rows.insert(0,[(event(child.stdin.fileno(),'child-input'),2)] if late_input else [(event(self.pipes.ports.fds['input'],'host-input'),1),(event(child.stdin.fileno(),'child-input'),2)])
             selector.select.side_effect=rows
+        original_write=service.os.write
+        child_input_fd=child.stdin.fileno()
+        def write(fd,data):
+            if late_input and fd==child_input_fd:raise BrokenPipeError(service.errno.EPIPE,'fixture runtime input reader closed')
+            return original_write(fd,data)
         original_sync=service.RuntimeDuplexRelay.sync
         def sync(relay,selected):
             if backpressure_cancel:
@@ -252,7 +271,7 @@ class ConfiguredHostRuntimeTests(unittest.TestCase):
         def admitted(_):
             if cancel_requested:runtime['cancel'].set()
             return 600
-        with patch.object(service,'verify_held_artifact'),patch.object(service.socket,'socketpair',side_effect=[(control,parent),(bootstrap,guest)]),patch.object(service.subprocess,'Popen',return_value=child) as spawn,patch.object(service,'receive_init_pidfd',side_effect=admitted),patch.object(service.os,'pidfd_open',return_value=700,create=True),patch.object(service.selectors,'DefaultSelector',return_value=selector),patch.object(service.RuntimeDuplexRelay,'sync',new=sync),patch.object(service.os,'read',side_effect=read),patch.object(service.os,'close',side_effect=lambda fd:None if fd in (600,700) else original_close(fd)),patch.object(service.signal,'pidfd_send_signal',create=True) as kill:
+        with patch.object(service,'verify_held_artifact'),patch.object(service.socket,'socketpair',side_effect=[(control,parent),(bootstrap,guest)]),patch.object(service.subprocess,'Popen',return_value=child) as spawn,patch.object(service,'receive_init_pidfd',side_effect=admitted),patch.object(service.os,'pidfd_open',return_value=700,create=True),patch.object(service.selectors,'DefaultSelector',return_value=selector),patch.object(service.RuntimeDuplexRelay,'sync',new=sync),patch.object(service.os,'read',side_effect=read),patch.object(service.os,'write',side_effect=write),patch.object(service.os,'close',side_effect=lambda fd:None if fd in (600,700) else original_close(fd)),patch.object(service.signal,'pidfd_send_signal',create=True) as kill:
             self.obj._run_runtime(self.fixture.item,runtime)
         if backpressure_cancel:
             kill.assert_any_call(600,service.signal.SIGKILL)
@@ -263,7 +282,7 @@ class ConfiguredHostRuntimeTests(unittest.TestCase):
         self.assertEqual(spawn.call_args.kwargs['stdin'],service.subprocess.PIPE)
         root=self.fixture.item['roots']['source']['root']
         self.assertEqual(spawn.call_args.args[0][-3:],['-9',root['guestPath'],'1' if root['readOnly'] else '0'])
-        self.assertEqual(os.read(self.pipes.output_reader,65536),b'{"type":"init"}\n');self.assertEqual(os.read(self.pipes.error_reader,65536),b'bounded stderr\n')
+        self.assertEqual(os.read(self.pipes.output_reader,65536),stdout_payload);self.assertEqual(os.read(self.pipes.error_reader,65536),b'bounded stderr\n')
         observed=json.loads((self.obj.directory/'logical'/'runtime-diagnostic.json').read_text())['observations']
         self.assertFalse(observed['ownershipReleased']);self.assertTrue(os.fstat(runtime['fds']['storeDirectory']))
         return runtime,observed
@@ -275,6 +294,10 @@ class ConfiguredHostRuntimeTests(unittest.TestCase):
         runtime,observed=self.run_injected(clean_eof=True)
         self.assertEqual(runtime['state'],'stopped');self.assertEqual(runtime['exitCode'],0);self.assertTrue(observed['nativeCleanupConfirmed'])
         self.assertEqual(os.read(self.pipes.child_input_reader,65536),b'{"type":"user","text":"go"}\n')
+    def test_late_input_epipe_preserves_output_and_native_receipt_reap_without_sigkill(self):
+        runtime,observed=self.run_injected(late_input=True)
+        self.assertEqual(runtime['state'],'stopped');self.assertEqual(runtime['exitCode'],0);self.assertTrue(observed['nativeReceiptObserved']);self.assertTrue(observed['nativeCleanupConfirmed']);self.assertFalse(observed['ownershipReleased'])
+        self.assertFalse(runtime['duplex'].fds) # only transport handles closed, not store hold
     def test_explicit_cancellation_still_targets_injected_native_descriptor_promptly(self):
         runtime,observed=self.run_injected(cancel_requested=True)
         # Signal call only is asserted above; injected status is not native stop/effect authority.
