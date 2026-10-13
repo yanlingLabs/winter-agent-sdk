@@ -91,6 +91,26 @@ test("callback/hook accessors refuse without invocation", () => {
     refusal(() => query({ prompt: "fixture", options: f.options })); expect(reads).toBe(0); f.closed();
   }
 });
+test("prototype-inherited confined posture cannot be masked; inherited accessor is never read", () => {
+  let hooks = 0, callbacks = 0, getters = 0;
+  for (const accessor of [false, true]) {
+    const f = prepared(() => { hooks++; throw new Error("hook tripwire"); }, async () => { callbacks++; return snapshot; });
+    const prototype = accessor ? Object.defineProperty({}, "executionPosture", { get() { getters++; return "confined-guest"; } })
+      : { executionPosture: "confined-guest" };
+    Object.setPrototypeOf(f.options, prototype);
+    refusal(() => query({ prompt: "fixture", options: f.options })); f.closed();
+  }
+  expect(hooks).toBe(0); expect(callbacks).toBe(0); expect(getters).toBe(0);
+});
+test("own local posture wins over inherited confined posture", async () => {
+  let hooks = 0, handle!: ReturnType<typeof virtual>;
+  const f = prepared(opts => { hooks++; consumeGuidedQueryCorrelation(opts.guidedQueryClaim!, opts.args);
+    const config: RuntimeConfig = JSON.parse(opts.args[2]!); expect(config.executionPosture).toBe("local");
+    handle = virtual(async function* () { yield init(config); yield result; }); return handle.proc;
+  });
+  Object.setPrototypeOf(f.options, { executionPosture: "confined-guest" }); f.options.executionPosture = "local";
+  await drain(f.options); f.closed(); handle.finish(); expect(hooks).toBe(1);
+});
 test("captured pair survives hook mutation; foreign callback and fallback hook never run", async () => {
   let callbacks = 0, foreign = 0, spawns = 0, handle!: ReturnType<typeof virtual>;
   const f = prepared(opts => {

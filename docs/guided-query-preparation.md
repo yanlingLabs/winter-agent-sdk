@@ -31,13 +31,17 @@ input and request the existing TERM/KILL grace teardown. No exit promise is
 interpreted as native cleanup success. Mutable Options cannot substitute the
 captured callback/hook or abort controller. The no-opt-in path retains its
 ordinary spawn/frame behavior and performs no preparation-registry lookup.
+An inherited posture is refused without evaluating an inherited getter; an own
+data `executionPosture: "local"` wins over a prototype value. Reflect.has may
+invoke caller Proxy traps: this host-only lifecycle door is not native authority.
 
 Consumed UUIDs remain in a module-local set after close, with a fixed capacity of
 4096. Replay in another preparation refuses. Once capacity is reached, all further
 claims and consumes fail closed and close their preparation; existing entries are unchanged.
 There is no eviction, TTL or reset. **This is not the production daemon lifecycle.**
 A reviewed Root-owned generation/domain expiry protocol is a prerequisite before
-any wiring; these APIs alone are insufficient for long-lived production use.
+guided guest or production daemon activation; these APIs alone are insufficient
+for long-lived production use.
 
 The decoder accepts the SDK's exact three-argument `--run --config-json` envelope,
 with a 64 KiB config bound before JSON parsing. Config must round-trip byte-exactly

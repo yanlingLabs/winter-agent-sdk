@@ -806,6 +806,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     if (!callback || !("value" in callback) || typeof callback.value !== "function"
       || !spawn || !("value" in spawn) || typeof spawn.value !== "function"
       || !required || !("value" in required) || required.value !== true
+      || (posture === undefined && Reflect.has(args.options, "executionPosture"))
       || (posture !== undefined && (!("value" in posture) || (posture.value !== undefined && posture.value !== "local")))) throw new Error("required_context_unavailable");
     const pair = Object.freeze({ onRuntimeContext: callback.value, spawnClaudeCodeProcess: spawn.value });
     const claim = claimGuidedQuery(preparation, pair);
