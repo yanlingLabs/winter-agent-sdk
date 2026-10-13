@@ -101,9 +101,11 @@ Failure evidence is retained; no automatic unmount or ignoring EROFS is availabl
 The source now adds a separate whole **working fixture** removal gate. Only the
 new `/tmp/winter-utility-run-*` directory created by that invocation is removed,
 after confirmed native/service waits, closed fixture control/process pipe FDs
-and unchanged outer mount observations. Plain `shutil.rmtree` must succeed;
-`lstat` must report FileNotFoundError, and a bounded fresh `/proc/self/mountinfo`
-read must contain no mountpoint equal to or beneath that exact directory.
+and unchanged outer mount observations. A bounded decoded `/proc/self/mountinfo`
+scan must contain no mountpoint equal to or beneath that exact directory before
+plain `shutil.rmtree` can start. After deletion, `lstat` must report
+FileNotFoundError and the same scan must pass again. Missing, malformed or failed
+preflight observations retain the tree without starting the removal walker.
 There is no retry, `umount`, permission repair, ignore-errors or EROFS recovery.
 Only then is success printed with `wholeFixtureRemovalConfirmed:true`.
 

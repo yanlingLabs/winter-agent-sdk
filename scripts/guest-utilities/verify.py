@@ -22,7 +22,7 @@ PROCESS_CLASSES={'ModuleNotFoundError','ImportError','AssertionError','SyntaxErr
 PROCESS_CATEGORIES={'module_missing','import_error','assertion_failed','syntax_error','permission_denied','shared_library_load','empty','unknown'}
 ERRNO_TOKENS=('EACCES','EPERM','ENOENT','ENOTDIR','ELOOP','ECONNREFUSED','ECONNRESET','EPIPE','EAGAIN','EMFILE','ENOSPC','EROFS','ENXIO')
 OPERATIONS=('connect','open','spawn','exec','read','write','bind')
-PHASES={'fixture-copy','service-startup','client-ordinary','client-plan','client-ordinary-receipt','client-plan-receipt','source-canaries','native-quiescence','service-close-wait','outer-mount-observation','fixture-fd-close','fixture-removal','fixture-removal-checks','complete'}
+PHASES={'fixture-copy','service-startup','client-ordinary','client-plan','client-ordinary-receipt','client-plan-receipt','source-canaries','native-quiescence','service-close-wait','outer-mount-observation','fixture-fd-close','fixture-removal-preflight','fixture-removal','fixture-removal-checks','complete'}
 
 
 def normalized_stderr(data):
@@ -111,16 +111,7 @@ def outer_mountinfo():
     finally:os.close(fd)
 
 
-def remove_working_fixture(directory,result,observations):
-    directory=Path(directory)
-    if directory.parent!=Path('/tmp') or not re.fullmatch(r'winter-utility-run-[A-Za-z0-9_-]+',directory.name):raise ValueError('fixed working fixture removal scope required')
-    if result.get('passed') is not True or result.get('nativeCleanupConfirmed') is not True or any(observations.get(key) is not True for key in ('serviceReaped','serviceCleanupConfirmed','nativeCleanupConfirmed','fixtureFdsClosedConfirmed')) or type(observations.get('serviceExitCode')) is not int or observations['serviceExitCode']!=0 or result.get('outerMountObservation',{}).get('unchanged') is not True:raise ValueError('complete native/service/fd/outer evidence required before removal')
-    observations['phase']='fixture-removal'
-    shutil.rmtree(directory)
-    observations['phase']='fixture-removal-checks'
-    try:os.lstat(directory)
-    except FileNotFoundError:observations['fixtureRetained']=False
-    else:raise ValueError('working fixture still present after removal')
+def working_fixture_mounts_absent(directory):
     wire=outer_mountinfo();root=os.fsencode(directory)
     if not wire or len(wire)>1024*1024:raise ValueError('working fixture mount observation bound')
     for line in wire.splitlines():
@@ -129,6 +120,21 @@ def remove_working_fixture(directory,result,observations):
         point=re.sub(rb'\\(040|011|012|134)',lambda match:bytes([int(match[1],8)]),fields[4])
         if not point.startswith(b'/'):raise ValueError('working fixture mountpoint malformed')
         if point==root or point.startswith(root+b'/'):raise ValueError('working fixture mount residue')
+
+
+def remove_working_fixture(directory,result,observations):
+    directory=Path(directory)
+    if directory.parent!=Path('/tmp') or not re.fullmatch(r'winter-utility-run-[A-Za-z0-9_-]+',directory.name):raise ValueError('fixed working fixture removal scope required')
+    if result.get('passed') is not True or result.get('nativeCleanupConfirmed') is not True or any(observations.get(key) is not True for key in ('serviceReaped','serviceCleanupConfirmed','nativeCleanupConfirmed','fixtureFdsClosedConfirmed')) or type(observations.get('serviceExitCode')) is not int or observations['serviceExitCode']!=0 or result.get('outerMountObservation',{}).get('unchanged') is not True:raise ValueError('complete native/service/fd/outer evidence required before removal')
+    observations['phase']='fixture-removal-preflight'
+    working_fixture_mounts_absent(directory)
+    observations['phase']='fixture-removal'
+    shutil.rmtree(directory)
+    observations['phase']='fixture-removal-checks'
+    try:os.lstat(directory)
+    except FileNotFoundError:observations['fixtureRetained']=False
+    else:raise ValueError('working fixture still present after removal')
+    working_fixture_mounts_absent(directory)
     observations.update(wholeFixtureRemovalConfirmed=True,phase='complete')
     result.update(fixtureFdsClosedConfirmed=True,wholeFixtureRemovalConfirmed=True,sealedInputStageRemovalConfirmed=False)
 
@@ -322,7 +328,7 @@ def main():
         result=execute(directory,parent,oracle,observations)
         remove_working_fixture(directory,result,observations)
     except BaseException as error:
-        if observations.get('phase') in ('fixture-removal','fixture-removal-checks'):
+        if observations.get('phase') in ('fixture-removal-preflight','fixture-removal','fixture-removal-checks'):
             try:os.lstat(directory)
             except FileNotFoundError:observations['fixtureRetained']=False
             except OSError:observations['fixtureRetained']=None

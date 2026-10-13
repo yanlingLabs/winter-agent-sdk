@@ -51,7 +51,7 @@ class WorkingFixtureRemovalTests(unittest.TestCase):
     def test_plain_removal_then_missing_lstat_then_mount_check_precede_success(self):
         sibling=BASE+b'2 1 0:2 / /tmp/winter-utility-run-removal-test-other/sub ro - tmpfs tmpfs ro\n'
         events,result,observations=self.remove(sibling)
-        self.assertEqual(events,['rmtree','lstat','mountinfo'])
+        self.assertEqual(events,['mountinfo','rmtree','lstat','mountinfo'])
         self.assertTrue(result['wholeFixtureRemovalConfirmed']);self.assertFalse(result['sealedInputStageRemovalConfirmed'])
         self.assertFalse(observations['fixtureRetained']);self.assertEqual(observations['phase'],'complete')
 
@@ -75,9 +75,9 @@ class WorkingFixtureRemovalTests(unittest.TestCase):
 
     def test_erofs_is_propagated_without_retry_or_mount_recovery(self):
         error=OSError(errno.EROFS,'synthetic read-only failure');observations=proof()
-        with patch.object(v.shutil,'rmtree',side_effect=error) as remove,patch.object(v.os,'lstat') as check,patch.object(v,'outer_mountinfo') as mounts:
+        with patch.object(v.shutil,'rmtree',side_effect=error) as remove,patch.object(v.os,'lstat') as check,patch.object(v,'outer_mountinfo',return_value=BASE) as mounts:
             with self.assertRaises(OSError) as caught:v.remove_working_fixture(DIRECTORY,{'passed':True,'nativeCleanupConfirmed':True,'outerMountObservation':{'unchanged':True}},observations)
-        self.assertIs(caught.exception,error);remove.assert_called_once_with(DIRECTORY);check.assert_not_called();mounts.assert_not_called()
+        self.assertIs(caught.exception,error);remove.assert_called_once_with(DIRECTORY);check.assert_not_called();mounts.assert_called_once_with()
         self.assertTrue(observations['nativeCleanupConfirmed']);self.assertFalse(observations['wholeFixtureRemovalConfirmed'])
         self.assertEqual(observations['phase'],'fixture-removal')
 
@@ -90,7 +90,23 @@ class WorkingFixtureRemovalTests(unittest.TestCase):
         with patch.object(v.shutil,'rmtree'),patch.object(v.os,'lstat',side_effect=FileNotFoundError),patch.object(v,'outer_mountinfo',side_effect=OSError('reader failure')):
             with self.assertRaises(OSError):v.remove_working_fixture(DIRECTORY,{'passed':True,'nativeCleanupConfirmed':True,'outerMountObservation':{'unchanged':True}},proof())
 
-    def main(self,remove_error=None,mount_error=None,execute_error=None):
+    def test_bad_or_missing_preflight_mount_evidence_never_starts_the_walker(self):
+        residue=BASE+b'2 1 0:2 / '+os.fsencode(DIRECTORY)+b'/unexpected-rw-bind rw - tmpfs tmpfs rw\n'
+        for wire in (residue,b'',b'malformed\n'):
+            observations=proof()
+            with self.subTest(wire=wire),patch.object(v.shutil,'rmtree') as remove,patch.object(v.os,'lstat') as check,patch.object(v,'outer_mountinfo',return_value=wire):
+                with self.assertRaises(ValueError):v.remove_working_fixture(DIRECTORY,{'passed':True,'nativeCleanupConfirmed':True,'outerMountObservation':{'unchanged':True}},observations)
+                remove.assert_not_called();check.assert_not_called()
+            self.assertEqual(observations['phase'],'fixture-removal-preflight');self.assertTrue(observations['nativeCleanupConfirmed']);self.assertFalse(observations['wholeFixtureRemovalConfirmed'])
+
+    def test_post_removal_scan_still_refuses_residue_after_clean_preflight(self):
+        residue=BASE+b'2 1 0:2 / '+os.fsencode(DIRECTORY)+b'/late-residue ro - tmpfs tmpfs ro\n';observations=proof()
+        with patch.object(v.shutil,'rmtree') as remove,patch.object(v.os,'lstat',side_effect=FileNotFoundError),patch.object(v,'outer_mountinfo',side_effect=[BASE,residue]) as mounts:
+            with self.assertRaisesRegex(ValueError,'mount residue'):v.remove_working_fixture(DIRECTORY,{'passed':True,'nativeCleanupConfirmed':True,'outerMountObservation':{'unchanged':True}},observations)
+            remove.assert_called_once_with(DIRECTORY);self.assertEqual(mounts.call_count,2)
+        self.assertFalse(observations['fixtureRetained']);self.assertFalse(observations['wholeFixtureRemovalConfirmed']);self.assertTrue(observations['nativeCleanupConfirmed'])
+
+    def main(self,remove_error=None,mount_error=None,execute_error=None,preflight_error=None):
         events=[];writes=[];prints=[];removed=[False]
         def write(path,wire,mode):
             writes.append((path,json.loads(wire),mode));events.append('diagnostic-write')
@@ -112,7 +128,8 @@ class WorkingFixtureRemovalTests(unittest.TestCase):
             return SimpleNamespace()
         def mounts():
             events.append('mountinfo')
-            if mount_error:raise mount_error
+            if not removed[0] and preflight_error:raise preflight_error
+            if removed[0] and mount_error:raise mount_error
             return BASE
         def printed(value,**kwargs):prints.append((json.loads(value),kwargs));events.append('print')
         with patch.object(v,'ADMISSION',admission),patch.object(v,'checked_module',lambda name:modules[name]),patch.object(v.tempfile,'mkdtemp',lambda **kwargs:str(DIRECTORY)),patch.object(v,'execute',execute),patch.object(v.shutil,'rmtree',remove),patch.object(v.os,'lstat',lstat),patch.object(v,'outer_mountinfo',mounts),patch('builtins.print',printed):
@@ -122,7 +139,7 @@ class WorkingFixtureRemovalTests(unittest.TestCase):
 
     def test_main_prints_success_only_after_complete_removal_and_never_writes_a_premature_pass(self):
         events,writes,prints,error=self.main()
-        self.assertIsNone(error);self.assertEqual(events,['execute-confirmed','rmtree','lstat','mountinfo','print'])
+        self.assertIsNone(error);self.assertEqual(events,['execute-confirmed','mountinfo','rmtree','lstat','mountinfo','print'])
         self.assertEqual(writes,[]);self.assertEqual(len(prints),1);result=prints[0][0]
         self.assertTrue(result['passed']);self.assertTrue(result['wholeFixtureRemovalConfirmed']);self.assertFalse(result['sealedInputStageRemovalConfirmed'])
 
@@ -133,6 +150,11 @@ class WorkingFixtureRemovalTests(unittest.TestCase):
         self.assertFalse(record['passed']);self.assertTrue(record['fixtureRetained']);self.assertTrue(record['nativeCleanupConfirmed']);self.assertFalse(record['wholeFixtureRemovalConfirmed'])
         self.assertFalse(any(record.get('passed') is True for record,_ in prints))
         self.assertNotIn('private source path',json.dumps(record))
+
+    def test_main_preflight_reader_failure_retains_tree_and_native_proof(self):
+        failure=OSError('preflight reader failed');events,writes,prints,error=self.main(preflight_error=failure)
+        self.assertIs(error,failure);self.assertNotIn('rmtree',events)
+        record=writes[0][1];self.assertEqual(record['phase'],'fixture-removal-preflight');self.assertTrue(record['fixtureRetained']);self.assertTrue(record['nativeCleanupConfirmed']);self.assertFalse(record['wholeFixtureRemovalConfirmed']);self.assertFalse(record['passed'])
 
     def test_mount_read_failure_after_deletion_retains_exclusive_bounded_external_diagnostic(self):
         failure=OSError('mount reader failed');events,writes,prints,error=self.main(mount_error=failure)
