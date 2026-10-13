@@ -10,6 +10,21 @@ const hash = (value: string) => createHash("sha256").update(value).digest("hex")
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 const descendantCommand = (scenario: "foreground" | "cancel") => `python3 -c ${quote(descendant)} ${scenario}`;
 const check = (value: unknown, message: string): void => { if (!value) throw new Error(message); };
+function processFailureObservation(result: { exitCode: number; termination: string; stdout: string; stderr: string }, invocation: number) {
+  const stderr = result.stderr.slice(0, 16384), stdout = result.stdout.slice(0, 65536);
+  const knownMarkers = ["tool-device-stdin-fds-ok", "tool-device-inventory-ok", "tool-device-boundaries-ok", "tool-entropy-multiprocessing-ok", "tool-device-smoke-ok"];
+  const lines = new Set(stdout.split("\n"));
+  const classes = ["ModuleNotFoundError", "ImportError", "AssertionError", "SyntaxError", "PermissionError"];
+  const stderrClass = classes.find(value => new RegExp(`\\b${value}\\s*:`).test(stderr)) ?? "unrecognized";
+  const stderrCategory = stderrClass === "ModuleNotFoundError" ? "module_missing" : stderrClass === "ImportError" ? "import_error" : stderrClass === "AssertionError" ? "assertion_failed" : stderrClass === "SyntaxError" ? "syntax_error" : stderrClass === "PermissionError" ? "permission_denied" : stderr.includes("error while loading shared libraries:") ? "shared_library_load" : stderr ? "unknown" : "empty";
+  const traceback: { source: "stdin" | "string"; line: number }[] = [];
+  for (const match of stderr.matchAll(/^\s*File "<(stdin|string)>", line (\d{1,5})(?:,|$)/gm)) {
+    const line = Number(match[2]);
+    if (Number.isSafeInteger(line) && line >= 1 && line <= 10000) traceback.push({ source: match[1] as "stdin" | "string", line });
+    if (traceback.length === 8) break;
+  }
+  return { kind: "winter-tool-utility-client-failure", version: 1, phase: "smoke", scenario: "ordinary", invocation, process: { exitCode: result.exitCode, termination: result.termination, stdoutMarkers: knownMarkers.filter(value => lines.has(value)), stderrClass, stderrCategory, traceback } };
+}
 if (process.platform !== "linux" || process.argv.length !== 4 || !["ordinary", "plan"].includes(process.argv[3]!)) throw new Error("fixed Linux utility client required");
 const plan = process.argv[3] === "plan", uid = plan ? 20002 : 20001, toolUid = plan ? 10002 : 10001;
 check(process.getuid?.() === uid, "fixed runtime UID required");
@@ -27,7 +42,9 @@ if (plan) {
   const results = [];
   for (let invocation = 0; invocation < 2; invocation++) {
     const result = await execute(smoke);
-    check(result.exitCode === 0 && result.termination === "exit" && result.stdout === marker && result.stderr === "", "exact utility smoke result required");
+    const valid = result.exitCode === 0 && result.termination === "exit" && result.stdout === marker && result.stderr === "";
+    if (!valid) console.log(JSON.stringify(processFailureObservation(result, invocation)));
+    check(valid, "exact utility smoke result required");
     results.push(result);
   }
   for (const path of ["/run/winter", "/workspace/.winter/conversations", "/protected/runtime"]) {

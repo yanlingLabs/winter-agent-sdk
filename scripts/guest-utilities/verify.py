@@ -7,9 +7,73 @@ def admitted():
     if __file__!=value.directory+'/source/scripts/guest-utilities/verify.py':raise SystemExit('fixed sealed utility runner required')
     return value
 ADMISSION=admitted()
-import hashlib,json,socket,stat,struct,subprocess,tempfile,threading,time
+import hashlib,json,re,socket,stat,struct,subprocess,tempfile,threading,time
 from pathlib import Path
 HERE=Path(__file__).resolve().parent
+
+STDOUT_LIMIT=65536
+STDERR_LIMIT=16384
+TEXT_LIMIT=4096
+ERROR_CLASSES={'Error','AssertionError','ValueError','TypeError','ModuleNotFoundError','ImportError','OSError','TimeoutExpired','SyntaxError','ReferenceError','RuntimeError','SystemExit'}
+CLIENT_MESSAGES=('fixed Linux utility client required','fixed runtime UID required','fixed fixture endpoint required','exact utility smoke result required','file helper trusted path refusal required','file helper source symlink refusal required','readonly source must remain readonly','plan source must remain readonly','foreground descendant receipt required','cancel positive control required','cancellation must retain effect uncertainty','guest process denied','guest process response lost','malformed process receipt','invalid process receipt','invalid process outcome','invalid process stream','unbounded process response')
+FAILURE_CODES={'authority_denied','invalid_request','compartment_required','root_unavailable','cwd_denied','invalid_payload','payload_limit','resource_unavailable','pipe_failed','fork_failed','fd_cleanup_unavailable','invalid_response','binding_mismatch','transport_lost','worker_failed'}
+SMOKE_MARKERS=('tool-device-stdin-fds-ok','tool-device-inventory-ok','tool-device-boundaries-ok','tool-entropy-multiprocessing-ok','tool-device-smoke-ok')
+PROCESS_CLASSES={'ModuleNotFoundError','ImportError','AssertionError','SyntaxError','PermissionError','unrecognized'}
+PROCESS_CATEGORIES={'module_missing','import_error','assertion_failed','syntax_error','permission_denied','shared_library_load','empty','unknown'}
+
+
+def normalized_stderr(data):
+    # Retain only fixed source messages and known exception classes. Arbitrary
+    # strings, stack/source frames, paths, credentials and authority never persist.
+    text=data[:STDERR_LIMIT].decode('utf-8',errors='replace');lines=[]
+    for line in text.splitlines():
+        if re.match(r'^\s*\d+\s*\|',line):continue
+        classes=[name for name in ERROR_CLASSES if re.search(r'\b'+name+r'\s*:',line)]
+        messages=[message for message in CLIENT_MESSAGES if message in line]
+        if classes or messages:
+            value=(sorted(classes)[0] if classes else 'diagnostic')+': '+(messages[0] if messages else '[message redacted]')
+            if value not in lines:lines.append(value)
+    if not lines and text:lines=['[stderr details redacted]']
+    return '\n'.join(lines).encode()[:TEXT_LIMIT].decode('utf-8',errors='ignore')
+
+
+def stdout_observation(data):
+    if not isinstance(data,bytes):return {'classification':'unavailable','capturedBytes':0,'captureLimit':STDOUT_LIMIT,'truncated':False}
+    record={'capturedBytes':min(len(data),STDOUT_LIMIT),'captureLimit':STDOUT_LIMIT,'truncated':len(data)>STDOUT_LIMIT}
+    if record['truncated']:return {**record,'classification':'over_limit'}
+    if not data:return {**record,'classification':'empty'}
+    def unique(pairs):
+        result={}
+        for key,value in pairs:
+            if key in result:raise ValueError('duplicate diagnostic JSON field')
+            result[key]=value
+        return result
+    try:value=json.loads(data,object_pairs_hook=unique)
+    except (ValueError,UnicodeError,RecursionError):return {**record,'classification':'invalid_json'}
+    if type(value) is not dict:return {**record,'classification':'json_non_object'}
+    if value.get('kind')=='winter-tool-utility-client-failure':
+        process=value.get('process')
+        keys={'kind','version','phase','scenario','invocation','process'}
+        fields={'exitCode','termination','stdoutMarkers','stderrClass','stderrCategory','traceback'}
+        if set(value)!=keys or type(value.get('version')) is not int or value['version']!=1 or value.get('phase')!='smoke' or value.get('scenario')!='ordinary' or type(value.get('invocation')) is not int or value['invocation'] not in (0,1) or type(process) is not dict or set(process)!=fields:return {**record,'classification':'invalid_failure_observation'}
+        markers=process['stdoutMarkers']
+        if type(process['exitCode']) is not int or not 0<=process['exitCode']<=255 or type(process['termination']) is not str or process['termination'] not in ('exit','timeout','output_limit') or type(markers) is not list or len(markers)>len(SMOKE_MARKERS) or any(type(marker) is not str or marker not in SMOKE_MARKERS for marker in markers) or len(set(markers))!=len(markers) or type(process['stderrClass']) is not str or process['stderrClass'] not in PROCESS_CLASSES or type(process['stderrCategory']) is not str or process['stderrCategory'] not in PROCESS_CATEGORIES:return {**record,'classification':'invalid_failure_observation'}
+        trace=process['traceback']
+        if type(trace) is not list or len(trace)>8 or any(type(frame) is not dict or set(frame)!={'source','line'} or type(frame['source']) is not str or frame['source'] not in ('stdin','string') or type(frame['line']) is not int or not 1<=frame['line']<=10000 for frame in trace):return {**record,'classification':'invalid_failure_observation'}
+        return {**record,'classification':'utility_process_failure','phase':'smoke','invocation':value['invocation'],'process':{key:process[key] for key in fields}}
+    if value.get('passed') is False or value.get('ok') is False:
+        failure=value.get('failure');code=failure.get('code') if type(failure) is dict else value.get('code')
+        return {**record,'classification':'json_failure','failureCode':code if isinstance(code,str) and code in FAILURE_CODES else 'unrecognized'}
+    return {**record,'classification':'utility_client_receipt' if value.get('kind')=='winter-tool-utility-client' else 'json_object'}
+
+
+def client_observation(scenario,exit_code,out,err):
+    stderr=err if isinstance(err,bytes) else b''
+    return {'scenario':scenario,'exitCode':exit_code if type(exit_code) is int and -2147483648<=exit_code<=2147483647 else None,'stdout':stdout_observation(out),'stderr':{'capturedBytes':min(len(stderr),STDERR_LIMIT),'captureLimit':STDERR_LIMIT,'truncated':len(stderr)>STDERR_LIMIT,'normalizedText':normalized_stderr(stderr),'textLimit':TEXT_LIMIT}}
+
+
+def failure_record(error,observations):
+    return {'kind':'winter-utility-failure','class':type(error).__name__ if type(error).__name__ in ERROR_CLASSES else 'Exception','phase':observations.get('phase','fixture-copy'),'clients':observations.get('clients',[]),'serviceReaped':observations.get('serviceReaped') is True,'serviceExitCode':observations.get('serviceExitCode'),'serviceCleanupConfirmed':observations.get('serviceCleanupConfirmed') is True,'nativeCleanupConfirmed':observations.get('nativeCleanupConfirmed') is True,'fixtureRetained':True,'generalToolAvailabilityEnabled':False}
 
 
 def outer_mountinfo():
@@ -102,7 +166,9 @@ def environment_mode(guest,item):
     return 0o555 if item['executable'] else 0o444
 
 
-def execute(directory,parent,oracle):
+def execute(directory,parent,oracle,observations=None):
+    if observations is None:observations={}
+    observations.update(phase='fixture-copy',clients=[],serviceReaped=False,serviceExitCode=None,serviceCleanupConfirmed=False,nativeCleanupConfirmed=False)
     receipt=ADMISSION.receipt;directory=Path(directory);directory.chmod(0o711);binary=directory/'bin';binary.mkdir(mode=0o755);environment=directory/'environment';environment.mkdir(mode=0o755);control=directory/'control';control.mkdir(mode=0o711)
     def copy(relative,target,mode):
         fd=parent.leaf(ADMISSION.root_fd,relative)
@@ -125,6 +191,7 @@ def execute(directory,parent,oracle):
     config={'protectedStoreDirectories':[str(store)],'guestBootId':Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'artifacts':{key:{'path':str(binary/name),'sha256':receipt['files']['artifacts/'+name]['sha256']} for key,name in [('launcher','toolLauncher'),('fileWorker','fileWorker'),('processWorker','processWorker')]},'environment':str(environment),'controlDirectory':str(control),'conversations':conversations}
     parent.write_file(directory/'bootstrap.json',parent.canonical(config).encode(),0o400);fd=os.open(directory/'bootstrap.json',os.O_RDONLY|os.O_CLOEXEC);server=None;clients=[];complete=False;outer=OuterMountGuard();outer_result=None
     try:
+        observations['phase']='service-startup'
         server=subprocess.Popen(['/usr/bin/python3','-I','-S','-B',str(binary/'linux-supervisor.py'),'--trusted-config-fd',str(fd)],pass_fds=(fd,),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=parent.ENV,bufsize=0);os.close(fd);fd=None
         outer.sample()
         deadline=time.monotonic()+3
@@ -133,21 +200,32 @@ def execute(directory,parent,oracle):
             time.sleep(.02)
         records=[]
         for scenario,uid,sid in [('ordinary',20001,'conversation-utility'),('plan',20002,'conversation-plan')]:
+            observations['phase']='client-'+scenario
             def identity():os.setgroups([]);os.setgid(uid);os.setuid(uid)
             child=subprocess.Popen([str(binary/'utilityClient'),str(control/sid/'tools.sock'),scenario],preexec_fn=identity,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,close_fds=True,env={'PATH':'/usr/bin:/bin','LANG':'C','LC_ALL':'C','HOME':'/nonexistent'},start_new_session=True);clients.append(child)
-            out,err=child.communicate(timeout=75)
+            try:out,err=child.communicate(timeout=75)
+            except subprocess.TimeoutExpired as error:
+                observations['clients'].append(client_observation(scenario,child.returncode,error.output,error.stderr));raise
+            observations['clients'].append(client_observation(scenario,child.returncode,out,err))
             if child.returncode!=0 or err or len(out)>65536:raise ValueError('utility runtime-UID client failed/bounded output')
+            observations['phase']='client-'+scenario+'-receipt'
             record=parent.json_wire(out);client_oracle(record,oracle,receipt['smokeSha256'],scenario);records.append(record);quiescent(control,sid)
+        observations['phase']='source-canaries'
         # Quiescence is backed by the existing supervisor's immutable wait receipt;
         # source canaries are an additional descendant check, never its substitute.
         time.sleep(1.1)
         if any((source/name).read_text()!='ready-after-setsid' for name in ('descendant-ready','cancel-ready')) or (source/'writable-control').read_text()!='writable-source-positive' or any((source/name).exists() for name in ('descendant-orphan','cancel-orphan','plan-write')) or (readonly/'write').exists():raise ValueError('descendant/source positive-control fence')
+        observations['phase']='native-quiescence'
         quiescent(control,'conversation-utility');quiescent(control,'conversation-plan')
         parent.write_file(directory/'client-records.json',parent.canonical(records).encode(),0o600)
         outer.sample()
+        observations['phase']='service-close-wait'
         server.stdin.close();server.stdin=None;out,err=server.communicate(timeout=5)
+        observations.update(serviceReaped=True,serviceExitCode=server.returncode)
         if server.returncode!=0 or err or out!=b'{"fullGuestExecutionEnabled":false,"ready":true}\n':raise ValueError('root service wait/close confirmation required')
+        observations.update(serviceCleanupConfirmed=True,nativeCleanupConfirmed=True,phase='outer-mount-observation')
         outer_result=outer.finish()
+        observations['phase']='complete'
         complete=True
         return {'kind':'winter-tool-utility-native-fixture','passed':True,'directToolViewExecutionVerified':True,'firstSDKEngineExecutionVerified':False,'linuxExecutionVerified':True,'vmExecutionVerified':False,'generalToolAvailabilityEnabled':False,'nativeCleanupConfirmed':True,'clientRecordsSha256':parent.sha(parent.canonical(records).encode()),'approvedReceiptSha256':ADMISSION.receipt_sha,'smokeSha256':receipt['smokeSha256'],'freshInvocations':2,'outerMountObservation':outer_result}
     finally:
@@ -160,8 +238,12 @@ def execute(directory,parent,oracle):
                 except subprocess.TimeoutExpired:pass
             if server is not None:
                 if server.stdin is not None and not server.stdin.closed:server.stdin.close()
-                try:server.wait(timeout=5)
-                except subprocess.TimeoutExpired:server.kill();server.wait(timeout=2)
+                try:
+                    server.wait(timeout=5)
+                    observations.update(serviceReaped=True,serviceExitCode=server.returncode)
+                except subprocess.TimeoutExpired:
+                    server.kill();server.wait(timeout=2)
+                    observations.update(serviceReaped=True,serviceExitCode=server.returncode,serviceCleanupConfirmed=False)
             outer.finish()
 
 
@@ -169,11 +251,15 @@ def main():
     parent=checked_module('stage');parent.verify_staged(ADMISSION.directory,ADMISSION.receipt_sha,ADMISSION.parent_sha)
     capture=checked_module('closure');capture.validate_capture(ADMISSION.receipt['utilityCapture'],Path(ADMISSION.directory)/'environment',sealed=True)
     oracle=checked_module('oracle');directory=Path(tempfile.mkdtemp(prefix='winter-utility-run-',dir='/tmp'))
+    observations={'phase':'fixture-copy'}
     try:
-        result=execute(directory,parent,oracle)
+        result=execute(directory,parent,oracle,observations)
     except BaseException as error:
-        parent.write_file(directory/'failure.json',parent.canonical({'kind':'winter-utility-failure','class':type(error).__name__,'nativeCleanupConfirmed':False,'generalToolAvailabilityEnabled':False}).encode(),0o600)
-        print(parent.canonical({'fixtureRetained':True,'retentionId':directory.name,'nativeCleanupConfirmed':False}),file=sys.stderr);raise
+        diagnostic=failure_record(error,observations);wire=parent.canonical(diagnostic).encode()
+        if len(wire)>32768:raise ValueError('bounded utility failure diagnostic required') from error
+        parent.write_file(directory/'failure.json',wire,0o600)
+        print(parent.canonical(diagnostic),file=sys.stderr)
+        print(parent.canonical({'fixtureRetained':True,'retentionId':directory.name,'nativeCleanupConfirmed':diagnostic['nativeCleanupConfirmed']}),file=sys.stderr);raise
     else:
         parent.write_file(directory/'result.json',parent.canonical(result).encode(),0o600)
         print(parent.canonical(result))
