@@ -1,7 +1,7 @@
 /** Reusable admitted entry. No argv/env/options/config authority enters this API. */
 import { decodeFrame } from "@yanlinglabs/winter-agent-sdk";
 import { runEmbeddedSession } from "../embedded.ts";
-import { linuxSessionBindings, linuxSessionConfig, linuxSessionProfile, closeLinuxSession, type LinuxSessionAdmission } from "./linux-session-admission.ts";
+import { linuxSessionBindings, linuxSessionConfig, closeLinuxSession, type LinuxSessionAdmission } from "./linux-session-admission.ts";
 import { LINUX_SESSION_CHUNK_BYTES, LINUX_SESSION_FRAME_BYTES } from "./linux-host-query-profile.ts";
 import type { ProtectedStoreOwnershipOutcome } from "./store-bootstrap.ts";
 
@@ -16,7 +16,7 @@ export interface AdmittedLinuxSessionOptions {
   onProtectedStoreOwnershipOutcome(outcome: Readonly<ProtectedStoreOwnershipOutcome>): void;
 }
 /** Bounded pull-based framing, without a second parser/agent loop. Errors cancel the admitted run. */
-export async function* boundedLinuxSessionInput(input: AsyncIterable<string>, cancel: () => void, cancelOnEOF = true): AsyncGenerator<string> {
+export async function* boundedLinuxSessionInput(input: AsyncIterable<string>, cancel: () => void): AsyncGenerator<string> {
   let complete = false;
   let carry = "";
   try {
@@ -34,8 +34,9 @@ export async function* boundedLinuxSessionInput(input: AsyncIterable<string>, ca
     if (carry.length !== 0) throw new Error("Linux session input truncated frame");
     complete = true;
   } finally {
-    // Actual transport EOF/error/consumer cancellation differs from logical end_input.
-    if (!complete || cancelOnEOF) cancel();
+    // Clean EOF lets the engine finish queued work and deny unanswerable approvals.
+    // Malformed input, transport errors or abandoned consumption still hard-stop.
+    if (!complete) cancel();
   }
 }
 /** Transport framing only; does not grant a session or tool capability. */
@@ -57,7 +58,7 @@ export async function runAdmittedLinuxSession(options: AdmittedLinuxSessionOptio
   const signals: AbortSignal[] = [];
   try {
     // Reject forged/closed admissions before reading transport, touching callbacks or acquiring stores.
-    const config = linuxSessionConfig(options.admission), binding = linuxSessionBindings(options.admission), profile = linuxSessionProfile(options.admission);
+    const config = linuxSessionConfig(options.admission), binding = linuxSessionBindings(options.admission);
     if (typeof options.write !== "function" || typeof options.writeErr !== "function" || typeof options.onProtectedStoreOwnershipOutcome !== "function") throw new Error("Linux session transport/lifecycle observer unavailable");
     for (const signal of [binding.signal, options.signal]) {
       if (signal === undefined) continue;
@@ -67,7 +68,7 @@ export async function runAdmittedLinuxSession(options: AdmittedLinuxSessionOptio
     return await runEmbeddedSession({
       argv: ["--run", "--config-json", JSON.stringify(config)], env: {},
       linuxSessionAdmission: options.admission, protectedStoreBootstrap: binding.store,
-      input: boundedLinuxSessionInput(options.input, cancel, profile !== "fresh"), signal: controller.signal,
+      input: boundedLinuxSessionInput(options.input, cancel), signal: controller.signal,
       write: boundedLinuxSessionOutput(options.write, cancel), writeErr: boundedLinuxSessionOutput(options.writeErr, cancel),
       onProtectedStoreOwnershipOutcome: options.onProtectedStoreOwnershipOutcome,
     });
