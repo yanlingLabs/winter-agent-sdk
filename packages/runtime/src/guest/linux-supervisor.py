@@ -300,6 +300,11 @@ class RuntimeDuplexRelay:
         self.buffers[name].extend(data)
         return (name,data) if name!='input' else None
 
+def native_mount_policy(policy):
+    # Native launchers select the mount view, not the SDK approval mode.
+    # The Root-admitted full policy remains unchanged in item/bootstrap/config.
+    return 'plan' if policy=='plan' else 'auto'
+
 def runtime_root_metadata(root,policy,host_query=False):
     # Effective descriptor metadata MUST match the plan mount override and tool request comparison.
     return {'id':root['id'],'guestPath':root['guestPath'],'readOnly':root['readOnly'] or (host_query and policy=='plan')}
@@ -522,7 +527,7 @@ class ToolService:
         view=tempfile.mkdtemp(prefix='view-',dir=self.directory);control,parent=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET);child=None;pidfd=None;cleanup=False
         try:
             worker=self.artifacts['processWorker' if kind=='process' else 'fileWorker']
-            arguments=[str(self.artifacts['launcher']),str(worker),view,str(parent.fileno()),str(self.environment),str(item['toolUid']),str(item['workspaceGid']),'plan' if item['policy']=='plan' else 'auto',kind,operation,root['root']['guestPath'],relative,str(limit),extra,str(len(item['roots']))]
+            arguments=[str(self.artifacts['launcher']),str(worker),view,str(parent.fileno()),str(self.environment),str(item['toolUid']),str(item['workspaceGid']),native_mount_policy(item['policy']),kind,operation,root['root']['guestPath'],relative,str(limit),extra,str(len(item['roots']))]
             descriptors=[self.artifacts['launcher'],worker,parent.fileno(),self.environment]
             for binding in item['roots'].values():arguments.extend((str(binding['fd']),binding['root']['guestPath'],'1' if binding['root']['readOnly'] else '0'));descriptors.append(binding['fd'])
             child=subprocess.Popen(arguments,executable=f"/proc/self/fd/{self.artifacts['launcher']}",stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=descriptors,close_fds=True,env={'LANG':'C','LC_ALL':'C'},start_new_session=True,bufsize=0)
@@ -665,7 +670,7 @@ class ToolService:
             view=tempfile.mkdtemp(prefix='runtime-view-',dir=self.directory);control,parent=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET);bootstrap,guest=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET)
             control_directory=os.open(self.directory/sid,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
             try:
-                args=[str(self.runtime_artifacts['launcher']),str(self.runtime_artifacts['executable']),view,str(parent.fileno()),str(self.environment),str(item['runtimeUid']),str(item['workspaceGid']),str(guest.fileno()),str(self.runtime_artifacts['ownerLibrary']),str(runtime['fds']['storeDirectory']),str(runtime['fds']['runhomeDirectory']),str(control_directory),sid,item['policy'],str(len(item['roots']))]
+                args=[str(self.runtime_artifacts['launcher']),str(self.runtime_artifacts['executable']),view,str(parent.fileno()),str(self.environment),str(item['runtimeUid']),str(item['workspaceGid']),str(guest.fileno()),str(self.runtime_artifacts['ownerLibrary']),str(runtime['fds']['storeDirectory']),str(runtime['fds']['runhomeDirectory']),str(control_directory),sid,native_mount_policy(item['policy']),str(len(item['roots']))]
                 fds=[*self.runtime_artifacts.values(),parent.fileno(),self.environment,guest.fileno(),*runtime['fds'].values(),control_directory]
                 for binding in item['roots'].values():args.extend((str(binding['fd']),binding['root']['guestPath'],'1' if binding['root']['readOnly'] else '0'));fds.append(binding['fd'])
                 if port is not None:port.verify()
