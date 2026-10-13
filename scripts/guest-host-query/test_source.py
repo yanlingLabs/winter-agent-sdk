@@ -71,24 +71,24 @@ class SourceTests(unittest.TestCase):
   metadata=json.dumps({'provider':{'scope':scope}},sort_keys=True,separators=(',',':'))
   observed=json.dumps(json.loads(metadata)['provider']['scope'],separators=(',',':'))
   self.assertEqual(observed,json.dumps(scope,sort_keys=True,separators=(',',':')))
-  self.assertIn("'provider':route},sort_keys=True,separators=(',',':')",(HERE/'verify.py').read_text())
- def test_no_privileged_import_before_admission_and_no_utility_device_claim(self):
+  self.assertIn("'probePaths':probe_paths,'runtimeUid':RUNTIME_UID,'provider':route},sort_keys=True,separators=(',',':')",(HERE/'verify.py').read_text())
+ def test_no_privileged_import_before_admission_and_phase_a_is_separate_from_utilities(self):
   text=(HERE/'verify.py').read_text();self.assertLess(text.index('require_staged_imports()\n'),text.index("build=load("))
-  shell=(HERE/'cases.ts').read_text();self.assertIn('test ! -e /proc',shell);self.assertIn('test ! -e /dev',shell);self.assertNotIn('test -c /dev/null',shell)
+  shell=(HERE/'cases.ts').read_text();self.assertIn('done < /proc/self/mountinfo',shell);self.assertIn('test -c \"$phase_device\"',shell);self.assertNotIn('python3',shell);self.assertNotIn('cgroup',shell)
   client=(HERE/'host-client.ts').read_text();self.assertIn('const lifecycle = await process.exited',client);self.assertIn('writePipe(cancelFd, "K")',client);self.assertNotIn('Promise.resolve({ code: 0',client)
 
 class TranscriptTests(unittest.TestCase):
  def setUp(self):
   import hashlib
   self.temp=tempfile.TemporaryDirectory();self.store=Path(self.temp.name);self.kind='ask-allow';self.identity=verify.backend(self.kind)
-  self.script=[{'name':'Read','input':{'file_path':'seed'}},{'name':'Write','input':{'file_path':'approved-write','content':'approved\n'}},{'name':'Bash','input':{'command':'fixed immutable command','timeout':5000}}]
+  self.script=[{'name':'Read','input':{'file_path':'seed'}},{'name':'Write','input':{'file_path':'approved-write','content':'approved\n'}},{'name':'Bash','input':{'command':'fixed immutable command','timeout':5000}},{'name':'Bash','input':{'command':'fixed proc write command','timeout':5000}}]
   self.host={'scriptSha256':hashlib.sha256(json.dumps(self.script,separators=(',',':')).encode()).hexdigest()}
   self.records=[];self.states=[]
   for index,call in enumerate(self.script):
    anchor='assistant-'+str(index)
-   self.records.extend([{'sessionId':self.identity,'type':'assistant','uuid':anchor,'message':{'content':[{'type':'tool_use','id':'call-'+str(index),**call}]}},{'sessionId':self.identity,'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'call-'+str(index),'is_error':False,'content':'hello\n' if index==0 else 'host-query-boundary-ok' if index==2 else 'fixture'}]}}])
+   self.records.extend([{'sessionId':self.identity,'type':'assistant','uuid':anchor,'message':{'content':[{'type':'tool_use','id':'call-'+str(index),**call}]}},{'sessionId':self.identity,'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'call-'+str(index),'is_error':False,'content':'hello\n' if index==0 else 'host-query-view-counts:2:5:3:10:1:1:1:5\nhost-query-boundary-ok\n[Exit code: 0; cwd changes apply to this command only]' if index==2 else 'host-query-proc-device-ok\n[stderr]\n/bin/bash: line 5: printf: write error: No space left on device\n/bin/bash: line 8: /proc/self/comm: Read-only file system\n\n[Exit code: 0; cwd changes apply to this command only]' if index==3 else 'fixture'}]}}])
    self.states.append(self.native(index,anchor))
-  self.records.append({'sessionId':self.identity,'type':'assistant','uuid':'assistant-3','message':{'content':[{'type':'text','text':'host-query-ask-allow-complete'}]}});self.states.append(self.native(3,'assistant-3'))
+  self.records.append({'sessionId':self.identity,'type':'assistant','uuid':'assistant-4','message':{'content':[{'type':'text','text':'host-query-ask-allow-complete'}]}});self.states.append(self.native(4,'assistant-4'))
  def native(self,index,anchor):
   return {'type':'winter_provider_state','sessionId':self.identity,'anchorUuid':anchor,'provider':'openai','model':'openai/gpt-5.6','family':'openai','continuationDomain':'openai/gpt-5.6','itemIndex':1,'kind':'native-state','payload':{'items':[{'type':'reasoning','id':'reasoning-'+str(index),'encrypted_content':'fixture-native-state'}]},'uuid':'native-'+str(index),'timestamp':'fixture-time'}
  def tearDown(self):self.temp.cleanup()
@@ -96,7 +96,7 @@ class TranscriptTests(unittest.TestCase):
   for name,rows in [(self.identity+'.jsonl',self.records),(self.identity+'.provider-state.jsonl',self.states)]:
    (self.store/name).write_text(''.join(json.dumps(row)+'\n' for row in rows))
   return verify.transcript_oracle(self.kind,self.store,self.host)
- def test_actual_schema_golden_accepts(self):self.assertEqual(self.validate()['nativeStateAnchors'],4)
+ def test_actual_schema_golden_accepts(self):self.assertEqual(self.validate()['nativeStateAnchors'],5)
  def test_wrong_anchor_items_schema_order_or_tool_input_refuse(self):
   import copy
   original_records=copy.deepcopy(self.records);original_states=copy.deepcopy(self.states)

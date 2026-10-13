@@ -4,11 +4,11 @@ import { createReadStream } from "node:fs";
 import { query, splitFrames, CLIConnectionError, ProcessError, ProtocolDecodeError, ResultError, AbortError, type RuntimeConfig, type PermissionMode, type SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
 import { assertLinuxHostQueryConfig } from "../../packages/runtime/src/guest/linux-host-query-profile.ts";
 import { createHash } from "node:crypto";
-import { fixtureCase, toolScript, terminalText, type Case } from "./cases.ts";
+import { fixtureCase, toolScript, terminalText, PROC_WRITE_RESULT, PLAN_BOUNDARY_RESULT, VIEW_RESULT, fixtureProbePaths, type ProbePaths, type Case } from "./cases.ts";
 
-export function fixturePermission(kind: Case, tool: string, input: unknown): { behavior: "allow" } | { behavior: "deny"; message: string } {
+export function fixturePermission(kind: Case, tool: string, input: unknown, paths: ProbePaths): { behavior: "allow" } | { behavior: "deny"; message: string } {
   if (kind === "bypass") throw new Error("bypass callback must never run");
-  const intended = toolScript(kind).some(call => call.name === tool && JSON.stringify(call.input) === JSON.stringify(input));
+  const intended = toolScript(kind, paths).some(call => call.name === tool && JSON.stringify(call.input) === JSON.stringify(input));
   if (!intended) throw new Error("unbound fixture approval");
   return kind === "ask-allow" || kind === "plan" ? { behavior: "allow" } : { behavior: "deny", message: "fixed fixture denied" };
 }
@@ -20,8 +20,8 @@ export function hostOptions(config: RuntimeConfig) {
     permissions: config.permissions!, allowDangerouslySkipPermissions: config.allowDangerouslySkipPermissions === true, env: {}, pathToClaudeCodeExecutable: "winter-confined-guest", includePartialMessages: true, maxBufferSize: 1024 * 1024 };
 }
 /** The actual wire includes tool_result user messages omitted from the public TS union. */
-export function fixtureTranscript(kind: Case, frames: unknown[]) {
-  const script = toolScript(kind), calls: { id: string; name: string; input: unknown }[] = [], results: Record<string, any>[] = [];
+export function fixtureTranscript(kind: Case, frames: unknown[], paths: ProbePaths) {
+  const script = toolScript(kind, paths), calls: { id: string; name: string; input: unknown }[] = [], results: Record<string, any>[] = [];
   for (const message of frames as any[]) {
     if (!message || !Array.isArray(message.message?.content)) continue;
     for (const block of message.message.content) {
@@ -33,12 +33,13 @@ export function fixtureTranscript(kind: Case, frames: unknown[]) {
       if (message.type === "user" && block.type === "tool_result") {
         const index = results.length;
         if (block.tool_use_id !== `call-${index}` || index >= calls.length) throw new Error("fixture tool result correlation");
-        const denied = kind === "ask-deny" && (index === 1 || index === 2), outside = (kind === "bypass" && index >= 3) || (kind === "plan" && index === 1);
+        const denied = kind === "ask-deny" && (index === 1 || index === 2 || index === 3), outside = (kind === "bypass" && index >= 4) || (kind === "plan" && index === 1);
         if (Boolean(block.is_error) !== outside || Boolean(block.denied) !== denied) throw new Error("fixture tool result status");
         if (index === 0 && block.content !== "hello\n") throw new Error("fixture Read bytes");
         if (kind === "plan" && index === 1 && block.content !== "Error [read_only]: guest file operation refused") throw new Error("fixture native plan Write authority");
-        if (kind === "plan" && index === 2 && (typeof block.content !== "string" || !block.content.includes("Read-only file system") || !block.content.includes("host-query-boundary-ok") || !block.content.endsWith("[Exit code: 0; cwd changes apply to this command only]"))) throw new Error("fixture native plan readonly Bash");
-        if (index === 2 && !denied && kind !== "plan" && block.content !== "host-query-boundary-ok\n[Exit code: 0; cwd changes apply to this command only]") throw new Error("fixture Bash output");
+        if (kind === "plan" && index === 2 && block.content !== PLAN_BOUNDARY_RESULT) throw new Error("fixture native plan readonly Bash");
+        if (index === 2 && !denied && kind !== "plan" && block.content !== VIEW_RESULT) throw new Error("fixture Bash output");
+        if (index === 3 && !denied && block.content !== PROC_WRITE_RESULT) throw new Error("fixture readonly proc write");
         results.push(block);
       }
     }
@@ -51,10 +52,10 @@ export function fixtureTranscript(kind: Case, frames: unknown[]) {
 type HostFailureDiagnostic = { class: string; code: string; errnoCode?: string; processCode?: number | null; signal?: string | null; resultSubtype?: string };
 export function hostFailure(error: unknown): HostFailureDiagnostic {
   const codes: Record<string, string> = {
-    "fixture case unavailable": "fixture_case", "bypass callback must never run": "bypass_callback", "unbound fixture approval": "approval_binding",
+    "fixture case unavailable": "fixture_case", "fixture probe paths unavailable": "probe_paths", "bypass callback must never run": "bypass_callback", "unbound fixture approval": "approval_binding",
     "fixture tool call binding": "tool_call", "fixture tool result correlation": "tool_result", "fixture tool result status": "tool_status",
     "fixture Read bytes": "read_bytes", "fixture native plan Write authority": "plan_write", "fixture native plan readonly Bash": "plan_bash",
-    "fixture Bash output": "bash_output", "fixture missing tool results": "missing_results", "fixture pipe bound": "pipe_bound",
+    "fixture Bash output": "bash_output", "fixture readonly proc write": "proc_write", "fixture missing tool results": "missing_results", "fixture pipe bound": "pipe_bound",
     "fixture input closed": "input_closed", "fixture input frame bound": "input_frame", "fixture control correlation": "control_correlation",
     "fixture output frame bound": "output_frame", "fixed fixture observation bound": "observation_bound", "fixture control route": "control_route",
     "fixture permission binding": "permission_binding", "fixture output truncated frame": "output_truncated", "fixture lifecycle bound": "lifecycle_bound",
@@ -91,8 +92,8 @@ async function* chunks(fd: number): AsyncGenerator<string> {
   try { for await (const bytes of stream) { const text = decoder.decode(bytes, { stream: true }); if (text) yield text; } const tail = decoder.decode(); if (tail) yield tail; }
   finally { stream.destroy(); }
 }
-export async function runClient(metadata: { case: Case; runtimeConfig: RuntimeConfig }, inputFd: number, outputFd: number, errorFd: number, lifecycleFd: number, cancelFd: number) {
-  const kind = fixtureCase(metadata.case); let callbacks = 0, terminal = false, ended = false, killed = false, requests = 0, responses = 0;
+export async function runClient(metadata: { case: Case; runtimeConfig: RuntimeConfig; probePaths: ProbePaths }, inputFd: number, outputFd: number, errorFd: number, lifecycleFd: number, cancelFd: number) {
+  const kind = fixtureCase(metadata.case), paths = fixtureProbePaths(metadata.probePaths); let callbacks = 0, terminal = false, ended = false, killed = false, requests = 0, responses = 0;
   const observedFrames: unknown[] = []; let observedBytes = 0;
   const permissions = new Map<string, { tool: string; input: unknown; toolUseID: string }>();
   const requestIds = new Set<string>(), responseIds = new Set<string>();
@@ -109,7 +110,7 @@ export async function runClient(metadata: { case: Case; runtimeConfig: RuntimeCo
     },
     stdout: (async function* () { for await (const chunk of chunks(outputFd)) { const split = splitFrames(chunk, outputCarry); outputCarry = split.carry; if (Buffer.byteLength(outputCarry) > 1024 * 1024) throw new Error("fixture output frame bound"); for (const frame of split.frames) {
       if (frame.type === "data") { observedBytes += Buffer.byteLength(JSON.stringify(frame.message)); if (observedFrames.length >= 256 || observedBytes > 2 * 1024 * 1024) throw new Error("fixed fixture observation bound"); observedFrames.push(frame.message); }
-      if (frame.type === "control_request") { if (frame.subtype !== "permission" || typeof frame.requestId !== "string" || requestIds.has(frame.requestId)) throw new Error("fixture control route"); const payload = frame.payload as any, script = toolScript(kind), index = Number(String(payload?.toolUseID).replace("call-", ""));
+      if (frame.type === "control_request") { if (frame.subtype !== "permission" || typeof frame.requestId !== "string" || requestIds.has(frame.requestId)) throw new Error("fixture control route"); const payload = frame.payload as any, script = toolScript(kind, paths), index = Number(String(payload?.toolUseID).replace("call-", ""));
         if (payload?.requestId !== frame.requestId || !Number.isInteger(index) || !script[index] || script[index]!.name !== payload.toolName || JSON.stringify(script[index]!.input) !== JSON.stringify(payload.input)) throw new Error("fixture permission binding");
         permissions.set(frame.requestId, { tool: payload.toolName, input: payload.input, toolUseID: payload.toolUseID });
         requestIds.add(frame.requestId); requests++; }
@@ -131,17 +132,17 @@ export async function runClient(metadata: { case: Case; runtimeConfig: RuntimeCo
     canUseTool: async (tool, input, options) => {
       const request = permissions.get(options.requestId);
       if (!request || request.tool !== tool || request.toolUseID !== options.toolUseID || JSON.stringify(request.input) !== JSON.stringify(input)) throw new Error("fixture callback correlation");
-      callbacks++; return fixturePermission(kind, tool, input);
+      callbacks++; return fixturePermission(kind, tool, input, paths);
     },
   } });
   let messages = 0, terminalTextObserved = false;
   try { for await (const message of q) { messages++; if (message.type === "result") { terminal = message.subtype === "success"; } if (message.type === "assistant") terminalTextObserved ||= JSON.stringify(message.message.content).includes(terminalText(kind)); } }
   finally { await q.return(undefined); }
   if (inputCarry) throw new Error("fixture input truncated frame");
-  const toolEvidence = fixtureTranscript(kind, observedFrames);
+  const toolEvidence = fixtureTranscript(kind, observedFrames, paths);
   const lifecycle = await process.exited;
   if (lifecycle.code !== 0 || lifecycle.signal !== null) throw new Error("Root teardown observer failed");
-  if (!terminal || !terminalTextObserved || requests !== (kind === "bypass" ? 0 : 2) || responses !== requests || callbacks !== requests) throw new Error("fixture approval/result oracle");
+  if (!terminal || !terminalTextObserved || requests !== (kind === "bypass" ? 0 : 3) || responses !== requests || callbacks !== requests) throw new Error("fixture approval/result oracle");
   return { passed: true, case: kind, callbacks, requests, responses, messages, terminal, terminalTextObserved, transportOnly: true, rootTeardownObserved: true, ...toolEvidence };
 }
 if (import.meta.main) {

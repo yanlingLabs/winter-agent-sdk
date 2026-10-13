@@ -1,7 +1,7 @@
 /** Disposable host-provider fixture. No production provider/network admission is claimed.
  * The Root harness fixes listener/library/metadata FDs and sends the actual runtime pidfd.
  * This process holds only a fake credential; no credential material enters guest frames. */
-import { fixtureCase, toolScript, terminalText } from "./cases.ts";
+import { fixtureCase, toolScript, terminalText, fixtureProbePaths } from "./cases.ts";
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { fstatSync, readFileSync } from "node:fs";
 import type { ProviderEvent } from "@yanlinglabs/winter-provider-runtime";
@@ -23,7 +23,7 @@ const fakeHostCredential = "DISPOSABLE-HOST-CREDENTIAL-NOT-A-REAL-SECRET";
 const scope = JSON.stringify(metadata.provider.scope), selection = metadata.provider.selection;
 let peerValidated = false;
 let invocation: { id: string; sequence: number; events: ProviderEvent[]; at: number } | undefined, turns = 0;
-const kind = fixtureCase(metadata.case), script = toolScript(kind);
+const kind = fixtureCase(metadata.case), paths = fixtureProbePaths(metadata.probePaths), script = toolScript(kind, paths);
 function response(request: any): object {
   if (request.version !== 1 || JSON.stringify(request.scope) !== scope || typeof request.invocationId !== "string" || request.invocationId.length > 128 || !Number.isSafeInteger(request.sequence)) throw new Error("scope");
   if (request.operation === "begin") {

@@ -1,6 +1,9 @@
 # SDK host-query Linux fixture source
 
-Source base: accepted SDK11/12 composition `fe385afdabd908dab1b46be19fe40abe3bb259c8`.
+Original source base: accepted SDK11/12 composition `fe385afdabd908dab1b46be19fe40abe3bb259c8`.
+Phase A source base: `c9ad44cbff41e0a93fb958fac0ce5832f865c4ed`, composing
+main `546249e5` (exact SDK9 private tool view and opt-in requiredContext14;
+no Linux admission profile widening).
 This is a distinct source-only disposable Linux fixture. No protected service,
 Root/native/helper/client artifact, mount, VM, GUI or CI execution has occurred.
 No production capability, daemon registration, native device/backend, SDK version
@@ -46,8 +49,10 @@ Four fresh conversations run sequentially:
   Positive allowed Write succeeds and a readonly Bash probe checks actual tool
   view, followed by outside/store/credential file-helper denials with no callback.
 
-The current native tool skeleton has **absent /proc and /dev**, not the later
-utility-device profile. The probe requires those exact absences plus unavailable
+Before Phase A, the original fixture tool skeleton had **absent /proc and /dev**.
+Phase A below replaces those checks against the separately reviewed SDK9 private
+proc/device source composition. The original proof did not claim that view.
+The source continues to require unavailable
 private runhome/store/runtime/outside paths and host credential environment.
 It also checks visible source symlinks to real parent-side store/credential
 canaries do not resolve in the tool view; Root asserts their backing targets exist
@@ -149,7 +154,8 @@ port invocation; local injected EROFS/readonly outcomes remain schema/control
 checks only. Actual Linux execution must produce the helper refusal and Bash
 EROFS itself. Readable canaries remove the earlier DAC ambiguity without changing
 actual store/runhome ownership, permissions or fresh admission. Plan requires
-exactly two callbacks, requests and responses. The helper rejects before its Root
+Originally exactly two callbacks, requests and responses; Phase A below adds
+a third bounded exchange. The helper rejects before its Root
 port, so this SDK Write case does not exercise the later supervisor Write guard;
 the real Bash EROFS probe is the independent readonly-mount requirement. FD8 remains
 unexecuted and is not kernel-cancellation evidence.
@@ -251,3 +257,83 @@ in SDK `protocol/frames.ts` are retained; its open string extensions are omitted
 The verifier mirrors these bounds and keeps no result text/raw messages. Portable
 checks now pass 41 Python tests and exact 8 Bun tests / 63 assertions, including
 actual SDK error instances, spoofed/unknown classes and out-of-bound values.
+
+## Phase A: actual SDK private proc/device source fixture
+
+The original four-case pass at source `d275d104` / run `38430797231` used the old
+absent-proc/device tool view. Its result stays frozen; earlier failed fixture
+cleanup stays unknown. Phase A is new source intended for its own reviewed build,
+complete artifact/source audit and separately admitted run. It makes no measured
+utility/Python/Git availability or production/VM claim; the 272-leaf closure and
+actual everyday-tool smoke remain Phase B. Native C/helpers, ABI, Root grants,
+receipt/stager, resource bounds, capabilities and deadlines are unchanged here.
+
+Two fixed Bash calls use only existing Bash (the already admitted environment
+is unchanged). The first is readonly: numeric
+proc entries must be exactly PID1 and the main Bash PID (small private IDs), with
+matching four UID/GID fields, workspace supplementary group10000, PID1 PPid0,
+Bash PPid1, all five capability sets zero, NoNewPrivs1 and seccomp2. PID1 must
+hold exactly the supervisor's five pipe FDs0/1/2/3/5; Bash stdout/stderr must be
+the same pipe inodes as worker read ends3/5. Main-shell Bash FD enumeration admits
+only null FD0, pipe FD1/2 and at most one glob-directory entry already gone when
+rechecked; unreadable FD tables fail. No socket, extra live FD, runtime/store
+descriptor or extra process is allowed. No cgroup property is asserted.
+
+Device inventory is exactly five character nodes, four symlink names and shm;
+no TTY or extra entry. Link endpoints must be inode-equivalent to their exact
+proc FD targets. This does not read symlink text or independently measure rdev:
+unchanged reviewed C pins the major/minor identity, and these probes test the
+view/type/behaviour. Proc flags require ro/nosuid/nodev/noexec; shm requires
+rw/nosuid/nodev/noexec, sticky writable directory and exact8192k mount size.
+Source is rw except plan ro; all five device mounts require ro/nosuid/noexec
+and no nodev. Shared/master/propagate_from tags and unexpected mount counts fail.
+
+Mountinfo ROOT columns must exclude all six actual fixture roles: store, home,
+control, credential, canaryStore and sealed staging ancestry. `verify.py` derives
+these exact paths from its current disposable Root objects and stage admission,
+then passes identical immutable Root-owned metadata to host/provider. Closed
+`fixtureProbePaths` validation requires nonempty canonical names, the same run
+root and the fixed stage pattern; absent/mismatched/model/extra fields refuse.
+They are oracle data, not native admission, authority, runtimeConfig or env/argv.
+The paths enter both exact script/input hashes; renamed data cannot leave a
+vacuous typed-literal negative behind. Original readable canary/symlink, private
+path and credential-environment negatives remain. Status and mountinfo input reads are builtin/main-shell, with no pipeline,
+command substitution or helper process. No raw mount/status text prints.
+
+Output redirections stay in the second call, which contains no protected path
+roles: shell stdin/null EOF, zero NUL read, full ENOSPC, bounded random/urandom
+read, private unix socket table header-only and a safe `/proc/self/comm` write
+that must report EROFS. It touches no global proc/sysrq path. The wire and
+persisted result must match the exact bounded marker, C-locale ENOSPC/EROFS
+stderr and exit0 trailer; permission denial, wrong errno/status, extra markers
+or helper error cannot satisfy it. Plan still separately proves source EROFS
+and readonly helper denial. This split preserves Code's protected-path floor
+without hiding paths or relaxing policies. Character RO mounts do not generally
+deny writes; `/dev/full`'s ENOSPC is its device behaviour.
+
+Calls are now4 for ask-allow/ask-deny/plan and7 for bypass; provider/native-state
+anchors are5 and8. Ask/plan require exactly3 correlated callbacks/requests/
+responses; ask-deny denies the new Bash as well, while the adversarial plan
+fixture allows both Bash calls. Bypass requires zero ordinary callbacks. Existing
+Readonly/EROFS/source/history/native receipt/reap/drain/ownership/mount/normal
+rmtree success oracles remain mandatory; no unmount/repair/ignore-error fallback.
+
+Current portable evidence: exact `./scripts/guest-host-query/cases.test.ts`
+runs11 tests/143 assertions, including actual SDK query/engine permission
+routing through its explicit local testing leg, closed metadata/path binding,
+strict outcome negatives and ordinary `bash -n` grammar checks. Generated
+mandatory-check snippets also execute with inert variables/overridden `test`
+inside conditional contexts: failure must exit90 before counter advancement.
+Those snippets do not execute the probe or touch host/proc/device paths. No Bash
+probe body or live proc/device is read by those syntax checks. 41 Python checks
+pass with updated4/7-call transcript/sidecar counts. Injected results are not
+native proof; the intended SDK9 kernel view has not run in this lane.
+
+Before source freeze, Root review found masked early `&&` failures when counters
+followed them. Every mandatory check now explicitly calls a closed-label
+`phase_fail`/exit90; no check depends on `set -e`, including loop/conditional/
+read-EOF contexts. Device inventory uses dotglob/nullglob and exact counts, so
+hidden entries cannot be silently skipped. The first result additionally requires
+exact `host-query-view-counts:2:5:3:10:1:1:1:5` before its marker. Inert generated
+UID/GID/group/worker-FD/stdin check failures prove no counter/success advancement
+even when Bash disables errexit in a conditional function call.

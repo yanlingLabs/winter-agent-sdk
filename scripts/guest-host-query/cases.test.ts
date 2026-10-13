@@ -1,21 +1,23 @@
 import { expect, test } from "bun:test";
-import { CASES, fixtureCase, toolScript } from "./cases.ts";
+import { CASES, fixtureCase, toolScript, boundaryCommand, procWriteCommand, PLAN_BOUNDARY_RESULT, PROC_WRITE_RESULT, VIEW_RESULT, fixtureProbePaths, type ProbePaths } from "./cases.ts";
 import { fixturePermission, fixtureTranscript, hostOptions, hostFailure } from "./host-client.ts";
 import { assertLinuxHostQueryConfig } from "../../packages/runtime/src/guest/linux-host-query-profile.ts";
+// Pure fixture oracle values, never a Root/native admission or actual kernel view.
+const PATHS: ProbePaths = { store: "/tmp/winter-host-query-run-fixture/store", home: "/tmp/winter-host-query-run-fixture/home", control: "/tmp/winter-host-query-run-fixture/control", credential: "/tmp/winter-host-query-run-fixture/host-only-credential", canaryStore: "/tmp/winter-host-query-run-fixture/protected-canary-store", stage: "/tmp/winter-host-query-reviewed-fixture" };
 function frames(kind: typeof CASES[number]) {
-  return toolScript(kind).flatMap((call, index) => [
+  return toolScript(kind, PATHS).flatMap((call, index) => [
     { type: "assistant", message: { content: [{ type: "tool_use", id: `call-${index}`, ...call }] } },
-    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: `call-${index}`, is_error: (kind === "bypass" && index >= 3) || (kind === "plan" && index === 1), denied: kind === "ask-deny" && (index === 1 || index === 2), content: kind === "plan" && index === 1 ? "Error [read_only]: guest file operation refused" : kind === "plan" && index === 2 ? "Read-only file system\nhost-query-boundary-ok\n[Exit code: 0; cwd changes apply to this command only]" : index === 0 ? "hello\n" : index === 2 ? "host-query-boundary-ok\n[Exit code: 0; cwd changes apply to this command only]" : "fixture" }] } },
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: `call-${index}`, is_error: (kind === "bypass" && index >= 4) || (kind === "plan" && index === 1), denied: kind === "ask-deny" && (index === 1 || index === 2 || index === 3), content: kind === "plan" && index === 1 ? "Error [read_only]: guest file operation refused" : kind === "plan" && index === 2 ? PLAN_BOUNDARY_RESULT : index === 3 ? PROC_WRITE_RESULT : index === 0 ? "hello\n" : index === 2 ? VIEW_RESULT : "fixture" }] } },
   ]);
 }
 test("closed fixture cases and bypass callback cannot be relaxed", () => {
   expect(() => fixtureCase("other")).toThrow();
   for (const kind of CASES) {
-    const write = toolScript(kind)[1]!;
-    if (kind === "bypass") expect(() => fixturePermission(kind, write.name, write.input)).toThrow();
-    else expect(fixturePermission(kind, write.name, write.input).behavior).toBe(kind === "ask-allow" || kind === "plan" ? "allow" : "deny");
-    expect(() => fixturePermission(kind, "Bash", { command: "different" })).toThrow();
-    expect(fixtureTranscript(kind, frames(kind)).toolCalls).toBe(kind === "bypass" ? 6 : 3);
+    const write = toolScript(kind, PATHS)[1]!;
+    if (kind === "bypass") expect(() => fixturePermission(kind, write.name, write.input, PATHS)).toThrow();
+    else expect(fixturePermission(kind, write.name, write.input, PATHS).behavior).toBe(kind === "ask-allow" || kind === "plan" ? "allow" : "deny");
+    expect(() => fixturePermission(kind, "Bash", { command: "different" }, PATHS)).toThrow();
+    expect(fixtureTranscript(kind, frames(kind), PATHS).toolCalls).toBe(kind === "bypass" ? 7 : 4);
   }
 });
 test("tool outcome oracle rejects missing/foreign/error results and changed exact Read/Bash", () => {
@@ -25,7 +27,7 @@ test("tool outcome oracle rejects missing/foreign/error results and changed exac
     (data: any[]) => { data[3].message.content[0].is_error = true; },
     (data: any[]) => { data[5].message.content[0].content = "not actual Bash output"; },
     (data: any[]) => { data[0].message.content[0].input = { file_path: "other" }; },
-  ]) { const data = frames("ask-allow"); mutate(data); expect(() => fixtureTranscript("ask-allow", data)).toThrow(); }
+  ]) { const data = frames("ask-allow"); mutate(data); expect(() => fixtureTranscript("ask-allow", data, PATHS)).toThrow(); }
 });
 test("host SDK options never derive native config authority from environment or preapproved tools", () => {
   const config: any = { executionPosture: "confined-guest", sessionId: "backend", model: "model", cwd: "/workspace/folders/source", winterHome: "/run/winter/conversations/logical", storeHome: "/workspace/.winter/conversations/logical", persistSession: true, tools: ["Read", "Edit", "Write", "Bash"], allowedTools: [], settingSources: [], skills: [], plugins: [], strictMcpConfig: true, mcpServers: {}, permissionMode: "bypassPermissions", permissions: { disableBypassPermissionsMode: false }, allowDangerouslySkipPermissions: true };
@@ -38,11 +40,11 @@ test("actual local SDK query/engine callback routing matches fixed allow/deny/pl
   const { inMemoryProcess } = await import("../../packages/runtime/src/testing.ts");
   const { mkdtempSync, rmSync } = await import("node:fs"), { tmpdir } = await import("node:os"), { join } = await import("node:path");
   for (const kind of CASES) {
-    const home = mkdtempSync(join(tmpdir(), "winter-host-case-")); let at = 0, callbacks = 0, requests = 0, responses = 0; const observed: unknown[] = [], script = toolScript(kind);
+    const home = mkdtempSync(join(tmpdir(), "winter-host-case-")); let at = 0, callbacks = 0, requests = 0, responses = 0; const observed: unknown[] = [], script = toolScript(kind, PATHS);
     const provider: any = { async generate() { const call = script[at]; return call ? { kind: "tool_use", calls: [{ id: `call-${at++}`, ...call }] } : { kind: "text", text: `host-query-${kind}-complete` }; } };
-    const tools: any = { async execute(call: any) { const index = Number(call.id.slice(5)); return { isError: (kind === "bypass" && index >= 3) || (kind === "plan" && index === 1), output: kind === "plan" && index === 1 ? "Error [read_only]: guest file operation refused" : kind === "plan" && index === 2 ? "Read-only file system\nhost-query-boundary-ok\n[Exit code: 0; cwd changes apply to this command only]" : index === 0 ? "hello\n" : index === 2 ? "host-query-boundary-ok\n[Exit code: 0; cwd changes apply to this command only]" : "fixture" }; } };
+    const tools: any = { async execute(call: any) { const index = Number(call.id.slice(5)); return { isError: (kind === "bypass" && index >= 4) || (kind === "plan" && index === 1), output: kind === "plan" && index === 1 ? "Error [read_only]: guest file operation refused" : kind === "plan" && index === 2 ? PLAN_BOUNDARY_RESULT : index === 3 ? PROC_WRITE_RESULT : index === 0 ? "hello\n" : index === 2 ? VIEW_RESULT : "fixture" }; } };
     const q = query({ prompt: "fixed local test", options: { model: "winter-test/echo", cwd: home, env: { WINTER_HOME: home, WINTER_DISABLE_GIT_INSTRUCTIONS: "1" }, persistSession: false, settingSources: [], tools: ["Read", "Edit", "Write", "Bash"], allowedTools: [], permissionMode: kind === "bypass" ? "bypassPermissions" : kind === "plan" ? "plan" : "default", permissions: { disableBypassPermissionsMode: kind !== "bypass" }, allowDangerouslySkipPermissions: kind === "bypass",
-      canUseTool: async (tool, input) => { callbacks++; return fixturePermission(kind, tool, input); },
+      canUseTool: async (tool, input) => { callbacks++; return fixturePermission(kind, tool, input, PATHS); },
       spawnClaudeCodeProcess(options) {
         // Explicit local testing leg with injected provider/executor, NEVER a native admission.
         const proc = inMemoryProcess(options.args, provider, tools, { WINTER_HOME: home });
@@ -50,21 +52,22 @@ test("actual local SDK query/engine callback routing matches fixed allow/deny/pl
         return { ...proc, stdin: { ...proc.stdin, write(chunk) { const split = splitFrames(chunk, inputCarry); inputCarry = split.carry; responses += split.frames.filter(frame => frame.type === "control_response").length; proc.stdin.write(chunk); } }, stdout: (async function* () { let carry = ""; for await (const chunk of proc.stdout) { const split = splitFrames(chunk, carry); carry = split.carry; for (const frame of split.frames) { if (frame.type === "data") observed.push(frame.message); if (frame.type === "control_request") requests++; } yield chunk; } })() };
       },
     } });
-    try { for await (const _ of q) {} expect(callbacks).toBe(kind === "bypass" ? 0 : 2); expect(requests).toBe(callbacks); expect(responses).toBe(callbacks); expect(fixtureTranscript(kind, observed).toolResults).toBe(script.length); }
+    try { for await (const _ of q) {} expect(callbacks).toBe(kind === "bypass" ? 0 : 3); expect(requests).toBe(callbacks); expect(responses).toBe(callbacks); expect(fixtureTranscript(kind, observed, PATHS).toolResults).toBe(script.length); }
     finally { await q.return(undefined); rmSync(home, { recursive: true, force: true }); }
   }
 });
 
 test("plan oracle requires independent readonly errors after deliberately allowed callbacks", () => {
-  const script = toolScript("plan");
-  expect(fixturePermission("plan", script[1]!.name, script[1]!.input).behavior).toBe("allow");
-  expect(fixturePermission("plan", script[2]!.name, script[2]!.input).behavior).toBe("allow");
-  for (const change of ["permission-denied", "missing-EROFS", "unexpected-success"]) {
+  const script = toolScript("plan", PATHS);
+  expect(fixturePermission("plan", script[1]!.name, script[1]!.input, PATHS).behavior).toBe("allow");
+  expect(fixturePermission("plan", script[2]!.name, script[2]!.input, PATHS).behavior).toBe("allow");
+  for (const change of ["permission-denied", "missing-EROFS", "unexpected-success", "missing-proc-EROFS"]) {
     const data = frames("plan") as any[];
     if (change === "permission-denied") { data[3].message.content[0].denied = true; data[3].message.content[0].is_error = false; }
-    if (change === "missing-EROFS") data[5].message.content[0].content = "host-query-boundary-ok\n[Exit code: 0; cwd changes apply to this command only]";
+    if (change === "missing-EROFS") data[5].message.content[0].content = VIEW_RESULT;
     if (change === "unexpected-success") data[3].message.content[0].is_error = false;
-    expect(() => fixtureTranscript("plan", data)).toThrow();
+    if (change === "missing-proc-EROFS") data[7].message.content[0].content = "host-query-proc-device-ok\n[Exit code: 0; cwd changes apply to this command only]";
+    expect(() => fixtureTranscript("plan", data, PATHS)).toThrow();
   }
 });
 test("actual readonly helper error code is distinct from a permission denial and never calls its port", async () => {
@@ -94,4 +97,66 @@ test("actual SDK error diagnostics preserve only bounded process facts and close
   expect(hostFailure(new ResultError({ type: "result", subtype: "error_during_execution", permission_denials: [], is_error: true, result: "secret /path" }))).toEqual({ class: "ResultError", code: "host_failure", resultSubtype: "error_during_execution" });
   expect(hostFailure(new ResultError({ type: "result", subtype: "/foreign/subtype", permission_denials: [], result: "secret" }))).toEqual({ class: "ResultError", code: "host_failure" });
   expect(hostFailure(Object.assign(new Error("secret"), { name: "ProcessError", code: 77, signal: "SIGTRAP" }))).toEqual({ class: "Error", code: "host_failure" });
+});
+
+test("Phase A commands remain separate, closed and syntax-only parse without executing bodies", async () => {
+  const { spawnSync } = await import("node:child_process");
+  for (const kind of CASES) {
+    const boundary = boundaryCommand(kind, PATHS), write = procWriteCommand();
+    expect(boundary.includes("\n")).toBe(true);
+    expect(boundary).toContain("test \"$phase_pid_count\" = 2");
+    expect(boundary).toContain("phase_worker_fds");
+    expect(boundary).toContain("CapInh:|CapPrm:|CapEff:|CapBnd:|CapAmb:");
+    expect(boundary).not.toContain("cgroup");
+    expect(write).toContain("/proc/self/comm");
+    expect(write).not.toContain("/workspace/.winter");
+    expect(write).not.toContain("/run/winter");
+    expect(write).not.toContain("/proc/sysrq");
+    for (const command of [boundary, write]) expect(spawnSync("/bin/bash", ["-n", "-c", command]).status).toBe(0); // Grammar only: no body/proc/device/mount inspection executes.
+  }
+  for (const change of ["extra-marker", "wrong-errno", "wrong-exit", "permission-denial", "helper-error"]) {
+    const data = frames("bypass") as any[];
+    const result = data[7].message.content[0];
+    if (change === "extra-marker") result.content = PROC_WRITE_RESULT + "host-query-proc-ro-ok";
+    if (change === "wrong-errno") result.content = PROC_WRITE_RESULT.replace("Read-only file system", "Permission denied");
+    if (change === "wrong-exit") result.content = PROC_WRITE_RESULT.replace("Exit code: 0", "Exit code: 1");
+    if (change === "permission-denial") result.denied = true;
+    if (change === "helper-error") result.is_error = true;
+    expect(() => fixtureTranscript("bypass", data, PATHS)).toThrow();
+  }
+});
+
+test("mandatory probe roles bind actual fixed paths and reject missing/foreign/extra metadata", () => {
+  expect(fixtureProbePaths(PATHS)).toEqual(PATHS);
+  for (const invalid of [undefined, {}, { ...PATHS, store: "" }, { ...PATHS, home: "/tmp/winter-host-query-run-other/home" }, { ...PATHS, stage: "/tmp/../private" }, { ...PATHS, extra: "model" }]) expect(() => fixtureProbePaths(invalid)).toThrow();
+  const changed = { ...PATHS, stage: "/tmp/winter-host-query-reviewed-other" };
+  expect(boundaryCommand("bypass", PATHS)).not.toBe(boundaryCommand("bypass", changed));
+  const call = toolScript("bypass", PATHS)[2]!;
+  expect(() => fixtureTranscript("bypass", frames("bypass"), changed)).toThrow();
+  expect(call.input.command).toContain(PATHS.stage);
+  expect(call.input.command).toContain(PATHS.store);
+});
+
+test("generated mandatory-check failures exit before counters even in conditional contexts", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const generated = boundaryCommand("bypass", PATHS), fail = generated.split("\n")[0]!;
+  const snippets = [
+    generated.match(/Uid:\|Gid:\) ([^\n]*);;/)![1]!,
+    generated.match(/Groups:\) ([^\n]*);;/)![1]!,
+    generated.match(/esac; (test -p \"\$phase_fd\"[^\n]*?phase_worker_fds=\$\(\(phase_worker_fds\+1\)\))/)![1]!,
+    generated.match(/0\) ([^\n]*?phase_self_fds=\$\(\(phase_self_fds\+1\)\));;/)![1]!,
+  ];
+  for (const snippet of snippets) {
+    // The actual generated guard/counter snippet; test is an inert failing stub.
+    // No probe, host/proc/dev path, file read, or native/Root role executes here.
+    const command = `${fail}\ntest() { return 1; }\nphase_a=10001; phase_b=10001; phase_c=10001; phase_d=10001; phase_rest=; phase_fd=inert; phase_seen=0; phase_worker_fds=0; phase_self_fds=0;\nphase_checks() { ${snippet}; printf counter-advanced; }\nif phase_checks; then printf unexpected-success; fi`;
+    const result = spawnSync("/bin/bash", ["-c", command], { encoding: "utf8" });
+    expect(result.status).toBe(90);
+    expect(result.stdout).toStartWith("phase-a-check-failed:");
+    expect(result.stdout).not.toContain("counter-advanced");
+    expect(result.stdout).not.toContain("unexpected-success");
+  }
+  expect(generated).toContain("shopt -s dotglob nullglob");
+  expect(generated).not.toContain("$(cat");
+  expect(generated).not.toContain(" | ");
 });
