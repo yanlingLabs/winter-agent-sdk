@@ -75,7 +75,7 @@ def validate_stdlib_graph(origin,files,builder):
     origin_root=c.open_root(origin)
     try:
         def read(guest):return held_source(origin_root,files[guest],c.MAX_FILE if files[guest]['role']=='extension' else graph.MAX_SOURCE)
-        return graph.validate(files,read,roots,sys.builtin_module_names,builder)
+        return graph.validate(files,read,roots,sys.builtin_module_names,builder,interpreter_platform=sys.platform)
     finally:os.close(origin_root)
 
 

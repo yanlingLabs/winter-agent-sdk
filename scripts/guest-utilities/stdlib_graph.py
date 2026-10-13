@@ -30,7 +30,7 @@ def payload_roots(smoke, descendant):
     return roots + [('descendant', descendant)]
 
 
-def validate(files, read_source, roots, builtin_names, builder_identity, seeds=SEEDS):
+def validate(files, read_source, roots, builtin_names, builder_identity, seeds=SEEDS, interpreter_platform=None):
     """Required module-body graph only; optional/lazy observations prove no closure."""
     interpreter = files.get('/usr/bin/python3', {})
     if type(builder_identity) is not dict or set(builder_identity) != {'version','sha256','bytes'} or type(builder_identity['bytes']) is not int or type(builder_identity['version']) is not str or type(builder_identity['sha256']) is not str or not re.fullmatch('[a-f0-9]{64}', builder_identity['sha256']):
@@ -39,6 +39,8 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
         raise ValueError('builtin inventory requires exact captured interpreter identity')
     if not builder_identity.get('version', '').startswith('3.12.'):
         raise ValueError('fixed Python 3.12 builtin inventory required')
+    if interpreter_platform != 'linux':
+        raise ValueError('fixed Linux interpreter platform required')
     if type(builtin_names) not in (tuple, list) or not 1 <= len(builtin_names) <= 512 or any(type(name) is not str or not re.fullmatch(r'[A-Za-z_]\w*', name, re.ASCII) for name in builtin_names) or len(set(builtin_names)) != len(builtin_names):
         raise ValueError('bounded interpreter builtin names required')
     builtins = set(builtin_names)
@@ -62,7 +64,7 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
         modules[name] = (guest, package)
     if len(modules) > MAX_MODULES or not 1 <= len(roots) <= 64:
         raise ValueError('static graph inventory limit')
-    visited = {};bindings = {};stars = {};edges = [];optional = [];deferred = [];root_records = []
+    visited = {};bindings = {};stars = {};edges = [];optional = [];deferred = [];root_records = [];aliases = {}
     total = 0
 
     def parse(data):
@@ -130,7 +132,60 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
         base = '.'.join(parts[:len(parts) - node.level + 1])
         return base + ('.' + node.module if node.module else '')
 
+    def linux_os_alias(tree):
+        # Only this source-declared alias is supported. Never consult host os.path.
+        if 'posix' not in builtins or 'nt' in builtins:
+            raise ValueError('os.path alias requires Linux posix builtin evidence')
+        def membership(node, name):
+            return isinstance(node, ast.Compare) and isinstance(node.left, ast.Constant) and node.left.value == name and len(node.ops) == len(node.comparators) == 1 and isinstance(node.ops[0], ast.In) and isinstance(node.comparators[0], ast.Name) and node.comparators[0].id == '_names'
+        def path_import(node, module):
+            return isinstance(node, ast.Import) and len(node.names) == 1 and node.names[0].name == module and node.names[0].asname == 'path'
+        names = [node for node in tree.body if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id == '_names' and isinstance(node.value, ast.Attribute) and isinstance(node.value.value, ast.Name) and node.value.value.id == 'sys' and node.value.attr == 'builtin_module_names']
+        branches = [node for node in tree.body if isinstance(node, ast.If) and membership(node.test, 'posix')]
+        registrations = [node for node in tree.body if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Subscript) and isinstance(node.targets[0].value, ast.Attribute) and isinstance(node.targets[0].value.value, ast.Name) and node.targets[0].value.value.id == 'sys' and node.targets[0].value.attr == 'modules' and isinstance(node.targets[0].slice, ast.Constant) and node.targets[0].slice.value == 'os.path' and isinstance(node.value, ast.Name) and node.value.id == 'path']
+        sys_imports = [node for node in tree.body if isinstance(node, ast.Import) and any(alias.name == 'sys' and alias.asname is None for alias in node.names)]
+        if len(names) != 1 or len(branches) != 1 or len(registrations) != 1 or len(sys_imports) != 1 or not sys_imports[0].lineno < names[0].lineno < branches[0].lineno < registrations[0].lineno:
+            raise ValueError('captured os.path alias source changed')
+        branch = branches[0]
+        posix_bindings = [node for node in branch.body if path_import(node, 'posixpath')]
+        nt_branch = branch.orelse[0] if len(branch.orelse) == 1 and isinstance(branch.orelse[0], ast.If) and membership(branch.orelse[0].test, 'nt') else None
+        nt_bindings = [node for node in nt_branch.body if path_import(node, 'ntpath')] if nt_branch else []
+        if len(posix_bindings) != 1 or len(nt_bindings) != 1:
+            raise ValueError('captured os.path alias binding changed')
+        allowed = {'sys':sys_imports, '_names':names, 'path':posix_bindings + nt_bindings}
+        def check_bindings(body):
+            for node in body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    continue
+                bound = set()
+                if isinstance(node, ast.Import):
+                    bound.update(alias.asname or alias.name.split('.')[0] for alias in node.names)
+                elif isinstance(node, ast.ImportFrom):
+                    bound.update(alias.asname or alias.name for alias in node.names)
+                elif isinstance(node, ast.ExceptHandler) and node.name:
+                    bound.add(node.name)
+                else:
+                    for field in ('targets', 'target', 'optional_vars'):
+                        value = getattr(node, field, None)
+                        for target in value if isinstance(value, list) else [value] if value is not None else []:
+                            bound.update(child.id for child in ast.walk(target) if isinstance(child, ast.Name) and isinstance(child.ctx, (ast.Store, ast.Del)))
+                if isinstance(node, ast.Delete) and bound == {'_names'} and node.lineno > registrations[0].lineno:
+                    bound.clear()  # The fixed source deletes this temporary after registration.
+                if any(name in bound and node not in nodes for name, nodes in allowed.items()):
+                    raise ValueError('contradictory captured os.path alias binding')
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == 'sys' and target.attr == 'modules':
+                            raise ValueError('contradictory captured os.path alias registration')
+                        if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Attribute) and isinstance(target.value.value, ast.Name) and target.value.value.id == 'sys' and target.value.attr == 'modules' and isinstance(target.slice, ast.Constant) and target.slice.value == 'os.path' and node not in registrations:
+                            raise ValueError('contradictory captured os.path alias registration')
+                for field in ('body', 'orelse', 'finalbody', 'handlers'):
+                    check_bindings(getattr(node, field, []))
+        check_bindings(tree.body)
+        aliases['os.path'] = {'target':'posixpath', 'sourceGuest':modules['os'][0], 'sourceSha256':visited['os']['sha256'], 'bindingLine':posix_bindings[0].lineno, 'registrationLine':registrations[0].lineno, 'interpreterPlatform':interpreter_platform, 'builtin':'posix'}
+
     def exported(module, symbol, seen=None):
+        module = aliases.get(module, {}).get('target', module)
         if module in builtins or module in visited and visited[module]['role'] == 'extension':
             return True  # Attribute validation would require executing native code.
         seen = set() if seen is None else seen
@@ -140,6 +195,12 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
         return symbol in bindings.get(module, set()) or any(exported(provider, symbol, seen) for provider in stars.get(module, []))
 
     def ensure(module, importer):
+        if module == 'os.path':
+            ensure('os', importer)
+            if module not in aliases:
+                raise ValueError('captured os.path alias required')
+            ensure(aliases[module]['target'], importer)
+            return
         if module in builtins:
             return
         if module not in modules:
@@ -159,6 +220,8 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
         if item['role'] == 'extension':
             return
         tree = parse(data);bindings[module] = declared(tree.body);stars[module] = []
+        if module == 'os':
+            linux_os_alias(tree)
         walk(tree, module)
 
     def walk(tree, owner):
@@ -169,7 +232,7 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
                 record['names'] = [alias.name for alias in node.names]
             if lazy or reason:
                 candidates = targets + ([targets[0] + '.' + alias.name for alias in node.names if alias.name != '*'] if isinstance(node, ast.ImportFrom) else [])
-                record.update(reason='function-lazy' if lazy else reason, captured={name:name in modules or name in builtins for name in candidates})
+                record.update(reason='function-lazy' if lazy else reason, captured={name:name in modules or name in builtins or name in aliases for name in candidates})
                 (deferred if lazy else optional).append(record)
             else:
                 for target in targets:
@@ -198,6 +261,7 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
         edges.append({'importer':'fixed-exercised-seed', 'module':seed, 'line':0});ensure(seed, 'fixed-exercised-seed')
     result = {'kind':'winter-utility-static-stdlib-graph', 'version':1, 'roots':root_records,
             'exercisedSeeds':list(seeds), 'builtinInterpreter':builder_identity,
+            'interpreterPlatform':interpreter_platform, 'aliases':aliases,
             'builtinModules':sorted(builtins), 'visited':dict(sorted(visited.items())),
             'requiredEdges':edges, 'optionalImports':optional, 'deferredImports':deferred,
             'requiredStaticImportsCaptured':True, 'dynamicCompletenessVerified':False,

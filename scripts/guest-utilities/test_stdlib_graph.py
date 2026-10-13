@@ -22,10 +22,10 @@ class StaticStdlibGraphTests(unittest.TestCase):
         self.files[guest] = {'role':role, 'source':guest[1:], 'sha256':graph.digest(data), 'bytes':len(data)}
         return guest
 
-    def run_graph(self, payload, builtins=('sys',), seeds=(), builder=None):
+    def run_graph(self, payload, builtins=('sys',), seeds=(), builder=None, platform='linux'):
         def read(guest):
             self.reads.append(guest);return self.data[guest]
-        return graph.validate(self.files, read, [('test:1', payload.encode())], builtins, builder or self.builder, seeds)
+        return graph.validate(self.files, read, [('test:1', payload.encode())], builtins, builder or self.builder, seeds, interpreter_platform=platform)
 
     def test_missing_transitive_required_module_fails_with_importer_and_no_discovery(self):
         self.source('alpha.py', 'import beta\nraise RuntimeError("source must not execute")\n')
@@ -101,6 +101,44 @@ class StaticStdlibGraphTests(unittest.TestCase):
         result = self.run_graph('from pkg import exported\nfrom pkg.sub import exported\n')
         self.assertEqual(set(result['visited']), {'pkg', 'pkg.api', 'pkg.sub'})
         self.assertFalse(any(edge['module'].endswith('.exported') for edge in result['requiredEdges']))
+
+    def os_source(self):
+        return "import sys\n_names = sys.builtin_module_names\nif 'posix' in _names:\n    import posixpath as path\nelif 'nt' in _names:\n    import ntpath as path\nelse:\n    raise ImportError('no os specific module found')\nsys.modules['os.path'] = path\nfrom os.path import curdir\ndel _names\n"
+
+    def test_linux_os_path_alias_uses_measured_source_and_follows_target_dependencies(self):
+        os_guest = self.source('os.py', self.os_source())
+        target = self.source('posixpath.py', "import genericpath\ncurdir = '.'\ndef join(*paths):\n    return paths\n")
+        self.source('genericpath.py', 'import sys\n')
+        result = self.run_graph('import os.path\nfrom os.path import join\n', builtins=('sys', 'posix'))
+        self.assertEqual(set(result['visited']), {'os', 'posixpath', 'genericpath'})
+        alias = result['aliases']['os.path']
+        self.assertEqual(alias['target'], 'posixpath');self.assertEqual(alias['sourceGuest'], os_guest)
+        self.assertEqual(alias['sourceSha256'], self.files[os_guest]['sha256'])
+        self.assertEqual(alias['interpreterPlatform'], 'linux');self.assertEqual(alias['builtin'], 'posix')
+        self.assertEqual(result['interpreterPlatform'], 'linux')
+        with self.assertRaisesRegex(ValueError, 'missing required captured module: os.unknown'):
+            self.run_graph('import os.unknown\n', builtins=('sys', 'posix'))
+        del self.files[target]
+        with self.assertRaisesRegex(ValueError, 'missing required captured module: posixpath'):
+            self.run_graph('import os.path\n', builtins=('sys', 'posix'))
+        self.source('posixpath.py', "import missing_transitive\ncurdir = '.'\n")
+        with self.assertRaisesRegex(ValueError, 'missing required captured module: missing_transitive'):
+            self.run_graph('import os.path\n', builtins=('sys', 'posix'))
+
+    def test_os_path_alias_rejects_fake_bindings_platform_builtins_and_interpreter_identity(self):
+        original = self.os_source();self.source('posixpath.py', "curdir = '.'\n")
+        for code in (original.replace('posixpath as path', 'ntpath as path'), original.replace('sys.builtin_module_names', "('posix',)"), original.replace("sys.modules['os.path'] = path", "sys.modules['os.path'] = sys"), original + 'path = sys\n', original.replace("if 'posix' in _names:", 'if True:'), original + "sys.modules['os.path'] = sys\n", original.replace("if 'posix' in _names:", "del _names\nif 'posix' in _names:")):
+            self.source('os.py', code)
+            with self.subTest(code=code), self.assertRaises(ValueError):
+                self.run_graph('import os.path\n', builtins=('sys', 'posix'))
+        self.source('os.py', original)
+        for builtins in (('sys',), ('sys', 'posix', 'nt')):
+            with self.subTest(builtins=builtins), self.assertRaisesRegex(ValueError, 'posix builtin evidence'):
+                self.run_graph('import os.path\n', builtins=builtins)
+        with self.assertRaisesRegex(ValueError, 'Linux interpreter platform'):
+            self.run_graph('import os.path\n', builtins=('sys', 'posix'), platform='darwin')
+        with self.assertRaisesRegex(ValueError, 'exact captured interpreter identity'):
+            self.run_graph('import os.path\n', builtins=('sys', 'posix'), builder={**self.builder, 'sha256':'0'*64})
 
     def test_all_fixed_payload_roots_are_extracted_as_syntax_not_executed(self):
         roots = graph.payload_roots((HERE/'smoke.sh').read_bytes(), (HERE/'descendant.py').read_bytes())

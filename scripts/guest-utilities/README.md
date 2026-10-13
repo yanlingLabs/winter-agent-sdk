@@ -203,6 +203,16 @@ build gate; dynamic dependency completeness, native execution and general tool
 availability remain false. Any additional named build-time gap requires source
 evidence and review rather than an allowlist exception or automatic copy.
 
+Build `38381353763` exposed `os.path` as a static module alias, not a missing
+file. The only supported alias is `os.path` to the already captured `posixpath`.
+The gate requires measured `os.py` declarations of the builtin-name selector,
+posix `import posixpath as path`, and ordered `sys.modules['os.path'] = path`
+registration, with no contradictory bindings. It also requires the byte-bound
+interpreter's recorded Linux platform and posix builtin (without nt). The graph
+records the source fingerprint and alias, and recursively checks the target's
+dependencies. Missing targets, fake aliases and unknown aliases still fail;
+host `os.path` and dynamic imports are never consulted.
+
 Artifact audit of build `38333923765` found that loader bytes were measured but
 captured/copied as 0444. Execution intent now binds capture modes (0555/0444),
 bundle metadata, immutable staging modes (0500/0400), and verified runtime copy
