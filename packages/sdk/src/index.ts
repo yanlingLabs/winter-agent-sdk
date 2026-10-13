@@ -366,3 +366,6 @@ export type { PluginScope, PluginManagerOptions, MarketplaceInfo, InstalledPlugi
 export { resolveMarketplacePluginPath } from "./plugins/marketplace-path.ts";
 
 export type { LeaseIdentityOptions, LeaseInfo } from "./store/leases.ts";
+
+export { RUNTIME_CONTEXT_SUBTYPE, RUNTIME_CONTEXT_VERSION, RUNTIME_CONTEXT_MAX_BYTES, parseRuntimeContextConfig, parseRuntimeContextRequest, parseRuntimeContextSnapshot } from "./runtime-context.ts";
+export type { RuntimeContextConfig, RuntimeContextRequest, RuntimeContextSnapshot, RuntimeContextHandler } from "./runtime-context.ts";

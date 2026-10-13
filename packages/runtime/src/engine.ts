@@ -1,3 +1,5 @@
+import type { RuntimeContextChannel } from "./context/runtime-context-channel.ts";
+import { parseRuntimeContextConfig, RUNTIME_CONTEXT_VERSION } from "@yanlinglabs/winter-agent-sdk";
 import { assertLinuxSession, assertRunningLinuxSession, checkLinuxSessionFrame, linuxSessionProfile, linuxSessionBindings, FRESH_LINUX_TOOLS, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
 import { LINUX_HOST_QUERY_PROFILE } from "./guest/linux-host-query-profile.ts";
 import { sourceReadRestrictionGeneration } from "./sandbox/source-read.ts";
@@ -1880,6 +1882,7 @@ export interface EngineOptions {
    * `credential_resolve` rides the session's own stdio pipe. Absent: nothing to bind.
    */
   hostCredentialChannel?: HostCredentialChannel;
+  runtimeContextChannel?: RuntimeContextChannel;
   /**
    * `system/init.slash_commands`. Produced by `slashCommandNames(resolver, cwd)`, which ALREADY
    * includes the engine's own `/compact` -- the engine must not prepend it a second time.
@@ -2572,6 +2575,7 @@ function withLegacyToolNameRules(opts: EngineOptions): EngineOptions {
 }
 
 export async function runEngine(opts: EngineOptions): Promise<number> {
+  if (opts.config.requiredRuntimeContext !== undefined && opts.config.executionPosture === "confined-guest") throw new Error("required_context_unavailable");
   assertRuntimeExecutionPosture(opts.config, opts.linuxSessionAdmission);
   if (opts.linuxSessionAdmission !== undefined) assertRunningLinuxSession(opts.linuxSessionAdmission, opts.config, opts.provider);
   if (opts.linuxSessionAdmission !== undefined && (opts.tools !== undefined || opts.unregisteredToolExecutor !== undefined)) throw new Error("fresh Linux execution cannot replace its enforced tools");
@@ -2671,6 +2675,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     extraMcpServerSources,
     mcpOAuthStore,
     hostCredentialChannel,
+    runtimeContextChannel,
     initSlashCommands,
     initSkills,
     initPlugins,
@@ -3031,6 +3036,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // WS-25 §7: a host-brokered session's credential reads ride THIS bridge (the one top-level engine binds;
   // a child engine never receives the channel, and shares the parent's binding through the stores).
   hostCredentialChannel?.bind(bridge);
+  if (config.requiredRuntimeContext !== undefined) {
+    const binding = parseRuntimeContextConfig(config.requiredRuntimeContext);
+    if (runtimeContextChannel === undefined || runtimeContextChannel.bindingId !== binding.bindingId || systemPromptAssembler?.requiredContext !== runtimeContextChannel) throw new Error("required_context_unavailable");
+  }
+  if (runtimeContextChannel !== undefined) {
+    runtimeContextChannel.bind(bridge);
+    facetDisposers.push(() => runtimeContextChannel.close());
+  }
   // Task 8: one stateless instance for the whole run — createBridgePromptStage's own closure only
   // ever reads `bridge` (constant for the run), so there is nothing to gain from rebuilding it on
   // every evaluate() call the way makeEvalCtx's own per-call PolicyState snapshot must be.
@@ -5933,6 +5946,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     liveAdvertisedToolNames().includes(AGENT_TOOL_CANONICAL_NAME) ? [...sessionAvailableAgentDefinitions().keys()].sort((a, b) => a.localeCompare(b)) : undefined;
   output.write({
     type: "init",
+    ...(config.requiredRuntimeContext !== undefined ? { runtimeContextVersion: RUNTIME_CONTEXT_VERSION } : {}),
     protocolVersion: PROTOCOL_VERSION,
     sessionId: config.sessionId,
     cwd: config.cwd,

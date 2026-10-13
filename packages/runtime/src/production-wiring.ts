@@ -1,3 +1,5 @@
+import { parseRuntimeContextConfig } from "@yanlinglabs/winter-agent-sdk";
+import { createRuntimeContextChannel, type RuntimeContextChannel } from "./context/runtime-context-channel.ts";
 import { assertLinuxSession, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
 import { installSourceReadRestrictions } from "./sandbox/source-read.ts";
 // Phase 5 Task 8: THE ONE PLACE every P5 lane's implementation is wired into a live session.
@@ -583,6 +585,7 @@ export interface ProductionWiring {
     mcpOAuthStore: McpOAuthStore;
     /** WS-25 §7: present when the host resolves credentials; `runEngine` binds it to its control bridge. */
     hostCredentialChannel?: HostCredentialChannel;
+    runtimeContextChannel?: RuntimeContextChannel;
     initSlashCommands: readonly string[];
     initSkills: readonly string[];
     initPlugins: readonly InitPluginInfo[];
@@ -764,6 +767,8 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
 
 async function buildProductionWiringImpl(opts: ProductionWiringOptions, restrictReads: (paths: readonly string[] | undefined) => void): Promise<ProductionWiring> {
   const { config, env } = opts;
+  if (config.requiredRuntimeContext !== undefined && config.executionPosture === "confined-guest") throw new Error("required_context_unavailable");
+  if (config.requiredRuntimeContext !== undefined) parseRuntimeContextConfig(config.requiredRuntimeContext);
   const freshLinux = opts.linuxSessionAdmission !== undefined;
   if (freshLinux) assertLinuxSession(opts.linuxSessionAdmission, config);
   // (0) THE BRAND (P7a, D19). THE ONE FALLBACK IN THE RUNTIME, and it is here rather than at each
@@ -1106,7 +1111,9 @@ async function buildProductionWiringImpl(opts: ProductionWiringOptions, restrict
 
   // (10) THE ASSEMBLER (Lane C). Its `home` is the resolved winter root and its `settings` is the
   // post-OVERLAY_NEVER_KEYS effective getter (rider 24, asserted above).
-  const systemPromptAssembler = createSystemPromptAssembler({ home: winterHome, settings: settingsGetter, pluginOutputStyles });
+  const runtimeContextChannel = config.requiredRuntimeContext !== undefined ? createRuntimeContextChannel(config.requiredRuntimeContext) : undefined;
+  const systemPromptAssembler = createSystemPromptAssembler({ home: winterHome, settings: settingsGetter, pluginOutputStyles,
+    ...(runtimeContextChannel !== undefined ? { requiredContext: runtimeContextChannel } : {}) });
 
   // (10b) THE TWO PROCESS-LEVEL SURFACES A BRAND CANNOT REACH BY PARAMETER (P7a, D19).
   //
@@ -1876,6 +1883,7 @@ async function buildProductionWiringImpl(opts: ProductionWiringOptions, restrict
           ? createHostBrokeredMcpOAuthStore(hostCredentialChannel)
           : resolveSessionMcpOAuthStore({ keychainService: resolveSessionKeychainService(config), testStoreFile: mcpOAuthTestStoreFile }),
       ...(hostCredentialChannel !== undefined ? { hostCredentialChannel } : {}),
+      ...(runtimeContextChannel !== undefined ? { runtimeContextChannel } : {}),
       initSlashCommands,
       initSkills,
       initPlugins,

@@ -11,6 +11,7 @@
 // Task 5 (WS-07 §3.3 / phase ruling 1): allowedTools/disallowedTools/permissions/settingSources
 // mirror Options' own fields (options.ts) exactly — same optional raw-string-grammar shapes, same
 // serialize-only posture. The runtime engine (a later task) is the actual consumer.
+import type { RuntimeContextConfig } from "../runtime-context.ts";
 import type { HookSource } from "../permissions/types.ts";
 import type { SettingSource } from "../settings/types.ts";
 // P7a (D19): the resolved brand profile rides `RuntimeConfig.brand` — declared in brand.ts (the one
@@ -597,6 +598,8 @@ export interface RuntimeAgentDefinition {
 }
 
 export interface RuntimeConfig {
+  /** Dedicated protocol opt-in; no context text, callback or filesystem authority. */
+  requiredRuntimeContext?: RuntimeContextConfig;
   /** Trusted launch wrapper only; never populated from project settings or Options. */
   hostCodeProcessBroker?: { generationId: string };
   executionPosture?: "local" | "confined-guest";
