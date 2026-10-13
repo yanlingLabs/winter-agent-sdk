@@ -28,6 +28,15 @@ class FakeOS:
     def close(self,fd):self.closed.append(fd)
 
 class PayloadTests(unittest.TestCase):
+    def test_sealed_payload_emits_separator_before_any_probe(self):
+        for name in PAYLOADS:
+            lines=source(name).splitlines()
+            self.assertTrue(lines[1].startswith('phase_b_fail()'))
+            self.assertEqual(lines[2],"printf '\\n' || phase_b_fail separator")
+            # Only the failure function and separator: no utility/probe body.
+            result=subprocess.run(['/bin/bash','-c','\n'.join(lines[1:3])],capture_output=True,timeout=2)
+            self.assertEqual((result.returncode,result.stdout,result.stderr),(0,b'\n',b''))
+
     def test_optimized_python_refuses_before_imports_or_probe_io(self):
         for name in PAYLOADS:
             first=python_body(name).body[0]

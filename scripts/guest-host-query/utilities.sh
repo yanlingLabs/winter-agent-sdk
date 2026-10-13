@@ -1,5 +1,6 @@
 # Fixed positive utility payload; appended after the unchanged Phase A prefix.
 phase_b_fail() { printf 'phase-b-failed:%s\n' "$1"; exit 91; }
+printf '\n' || phase_b_fail separator
 export HOME=/dev/shm/winter-daily-home TMPDIR=/dev/shm/winter-daily-home
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 export PYTHONOPTIMIZE=0 PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 PYTHONSAFEPATH=1 PYTHONHASHSEED=0
