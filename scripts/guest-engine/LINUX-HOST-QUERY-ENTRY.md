@@ -16,7 +16,8 @@ and store bootstrap derive only from the opaque native admission. There is no
 caller argv, environment, settings, credential or replacement-tool option.
 Input is pull-based NDJSON, with 256 KiB chunks and 1 MiB frames; output frames
 use the same bound and split into bounded Unicode-safe chunks. Physical host-query
-transport EOF/errors cancel the run. Logical `end_input` leaves the permission
+transport EOF lets the engine finish queued work and deny unanswerable approvals;
+malformed input, transport errors and abandoned consumption cancel the run. Logical `end_input` leaves the permission
 reply route open. Fresh fixture EOF semantics remain unchanged.
 
 `admitHostQueryLinuxSession(bootstrapFd, ownerLibraryFd)` uses the existing
@@ -102,3 +103,36 @@ accidentally exercise the protected-path override. These remain local testing-le
 observations, not actual guest approval or native owner/mount acceptance.
 Follow-up logs and the unexecuted bundle are retained separately in
 `out/linux-host-query-entry-med-check/`.
+
+
+## Reviewed clean-EOF backport
+
+This entry-only correction is backported from reviewed stacked supervisor source
+`89b6cad7320a2d34a2fb52040e9ecabfd4b83481`. The original `84dc16c9` entry explicitly
+passed `cancelOnEOF = profile !== fresh`, so host-query EOF aborted. That history
+remains recorded; the correction changes clean EOF to graceful completion. The
+bounded helper now cancels only malformed/errors/abandoned consumption. Explicit
+caller signals and genuine owner loss still hard-stop; pending permission RPCs
+become unanswerable on physical EOF and are denied by the actual engine bridge.
+Logical end_input continues to leave the transport open for replies.
+
+The backport includes only reusable-entry code, its profile test, the new local
+EOF test and this report. It includes no producer, supervisor, immutable host-query
+main, pipe adapter or native source. Source authority/admission and capabilities
+remain unchanged. Those dependent parts stay on their separate producer branch;
+no implementation or artifact receipt is silently relabeled.
+
+Current entry validation: 45 focused Bun tests / 306 assertions across five files;
+both repository TypeScript checks pass; the reusable entry bundles without
+execution. EOF tests use the actual SDK query/local engine/RpcBridge and real
+SDK storage in disposable directories. They prove terminal-result → stdin EOF →
+post-result completion, fragmented queued-user → EOF → code0/persisted transcript,
+and pending permission → EOF → denied effect/code0/transcript. They never create
+a native admission or prove real guest approvals/teardown. Logs and the unexecuted
+bundle are retained separately under `out/linux-host-query-entry-eof-check/`.
+
+Entry-only focused command:
+
+```
+bun test packages/runtime/src/guest/linux-host-query-eof.test.ts packages/runtime/src/guest/linux-host-query-profile.test.ts packages/runtime/src/guest/linux-host-query-engine.test.ts packages/runtime/src/guest/linux-session-admission.test.ts packages/runtime/src/rpc/bridge.test.ts
+```
