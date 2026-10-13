@@ -1525,10 +1525,11 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
             // registry. Fire-and-forget: answering it (a permission prompt may wait on a human)
             // must never block this loop from continuing to read/yield the turn's other frames.
             const request = frame as ControlRequestFrame;
-            if (request.subtype === RUNTIME_CONTEXT_SUBTYPE
-              && (typeof request.requestId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(request.requestId)
-                || incomingRequestAborts.has(request.requestId) || contextRequestAborts.has(request.requestId)
-                || Object.keys(request).sort().join(",") !== "payload,requestId,subtype,type")) {
+            if (contextRequestAborts.has(request.requestId)
+              || (request.subtype === RUNTIME_CONTEXT_SUBTYPE
+                && (typeof request.requestId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(request.requestId)
+                  || incomingRequestAborts.has(request.requestId)
+                  || Object.keys(request).sort().join(",") !== "payload,requestId,subtype,type"))) {
               throw new ProtocolDecodeError("required_context_unavailable");
             }
             void handleIncomingControlRequest(frame as ControlRequestFrame);

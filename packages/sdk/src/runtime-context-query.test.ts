@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, readdirSync, readFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query } from "./query.ts";
+import { ProtocolDecodeError } from "./errors.ts";
 import { encodeFrame, splitFrames } from "./protocol/codec.ts";
 import { PROTOCOL_VERSION, type ControlRequestFrame, type ControlResponseFrame, type WinterFrame } from "./protocol/frames.ts";
 import type { RuntimeConfig } from "./protocol/config.ts";
@@ -229,4 +230,53 @@ test("opted-in parser redacts malformed wire bytes rather than echoing protected
       exited: new Promise(() => {}), kill() {}, pid: null };
   } })).rejects.toThrow(/^required_context_unavailable$/);
   expect(called).toBe(0);
+});
+
+test.each(["permission", "hook"] as const)("active context identity cannot be overwritten by a registered %s request", async subtype => {
+  let ready!: () => void, stopped!: () => void;
+  const started = new Promise<void>(resolve => { ready = resolve; }), aborted = new Promise<void>(resolve => { stopped = resolve; });
+  const writes: WinterFrame[] = [], messages: unknown[] = [];
+  let secondCallbacks = 0, postCollisionDispatches = 0, failure: unknown;
+  const options: Options = { requireRuntimeContext: true,
+    onRuntimeContext: async (_, { signal }) => {
+      ready(); await new Promise<void>(resolve => signal.addEventListener("abort", () => { stopped(); resolve(); }, { once: true }));
+      return snapshot; // A late successful callback result must never be returned to the runtime.
+    },
+    canUseTool: async () => { secondCallbacks++; return { behavior: "allow", updatedInput: {} }; },
+    hooks: { PreToolUse: [{ hooks: [async () => { secondCallbacks++; return {}; }] }] },
+    spawnClaudeCodeProcess(opts) {
+      const config: RuntimeConfig = JSON.parse(opts.args[opts.args.indexOf("--config-json") + 1]!);
+      const payload = subtype === "permission"
+        ? { toolName: "Fixture", input: {}, suggestions: [], toolUseID: "tool-X", requestId: "X", policyVersion: 0 }
+        : { hookId: "PreToolUse:sdk:0:0", event: "PreToolUse", sessionId: config.sessionId, toolUseID: "tool-X", toolName: "Fixture", input: {}, requestId: "X", policyVersion: "0" };
+      return transport(config, async function* () { yield init(config);
+        yield { type: "control_request", subtype: "runtime_context", requestId: "X", payload: request(config) };
+        await started;
+        yield { type: "control_request", subtype, requestId: "X", payload };
+        postCollisionDispatches++;
+        yield { type: "control_cancel_request", requestId: "X" };
+        yield result;
+      }, writes);
+    },
+  };
+  try { for await (const message of query({ prompt: "fixture", options })) messages.push(message); } catch (error) { failure = error; }
+  await aborted; await Promise.resolve(); await Promise.resolve();
+  expect(failure).toBeInstanceOf(ProtocolDecodeError); expect((failure as Error).message).toBe("required_context_unavailable");
+  expect(secondCallbacks).toBe(0); expect(postCollisionDispatches).toBe(0); expect(messages).toEqual([]);
+  expect(writes.filter(frame => frame.type === "control_response")).toEqual([]);
+});
+
+test("a runtime context request before the feature handshake cannot invoke the host callback", async () => {
+  let called = 0; const writes: WinterFrame[] = [];
+  let failure: unknown;
+  try { await drain({ requireRuntimeContext: true, onRuntimeContext: async () => { called++; return snapshot; }, spawnClaudeCodeProcess(opts) {
+    const config: RuntimeConfig = JSON.parse(opts.args[opts.args.indexOf("--config-json") + 1]!);
+    return transport(config, async function* () {
+      yield { type: "control_request", subtype: "runtime_context", requestId: "X", payload: request(config) };
+      yield init(config); yield result;
+    }, writes);
+  } }); } catch (error) { failure = error; }
+  expect(failure).toBeInstanceOf(ProtocolDecodeError);
+  expect((failure as Error).message).toBe("protocol violation: expected 'init' as the first frame, got 'control_request' (runtime_context)");
+  expect(called).toBe(0); expect(writes.filter(frame => frame.type === "control_response")).toEqual([]);
 });

@@ -29,7 +29,10 @@ failure codes without forwarding callback text, paths or credentials. Each actua
 model/compaction dispatch resolves a current snapshot. The existing engine timeout
 aborts the correlated RPC; runtime cancellation and query teardown reach the host
 callback's `AbortSignal`. Hosts must honor cancellation to stop their own work.
-Late responses cannot provide a fallback snapshot.
+Late responses cannot provide a fallback snapshot. An active context request ID
+is reserved across all incoming RPC subtypes, including permission and hooks.
+A collision refuses the parser and teardown aborts the original context callback.
+The init/feature handshake must precede any context callback.
 
 Production wiring creates one channel per query and binds it once to the parent's
 existing control bridge. Ordinary, specialized and forked children share that
