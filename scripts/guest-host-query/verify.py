@@ -73,13 +73,16 @@ def snapshot(path,limit=8*1024*1024):
         if len(wire)!=before.st_size or len(wire)>limit or (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns)!=(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns):raise ValueError('fixture evidence changed')
         return wire
     finally:os.close(fd)
+def require_dac_identity(uid,gid,groups):
+    if uid!=TOOL_UID or gid!=TOOL_UID or list(groups)!=[GROUP]:raise AssertionError('DAC tool identity mismatch')
 def dac_writable_control(source):
     # Fixed fixture child BEFORE service threads, not a guest/native-owner substitute.
     # It proves the same backing source accepts a write under the actual tool UID/GID.
     pid=os.fork()
     if pid==0:
         try:
-            os.setgroups([GROUP]);os.setgid(GROUP);os.setuid(TOOL_UID)
+            os.setgroups([GROUP]);os.setgid(TOOL_UID);os.setuid(TOOL_UID)
+            require_dac_identity(os.getuid(),os.getgid(),os.getgroups())
             fd=os.open(source/'dac-control',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
             try:
                 if os.write(fd,b'DAC-writable\n')!=13:os._exit(61)

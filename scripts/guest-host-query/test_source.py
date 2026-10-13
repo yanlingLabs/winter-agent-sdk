@@ -26,6 +26,10 @@ class SourceTests(unittest.TestCase):
    with self.assertRaises(AssertionError):verify.effect_oracle('ask-deny',source)
    (source/'seed').write_bytes(b'changed')
    with self.assertRaises(AssertionError):verify.effect_oracle('bypass',source)
+ def test_dac_identity_requires_actual_tool_primary_and_supplementary_groups(self):
+  verify.require_dac_identity(10001,10001,[10000])
+  for identity in ((0,10001,[10000]),(10001,10000,[10000]),(10001,10001,[]),(10001,10001,[10000,0])):
+   with self.assertRaises(AssertionError):verify.require_dac_identity(*identity)
  def test_dac_control_parent_observes_owned_child_and_exact_bytes_without_running_it(self):
   with tempfile.TemporaryDirectory() as tmp:
    source=Path(tmp);(source/'dac-control').write_bytes(b'DAC-writable\n')

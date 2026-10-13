@@ -53,7 +53,8 @@ canaries do not resolve in the tool view; Root asserts their backing targets exi
 and remain unchanged. The credential is 0444, and the separate protected canary
 store has a 0755 directory/0444 file under traversable fixture ancestors. This
 removes DAC as the reason for negative visibility. Before service threads start,
-a fixed fixture child under the real tool UID/GID must write `dac-control` in the
+a fixed fixture child self-checks tool UID/primary GID10001 and supplementary
+workspace GID10000 before writing `dac-control` in the
 same backing source and be reaped; its bytes remain unchanged after plan probing.
 Thus plan EROFS is checked against an actual writable backing control, not any
 error or a DAC refusal. This source branch has not executed that Root-side control.
@@ -120,7 +121,7 @@ privileged command or launch approval is provided by this source report.
 
 ## Local source evidence
 
-17 Python portable checks pass: three-entry complete inert closure, missing/extra/
+18 Python portable checks pass: three-entry complete inert closure, missing/extra/
 old outputs, wrong recipe/kind/path, changed ELF/dependency/metafile, aggregate
 refusal without stress allocation, canonical provider scope, real pipe final-writer
 EOF and sidecar golden negatives for schema/items/anchor/order/input/result.
