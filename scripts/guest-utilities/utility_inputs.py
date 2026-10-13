@@ -1,12 +1,12 @@
 """Ordinary Linux build-only fixed utility inputs. readelf reads metadata; no input ELF runs."""
 import os,sys
 if __name__=='__main__' and os.geteuid()==0:raise SystemExit('ordinary utility origin builder required')
-import argparse,hashlib,importlib.util,json,platform,re,subprocess
+import argparse,ast,hashlib,importlib.util,json,platform,re,stat,subprocess
 from pathlib import Path
 HERE=Path(__file__).resolve().parent
 spec=importlib.util.spec_from_file_location('utility_capture',HERE/'closure.py');c=importlib.util.module_from_spec(spec);spec.loader.exec_module(c)
 PACKAGES=('collections','encodings','importlib','json','multiprocessing','re','zipfile')
-MODULES=('__future__','_collections_abc','_compression','_sitebuiltins','_weakrefset','abc','argparse','base64','bisect','calendar','codecs','contextlib','copy','copyreg','datetime','decimal','dis','enum','fnmatch','functools','genericpath','getopt','gettext','hashlib','heapq','hmac','inspect','io','keyword','linecache','locale','logging','numbers','operator','os','pathlib','pickle','platform','posixpath','queue','random','reprlib','runpy','secrets','selectors','shutil','signal','site','socket','stat','string','struct','subprocess','sysconfig','tempfile','textwrap','threading','token','tokenize','traceback','types','typing','warnings','weakref')
+MODULES=('__future__','_collections_abc','_compat_pickle','_compression','_sitebuiltins','_weakrefset','abc','argparse','base64','bisect','calendar','codecs','contextlib','copy','copyreg','datetime','decimal','dis','enum','fnmatch','functools','genericpath','getopt','gettext','hashlib','heapq','hmac','inspect','io','keyword','linecache','locale','logging','numbers','operator','os','pathlib','pickle','platform','posixpath','queue','random','reprlib','runpy','secrets','selectors','shutil','signal','site','socket','stat','string','struct','subprocess','sysconfig','tempfile','textwrap','threading','token','tokenize','traceback','types','typing','warnings','weakref')
 EXTENSIONS=('_multiprocessing','_posixshmem','_socket','_struct','array','binascii','math','select','_random','_sha2','_hashlib','_blake2','_pickle','_heapq','_bisect','_posixsubprocess','fcntl','mmap','_csv','_datetime','_opcode','zlib')
 
 
@@ -23,6 +23,41 @@ def stdlib_paths(base):
         if not (base/package/'__init__.py').is_file():raise ValueError('fixed Python package missing: '+package)
         paths.extend(path for path in sorted((base/package).rglob('*.py')) if not any(part in ('test','tests','__pycache__') for part in path.relative_to(base).parts))
     return paths
+
+
+def validate_pickle_dependency(origin,files):
+    """Check only the measured pickle -> _compat_pickle required pure-source edge.
+
+    Direct module-body imports are unconditional. Imports nested under try/if,
+    including pickle's optional _pickle/ImportError paths, cannot satisfy this
+    edge. This is not a general import-graph or runtime-completeness proof.
+    """
+    root=c.open_root(origin);sources={}
+    try:
+        for name in ('pickle','_compat_pickle'):
+            guest='/usr/lib/python3.12/'+name+'.py';item=files.get(guest)
+            if not item or item['role']!='stdlib' or item['source']!=guest[1:]:raise ValueError('required pickle dependency leaf missing')
+            fd=c.leaf(root,item['source'])
+            try:
+                before=os.fstat(fd);limit=1024*1024
+                if not stat.S_ISREG(before.st_mode) or not 1<=before.st_size<=limit:raise ValueError('bounded pickle source required')
+                parts=[];size=0
+                while True:
+                    part=os.read(fd,min(65536,limit-size+1))
+                    if not part:break
+                    size+=len(part)
+                    if size>limit:raise ValueError('bounded pickle source required')
+                    parts.append(part)
+                data=b''.join(parts)
+                if c.identity(before)!=c.identity(os.fstat(fd)) or size!=before.st_size or size!=item['bytes'] or c.digest(data)!=item['sha256']:raise ValueError('pickle source measurement changed')
+                sources[name]=data
+            finally:os.close(fd)
+    finally:os.close(root)
+    tree=ast.parse(sources['pickle']);imports=set()
+    for node in tree.body:
+        if isinstance(node,ast.Import):imports.update(alias.name for alias in node.names)
+        elif isinstance(node,ast.ImportFrom) and node.level==0:imports.add(node.module)
+    if '_compat_pickle' not in imports:raise ValueError('fixed unconditional pickle dependency changed')
 
 
 def prepare(output):
@@ -69,6 +104,7 @@ def prepare(output):
             if source is None:raise ValueError('fixed library dependency missing')
             add('/lib/aarch64-linux-gnu/'+name,source,'library')
     manifest=c.validate_manifest({'formatVersion':1,'kind':'winter-tool-utility-inputs','target':'linux-arm64-gnu','files':files})
+    validate_pickle_dependency(origin,manifest['files'])
     if c.measured_path(reader)!=reader_identity:raise ValueError('readelf changed')
     (output/'input-manifest.json').write_text(c.canonical(manifest)+'\n')
     (output/'origin-receipt.json').write_text(c.canonical({'kind':'winter-utility-origin','builder':{'version':platform.python_version(),**c.measured_path(Path(sys.executable).resolve(),128*1024*1024)},'readelf':reader_identity,'readelfCommands':commands,'manifestSha256':c.digest(c.canonical(manifest).encode()),'utilityExecution':False,'dependencyCompletenessVerified':False})+'\n')

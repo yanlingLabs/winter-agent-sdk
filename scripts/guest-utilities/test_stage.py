@@ -149,11 +149,34 @@ class UtilityStageTests(unittest.TestCase):
         excluded=source('zipfile/tests/should-not-copy.py')
         paths=collector.stdlib_paths(base)
         self.assertIn(base/'zipfile/__init__.py',paths);self.assertIn(nested,paths);self.assertIn(glob,paths)
+        self.assertIn(base/'_compat_pickle.py',paths)
         self.assertNotIn(excluded,paths);self.assertFalse((base/'zipfile.py').exists())
         (base/'zipfile/__init__.py').unlink()
         with self.assertRaisesRegex(ValueError,'fixed Python package missing: zipfile'):collector.stdlib_paths(base)
         source('zipfile/__init__.py');(base/'threading.py').unlink()
         with self.assertRaisesRegex(ValueError,'fixed Python module missing: threading'):collector.stdlib_paths(base)
+        source('threading.py');(base/'_compat_pickle.py').unlink()
+        with self.assertRaisesRegex(ValueError,'fixed Python module missing: _compat_pickle'):collector.stdlib_paths(base)
+    def test_measured_pickle_required_edge_and_optional_importerror_are_distinct(self):
+        collector=load('utility_inputs');origin=self.root/'pickle-origin';origin.mkdir();files={}
+        def source(name,body):
+            guest='/usr/lib/python3.12/'+name+'.py';path=origin/guest[1:];path.parent.mkdir(parents=True,exist_ok=True);data=body.encode();path.write_bytes(data)
+            files[guest]={'role':'stdlib','source':guest[1:],'sha256':s.sha(data),'bytes':len(data),'executable':False};return path
+        source('_compat_pickle','raise RuntimeError("dependency bytes must never execute")\n')
+        pickle=source('pickle','import _compat_pickle\ntry:\n    from _pickle import PickleBuffer\nexcept ImportError:\n    PickleBuffer = None\nraise RuntimeError("pickle bytes must never execute")\n')
+        self.assertIsNone(collector.validate_pickle_dependency(origin,files))
+        missing=copy.deepcopy(files);del missing['/usr/lib/python3.12/_compat_pickle.py']
+        with self.assertRaisesRegex(ValueError,'required pickle dependency leaf missing'):collector.validate_pickle_dependency(origin,missing)
+        for body in ('try:\n    import _compat_pickle\nexcept ImportError:\n    pass\n','if False:\n    import _compat_pickle\n','import _pickle\n'):
+            source('pickle',body)
+            with self.subTest(body=body),self.assertRaisesRegex(ValueError,'fixed unconditional pickle dependency changed'):collector.validate_pickle_dependency(origin,files)
+        source('pickle','import _compat_pickle\n')
+        pickle.write_bytes(b'import _compat_pickle\n# changed bytes\n')
+        with self.assertRaisesRegex(ValueError,'pickle source measurement changed'):collector.validate_pickle_dependency(origin,files)
+        source('pickle','import _compat_pickle\n');pickle.unlink();pickle.symlink_to(origin/'usr/lib/python3.12/_compat_pickle.py')
+        with self.assertRaises(OSError):collector.validate_pickle_dependency(origin,files)
+        recipe=(HERE/'utility_inputs.py').read_text()
+        self.assertLess(recipe.index("validate_pickle_dependency(origin,manifest['files'])"),recipe.index("(output/'input-manifest.json').write_text"))
     def test_exact_descendant_payload_child_readiness_after_setsid_and_parent_timeout(self):
         payload=(HERE/'descendant.py').read_text()
         class Halt(Exception):pass

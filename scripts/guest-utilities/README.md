@@ -160,6 +160,20 @@ through the same measured copy path. Missing package initializers or required
 modules still refuse; this source correction does not establish a completed
 Linux utility closure, artifact admission or native execution.
 
+The admitted run `38377350513` passed the stdin, inventory and boundary markers,
+then failed importing multiprocessing. Static inspection of its pinned pickle
+source found an unconditional `import _compat_pickle` whose leaf was absent.
+The explicit module selection now includes `_compat_pickle.py`. Before emitting
+the input manifest, a focused AST guard reads the measured origin copies of
+`pickle.py` and `_compat_pickle.py` through held nofollow descriptors, checks
+their exact recorded bytes, and requires that direct module-body import.
+Imports nested under try/if cannot satisfy it. Pickle's two `_pickle` accelerator
+imports have explicit ImportError fallbacks; they are optional paths, separate
+from this required pure-source edge. No guest Python module or input ELF runs.
+This guard proves only that fixed edge and selected leaf, not the full static
+graph, platform branches, dynamic imports or runtime completeness. A fresh
+source/build/artifact review and separately admitted run remain required.
+
 Artifact audit of build `38333923765` found that loader bytes were measured but
 captured/copied as 0444. Execution intent now binds capture modes (0555/0444),
 bundle metadata, immutable staging modes (0500/0400), and verified runtime copy
