@@ -348,3 +348,11 @@ The denial-oracle follow-up after `1f575ae9` requires exact `fixed fixture denie
 content on ask-deny's Write and both Bash results in wire and persisted history,
 not merely denied/is_error flags. Synthetic goldens now use the actual engine
 denial text; positive proc markers or other messages cannot satisfy those calls.
+
+The mount-guard correction after `ad90b458` pads the optional-field string before
+matching propagation tags, so a first shared/master/propagate_from field cannot
+escape detection. Each of the six protected roles matches both its exact full
+path and the exact suffix after `/tmp`, covering a separate tmpfs mount without
+rejecting legitimate source/environment paths sharing the run ID. Generated
+guard-only tests cover these failures and clean synthetic records; no proc/mount
+probe executes. Native private-mount code remains unchanged.

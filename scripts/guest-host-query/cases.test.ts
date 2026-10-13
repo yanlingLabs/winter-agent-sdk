@@ -185,3 +185,29 @@ test("ask-deny requires exact per-call denial text even with otherwise correct f
     }
   }
 });
+
+test("generated mount guards reject first propagation tags and exact protected roots without tmp prefix", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const generated = boundaryCommand("bypass", PATHS), fail = generated.split("\n")[0]!;
+  const propagation = generated.match(/case " \$phase_tail" in .*?esac;/)![0]!;
+  const protectedRoots = generated.match(/for phase_protected in .*?done;/)![0]!;
+  const evaluate = (tail: string, root: string) => spawnSync("/bin/bash", ["-c", `${fail}\nphase_tail='${tail}'; phase_root='${root}'; ${propagation} ${protectedRoots} printf clean`], { encoding: "utf8" });
+  for (const tag of ["shared:3", "master:4", "propagate_from:5"]) {
+    const result = evaluate(`${tag} - tmpfs tmpfs rw`, "/");
+    expect(result.status).toBe(90);
+    expect(result.stdout).toBe("phase-a-check-failed:mount_propagation\n");
+  }
+  for (const path of Object.values(PATHS)) {
+    for (const root of [path, path.slice(4)]) {
+      const result = evaluate("- tmpfs tmpfs rw", root);
+      expect(result.status).toBe(90);
+      expect(result.stdout).toBe("phase-a-check-failed:protected_mount_root\n");
+    }
+  }
+  // Shared run ID itself is legitimate: only the exact protected role suffixes deny.
+  for (const root of ["/", "/winter-host-query-run-fixture/source", "/winter-host-query-run-fixture/environment"]) {
+    const result = evaluate("- tmpfs tmpfs rw", root);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("clean");
+  }
+});
