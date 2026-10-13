@@ -39,8 +39,9 @@ Four fresh conversations run sequentially:
   `read_only` authority refusal with is_error (not permission denied); actual Bash
   must attempt a source write, report the exact C-locale `Read-only file system`
   (Linux EROFS/errno30), then finish the boundary probe with no
-  source effect. This deliberately adversarial fixture checks independent native
-  mount/descriptor enforcement; local injected outcomes do not prove it.
+  source effect. Write exercises the in-runtime file-helper gate using Root's
+  read-only flag. Only Bash EROFS would demonstrate native read-only mount
+  enforcement; local injected outcomes do not prove it.
 - bypass: the callback throws if invoked; callback/request counts must be zero.
   Positive allowed Write succeeds and a readonly Bash probe checks actual tool
   view, followed by outside/store/credential file-helper denials with no callback.
