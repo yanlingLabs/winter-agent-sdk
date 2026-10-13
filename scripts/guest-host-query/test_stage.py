@@ -161,7 +161,7 @@ class StageTests(unittest.TestCase):
         self.approved = digest(native)
 
     def capture(self):
-        return s.capture(self.source, self.artifacts, self.receipt_path, self.approved)
+        return s.capture(self.source, self.artifacts, self.receipt_path, self.approved,environment=self.artifacts/'environment')
 
     def test_complete_three_entry_snapshot_accepts_without_execution(self):
         with self.capture() as snapshot:self.assertEqual(set(snapshot.compiled['outputs']),set(s.ENTRIES))

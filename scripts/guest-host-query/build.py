@@ -43,8 +43,17 @@ def validate_receipt(receipt,directory):
     if digest(compile_path)!=receipt.get('compileReceiptSha256'):raise ValueError('compile receipt changed')
     validate_compile_receipt(provenance.json_read(compile_path),directory)
     parent=load_parent()
-    with parent.capture(ROOT,directory,Path(directory)/'receipt.json',digest(Path(directory)/'receipt.json')):pass
+    with parent.capture(ROOT,directory,Path(directory)/'receipt.json',digest(Path(directory)/'receipt.json'),environment=Path(directory)/'environment'):pass
     return receipt
+
+def validate_staged_receipt(directory,receipt_path):
+    admission=getattr(sys,'_winter_host_query_stage_admission',None)
+    if admission is None:raise ValueError('sealed bootstrap admission required')
+    staged=Path(admission.directory)
+    if ROOT!=staged/'source' or Path(directory)!=staged/'artifacts' or Path(receipt_path)!=staged/'artifacts/receipt.json':raise ValueError('closed sealed runner paths')
+    parent=load_parent();native,environment=parent.open_admitted_environment()
+    try:return native
+    finally:os.close(environment)
 
 def load_parent():
     spec=importlib.util.spec_from_file_location('host_query_utility_parent',Path(__file__).with_name('stage.py'));module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
@@ -97,6 +106,6 @@ def main():
         finally:os.close(fd)
     receipt={'formatVersion':3,'kind':'winter-host-query-utilities','utilityCapture':capture,'utilityOrigin':origin,'environment':capture['outputs'],'utilityCaptureSha256':digest(args.output/'utility-receipt.json'),'utilityOriginSha256':digest(args.output/'utility-origin-receipt.json'),'elfDependencies':dependencies,'compileReceiptSha256':digest(args.output/'compile-receipt.json'),'sources':source_hashes,'artifacts':{name:digest(args.output/name) for name in [*NATIVE,*ENTRIES]},'nativeBuildCommands':commands,'nativeCompiler':{**compiler_identity,'version':version_line},'nativeBuildEnvironment':{'PATH':'/usr/bin:/bin','LANG':'C','LC_ALL':'C','TZ':'UTC'},'linuxExecutionVerified':False,'vmExecutionVerified':False}
     (args.output/'receipt.json').write_text(json.dumps(receipt,sort_keys=True,indent=2)+'\n');(args.output/'receipt.json').chmod(0o444)
-    with parent.capture(ROOT,args.output,args.output/'receipt.json',digest(args.output/'receipt.json')):pass
+    with parent.capture(ROOT,args.output,args.output/'receipt.json',digest(args.output/'receipt.json'),environment=args.output/'environment'):pass
     print(json.dumps({'receiptFile':'receipt.json','nativeArtifactsBuilt':True,'linuxExecutionVerified':False,'vmExecutionVerified':False}))
 if __name__=='__main__':main()

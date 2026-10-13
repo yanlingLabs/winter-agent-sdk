@@ -167,6 +167,37 @@ def verify_readonly_data(directory_fd,identity,expected,initial=None):
     if observed!=expected or directories!=wanted_dirs or initial is not None and identities!=initial:raise AssertionError('readonly data bytes/identity')
     return identities
 
+def timing_tool_service(base,measurements,clock=time.monotonic_ns):
+    # Fixture metrology only: delegate every authority/lifecycle decision unchanged.
+    class ObservedToolService(base):
+        def _run(self,item,kind,operation,root,relative,limit,extra,payload,seconds,cancel,channel):
+            try:before=clock()
+            except Exception:before=None
+            outcome='raised'
+            try:
+                result=super()._run(item,kind,operation,root,relative,limit,extra,payload,seconds,cancel,channel);outcome='returned';return result
+            finally:
+                if kind=='process':
+                    try:
+                        after=clock();elapsed=(after-before+999999)//1000000 if type(before)==int and type(after)==int and 0<=after-before<=60*1000000000 else None
+                    except Exception:elapsed=None
+                    record={'commandSha256':hashlib.sha256(payload).hexdigest(),'elapsedTotalUpperBoundMs':elapsed,'delegatedOutcome':outcome}
+                    if len(measurements['records'])<16:measurements['records'].append(record)
+                    else:measurements['overflow']=True
+    return ObservedToolService
+
+def timing_snapshot(measurements):
+    return {'records':[dict(record) for record in measurements['records'][:]],'overflow':measurements['overflow']}
+
+def utility_timing_oracle(kind,command_sha,measurements):
+    records=measurements['records']
+    if measurements['overflow'] or len(records)!=(0 if kind=='ask-deny' else 2):raise AssertionError('fixture process timing count')
+    if kind=='ask-deny':return {'executed':False,'commandSha256':command_sha,'elapsedTotalUpperBoundMs':None,'conservativeTwofoldMargin':None}
+    matching=[record for record in records if record['commandSha256']==command_sha]
+    if len(matching)!=1 or matching[0]['delegatedOutcome']!='returned':raise AssertionError('fixture utility timing binding')
+    elapsed=matching[0]['elapsedTotalUpperBoundMs']
+    return {'executed':True,'commandSha256':command_sha,'elapsedTotalUpperBoundMs':elapsed,'conservativeTwofoldMargin':True if elapsed is not None and elapsed<2500 else None}
+
 def effect_oracle(kind,source):
     if snapshot(source/'dac-control')!=b'DAC-writable\n':raise AssertionError('DAC control changed')
     if snapshot(source/'seed')!=b'hello\n':raise AssertionError('source sentinel changed')
@@ -222,7 +253,7 @@ def transcript_oracle(kind,store,host_record):
         if any(row.get(key)!=value for key,value in expected_row.items()) or not isinstance(row.get('uuid'),str) or not row['uuid'] or not isinstance(row.get('timestamp'),str) or not row['timestamp']:raise AssertionError('native state anchor/content')
     actual_script=[{'name':calls[f'call-{index}']['name'],'input':calls[f'call-{index}']['input']} for index in range(expected)]
     if hashlib.sha256(json.dumps(actual_script,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()!=host_record['scriptSha256']:raise AssertionError('persisted tool inputs differ from actual host oracle')
-    return {'exactReadBytes':True,'toolCalls':expected,'toolResults':expected,'nativeStateAnchors':len(native)}
+    return {'exactReadBytes':True,'toolCalls':expected,'toolResults':expected,'nativeStateAnchors':len(native),'utilityCommandSha256':hashlib.sha256(actual_script[3]['input']['command'].encode()).hexdigest()}
 def spawn_fixed(binary,args,descriptors,uid):
     # Before all service/listener/runtime threads start. No Popen preexec from a threaded Root.
     copies=[fcntl.fcntl(fd,fcntl.F_DUPFD_CLOEXEC,64) for fd in descriptors];fillers=[]
@@ -337,7 +368,7 @@ def print_failure_record(root,kind,phase,error,before,after,cleanup,helper):
 def run_case(kind,artifacts,receipt,helper):
     logical='host-query-'+kind;helper['LOGICAL']=logical
     root=Path(tempfile.mkdtemp(prefix='winter-host-query-run-',dir='/tmp'));root.chmod(0o711)
-    service=host=provider=owner=None;all_fds=[];channels=[];observed={};captures=[];errors=[];phase='outer-baseline'
+    service=host=provider=owner=None;all_fds=[];channels=[];observed={};captures=[];errors=[];measurements={'records':[],'overflow':False};phase='outer-baseline'
     oracle=helper['MountIsolationOracle'](str(root))
     try:
         oracle.before(observed);phase='artifacts'
@@ -347,8 +378,9 @@ def run_case(kind,artifacts,receipt,helper):
             if build.digest(target)!=receipt['artifacts'][name]:raise AssertionError('artifact changed')
             pins[name]={'path':str(target),'sha256':receipt['artifacts'][name]}
         phase='environment'
-        parent=build.load_parent();sealed_environment=Path(sys._winter_host_query_stage_admission.directory)/'environment'
-        env_fd=parent.open_root(sealed_environment)
+        parent=build.load_parent();validated_receipt,env_fd=parent.open_admitted_environment()
+        if validated_receipt!=receipt:
+            os.close(env_fd);raise AssertionError('sealed environment receipt changed')
         try:
             for guest,item in receipt['environment'].items():
                 target=environment/guest[1:];target.parent.mkdir(parents=True,exist_ok=True,mode=0o755)
@@ -386,7 +418,7 @@ def run_case(kind,artifacts,receipt,helper):
         pipes=[os.pipe2(os.O_CLOEXEC|os.O_NONBLOCK) for _ in range(5)];all_fds.extend(fd for pair in pipes for fd in pair)
         module=load('protected_fixture_service',ROOT/'packages/runtime/src/guest/linux-supervisor.py')
         phase='service-construct'
-        ports=module.RuntimeDuplexPorts(logical,scope,pipes[0][0],pipes[1][1],pipes[2][1]);service=module.ToolService(config,host_query_ports={logical:ports})
+        ports=module.RuntimeDuplexPorts(logical,scope,pipes[0][0],pipes[1][1],pipes[2][1]);service=timing_tool_service(module.ToolService,measurements)(config,host_query_ports={logical:ports})
         require_readonly_binding(service,logical,readonly_fd)
         # Only the accepted relay duplicates retain these service ends. No hidden writer
         # may keep host stderr/stdout alive after actual service closure.
@@ -465,7 +497,8 @@ def run_case(kind,artifacts,receipt,helper):
         verify_readonly_data(readonly_fd,readonly_identity,readonly_expected,readonly_initial)
         phase='source-effects';effects=effect_oracle(kind,source)
         phase='persisted-history';history=transcript_oracle(kind,root/'store',host_record)
-        evidence={**effects,**history,'callbacks':host_record['callbacks'],'readonlyDataIdentityUnchanged':True,'sameBoundReadonlyRoot':True,'backingCanariesUnchanged':True,'sameBackingDacWriteControl':True,'nativeServiceClosed':True,'storeLockReleased':True,'hostProviderReaped':True}
+        timing=utility_timing_oracle(kind,history['utilityCommandSha256'],measurements)
+        evidence={**effects,**history,'utilityTiming':timing,'callbacks':host_record['callbacks'],'readonlyDataIdentityUnchanged':True,'sameBoundReadonlyRoot':True,'backingCanariesUnchanged':True,'sameBackingDacWriteControl':True,'nativeServiceClosed':True,'storeLockReleased':True,'hostProviderReaped':True}
         phase='mount-teardown';oracle.after(observed);evidence['mountIsolation']=observed
         for capture in (*captures,*errors):capture.stream.close()
         for channel in channels:channel.close()
@@ -476,6 +509,7 @@ def run_case(kind,artifacts,receipt,helper):
         return {'case':kind,'passed':True,'evidence':evidence}
     except BaseException as error:
         before=failure_observation(service,logical,captures,errors,(host,provider),root,helper)
+        before['processTiming']=timing_snapshot(measurements)
         cleanup={'serviceCloseObserved':None,'hostWaitCompleted':False,'providerWaitCompleted':False}
         if service is not None:
             try:service.revoke(logical)
@@ -491,6 +525,7 @@ def run_case(kind,artifacts,receipt,helper):
             except Exception as failure:cleanup['serviceCloseFailure']=diagnostic_failure(failure,helper)
         for capture in (*captures,*errors):capture.finish()
         after=failure_observation(service,logical,captures,errors,(host,provider),root,helper)
+        after['processTiming']=timing_snapshot(measurements)
         print_failure_record(root,kind,phase,error,before,after,cleanup,helper)
         raise
     finally:
@@ -501,7 +536,7 @@ def run_case(kind,artifacts,receipt,helper):
         for channel in channels:channel.close()
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--artifacts',type=Path,required=True);parser.add_argument('--reviewed-receipt',type=Path,required=True);args=parser.parse_args()
-    receipt=build.validate_receipt(build.provenance.json_read(args.reviewed_receipt),args.artifacts)
+    receipt=build.validate_staged_receipt(args.artifacts,args.reviewed_receipt)
     if sys.platform!='linux' or os.geteuid()!=0:raise SystemExit('admitted disposable Root Linux fixture only')
     helper=stable_helpers()
     try:results=[run_case(kind,args.artifacts,receipt,helper) for kind in CASES]

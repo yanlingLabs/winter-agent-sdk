@@ -447,12 +447,12 @@ def own_parent_hash():
     try:return measure(directory,path.name,MAX_FILE,unique=False)['sha256']
     finally:os.close(directory)
 
-def capture(source,artifacts,receipt_path,approved_digest):
+def capture(source,artifacts,receipt_path,approved_digest,*,environment):
     if not valid_hash(approved_digest):raise ValueError('external approved receipt digest required')
     source_fd=artifact_fd=receipt_fd=environment_fd=None
     try:
         source_fd=open_root(source);artifact_fd=open_root(artifacts);receipt_fd=open_root(Path(receipt_path).parent)
-        environment_fd=open_root(Path(artifacts)/'environment')
+        environment_fd=open_root(environment)
         wire=measure(receipt_fd,Path(receipt_path).name,MAX_JSON,approved_digest,retain=True);native=json_wire(wire)
         if type(native) is not dict or not valid_hash(native.get('compileReceiptSha256')):raise ValueError('native receipt shape')
         compiled=json_wire(measure(artifact_fd,'compile-receipt.json',MAX_JSON,native['compileReceiptSha256'],retain=True))
@@ -560,9 +560,8 @@ def stage_root_names(fd):
             if len(names)>3:raise ValueError('staged root inventory')
     return names
 
-def verify_staged(directory,approved_digest,parent_sha):
-    trusted_staging_ancestry(directory)
-    root=open_root(directory);source=artifacts=environment=None
+def verify_staged_fd(root,approved_digest,parent_sha,*,keep_environment=False):
+    source=artifacts=environment=None
     try:
         info=os.fstat(root)
         if info.st_uid!=0 or stat.S_IMODE(info.st_mode)!=0o500 or stage_root_names(root)!={'source','artifacts','environment'}:raise ValueError('immutable staged root required')
@@ -571,10 +570,27 @@ def verify_staged(directory,approved_digest,parent_sha):
         wire=measure(artifacts,'receipt.json',MAX_JSON,approved_digest,retain=True,immutable=True);native=json_wire(wire);compiled=json_wire(measure(artifacts,'compile-receipt.json',MAX_JSON,native['compileReceiptSha256'],retain=True,immutable=True))
         snapshot=Snapshot(source,artifacts,native,compiled,wire,approved_digest,parent_sha,environment);check_snapshot(snapshot,immutable=True)
         if native['sources'].get(PARENT)!=parent_sha or inventory_staged(source)!=compiled['inputs'] or set(inventory_staged(artifacts))!=set((*ARTIFACTS,*METADATA)):raise ValueError('immutable staged closure inventory')
+        if keep_environment:
+            result=(native,environment);environment=None;return result
         return native
     finally:
-        for fd in (source,artifacts,environment,root):
+        for fd in (source,artifacts,environment):
             if fd is not None:os.close(fd)
+
+def verify_staged(directory,approved_digest,parent_sha):
+    trusted_staging_ancestry(directory);root=open_root(directory)
+    try:return verify_staged_fd(root,approved_digest,parent_sha)
+    finally:os.close(root)
+
+def open_admitted_environment():
+    # Only the externally admitted bootstrap sets this in the isolated Root runner.
+    # No argv/model/environment record selects a directory or grants admission.
+    admission=getattr(sys,'_winter_host_query_stage_admission',None)
+    if admission is None or sys.platform!='linux' or os.geteuid()!=0 or not sys.flags.isolated or not sys.flags.no_site or not sys.dont_write_bytecode or admission.pid!=os.getpid():raise ValueError('sealed bootstrap admission required')
+    directory=Path(admission.directory);trusted_staging_ancestry(directory)
+    held=os.fstat(admission.directory_fd);named=os.lstat(directory)
+    if not stat.S_ISDIR(held.st_mode) or held.st_uid!=0 or stat.S_IMODE(held.st_mode)!=0o500 or (held.st_dev,held.st_ino)!=admission.identity or (named.st_dev,named.st_ino)!=admission.identity:raise ValueError('sealed admission identity')
+    return verify_staged_fd(admission.directory_fd,admission.receipt_sha,admission.parent_sha,keep_environment=True)
 
 BOOTSTRAP=r'''
 import hashlib,os,stat,sys
@@ -631,7 +647,7 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--source',type=Path,required=True);parser.add_argument('--artifacts',type=Path,required=True);parser.add_argument('--receipt',type=Path,required=True);parser.add_argument('--approved-receipt-sha256',required=True);parser.add_argument('--approved-parent-sha256',required=True);args=parser.parse_args()
     if not sys.flags.isolated or not sys.flags.no_site or not sys.dont_write_bytecode:raise SystemExit('isolated stdlib-only parent required')
     if not valid_hash(args.approved_parent_sha256) or own_parent_hash()!=args.approved_parent_sha256:raise SystemExit('external parent admission mismatch')
-    with capture(args.source,args.artifacts,args.receipt,args.approved_receipt_sha256) as snapshot:
+    with capture(args.source,args.artifacts,args.receipt,args.approved_receipt_sha256,environment=Path(args.artifacts)/'environment') as snapshot:
         directory=stage(snapshot);print(json.dumps({'staged':True,'stagingId':directory.name,'approvedReceiptSha256':snapshot.approved}),flush=True)
         return run_staged(directory,snapshot.approved,snapshot.parent_sha)
 if __name__=='__main__':raise SystemExit(main())

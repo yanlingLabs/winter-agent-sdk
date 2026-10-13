@@ -489,3 +489,64 @@ fork, Root identity transition, service construction or native operation execute
 in these tests. The earlier76-test full-suite record and both typechecks describe
 the prior freeze; this follow-up changed only verifier/test/docs and ran the exact
 new data-test module (four pass), without repeating unaffected checks.
+
+### Required sealed-stage handoff correction
+
+Astra found a blocking source error in c86173a1 before any native attempt: the
+ordinary build output holds `artifacts/environment`, but `stage()` creates
+`source`, `artifacts` and `environment` as siblings. The bootstrap passed the
+sealed artifacts directory to the old build validator, which recaptured an
+absent `artifacts/environment`. The c861 source/build data inventory remains
+historical data evidence; its launch admission is revoked and its pins are stale.
+
+Ordinary `capture()` now requires an explicit environment argument. Its build
+callers pass the ordinary output's nested environment. The trusted runner instead
+calls `build.validate_staged_receipt`: argv paths must match the admitted fixed
+source/artifacts/receipt layout, but paths do not select authority. It invokes the
+stdlib parent's `open_admitted_environment`, which checks the current isolated
+Root bootstrap admission, PID and held directory FD identity against its sealed
+name and then validates the complete tree through `verify_staged_fd`. The
+returned environment FD is the already validated sibling opened relative to
+that admission FD with O_DIRECTORY|O_NOFOLLOW. Runtime environment copying uses
+this same helper and receipt, with no reconstructed environment path, existence
+fallback or checkout recapture. All source/dependency/artifact/environment closure
+and ownership/mode checks remain mandatory before service/native work.
+
+`test_staged_handoff.py` calls actual `stage()` to copy synthetic inert inputs
+into the real sibling layout; privileged ownership/ancestry are injected and the
+creation-time final ownership check is deferred to actual full FD handoff
+validation. It then invokes actual `verify.main` and stops at the next phase
+before any service/native work. The former nested-environment path reproduces
+ENOENT. Missing sibling, wrong admission identity, nested artifact decoy, foreign
+CLI path and absent admission all refuse; a sentinel fails if checkout capture is
+called. This is portable API/byte validation, not Root/native acceptance. Its first
+setup attempts exposed macOS's `/tmp` symlink and incomplete injected Python3.14
+flags; corrected canonical private staging/fake flag metadata now pass. Those
+failed portable logs remain retained without any native cleanup claim.
+
+The fixture also delegates unchanged `ToolService._run` through a metrology-only
+subclass. It records at most16 SHA256/process/outcome observations and the ceiling
+of Root monotonic elapsed nanoseconds divided by1e6, including native init, body,
+reap and drain. The second Bash's actual wire/persisted input hash must match the
+observed process payload hash; ask-deny requires zero process execution records.
+An observed total below2500ms proves a conservative at-least2x margin against the
+unchanged5000ms body deadline. At/above that threshold or unavailable clocks the
+margin stays unknown/review-required; no timeout is increased. Return values and
+original delegated failures are preserved; bounded failure diagnostics retain
+these observations without turning them into native cleanup authority. Injected
+clock/base tests cover ceil rounding, exact argument/return identity, original
+failure preservation, unknown margin and denied-case zero execution. Timing
+remains unmeasured until the new separately admitted Linux run.
+
+The correction requires a fresh ordinary build, changed parent/receipt/archive
+pins, a complete independent artifact audit and a new one-run review. The old
+uncommitted execution workflow remains untouched and unadmitted.
+
+Correction freeze evidence: exact owned-directory Python discovery is97 pass in
+`out/phase-b-source-check/handoff-metrology-freeze.log` (including three new
+handoff cases, five metrology cases and existing/inherited fixture cases).
+`staged-handoff-final.log` retains the selected15-case handoff run. No TypeScript,
+helper/C, supervisor, tool payload, grant, timeout or workflow source changed in
+this correction; prior TypeScript/Bun checks are unchanged-scope evidence and were
+not relabeled a native result. No ordinary build, push, service or privileged
+execution was performed by this source lane.
