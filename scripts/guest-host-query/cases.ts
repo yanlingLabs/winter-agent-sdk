@@ -65,7 +65,7 @@ export function boundaryCommand(kind: Case, inputPaths: ProbePaths): string {
     '/workspace/folders/source) for phase_flag in ' + (kind === 'plan' ? 'ro' : 'rw') + ' nosuid nodev noexec; do ' + check('[[ ",$phase_options," = *",$phase_flag,"* ]]', 'source_flags') + '; done; phase_source_mount=$((phase_source_mount+1));;',
     '/dev/null|/dev/zero|/dev/full|/dev/random|/dev/urandom) for phase_flag in ro nosuid noexec; do ' + check('[[ ",$phase_options," = *",$phase_flag,"* ]]', 'device_flags') + '; done; ' + check('[[ ",$phase_options," != *",nodev,"* ]]', 'device_nodev') + '; phase_device_mounts=$((phase_device_mounts+1));;',
     'esac; done < /proc/self/mountinfo || phase_fail mount_read; ' + check('test "$phase_proc_mount:$phase_shm_mount:$phase_source_mount:$phase_device_mounts" = 1:1:1:5', 'mount_inventory') + ';',
-    "printf 'host-query-view-counts:2:5:3:10:1:1:1:5\\n'",
+    'printf "host-query-view-counts:%s:%s:%s:%s:%s:%s:%s:%s\\n" "$phase_pid_count" "$phase_worker_fds" "$phase_self_fds" "$phase_dev_count" "$phase_proc_mount" "$phase_shm_mount" "$phase_source_mount" "$phase_device_mounts"',
     'printf host-query-boundary-ok',
   ].join('\n');
   if (kind !== 'plan') return probe;

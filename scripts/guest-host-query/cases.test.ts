@@ -160,3 +160,17 @@ test("generated mandatory-check failures exit before counters even in conditiona
   expect(generated).not.toContain("$(cat");
   expect(generated).not.toContain(" | ");
 });
+
+test("generated view summary emits actual synthetic counters in the fixed order", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const line = boundaryCommand("bypass", PATHS).split("\n").find(value => value.startsWith('printf "host-query-view-counts:'))!;
+  expect(line).toBeDefined();
+  for (const values of [[2,5,3,10,1,1,1,5], [7,8,9,11,12,13,14,15]]) {
+    const names = ["phase_pid_count", "phase_worker_fds", "phase_self_fds", "phase_dev_count", "phase_proc_mount", "phase_shm_mount", "phase_source_mount", "phase_device_mounts"];
+    // Only the generated printf and inert variable assignments execute, never the probe.
+    const command = names.map((name, index) => `${name}=${values[index]}`).join(";") + ";" + line;
+    const result = spawnSync("/bin/bash", ["-c", command], { encoding: "utf8" });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(`host-query-view-counts:${values.join(":")}\n`);
+  }
+});

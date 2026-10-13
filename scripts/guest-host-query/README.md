@@ -337,3 +337,9 @@ hidden entries cannot be silently skipped. The first result additionally require
 exact `host-query-view-counts:2:5:3:10:1:1:1:5` before its marker. Inert generated
 UID/GID/group/worker-FD/stdin check failures prove no counter/success advancement
 even when Bash disables errexit in a conditional function call.
+
+A narrow follow-up after `462faae7` prints the eight observed counter variables
+in their fixed order rather than a hardcoded count literal. Mandatory guards
+and the exact host/Root expected string remain unchanged. A generated-printf
+inert test verifies both expected and deliberately different synthetic counters;
+it executes no probe or host proc/device access.
