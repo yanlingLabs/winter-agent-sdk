@@ -64,7 +64,7 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
         modules[name] = (guest, package)
     if len(modules) > MAX_MODULES or not 1 <= len(roots) <= 64:
         raise ValueError('static graph inventory limit')
-    visited = {};bindings = {};stars = {};edges = [];optional = [];deferred = [];root_records = [];aliases = {}
+    visited = {};bindings = {};stars = {};module_imports = {};edges = [];optional = [];deferred = [];root_records = [];aliases = {}
     total = 0
 
     def parse(data):
@@ -103,7 +103,7 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
             elif isinstance(node, (ast.With, ast.AsyncWith)):
                 yield from imports(node.body, conditional, lazy)
 
-    def declared(body):
+    def declared(body, owner):
         # Module-scope exported bindings, including conditional definitions.
         # Their runtime values/presence remain unverified, especially __getattr__.
         names = set()
@@ -112,14 +112,23 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
                 names.add(node.name)
             elif isinstance(node, ast.Import):
                 names.update(alias.asname or alias.name.split('.')[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                module_imports.setdefault(owner, set()).add((node.lineno, node.col_offset))
+                # Imported attributes are syntactic exports even in optional
+                # branches. A package's own `from . import missing` must not
+                # predeclare missing and satisfy that same required import.
+                if absolute(node, owner) != owner:
+                    names.update(alias.asname or alias.name for alias in node.names if alias.name != '*')
             elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 names.update(child.id for target in targets for child in ast.walk(target) if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store))
             elif isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith, ast.Try, ast.TryStar)):
+                targets = [node.target] if isinstance(node, (ast.For, ast.AsyncFor)) else [item.optional_vars for item in node.items if item.optional_vars is not None] if isinstance(node, (ast.With, ast.AsyncWith)) else []
+                names.update(child.id for target in targets for child in ast.walk(target) if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store))
                 for field in ('body', 'orelse', 'finalbody'):
-                    names.update(declared(getattr(node, field, [])))
+                    names.update(declared(getattr(node, field, []), owner))
                 for handler in getattr(node, 'handlers', []):
-                    names.update(declared(handler.body))
+                    names.update(declared(handler.body, owner))
         return names
 
     def absolute(node, owner):
@@ -219,7 +228,7 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
         visited[module] = {'guest':guest, 'role':item['role'], 'sha256':item['sha256'], 'bytes':item['bytes']}
         if item['role'] == 'extension':
             return
-        tree = parse(data);bindings[module] = declared(tree.body);stars[module] = []
+        tree = parse(data);bindings[module] = declared(tree.body, module);stars[module] = []
         if module == 'os':
             linux_os_alias(tree)
         walk(tree, module)
@@ -242,12 +251,13 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
                     target = targets[0]
                     for alias in node.names:
                         if alias.name == '*':
-                            stars.setdefault(owner, []).append(target)
+                            if (node.lineno, node.col_offset) in module_imports.get(owner, set()):
+                                stars.setdefault(owner, []).append(target)
                         elif not exported(target, alias.name):
                             child = target + '.' + alias.name
                             edges.append({'importer':owner, 'module':child, 'line':node.lineno})
                             ensure(child, owner)
-                        if alias.name != '*':
+                        if alias.name != '*' and (node.lineno, node.col_offset) in module_imports.get(owner, set()):
                             bindings.setdefault(owner, set()).add(alias.asname or alias.name)
             if len(edges) + len(optional) + len(deferred) > MAX_IMPORTS:
                 raise ValueError('static graph import limit')

@@ -102,6 +102,36 @@ class StaticStdlibGraphTests(unittest.TestCase):
         self.assertEqual(set(result['visited']), {'pkg', 'pkg.api', 'pkg.sub'})
         self.assertFalse(any(edge['module'].endswith('.exported') for edge in result['requiredEdges']))
 
+    def test_importfrom_conditional_native_exports_and_fallback_only_bindings_are_not_submodules(self):
+        self.source('abc.py', 'try:\n    from _abc import get_cache_token, _abc_init as init\nexcept ImportError:\n    from _py_abc import get_cache_token\n    from optional_fallback import fallback_token\n')
+        self.source('functools.py', 'from abc import get_cache_token, init, fallback_token\n')
+        result = self.run_graph('import functools\n', builtins=('sys', '_abc'))
+        self.assertEqual(set(result['visited']), {'abc', 'functools'})
+        self.assertFalse(any(edge['module'].startswith('abc.') for edge in result['requiredEdges']))
+        self.assertEqual([item['reason'] for item in result['optionalImports']], ['try-import-error', 'except-branch', 'except-branch'])
+        self.assertFalse(result['optionalImports'][-1]['captured']['optional_fallback'])
+        self.assertFalse(result['optionalBranchesVerified']);self.assertFalse(result['dynamicCompletenessVerified'])
+        self.source('abc.py', 'from missing_required_provider import get_cache_token\n')
+        with self.assertRaisesRegex(ValueError, 'missing required captured module: missing_required_provider'):
+            self.run_graph('import functools\n', builtins=('sys', '_abc'))
+
+    def test_importfrom_function_locals_do_not_export_or_satisfy_a_missing_package_submodule(self):
+        for code in ('def local():\n    from _abc import get_cache_token\n','class Local:\n    from _abc import get_cache_token\n'):
+            self.source('abc.py', code)
+            with self.subTest(code=code),self.assertRaisesRegex(ValueError, 'missing required captured module: abc.get_cache_token'):
+                self.run_graph('from abc import get_cache_token\n', builtins=('sys', '_abc'))
+        self.source('pkg/__init__.py', 'from . import missing\n')
+        with self.assertRaisesRegex(ValueError, 'missing required captured module: pkg.missing'):
+            self.run_graph('import pkg\n')
+
+    def test_module_scope_loop_and_context_bindings_do_not_include_function_locals(self):
+        self.source('scope.py', 'for loop_value in ():\n    pass\nwith manager as context_value:\n    pass\ndef local():\n    for local_value in ():\n        pass\n')
+        result = self.run_graph('from scope import loop_value, context_value\n')
+        self.assertEqual(set(result['visited']), {'scope'})
+        self.assertFalse(result['dynamicCompletenessVerified'])
+        with self.assertRaisesRegex(ValueError, 'missing required captured module: scope.local_value'):
+            self.run_graph('from scope import local_value\n')
+
     def os_source(self):
         return "import sys\n_names = sys.builtin_module_names\nif 'posix' in _names:\n    import posixpath as path\nelif 'nt' in _names:\n    import ntpath as path\nelse:\n    raise ImportError('no os specific module found')\nsys.modules['os.path'] = path\nfrom os.path import curdir\ndel _names\n"
 

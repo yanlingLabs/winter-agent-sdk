@@ -213,6 +213,16 @@ records the source fingerprint and alias, and recursively checks the target's
 dependencies. Missing targets, fake aliases and unknown aliases still fail;
 host `os.path` and dynamic imports are never consulted.
 
+Build `38383006510` exposed missing syntactic export accounting: `abc.py`
+imports `get_cache_token` from `_abc` or its ImportError fallback, and functools
+imports that attribute from abc. Module-scope `ImportFrom` aliases now count as
+declared exports, including conditional/fallback branches; function/class locals do
+not. Loop and context-manager binding targets receive the same scope treatment.
+Star imports remain providers. A package's own `from . import missing` cannot
+predeclare itself into satisfying a required missing submodule. Required provider
+modules still recurse/refuse, and conditional/runtime binding values remain
+unverified. This adds no captured leaf or attribute-name allowlist.
+
 Artifact audit of build `38333923765` found that loader bytes were measured but
 captured/copied as 0444. Execution intent now binds capture modes (0555/0444),
 bundle metadata, immutable staging modes (0500/0400), and verified runtime copy
