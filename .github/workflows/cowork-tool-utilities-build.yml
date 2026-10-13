@@ -1,0 +1,88 @@
+name: Build direct Cowork utility review bundle
+on:
+  pull_request:
+    paths:
+      - 'scripts/guest-utilities/**'
+      - 'scripts/guest-engine/provenance.py'
+      - 'scripts/build-runtime.ts'
+      - 'scripts/linux-runtime-base.json'
+      - 'packages/runtime/src/guest/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig*.json'
+      - 'bunfig.toml'
+      - '.github/workflows/cowork-tool-utilities-build.yml'
+permissions:
+  contents: read
+jobs:
+  build-only:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Locked dependencies only
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Require ordinary Linux ARM64 build tools
+        run: |
+          test "$(id -u)" -ne 0
+          test "$(uname -m)" = aarch64
+          command -v cc
+          command -v readelf
+          test -f /usr/bin/python3.12
+      - name: Download only the independently pinned guest base
+        run: |
+          python3 -I -S -B - <<'PY'
+          import hashlib, io, json, os, urllib.request, zipfile
+          from pathlib import Path
+          pin = json.loads(Path('scripts/linux-runtime-base.json').read_bytes())
+          with urllib.request.urlopen(pin['archiveUrl'], timeout=30) as response:
+              archive = response.read(64 * 1024 * 1024 + 1)
+          if len(archive) > 64 * 1024 * 1024 or hashlib.sha256(archive).hexdigest() != pin['archiveSha256']:
+              raise SystemExit('pinned guest archive refused')
+          with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+              entry = bundle.getinfo(pin['archiveEntry'])
+              if entry.is_dir() or entry.file_size > 128 * 1024 * 1024:
+                  raise SystemExit('pinned guest entry refused')
+              base = bundle.read(entry)
+          if hashlib.sha256(base).hexdigest() != pin['executableSha256']:
+              raise SystemExit('pinned guest executable refused')
+          Path('out').mkdir(mode=0o700, exist_ok=True)
+          fd = os.open('out/linux-bun-base', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o500)
+          try:
+              with os.fdopen(fd, 'wb', closefd=False) as output:
+                  output.write(base)
+          finally:
+              os.close(fd)
+          PY
+      - name: Compile the explicitly named direct tool client only
+        run: bun run scripts/guest-utilities/compile.ts --guest-base out/linux-bun-base --out out/utility-entries
+      - name: Capture only the fixed executable and selected library/stdlib closure
+        run: |
+          python3 -I -S -B scripts/guest-utilities/utility_inputs.py --out out/utility-origin
+          python3 -I -S -B scripts/guest-utilities/closure.py --utility-root "$PWD/out/utility-origin/origin" --manifest out/utility-origin/input-manifest.json --out out/utility-capture
+      - name: Compile native helpers and bind the complete immutable review bundle
+        run: python3 -I -S -B scripts/guest-utilities/build.py --entries out/utility-entries --capture out/utility-capture --origin-receipt out/utility-origin/origin-receipt.json --out out/utility-review
+      - name: Portable synthetic archive, oracle and clone tests only
+        run: |
+          python3 -I -S -B -m unittest discover -s scripts/guest-utilities -p 'test_*.py'
+          python3 -I -S -B -m unittest discover -s scripts/guest-engine -p 'test_tool_devices.py'
+      - name: Retain exact admission identities; no native fixture is executed
+        run: sha256sum scripts/guest-utilities/stage.py out/utility-review/receipt.json out/utility-review/bundle.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: direct-tool-utility-review
+          path: |
+            out/utility-review/receipt.json
+            out/utility-review/bundle.tar.gz
+          if-no-files-found: error
+          retention-days: 7

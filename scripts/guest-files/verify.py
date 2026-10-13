@@ -211,6 +211,9 @@ def main():
         assert (fixture / "source/from-shell").read_bytes() == b"data"
         assert ok("same-view file helper reads shell effects", execute("read", "from-shell"))["data"] == b"data"
         checks.append("actual Bash cwd, separate streams and shared file effects")
+        result = process("test -c /dev/null && test -z \"$(cat)\" && printf discarded > /dev/null && printf stdin-eof")
+        assert result["ok"] and result["exitCode"] == 0 and result["stdout"] == b"stdin-eof" and result["stderr"] == b"", result
+        checks.append("fixed null device supplies EOF stdin and accepts discard writes")
         result = process("test ! -e /protected-runtime-secret && test ! -e /proc && test -z \"$WINTER_HOME\" && test -z \"$BASH_ENV\"")
         assert result["ok"] and result["exitCode"] == 0, result
         checks.append("protected runtime/store/proc/env absent from shell view")

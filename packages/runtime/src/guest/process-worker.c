@@ -13,6 +13,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/sysmacros.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -46,6 +47,18 @@ static int compartment(unsigned long uid) {
     if(syscall(SYS_capget,&header,caps) || caps[0].effective || caps[1].effective || caps[0].permitted || caps[1].permitted || caps[0].inheritable || caps[1].inheritable)return 0;
     for(int cap=0;cap<=CAP_LAST_CAP;cap++)if(prctl(PR_CAPBSET_READ,cap,0,0,0)!=0 || prctl(PR_CAP_AMBIENT,PR_CAP_AMBIENT_IS_SET,cap,0,0)!=0)return 0;
     return 1;
+}
+static void shell_stdin(void) {
+    /* The command pipe belongs to the supervisor and has already been consumed.
+     * Shells accept no input: open the compartment's admitted null node as the
+     * tool UID so /dev/stdin can reopen fd0 without root-owned pipe permissions. */
+    int input=open("/dev/null",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+    struct stat info;
+    if(input<0 || fstat(input,&info) || !S_ISCHR(info.st_mode) || major(info.st_rdev)!=1 || minor(info.st_rdev)!=3 || (fcntl(input,F_GETFL)&O_ACCMODE)!=O_RDONLY)_exit(126);
+    /* dup2(input,0) is a no-op when open returns fd0. Clear CLOEXEC explicitly
+     * in both cases, and never close the retained fd0 alias. */
+    if(dup2(input,0)<0 || fcntl(0,F_SETFD,0)<0)_exit(126);
+    if(input!=0)close(input);
 }
 int main(int argc,char **argv) {
     /* ROOT REL_CWD UID TIMEOUT_MS OUTPUT_LIMIT; command is bounded UTF-8 stdin. */
@@ -82,6 +95,7 @@ int main(int argc,char **argv) {
     pid_t child=fork();
     if(child<0)return denial("fork_failed");
     if(child==0){
+        shell_stdin();
         if(dup2(pipes[0][1],1)<0 || dup2(pipes[1][1],2)<0 || syscall(SYS_close_range,3U,~0U,0U))_exit(126);
         char *args[]={"/bin/bash","--noprofile","--norc","-c",command,NULL};
         char *env[]={"PATH=/usr/bin:/bin","HOME=/tmp","TMPDIR=/tmp","LANG=C","LC_ALL=C",NULL};
