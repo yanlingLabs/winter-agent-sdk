@@ -10,7 +10,7 @@ export function fixturePermission(kind: Case, tool: string, input: unknown): { b
   if (kind === "bypass") throw new Error("bypass callback must never run");
   const intended = toolScript(kind).some(call => call.name === tool && JSON.stringify(call.input) === JSON.stringify(input));
   if (!intended) throw new Error("unbound fixture approval");
-  return kind === "ask-allow" ? { behavior: "allow" } : { behavior: "deny", message: "fixed fixture denied" };
+  return kind === "ask-allow" || kind === "plan" ? { behavior: "allow" } : { behavior: "deny", message: "fixed fixture denied" };
 }
 export function hostOptions(config: RuntimeConfig) {
   assertLinuxHostQueryConfig(config);
@@ -33,16 +33,18 @@ export function fixtureTranscript(kind: Case, frames: unknown[]) {
       if (message.type === "user" && block.type === "tool_result") {
         const index = results.length;
         if (block.tool_use_id !== `call-${index}` || index >= calls.length) throw new Error("fixture tool result correlation");
-        const denied = (kind === "ask-deny" || kind === "plan") && (index === 1 || index === 2), outside = kind === "bypass" && index >= 3;
+        const denied = kind === "ask-deny" && (index === 1 || index === 2), outside = (kind === "bypass" && index >= 3) || (kind === "plan" && index === 1);
         if (Boolean(block.is_error) !== outside || Boolean(block.denied) !== denied) throw new Error("fixture tool result status");
         if (index === 0 && block.content !== "hello\n") throw new Error("fixture Read bytes");
-        if (index === 2 && !denied && block.content !== "host-query-boundary-ok\n[Exit code: 0; cwd changes apply to this command only]") throw new Error("fixture Bash output");
+        if (kind === "plan" && index === 1 && block.content !== "Error [read_only]: guest file operation refused") throw new Error("fixture native plan Write authority");
+        if (kind === "plan" && index === 2 && (typeof block.content !== "string" || !block.content.includes("Read-only file system") || !block.content.includes("host-query-boundary-ok") || !block.content.endsWith("[Exit code: 0; cwd changes apply to this command only]"))) throw new Error("fixture native plan readonly Bash");
+        if (index === 2 && !denied && kind !== "plan" && block.content !== "host-query-boundary-ok\n[Exit code: 0; cwd changes apply to this command only]") throw new Error("fixture Bash output");
         results.push(block);
       }
     }
   }
   if (calls.length !== script.length || results.length !== script.length) throw new Error("fixture missing tool results");
-  return { toolCalls: calls.length, toolResults: results.length, scriptSha256: createHash("sha256").update(JSON.stringify(script)).digest("hex"), resultErrors: results.map(result => Boolean(result.is_error)), resultDenied: results.map(result => Boolean(result.denied)), exactReadBytes: true, bashBoundaryObserved: kind === "ask-allow" || kind === "bypass" };
+  return { toolCalls: calls.length, toolResults: results.length, scriptSha256: createHash("sha256").update(JSON.stringify(script)).digest("hex"), resultErrors: results.map(result => Boolean(result.is_error)), resultDenied: results.map(result => Boolean(result.denied)), exactReadBytes: true, bashBoundaryObserved: kind === "ask-allow" || kind === "bypass" || kind === "plan" };
 }
 function writePipe(fd: number, chunk: string): void {
   const data = Buffer.from(chunk);
@@ -109,7 +111,7 @@ export async function runClient(metadata: { case: Case; runtimeConfig: RuntimeCo
   const toolEvidence = fixtureTranscript(kind, observedFrames);
   const lifecycle = await process.exited;
   if (lifecycle.code !== 0 || lifecycle.signal !== null) throw new Error("Root teardown observer failed");
-  if (!terminal || !terminalTextObserved || requests !== responses || (kind === "bypass" ? callbacks !== 0 : callbacks !== 2)) throw new Error("fixture approval/result oracle");
+  if (!terminal || !terminalTextObserved || requests !== (kind === "bypass" ? 0 : 2) || responses !== requests || callbacks !== requests) throw new Error("fixture approval/result oracle");
   return { passed: true, case: kind, callbacks, requests, responses, messages, terminal, terminalTextObserved, transportOnly: true, rootTeardownObserved: true, ...toolEvidence };
 }
 if (import.meta.main) {

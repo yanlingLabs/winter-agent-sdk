@@ -7,7 +7,7 @@ export function fixtureCase(value: unknown): Case {
 }
 /** Builtins only: current restricted tool skeleton does not claim the utility-device profile. */
 export function boundaryCommand(kind: Case): string {
-  return [
+  const readonlyProbe = [
     'test "$UID" = 10001',
     'test ! -e /workspace/.winter/conversations',
     'test ! -e /run/winter/conversations',
@@ -23,6 +23,8 @@ export function boundaryCommand(kind: Case): string {
     'for envkey in OPENAI_API_KEY ANTHROPIC_API_KEY WINTER_TEST_KEYCHAIN_SECRET; do test -z "${!envkey-}" || exit 34; done',
     'printf host-query-boundary-ok',
   ].join(' && ');
+  if (kind !== "plan") return readonlyProbe;
+  return 'if printf forbidden > plan-denied-write; then exit 35; fi; test ! -e plan-denied-write && ' + readonlyProbe;
 }
 export function toolScript(kind: Case) {
   const script: { name: string; input: Record<string, unknown> }[] = [
@@ -31,7 +33,7 @@ export function toolScript(kind: Case) {
     { name: "Bash", input: { command: boundaryCommand(kind), timeout: 5000 } },
   ];
   if (kind === "bypass") script.push(
-    { name: "Read", input: { file_path: "store-probe/hidden" } },
+    { name: "Read", input: { file_path: "store-probe" } },
     { name: "Write", input: { file_path: "/outside-source", content: "must-not-write" } },
     { name: "Read", input: { file_path: "credential-probe" } },
   );

@@ -21,11 +21,29 @@ class SourceTests(unittest.TestCase):
   self.assertEqual(helper['parse_mountinfo'](b'1 2 0:1 / / rw - tmpfs tmpfs rw\n')[1]['point'],'/')
  def test_effects_require_exact_sentinel_and_allowed_bytes(self):
   with tempfile.TemporaryDirectory() as tmp:
-   source=Path(tmp);(source/'store-probe').symlink_to('root-store');(source/'credential-probe').symlink_to('root-credential');(source/'seed').write_bytes(b'hello\n');verify.effect_oracle('plan',source)
+   source=Path(tmp);(source/'dac-control').write_bytes(b'DAC-writable\n');(source/'store-probe').symlink_to('root-store');(source/'credential-probe').symlink_to('root-credential');(source/'seed').write_bytes(b'hello\n');verify.effect_oracle('plan',source)
    (source/'approved-write').write_bytes(b'approved\n');verify.effect_oracle('bypass',source)
    with self.assertRaises(AssertionError):verify.effect_oracle('ask-deny',source)
    (source/'seed').write_bytes(b'changed')
    with self.assertRaises(AssertionError):verify.effect_oracle('bypass',source)
+ def test_dac_control_parent_observes_owned_child_and_exact_bytes_without_running_it(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   source=Path(tmp);(source/'dac-control').write_bytes(b'DAC-writable\n')
+   with patch.object(verify.os,'fork',return_value=123),patch.object(verify.os,'waitpid',return_value=(123,0)) as wait:
+    verify.dac_writable_control(source);wait.assert_called_once_with(123,0)
+   with patch.object(verify.os,'fork',return_value=123),patch.object(verify.os,'waitpid',return_value=(123,256)):
+    with self.assertRaises(AssertionError):verify.dac_writable_control(source)
+ def test_readable_canary_control_and_private_store_bounds_are_separate(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);root.chmod(0o711);canary=root/'protected-canary-store';canary.mkdir(mode=0o755)
+   file=canary/'canary';file.write_bytes(b'readable store canary\n');file.chmod(0o444)
+   secret=root/'host-only-credential';secret.write_bytes(b'fixture marker');secret.chmod(0o444)
+   store=root/'store';store.mkdir(mode=0o700)
+   self.assertEqual(file.stat().st_mode&0o777,0o444);self.assertEqual(secret.stat().st_mode&0o777,0o444)
+   self.assertEqual(canary.stat().st_mode&0o777,0o755);self.assertEqual(root.stat().st_mode&0o777,0o711)
+   self.assertEqual(store.stat().st_mode&0o777,0o700);self.assertEqual(list(store.iterdir()),[])
+   source=(HERE/'verify.py').read_text();self.assertIn("str(root/'home'),str(canary_store)",source)
+   self.assertIn("symlink_to(canary_store/'canary')",source)
  def test_fifo_and_symlink_inputs_refuse_without_waiting(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp).resolve();os.mkfifo(root/'fifo');(root/'file').write_bytes(b'x');(root/'alias').symlink_to('file')

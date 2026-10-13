@@ -73,14 +73,30 @@ def snapshot(path,limit=8*1024*1024):
         if len(wire)!=before.st_size or len(wire)>limit or (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns)!=(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns):raise ValueError('fixture evidence changed')
         return wire
     finally:os.close(fd)
+def dac_writable_control(source):
+    # Fixed fixture child BEFORE service threads, not a guest/native-owner substitute.
+    # It proves the same backing source accepts a write under the actual tool UID/GID.
+    pid=os.fork()
+    if pid==0:
+        try:
+            os.setgroups([GROUP]);os.setgid(GROUP);os.setuid(TOOL_UID)
+            fd=os.open(source/'dac-control',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
+            try:
+                if os.write(fd,b'DAC-writable\n')!=13:os._exit(61)
+            finally:os.close(fd)
+            os._exit(0)
+        except BaseException:os._exit(62)
+    waited,status=os.waitpid(pid,0)
+    if waited!=pid or os.waitstatus_to_exitcode(status)!=0 or snapshot(source/'dac-control')!=b'DAC-writable\n':raise AssertionError('same source DAC positive control')
 def effect_oracle(kind,source):
+    if snapshot(source/'dac-control')!=b'DAC-writable\n':raise AssertionError('DAC control changed')
     if snapshot(source/'seed')!=b'hello\n':raise AssertionError('source sentinel changed')
     expected=kind in ('ask-allow','bypass')
     for name,value in (('approved-write',b'approved\n'),):
         if expected:
             if snapshot(source/name)!=value:raise AssertionError('allowed source bytes missing')
         elif (source/name).exists():raise AssertionError('denied source effect')
-    if set(path.name for path in source.iterdir())!={'seed','store-probe','credential-probe',*(['approved-write'] if expected else [])}:raise AssertionError('unexpected source effect')
+    if set(path.name for path in source.iterdir())!={'seed','dac-control','store-probe','credential-probe',*(['approved-write'] if expected else [])}:raise AssertionError('unexpected source effect')
     return {'sourceSentinelUnchanged':True,'allowedSourceBytes':expected,'noDeniedSourceEffects':not expected}
 def transcript_oracle(kind,store,host_record):
     records=[];states=[];identity=backend(kind)
@@ -106,11 +122,13 @@ def transcript_oracle(kind,store,host_record):
             if record.get('type')=='assistant' and block.get('type')=='text' and block.get('text')==f'host-query-{kind}-complete':anchors.append(record['uuid'])
     if len(calls)!=expected or len(results)!=expected or len(set(anchors))!=expected+1:raise AssertionError('tool/native-state history count')
     for index in range(expected):
-        result=results[f'call-{index}'];denied=kind in ('ask-deny','plan') and index in (1,2);outside=kind=='bypass' and index>=3
+        result=results[f'call-{index}'];denied=kind=='ask-deny' and index in (1,2);outside=kind=='bypass' and index>=3 or kind=='plan' and index==1
         if bool(result.get('is_error'))!=outside or bool(result.get('denied'))!=denied:raise AssertionError('tool result error class')
         content=result.get('content')
         if index==0:
             if content!='hello\n':raise AssertionError('Read exact seed bytes')
+        if kind=='plan' and index==1 and str(content)!='Error [read_only]: guest file operation refused':raise AssertionError('native plan file authority')
+        if kind=='plan' and index==2 and ('Read-only file system' not in str(content) or 'host-query-boundary-ok' not in str(content) or not str(content).endswith('[Exit code: 0; cwd changes apply to this command only]')):raise AssertionError('native plan readonly mount')
         if index==2 and kind in ('ask-allow','bypass') and 'host-query-boundary-ok' not in str(content):raise AssertionError('Bash boundary did not run')
     state_ids=set()
     for row in states:
@@ -156,18 +174,21 @@ def run_case(kind,artifacts,receipt,helper):
         helper['stage_environment'](environment,['/bin/bash','/bin/sleep','/bin/cat','/usr/bin/setsid',binary/'runtimeEntry',binary/'ownerLibrary'])
         source=root/'source';source.mkdir(mode=0o2770);os.chown(source,TOOL_UID,GROUP);source.chmod(0o2770)
         (source/'seed').write_bytes(b'hello\n');os.chown(source/'seed',TOOL_UID,GROUP);(source/'seed').chmod(0o660)
-        (root/'host-only-credential').write_text('DISPOSABLE-HOST-CREDENTIAL-NOT-A-REAL-SECRET');(root/'host-only-credential').chmod(0o400)
+        dac_writable_control(source)
+        (root/'host-only-credential').write_text('DISPOSABLE-HOST-CREDENTIAL-NOT-A-REAL-SECRET');(root/'host-only-credential').chmod(0o444)
+        canary_store=root/'protected-canary-store';canary_store.mkdir(mode=0o755)
+        (canary_store/'canary').write_bytes(b'readable store canary\n');(canary_store/'canary').chmod(0o444)
         for folder in ('store','home'):
             (root/folder).mkdir(mode=0o700);os.chown(root/folder,RUNTIME_UID,RUNTIME_UID)
-        (source/'store-probe').symlink_to(root/'store',target_is_directory=True)
+        (source/'store-probe').symlink_to(canary_store/'canary')
         (source/'credential-probe').symlink_to(root/'host-only-credential')
-        if not (source/'store-probe').resolve().is_dir() or (source/'credential-probe').resolve()!=root/'host-only-credential':raise AssertionError('backing canary controls')
+        if (source/'store-probe').resolve()!=canary_store/'canary' or snapshot(canary_store/'canary')!=b'readable store canary\n' or (source/'credential-probe').resolve()!=root/'host-only-credential':raise AssertionError('backing canary controls')
         boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
         scope={'workspaceId':'workspace','sessionId':backend(kind),'incarnationId':'incarnation','leaseEpoch':1,'configRevision':1,'grantRevision':1,'policyRevision':1}
         selection={'providerId':'openai','modelKey':'openai/gpt-5.6','providerModelId':'gpt-5.6','family':'openai','protocol':'openai-responses','continuationDomain':'openai/gpt-5.6','capabilities':{'toolCalling':'native','readableState':'summary'}}
         route={'scope':{'homeId':'fixture-home','workspaceId':'workspace','sessionId':logical,'backendSessionId':backend(kind),'taskId':'task','incarnationId':'incarnation','bootId':boot,'leaseEpoch':1,'grantRevision':1,'accountRevision':1,'modelRevision':1},'selection':selection}
         conversation={'authority':scope,'logicalSessionId':logical,'runtimeUid':RUNTIME_UID,'toolUid':TOOL_UID,'workspaceGid':GROUP,'policy':'bypass' if kind=='bypass' else 'plan' if kind=='plan' else 'ask','roots':[{'id':'source','guestPath':'/workspace/folders/source','readOnly':False,'source':str(source)}],'hostQueryRuntime':{'storeDirectory':str(root/'store'),'runhomeDirectory':str(root/'home'),'provider':route,'model':selection['modelKey'],'toolClasses':['read','write','execute'],'timeoutMs':30000}}
-        config={'guestBootId':boot,'protectedStoreDirectories':[str(root/'store'),str(root/'home')],'artifacts':{'launcher':pins['toolLauncher'],'fileWorker':pins['fileWorker'],'processWorker':pins['processWorker']},'hostQueryRuntime':{'artifacts':{'launcher':pins['runtimeLauncher'],'executable':pins['runtimeEntry'],'ownerLibrary':pins['ownerLibrary']}},'environment':str(environment),'controlDirectory':str(control),'conversations':[conversation]}
+        config={'guestBootId':boot,'protectedStoreDirectories':[str(root/'store'),str(root/'home'),str(canary_store)],'artifacts':{'launcher':pins['toolLauncher'],'fileWorker':pins['fileWorker'],'processWorker':pins['processWorker']},'hostQueryRuntime':{'artifacts':{'launcher':pins['runtimeLauncher'],'executable':pins['runtimeEntry'],'ownerLibrary':pins['ownerLibrary']}},'environment':str(environment),'controlDirectory':str(control),'conversations':[conversation]}
         pipes=[os.pipe2(os.O_CLOEXEC|os.O_NONBLOCK) for _ in range(5)];all_fds=[fd for pair in pipes for fd in pair]
         module=load('protected_fixture_service',ROOT/'packages/runtime/src/guest/linux-supervisor.py')
         ports=module.RuntimeDuplexPorts(logical,scope,pipes[0][0],pipes[1][1],pipes[2][1]);service=module.ToolService(config,host_query_ports={logical:ports})
@@ -223,11 +244,11 @@ def run_case(kind,artifacts,receipt,helper):
         if any(not capture.metadata()['drainComplete'] or capture.metadata()['truncated'] for capture in (*captures,*errors)):raise AssertionError('bounded process drain')
         host_record=json.loads(captures[0].data);provider_record=json.loads(captures[1].data)
         if host_record.get('passed') is not True or host_record.get('rootTeardownObserved') is not True or provider_record.get('passed') is not True:raise AssertionError('actual SDK/provider receipt')
-        if snapshot(root/'host-only-credential')!=b'DISPOSABLE-HOST-CREDENTIAL-NOT-A-REAL-SECRET' or not (source/'store-probe').is_symlink() or not (source/'credential-probe').is_symlink():raise AssertionError('backing canary changed')
+        if snapshot(canary_store/'canary')!=b'readable store canary\n' or snapshot(root/'host-only-credential')!=b'DISPOSABLE-HOST-CREDENTIAL-NOT-A-REAL-SECRET' or not (source/'store-probe').is_symlink() or not (source/'credential-probe').is_symlink():raise AssertionError('backing canary changed')
         for path in [root/'store',*list((root/'store').rglob('*.jsonl'))]:
             info=path.lstat()
             if info.st_uid!=RUNTIME_UID or info.st_mode&0o077:raise AssertionError('protected SDK state owner/mode')
-        evidence={**effect_oracle(kind,source),**transcript_oracle(kind,root/'store',host_record),'callbacks':host_record['callbacks'],'backingCanariesUnchanged':True,'nativeServiceClosed':True,'storeLockReleased':True,'hostProviderReaped':True}
+        evidence={**effect_oracle(kind,source),**transcript_oracle(kind,root/'store',host_record),'callbacks':host_record['callbacks'],'backingCanariesUnchanged':True,'sameBackingDacWriteControl':True,'nativeServiceClosed':True,'storeLockReleased':True,'hostProviderReaped':True}
         oracle.after(observed);evidence['mountIsolation']=observed
         for capture in (*captures,*errors):capture.stream.close()
         for channel in channels:channel.close()

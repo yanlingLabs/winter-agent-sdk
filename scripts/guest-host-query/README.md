@@ -25,16 +25,22 @@ closure and independently re-acquired store flock. The host client explicitly
 awaits it after terminal result; stdout EOF or a hardcoded code0 never suffices.
 Fixed FD8 carries only one idempotent `K` cancellation signal for this exact scope;
 it invokes Root revoke/current native pidfd cancellation, never raw PIDs/commands.
-Ordinary stdin.end remains graceful and separate from kill.
+Ordinary stdin.end remains graceful and separate from kill. The FD8 K cancellation
+path is **UNEXECUTED**: only source/portable checks cover it here; no actual kernel
+cancellation or native stop has been demonstrated by this fixture.
 
 Four fresh conversations run sequentially:
 
 - ask-allow: exact Write/Bash callbacks allow; Read seed and allowed source bytes
   must match; actual Bash boundary marker must be returned.
 - ask-deny: those exact callbacks deny; sentinel/source tree remain unchanged.
-- plan: Write/Bash deny; no requested source effect; effective readonly metadata
-  must still reach the accepted producer. This case does not claim executed Bash
-  proves readonly mounts.
+- plan: fixture callbacks deliberately allow its exact Write/Bash requests,
+  unlike the product approval bridge. Write must return the existing file-helper
+  `read_only` authority refusal with is_error (not permission denied); actual Bash
+  must attempt a source write, report the exact C-locale `Read-only file system`
+  (Linux EROFS/errno30), then finish the boundary probe with no
+  source effect. This deliberately adversarial fixture checks independent native
+  mount/descriptor enforcement; local injected outcomes do not prove it.
 - bypass: the callback throws if invoked; callback/request counts must be zero.
   Positive allowed Write succeeds and a readonly Bash probe checks actual tool
   view, followed by outside/store/credential file-helper denials with no callback.
@@ -44,7 +50,15 @@ utility-device profile. The probe requires those exact absences plus unavailable
 private runhome/store/runtime/outside paths and host credential environment.
 It also checks visible source symlinks to real parent-side store/credential
 canaries do not resolve in the tool view; Root asserts their backing targets exist
-and remain unchanged. Positive source Write is separate from readonly Bash, so
+and remain unchanged. The credential is 0444, and the separate protected canary
+store has a 0755 directory/0444 file under traversable fixture ancestors. This
+removes DAC as the reason for negative visibility. Before service threads start,
+a fixed fixture child under the real tool UID/GID must write `dac-control` in the
+same backing source and be reaped; its bytes remain unchanged after plan probing.
+Thus plan EROFS is checked against an actual writable backing control, not any
+error or a DAC refusal. This source branch has not executed that Root-side control.
+The actual protected SDK store and runhome remain 0700/fresh-empty; their real
+invariants are never relaxed. Positive source Write is separate from readonly Bash, so
 existing Code protected-path integrity checks are not bypassed or relaxed. This
 is not complete Code parity, internet/utility support or a production VM test.
 
@@ -106,12 +120,12 @@ privileged command or launch approval is provided by this source report.
 
 ## Local source evidence
 
-15 Python portable checks pass: three-entry complete inert closure, missing/extra/
+17 Python portable checks pass: three-entry complete inert closure, missing/extra/
 old outputs, wrong recipe/kind/path, changed ELF/dependency/metafile, aggregate
 refusal without stress allocation, canonical provider scope, real pipe final-writer
 EOF and sidecar golden negatives for schema/items/anchor/order/input/result.
 Synthetic ELF bytes are never executed and no Root ownership is simulated as
-native authority. Four Bun tests / 30 assertions include actual local SDK query/
+native authority. Six Bun tests / 46 assertions include actual local SDK query/
 engine callback routes with injected testing provider/executor; those do not
 prove guest/native approvals, boundary enforcement or Root observer release.
 Both repository TypeScript checks pass. Three Bun bundles compile without
@@ -121,3 +135,18 @@ Source review, fresh ordinary Linux build, complete independent artifact/source/
 compiler/stager audit and a separately approved disposable execution workflow
 remain required. The intended Linux cases have not run; no native or production
 acceptance follows from these portable source checks.
+
+
+Source correction after `7543057e`: plan approvals are intentionally adversarial
+fixture-only allows so the independent readonly helper/mount result must carry the
+failure. The existing helper's exact refusal is `Error [read_only]: guest file
+operation refused` / is_error=true / denied=false, not a fabricated
+`authority_denied` string. A pure actual-helper test checks that code before any
+port invocation; local injected EROFS/readonly outcomes remain schema/control
+checks only. Actual Linux execution must produce the helper refusal and Bash
+EROFS itself. Readable canaries remove the earlier DAC ambiguity without changing
+actual store/runhome ownership, permissions or fresh admission. Plan requires
+exactly two callbacks, requests and responses. The helper rejects before its Root
+port, so this SDK Write case does not exercise the later supervisor Write guard;
+the real Bash EROFS probe is the independent readonly-mount requirement. FD8 remains
+unexecuted and is not kernel-cancellation evidence.
