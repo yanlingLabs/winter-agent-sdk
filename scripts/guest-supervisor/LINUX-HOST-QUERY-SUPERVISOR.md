@@ -175,3 +175,43 @@ other child-input errors retaining uncertainty. Existing output-EPIPE regression
 still fails without dropping its queued bytes. Current selected Python result:
 59 tests (58 passes, one Linux-only skip). Earlier 89b validation/logs are retained;
 Bun/TypeScript/compiled-main sources are unchanged by this narrow race correction.
+
+### Runtime launcher policy correction
+
+The separately admitted host-query diagnostic run `38427242630` failed before
+SDK exchange: native-startup/init_admission_lost, parent exit64, no native receipt,
+cleanup false and retained debt. Its cleanup remains unconfirmed. Source review
+found `_run_runtime` passing full policy `ask` as argv13, while the unchanged C
+launcher accepts only `auto|plan`. The same mismatch affected accept-edits,
+dont-ask and bypass. All other actual native guards are still unproven here.
+
+Both tool and runtime argv assembly now use one `native_mount_policy`: plan iff
+the Root-admitted full policy is plan, otherwise auto. This selects the existing
+native readonly/writable view; it does not select SDK approval mode. Item policy,
+effect grants, roots/readonly metadata, bootstrap and `host_query_config` remain
+unchanged: ask/default, plan/plan, accept-edits/acceptEdits, dont-ask/dontAsk and
+bypass/bypassPermissions with the exact bypass clamp pair. Native C/helpers,
+owner proof, filters, deadlines, capability flags and fixture oracles are unchanged.
+
+The original first-SDK `scripts/guest-engine/verify.py` fixed policy to auto.
+Its passes never established actual ask/bypass host-query runtime launches; the
+producer's earlier local SDK/injected tests likewise did not establish them.
+Separate native utility tool-process plan/bypass evidence is unaffected.
+
+An injected regression traverses the actual `_run_runtime` to assembled Popen
+argv for all six admitted policies, then deliberately refuses Popen before any
+child/native effect. It compares complete item/SDK/bootstrap snapshots, both
+writable and explicitly readonly roots, native argument positions/counts and
+unchanged bypass clamps. Before the fix it fails the four unsupported spellings;
+afterward all six pass. Disposable STREAM socketpairs are only portable FD
+stand-ins, never peer/pidfd/owner proof. No protected service is constructed.
+
+Focused Python results: 64 tests, 63 passed and one Linux ancillary skip, excluding
+native-parser and listener-saturation execution. A broader discovery invocation
+also ran the existing unprivileged C JSON-parser prefix executable and mocked
+AF_UNIX listener saturation test (66 tests, 65 passed/one skip); its separate log
+is retained as a test-selection mistake, not native launch evidence. Neither ran
+the native launcher/helper ABI, Root, a protected service, mount, VM or GUI.
+No TypeScript source changed; typechecks were not repeated. Source review,
+composition, fresh immutable build/full-chain audit and separate run admission
+are still required. No push or CI run was performed from this correction lane.
