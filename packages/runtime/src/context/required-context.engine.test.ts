@@ -49,9 +49,12 @@ test("absent required layer retains ordinary Code request context", async () => 
 test.each([false, true])("current guidance survives omitted project context (%s) and updates with unchanged host revision", async omitProjectContext => {
   let text = "CURRENT-ONE";
   const run = await drive({ prompts: ["first", "second"], engine: { systemPromptAssembler: assembler(source(() => text)), omitProjectContext }, betweenTurns: () => { text = "CURRENT-TWO"; } });
-  expect(run.requests[0]!.system).toContain("CURRENT-ONE"); expect(run.requests[1]!.system).toContain("CURRENT-TWO");
-  expect(run.requests[1]!.system).not.toContain("CURRENT-ONE");
-  for (const request of run.requests) { expect(messageText(request)).not.toContain("STALE-LEGACY-GUIDANCE"); expect(request.system!.match(/# Current workspace context/g)).toHaveLength(1); }
+  expect(messageText(run.requests[0]!)).toContain("CURRENT-ONE"); expect(messageText(run.requests[1]!)).toContain("CURRENT-TWO");
+  expect(messageText(run.requests[1]!)).not.toContain("CURRENT-ONE");
+  for (const request of run.requests) {
+    expect(messageText(request)).not.toContain("STALE-LEGACY-GUIDANCE"); expect(request.system!.match(/# Current workspace context/g)).toHaveLength(1);
+    expect(request.system).not.toContain("CURRENT-"); expect(messageText(request).match(/# claudeMd/g)).toHaveLength(1);
+  }
 });
 
 test("tool continuations re-resolve and the captured fork base contains no live overlay", async () => {
@@ -62,7 +65,7 @@ test("tool continuations re-resolve and the captured fork base contains no live 
     generate: (_, index) => index === 0 ? { kind: "tool_use", calls: [{ id: "call-1", name: "Probe", input: {} }] } : { kind: "text", text: "done" },
     onRequest: () => captured.push(structuredClone(getSessionRequestLayout("required-context-fixture"))),
   });
-  expect(resolutions).toBe(2); expect(run.requests[0]!.system).toContain("BEFORE-TOOL"); expect(run.requests[1]!.system).toContain("AFTER-TOOL");
+  expect(resolutions).toBe(2); expect(messageText(run.requests[0]!)).toContain("BEFORE-TOOL"); expect(messageText(run.requests[1]!)).toContain("AFTER-TOOL");
   expect(JSON.stringify(captured)).not.toContain("BEFORE-TOOL"); expect(JSON.stringify(captured)).not.toContain("AFTER-TOOL"); expect(JSON.stringify(captured)).not.toContain("STALE-LEGACY-GUIDANCE");
 });
 
@@ -71,7 +74,8 @@ test("an exact inherited layout with prior history receives current guidance whi
     exactRequestLayout: { system: "INHERITED-BASE", systemBlocks: [{ text: "INHERITED-BASE", cacheScope: "global" }], userContext: [["claudeMd", "FROZEN-OLD-GUIDANCE"], ["currentDate", "inherited-date"]], tools: [] },
     initialMessages: [{ role: "user", content: "historical task" }, { role: "assistant", content: "historical reply" }],
   } });
-  expect(run.requests[0]!.system).toContain("INHERITED-BASE"); expect(run.requests[0]!.system).toContain("RESTORED-CURRENT");
+  expect(run.requests[0]!.system).toContain("INHERITED-BASE"); expect(messageText(run.requests[0]!)).toContain("RESTORED-CURRENT");
+  expect(run.requests[0]!.system).not.toContain("RESTORED-CURRENT");
   expect(messageText(run.requests[0]!)).not.toContain("FROZEN-OLD-GUIDANCE"); expect(messageText(run.requests[0]!)).toContain("historical reply");
 });
 
@@ -97,6 +101,42 @@ test("interrupting a parked context lookup settles without model dispatch", asyn
   expect(dispatched).toBe(0); expect(JSON.stringify(frames)).toContain("interrupted");
 });
 
+test("idle compact control after an interrupted turn uses a fresh operation signal", async () => {
+  const { host, runtime } = createInMemoryChannel(); let entered!: () => void, idle!: () => void, acknowledge!: (frame: WinterFrame) => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; }), quiescent = new Promise<void>(resolve => { idle = resolve; });
+  const compacted = new Promise<WinterFrame>(resolve => { acknowledge = resolve; });
+  let waiting = false; const requests: ProviderRequest[] = [], purposes: string[] = [];
+  const frames: WinterFrame[] = [];
+  const done = runEngine({ config: { sessionId: "required-idle-compact", cwd: "/fixture", model: "winter-test/echo" },
+    input: runtime.input, output: runtime.output, tools: stubExecutor,
+    onSessionPhase: phase => { if (waiting && phase === "idle") idle(); },
+    provider: { generate: async request => { requests.push(request); return { kind: "text", text: "summary" }; } },
+    systemPromptAssembler: assembler({ resolve: async (request, options) => {
+      purposes.push(request.purpose);
+      if (request.purpose === "generation") { waiting = true; entered(); return new Promise(() => {}); }
+      expect(options.signal.aborted).toBe(false);
+      return { revision: "host:2", facts: "CURRENT-HOST", instructions: "CURRENT-AFTER-INTERRUPT" };
+    } }),
+    compactionController: { shouldCompact: () => false, compact: async input => {
+      await input.provider.generate(input.prefixRequest ?? { messages: input.messages });
+      return { summary: "summary", retained: [], preTokens: 1, evidencedToolNames: [] };
+    } },
+  });
+  const reader = (async () => { for await (const frame of host.input) {
+    frames.push(frame); if (frame.type === "control_response" && frame.requestId === "compact-idle") acknowledge(frame);
+  } })();
+  host.output.write({ type: "user", text: "task" }); await ready;
+  host.output.write({ type: "control_request", requestId: "interrupt", subtype: "interrupt", payload: undefined }); await quiescent;
+  host.output.write({ type: "control_request", requestId: "compact-idle", subtype: "compact", payload: {} });
+  expect(await compacted).toMatchObject({ ok: true });
+  // A manual command also owns a fresh turn signal after the same interruption.
+  host.output.write({ type: "user", text: "/compact" });
+  for (let tick = 0; tick < 200 && requests.length < 2; tick++) await new Promise(resolve => setTimeout(resolve, 5));
+  host.output.write({ type: "control_request", requestId: "finish", subtype: "end_input", payload: undefined }); await done; await reader;
+  expect(purposes).toEqual(["generation", "compaction", "compaction"]); expect(requests).toHaveLength(2);
+  for (const request of requests) expect(messageText(request)).toContain("CURRENT-AFTER-INTERRUPT");
+});
+
 test("unavailable current guidance prevents dispatch and does not expose the host exception", async () => {
   const run = await drive({ engine: { systemPromptAssembler: assembler({ resolve: async () => { throw Error("PRIVATE-HOST-DETAIL"); } }) } });
   expect(run.requests).toEqual([]); const wire = JSON.stringify(run.frames);
@@ -110,8 +150,8 @@ test("compaction dispatch refreshes current guidance outside the reusable prefix
     compact: async input => { text = "DURING-COMPACT"; await input.provider.generate(input.prefixRequest ?? { messages: input.messages });
       return { summary: "summary", retained: [], preTokens: 1, evidencedToolNames: [] }; },
   } }, onRequest: request => requests.push(request) });
-  expect(run.requests).toHaveLength(3); expect(run.requests[1]!.system).toContain("DURING-COMPACT");
-  expect(run.requests[1]!.system).not.toContain("BEFORE-COMPACT"); expect(run.requests[2]!.system!.match(/# Current workspace context/g)).toHaveLength(1);
+  expect(run.requests).toHaveLength(3); expect(messageText(run.requests[1]!)).toContain("DURING-COMPACT");
+  expect(messageText(run.requests[1]!)).not.toContain("BEFORE-COMPACT"); expect(run.requests[2]!.system!.match(/# Current workspace context/g)).toHaveLength(1);
 });
 
 test("the real child factory carries current guidance into ordinary, specialized and forked children", async () => {
@@ -143,7 +183,8 @@ test("the real child factory carries current guidance into ordinary, specialized
     expect(childRequests).toHaveLength(3);
     expect(seenActors.filter(actor => actor !== undefined)).toHaveLength(3);
     for (const request of childRequests) {
-      expect(request.system).toContain("CURRENT-CHILD-GUIDANCE"); expect(request.system).not.toContain("CURRENT-PARENT-GUIDANCE");
+      expect(messageText(request)).toContain("CURRENT-CHILD-GUIDANCE"); expect(messageText(request)).not.toContain("CURRENT-PARENT-GUIDANCE");
+      expect(request.system).not.toContain("CURRENT-CHILD-GUIDANCE");
       expect(request.system!.match(/# Current workspace context/g)).toHaveLength(1);
       expect(messageText(request)).not.toContain("STALE-LEGACY-GUIDANCE");
     }

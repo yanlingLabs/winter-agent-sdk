@@ -7756,7 +7756,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           // The controller may build either a cached-prefix request or an overflow/redacted
           // request. Apply current context at its actual dispatch, never to the cached base.
           generate: async request => (opts.provider ?? activeProvider).generate(applyRequiredContext(request,
-            await currentRequiredSnapshot("compaction", currentTurnSignal ?? abortSignal))),
+            await currentRequiredSnapshot("compaction", turnActive ? (currentTurnSignal ?? abortSignal) : abortSignal))),
         },
         ...(prefixRequest !== undefined ? { prefixRequest } : {}),
         ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
@@ -9578,9 +9578,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // Resolve after host input/tool planning awaits. Tool rounds, fallbacks and
         // resumed generations each reach this point again; no stale snapshot fallback.
         const requiredSnapshot = requiredContext === undefined ? undefined : await currentRequiredSnapshot("generation", turnAbort.signal);
-        const outboundMessages = imagesOnlyNewest
+        const baseMessages = imagesOnlyNewest
           ? withinImageBudget(requestMessages(context, effortPlan.markers, toolPlan.toolChanges), { maxImages: 1, maxBytes: Number.MAX_SAFE_INTEGER })
           : requestMessages(context, effortPlan.markers, toolPlan.toolChanges);
+        const baseSystem = requestSystem(assembled, context);
+        const effective = requiredSnapshot === undefined ? undefined : applyRequiredContext({ messages: baseMessages,
+          ...(baseSystem.system.length > 0 ? { system: baseSystem.system } : {}),
+          ...(baseSystem.systemBlocks !== undefined ? { systemBlocks: baseSystem.systemBlocks } : {}),
+        }, requiredSnapshot);
+        const outboundMessages = effective?.messages ?? baseMessages;
+        const outboundSystem = effective === undefined ? baseSystem : { system: effective.system!,
+          ...(effective.systemBlocks !== undefined ? { systemBlocks: effective.systemBlocks } : {}) };
         lastRequestImageCount = countRequestImages(outboundMessages);
         sentToolChangeMessage = outboundMessages.some((m) => m.toolChanges !== undefined);
         generationEffort = effortPlan.stamp;
@@ -9590,13 +9598,6 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // P1 carry: the per-message cap, enforced BEFORE the request leaves the engine. Throws a
         // `ProviderTurnError`, so it lands on R6-F's result shape through the catch below.
         assertMessagesWithinCap(outboundMessages);
-        const baseSystem = requestSystem(assembled, context);
-        const currentSystem = requiredSnapshot === undefined ? undefined : applyRequiredContext({ messages: [],
-          ...(baseSystem.system.length > 0 ? { system: baseSystem.system } : {}),
-          ...(baseSystem.systemBlocks !== undefined ? { systemBlocks: baseSystem.systemBlocks } : {}),
-        }, requiredSnapshot);
-        const outboundSystem = currentSystem === undefined ? baseSystem : { system: currentSystem.system!,
-          ...(currentSystem.systemBlocks !== undefined ? { systemBlocks: currentSystem.systemBlocks } : {}) };
         // WS-23 (reasoning-state, decision 5): the FIRST request after a model switch checks that the
         // conversation fits the target. When it does not, the model the session left compacts it (the
         // user's rule: the source pays; the target's own summarizer, bounded to what it can read, only

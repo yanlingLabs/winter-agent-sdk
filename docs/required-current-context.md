@@ -34,12 +34,17 @@ guidance and any applicable memory index. The engine suppresses the cached
 `claudeMd` entry structurally and does not discover it through the normal assembler.
 This prevents stale or duplicate guidance from a generated run home or inherited
 fork layout. Other base context, history, tools and persona remain as before.
-Apply current text once in a separate dynamic system block; capture only the base
+Place host facts in a separate dynamic system block and editable instructions in
+the normal live `claudeMd` user-context framing, once. Diagnostic revisions stay
+outside model text, avoiding cache churn when only provenance changes. Capture only the base
 layout for forks and compaction prefixes. Do not persist the live layer as history
 or authoritative continuation state. Historical model replies remain history.
 
 The resolver receives engine identity, live cwd, purpose, attempt and a cancellation
 signal. Its default deadline is 15 seconds, configurable between 1 ms and 30 seconds.
+Normal resolution should complete in less than a second; the deadline is a failure
+ceiling, not expected latency on every tool round. An idle compaction control uses
+the session's operation signal, never an aborted prior turn's signal.
 The rendered layer is capped at 128 KiB. Malformed results, host errors, unavailable
 guidance, cancellation or deadline prevent that dispatch, with path-free typed
 `required_context_*` failures and no stale fallback. The callback must validate

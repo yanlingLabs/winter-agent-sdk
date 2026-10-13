@@ -1,5 +1,6 @@
 import type { ProviderRequest } from "../engine.ts";
 import { neutralizeReminderTags } from "./injection.ts";
+import { buildRequestMessages, renderUserContext } from "./request-layout.ts";
 
 export const REQUIRED_CONTEXT_MAX_BYTES = 128 * 1024;
 export interface RequiredContextRequest {
@@ -75,9 +76,10 @@ export async function resolveRequiredContext(source: RequiredContextSource, requ
 /** Apply only to a freshly constructed BASE request. Never persist/capture this layer.
  * Separate sections preserve provenance; grants are enforced outside this prompt. */
 export function applyRequiredContext(base: ProviderRequest, snapshot: Readonly<RequiredContextSnapshot>): ProviderRequest {
-  const text = `# Current workspace context\nRevision: ${snapshot.revision}\n\n## Host facts\n${neutralizeReminderTags(snapshot.facts)}\n\n## Applicable instructions\n${neutralizeReminderTags(snapshot.instructions)}`;
-  if (Buffer.byteLength(text, "utf8") > REQUIRED_CONTEXT_MAX_BYTES) throw new RequiredContextError("required_context_unavailable");
-  return { ...base, system: [base.system, text].filter(Boolean).join("\n\n"),
+  const text = `# Current workspace context\n${neutralizeReminderTags(snapshot.facts)}`;
+  const instructions = renderUserContext([["claudeMd", neutralizeReminderTags(snapshot.instructions)]]);
+  if (Buffer.byteLength(text, "utf8") + Buffer.byteLength(instructions ?? "", "utf8") > REQUIRED_CONTEXT_MAX_BYTES) throw new RequiredContextError("required_context_unavailable");
+  return { ...base, messages: buildRequestMessages(base.messages, instructions), system: [base.system, text].filter(Boolean).join("\n\n"),
     ...(base.systemBlocks !== undefined ? { systemBlocks: [...base.systemBlocks, { text, cacheScope: "org" as const }] } : {}),
   };
 }
