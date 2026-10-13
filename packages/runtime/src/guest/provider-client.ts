@@ -17,6 +17,12 @@ export interface GuestProviderSelection {
 export interface GuestProviderPort { exchange(frame: Uint8Array, signal?: AbortSignal): Promise<Uint8Array>; close(): void }
 export interface GuestProviderClient { readonly scope: Readonly<GuestProviderScope>; readonly selection: Readonly<GuestProviderSelection>; close(): void }
 const clients = new WeakMap<GuestProviderClient, ProviderAdapter>();
+const providerRoutes = new WeakMap<object, GuestProviderClient>();
+/** Private engine admission must use this exact live client, never a caller-replaced provider. */
+export function assertGuestProviderRoute(client: GuestProviderClient, provider: object): void {
+  assertGuestProviderClient(client);
+  if (providerRoutes.get(provider) !== client) throw new Error("guest provider route unavailable");
+}
 const errorEvent = (aborted = false): ProviderEvent => ({ type: "error", error: { code: aborted ? "aborted" : "network", message: aborted ? "guest provider request cancelled" : "guest provider channel unavailable", retryable: false } });
 function encode(value: unknown, limit: number): Uint8Array {
   const body = Buffer.from(JSON.stringify(value)); if (body.length > limit) throw new Error("guest provider limit");
@@ -109,5 +115,6 @@ export function guestProviderFor(client: GuestProviderClient, resolved: Resolved
   if (resolved.providerId !== selected.providerId || resolved.modelKey !== selected.modelKey || resolved.providerModelId !== selected.providerModelId || resolved.adapter.family !== selected.family || resolved.continuationDomain !== selected.continuationDomain) throw new Error("guest provider selection mismatch");
   const unavailable = async (): Promise<never> => { throw new Error("guest credential operation unavailable"); };
   const context: ProviderContext = { connection: { providerId: selected.providerId }, authRef: { kind: "none" }, credentials: { get: unavailable, set: unavailable, delete: unavailable }, stallTimeoutMs: 60_000, log: () => {} };
-  return adapterAsProvider(resolved, context, { ...options, adapter: clients.get(client)! });
+  const provider = adapterAsProvider(resolved, context, { ...options, adapter: clients.get(client)! });
+  providerRoutes.set(provider, client); return provider;
 }

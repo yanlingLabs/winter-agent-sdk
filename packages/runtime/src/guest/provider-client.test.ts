@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createGuestProviderClient, guestProviderFor, type GuestProviderScope } from "./provider-client.ts";
+import { createGuestProviderClient, guestProviderFor, assertGuestProviderRoute, type GuestProviderScope } from "./provider-client.ts";
 import { buildSessionProvider } from "../provider/session-provider.ts";
 import { assertRuntimeExecutionPosture } from "./execution-posture.ts";
 import type { ResolvedModel } from "@yanlinglabs/winter-provider-runtime";
@@ -86,6 +86,17 @@ test("oversized and incorrectly delimited response bytes refuse before fold or l
     const client = createGuestProviderClient({ scope, selection, port: { exchange: async () => { calls++; return malformed; }, close() {} } });
     await expect(guestProviderFor(client, resolved).generate({ messages: [] })).rejects.toThrow("guest provider channel unavailable"); expect(calls).toBe(1);
   }
+});
+
+
+test("fresh engine route accepts only the provider folded from its exact private client", () => {
+  const port = { exchange: async () => { throw new Error("never exchange"); }, close() {} };
+  const first = createGuestProviderClient({ scope, selection, port }), second = createGuestProviderClient({ scope, selection, port });
+  const route = guestProviderFor(first, resolved);
+  expect(() => assertGuestProviderRoute(first, route)).not.toThrow();
+  expect(() => assertGuestProviderRoute(second, route)).toThrow("route unavailable");
+  expect(() => assertGuestProviderRoute(first, { generate: route.generate })).toThrow("route unavailable");
+  first.close(); second.close();
 });
 
 test("an early consumer return cancels only its invocation and preserves the next turn",async()=>{

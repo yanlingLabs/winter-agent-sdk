@@ -1,3 +1,4 @@
+import { claimLinuxSession, linuxSessionBindings, closeLinuxSession, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
 // WS-23 (embedded chat/dispatch): `runEmbeddedSession` -- ONE Winter session, run to completion, with
 // every process global turned into a parameter.
 //
@@ -92,6 +93,8 @@ export interface EmbeddedSessionOptions {
   onSessionPhase?: (phase: "running" | "idle" | "ending") => void;
   /** Trusted supervisor object capability. Never read from RuntimeConfig/SDK options or env. */
   protectedStoreBootstrap?: ProtectedStoreBootstrap;
+  /** Actual native owner admission, confined fresh four-tool scope only. */
+  linuxSessionAdmission?: LinuxSessionAdmission;
   /** REQUIRED whenever protectedStoreBootstrap is supplied. Trusted terminal lifecycle channel,
    * emitted exactly once after release handling, independently of the numeric agent-turn code.
    * The supervisor must consume retained/release-failed states without parsing diagnostics. */
@@ -257,7 +260,13 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
       opts.onHostCodeProtectionBound?.(hostCodeProtection);
     }
     const config = parseConfigFromArgv(opts.argv);
-    assertRuntimeExecutionPosture(config);
+    assertRuntimeExecutionPosture(config, opts.linuxSessionAdmission);
+    if (opts.linuxSessionAdmission !== undefined) {
+      if (Object.keys(env).length !== 0) throw new Error("fresh Linux execution requires its fixed clean environment");
+      claimLinuxSession(opts.linuxSessionAdmission, config);
+      const binding = linuxSessionBindings(opts.linuxSessionAdmission);
+      if (opts.protectedStoreBootstrap !== binding.store || opts.hostCodeProtection !== undefined || opts.hostChildFloor !== undefined || opts.brokerRequired || opts.workflowWorkerCommand !== undefined) throw new Error("fresh Linux bootstrap binding mismatch");
+    }
     if (opts.protectedStoreBootstrap !== undefined) {
       if (typeof opts.onProtectedStoreOwnershipOutcome !== "function") throw new Error("protected store bootstrap requires a machine-readable terminal ownership observer");
       const durableRoot = resolveProductionStoreHome(config, env) ?? resolveProductionWinterHome(config, env);
@@ -314,6 +323,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
     // must see the host's original `allowedTools`.
     const wiring = await buildProductionWiring({
       config: effectiveConfig,
+      ...(opts.linuxSessionAdmission !== undefined ? { linuxSessionAdmission: opts.linuxSessionAdmission } : {}),
       env,
       winterHome: resolveProductionWinterHome(config, env),
       ...(store !== undefined ? { persistence: store } : {}),
@@ -322,6 +332,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
       // credential store stay at their production defaults (the compiled catalog; the
       // Keychain/env/file/inline composite). NOT testing.ts's `testProviders: () => provider`.
       provider: {
+        ...(opts.linuxSessionAdmission !== undefined ? { guestProvider: linuxSessionBindings(opts.linuxSessionAdmission).provider } : {}),
         testProviders: resolveNamespacedTestProvider,
         ...(env["HOME"] !== undefined ? { home: env["HOME"] } : {}),
         // R6-7: a getter, because `attachContinuationChain` re-attaches it after the run starts.
@@ -331,7 +342,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
     const provider = wiring.providerWiring.provider;
     // Non-fatal, and STDERR only (stdout is the frame stream exclusively, WS-04 §2/§6).
     for (const warning of wiring.warnings) writeErr(`winter: ${warning}\n`);
-    registerDefaultChildEngineFactory({
+    if (opts.linuxSessionAdmission === undefined) registerDefaultChildEngineFactory({
       provider,
       config: effectiveConfig,
       env,
@@ -361,6 +372,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
     try {
       runtimeStarted = true;
       const code = await runEngine({
+        ...(opts.linuxSessionAdmission !== undefined ? { linuxSessionAdmission: opts.linuxSessionAdmission } : {}),
         ...(restoredChildren !== undefined ? { restoredChildren: restoredChildren.handles } : {}),
         // `wiring.config` -- the effective config PLUS the provider-derived defaults (the
         // descriptor's own context window when the host stated none). Never `effectiveConfig`.
@@ -378,7 +390,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
         // `unregisteredToolExecutor: stubExecutor` keeps the scripted test doubles' non-WS-06 names
         // ("test_tool"/"mystery_tool"/"long_task") echoing (registry.ts's
         // buildRegistryToolExecutorWithFallback).
-        unregisteredToolExecutor: stubExecutor,
+        ...(opts.linuxSessionAdmission === undefined ? { unregisteredToolExecutor: stubExecutor } : {}),
         ...(store !== undefined ? { store } : {}),
         ...(initialMessages.length > 0 ? { initialMessages } : {}),
         // Task 11 (WS-07 §9) / Task 12 (WS-07 §10.5): the same resolved triple as `store`.
@@ -430,6 +442,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
       try { opts.onProtectedStoreOwnershipOutcome?.(outcome); }
       catch { try { writeErr("winter: terminal ownership observer failed\n"); } catch {} }
     } finally {
+      if (opts.linuxSessionAdmission !== undefined) closeLinuxSession(opts.linuxSessionAdmission);
       hostCodeProtection?.close();
       try { releaseHostChildFloor?.(); }
       finally { releaseBrokerRequirement?.(); }

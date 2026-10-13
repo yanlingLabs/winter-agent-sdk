@@ -1,3 +1,4 @@
+import { assertLinuxSession, assertRunningLinuxSession, assertFreshLinuxUserFrame, linuxSessionBindings, FRESH_LINUX_TOOLS, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
 import { sourceReadRestrictionGeneration } from "./sandbox/source-read.ts";
 import { randomUUID } from "node:crypto";
 import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
@@ -1552,6 +1553,8 @@ export interface SessionPersistence {
 }
 
 export interface EngineOptions {
+  /** Private native Linux invocation capability; never parsed from config/env/frames. */
+  linuxSessionAdmission?: LinuxSessionAdmission;
   config: RuntimeConfig;
   input: FrameSource;
   output: FrameSink;
@@ -2567,7 +2570,9 @@ function withLegacyToolNameRules(opts: EngineOptions): EngineOptions {
 }
 
 export async function runEngine(opts: EngineOptions): Promise<number> {
-  assertRuntimeExecutionPosture(opts.config);
+  assertRuntimeExecutionPosture(opts.config, opts.linuxSessionAdmission);
+  if (opts.linuxSessionAdmission !== undefined) assertRunningLinuxSession(opts.linuxSessionAdmission, opts.config, opts.provider);
+  if (opts.linuxSessionAdmission !== undefined && (opts.tools !== undefined || opts.unregisteredToolExecutor !== undefined)) throw new Error("fresh Linux execution cannot replace its enforced tools");
   // Host broker construction narrows this generation's execution authority. Removing its
   // client cannot restore local execution, and no settings/env/model boolean can opt out.
   const releaseBrokerRequirement = opts.config.hostCodeProcessBroker !== undefined ? requireHostCodeProcessBroker() : undefined;
@@ -4697,6 +4702,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // residual carry.
     configureBackgroundTaskRoot(resolveSessionTempPaths);
     const deps: RegistryToolExecutorDeps = {
+      ...(opts.linuxSessionAdmission !== undefined ? { executionPosture: "confined-guest" as const, guestFiles: linuxSessionBindings(opts.linuxSessionAdmission).files } : {}),
       sessionId: config.sessionId,
       home: permissionHome,
       // Code-mode images: the LIVE model's catalog row decides, per call, whether Read may hand it an
@@ -4919,7 +4925,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // tool" error for an unregistered name exactly as before this fix round.
     return unregisteredToolExecutor !== undefined ? buildRegistryToolExecutorWithFallback(deps, unregisteredToolExecutor) : buildRegistryToolExecutor(deps);
   }
-  const tools: ToolExecutor = providedTools ?? buildDefaultToolExecutor();
+  const underlyingTools: ToolExecutor = providedTools ?? buildDefaultToolExecutor();
+  const tools: ToolExecutor = opts.linuxSessionAdmission === undefined ? underlyingTools : {
+    execute(call, executionOptions) {
+      assertLinuxSession(opts.linuxSessionAdmission, config);
+      if (!(FRESH_LINUX_TOOLS as readonly string[]).includes(call.name)) return Promise.resolve({ output: "fresh Linux tool route unavailable", isError: true });
+      return underlyingTools.execute(call, executionOptions);
+    },
+  };
 
   // Phase 4 Task 3 (WS-04 addendum, "sdk_mcp_call host-side bridge"): registers an in-process SDK
   // server's own tools directly from RuntimeConfig.mcpServers (populated by query.ts's own
@@ -5286,6 +5299,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
    * Agent tool itself resolves (tools/impl/agent.ts passes the same inputs through its ctx).
    */
   function sessionAgentDefinitions(at: { cwd?: string; trustedWorkspace?: boolean } = {}): Map<string, SourcedAgentDefinition> {
+    if (opts.linuxSessionAdmission !== undefined) return new Map();
     const pluginAgents = getPluginAgents(config.sessionId);
     return loadAgentDefinitions({
       home: permissionHome,
@@ -6534,6 +6548,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         if (outcome.kind === "stop") return; // engine completion cancelled the pump's read — see header above
         if (outcome.result.done) return; // true input EOF (path (a) above)
         const frame = outcome.result.value;
+        if (opts.linuxSessionAdmission !== undefined) {
+          assertLinuxSession(opts.linuxSessionAdmission, config);
+          // Fresh scope has no host control/delegation/config mutation surface. EOF ends input.
+          assertFreshLinuxUserFrame(frame);
+        }
 
         if (frame.type === "user") {
           hostInputFrames.add(frame as UserFrame);
