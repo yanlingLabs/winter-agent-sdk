@@ -50,8 +50,11 @@ import type { ContextEntry } from "./request-layout.ts";
 import { memoryDirFor } from "./memory-key.ts";
 import { resolveOutputStyle, type PluginOutputStyleSource, type ResolvedOutputStyle } from "./output-styles.ts";
 import type { PlanModeInput } from "./plan-mode.ts";
+import type { RequiredContextSource } from "./required-context.ts";
 
 export interface SystemPromptAssemblerDeps {
+  /** Complete current guidance from a trusted host/guest context owner, not project settings. */
+  requiredContext?: RequiredContextSource;
   /**
    * The resolved winter home. Omitted resolves from `SystemPromptInput.env` (so `<PREFIX>HOME` is
    * honoured per session, not per process). Tests pass an mkdtemp directory here rather than
@@ -227,6 +230,7 @@ function resolveContext(deps: SystemPromptAssemblerDeps, input: SystemPromptInpu
 
 export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}): SystemPromptAssembler {
   return {
+    ...(deps.requiredContext !== undefined ? { requiredContext: deps.requiredContext } : {}),
     assemble(input: SystemPromptInput): AssembledPrompt {
       const config = input.config;
       const { settings, brand, home, settingSources, region, memoryDir, environment } = resolveContext(deps, input);

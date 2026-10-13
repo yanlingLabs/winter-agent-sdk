@@ -12,6 +12,8 @@ export type { ProtectedStoreBootstrap, ProtectedStoreScope, ProtectedStoreOwners
 // teardown. This is the real production entry point (Task 4's main.ts calls it directly);
 // runWinterRuntime above is a compatibility adapter over it.
 export { runEngine } from "./engine.ts";
+export { RequiredContextError, REQUIRED_CONTEXT_MAX_BYTES } from "./context/required-context.ts";
+export type { RequiredContextSource, RequiredContextRequest, RequiredContextSnapshot } from "./context/required-context.ts";
 export type {
   Provider,
   ProviderTurn,

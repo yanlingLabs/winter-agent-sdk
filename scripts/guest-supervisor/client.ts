@@ -44,7 +44,25 @@ if(scenario==="ordinary"){
  const glibc=await run("Bash",{command:"/bin/glibc-tools"});require(!glibc.isError&&glibc.output.includes("glibc-thread-spawn-local-ipc-ok"),"glibc threads/spawn/local IPC: "+JSON.stringify(glibc));
  const bounded=await run("Bash",{command:"exit 7"});require(bounded.isError&&bounded.output.includes("Exit code: 7"),"shell nonzero receipt");
  require((await run("Read",{file_path:"escape"})).isError,"out-of-root symlink");
- require((await run("Bash",{command:"test ! -e /proc && test ! -e /run && test ! -e /protected/runtime && test -z \"$SECRET_SHOULD_NOT_TRAVEL\""})).output.includes("0"),"no runtime/proc/env surface");
+ // Process tools now have their own private procfs. It must describe only the
+ // tool identity; the runtime, service, protected paths and host env stay hidden.
+ const privateProc=await guest.executeProcess!(`set -e
+test -r /proc/1/status && test -r /proc/self/status || exit 1
+test ! -e /run && test ! -e /protected/runtime && test -z "$SECRET_SHOULD_NOT_TRAVEL" || exit 1
+for status in /proc/[0-9]*/status; do
+ uid_seen=0; nnp_seen=0; seccomp_seen=0; caps_seen=0
+ while read -r key a b c d unused; do
+  case "$key" in
+   Uid:) test "$a" = "${Number(uid)}" && test "$b" = "$a" && test "$c" = "$a" && test "$d" = "$a" || exit 1; uid_seen=1;;
+   CapInh:|CapPrm:|CapEff:|CapBnd:|CapAmb:) test "$a" = 0000000000000000; caps_seen=$((caps_seen+1));;
+   NoNewPrivs:) test "$a" = 1; nnp_seen=1;;
+   Seccomp:) test "$a" = 2; seccomp_seen=1;;
+  esac
+ done < "$status"
+ test "$uid_seen:$nnp_seen:$seccomp_seen:$caps_seen" = 1:1:1:5
+done
+printf private-proc-only`,cwd,5000);
+ require(privateProc.exitCode===0&&privateProc.termination==="exit"&&privateProc.stdout==="private-proc-only"&&privateProc.stderr==="","private tool proc and no runtime/env surface");
  require((await run("Write",{file_path:"/workspace/folders/readonly/new",content:"blocked"})).isError,"readonly file mount");
  const ro=await run("Bash",{command:"printf blocked > /workspace/folders/readonly/shell-write"});require(ro.isError&&ro.output.includes("Read-only file system"),"actual readonly mount errno");
  for(const name of ["Glob","Grep","NotebookEdit","Workflow","Monitor"])require((await run(name,{})).output.includes("guest_tool_unsupported"),"unsupported route");

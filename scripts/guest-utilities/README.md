@@ -1,0 +1,299 @@
+# Measured real-utility fixture preparation
+
+This is an independent source/capture/oracle slice. It prepares a disposable
+Linux tool-compatibility fixture. The native runner is implemented as source and
+requires separate exact source/artifact admission before execution. No native
+runner, utility, helper, namespace or VM was executed during its initial preparation.
+The existing strict five-provider-turn/four-tool fresh-engine oracle is unchanged.
+General tool availability and production activation remain false.
+
+## Implemented components
+
+- `closure.py` captures only an explicit externally reviewable manifest. Six
+  executable destinations are fixed: Bash, cat, Git, Python 3.12, OpenSSL and
+  mktemp. Libraries are limited to ARM64 GNU library/loader paths. Python input
+  files are explicit `.py` and lib-dynload extension leaves under the fixed
+  `/usr/lib/python3.12` prefix. Site/dist packages, tests, ensurepip and caches
+  are excluded. There is no whole-root copy, recursive utility discovery, ldd
+  execution, utility version execution, implicit config or real user home.
+  Every input/output leaf records a strict boolean execution intent. The six
+  programs require X. Exactly two measured loader spellings also require X while
+  retaining the `library` role: `/lib/ld-linux-aarch64.so.1` and
+  `/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1`. All other libraries, extensions
+  and stdlib leaves require non-executable modes. No additional program is added.
+- The caller supplies canonical fixture-only origin paths and every file's
+  SHA-256, length, source spelling, destination and role. Source paths are
+  restricted to fixed executable spellings or library/stdlib paths. The capture
+  walks origin directories with held nofollow directory FDs, opens each regular
+  leaf nonblocking/nofollow, and hashes/copies its held FD while checking identity
+  stability. Binary leaves must have ARM64 little-endian ELF headers. No ELF is
+  executed. Partial captures are retained on failure; they carry no admission.
+- Its receipt binds the manifest, exact output inventory, capture source files
+  and running Python builder identity. There is no compiler in this byte-copy
+  step. Native C and compiled SDK inputs/compiler/artifacts still require the
+  separate existing compile/native receipts. `validate_capture` rejects changed,
+  writable, missing, extra, symlinked or multiply linked output leaves and
+  unmeasured directories. Each captured output leaf must retain link count one.
+  It requires all completeness/execution/availability claims to remain false.
+- `smoke.sh` is a non-executable source payload for a later bounded admitted
+  process request. It checks the exact device inventory and flags, readable EOF
+  stdin and closed inherited descriptors, null/zero/full behavior, private proc
+  PID-1/UID/capability checks, absent protected paths and receipt/bootstrap
+  socket descriptors, Python entropy/shared memory/semaphore/multiprocessing,
+  OpenSSL entropy, Bash process substitution, mktemp and local Git init/commit.
+  It uses no network, real credentials, push or interactive input.
+- `oracle.py` accepts only the exact five stdout markers, empty stderr, integer
+  shell exit zero and normal termination. Its metadata is not native execution
+  or teardown proof; a matching native process and immutable parent wait receipt
+  must still be supplied by the later reviewed runner.
+
+Python 3.12 and GNU ARM64 are explicit fixture choices, not supported-platform
+claims. The minimum manifest checks do **not** infer dependency completeness.
+The real reviewed manifest must include every transitive interpreter/library/
+stdlib dependency needed by the fixed payload. Native smoke is the completeness
+gate. Python source code and ELF bytes in portable tests are synthetic and are
+never imported/executed.
+
+## Ordinary source/capture validation
+
+Run from the SDK root, unprivileged:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/guest-utilities/test_fixture.py -v
+```
+
+Six portable tests check isolated CLI capture/refusal, exact synthetic-byte
+capture and receipts, source/target and nofollow/FIFO refusals,
+extra/writable/multiply linked output refusal, exact result negatives, Bash/Python
+syntax only, and preservation of the existing oracle assertions.
+The capture CLI itself requires isolated system Python `-I -S -B` and refuses
+root before project imports. For a future explicit manifest and fixture-only
+origin tree, its ordinary capture command is:
+
+```sh
+python3 -I -S -B scripts/guest-utilities/closure.py --utility-root /canonical/disposable/utility-origin --manifest /canonical/reviewed-input-manifest.json --out /canonical/new-capture
+```
+
+The manifest schema is `{formatVersion:1, kind:"winter-tool-utility-inputs",
+target:"linux-arm64-gnu", files:{"/guest/path":{role,source,sha256,bytes,executable}}}`.
+`source` is relative to the fixture origin tree. No origin discovery or default
+manifest is installed. No real Linux utility closure was captured in this task.
+
+## Separate executable fixture and admission
+
+`utilityClient` is an explicitly named compiled Bun client for direct native tool
+views. It is neither `runtimeEntry` nor the actual SDK/provider loop. It uses the
+existing UID-authenticated supervisor's file/process port with fixed scopes,
+roots and tool/runtime UIDs. The first SDK fixture's strict five provider turns,
+four tool results and transcript/native-state oracle remain unchanged.
+
+The client runs the fixed smoke payload twice; each starts with empty private
+tmp/shm. The first leaves private canaries that cannot enter the second view.
+Additional requests check file-helper runtime/control/store and source-symlink
+refusal, readonly and plan mounts, a setsid descendant after foreground exit,
+and cancellation with uncertain effects. Success also requires positive source
+canaries, absent orphan writes after a bounded delay, exact zero active/debt
+status, the existing supervisor's immutable namespace-init wait receipts, client
+reaping and a clean service close/wait. No timeout, EOF or kill() substitutes for
+native wait confirmation. Client records are measured in the native receipt.
+Failure evidence is retained; no automatic unmount or ignoring EROFS is available.
+
+The source now adds a separate whole **working fixture** removal gate. Only the
+new `/tmp/winter-utility-run-*` directory created by that invocation is removed,
+after confirmed native/service waits, closed fixture control/process pipe FDs
+and unchanged outer mount observations. A bounded decoded `/proc/self/mountinfo`
+scan must contain no mountpoint equal to or beneath that exact directory before
+plain `shutil.rmtree` can start. After deletion, `lstat` must report
+FileNotFoundError and the same scan must pass again. Missing, malformed or failed
+preflight observations retain the tree without starting the removal walker.
+There is no retry, `umount`, permission repair, ignore-errors or EROFS recovery.
+Only then is success printed with `wholeFixtureRemovalConfirmed:true`.
+
+Native process/view cleanup and whole working-directory removal are distinct
+claims. A removal failure preserves actual prior native cleanup evidence while
+reporting overall failure and whole removal false. Remaining tree contents are
+retained; if deletion already removed the diagnostic parent or it cannot hold
+`failure.json`, an exclusive mode0600 bounded `/tmp/winter-utility-failure-*`
+diagnostic is retained instead. A deleted working tree is never recreated.
+The separate root-owned immutable **sealed input stage** is retained and has
+`sealedInputStageRemovalConfirmed:false`; borrowed input-stage FDs are outside
+the working-fixture FD claim. Earlier failed fixtures are never deleted.
+Run `38408642713` verified the prior native tool-view/process/drain gate; its
+runner did not remove the whole working fixture. The added removal gate needs
+fresh source/build/artifact review and a separately admitted rerun before it
+can be reported passing. Success receipts are printed after removal, rather
+than writing a premature `passed:true` result inside the working tree.
+
+The fixed descendant payload writes its readiness marker only in the child,
+after successful `setsid()`. Its foreground parent waits at most two seconds for
+that exact marker before exiting; cancellation observes the same child marker.
+The source and readonly fixture directories both have tool-owned/group-writable
+2770 permissions. The smoke checks exact RW/RO mount flags and matching inode
+ownership/modes, writes a positive control to the writable source and preserves
+the readonly grant. Thus the readonly negative has no independent DAC denial.
+The tool's primary UID/GID remain 10001; workspace GID 10000 is supplementary.
+The smoke checks that membership and each directory's fixed workspace group
+separately instead of equating the directory group with the primary GID.
+
+`stage.py` is a separate stdlib-only externally hash-admitted parent. Its archive
+contains the entire measured SDK source/dependency closure, utilityClient and
+normalized metafile, three native tool artifacts and their source/header/scripts,
+fixed smoke bytes, native/Bun compiler recipes and identities, build workflow,
+utility capture/origin receipts and only the fixed utility environment. It
+checks exact archive/receipt/parent hashes, bounded unique paths and bytes, no
+archive hardlinks/devices/traversal, internal source-only symlinks, exact compiler
+and utility roles, compile graph and fixed six-executable ceiling. Only after
+those checks does it create a root-owned immutable sealed tree and revalidate
+all owners/modes/links/bytes. The runner rechecks that tree before loading any
+project module. The source bootstrap itself must be byte-checked by an external
+isolated system-Python invocation before executing the parent; unsigned hashes
+reported by an untrusted build are not authority.
+
+The changed native launcher now makes each detached admitted/device mount
+explicitly `MS_PRIVATE` before namespace transfer. The destination namespace's
+existing recursive private-root operation remains. The runner records the
+original outer mountinfo before launch, samples it during work, and compares it
+after service wait. Any observed addition/change or reader failure is retained
+as failure; a later equal snapshot cannot erase an observed transient change.
+This sampled observer is an additional regression oracle, not a continuous
+kernel trace. No native enforcement claim follows from its portable tests.
+
+## Ordinary build-only workflow
+
+`.github/workflows/cowork-tool-utilities-build.yml` runs ordinary Linux ARM64 build
+steps only. Its fixed input collector copies just the six existing utilities,
+selected explicit Python 3.12 modules/packages/extensions and recursively needed
+libraries identified by bounded readelf metadata. It never executes those input
+ELFs or copies a general host root/usr tree. The origin receipt records readelf
+and Python identities and metadata command hashes. Dependency completeness
+remains false until the admitted smoke actually passes.
+
+The workflow verifies the existing pinned Bun archive/base hashes, compiles only
+the named utilityClient with no autoload flags, captures the explicit utility
+manifest, compiles three native helpers, and constructs/revalidates the complete
+receipt/archive. No sudo, native fixture run or production activation is wired
+into that workflow. Linux C toolchain system headers are supplied by the trusted
+ordinary CI build environment; this is measured build provenance, not a fully
+hermetic toolchain claim. A local Mac ARM64 client cross-compile is compile-only
+and is refused for native admission by the parent, which requires a fresh Linux
+ARM64 builder identity in the client receipt.
+
+Build `38308107043` compiled the named client, then failed during input collection
+because the selection expected `zipfile.py`. Python 3.12 supplies the
+[`zipfile` package](https://github.com/python/cpython/tree/v3.12.0/Lib/zipfile).
+The fixed package selection now captures its initializer and nested `.py` leaves
+through the same measured copy path. Missing package initializers or required
+modules still refuse; this source correction does not establish a completed
+Linux utility closure, artifact admission or native execution.
+
+The admitted run `38377350513` passed the stdin, inventory and boundary markers,
+then failed importing multiprocessing. Static inspection of its pinned pickle
+source found an unconditional `import _compat_pickle` whose leaf was absent.
+The explicit module selection now includes `_compat_pickle.py`. Before emitting
+the input manifest, a focused AST guard reads the measured origin copies of
+`pickle.py` and `_compat_pickle.py` through held nofollow descriptors, checks
+their exact recorded bytes, and requires that direct module-body import.
+Imports nested under try/if cannot satisfy it. Pickle's two `_pickle` accelerator
+imports have explicit ImportError fallbacks; they are optional paths, separate
+from this required pure-source edge. No guest Python module or input ELF runs.
+This guard proves only that fixed edge and selected leaf, not the full static
+graph, platform branches, dynamic imports or runtime completeness. A fresh
+source/build/artifact review and separately admitted run remain required.
+
+The ordinary collector also runs `stdlib_graph.py` before writing either origin
+receipt or manifest. It parses all five literal Python invocations in the fixed
+smoke (single-quoted `-c` payloads and `PY` heredocs) plus `descendant.py`. It
+recurses through module-body unconditional imports in captured pure `.py` files,
+package initializers and relative submodules, or resolves captured extension
+leaves without executing them. Exported declared functions/attributes are not
+invented submodules; missing required module/package leaves fail with their
+module and importer names. Cycles terminate, and source/AST/module/import/receipt
+bounds apply. Every visited captured leaf is checked against its measured bytes
+through held nofollow descriptors. There is no implicit filesystem discovery,
+host `find_spec`, guest module import, input ELF execution or whole-stdlib copy.
+
+Builtin resolution uses the already running ordinary Python builder's
+`sys.builtin_module_names` only when its measured interpreter exactly matches the
+captured `/usr/bin/python3` byte identity and Python 3.12 version. The interpreter
+is remeasured after graph validation. The origin receipt's `staticStdlibGraph`
+records that identity, builtin names, measured payload roots/visited leaves,
+required edges, and separate conditional/ImportError and function-lazy imports.
+Those optional/deferred observations never satisfy a required missing module.
+Explicit exercised seeds are `multiprocessing.shared_memory`, `synchronize`,
+`resource_tracker`, `spawn` and `popen_fork`; the last is selected by the smoke's
+fork context. They cover known lazy paths without claiming to resolve all lazy
+imports. Conditional platform branches, runtime exported attribute values,
+dynamic `__all__`/`__getattr__`, extension attributes, computed imports and further
+function-lazy paths remain unverified. Required static reachability is only a
+build gate; dynamic dependency completeness, native execution and general tool
+availability remain false. Any additional named build-time gap requires source
+evidence and review rather than an allowlist exception or automatic copy.
+
+Build `38381353763` exposed `os.path` as a static module alias, not a missing
+file. The only supported alias is `os.path` to the already captured `posixpath`.
+The gate requires measured `os.py` declarations of the builtin-name selector,
+posix `import posixpath as path`, and ordered `sys.modules['os.path'] = path`
+registration, with no contradictory bindings. It also requires the byte-bound
+interpreter's recorded Linux platform and posix builtin (without nt). The graph
+records the source fingerprint and alias, and recursively checks the target's
+dependencies. Missing targets, fake aliases and unknown aliases still fail;
+host `os.path` and dynamic imports are never consulted.
+
+Build `38383006510` exposed missing syntactic export accounting: `abc.py`
+imports `get_cache_token` from `_abc` or its ImportError fallback, and functools
+imports that attribute from abc. Module-scope `ImportFrom` aliases now count as
+declared exports, including conditional/fallback branches; function/class locals do
+not. Loop and context-manager binding targets receive the same scope treatment.
+Star imports remain providers. A package's own `from . import missing` cannot
+predeclare itself into satisfying a required missing submodule. Required provider
+modules still recurse/refuse, and conditional/runtime binding values remain
+unverified. This adds no captured leaf or attribute-name allowlist.
+
+Build `38384715089` exposed the selected native-star provider behind `os.urandom`.
+Only the already source-validated Linux/posix os branch can contribute a native
+star provider: it must directly declare exactly `from posix import *`, using
+the same measured source and byte-bound platform/builtin evidence as the alias.
+`selectedNativeStarProviders` records that source fingerprint and import/branch
+lines. Other conditional stars remain optional observations. This provider has
+the same opaque attribute limitation as direct builtin imports: no native
+attribute value/presence or runtime behavior is proved. Those flags remain
+false, and required real modules and unknown aliases continue to refuse.
+
+Build `38400134048` exposed multiprocessing's finite class-derived package
+exports. The gate accounts only for `get_start_method` and `set_start_method`,
+requiring the measured package's exact context import, filtered `dir`/`__all__`
+comprehension and `globals().update` generator. It byte-checks captured
+`context.py`, the direct `DefaultContext(BaseContext)` lineage/method declarations
+and module-scope `DefaultContext` constructor assignments. Contradictory class,
+instance, method or export-glue writes refuse. `finiteClassDerivedExports`
+records both source hashes and structural lines with `runtimeExportsVerified`
+false. This is syntax accounting, not a general dynamic export rule; other
+computed exports and genuinely missing modules remain unsupported/refused.
+
+Artifact audit of build `38333923765` found that loader bytes were measured but
+captured/copied as 0444. Execution intent now binds capture modes (0555/0444),
+bundle metadata, immutable staging modes (0500/0400), and verified runtime copy
+modes (0555/0444). Validators reject a missing loader X bit, X on any other
+library, and mode changes even when bytes/hash are unchanged. Old mode-less
+receipts refuse and need a fresh source/build/artifact review. The first SDK
+bundle is unchanged, and no native utility fixture execution is implied here.
+The audited build's actual checkout was PR merge
+`077e6c036e472656b1aab238a7af0f5296588a4b`, not branch head `33ce2179`.
+Its measured graph must retain that identity; the new metadata requires a new
+archive and review rather than relabeling the old bundle.
+
+Portable source validation:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/guest-utilities -p 'test_*.py'
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/guest-engine/test_tool_devices.py scripts/guest-engine/test_shell_stdin.py scripts/guest-engine/test_runtime_entropy.py scripts/guest-engine/test_parent_remap.py -v
+pnpm exec tsc --noEmit -p tsconfig.typecheck.json
+```
+
+A later externally byte-checked parent may receive only the exact independently
+approved archive/receipt/parent hashes and `--run` for an isolated disposable
+Linux runner. No execution command or approval identity is preinstalled. The
+added working-fixture removal gate remains unexecuted and unadmitted. General tool
+availability stays false even when the limited native tool-view gate passes; first SDK,
+VM integration, cold continuity and resource/storage acceptance are separate.
+Neither held Mac two-disk nor native egress work is resumed by this slice.

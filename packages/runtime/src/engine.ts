@@ -125,6 +125,7 @@ import { parseMcpEnvConfig } from "./mcp/env.ts";
 // nothing from this module, and a value import in either direction would make the pair a runtime
 // cycle the compiled binary resolves differently from the dev leg.
 import type { AssembledPrompt, SkillListing, SystemPromptAssembler, SystemPromptInput } from "./context/seam.ts";
+import { applyRequiredCompactionContext, applyRequiredContext, requiredContextEntries, RequiredContextError, resolveRequiredContext } from "./context/required-context.ts";
 import type { CompactBoundaryRecord, CompactBoundaryWriteResult, CompactionController, CompactionResult } from "./compaction/seam.ts";
 import { transcriptNote } from "./compaction/summarizer.ts";
 import { STRUCTURED_OUTPUT_TOOL_NAME, resolveMaxStructuredOutputAttempts, type StructuredOutputSeam } from "./structured/seam.ts";
@@ -3323,6 +3324,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // ever touched -- which is always, for every one of this engine's ~1272 pre-existing tests (they
   // supply their own `tools` and never reach the registry's `session` seam at all).
   let currentCwd = config.cwd;
+  const requiredContext = systemPromptAssembler?.requiredContext;
+  let requiredContextAttempt = 0;
+  const currentRequiredSnapshot = (purpose: "generation" | "compaction", signal?: AbortSignal) =>
+    resolveRequiredContext(requiredContext!, { sessionId: config.sessionId, ...(config.agentId !== undefined ? { agentId: config.agentId } : {}),
+      cwd: currentCwd, purpose, attempt: ++requiredContextAttempt }, signal);
   const extraBoundedRoots: string[] = [];
   // RULING P3-L (fix wave, P3 close-out): the engine-owned session root -- see registry.ts's own
   // ToolExecutionContext.session.getSessionRoot doc comment for the exact contract. Starts at
@@ -7756,7 +7762,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // The LIVE provider (fix wave): after a `set_model` the summariser must run on the model the
         // session is generating with, not the one it started on -- unless the caller names another
         // (WS-23: a switch's source model, which the user chose to pay for the compaction).
-        provider: opts.provider ?? activeProvider,
+        provider: requiredContext === undefined ? (opts.provider ?? activeProvider) : {
+          // The controller may build either a cached-prefix request or an overflow/redacted
+          // request. Apply current context at its actual dispatch, never to the cached base.
+          generate: async request => (opts.provider ?? activeProvider).generate(applyRequiredCompactionContext(request,
+            await currentRequiredSnapshot("compaction", turnActive ? (currentTurnSignal ?? abortSignal) : abortSignal))),
+        },
         ...(prefixRequest !== undefined ? { prefixRequest } : {}),
         ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
         ...(opts.maxInputChars !== undefined ? { maxInputChars: opts.maxInputChars } : {}),
@@ -8056,12 +8067,17 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // for this session, the simplest correct answer, rather than seeding a real date that could fire a
     // spurious `date_change` attachment the parent's own captured bytes never anticipated.
     if (exactRequestLayout !== undefined) {
-      sessionContext = { userContext: exactRequestLayout.userContext, userContextText: renderUserContext(exactRequestLayout.userContext), systemContextText: undefined, date: undefined };
+      const userContext = requiredContext === undefined ? exactRequestLayout.userContext : exactRequestLayout.userContext.filter(([key]) => key !== "claudeMd");
+      sessionContext = { userContext, userContextText: renderUserContext(userContext), systemContextText: undefined, date: undefined };
       return sessionContext;
     }
     const placement = assembled.systemContextPlacement ?? "none";
     const gitStatus = placement !== "none" ? await computeGitStatus(config.cwd) : undefined;
-    let userContext: ContextEntry[] = systemPromptAssembler?.userContext?.(input) ?? [];
+    // Opted-in hosts own the complete instruction layer. Do not read the legacy
+    // generated WINTER.md/memory snapshot just to discard it, and filter custom
+    // assemblers structurally rather than trying to erase stale text by matching strings.
+    let userContext: ContextEntry[] = systemPromptAssembler?.userContext?.(requiredContext === undefined ? input : { ...input, omitProjectContext: true }) ?? [];
+    if (requiredContext !== undefined) userContext = userContext.filter(([key]) => key !== "claudeMd");
     // `excludeDynamicSections`: the git status goes FIRST, ahead of the user context entries.
     if (placement === "userContext" && gitStatus !== undefined) userContext = [["gitStatus", gitStatus], ...userContext];
     const dated = userContext.find(([key]) => key === "currentDate");
@@ -9569,9 +9585,22 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         sentToolChanges = toolPlan.optIn === true || (toolPlan.toolChanges?.render.size ?? 0) > 0;
         sentNativeToolSearch = toolSpecs.some((t) => t.toolSearch === true);
         sentAllowedTools = toolPlan.allowedTools !== undefined;
-        const outboundMessages = imagesOnlyNewest
-          ? withinImageBudget(requestMessages(context, effortPlan.markers, toolPlan.toolChanges), { maxImages: 1, maxBytes: Number.MAX_SAFE_INTEGER })
-          : requestMessages(context, effortPlan.markers, toolPlan.toolChanges);
+        // Resolve after host input/tool planning awaits. Tool rounds, fallbacks and
+        // resumed generations each reach this point again; no stale snapshot fallback.
+        const requiredSnapshot = requiredContext === undefined ? undefined : await currentRequiredSnapshot("generation", turnAbort.signal);
+        const liveEntries = requiredSnapshot === undefined ? undefined : requiredContextEntries(context.userContext, requiredSnapshot);
+        const liveContext = liveEntries === undefined ? context : { ...context, userContext: liveEntries, userContextText: renderUserContext(liveEntries) };
+        const baseMessages = imagesOnlyNewest
+          ? withinImageBudget(requestMessages(liveContext, effortPlan.markers, toolPlan.toolChanges), { maxImages: 1, maxBytes: Number.MAX_SAFE_INTEGER })
+          : requestMessages(liveContext, effortPlan.markers, toolPlan.toolChanges);
+        const baseSystem = requestSystem(assembled, context);
+        const effective = requiredSnapshot === undefined ? undefined : applyRequiredContext({ messages: baseMessages,
+          ...(baseSystem.system.length > 0 ? { system: baseSystem.system } : {}),
+          ...(baseSystem.systemBlocks !== undefined ? { systemBlocks: baseSystem.systemBlocks } : {}),
+        }, requiredSnapshot);
+        const outboundMessages = effective?.messages ?? baseMessages;
+        const outboundSystem = effective === undefined ? baseSystem : { system: effective.system!,
+          ...(effective.systemBlocks !== undefined ? { systemBlocks: effective.systemBlocks } : {}) };
         lastRequestImageCount = countRequestImages(outboundMessages);
         sentToolChangeMessage = outboundMessages.some((m) => m.toolChanges !== undefined);
         generationEffort = effortPlan.stamp;
@@ -9581,7 +9610,6 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // P1 carry: the per-message cap, enforced BEFORE the request leaves the engine. Throws a
         // `ProviderTurnError`, so it lands on R6-F's result shape through the catch below.
         assertMessagesWithinCap(outboundMessages);
-        const outboundSystem = requestSystem(assembled, context);
         // WS-23 (reasoning-state, decision 5): the FIRST request after a model switch checks that the
         // conversation fits the target. When it does not, the model the session left compacts it (the
         // user's rule: the source pays; the target's own summarizer, bounded to what it can read, only
@@ -9590,15 +9618,20 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           const check = pendingFitCheck;
           pendingFitCheck = undefined;
           const fit = requestFit(outboundSystem.system, toolSpecs, outboundMessages);
-          if (fit !== undefined && !fit.fits && (await compactForSwitch(check, fit))) continue roundLoop;
+          if (fit !== undefined && !fit.fits) {
+            const compacted = await compactForSwitch(check, fit);
+            // Even a failed compaction waited on host/model work. An opted-in
+            // dispatch must resolve again instead of sending its pre-wait snapshot.
+            if (compacted || requiredContext !== undefined) continue roundLoop;
+          }
         }
         // WS-23: what compaction's summary reuses (see `compactionPrefixRequest`).
         const { tools: _declared, ...toolPlanRest } = toolPlan;
-        lastMainRequestShape = { modelKey: currentProviderIdentity?.modelKey ?? currentModel, system: outboundSystem, userContextText: context.userContextText, tools: toolSpecs, toolPlan: toolPlanRest };
+        lastMainRequestShape = { modelKey: currentProviderIdentity?.modelKey ?? currentModel, system: baseSystem, userContextText: context.userContextText, tools: toolSpecs, toolPlan: toolPlanRest };
         // The layout a byte-exact fork (a later lane) will reuse: exactly what this request carries.
         recordSessionRequestLayout(config.sessionId, config.agentId, {
-          ...(outboundSystem.system.length > 0 ? { system: outboundSystem.system } : {}),
-          systemBlocks: outboundSystem.systemBlocks ?? [],
+          ...(baseSystem.system.length > 0 ? { system: baseSystem.system } : {}),
+          systemBlocks: baseSystem.systemBlocks ?? [],
           userContext: context.userContext,
           tools: toolSpecs,
         });
@@ -9706,6 +9739,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
           });
         }
       } catch (err) {
+        if (err instanceof RequiredContextError && err.code === "required_context_cancelled" && turnAbort.signal.aborted) {
+          interrupted = true; break roundLoop;
+        }
         // WS-23: a context-overflow REFUSAL (the 400, before any output) -- reactive compaction and one
         // retry, ahead of the fallback check: another model with the same window would overflow on the
         // same prompt, so this is never a reason to swap models.
