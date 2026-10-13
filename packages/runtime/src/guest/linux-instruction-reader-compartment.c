@@ -47,7 +47,7 @@ static int reader_path(const char *text, size_t maximum) {
             if(!length||(length==1&&part[0]=='.')||(length==2&&part[0]=='.'&&part[1]=='.'))return 0;
             if(!*p)return 1;
             part=(const char *)p+1;
-        } else if(*p<33||*p>126)return 0;
+        } else if(*p<32||*p==127||*p=='\\')return 0;
     }
 }
 static int reader_source_path(const char *text) {
@@ -58,6 +58,7 @@ static int reader_source_path(const char *text) {
 }
 static int reader_dependency_path(const char *text) {
     if(!reader_path(text,1024))return 0;
+    for(const unsigned char *p=(const unsigned char *)text;*p;p++)if(*p<33||*p>126)return 0;
     return !strncmp(text,"/lib/",5)||!strncmp(text,"/lib64/",7)||!strncmp(text,"/usr/lib/",9);
 }
 static int reader_parse(int argc, char **argv, struct reader_plan *plan) {
@@ -240,6 +241,23 @@ static int reader_monitor(pid_t child, int control, int parent, int64_t deadline
     close(init);close(control);return WIFEXITED(status)?WEXITSTATUS(status):128+WTERMSIG(status);
 }
 
+/* Bind the peer check and death signal to ONE original Root parent. Re-reading
+ * getppid for pidfd_open could otherwise bind a new parent after reparenting.
+ * SO_PEERCRED PID translation is valid here only BEFORE unshare/fork. */
+static int reader_service_owner(int receipt) {
+    pid_t original_parent=getppid();
+    int socket_type;socklen_t type_length=sizeof socket_type;
+    require(getsockopt(receipt,SOL_SOCKET,SO_TYPE,&socket_type,&type_length),"reader receipt type");
+    struct ucred peer;socklen_t peer_length=sizeof peer;
+    require(getsockopt(receipt,SOL_SOCKET,SO_PEERCRED,&peer,&peer_length),"reader Root peer");
+    if(socket_type!=SOCK_SEQPACKET||peer_length!=sizeof peer||peer.uid!=0||peer.pid!=original_parent)_exit(64);
+    int service=(int)syscall(SYS_pidfd_open,original_parent,0);require(service,"reader service pidfd");
+    require(prctl(PR_SET_PDEATHSIG,SIGKILL),"reader service death");
+    struct pollfd owner={service,POLLIN,0};
+    if(getppid()!=original_parent||poll(&owner,1,0)!=0)_exit(77);
+    return service;
+}
+
 int main(int argc, char **argv) {
     struct reader_plan plan;if(getuid()!=0||geteuid()!=0||!reader_parse(argc,argv,&plan))_exit(64);
     int64_t deadline=reader_milliseconds()+READER_WALL_MS;
@@ -248,15 +266,8 @@ int main(int argc, char **argv) {
     struct stat source,shared;require(fstat(plan.source,&source),"reader source identity");
     require(fstat(plan.shared,&shared),"reader shared identity");
     if(source.st_dev==shared.st_dev&&source.st_ino==shared.st_ino)_exit(64);
-    int socket_type;socklen_t type_length=sizeof socket_type;
-    require(getsockopt(plan.receipt,SOL_SOCKET,SO_TYPE,&socket_type,&type_length),"reader receipt type");
-    struct ucred peer;socklen_t peer_length=sizeof peer;
-    require(getsockopt(plan.receipt,SOL_SOCKET,SO_PEERCRED,&peer,&peer_length),"reader Root peer");
-    if(socket_type!=SOCK_SEQPACKET||peer_length!=sizeof peer||peer.uid!=0||peer.pid!=getppid())_exit(64);
+    int service=reader_service_owner(plan.receipt);
     for(int i=0;i<plan.dependencies;i++)reader_file(plan.dependency_fds[i],0);
-    int service=(int)syscall(SYS_pidfd_open,getppid(),0);require(service,"reader service pidfd");
-    require(prctl(PR_SET_PDEATHSIG,SIGKILL),"reader service death");struct pollfd owner={service,POLLIN,0};
-    if(poll(&owner,1,0)!=0)_exit(77);
     close(service);
     int parent=(int)syscall(SYS_pidfd_open,getpid(),0);require(parent,"reader parent pidfd");
     int source_tree=reader_clone(plan.source,0),shared_tree=reader_clone(plan.shared,0),executable_tree=reader_clone(plan.executable,1);

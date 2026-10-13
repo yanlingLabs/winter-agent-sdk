@@ -26,7 +26,7 @@ mount fields. This is not an extension of `file` or `process` tool requests.
 | --- | --- |
 | privateViewPath | `/run/winter/instruction-reader-views/<id>`; Root-owned 0700 final directory, all ancestors Root-owned and not writable by other identities; empty and exclusively held by Root for this lifetime |
 | sourceGuestPath | Exactly `/workspace/folders/<id>` or `/workspace/repos/<id>`; one selected source per reader |
-| sourceCwd | Canonical absolute lexical descendant of the selected source, or that source itself; at most 4096 ASCII printable bytes, no empty/`.`/`..` component; only a validated lookup hint, never executable cwd |
+| sourceCwd | Canonical absolute lexical descendant of the selected source, or that source itself; at most 4096 bytes, no C0/DEL/backslash or empty/`.`/`..` component; spaces and UTF-8 path bytes allowed; only a validated lookup hint, never executable cwd |
 | shared guidance | Fixed mount `/run/winter/shared-instructions`; Root supplies the dedicated canonical directory descriptor, independent of tool roots |
 | executableFD | Root-measured actual compiled loader executable; O_RDONLY, Root-owned, regular, single-link, no writable mode bits, executable mode present |
 | dependencies | 0–32 exact immutable file descriptors; same immutable-file checks; canonical file targets beneath `/lib/`, `/lib64/` or `/usr/lib/`, at most 1024 bytes; no duplicate or ancestor/descendant targets and no environment directory mounts |
@@ -35,8 +35,11 @@ mount fields. This is not an extension of `file` or `process` tool requests.
 
 `<id>` is `[A-Za-z0-9][A-Za-z0-9_.-]{0,127}`. A legitimate `grant..id` or
 `repo..id` is accepted; exact `.`/`..` path components are refused. Paths do not
-accept whitespace/control bytes. Dependency targets contain no symlink-created
-skeleton; Root materializes only explicit regular-file mountpoints.
+accept control bytes or backslashes. Source cwd supports ordinary spaces and
+Unicode names; Root must supply a canonically validated UTF-8 spelling because
+the C component parser treats non-ASCII bytes as opaque. Dependency targets keep
+the narrower printable ASCII grammar without whitespace and contain no
+symlink-created skeleton; Root materializes only explicit regular-file mountpoints.
 
 Root must reserve `readerUID` independently from UID0, the runtime UID and tool
 UID. The primary GID equals readerUID; supplementary membership is exactly the
@@ -101,7 +104,10 @@ env: LANG=C LC_ALL=C TZ=UTC HOME=/run/winter/instruction-reader TMPDIR=/tmp PATH
 
 There is no inherited environment. Source cwd is passed through the separately
 bounded Root-generated JSON loader request and validated by the actual loader
-wrapper; it is not the process cwd. The entry must be compiled with Bun autoload
+wrapper; it is not the process cwd. Root must require the launch envelope's
+source root/cwd to equal the request's `views.sourceRoot`/`views.sourceCwd` before
+launch, and bind both to the same canonical registration. The currently unwired
+C role does not parse stdin or establish that equality. The entry must be compiled with Bun autoload
 disabled for bunfig, dotenv, tsconfig and package.json. The exact compiled entry,
 these flags, all source/dependency closure and planted configuration/preload/env
 negative oracles are still owed; this C source does not build or attest them.
@@ -127,8 +133,15 @@ automatically.
 ## Native lifecycle versus outstanding reader debt
 
 The Root service launches this compiled role directly, never by forking a
-protected SDK runtime. The outer launcher obtains the Root service pidfd, arms
-PDEATHSIG and corroborates liveness. After forking the PID-namespace init it
+protected SDK runtime. The outer launcher captures the original parent PID once,
+compares the socket peer to that PID, opens that exact PID's pidfd, arms
+PDEATHSIG, then requires unchanged parent PID and held-pidfd liveness. Reparenting
+cannot cause a later `getppid()` lookup to admit a different owner. Peer PID
+comparison runs before unshare/fork, in the receiver's original PID namespace.
+Root must launch from a creating thread that remains alive until the reader is
+reaped: Linux PDEATHSIG tracks that thread, not just the parent's process. The
+held process pidfd is the liveness identity check; PDEATHSIG is a death backstop.
+After forking the PID-namespace init it
 retains only the receipt socket and init pidfd: all original descriptors,
 detached mounts and fds 0/1/2 are explicitly closed in the monitor before the `I`
 message. Copies avoid fd-remap alias collisions. No monitor filesystem FD is
@@ -181,16 +194,17 @@ Run the portable regression from this SDK worktree:
 python3 -I -S scripts/guest-engine/test_instruction_reader_source.py
 ```
 
-The four portable tests compile extracted pure/parser/mount/filter functions with existing
+The five portable tests compile extracted pure/parser/mount/filter/owner functions with existing
 portable `cc`. Mount syscalls and seccomp install are inert stand-ins; an inert
 BPF interpreter checks both architecture branches and all 64 clone flag bits.
 They check malformed/surplus arguments, descriptor aliases, source/cwd/dependency
 grammar, maximum dependency count, double-dot IDs, recursive RO/private clone
-flags, failure paths, socket/process denial and source lifecycle ordering.
+flags, failure paths, socket/process denial, original-parent death/reparenting
+schedules and source lifecycle ordering.
 Source substring checks are structural regression evidence, not kernel or Bun
 proof. No new native launcher or compiled reader is executed.
 
-A fifth Linux-only test compiles the entire new role to an object with existing
+A sixth Linux-only test compiles the entire new role to an object with existing
 `cc`, `-std=c11 -O2 -Wall -Wextra -Werror -D_FORTIFY_SOURCE=2
 -fstack-protector-strong -fPIE -c`. It never links or executes that output. On this
 Mac it is explicitly skipped; complete Linux role compilation remains unverified
