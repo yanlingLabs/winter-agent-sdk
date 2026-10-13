@@ -21,6 +21,7 @@
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import type { ContextEntry } from "./request-layout.ts";
 import type { PlanModeInput } from "./plan-mode.ts";
+import type { RequiredContextSource } from "./required-context.ts";
 
 // RULING R5-17 (pre-flight scan T5<->T6): Lane S produces this listing, Lane C consumes it (SDK 0.0.16:
 // as the engine's persisted `skill_listing` attachment, context/attachments.ts), and neither lane may define it -- it lives here, in the spine,
@@ -145,6 +146,9 @@ export interface AssembledPrompt {
 }
 
 export interface SystemPromptAssembler {
+  /** Opt-in current instruction layer, independent of cached context and exact fork layouts.
+   * Trusted programmatic dependency only; absent preserves ordinary Code behavior. */
+  requiredContext?: RequiredContextSource;
   assemble(input: SystemPromptInput): AssembledPrompt;
   /**
    * SDK 0.0.16 (P16-5): the session's userContext entries, in claude's key order -- `claudeMd`, then
