@@ -23,7 +23,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: direct-tool-utility-review
-          run-id: 38406073451
+          run-id: 38417505242
           github-token: ${{ github.token }}
           path: out/utility-approved
       - name: Verify pinned inputs as the ordinary runner
@@ -34,8 +34,8 @@ jobs:
           if os.geteuid() == 0:
               raise SystemExit('ordinary input verification required')
           pins = [
-              ('out/utility-approved/receipt.json', 16777216, 'a7c2a2825c0e8db15f275e5f5f8eaaab2bfb56da6ddbf2bd918dfac96ff36f3c'),
-              ('out/utility-approved/bundle.tar.gz', 268435456, '9cd408907fe9c875a9c3a06f33bfba845ffaef1df7347cc6ae3a2d2b5f38cbe9'),
+              ('out/utility-approved/receipt.json', 16777216, '1524a89e2bd462722fc7dc154fa5ec03e6737892267524bedfccd359ce4bb70e'),
+              ('out/utility-approved/bundle.tar.gz', 268435456, '7d0bd70a08e88ef82f680dff7a454394bd7c164ce377f883d24c16f54fa76a8c'),
               ('scripts/guest-utilities/stage.py', 33554432, 'f79b2354dbecfd8040fcb493e438bf1c49e1b064db70b4a4bf1fc867dcb288a8'),
           ]
           for name, limit, expected in pins:
@@ -100,4 +100,4 @@ jobs:
           if len(data)!=identity.st_size or hashlib.sha256(data).hexdigest()!=digest:raise SystemExit("unreviewed parent refused")
           sys.argv=[source,*arguments]
           exec(compile(data,"<reviewed-utility-parent>","exec"),{"__name__":"__main__","__file__":source})
-          ' scripts/guest-utilities/stage.py f79b2354dbecfd8040fcb493e438bf1c49e1b064db70b4a4bf1fc867dcb288a8 --archive out/utility-approved/bundle.tar.gz --approved-archive-sha256 9cd408907fe9c875a9c3a06f33bfba845ffaef1df7347cc6ae3a2d2b5f38cbe9 --approved-receipt-sha256 a7c2a2825c0e8db15f275e5f5f8eaaab2bfb56da6ddbf2bd918dfac96ff36f3c --approved-parent-sha256 f79b2354dbecfd8040fcb493e438bf1c49e1b064db70b4a4bf1fc867dcb288a8 --run
+          ' scripts/guest-utilities/stage.py f79b2354dbecfd8040fcb493e438bf1c49e1b064db70b4a4bf1fc867dcb288a8 --archive out/utility-approved/bundle.tar.gz --approved-archive-sha256 7d0bd70a08e88ef82f680dff7a454394bd7c164ce377f883d24c16f54fa76a8c --approved-receipt-sha256 1524a89e2bd462722fc7dc154fa5ec03e6737892267524bedfccd359ce4bb70e --approved-parent-sha256 f79b2354dbecfd8040fcb493e438bf1c49e1b064db70b4a4bf1fc867dcb288a8 --run
