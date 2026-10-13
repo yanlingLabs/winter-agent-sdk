@@ -204,8 +204,9 @@ export interface PromptStageMeta {
   agentID?: string;
   matchedAskRule?: { source: RuleSource; toolName: string; ruleContent?: string };
   // Task 8 (WS-07 §7.1): the path boundary that forced this prompt, when T7's protected-write check
-  // is what forced it — populated ONLY at the resolveProtectedWrite mustPrompt call site (the first
-  // candidate write path, resolved against cwd). Deliberately absent for the critical-removal
+  // is what forced it — populated ONLY at the resolveProtectedWrite mustPrompt call site (a REAL
+  // matching path/end, or a custom seam's first candidate, resolved against cwd). Absent if the
+  // REAL filesystem recheck loses its match. Deliberately absent for the critical-removal
   // standing exception: T7's CriticalRemovalResult (protected.ts) exposes only a prose `reason`
   // string (already carried via `decisionReason`), not a structured path — extending that sealed
   // shape is out of this task's scope; see the task report's Deviations.
@@ -775,9 +776,20 @@ function shellCommandChangesDirectory(call: PermissionCall): boolean {
  * The shell-only additions to the protected set: a control-plane FILENAME at any depth (so a `cd`
  * cannot hide it), checked at both ends of a symlink like every other protected path.
  */
-function isProtectedShellTarget(path: string, ctx: EvaluationContext): boolean {
+function protectedShellTargetPath(path: string, ctx: EvaluationContext): string | undefined {
   const absPath = resolve(ctx.cwd, path);
-  return checkSymlinkBothEnds(absPath, (candidate) => CONTROL_PLANE_BASENAMES.has(candidate.slice(candidate.lastIndexOf("/") + 1).toLowerCase())).denyIfEither;
+  return matchedProtectedEnd(absPath, (candidate) => CONTROL_PLANE_BASENAMES.has(candidate.slice(candidate.lastIndexOf("/") + 1).toLowerCase()));
+}
+
+/** Capture the matching end during the existing walk: lexical link, real target, then chain target. */
+function matchedProtectedEnd(path: string, matcher: (candidate: string) => boolean): string | undefined {
+  let matched: string | undefined;
+  const result = checkSymlinkBothEnds(path, (candidate) => {
+    const matches = matcher(candidate);
+    if (matches && matched === undefined) matched = candidate;
+    return matches;
+  });
+  return result.denyIfEither ? matched : undefined;
 }
 
 /**
@@ -872,36 +884,45 @@ function shellPathConstraint(call: PermissionCall, ctx: EvaluationContext): { re
   return shellWriteNeedsApproval(call, ctx);
 }
 
+/** First REAL matching protected path/end, preserving path-before-shell-control-plane check order. */
+function realProtectedWriteCandidate(call: PermissionCall, ctx: EvaluationContext): string | undefined {
+  // Ruling P2-J (rider 2) applied here too, advisor-flagged gap: `isProtectedPath` itself is
+  // pure name/segment matching against the LINK text only (protected.ts has no fs access at
+  // all) — without composing checkSymlinkBothEnds here, `Edit(file_path="/work/innocent-link")`
+  // where the link resolves into `/work/.git/config` would sail through as "not protected" (the
+  // link's own path has no `.git` segment) even though the write lands inside `.git`. "deny if
+  // EITHER end classifies protected" mirrors rider 2's own deny-direction semantics — protected
+  // is a safety check, not a grant, so the more-restrictive interpretation applies, exactly like
+  // deny/ask elsewhere in this phase.
+  const outputsDirs = outputsCarveOutDirs(ctx);
+  for (const path of extractCandidateWritePaths(call, ctx)) {
+    const absPath = resolve(ctx.cwd, path);
+    const protectedPath = matchedProtectedEnd(absPath, (candidate) =>
+      isProtectedPath(candidate, {
+        cwd: ctx.cwd,
+        home: ctx.home,
+        ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
+        ...(ctx.storeHome !== undefined ? { storeHome: ctx.storeHome } : {}),
+        ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
+        ...(outputsDirs !== undefined ? { outputsDirs } : {}),
+      }),
+    );
+    if (protectedPath !== undefined) return protectedPath;
+  }
+  // A SHELL write also may not name a control-plane file anywhere (see protectedShellTargetPath).
+  for (const path of shellWriteTargets(call, ctx)) {
+    const protectedPath = protectedShellTargetPath(path, ctx);
+    if (protectedPath !== undefined) return protectedPath;
+  }
+  return undefined;
+}
+
 // The real SpecialChecks seam fill (T6's stub, NO_SPECIAL_CHECKS above, was "always no opinion").
 // Wired into engine.ts's `makeEvalCtx` in place of NO_SPECIAL_CHECKS; every fixture in this file
 // that wants real protected/critical behavior passes this explicitly instead.
 export const REAL_SPECIAL_CHECKS: SpecialChecks = {
   isProtectedWrite(call, ctx) {
-    // Ruling P2-J (rider 2) applied here too, advisor-flagged gap: `isProtectedPath` itself is
-    // pure name/segment matching against the LINK text only (protected.ts has no fs access at
-    // all) — without composing checkSymlinkBothEnds here, `Edit(file_path="/work/innocent-link")`
-    // where the link resolves into `/work/.git/config` would sail through as "not protected" (the
-    // link's own path has no `.git` segment) even though the write lands inside `.git`. "deny if
-    // EITHER end classifies protected" mirrors rider 2's own deny-direction semantics — protected
-    // is a safety check, not a grant, so the more-restrictive interpretation applies, exactly like
-    // deny/ask elsewhere in this phase.
-    const outputsDirs = outputsCarveOutDirs(ctx);
-    const protectedPath = extractCandidateWritePaths(call, ctx).some((p) => {
-      const absPath = resolve(ctx.cwd, p);
-      return checkSymlinkBothEnds(absPath, (candidate) =>
-        isProtectedPath(candidate, {
-          cwd: ctx.cwd,
-          home: ctx.home,
-          ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
-          ...(ctx.storeHome !== undefined ? { storeHome: ctx.storeHome } : {}),
-          ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
-          ...(outputsDirs !== undefined ? { outputsDirs } : {}),
-        }),
-      ).denyIfEither;
-    });
-    if (protectedPath) return true;
-    // A SHELL write also may not name a control-plane file anywhere (see isProtectedShellTarget).
-    return shellWriteTargets(call, ctx).some((p) => isProtectedShellTarget(p, ctx));
+    return realProtectedWriteCandidate(call, ctx) !== undefined;
   },
   isCriticalRemoval(call, ctx) {
     // WS-07 §6.8 is scoped to `rm`/`rmdir` — a shell concept; Edit/Write never "remove" anything.
@@ -1832,13 +1853,13 @@ function resolveProtectedWrite(mode: PermissionMode, ctx: EvaluationContext, cal
   // sessionBypassEnabled is ALREADY guaranteed false for `plan` (this line just intercepted the
   // true case), so evaluate()'s own borrow-gate never needs to re-check bypass for THIS origin.
   if (mode === "plan" && ctx.sessionBypassEnabled === true && !bypassImmune) return { kind: "allow" };
-  // Task 8 (WS-07 §7.1's `blockedPath`): the SAME per-tool path extraction driving
-  // REAL_SPECIAL_CHECKS.isProtectedWrite itself (this function's own caller already confirmed
-  // isProtectedWrite is true, so at least one candidate path exists) — the first candidate is
-  // reported; a compound Bash command touching several protected paths at once reports only one,
-  // a judgment call (no ordering guarantee is documented anywhere in scope).
-  const candidatePaths = extractCandidateWritePaths(call, ctx);
-  const blockedPath = candidatePaths[0] !== undefined ? resolve(ctx.cwd, candidatePaths[0]) : undefined;
+  // Consent must name a REAL matching path/end, not an unrelated earlier write. Rechecking
+  // filesystem state can lose the match; keep the decision and omit the diagnostic in that case.
+  // A custom boolean seam has no REAL path semantics: preserve its existing first-path fallback.
+  const candidate = ctx.specialChecks.isProtectedWrite === REAL_SPECIAL_CHECKS.isProtectedWrite
+    ? realProtectedWriteCandidate(call, ctx)
+    : extractCandidateWritePaths(call, ctx)[0];
+  const blockedPath = candidate !== undefined ? resolve(ctx.cwd, candidate) : undefined;
   return { kind: "mustPrompt", message, origin: "protected", ...(blockedPath !== undefined ? { blockedPath } : {}) };
 }
 

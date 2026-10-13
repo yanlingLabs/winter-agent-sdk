@@ -1551,6 +1551,94 @@ describe("Task 7 — §6.7 protected-path write matrix (mode × protected write,
     expect(promptSpy.calls[0]!.meta.blockedPath).toBe("/work/.git/config");
   });
 
+  test("consent skips unrelated targets, retaining protected-path before control-plane order", async () => {
+    for (const [command, expected] of [
+      ["printf x > /dev/full; printf x > ordinary; printf x > .git/config", "/work/.git/config"],
+      ["printf x > /dev/null; printf x > ordinary; printf x > nested/settings.json", "/work/nested/settings.json"],
+      // General protected paths are checked before the shell-only basename pass, as before.
+      ["printf x > settings.json; printf x > .git/config", "/work/.git/config"],
+    ]) {
+      const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+      const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "bypassPermissions" }), specialChecks: REAL_SPECIAL_CHECKS });
+      const action = call("Bash", { command });
+      expect(REAL_SPECIAL_CHECKS.isProtectedWrite(action, ctx)).toBe(true);
+      const record = await evaluate(action, ctx);
+      expect(record.decision).toBe("deny");
+      expect(promptSpy.calls).toHaveLength(1);
+      expect(promptSpy.calls[0]!.meta.blockedPath).toBe(expected);
+    }
+  });
+
+  test("custom protected boolean seams keep their existing first-candidate fallback", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "bypassPermissions" }),
+      specialChecks: { ...REAL_SPECIAL_CHECKS, isProtectedWrite: () => true } });
+    const record = await evaluate(call("Bash", { command: "printf x > ordinary; printf x > .git/config" }), ctx);
+    expect(record.decision).toBe("deny");
+    expect(promptSpy.calls[0]!.meta.blockedPath).toBe("/work/ordinary");
+  });
+
+  test("consent names a candidate whose link OR target is protected, including control-plane targets", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "winter-consent-links-")));
+    try {
+      mkdirSync(join(root, ".git"));
+      writeFileSync(join(root, ".git", "config"), "fixture");
+      writeFileSync(join(root, "settings.json"), "fixture");
+      writeFileSync(join(root, "ordinary"), "fixture");
+      symlinkSync(join(root, ".git", "config"), join(root, "innocent-link"));
+      symlinkSync(join(root, "settings.json"), join(root, "config-link"));
+      symlinkSync(join(root, "ordinary"), join(root, ".git", "safe-target"));
+      symlinkSync(join(root, "innocent-link"), join(root, "chain-link"));
+      symlinkSync(join(root, ".git", "missing"), join(root, "dangling-link"));
+      symlinkSync(join(root, "dangling-link"), join(root, "dangling-chain"));
+      symlinkSync(join(root, "nested", "settings.local.json"), join(root, "dangling-config"));
+      for (const [target, expected] of [
+        ["innocent-link", ".git/config"], ["config-link", "settings.json"],
+        // Lexical link protection wins even when its destination is ordinary.
+        [".git/safe-target", ".git/safe-target"], ["chain-link", ".git/config"],
+        ["dangling-link", ".git/missing"], ["dangling-chain", ".git/missing"],
+        ["dangling-config", "nested/settings.local.json"],
+      ] as const) {
+        const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+        const ctx = baseCtx({ cwd: root, sessionRoot: root, promptStage: promptSpy.stage,
+          policy: policy({ mode: "bypassPermissions" }), specialChecks: { ...REAL_SPECIAL_CHECKS } });
+        const record = await evaluate(call("Bash", { command: `printf x > ordinary; printf x > ${target}` }), ctx);
+        expect(record.decision).toBe("deny");
+        expect(promptSpy.calls).toHaveLength(1);
+        expect(promptSpy.calls[0]!.meta.blockedPath).toBe(join(root, expected));
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  test("losing a REAL symlink match during diagnostic recheck omits path but retains denial", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "winter-consent-recheck-")));
+    try {
+      mkdirSync(join(root, ".git"));
+      writeFileSync(join(root, ".git", "config"), "fixture");
+      writeFileSync(join(root, "ordinary"), "fixture");
+      const link = join(root, "innocent-link");
+      symlinkSync(join(root, ".git", "config"), link);
+      let reads = 0;
+      const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+      const ctx = baseCtx({ cwd: root, sessionRoot: root, promptStage: promptSpy.stage,
+        policy: policy({ mode: "bypassPermissions" }), specialChecks: {
+          isCriticalRemoval: REAL_SPECIAL_CHECKS.isCriticalRemoval,
+          get isProtectedWrite() {
+            // First read supplies the REAL boolean. The resolver's read changes only the fixture
+            // link before the repeated filesystem check; the function identity remains REAL.
+            if (++reads === 2) { rmSync(link); symlinkSync(join(root, "ordinary"), link); }
+            return REAL_SPECIAL_CHECKS.isProtectedWrite;
+          },
+        } });
+      const record = await evaluate(call("Bash", { command: "printf x > /dev/full; printf x > innocent-link" }), ctx);
+      expect(reads).toBe(2);
+      expect(record.decision).toBe("deny");
+      expect(promptSpy.calls).toHaveLength(1);
+      expect(promptSpy.calls[0]!.meta.blockedPath).toBeUndefined();
+      expect(promptSpy.calls[0]!.meta.decisionReason).toBe("Denied: protected path write requires approval (WS-07 §6.7)");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   test("acceptEdits: prompt/callback — never silently auto-approved just because Edit is 'recognized'", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
     const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
