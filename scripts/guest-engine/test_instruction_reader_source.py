@@ -104,6 +104,7 @@ int main(int argc,char **argv) {
 #include <assert.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <sys/types.h>
 #include <unistd.h>
 #define SOL_SOCKET 1
 #define SO_TYPE 2
