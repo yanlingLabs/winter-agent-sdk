@@ -23,32 +23,43 @@ owner object can mint either admission. The native C helper is unchanged.
 
 The host-query config is closed: visible tools are a unique subset of
 Read/Write/Edit/Bash (Edit requires Read and Write), `allowedTools` is empty,
-settings/skills/plugins/MCP are empty, and only default/plan/bypassPermissions
-are accepted. Bypass requires `allowDangerouslySkipPermissions: true` and
+settings/skills/plugins/MCP are empty, and only default/acceptEdits/dontAsk/plan/
+bypassPermissions are accepted. Bypass requires `allowDangerouslySkipPermissions: true` and
 `permissions.disableBypassPermissionsMode: false`; other modes require the
 opposite pair. Captured config remains fixed except bounded provider-derived
 context sizing. Tool execution also checks the admitted subset. The record must
-bind cwd to a source root, exclude the protected store, and mark every plan root
-read-only. Root metadata corroborates intent; the native supervisor must enforce
+bind cwd exactly to a source root, admit at most 16 roots, exclude every
+`/workspace/.winter` root, and mark every plan root read-only. These are narrow
+first-slice restrictions: nested cwd and the full shared guidance/memory/scratch
+layout are not yet admitted by this profile. Root metadata corroborates intent; the native supervisor must enforce
 read-only mounts and current source authority independently.
 
 The engine permits text, end_input/interrupt, and correlated *pending permission*
 responses only. Attachments, slash commands, settings/config changes, delegation
 and resume controls are refused. Foreign/duplicate/late replies are dropped.
-Permission replies cannot install updatedPermissions. Malformed confined input
+Permission replies cannot install updatedPermissions. The engine derives a
+permission-only outbound RpcBridge allowlist from the genuine native admission
+profile, never from config/JSON/env. Unsupported credential/hook/MCP/other RPCs
+reject immediately before IDs, signal listeners, timers, frames or pending entries
+are created; they cannot park waiting for a reply this input route would drop.
+Ordinary and fresh-fixture bridges retain their original unrestricted behavior.
+Malformed confined input
 uses the existing hard-stop path, cancelling pending approvals/in-flight work.
 Closing the entry/native owner handle or returning a numeric code never proves
 native teardown or releases the protected store hold.
 
 The current supervisor producer and immutable fixture entry remain unchanged.
 A later source slice must derive this profile from authenticated host authority,
-produce the root-owned record, enforce read-only plan roots, and implement bounded
+produce the root-owned record, derive effective read-only plan roots matching
+ToolService descriptors (not merely override the mount while retaining writable
+root metadata), enforce those mounts, and implement bounded
 live stdin/stdout relay. Production capability flags remain false. Actual native
 owner/profile acceptance, live guest ask/plan/bypass callbacks, revocation and
 native teardown need separately reviewed execution. No native/privileged/VM,
 credentials, network or CI execution was performed for this source slice.
 
-Validation: Bun 1.3.14, 39 focused tests / 205 assertions across the two new files,
+Original source validation (`952f1bbb`): Bun 1.3.14, 39 focused tests / 205 assertions
+across the two new files,
 existing linux-session-admission tests and RpcBridge tests; both repository
 TypeScript configurations pass. The actual SDK query → testing inMemoryProcess →
 runEngine → RpcBridge tests use a disposable local home and injected test executor,
@@ -71,3 +82,18 @@ Retained validation logs/bundle are in `out/linux-host-query-entry-check/`.
 Temporary dependency links use the existing frozen local pnpm dependency store;
 workspace imports resolve to this worktree, and the links are removed before
 freeze. No package versions, release pins or frozen first-SDK artifacts change.
+
+
+MED follow-up validation: 42 focused tests / 290 assertions, both repository
+TypeScript checks, and an unexecuted entry bundle compile. Outbound RPC restriction
+regression covers held/open bridges,
+no option callbacks/listeners/timers/frames/pending entries, immediate rejection,
+allowlist capture and still-working permission correlation. Config tests cover all
+five modes and both clamp mismatch directions; the local actual SDK/engine tests
+also prove acceptEdits ordinary-write allowance plus unmatched-Bash prompting, and
+dontAsk unmatched-write denial plus normal-read allowance. The source cwd and
+runtime home are separate disposable roots so the ordinary-write case does not
+accidentally exercise the protected-path override. These remain local testing-leg
+observations, not actual guest approval or native owner/mount acceptance.
+Follow-up logs and the unexecuted bundle are retained separately in
+`out/linux-host-query-entry-med-check/`.

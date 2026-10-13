@@ -1,4 +1,5 @@
-import { assertLinuxSession, assertRunningLinuxSession, checkLinuxSessionFrame, linuxSessionBindings, FRESH_LINUX_TOOLS, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
+import { assertLinuxSession, assertRunningLinuxSession, checkLinuxSessionFrame, linuxSessionProfile, linuxSessionBindings, FRESH_LINUX_TOOLS, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
+import { LINUX_HOST_QUERY_PROFILE } from "./guest/linux-host-query-profile.ts";
 import { sourceReadRestrictionGeneration } from "./sandbox/source-read.ts";
 import { randomUUID } from "node:crypto";
 import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
@@ -3017,7 +3018,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // below wakes -- and a host reads anything but `init` first as a protocol violation. That was a live
   // WS-25 bug: a code session with a signed-in OAuth MCP server died at start with `query()`'s
   // "expected 'init' as the first frame, got 'control_request'". See `RpcBridgeOptions.holdUntilOpen`.
-  const bridge = createRpcBridge(output, { holdUntilOpen: true });
+  const bridge = createRpcBridge(output, {
+    holdUntilOpen: true,
+    ...(opts.linuxSessionAdmission !== undefined && linuxSessionProfile(opts.linuxSessionAdmission) === LINUX_HOST_QUERY_PROFILE
+      ? { allowedSubtypes: ["permission"] } : {}),
+  });
   if (config.hostCodeProcessBroker !== undefined) {
     if (typeof config.hostCodeProcessBroker.generationId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(config.hostCodeProcessBroker.generationId)) throw new Error("invalid host Code broker generation");
     facetDisposers.push(installHostCodeProcessClient({ client: createHostCodeProcessClient(bridge), generationId: config.hostCodeProcessBroker.generationId }));

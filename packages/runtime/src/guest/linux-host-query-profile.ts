@@ -16,7 +16,7 @@ export function assertLinuxHostQueryConfig(config: RuntimeConfig): void {
   if (Object.keys(config).some(key => !configKeys.has(key)) || config.executionPosture !== "confined-guest" || config.persistSession !== true || !Array.isArray(config.tools) || config.tools.length > 4 || new Set(config.tools).size !== config.tools.length || config.tools.some(tool => typeof tool !== "string" || !tools.has(tool)) || (config.tools.includes("Edit") && (!config.tools.includes("Read") || !config.tools.includes("Write")))) refuse();
   if (![config.sessionId, config.model, config.cwd, config.winterHome, config.storeHome].every(value => typeof value === "string" && value.length > 0 && value.length <= 4096)) refuse();
   if (!emptyList(config.allowedTools) || !emptyList(config.settingSources) || !emptyList(config.skills) || !emptyList(config.plugins) || config.strictMcpConfig !== true || !object(config.mcpServers) || Object.keys(config.mcpServers).length !== 0) refuse();
-  if (!["default", "plan", "bypassPermissions"].includes(config.permissionMode ?? "")) refuse();
+  if (!["default", "acceptEdits", "dontAsk", "plan", "bypassPermissions"].includes(config.permissionMode ?? "")) refuse();
   const bypass = config.permissionMode === "bypassPermissions";
   if (config.allowDangerouslySkipPermissions !== bypass || !object(config.permissions) || !closed(config.permissions, ["disableBypassPermissionsMode"]) || config.permissions.disableBypassPermissionsMode !== !bypass) refuse();
   if (config.contextWindowTokens !== undefined && (!Number.isSafeInteger(config.contextWindowTokens) || config.contextWindowTokens < 1 || config.contextWindowTokens > 16 * 1024 * 1024)) refuse();
@@ -24,7 +24,7 @@ export function assertLinuxHostQueryConfig(config: RuntimeConfig): void {
 /** Root metadata is corroboration, not mount proof; native supervisor must enforce these roots. */
 export function assertLinuxHostQueryRoots(config: RuntimeConfig, roots: readonly GuestFileRoot[]): void {
   assertLinuxHostQueryConfig(config);
-  if (!Array.isArray(roots) || roots.length < 1 || roots.length > 64 || new Set(roots.map(root => root.id)).size !== roots.length || new Set(roots.map(root => root.guestPath)).size !== roots.length) refuse();
+  if (!Array.isArray(roots) || roots.length < 1 || roots.length > 16 || new Set(roots.map(root => root.id)).size !== roots.length || new Set(roots.map(root => root.guestPath)).size !== roots.length) refuse();
   for (const root of roots) {
     if (!object(root) || !closed(root as unknown as Record<string, unknown>, ["id", "guestPath", "readOnly"]) || typeof root.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(root.id) || typeof root.guestPath !== "string" || !root.guestPath.startsWith("/workspace/") || root.guestPath.length > 4096 || root.guestPath.includes("\0") || root.guestPath.split("/").slice(1).some(part => part === "" || part === "." || part === "..") || root.guestPath === "/workspace/.winter" || root.guestPath.startsWith("/workspace/.winter/") || typeof root.readOnly !== "boolean" || (config.permissionMode === "plan" && !root.readOnly)) refuse();
   }

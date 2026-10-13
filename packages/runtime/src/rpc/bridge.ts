@@ -87,6 +87,9 @@ export interface RpcBridgeOptions {
   // by `rejectAllPending` -- is dropped from the queue and NEVER written, and no `control_cancel_request`
   // is sent for it: the host never saw the request it would cancel.
   holdUntilOpen?: boolean;
+  /** Optional restriction only: never grants authority. The Linux engine derives this from
+   * its genuine native admission, not RuntimeConfig, argv, environment or a profile claim. */
+  allowedSubtypes?: readonly string[];
 }
 
 interface PendingRpc {
@@ -111,6 +114,7 @@ interface PendingRpc {
 // never imports the runtime (WS-02 §3), even though the shape rhymes.
 export function createRpcBridge(output: FrameSink, bridgeOpts: RpcBridgeOptions = {}): RpcBridge {
   const pending = new Map<string, PendingRpc>();
+  const allowedSubtypes = bridgeOpts.allowedSubtypes === undefined ? undefined : new Set(bridgeOpts.allowedSubtypes);
   // The requests written nowhere yet, keyed by requestId in ISSUE order (a Map iterates in insertion
   // order), or `undefined` once the bridge is open. See `RpcBridgeOptions.holdUntilOpen`.
   let held: Map<string, ControlRequestFrame> | undefined = bridgeOpts.holdUntilOpen === true ? new Map() : undefined;
@@ -129,6 +133,10 @@ export function createRpcBridge(output: FrameSink, bridgeOpts: RpcBridgeOptions 
     request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string; signal?: AbortSignal; cancelGraceMs?: number }): Promise<T> {
       if (closed) {
         return Promise.reject(new WinterRpcError("connection_closed", `rpc bridge is closed: cannot issue a '${subtype}' request`));
+      }
+      if (allowedSubtypes !== undefined && !allowedSubtypes.has(subtype)) {
+        // Refuse before IDs, timers, signal listeners, held frames or pending entries exist.
+        return Promise.reject(new WinterRpcError("unsupported_subtype", "rpc subtype unavailable for this session"));
       }
       if (opts?.signal?.aborted === true) {
         return Promise.reject(new WinterRpcError("cancelled", `the '${subtype}' request was cancelled before it was issued`));

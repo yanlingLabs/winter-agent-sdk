@@ -7,10 +7,11 @@ import { query, decodeFrame, type Options } from "@yanlinglabs/winter-agent-sdk"
 import { inMemoryProcess } from "../testing.ts";
 import type { Provider, ToolExecutor } from "../engine.ts";
 
-async function exercise(mode: "default" | "plan" | "bypassPermissions", answer: "allow" | "deny" | "throw" | "interrupt") {
+async function exercise(mode: "default" | "acceptEdits" | "dontAsk" | "plan" | "bypassPermissions", answer: "allow" | "deny" | "throw" | "interrupt", tool: "Write" | "Read" | "Bash" = "Write") {
   const home = mkdtempSync(join(tmpdir(), "winter-host-query-local-"));
+  const cwd = mkdtempSync(join(tmpdir(), "winter-host-query-source-"));
   let calls = 0, prompts = 0, generation = 0, ended = false, responseAfterEnd = false, callbackCancelled = false;
-  const provider: Provider = { async generate() { return generation++ === 0 ? { kind: "tool_use", calls: [{ id: "write-1", name: "Write", input: { file_path: join(home, "source"), content: "effect" } }] } : { kind: "text", text: "done" }; } };
+  const provider: Provider = { async generate() { return generation++ === 0 ? { kind: "tool_use", calls: [{ id: "write-1", name: tool, input: tool === "Bash" ? { command: "build-fixture" } : { file_path: join(cwd, "source"), content: "effect" } }] } : { kind: "text", text: "done" }; } };
   const tools: ToolExecutor = { async execute() { calls++; return { output: "test executor observed" }; } };
   const callback: NonNullable<Options["canUseTool"]> = async (_tool, _input, options) => {
     prompts++;
@@ -23,7 +24,7 @@ async function exercise(mode: "default" | "plan" | "bypassPermissions", answer: 
     return answer === "allow" ? { behavior: "allow" } : { behavior: "deny", message: "fixture denied" };
   };
   const q = query({ prompt: "write once", options: {
-    model: "winter-test/echo", cwd: home, env: { WINTER_HOME: home, WINTER_DISABLE_GIT_INSTRUCTIONS: "1" }, persistSession: false, settingSources: [], tools: ["Read", "Edit", "Write", "Bash"], allowedTools: [], skills: [], plugins: [], mcpServers: {}, strictMcpConfig: true,
+    model: "winter-test/echo", cwd, env: { WINTER_HOME: home, WINTER_DISABLE_GIT_INSTRUCTIONS: "1" }, persistSession: false, settingSources: [], tools: ["Read", "Edit", "Write", "Bash"], allowedTools: [], skills: [], plugins: [], mcpServers: {}, strictMcpConfig: true,
     permissionMode: mode, permissions: { disableBypassPermissionsMode: mode !== "bypassPermissions" }, allowDangerouslySkipPermissions: mode === "bypassPermissions", canUseTool: callback,
     spawnClaudeCodeProcess(opts) {
       const proc = inMemoryProcess(opts.args, provider, tools, { WINTER_HOME: home });
@@ -42,7 +43,7 @@ async function exercise(mode: "default" | "plan" | "bypassPermissions", answer: 
   try {
     try { for await (const _ of q) {} } catch (error) { if (answer !== "interrupt") throw error; }
     return { calls, prompts, responseAfterEnd, callbackCancelled };
-  } finally { await q.return(undefined); rmSync(home, { recursive: true, force: true }); }
+  } finally { await q.return(undefined); rmSync(home, { recursive: true, force: true }); rmSync(cwd, { recursive: true, force: true }); }
 }
 
 test("actual SDK permission answer still reaches engine after logical end_input, once only", async () => {
@@ -58,4 +59,14 @@ test("plan write is withheld on denied approval; bypass permits ordinary call wi
 test("interrupt cancels actual pending host callback and its late allow cannot execute", async () => {
   const result = await exercise("default", "interrupt");
   expect(result.calls).toBe(0); expect(result.prompts).toBe(1); expect(result.callbackCancelled).toBe(true);
+});
+
+
+test("acceptEdits admits ordinary writes but an unmatched Bash still requires host approval", async () => {
+  expect(await exercise("acceptEdits", "deny")).toEqual({ calls: 1, prompts: 0, responseAfterEnd: false, callbackCancelled: false });
+  expect(await exercise("acceptEdits", "deny", "Bash")).toEqual({ calls: 0, prompts: 1, responseAfterEnd: true, callbackCancelled: false });
+});
+test("dontAsk denies unmatched writes silently, while ordinary reads still run without a callback", async () => {
+  expect(await exercise("dontAsk", "allow")).toEqual({ calls: 0, prompts: 0, responseAfterEnd: false, callbackCancelled: false });
+  expect(await exercise("dontAsk", "deny", "Read")).toEqual({ calls: 1, prompts: 0, responseAfterEnd: false, callbackCancelled: false });
 });

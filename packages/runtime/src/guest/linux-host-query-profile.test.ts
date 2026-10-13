@@ -2,12 +2,12 @@ import { expect, test } from "bun:test";
 import type { RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { assertLinuxHostQueryConfig, assertLinuxHostQueryRoots, checkLinuxHostQueryFrame, LINUX_SESSION_CHUNK_BYTES, LINUX_SESSION_FRAME_BYTES } from "./linux-host-query-profile.ts";
 import { boundedLinuxSessionInput, boundedLinuxSessionOutput, runAdmittedLinuxSession } from "./linux-session-entry.ts";
-import { admitHostQueryLinuxSession, type LinuxSessionAdmission } from "./linux-session-admission.ts";
+import { admitHostQueryLinuxSession, linuxSessionProfile, checkLinuxSessionFrame, type LinuxSessionAdmission } from "./linux-session-admission.ts";
 import { createRpcBridge } from "../rpc/bridge.ts";
 const config = (): RuntimeConfig => ({ executionPosture: "confined-guest", sessionId: "backend", model: "model", cwd: "/workspace/source", winterHome: "/run/winter/conversations/logical", storeHome: "/workspace/.winter/conversations/logical", persistSession: true, tools: ["Read", "Edit", "Write", "Bash"], allowedTools: [], settingSources: [], skills: [], plugins: [], strictMcpConfig: true, mcpServers: {}, permissionMode: "default", permissions: { disableBypassPermissionsMode: true }, allowDangerouslySkipPermissions: false });
 
 test("closed host-query config requires empty preapprovals and matching immutable bypass clamp", () => {
-  for (const mode of ["default", "plan", "bypassPermissions"] as const) {
+  for (const mode of ["default", "acceptEdits", "dontAsk", "plan", "bypassPermissions"] as const) {
     const value = { ...config(), permissionMode: mode, permissions: { disableBypassPermissionsMode: mode !== "bypassPermissions" }, allowDangerouslySkipPermissions: mode === "bypassPermissions" };
     expect(() => assertLinuxHostQueryConfig(value)).not.toThrow();
     expect(() => assertLinuxHostQueryConfig({ ...value, allowDangerouslySkipPermissions: !value.allowDangerouslySkipPermissions })).toThrow();
@@ -16,7 +16,7 @@ test("closed host-query config requires empty preapprovals and matching immutabl
   for (const change of [
     { allowedTools: ["Bash"] }, { tools: ["Agent"] }, { tools: ["Read", "Read"] }, { tools: ["Edit"] },
     { permissionMode: "auto" }, { permissions: { disableBypassPermissionsMode: true, allow: ["Bash"] } },
-    { resume: "backend" }, { hooks: {} }, { agents: {} }, { env: {} }, { unknown: true },
+    { profile: "host-query-v1" }, { allowedSubtypes: ["permission"] }, { resume: "backend" }, { hooks: {} }, { agents: {} }, { env: {} }, { unknown: true },
     { settingSources: ["project"] }, { mcpServers: { x: {} } }, { plugins: ["x"] }, { contextWindowTokens: Infinity },
   ]) expect(() => assertLinuxHostQueryConfig({ ...config(), ...change } as RuntimeConfig)).toThrow();
   expect(() => assertLinuxHostQueryConfig({ ...config(), tools: [], contextWindowTokens: 8192 })).not.toThrow();
@@ -68,6 +68,8 @@ test("bounded transport preserves fragmented text and permission-after-end-input
 test("closed entry refuses forged native admission before input, writes or ownership callbacks", async () => {
   let touched = 0;
   const fake = Object.freeze({ profile: "host-query-v1", config: config() }) as unknown as LinuxSessionAdmission;
+  expect(() => linuxSessionProfile(fake)).toThrow("admission unavailable");
+  expect(() => checkLinuxSessionFrame(fake, config(), { type: "user", text: "go" }, () => { touched++; return true; })).toThrow("admission unavailable");
   await expect(runAdmittedLinuxSession({ admission: fake, input: { [Symbol.asyncIterator]() { touched++; throw new Error("not read"); } }, write() { touched++; }, writeErr() { touched++; }, onProtectedStoreOwnershipOutcome() { touched++; } })).rejects.toThrow("admission unavailable");
   expect(touched).toBe(0);
   for (const [a, b] of [[3, 3], [0, 4], [3.5, 4]]) expect(() => admitHostQueryLinuxSession(a!, b!)).toThrow("admission unavailable");
@@ -77,10 +79,11 @@ test("closed entry refuses forged native admission before input, writes or owner
 test("host-query record binds cwd to roots and plan requires read-only metadata, without claiming mount proof", () => {
   const root = { id: "source", guestPath: "/workspace/source", readOnly: false };
   expect(() => assertLinuxHostQueryRoots(config(), [root])).not.toThrow();
+  expect(() => assertLinuxHostQueryRoots(config(), Array.from({ length: 16 }, (_, index) => ({ ...root, id: `source-${index}`, guestPath: index === 0 ? root.guestPath : `/workspace/source-${index}` })))).not.toThrow();
   const plan = { ...config(), permissionMode: "plan" as const };
   expect(() => assertLinuxHostQueryRoots(plan, [root])).toThrow();
   expect(() => assertLinuxHostQueryRoots(plan, [{ ...root, readOnly: true }])).not.toThrow();
-  for (const roots of [[], [root, root], [{ ...root, guestPath: "/workspace/.winter" }], [{ ...root, guestPath: "/workspace/source/../other" }], [{ ...root, guestPath: "/workspace/other" }], Array(65).fill(root)]) expect(() => assertLinuxHostQueryRoots(config(), roots)).toThrow();
+  for (const roots of [[], [root, root], [{ ...root, guestPath: "/workspace/.winter" }], [{ ...root, guestPath: "/workspace/source/../other" }], [{ ...root, guestPath: "/workspace/other" }], Array(17).fill(root)]) expect(() => assertLinuxHostQueryRoots(config(), roots)).toThrow();
 });
 
 test("fresh profile bounded input preserves ordinary EOF and still cancels malformed input", async () => {
