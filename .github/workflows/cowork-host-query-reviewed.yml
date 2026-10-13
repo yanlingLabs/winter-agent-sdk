@@ -22,7 +22,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: host-query-linux-review
-          run-id: 38419920540
+          run-id: 38426042420
           github-token: ${{ github.token }}
           path: out/host-query-approved
       - name: Verify the exact build and current source without privilege
@@ -53,9 +53,9 @@ jobs:
                   return bytes(wire)
               finally:
                   os.close(fd)
-          native = json.loads(bounded(folder / 'receipt.json', 16777216, '12758285e7f42eeedd569d76359593b7111b4f6eccf244475abe456617260ab4'))
-          compiled = json.loads(bounded(folder / 'compile-receipt.json', 16777216, '5b59479c0eae3e5218a4a71d06e2611d792b057f87e57cf3a0273818761cfab4'))
-          bounded(folder / 'source.tar.gz', 268435456, 'a237781ddac24abfdf80cf6172d6c3997b6f9fcd3a4689ed9c1bc16d78c2dd1b')
+          native = json.loads(bounded(folder / 'receipt.json', 16777216, '62d2f8d5008724702bf1440b2aa9bdcd3d28ddbbf79247a1d1bac63ef49ca3b7'))
+          compiled = json.loads(bounded(folder / 'compile-receipt.json', 16777216, '724f90b9ca31b63f9bf2d19d111e500f918aaf8b0513b70a5cde998aec0cac9d'))
+          bounded(folder / 'source.tar.gz', 268435456, '2d4eba662b891c0b2c41881f1731e8a685a0e0011043da9f5ac4aac52b69d9cb')
           for name, item in compiled['inputs'].items():
               path = PurePosixPath(name)
               if path.is_absolute() or str(path) != name or any(part in ('.', '..') for part in path.parts):
@@ -88,7 +88,7 @@ jobs:
           if len(data)!=before.st_size or hashlib.sha256(data).hexdigest()!=digest:raise SystemExit("unreviewed rehydrator refused")
           sys.argv=[source,*arguments]
           exec(compile(data,"<reviewed-host-query-rehydrator>","exec"),{"__name__":"__main__","__file__":source})
-          ' scripts/guest-host-query/rehydrate.py c8941dfa7647c5d91a83317053809b28816b9d3df8c8c97af1adb87fd52d5c22 --archive out/host-query-approved/source.tar.gz --compile-receipt out/host-query-approved/compile-receipt.json --destination out/host-query-approved/materialized-source --archive-sha256 a237781ddac24abfdf80cf6172d6c3997b6f9fcd3a4689ed9c1bc16d78c2dd1b --compile-sha256 5b59479c0eae3e5218a4a71d06e2611d792b057f87e57cf3a0273818761cfab4
+          ' scripts/guest-host-query/rehydrate.py c8941dfa7647c5d91a83317053809b28816b9d3df8c8c97af1adb87fd52d5c22 --archive out/host-query-approved/source.tar.gz --compile-receipt out/host-query-approved/compile-receipt.json --destination out/host-query-approved/materialized-source --archive-sha256 2d4eba662b891c0b2c41881f1731e8a685a0e0011043da9f5ac4aac52b69d9cb --compile-sha256 724f90b9ca31b63f9bf2d19d111e500f918aaf8b0513b70a5cde998aec0cac9d
       - name: Require existing disposable fixture facilities
         run: |
           test "$(uname -s)" = Linux
@@ -114,4 +114,4 @@ jobs:
           if len(data)!=before.st_size or hashlib.sha256(data).hexdigest()!=digest:raise SystemExit("unreviewed parent refused")
           sys.argv=[source,*arguments]
           exec(compile(data,"<reviewed-host-query-parent>","exec"),{"__name__":"__main__","__file__":source})
-          ' scripts/guest-host-query/stage.py 259f97f4992fd5dac747476b879a3ea8dbd61ee49bea51165ba031fdd458de47 --source out/host-query-approved/materialized-source --artifacts out/host-query-approved --receipt out/host-query-approved/receipt.json --approved-receipt-sha256 12758285e7f42eeedd569d76359593b7111b4f6eccf244475abe456617260ab4 --approved-parent-sha256 259f97f4992fd5dac747476b879a3ea8dbd61ee49bea51165ba031fdd458de47
+          ' scripts/guest-host-query/stage.py 259f97f4992fd5dac747476b879a3ea8dbd61ee49bea51165ba031fdd458de47 --source out/host-query-approved/materialized-source --artifacts out/host-query-approved --receipt out/host-query-approved/receipt.json --approved-receipt-sha256 62d2f8d5008724702bf1440b2aa9bdcd3d28ddbbf79247a1d1bac63ef49ca3b7 --approved-parent-sha256 259f97f4992fd5dac747476b879a3ea8dbd61ee49bea51165ba031fdd458de47
