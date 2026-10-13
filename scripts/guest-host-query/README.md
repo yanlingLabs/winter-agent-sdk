@@ -242,3 +242,12 @@ native evidence. The authoritative rerun used
 No Root, service, native/helper/ELF, mount, VM, GUI, credentials or CI execution
 was performed in this diagnostic lane. Fresh source review, build, full artifact
 chain audit and separately reviewed run admission are still required.
+
+The narrow follow-up after accepted `2f147239` recognizes actual SDK instances of
+CLIConnectionError, ProcessError, ProtocolDecodeError, ResultError and AbortError
+from `packages/sdk/src/errors.ts`. Process codes are integer0–255 or explicit null;
+signals are a closed Linux name set or null. Only the five named result subtypes
+in SDK `protocol/frames.ts` are retained; its open string extensions are omitted.
+The verifier mirrors these bounds and keeps no result text/raw messages. Portable
+checks now pass 41 Python tests and exact 8 Bun tests / 63 assertions, including
+actual SDK error instances, spoofed/unknown classes and out-of-bound values.

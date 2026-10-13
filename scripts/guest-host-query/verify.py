@@ -212,14 +212,19 @@ def failure_observation(service,logical,captures,errors,processes,root,helper):
                         failure=value.get('failure')
                         if type(failure) is dict and type(failure.get('code')) is str and failure['code'] in HOST_FAILURE_CODES:
                             item['receipt']['failure']={'code':failure['code']}
-                            if failure.get('class') in ('Error','TypeError','RangeError','SyntaxError','NonError'):item['receipt']['failure']['class']=failure['class']
+                            if failure.get('class') in ('Error','TypeError','RangeError','SyntaxError','NonError','CLIConnectionError','ProcessError','ProtocolDecodeError','ResultError','AbortError'):item['receipt']['failure']['class']=failure['class']
                             if failure.get('errnoCode') in ('EBADF','EPIPE','EIO','EINVAL','ENOENT','ETIMEDOUT','EINTR'):item['receipt']['failure']['errnoCode']=failure['errnoCode']
+                            if failure.get('class') in ('ProcessError','ResultError'):
+                                if 'processCode' in failure and (failure['processCode'] is None or type(failure['processCode']) is int and 0<=failure['processCode']<=255):item['receipt']['failure']['processCode']=failure['processCode']
+                                if 'signal' in failure and (failure['signal'] is None or failure['signal'] in HOST_SIGNALS):item['receipt']['failure']['signal']=failure['signal']
+                            if failure.get('class')=='ResultError' and failure.get('resultSubtype') in ('success','error_max_turns','error_during_execution','error_max_budget_usd','error_max_structured_output_retries'):item['receipt']['failure']['resultSubtype']=failure['resultSubtype']
                 except (ValueError,TypeError,RecursionError):item['receipt']={'parsed':False}
         if index<len(errors):item['stderr']=errors[index].metadata()
         result['processes'][label]=item
     try:helper['snapshot_runtime_diagnostic']({'control':root/'control'},result)
     except Exception as error:result['runtimeDiagnosticReadFailure']=diagnostic_failure(error,helper)
     return result
+HOST_SIGNALS=('SIGABRT','SIGALRM','SIGBUS','SIGCHLD','SIGCONT','SIGFPE','SIGHUP','SIGILL','SIGINT','SIGIO','SIGIOT','SIGKILL','SIGPIPE','SIGPOLL','SIGPROF','SIGPWR','SIGQUIT','SIGSEGV','SIGSTKFLT','SIGSTOP','SIGSYS','SIGTERM','SIGTRAP','SIGTSTP','SIGTTIN','SIGTTOU','SIGURG','SIGUSR1','SIGUSR2','SIGVTALRM','SIGWINCH','SIGXCPU','SIGXFSZ')
 HOST_FAILURE_CODES=frozenset(('fixture_case','bypass_callback','approval_binding','tool_call','tool_result','tool_status','read_bytes','plan_write','plan_bash','bash_output','missing_results','pipe_bound','input_closed','input_frame','control_correlation','output_frame','observation_bound','control_route','permission_binding','output_truncated','lifecycle_bound','lifecycle_unavailable','lifecycle_code','callback_binding','input_truncated','teardown_failed','approval_result','host_failure'))
 def print_failure_record(root,kind,phase,error,before,after,cleanup,helper):
     phases=('outer-baseline','artifacts','environment','dac-control','canaries','service-construct','metadata','listener','provider-spawn','host-spawn','service-start','launch','owner-handoff','oracle-during','provider-handoff','completion-loop','native-conjunction','close','flock','observer','reap','capture-drain','receipts','oracles','source-effects','persisted-history','mount-teardown','rmtree')

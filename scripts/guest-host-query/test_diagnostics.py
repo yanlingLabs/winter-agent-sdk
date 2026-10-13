@@ -49,6 +49,25 @@ class DiagnosticTests(unittest.TestCase):
         self.assertFalse(result['nativeStatusAvailable']);self.assertTrue(result['processes']['host']['stderr']['truncated'])
         self.assertLessEqual(len(result['processes']['host']['stderr']['normalizedText'].encode()),4096)
 
+    def test_host_sdk_receipt_enums_and_process_bounds_match_classifier(self):
+        def observe(failure):
+            capture=self.helper['BoundedCapture'](io.BytesIO(json.dumps({'passed':False,'failure':failure}).encode()),65536);capture.finish()
+            with tempfile.TemporaryDirectory() as temp:
+                value=verify.failure_observation(None,'host-query-ask-allow',[capture],[],(None,None),Path(temp),self.helper)
+            return value['processes']['host']['receipt']['failure']
+        for name in ('CLIConnectionError','ProtocolDecodeError','AbortError'):
+            self.assertEqual(observe({'class':name,'code':'host_failure','processCode':255,'signal':'SIGKILL','resultSubtype':'success'}),{'class':name,'code':'host_failure'})
+        self.assertEqual(observe({'class':'ProcessError','code':'host_failure','processCode':255,'signal':'SIGTRAP'}),{'class':'ProcessError','code':'host_failure','processCode':255,'signal':'SIGTRAP'})
+        self.assertEqual(observe({'class':'ProcessError','code':'host_failure','processCode':None,'signal':None}),{'class':'ProcessError','code':'host_failure','processCode':None,'signal':None})
+        for code in (-1,256,1.5,True):
+            self.assertEqual(observe({'class':'ProcessError','code':'host_failure','processCode':code,'signal':'/private/signal'}),{'class':'ProcessError','code':'host_failure'})
+        for subtype in ('success','error_max_turns','error_during_execution','error_max_budget_usd','error_max_structured_output_retries'):
+            self.assertEqual(observe({'class':'ResultError','code':'host_failure','resultSubtype':subtype,'result':'secret /private'}),{'class':'ResultError','code':'host_failure','resultSubtype':subtype})
+        self.assertEqual(observe({'class':'ResultError','code':'host_failure','resultSubtype':'/foreign/subtype'}),{'class':'ResultError','code':'host_failure'})
+        self.assertEqual(observe({'class':'/private/class','code':'host_failure','processCode':77,'signal':'SIGTRAP'}),{'code':'host_failure'})
+        source=(HERE/'host-client.ts').read_text()
+        for signal in verify.HOST_SIGNALS:self.assertIn('"'+signal+'"',source)
+
     def test_before_after_native_status_does_not_imply_release(self):
         logical='host-query-ask-allow'
         service=SimpleNamespace(lock=threading.Lock(),runtimes={logical:{'state':'retained','exitCode':77,'cleanupConfirmed':False,'private':'secret'}},debt={logical},active={(logical,'request'):(logical,None,'file')})

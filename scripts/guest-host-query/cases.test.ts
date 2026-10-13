@@ -84,3 +84,14 @@ test("host failure diagnostics retain only closed classes/reasons and known errn
   expect(hostFailure({ message: "secret", code: "/private/path" })).toEqual({ class: "NonError", code: "host_failure" });
   expect(hostFailure(null)).toEqual({ class: "NonError", code: "host_failure" });
 });
+
+test("actual SDK error diagnostics preserve only bounded process facts and closed result subtypes", async () => {
+  const { CLIConnectionError, ProcessError, ProtocolDecodeError, ResultError, AbortError } = await import("@yanlinglabs/winter-agent-sdk");
+  for (const error of [new CLIConnectionError("secret /path"), new ProtocolDecodeError("foreign frame"), new AbortError("secret abort")]) expect(hostFailure(error)).toEqual({ class: error.name, code: "host_failure" });
+  expect(hostFailure(new ProcessError("foreign output", 77, "SIGTRAP"))).toEqual({ class: "ProcessError", code: "host_failure", processCode: 77, signal: "SIGTRAP" });
+  expect(hostFailure(new ProcessError("foreign output", null, null))).toEqual({ class: "ProcessError", code: "host_failure", processCode: null, signal: null });
+  for (const code of [-1, 256, 1.5, NaN, Infinity]) expect(hostFailure(new ProcessError("secret", code, "/foreign/signal"))).toEqual({ class: "ProcessError", code: "host_failure" });
+  expect(hostFailure(new ResultError({ type: "result", subtype: "error_during_execution", permission_denials: [], is_error: true, result: "secret /path" }))).toEqual({ class: "ResultError", code: "host_failure", resultSubtype: "error_during_execution" });
+  expect(hostFailure(new ResultError({ type: "result", subtype: "/foreign/subtype", permission_denials: [], result: "secret" }))).toEqual({ class: "ResultError", code: "host_failure" });
+  expect(hostFailure(Object.assign(new Error("secret"), { name: "ProcessError", code: 77, signal: "SIGTRAP" }))).toEqual({ class: "Error", code: "host_failure" });
+});

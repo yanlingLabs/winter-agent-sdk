@@ -1,7 +1,7 @@
 /** Actual SDK query over fixed owned pipes. This transports bytes; it cannot admit a guest owner. */
 import { fstatSync, readFileSync, writeSync, closeSync } from "node:fs";
 import { createReadStream } from "node:fs";
-import { query, splitFrames, type RuntimeConfig, type PermissionMode, type SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
+import { query, splitFrames, CLIConnectionError, ProcessError, ProtocolDecodeError, ResultError, AbortError, type RuntimeConfig, type PermissionMode, type SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
 import { assertLinuxHostQueryConfig } from "../../packages/runtime/src/guest/linux-host-query-profile.ts";
 import { createHash } from "node:crypto";
 import { fixtureCase, toolScript, terminalText, type Case } from "./cases.ts";
@@ -48,7 +48,8 @@ export function fixtureTranscript(kind: Case, frames: unknown[]) {
 }
 
 /** Closed fixture diagnostics only. Unknown messages/paths never reach output. */
-export function hostFailure(error: unknown): { class: string; code: string; errnoCode?: string } {
+type HostFailureDiagnostic = { class: string; code: string; errnoCode?: string; processCode?: number | null; signal?: string | null; resultSubtype?: string };
+export function hostFailure(error: unknown): HostFailureDiagnostic {
   const codes: Record<string, string> = {
     "fixture case unavailable": "fixture_case", "bypass callback must never run": "bypass_callback", "unbound fixture approval": "approval_binding",
     "fixture tool call binding": "tool_call", "fixture tool result correlation": "tool_result", "fixture tool result status": "tool_status",
@@ -60,10 +61,18 @@ export function hostFailure(error: unknown): { class: string; code: string; errn
     "Root lifecycle observer unavailable": "lifecycle_unavailable", "fixture lifecycle code": "lifecycle_code", "fixture callback correlation": "callback_binding",
     "fixture input truncated frame": "input_truncated", "Root teardown observer failed": "teardown_failed", "fixture approval/result oracle": "approval_result",
   };
-  const name = error instanceof Error ? error.name : "NonError";
-  const result: { class: string; code: string; errnoCode?: string } = { class: ["Error", "TypeError", "RangeError", "SyntaxError", "NonError"].includes(name) ? name : "Error", code: error instanceof Error ? (Object.hasOwn(codes, error.message) ? codes[error.message]! : "host_failure") : "host_failure" };
+  const sdkClass = error instanceof ResultError ? "ResultError" : error instanceof ProcessError ? "ProcessError" : error instanceof CLIConnectionError ? "CLIConnectionError" : error instanceof ProtocolDecodeError ? "ProtocolDecodeError" : error instanceof AbortError ? "AbortError" : undefined;
+  const name = sdkClass ?? (error instanceof Error ? error.name : "NonError");
+  const result: HostFailureDiagnostic = { class: sdkClass ?? (["Error", "TypeError", "RangeError", "SyntaxError", "NonError"].includes(name) ? name : "Error"), code: error instanceof Error ? (Object.hasOwn(codes, error.message) ? codes[error.message]! : "host_failure") : "host_failure" };
   const errno = (error as NodeJS.ErrnoException | null)?.code;
   if (typeof errno === "string" && ["EBADF", "EPIPE", "EIO", "EINVAL", "ENOENT", "ETIMEDOUT", "EINTR"].includes(errno)) result.errnoCode = errno;
+  if (error instanceof ProcessError) {
+    if (error.code === null || (typeof error.code === "number" && Number.isInteger(error.code) && error.code >= 0 && error.code <= 255)) result.processCode = error.code;
+    const signals = ["SIGABRT", "SIGALRM", "SIGBUS", "SIGCHLD", "SIGCONT", "SIGFPE", "SIGHUP", "SIGILL", "SIGINT", "SIGIO", "SIGIOT", "SIGKILL", "SIGPIPE", "SIGPOLL", "SIGPROF", "SIGPWR", "SIGQUIT", "SIGSEGV", "SIGSTKFLT", "SIGSTOP", "SIGSYS", "SIGTERM", "SIGTRAP", "SIGTSTP", "SIGTTIN", "SIGTTOU", "SIGURG", "SIGUSR1", "SIGUSR2", "SIGVTALRM", "SIGWINCH", "SIGXCPU", "SIGXFSZ"];
+    if (error.signal === null || (typeof error.signal === "string" && signals.includes(error.signal))) result.signal = error.signal;
+  }
+  // frames.ts admits extensions as string: unknown result values are deliberately omitted.
+  if (error instanceof ResultError && ["success", "error_max_turns", "error_during_execution", "error_max_budget_usd", "error_max_structured_output_retries"].includes(error.result.subtype)) result.resultSubtype = error.result.subtype;
   return result;
 }
 
