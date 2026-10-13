@@ -93,7 +93,7 @@ export interface EmbeddedSessionOptions {
   onSessionPhase?: (phase: "running" | "idle" | "ending") => void;
   /** Trusted supervisor object capability. Never read from RuntimeConfig/SDK options or env. */
   protectedStoreBootstrap?: ProtectedStoreBootstrap;
-  /** Actual native owner admission, confined fresh four-tool scope only. */
+  /** Actual native owner admission, closed fresh-store fixture or host-query profile only. */
   linuxSessionAdmission?: LinuxSessionAdmission;
   /** REQUIRED whenever protectedStoreBootstrap is supplied. Trusted terminal lifecycle channel,
    * emitted exactly once after release handling, independently of the numeric agent-turn code.

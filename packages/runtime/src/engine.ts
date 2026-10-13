@@ -1,4 +1,5 @@
-import { assertLinuxSession, assertRunningLinuxSession, assertFreshLinuxUserFrame, linuxSessionBindings, FRESH_LINUX_TOOLS, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
+import { assertLinuxSession, assertRunningLinuxSession, checkLinuxSessionFrame, linuxSessionProfile, linuxSessionBindings, FRESH_LINUX_TOOLS, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
+import { LINUX_HOST_QUERY_PROFILE } from "./guest/linux-host-query-profile.ts";
 import { sourceReadRestrictionGeneration } from "./sandbox/source-read.ts";
 import { randomUUID } from "node:crypto";
 import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
@@ -3018,7 +3019,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // below wakes -- and a host reads anything but `init` first as a protocol violation. That was a live
   // WS-25 bug: a code session with a signed-in OAuth MCP server died at start with `query()`'s
   // "expected 'init' as the first frame, got 'control_request'". See `RpcBridgeOptions.holdUntilOpen`.
-  const bridge = createRpcBridge(output, { holdUntilOpen: true });
+  const bridge = createRpcBridge(output, {
+    holdUntilOpen: true,
+    ...(opts.linuxSessionAdmission !== undefined && linuxSessionProfile(opts.linuxSessionAdmission) === LINUX_HOST_QUERY_PROFILE
+      ? { allowedSubtypes: ["permission"] } : {}),
+  });
   if (config.hostCodeProcessBroker !== undefined) {
     if (typeof config.hostCodeProcessBroker.generationId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(config.hostCodeProcessBroker.generationId)) throw new Error("invalid host Code broker generation");
     facetDisposers.push(installHostCodeProcessClient({ client: createHostCodeProcessClient(bridge), generationId: config.hostCodeProcessBroker.generationId }));
@@ -4935,7 +4940,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const tools: ToolExecutor = opts.linuxSessionAdmission === undefined ? underlyingTools : {
     execute(call, executionOptions) {
       assertLinuxSession(opts.linuxSessionAdmission, config);
-      if (!(FRESH_LINUX_TOOLS as readonly string[]).includes(call.name)) return Promise.resolve({ output: "fresh Linux tool route unavailable", isError: true });
+      if (!(FRESH_LINUX_TOOLS as readonly string[]).includes(call.name) || !Array.isArray(config.tools) || !config.tools.includes(call.name)) return Promise.resolve({ output: "fresh Linux tool route unavailable", isError: true });
       return underlyingTools.execute(call, executionOptions);
     },
   };
@@ -6555,9 +6560,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         if (outcome.result.done) return; // true input EOF (path (a) above)
         const frame = outcome.result.value;
         if (opts.linuxSessionAdmission !== undefined) {
-          assertLinuxSession(opts.linuxSessionAdmission, config);
-          // Fresh scope has no host control/delegation/config mutation surface. EOF ends input.
-          assertFreshLinuxUserFrame(frame);
+          try {
+            if (checkLinuxSessionFrame(opts.linuxSessionAdmission, config, frame, id => bridge.ownsRequest(id, "permission")) === "drop") continue;
+          } catch (error) {
+            // A malformed confined input cancels pending approvals/in-flight work; it is not
+            // merely a logical end_input followed by continued execution.
+            hardStop();
+            throw error;
+          }
         }
 
         if (frame.type === "user") {
@@ -7186,7 +7196,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // interrupted (its tools' process groups die through the turn's abort signal); a runtime->host
   // request nobody can answer is rejected; and the session-level abort makes the background wait stop
   // instead of holding the session open for a background agent.
-  const hardStop = (): void => {
+  function hardStop(): void {
     sessionHardStopped = true;
     announceHardStop();
     facetInputEnded = true;
@@ -7196,7 +7206,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     interruptCurrentTurn.current?.();
     signalBackgroundWait();
     bridge.rejectAllPending(new Error("winter: the session was stopped before this control request could be answered"));
-  };
+  }
   if (abortSignal?.aborted === true) hardStop();
   else abortSignal?.addEventListener("abort", hardStop, { once: true });
 
