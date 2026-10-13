@@ -1,7 +1,7 @@
 """Real socket/descriptor checks; no privileged service or Linux confinement claim."""
 import array,importlib.util,json,os,socket,struct,sys,tempfile,threading,time,unittest,warnings
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock,patch
 MODULE=Path(__file__).resolve().parents[2]/'packages/runtime/src/guest/linux-supervisor.py'
 spec=importlib.util.spec_from_file_location('protected_tool_service',MODULE);service=importlib.util.module_from_spec(spec);spec.loader.exec_module(service)
 class ProtocolTests(unittest.TestCase):
@@ -54,7 +54,10 @@ class ProtocolTests(unittest.TestCase):
                 for index in range(8):
                     client=socket.socket(socket.AF_UNIX);client.connect(str(root/f'tools-{index//2}'));clients.append(client)
                 with busy:self.assertTrue(busy.wait_for(lambda:len(entered)==8,timeout=1))
-                ninth=socket.socket(socket.AF_UNIX);ninth.settimeout(1);ninth.connect(str(root/'tools-0'));clients.append(ninth);self.assertEqual(service.frame_read(ninth),{'error':'capacity_busy'})
+                ninth=socket.socket(socket.AF_UNIX);ninth.settimeout(1);ninth.connect(str(root/'tools-0'));clients.append(ninth)
+                service.frame_write(ninth,{'kind':'reserve','untrustedBody':'fixture-only'})
+                self.assertEqual(service.frame_read(ninth),{'error':'capacity_busy'})
+                self.assertEqual(ninth.recv(1),b'') # No unread-request reset hides the reply.
                 def admin(operation):
                     with socket.socket(socket.AF_UNIX) as channel:
                         channel.connect(str(root/'admin'));service.frame_write(channel,{'operation':operation,'sessionId':'logical'});return service.frame_read(channel,timeout=1)
@@ -66,6 +69,56 @@ class ProtocolTests(unittest.TestCase):
                 release.set()
                 for client in clients:client.close()
                 self.assertTrue(obj.close())
+
+    def test_busy_drain_is_bounded_and_never_decodes_a_request(self):
+        left,right=socket.socketpair();right.settimeout(7)
+        try:
+            payload=b'not JSON: no handler or ticket may consume this'
+            left.sendall(struct.pack('!I',len(payload))+payload)
+            with patch.object(service.json,'loads',side_effect=AssertionError('busy must not decode')):
+                service.discard_busy_frame(right)
+            self.assertEqual(right.gettimeout(),7)
+            left.sendall(struct.pack('!I',service.FRAME_LIMIT+1))
+            with self.assertRaisesRegex(service.Refusal,'frame_limit'):service.discard_busy_frame(right)
+            self.assertEqual(right.gettimeout(),7)
+        finally:left.close();right.close()
+
+    def test_busy_drain_header_and_body_share_one_deadline(self):
+        left,right=socket.socketpair();right.settimeout(7);stop=threading.Event()
+        wire=struct.pack('!I',20)+b'x'*20
+        def trickle():
+            try:
+                for byte in wire:
+                    left.sendall(bytes([byte]))
+                    if stop.wait(.015):break
+            except OSError:pass
+        producer=threading.Thread(target=trickle);producer.start();start=time.monotonic()
+        try:
+            with self.assertRaisesRegex(service.Refusal,'frame_deadline'):service.discard_busy_frame(right,timeout=.1)
+            self.assertLess(time.monotonic()-start,.4);self.assertEqual(right.gettimeout(),7)
+        finally:stop.set();producer.join(1);left.close();right.close()
+
+    def test_busy_auth_drain_and_reply_do_not_renew_rejection_budget(self):
+        channel=MagicMock()
+        with patch.object(service,'peer_uid',return_value=10001),patch.object(service.time,'monotonic',side_effect=[0,.01,.08,.099]),patch.object(service,'discard_busy_frame') as drain,patch.object(service,'frame_write') as write:
+            service.reply_busy(channel,10001)
+        self.assertAlmostEqual(drain.call_args.kwargs['deadline'],.1)
+        self.assertAlmostEqual(channel.settimeout.call_args.args[0],.02)
+        write.assert_called_once_with(channel,{'error':'capacity_busy'})
+        for times in ([0,.01,.11],[0,.01,.08,.11]):
+            with self.subTest(times=times),patch.object(service,'peer_uid',return_value=10001),patch.object(service.time,'monotonic',side_effect=times),patch.object(service,'discard_busy_frame'),patch.object(service,'frame_write') as write:
+                with self.assertRaisesRegex(service.Refusal,'frame_deadline'):service.reply_busy(channel,10001)
+                self.assertEqual(write.call_count,0 if len(times)==3 else 1)
+        with patch.object(service,'peer_uid',return_value=20001),patch.object(service,'discard_busy_frame') as drain,patch.object(service,'frame_write') as write:
+            with self.assertRaisesRegex(service.Refusal,'peer_identity'):service.reply_busy(channel,10001)
+            drain.assert_not_called();write.assert_not_called()
+
+    def test_busy_drain_does_not_extend_absolute_deadline_after_descheduling(self):
+        channel=MagicMock();channel.gettimeout.return_value=7
+        with patch.object(service.time,'monotonic',return_value=.11):
+            with self.assertRaisesRegex(service.Refusal,'frame_deadline'):service.discard_busy_frame(channel,deadline=.1)
+        channel.recv.assert_not_called()
+        channel.settimeout.assert_called_once_with(7)
     def test_source_ancestor_swap_and_leaf_alias_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp).resolve();allowed=root/'allowed';allowed.mkdir();(allowed/'nested').mkdir();protected=root/'protected';protected.mkdir();(protected/'nested').mkdir();source=allowed/'nested';original_open=service.os.open;swapped=False

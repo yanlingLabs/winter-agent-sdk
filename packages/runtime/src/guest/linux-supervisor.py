@@ -99,12 +99,54 @@ def frame_read(channel,timeout=FRAME_READ_SECONDS):
         if size<1 or size>FRAME_LIMIT:raise Refusal('frame_limit')
         return json.loads(exact(size))
     finally:channel.settimeout(original_timeout)
+
+def discard_busy_frame(channel,timeout=.1,*,deadline=None):
+    """Consume one bounded frame without decoding, handling or admitting it.
+
+    Closing a Unix stream with an unread request can reset the peer and hide
+    the explicit no-effect busy reply. Rejection keeps its original short
+    budget; idle/trickling/oversized requests never enter the handler.
+    """
+    if deadline is None:deadline=time.monotonic()+timeout
+    original_timeout=channel.gettimeout()
+    def exact(count,header=False):
+        retained=bytearray()
+        while count:
+            remaining=deadline-time.monotonic()
+            if remaining<=0:raise Refusal('frame_deadline')
+            channel.settimeout(remaining)
+            try:data=channel.recv(min(count,65536))
+            except socket.timeout:raise Refusal('frame_deadline')
+            if time.monotonic()>=deadline:raise Refusal('frame_deadline')
+            if not data:raise Refusal('channel_closed')
+            count-=len(data)
+            # Only the four-byte header is retained, never a request body.
+            if header:retained.extend(data)
+        return bytes(retained)
+    try:
+        size=struct.unpack('!I',exact(4,header=True))[0]
+        if size<1 or size>FRAME_LIMIT:raise Refusal('frame_limit')
+        exact(size)
+    finally:channel.settimeout(original_timeout)
 def frame_write(channel,value):
     data=canonical(value).encode()
     if len(data)>FRAME_LIMIT:raise Uncertain('response_limit')
     channel.sendall(struct.pack('!I',len(data))+data)
 
 def peer_uid(channel):return struct.unpack('3i',channel.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))[1]
+
+def reply_busy(channel,uid):
+    # Authentication, drain and response share the original rejection budget.
+    deadline=time.monotonic()+.1
+    if peer_uid(channel)!=uid:raise Refusal('peer_identity')
+    remaining=deadline-time.monotonic()
+    if remaining<=0:raise Refusal('frame_deadline')
+    discard_busy_frame(channel,deadline=deadline)
+    remaining=deadline-time.monotonic()
+    if remaining<=0:raise Refusal('frame_deadline')
+    channel.settimeout(remaining)
+    frame_write(channel,{'error':'capacity_busy'})
+    if time.monotonic()>=deadline:raise Refusal('frame_deadline')
 
 def source_directory(source,protected):
     # Bootstrap roots must be canonical, with no symlink at ANY path component.
@@ -209,8 +251,8 @@ class ToolService:
                 if not global_acquired:
                     if local_capacity is not None and local_acquired:local_capacity.release()
                     try:
-                        connection.settimeout(.1);frame_write(connection,{'error':'capacity_busy'})
-                    except OSError:pass
+                        reply_busy(connection,uid)
+                    except (OSError,Refusal):pass
                     connection.close();continue
                 def serve(connection=connection):
                     try:
