@@ -22,6 +22,7 @@ interface PreparationRecord {
   state: State;
   onRuntimeContext: RuntimeContextHandler | undefined;
   spawnClaudeCodeProcess: SpawnClaudeCodeProcess | undefined;
+  correlation?: Readonly<GuidedQueryCorrelation>;
 }
 const preparations = new WeakMap<GuidedQueryPreparation, PreparationRecord>();
 const claims = new WeakMap<GuidedQueryClaim, GuidedQueryPreparation>();
@@ -53,6 +54,7 @@ function closeRecord(value: PreparationRecord): void {
   value.state = "closed";
   value.onRuntimeContext = undefined;
   value.spawnClaudeCodeProcess = undefined;
+  delete value.correlation;
 }
 
 /** Stores the exact functions without calling them. Does not grant query/runtime access. */
@@ -119,11 +121,20 @@ export function consumeGuidedQueryCorrelation(claim: GuidedQueryClaim, args: rea
     if (consumedBindings.has(result.bindingId) || consumedBindings.size >= GUIDED_QUERY_CORRELATION_CAPACITY) return fail();
     consumedBindings.add(result.bindingId);
     current.state = "correlated";
+    current.correlation = result;
     return result;
   } catch {
     closeRecord(current);
     return fail();
   }
+}
+/** Correlation/liveness check only; never an authenticated native capability. */
+export function assertGuidedQueryCorrelation(claim: GuidedQueryClaim, expected: Readonly<GuidedQueryCorrelation>): void {
+  const preparation = claims.get(claim);
+  if (preparation === undefined) return fail();
+  const current = record(preparation);
+  if (current.state !== "correlated" || current.correlation?.version !== expected.version
+    || current.correlation.bindingId !== expected.bindingId) return fail();
 }
 /** Future owning query teardown must call this on abort/exit/abandonment. No process is launched here. */
 export function closeGuidedQuery(preparation: GuidedQueryPreparation): void { closeRecord(record(preparation)); }

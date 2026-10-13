@@ -1,9 +1,10 @@
 # Guided query preparation: lifecycle only
 
-The exported preparation codec is a source prerequisite for a future reviewed
-native guided-query adapter. It does not enable `requireRuntimeContext` in a
-confined guest. Query, Options, engine, native profile and producer guards are
-unchanged. No reader/provider/filesystem access or process launch occurs here.
+The preparation codec and opt-in host query lifecycle are source prerequisites
+for a future reviewed native guided-query adapter. They do not enable
+`requireRuntimeContext` in a confined guest. Engine, native profile and producer
+guards remain unchanged. The codec performs no IO; an ordinary custom-spawn query
+can use existing context callbacks only after exact correlation is consumed.
 
 `prepareGuidedQuery` retains the exact host callback and spawn-hook objects;
 `claimGuidedQuery` checks those same identities and permits one claim.
@@ -11,15 +12,36 @@ unchanged. No reader/provider/filesystem access or process launch occurs here.
 `{version: 1, bindingId}`. `closeGuidedQuery` permanently revokes it and releases
 the retained functions. Preparation and claim use private WeakMaps; copied,
 wrapped, forged or JSON representations are not registrations. Serialization
-throws. The owning adapter must close on abort, exit and abandonment; this module
-does not install listeners or manage a process.
+throws. The standalone codec does not install listeners or manage a process.
+
+`Options.guidedQueryPreparation` opts an ordinary query into the lifecycle. Before
+spawn it claims the same callback and custom hook, captured from own data fields;
+there is no default-hook fallback. `SpawnRuntimeOptions.guidedQueryClaim` is passed
+only to that hook and is absent on ordinary calls without opt-in. The hook must
+consume correlation from its exact SDK args before returning. Query checks the
+stored frozen version/UUID against its own generated config before any initial
+prompt or context callback, and again after an awaited context result. Tokens
+never enter RuntimeConfig, args or environment. Copying Options preserves identity
+if the same opaque token and function objects remain; copying the token does not.
+
+Query closes preparation on setup/hook errors, abort, observed process exit
+(resolution or rejection), and generator finally/return/throw including before
+first next. Failed post-hook correlation and abandonment before first next end
+input and request the existing TERM/KILL grace teardown. No exit promise is
+interpreted as native cleanup success. Mutable Options cannot substitute the
+captured callback/hook or abort controller. The no-opt-in path retains its
+ordinary spawn/frame behavior and performs no preparation-registry lookup.
+An inherited posture is refused without evaluating an inherited getter; an own
+data `executionPosture: "local"` wins over a prototype value. Reflect.has may
+invoke caller Proxy traps: this host-only lifecycle door is not native authority.
 
 Consumed UUIDs remain in a module-local set after close, with a fixed capacity of
 4096. Replay in another preparation refuses. Once capacity is reached, all further
 claims and consumes fail closed and close their preparation; existing entries are unchanged.
 There is no eviction, TTL or reset. **This is not the production daemon lifecycle.**
 A reviewed Root-owned generation/domain expiry protocol is a prerequisite before
-any wiring; these APIs alone are insufficient for long-lived production use.
+guided guest or production daemon activation; these APIs alone are insufficient
+for long-lived production use.
 
 The decoder accepts the SDK's exact three-argument `--run --config-json` envelope,
 with a 64 KiB config bound before JSON parsing. Config must round-trip byte-exactly
@@ -37,6 +59,9 @@ before reader/provider access. Preparation alone is not native proof. The host
 callback and hook must be bound to the same preparation; matching nonce text,
 profile strings and transport shapes cannot establish admission. Unregistered,
 v1 and prepared-but-unattested confined required-context queries still refuse.
-The source tests use stored function tripwires and one actual ordinary query's
-spawn hook that throws before any process is created. They do not prove a native
-owner, guest guidance, approvals, isolation, VM or production activation.
+Source tests use virtual transports and actual SDK/engine in-memory callbacks.
+Failed correlation produces zero model callbacks; valid correlation can exercise
+ordinary context behavior. A separate bounded Bun unit subprocess tests capacity
+against the actual codec module, with isolated HOME/config and no dotenv loading;
+it never imports query/runtime/native code. These are source tests, not native
+owner, guest guidance, approvals, isolation, VM or production activation proof.

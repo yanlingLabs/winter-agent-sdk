@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { WinterSDKError } from "./errors.ts";
+import type { GuidedQueryClaim } from "./guided-query-preparation.ts";
 
 // The pinned process seam (WS-04 §8, WS-03 §5): byte-level, shape-compatible with the pinned
 // spawnClaudeCodeProcess hook. Both the real child transport (defaultSpawn, below) and the
@@ -25,6 +26,9 @@ export interface SpawnedRuntimeProcess {
 }
 
 export interface SpawnRuntimeOptions {
+  /** Host-local claim: custom hook consumes its exact args correlation before returning.
+   * Absent without opt-in. Never serialize this token or treat it as native admission. */
+  guidedQueryClaim?: GuidedQueryClaim;
   /** Trusted launcher requirement, never RuntimeConfig/environment authority. Custom transports
    * must refuse if they cannot preserve the native floor; embedded Workers cannot satisfy it. */
   requireHostFloor?: true;

@@ -1,4 +1,5 @@
 import { RUNTIME_CONTEXT_SUBTYPE, RUNTIME_CONTEXT_VERSION, parseRuntimeContextRequest, parseRuntimeContextSnapshot } from "./runtime-context.ts";
+import { claimGuidedQuery, closeGuidedQuery, assertGuidedQueryCorrelation, type GuidedQueryClaim, type GuidedQueryCorrelation } from "./guided-query-preparation.ts";
 import { randomUUID } from "node:crypto";
 import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
@@ -776,7 +777,71 @@ function abortedBeforeSpawn(): SpawnedRuntimeProcess {
   };
 }
 
+interface QueryPreparationLifecycle {
+  claim: GuidedQueryClaim;
+  callback: NonNullable<Options["onRuntimeContext"]>;
+  spawn: NonNullable<Options["spawnClaudeCodeProcess"]>;
+  assert(expected: Readonly<GuidedQueryCorrelation>): void;
+  close(): void;
+  attach(proc: SpawnedRuntimeProcess): void;
+  teardown(action: () => void): void;
+}
 export function query(args: { prompt: string | AsyncIterable<string>; options: Options }): Query {
+  const preparation = args.options.guidedQueryPreparation;
+  if (preparation === undefined) return queryImplementation(args);
+  let closed = false, teardown: (() => void) | undefined;
+  let controller: AbortController | undefined, signal: AbortSignal | undefined;
+  const close = () => {
+    if (closed) return;
+    closed = true; signal?.removeEventListener("abort", close);
+    try { closeGuidedQuery(preparation); } catch { /* forged tokens are never registrations */ }
+  };
+  try {
+    controller = args.options.abortController; signal = controller?.signal;
+    // No preparation can lift the current unconditional native guest refusal.
+    const callback = Object.getOwnPropertyDescriptor(args.options, "onRuntimeContext");
+    const spawn = Object.getOwnPropertyDescriptor(args.options, "spawnClaudeCodeProcess");
+    const required = Object.getOwnPropertyDescriptor(args.options, "requireRuntimeContext");
+    const posture = Object.getOwnPropertyDescriptor(args.options, "executionPosture");
+    if (!callback || !("value" in callback) || typeof callback.value !== "function"
+      || !spawn || !("value" in spawn) || typeof spawn.value !== "function"
+      || !required || !("value" in required) || required.value !== true
+      || (posture === undefined && Reflect.has(args.options, "executionPosture"))
+      || (posture !== undefined && (!("value" in posture) || (posture.value !== undefined && posture.value !== "local")))) throw new Error("required_context_unavailable");
+    const pair = Object.freeze({ onRuntimeContext: callback.value, spawnClaudeCodeProcess: spawn.value });
+    const claim = claimGuidedQuery(preparation, pair);
+    // Only prepared lifecycle fields are fixed; unrelated option getters retain
+    // their original receiver and ordinary callers never take this branch.
+    const ownedOptions = new Proxy(args.options, { get(target, key) {
+      if (key === "onRuntimeContext") return pair.onRuntimeContext;
+      if (key === "spawnClaudeCodeProcess") return pair.spawnClaudeCodeProcess;
+      if (key === "requireRuntimeContext") return true;
+      if (key === "executionPosture") return posture?.value;
+      if (key === "abortController") return controller;
+      return Reflect.get(target, key, target);
+    } });
+    const ownedArgs = { prompt: args.prompt, options: ownedOptions };
+    if (signal?.aborted) { close(); return queryImplementation(ownedArgs); }
+    signal?.addEventListener("abort", close, { once: true });
+    const lifecycle: QueryPreparationLifecycle = {
+      claim, close, callback: pair.onRuntimeContext, spawn: pair.spawnClaudeCodeProcess,
+      assert(expected) { if (closed) throw new Error("required_context_unavailable"); assertGuidedQueryCorrelation(claim, expected); },
+      attach(proc) { void proc.exited.then(close, close); },
+      teardown(action) { teardown = action; },
+    };
+    const gen = queryImplementation(ownedArgs, lifecycle);
+    let started = false;
+    const originalNext = gen.next.bind(gen);
+    const originalReturn = gen.return.bind(gen), originalThrow = gen.throw.bind(gen);
+    gen.next = (...values) => { started = true; return originalNext(...values); };
+    gen.return = (...values) => { close(); if (!started) teardown?.(); return originalReturn(...values); };
+    gen.throw = (...values) => { close(); if (!started) teardown?.(); return originalThrow(...values); };
+    return gen;
+  } catch (error) {
+    close(); teardown?.(); throw error;
+  }
+}
+function queryImplementation(args: { prompt: string | AsyncIterable<string>; options: Options }, preparation?: QueryPreparationLifecycle): Query {
   const { prompt, options } = args;
 
   // Task 8 (WS-07 §7.3): the shadow warning — a STATIC, ONE-TIME check at query() CONSTRUCTION
@@ -886,11 +951,11 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     try { hostCodeRegistration?.dispose?.(); } catch { /* teardown must continue */ }
   };
   let removeHostCodeAbortListener = () => {};
-  if ((options.requireRuntimeContext !== undefined && typeof options.requireRuntimeContext !== "boolean")
+  if (preparation === undefined && ((options.requireRuntimeContext !== undefined && typeof options.requireRuntimeContext !== "boolean")
     || (options.requireRuntimeContext === true) !== (typeof options.onRuntimeContext === "function")
-    || (options.onRuntimeContext !== undefined && typeof options.onRuntimeContext !== "function")) throw new Error("required_context_unavailable");
-  if (options.requireRuntimeContext === true && options.executionPosture === "confined-guest") throw new Error("required_context_unavailable");
-  const contextBindingId = options.requireRuntimeContext === true ? randomUUID() : undefined;
+    || (options.onRuntimeContext !== undefined && typeof options.onRuntimeContext !== "function"))) throw new Error("required_context_unavailable");
+  if ((preparation !== undefined || options.requireRuntimeContext === true) && options.executionPosture === "confined-guest") throw new Error("required_context_unavailable");
+  const contextBindingId = preparation !== undefined || options.requireRuntimeContext === true ? randomUUID() : undefined;
   const config: RuntimeConfig = {
     ...(contextBindingId !== undefined ? { requiredRuntimeContext: { version: RUNTIME_CONTEXT_VERSION, bindingId: contextBindingId } } : {}),
     ...(options.hostCodeProcessBroker !== undefined ? { hostCodeProcessBroker: { generationId: options.hostCodeProcessBroker.generationId } } : {}),
@@ -1028,7 +1093,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // runtimes, a supervising daemon — WS-04 §8): resolving a LOCAL platform binary would be wrong
   // (and often impossible) in those cases, so executable resolution — including its typed throw
   // when nothing is configured — only runs on the defaultSpawn path.
-  const command = options.spawnClaudeCodeProcess
+  const command = (preparation !== undefined ? preparation.spawn : options.spawnClaudeCodeProcess)
     // `"winter"` here is the PUBLISHED ARTIFACT's executable name (WS-02 §4: the platform package
     // ships exactly one binary called `winter`), NOT the host's `brand.processLabel` — review r1,
     // Minor-1. A reuser installing @yanlinglabs/winter-agent-sdk-darwin-arm64 gets a binary with
@@ -1038,6 +1103,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ? (options.pathToClaudeCodeExecutable ?? "winter")
     : resolveRuntimeExecutable(options);
   const spawnOptions: SpawnRuntimeOptions = {
+    ...(preparation !== undefined ? { guidedQueryClaim: preparation.claim } : {}),
     command,
     args: ["--run", "--config-json", JSON.stringify(config)],
     cwd: config.cwd,
@@ -1060,21 +1126,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // the Query) must not be left with a live runtime child. The Query still behaves exactly as if the
   // abort had landed right after a spawn -- reading it throws `AbortError` -- through an inert stand-in
   // handle whose process is already gone.
-  const proc: SpawnedRuntimeProcess = options.abortController?.signal.aborted === true ? abortedBeforeSpawn() : (options.spawnClaudeCodeProcess ?? defaultSpawn)(spawnOptions);
-  if (hostCodeRegistration) {
-    // The consumer may abandon the generator: registration lifetime follows the actual query
-    // abort/process exit, independently of whether iterate() ever reaches its finally block.
-    const signal = options.abortController?.signal;
-    if (signal?.aborted) disposeHostCodeRegistration();
-    else if (signal) {
-      signal.addEventListener("abort", disposeHostCodeRegistration, { once: true });
-      removeHostCodeAbortListener = () => signal.removeEventListener("abort", disposeHostCodeRegistration);
-    }
-    const exited = () => { disposeHostCodeRegistration(); removeHostCodeAbortListener(); };
-    void proc.exited.then(exited, exited);
-  }
-  const maxBufferSize = options.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
-
+  const proc: SpawnedRuntimeProcess = options.abortController?.signal.aborted === true ? abortedBeforeSpawn() : (preparation !== undefined ? preparation.spawn : (options.spawnClaudeCodeProcess ?? defaultSpawn))(spawnOptions);
   // An abort BEFORE the first read kills the child now, not when (if ever) the Query is first read: the
   // read loop's own abort handling only exists once iteration starts, and a caller that aborts and walks
   // away would otherwise leak a live `winter` until this process exits. SIGTERM, then SIGKILL after the
@@ -1105,12 +1157,33 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // `finally` calls this): a later abort must not SIGTERM/SIGKILL a child that is shutting down gracefully
   // after a completed exchange.
   let removeSpawnAbortListener = (): void => {};
+  preparation?.teardown(() => {
+    removeSpawnAbortListener(); disposeHostCodeRegistration(); removeHostCodeAbortListener();
+    try { proc.stdin.end(); } catch { /* teardown preserves the original construction refusal */ }
+    killForAbort();
+  });
+  preparation?.attach(proc);
+  if (hostCodeRegistration) {
+    // The consumer may abandon the generator: registration lifetime follows the actual query
+    // abort/process exit, independently of whether iterate() ever reaches its finally block.
+    const signal = options.abortController?.signal;
+    if (signal?.aborted) disposeHostCodeRegistration();
+    else if (signal) {
+      signal.addEventListener("abort", disposeHostCodeRegistration, { once: true });
+      removeHostCodeAbortListener = () => signal.removeEventListener("abort", disposeHostCodeRegistration);
+    }
+    const exited = () => { disposeHostCodeRegistration(); removeHostCodeAbortListener(); };
+    void proc.exited.then(exited, exited);
+  }
+  const maxBufferSize = options.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
+
   if (options.abortController !== undefined && options.abortController.signal.aborted !== true) {
     const signal = options.abortController.signal;
     signal.addEventListener("abort", killForAbort, { once: true });
     removeSpawnAbortListener = () => signal.removeEventListener("abort", killForAbort);
     proc.exited.then(removeSpawnAbortListener, removeSpawnAbortListener);
   }
+  if (preparation !== undefined && options.abortController?.signal.aborted !== true) preparation.assert(config.requiredRuntimeContext!);
 
   // Task 2 (WS-04 §3.1, direction inversion): HOST-originated control requests (interrupt,
   // setPermissionMode today; setModel/taskStop/mcp_*/rewindFiles in later tasks) awaiting the
@@ -1295,14 +1368,16 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       return { ok: true, payload: result };
     };
   }
-  if (contextBindingId !== undefined && options.onRuntimeContext !== undefined) {
-    const resolve = options.onRuntimeContext;
+  if (contextBindingId !== undefined && (preparation !== undefined || options.onRuntimeContext !== undefined)) {
+    const resolve = preparation !== undefined ? preparation.callback : options.onRuntimeContext!;
     controlRequestHandlers.set(RUNTIME_CONTEXT_SUBTYPE, async (payload, context) => {
       const { controller, dispose } = abortableFor(options.abortController, context);
       try {
         const request = parseRuntimeContextRequest(payload);
         if (request.bindingId !== contextBindingId || controller.signal.aborted || contextTransportClosed) throw new Error("required_context_unavailable");
+        preparation?.assert(config.requiredRuntimeContext!);
         const snapshot = parseRuntimeContextSnapshot(await resolve(request, { signal: controller.signal, trustedQuerySessionId: config.sessionId }));
+        preparation?.assert(config.requiredRuntimeContext!);
         return { ok: true, payload: snapshot };
       } catch {
         return { ok: false, error: { code: "required_context_unavailable", message: "required_context_unavailable" } };
@@ -1388,6 +1463,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
 
     try {
       if (options.abortController?.signal.aborted) onAbort();
+      else preparation?.assert(config.requiredRuntimeContext!);
 
       // Task 3: a string prompt sends one `user` frame then `end_input`; an AsyncIterable<string>
       // prompt sends each item as a `user` frame AS IT ARRIVES — not waiting for that turn's
@@ -1583,6 +1659,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       // generator as terminated and fails fast instead of registering a promise nothing will ever
       // settle.
       generatorTerminated = true;
+      preparation?.close();
       if (contextBindingId !== undefined) closeRuntimeContext();
       disposeHostCodeRegistration();
       removeHostCodeAbortListener();
