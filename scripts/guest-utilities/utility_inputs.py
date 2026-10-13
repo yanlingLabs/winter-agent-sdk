@@ -5,6 +5,7 @@ import argparse,ast,hashlib,importlib.util,json,platform,re,stat,subprocess
 from pathlib import Path
 HERE=Path(__file__).resolve().parent
 spec=importlib.util.spec_from_file_location('utility_capture',HERE/'closure.py');c=importlib.util.module_from_spec(spec);spec.loader.exec_module(c)
+spec=importlib.util.spec_from_file_location('utility_static_graph',HERE/'stdlib_graph.py');graph=importlib.util.module_from_spec(spec);spec.loader.exec_module(graph)
 PACKAGES=('collections','encodings','importlib','json','multiprocessing','re','zipfile')
 MODULES=('__future__','_collections_abc','_compat_pickle','_compression','_sitebuiltins','_weakrefset','abc','argparse','base64','bisect','calendar','codecs','contextlib','copy','copyreg','datetime','decimal','dis','enum','fnmatch','functools','genericpath','getopt','gettext','hashlib','heapq','hmac','inspect','io','keyword','linecache','locale','logging','numbers','operator','os','pathlib','pickle','platform','posixpath','queue','random','reprlib','runpy','secrets','selectors','shutil','signal','site','socket','stat','string','struct','subprocess','sysconfig','tempfile','textwrap','threading','token','tokenize','traceback','types','typing','warnings','weakref')
 EXTENSIONS=('_multiprocessing','_posixshmem','_socket','_struct','array','binascii','math','select','_random','_sha2','_hashlib','_blake2','_pickle','_heapq','_bisect','_posixsubprocess','fcntl','mmap','_csv','_datetime','_opcode','zlib')
@@ -25,6 +26,24 @@ def stdlib_paths(base):
     return paths
 
 
+def held_source(root,item,limit=1024*1024):
+    fd=c.leaf(root,item['source'])
+    try:
+        before=os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode) or not 1<=before.st_size<=limit:raise ValueError('bounded static source required')
+        parts=[];size=0
+        while True:
+            part=os.read(fd,min(65536,limit-size+1))
+            if not part:break
+            size+=len(part)
+            if size>limit:raise ValueError('bounded static source required')
+            parts.append(part)
+        data=b''.join(parts)
+        if c.identity(before)!=c.identity(os.fstat(fd)) or size!=before.st_size or size!=item.get('bytes',size) or c.digest(data)!=item.get('sha256',c.digest(data)):raise ValueError('static source measurement changed')
+        return data
+    finally:os.close(fd)
+
+
 def validate_pickle_dependency(origin,files):
     """Check only the measured pickle -> _compat_pickle required pure-source edge.
 
@@ -37,27 +56,27 @@ def validate_pickle_dependency(origin,files):
         for name in ('pickle','_compat_pickle'):
             guest='/usr/lib/python3.12/'+name+'.py';item=files.get(guest)
             if not item or item['role']!='stdlib' or item['source']!=guest[1:]:raise ValueError('required pickle dependency leaf missing')
-            fd=c.leaf(root,item['source'])
-            try:
-                before=os.fstat(fd);limit=1024*1024
-                if not stat.S_ISREG(before.st_mode) or not 1<=before.st_size<=limit:raise ValueError('bounded pickle source required')
-                parts=[];size=0
-                while True:
-                    part=os.read(fd,min(65536,limit-size+1))
-                    if not part:break
-                    size+=len(part)
-                    if size>limit:raise ValueError('bounded pickle source required')
-                    parts.append(part)
-                data=b''.join(parts)
-                if c.identity(before)!=c.identity(os.fstat(fd)) or size!=before.st_size or size!=item['bytes'] or c.digest(data)!=item['sha256']:raise ValueError('pickle source measurement changed')
-                sources[name]=data
-            finally:os.close(fd)
+            sources[name]=held_source(root,item)
     finally:os.close(root)
     tree=ast.parse(sources['pickle']);imports=set()
     for node in tree.body:
         if isinstance(node,ast.Import):imports.update(alias.name for alias in node.names)
         elif isinstance(node,ast.ImportFrom) and node.level==0:imports.add(node.module)
     if '_compat_pickle' not in imports:raise ValueError('fixed unconditional pickle dependency changed')
+
+
+def validate_stdlib_graph(origin,files,builder):
+    source_root=c.open_root(HERE)
+    try:
+        smoke=held_source(source_root,{'source':'smoke.sh'})
+        descendant=held_source(source_root,{'source':'descendant.py'})
+        roots=graph.payload_roots(smoke,descendant)
+    finally:os.close(source_root)
+    origin_root=c.open_root(origin)
+    try:
+        def read(guest):return held_source(origin_root,files[guest],c.MAX_FILE if files[guest]['role']=='extension' else graph.MAX_SOURCE)
+        return graph.validate(files,read,roots,sys.builtin_module_names,builder)
+    finally:os.close(origin_root)
 
 
 def prepare(output):
@@ -105,9 +124,12 @@ def prepare(output):
             add('/lib/aarch64-linux-gnu/'+name,source,'library')
     manifest=c.validate_manifest({'formatVersion':1,'kind':'winter-tool-utility-inputs','target':'linux-arm64-gnu','files':files})
     validate_pickle_dependency(origin,manifest['files'])
+    interpreter=Path(sys.executable).resolve();builder={'version':platform.python_version(),**c.measured_path(interpreter,128*1024*1024)}
+    static_graph=validate_stdlib_graph(origin,manifest['files'],builder)
+    if c.measured_path(interpreter,128*1024*1024)!={key:builder[key] for key in ('sha256','bytes')}:raise ValueError('Python builtin inventory interpreter changed')
     if c.measured_path(reader)!=reader_identity:raise ValueError('readelf changed')
     (output/'input-manifest.json').write_text(c.canonical(manifest)+'\n')
-    (output/'origin-receipt.json').write_text(c.canonical({'kind':'winter-utility-origin','builder':{'version':platform.python_version(),**c.measured_path(Path(sys.executable).resolve(),128*1024*1024)},'readelf':reader_identity,'readelfCommands':commands,'manifestSha256':c.digest(c.canonical(manifest).encode()),'utilityExecution':False,'dependencyCompletenessVerified':False})+'\n')
+    (output/'origin-receipt.json').write_text(c.canonical({'kind':'winter-utility-origin','builder':builder,'readelf':reader_identity,'readelfCommands':commands,'manifestSha256':c.digest(c.canonical(manifest).encode()),'staticStdlibGraph':static_graph,'utilityExecution':False,'dependencyCompletenessVerified':False})+'\n')
     return manifest
 
 

@@ -174,6 +174,35 @@ This guard proves only that fixed edge and selected leaf, not the full static
 graph, platform branches, dynamic imports or runtime completeness. A fresh
 source/build/artifact review and separately admitted run remain required.
 
+The ordinary collector also runs `stdlib_graph.py` before writing either origin
+receipt or manifest. It parses all five literal Python invocations in the fixed
+smoke (single-quoted `-c` payloads and `PY` heredocs) plus `descendant.py`. It
+recurses through module-body unconditional imports in captured pure `.py` files,
+package initializers and relative submodules, or resolves captured extension
+leaves without executing them. Exported declared functions/attributes are not
+invented submodules; missing required module/package leaves fail with their
+module and importer names. Cycles terminate, and source/AST/module/import/receipt
+bounds apply. Every visited captured leaf is checked against its measured bytes
+through held nofollow descriptors. There is no implicit filesystem discovery,
+host `find_spec`, guest module import, input ELF execution or whole-stdlib copy.
+
+Builtin resolution uses the already running ordinary Python builder's
+`sys.builtin_module_names` only when its measured interpreter exactly matches the
+captured `/usr/bin/python3` byte identity and Python 3.12 version. The interpreter
+is remeasured after graph validation. The origin receipt's `staticStdlibGraph`
+records that identity, builtin names, measured payload roots/visited leaves,
+required edges, and separate conditional/ImportError and function-lazy imports.
+Those optional/deferred observations never satisfy a required missing module.
+Explicit exercised seeds are `multiprocessing.shared_memory`, `synchronize`,
+`resource_tracker`, `spawn` and `popen_fork`; the last is selected by the smoke's
+fork context. They cover known lazy paths without claiming to resolve all lazy
+imports. Conditional platform branches, runtime exported attribute values,
+dynamic `__all__`/`__getattr__`, extension attributes, computed imports and further
+function-lazy paths remain unverified. Required static reachability is only a
+build gate; dynamic dependency completeness, native execution and general tool
+availability remain false. Any additional named build-time gap requires source
+evidence and review rather than an allowlist exception or automatic copy.
+
 Artifact audit of build `38333923765` found that loader bytes were measured but
 captured/copied as 0444. Execution intent now binds capture modes (0555/0444),
 bundle metadata, immutable staging modes (0500/0400), and verified runtime copy

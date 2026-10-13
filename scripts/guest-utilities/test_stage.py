@@ -12,7 +12,7 @@ s=load('stage');v=load('verify');o=load('oracle');f=load('test_fixture')
 class UtilityStageTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(prefix='winter-utility-stage-source-');self.root=Path(self.temp.name).resolve();origin=self.root/'origin';origin.mkdir();manifest=f.fixture(origin);capture=f.closure.capture(origin,manifest,self.root/'capture')
-        source_names=['scripts/guest-utilities/'+name for name in ('stage.py','verify.py','closure.py','oracle.py','client.ts','compile.ts','build.py','smoke.sh','utility_inputs.py','descendant.py')]
+        source_names=['scripts/guest-utilities/'+name for name in ('stage.py','verify.py','closure.py','oracle.py','client.ts','compile.ts','build.py','smoke.sh','utility_inputs.py','stdlib_graph.py','descendant.py')]
         source_names+=['scripts/guest-engine/provenance.py','scripts/build-runtime.ts','scripts/linux-runtime-base.json','packages/runtime/src/guest/linux-supervisor.py','packages/runtime/src/guest/linux-compartment.h','packages/runtime/src/guest/linux-tool-compartment.c','packages/runtime/src/guest/file-worker.c','packages/runtime/src/guest/process-worker.c','package.json','pnpm-lock.yaml','pnpm-workspace.yaml','tsconfig.base.json','tsconfig.typecheck.json','tsconfig.sdk-fence.json','bunfig.toml']
         source_names+=['.github/workflows/cowork-tool-utilities-build.yml']
         self.data={'source/'+name:(ROOT/name).read_bytes() for name in source_names};inputs={name:{'kind':'file','sha256':s.sha(self.data['source/'+name]),'bytes':len(self.data['source/'+name])} for name in source_names}
@@ -172,7 +172,7 @@ class UtilityStageTests(unittest.TestCase):
             with self.subTest(body=body),self.assertRaisesRegex(ValueError,'fixed unconditional pickle dependency changed'):collector.validate_pickle_dependency(origin,files)
         source('pickle','import _compat_pickle\n')
         pickle.write_bytes(b'import _compat_pickle\n# changed bytes\n')
-        with self.assertRaisesRegex(ValueError,'pickle source measurement changed'):collector.validate_pickle_dependency(origin,files)
+        with self.assertRaisesRegex(ValueError,'static source measurement changed'):collector.validate_pickle_dependency(origin,files)
         source('pickle','import _compat_pickle\n');pickle.unlink();pickle.symlink_to(origin/'usr/lib/python3.12/_compat_pickle.py')
         with self.assertRaises(OSError):collector.validate_pickle_dependency(origin,files)
         recipe=(HERE/'utility_inputs.py').read_text()
