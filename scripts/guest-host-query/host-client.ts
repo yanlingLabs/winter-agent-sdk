@@ -46,6 +46,27 @@ export function fixtureTranscript(kind: Case, frames: unknown[]) {
   if (calls.length !== script.length || results.length !== script.length) throw new Error("fixture missing tool results");
   return { toolCalls: calls.length, toolResults: results.length, scriptSha256: createHash("sha256").update(JSON.stringify(script)).digest("hex"), resultErrors: results.map(result => Boolean(result.is_error)), resultDenied: results.map(result => Boolean(result.denied)), exactReadBytes: true, bashBoundaryObserved: kind === "ask-allow" || kind === "bypass" || kind === "plan" };
 }
+
+/** Closed fixture diagnostics only. Unknown messages/paths never reach output. */
+export function hostFailure(error: unknown): { class: string; code: string; errnoCode?: string } {
+  const codes: Record<string, string> = {
+    "fixture case unavailable": "fixture_case", "bypass callback must never run": "bypass_callback", "unbound fixture approval": "approval_binding",
+    "fixture tool call binding": "tool_call", "fixture tool result correlation": "tool_result", "fixture tool result status": "tool_status",
+    "fixture Read bytes": "read_bytes", "fixture native plan Write authority": "plan_write", "fixture native plan readonly Bash": "plan_bash",
+    "fixture Bash output": "bash_output", "fixture missing tool results": "missing_results", "fixture pipe bound": "pipe_bound",
+    "fixture input closed": "input_closed", "fixture input frame bound": "input_frame", "fixture control correlation": "control_correlation",
+    "fixture output frame bound": "output_frame", "fixed fixture observation bound": "observation_bound", "fixture control route": "control_route",
+    "fixture permission binding": "permission_binding", "fixture output truncated frame": "output_truncated", "fixture lifecycle bound": "lifecycle_bound",
+    "Root lifecycle observer unavailable": "lifecycle_unavailable", "fixture lifecycle code": "lifecycle_code", "fixture callback correlation": "callback_binding",
+    "fixture input truncated frame": "input_truncated", "Root teardown observer failed": "teardown_failed", "fixture approval/result oracle": "approval_result",
+  };
+  const name = error instanceof Error ? error.name : "NonError";
+  const result: { class: string; code: string; errnoCode?: string } = { class: ["Error", "TypeError", "RangeError", "SyntaxError", "NonError"].includes(name) ? name : "Error", code: error instanceof Error ? (Object.hasOwn(codes, error.message) ? codes[error.message]! : "host_failure") : "host_failure" };
+  const errno = (error as NodeJS.ErrnoException | null)?.code;
+  if (typeof errno === "string" && ["EBADF", "EPIPE", "EIO", "EINVAL", "ENOENT", "ETIMEDOUT", "EINTR"].includes(errno)) result.errnoCode = errno;
+  return result;
+}
+
 function writePipe(fd: number, chunk: string): void {
   const data = Buffer.from(chunk);
   if (data.length > 1024 * 1024) throw new Error("fixture pipe bound");
@@ -121,5 +142,5 @@ if (import.meta.main) {
   for (const fd of [3, 4, 5, 7, 8]) { const pipe = fstatSync(fd); if (!pipe.isFIFO() || pipe.uid !== 0 || pipe.nlink !== 1) throw new Error("Root-owned fixture pipe required"); }
   const metadata = JSON.parse(readFileSync(6, "utf8"));
   try { console.log(JSON.stringify(await runClient(metadata, 3, 4, 5, 7, 8))); }
-  catch { console.log(JSON.stringify({ passed: false, class: "host_query_fixture" })); process.exitCode = 1; }
+  catch (error) { console.log(JSON.stringify({ passed: false, class: "host_query_fixture", failure: hostFailure(error) })); process.exitCode = 1; }
 }

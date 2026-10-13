@@ -194,6 +194,51 @@ regular files plus 71 symlinks, exact 3,760-leaf closure. Archive SHA256:
 `b4afe5ef49a5f3e6bd38972724de7f1340420821d1a36fde9394b80243f1896f`;
 compile-receipt SHA256:
 `f548050e2f0cf6fbc3780e372bd469ce8116f930a516f53eae36244aeb7352b8`.
-No copied bytes were imported or executed. This does not relabel that old build
+During that data-only copy, no copied bytes were imported or executed. This does not relabel that old build
 as containing this new adapter: source review and a fresh build/archive remain
 required. No TypeScript, native helper, stager, build or workflow changed here.
+
+## Host-query failure diagnostics
+
+The independently admitted run `38423093803` failed its first ask-allow case
+after staging, with only a generic failure line. Its cause and failed-fixture
+cleanup remain unconfirmed. Timing alone does not establish a runtime cause.
+This diagnostic source change does not retry it or reuse its admission/pins.
+
+The runner now records closed phases spanning setup, DAC control, service/native
+owner handoff, mount proof, completion, receipt/history/source oracles and normal
+rmtree. It prints an exception class plus only known assertion reason,
+supervisor refusal/mount code or numeric errno; unknown messages are omitted.
+The fixed DAC control's observed child exit code is retained without changing
+its success requirements. Host-client failures similarly emit only closed
+internal reason/class and allowlisted errno codes, never raw exception messages.
+
+Before and after failure unwind, the runner observes the existing native runtime
+state/exit/cleanup flag, logical debt/active state, host/provider process exits,
+bounded capture metadata, normalized stderr and whitelisted receipt fields.
+It reuses the exact accepted fixed-control runtime-diagnostic reader and validator
+after staged admission; missing diagnostics do not imply a cause. Failure-path
+service.close results are observed separately from native receipt/reap/drain/store
+release. No observer, EOF, kill/wait or close result establishes ownership release.
+
+A compact failure record is retained using a fixed exclusive nofollow/nonblocking
+0600 regular file and printed before main's unchanged `SystemExit(78) from None`.
+Record output is bounded at 32 KiB; oversized snapshots are explicitly omitted,
+preserving the original phase/reason. `retained:true` expresses failure retention
+intent; `retentionDirectoryObserved` separately records true/false/unknown and
+does not prove the whole tree or native cleanup. `ownershipReleased` remains
+false on every failure. Success, approval, history, EROFS/DAC, mount and normal
+rmtree oracles and their deadlines remain unchanged. No unmount/ignore-EROFS
+fallback, stager/native-helper, workflow, capability or privilege change occurs.
+
+Portable evidence: 40 Python tests (9 new diagnostic tests), 7 directly selected
+Bun tests / 50 assertions, both TypeScript configurations and an unexecuted host
+Bun bundle pass. An earlier Bun invocation omitted the `./` path prefix and
+selected 19 tests / 142 assertions across the intended file and two retained
+rehydrated source copies; their ordinary local/inMemory test legs were imported
+and executed. This test-selection mistake is retained separately and is not
+native evidence. The authoritative rerun used
+`bun test ./scripts/guest-host-query/cases.test.ts` (exactly one file).
+No Root, service, native/helper/ELF, mount, VM, GUI, credentials or CI execution
+was performed in this diagnostic lane. Fresh source review, build, full artifact
+chain audit and separately reviewed run admission are still required.

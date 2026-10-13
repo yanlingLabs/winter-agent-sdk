@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { CASES, fixtureCase, toolScript } from "./cases.ts";
-import { fixturePermission, fixtureTranscript, hostOptions } from "./host-client.ts";
+import { fixturePermission, fixtureTranscript, hostOptions, hostFailure } from "./host-client.ts";
 import { assertLinuxHostQueryConfig } from "../../packages/runtime/src/guest/linux-host-query-profile.ts";
 function frames(kind: typeof CASES[number]) {
   return toolScript(kind).flatMap((call, index) => [
@@ -75,4 +75,12 @@ test("actual readonly helper error code is distinct from a permission denial and
   try { await helper.write("source", "approved-write", new Uint8Array([1])); throw new Error("missing refusal"); }
   catch (error) { expect(error).toBeInstanceOf(GuestFileHelperError); expect(guestFileError(error)).toEqual({ output: "Error [read_only]: guest file operation refused", isError: true }); }
   expect(effects).toBe(0);
+});
+
+test("host failure diagnostics retain only closed classes/reasons and known errno", () => {
+  expect(hostFailure(new Error("fixture callback correlation"))).toEqual({ class: "Error", code: "callback_binding" });
+  const error = Object.assign(new Error("secret /foreign/path bearer abc"), { code: "EPIPE" });
+  expect(hostFailure(error)).toEqual({ class: "Error", code: "host_failure", errnoCode: "EPIPE" });
+  expect(hostFailure({ message: "secret", code: "/private/path" })).toEqual({ class: "NonError", code: "host_failure" });
+  expect(hostFailure(null)).toEqual({ class: "NonError", code: "host_failure" });
 });
