@@ -41,12 +41,38 @@ class UtilityDiagnosticsTests(unittest.TestCase):
         self.assertNotIn('private-value',json.dumps(record));self.assertNotIn('/secret',json.dumps(record))
         self.assertLess(len(json.dumps(record).encode()),32768)
 
+    def test_errno_operation_and_warning_tokens_survive_without_free_text(self):
+        text=v.normalized_stderr(b'error: connect ENOENT /private/authority.sock token=private-token\nwarning: PRIVATE_VALUE\nopen EACCES /secret/path\nspawn EPIPE\nexec EPERM\nread EAGAIN\nwrite ENOSPC\nbind EROFS\nUNAPPROVED_ERRNO')
+        for token in ('errno: ENOENT','errno: EACCES','errno: EPIPE','errno: EPERM','errno: EAGAIN','errno: ENOSPC','errno: EROFS','warning: observed'):
+            self.assertIn(token,text)
+        for operation in v.OPERATIONS:self.assertIn('operation: '+operation,text)
+        for value in ('/private','/secret','private-token','PRIVATE_VALUE','UNAPPROVED_ERRNO','authority.sock'):
+            self.assertNotIn(value,text)
+
+    def test_oversized_diagnostic_still_persists_minimal_retained_failure(self):
+        canonical=lambda value:json.dumps(value,sort_keys=True,separators=(',',':'))
+        observations={'phase':'client-ordinary','clients':['PRIVATE_CONTENT'*4000],'serviceReaped':True,'serviceExitCode':0,'serviceCleanupConfirmed':False,'nativeCleanupConfirmed':False}
+        record,wire=v.diagnostic_wire(ValueError('/secret/path'),observations,canonical)
+        self.assertLess(len(wire),32768);self.assertTrue(record['diagnosticTruncated']);self.assertTrue(record['fixtureRetained'])
+        self.assertFalse(record['nativeCleanupConfirmed']);self.assertFalse(record['serviceCleanupConfirmed']);self.assertNotIn('clients',record)
+        self.assertNotIn('PRIVATE_CONTENT',wire.decode());self.assertNotIn('/secret',wire.decode())
+        writes=[];parent=SimpleNamespace(verify_staged=lambda *args:None,canonical=canonical,write_file=lambda path,data,mode:writes.append((path,json.loads(data),mode)))
+        modules={'stage':parent,'closure':SimpleNamespace(validate_capture=lambda *args,**kwargs:None),'oracle':object()}
+        admission=SimpleNamespace(directory='/sealed',receipt_sha='redacted',parent_sha='redacted',receipt={'utilityCapture':{}})
+        def fail(directory,parent,oracle,values):values.update(observations);raise ValueError('original failure')
+        with patch.object(v,'ADMISSION',admission),patch.object(v,'checked_module',lambda name:modules[name]),patch.object(v.tempfile,'mkdtemp',lambda **kwargs:'/tmp/winter-utility-run-diagnostic'),patch.object(v,'execute',fail),patch('builtins.print'):
+            with self.assertRaisesRegex(ValueError,'original failure'):v.main()
+        self.assertEqual(len(writes),1);self.assertEqual(writes[0][0].name,'failure.json');self.assertEqual(writes[0][2],0o600)
+        self.assertTrue(writes[0][1]['diagnosticTruncated']);self.assertTrue(writes[0][1]['fixtureRetained'])
+        sanitized,_=v.diagnostic_wire(ValueError(),{**observations,'phase':'/private/authority','serviceExitCode':'private-code'},canonical)
+        self.assertEqual(sanitized['phase'],'unknown');self.assertIsNone(sanitized['serviceExitCode'])
+
     def test_exact_client_failure_observation_is_safe_and_parent_whitelists_it(self):
         bun=shutil.which('bun')
         if not bun:self.skipTest('existing Bun unavailable')
         source=(HERE/'client.ts').read_text();start=source.index('function processFailureObservation(')
         helper=source[start:source.index('if (process.platform',start)]
-        cases=[{'exitCode':1,'termination':'exit','stdout':'tool-device-stdin-fds-ok\nPRIVATE_BODY\n','stderr':'  File "<stdin>", line 47, in <module>\n  File "/secret/path", line 93, in <module>\n  File "<string>", line 7, in <module>\nModuleNotFoundError: No module named private_module /secret/path token=private-token'},{'exitCode':126,'termination':'exit','stdout':'','stderr':'error while loading shared libraries: private-library.so: /secret/path'},{'exitCode':1,'termination':'exit','stdout':'','stderr':'PRIVATE_VALUE'+('x'*20000)+'AssertionError: outside bounded prefix'},{'exitCode':1,'termination':'exit','stdout':'','stderr':'  File "<stdin>", line 10001, in <module>\n'+('  File "<string>", line 3, in <module>\n'*12)}]
+        cases=[{'exitCode':1,'termination':'exit','stdout':'tool-device-stdin-fds-ok\nPRIVATE_BODY\n','stderr':'  File "<stdin>", line 47, in <module>\n  File "/secret/path", line 93, in <module>\n  File "<string>", line 7, in <module>\nModuleNotFoundError: No module named private_module /secret/path token=private-token ENOENT EACCES'},{'exitCode':126,'termination':'exit','stdout':'','stderr':'error while loading shared libraries: private-library.so: /secret/path'},{'exitCode':1,'termination':'exit','stdout':'','stderr':'PRIVATE_VALUE'+('x'*20000)+'AssertionError: outside bounded prefix'},{'exitCode':1,'termination':'exit','stdout':'','stderr':'  File "<stdin>", line 10001, in <module>\n'+('  File "<string>", line 3, in <module>\n'*12)}]
         with tempfile.TemporaryDirectory(prefix='winter-utility-diagnostic-helper-') as temp:
             script=Path(temp)/'helper.ts';script.write_text(helper+'\nconsole.log(JSON.stringify('+json.dumps(cases)+'.map((result,index)=>processFailureObservation(result,index===0?0:1))));\n')
             result=subprocess.run([bun,'run',str(script)],capture_output=True,text=True,timeout=5)
@@ -56,11 +82,12 @@ class UtilityDiagnosticsTests(unittest.TestCase):
         self.assertEqual(first['process']['stdoutMarkers'],['tool-device-stdin-fds-ok'])
         self.assertEqual(first['process']['stderrClass'],'ModuleNotFoundError');self.assertEqual(first['process']['stderrCategory'],'module_missing')
         self.assertEqual(first['process']['traceback'],[{'source':'stdin','line':47},{'source':'string','line':7}])
+        self.assertEqual(first['process']['errnoTokens'],['EACCES','ENOENT'])
         self.assertEqual(records[1]['process']['stderrCategory'],'shared_library_load');self.assertEqual(records[2]['process']['stderrCategory'],'unknown')
         self.assertEqual(records[3]['process']['traceback'],[{'source':'string','line':3}]*8)
         for value in ('PRIVATE_BODY','private_module','private-token','private-library','/secret','PRIVATE_VALUE'):
             self.assertNotIn(value,result.stdout);self.assertNotIn(value,json.dumps(first))
-        for update in ({'stderrClass':{}},{'stdoutMarkers':['PRIVATE_MARKER']},{'exitCode':False},{'termination':'PRIVATE_TERMINATION'},{'traceback':[{'source':'/private/path','line':4}]},{'traceback':[{'source':'stdin','line':True}]},{'traceback':[{'source':'stdin','line':10001}]},{'traceback':[{'source':'string','line':3}]*9}):
+        for update in ({'stderrClass':{}},{'stdoutMarkers':['PRIVATE_MARKER']},{'exitCode':False},{'termination':'PRIVATE_TERMINATION'},{'traceback':[{'source':'/private/path','line':4}]},{'traceback':[{'source':'stdin','line':True}]},{'traceback':[{'source':'stdin','line':10001}]},{'traceback':[{'source':'string','line':3}]*9},{'errnoTokens':['PRIVATE_ERRNO']},{'errnoTokens':'ENOENT'},{'errnoTokens':[None]},{'errnoTokens':['ENOENT','ENOENT']}):
             malformed=copy.deepcopy(records[0]);malformed['process'].update(update)
             self.assertEqual(v.stdout_observation(json.dumps(malformed).encode())['classification'],'invalid_failure_observation')
         malformed={**records[0],'authority':'PRIVATE_AUTHORITY'}

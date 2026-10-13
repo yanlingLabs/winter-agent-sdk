@@ -20,6 +20,9 @@ FAILURE_CODES={'authority_denied','invalid_request','compartment_required','root
 SMOKE_MARKERS=('tool-device-stdin-fds-ok','tool-device-inventory-ok','tool-device-boundaries-ok','tool-entropy-multiprocessing-ok','tool-device-smoke-ok')
 PROCESS_CLASSES={'ModuleNotFoundError','ImportError','AssertionError','SyntaxError','PermissionError','unrecognized'}
 PROCESS_CATEGORIES={'module_missing','import_error','assertion_failed','syntax_error','permission_denied','shared_library_load','empty','unknown'}
+ERRNO_TOKENS=('EACCES','EPERM','ENOENT','ENOTDIR','ELOOP','ECONNREFUSED','ECONNRESET','EPIPE','EAGAIN','EMFILE','ENOSPC','EROFS','ENXIO')
+OPERATIONS=('connect','open','spawn','exec','read','write','bind')
+PHASES={'fixture-copy','service-startup','client-ordinary','client-plan','client-ordinary-receipt','client-plan-receipt','source-canaries','native-quiescence','service-close-wait','outer-mount-observation','complete'}
 
 
 def normalized_stderr(data):
@@ -33,6 +36,13 @@ def normalized_stderr(data):
         if classes or messages:
             value=(sorted(classes)[0] if classes else 'diagnostic')+': '+(messages[0] if messages else '[message redacted]')
             if value not in lines:lines.append(value)
+        for token in ERRNO_TOKENS:
+            value='errno: '+token
+            if re.search(r'\b'+token+r'\b',line) and value not in lines:lines.append(value)
+        for operation in OPERATIONS:
+            value='operation: '+operation
+            if re.search(r'\b'+operation+r'\b',line) and value not in lines:lines.append(value)
+        if re.search(r'\bwarn(?:ing)?\b',line,re.IGNORECASE) and 'warning: observed' not in lines:lines.append('warning: observed')
     if not lines and text:lines=['[stderr details redacted]']
     return '\n'.join(lines).encode()[:TEXT_LIMIT].decode('utf-8',errors='ignore')
 
@@ -54,12 +64,14 @@ def stdout_observation(data):
     if value.get('kind')=='winter-tool-utility-client-failure':
         process=value.get('process')
         keys={'kind','version','phase','scenario','invocation','process'}
-        fields={'exitCode','termination','stdoutMarkers','stderrClass','stderrCategory','traceback'}
+        fields={'exitCode','termination','stdoutMarkers','stderrClass','stderrCategory','traceback','errnoTokens'}
         if set(value)!=keys or type(value.get('version')) is not int or value['version']!=1 or value.get('phase')!='smoke' or value.get('scenario')!='ordinary' or type(value.get('invocation')) is not int or value['invocation'] not in (0,1) or type(process) is not dict or set(process)!=fields:return {**record,'classification':'invalid_failure_observation'}
         markers=process['stdoutMarkers']
         if type(process['exitCode']) is not int or not 0<=process['exitCode']<=255 or type(process['termination']) is not str or process['termination'] not in ('exit','timeout','output_limit') or type(markers) is not list or len(markers)>len(SMOKE_MARKERS) or any(type(marker) is not str or marker not in SMOKE_MARKERS for marker in markers) or len(set(markers))!=len(markers) or type(process['stderrClass']) is not str or process['stderrClass'] not in PROCESS_CLASSES or type(process['stderrCategory']) is not str or process['stderrCategory'] not in PROCESS_CATEGORIES:return {**record,'classification':'invalid_failure_observation'}
         trace=process['traceback']
         if type(trace) is not list or len(trace)>8 or any(type(frame) is not dict or set(frame)!={'source','line'} or type(frame['source']) is not str or frame['source'] not in ('stdin','string') or type(frame['line']) is not int or not 1<=frame['line']<=10000 for frame in trace):return {**record,'classification':'invalid_failure_observation'}
+        tokens=process['errnoTokens']
+        if type(tokens) is not list or len(tokens)>len(ERRNO_TOKENS) or any(type(token) is not str or token not in ERRNO_TOKENS for token in tokens) or len(set(tokens))!=len(tokens):return {**record,'classification':'invalid_failure_observation'}
         return {**record,'classification':'utility_process_failure','phase':'smoke','invocation':value['invocation'],'process':{key:process[key] for key in fields}}
     if value.get('passed') is False or value.get('ok') is False:
         failure=value.get('failure');code=failure.get('code') if type(failure) is dict else value.get('code')
@@ -73,7 +85,16 @@ def client_observation(scenario,exit_code,out,err):
 
 
 def failure_record(error,observations):
-    return {'kind':'winter-utility-failure','class':type(error).__name__ if type(error).__name__ in ERROR_CLASSES else 'Exception','phase':observations.get('phase','fixture-copy'),'clients':observations.get('clients',[]),'serviceReaped':observations.get('serviceReaped') is True,'serviceExitCode':observations.get('serviceExitCode'),'serviceCleanupConfirmed':observations.get('serviceCleanupConfirmed') is True,'nativeCleanupConfirmed':observations.get('nativeCleanupConfirmed') is True,'fixtureRetained':True,'generalToolAvailabilityEnabled':False}
+    phase=observations.get('phase','fixture-copy');code=observations.get('serviceExitCode')
+    return {'kind':'winter-utility-failure','class':type(error).__name__ if type(error).__name__ in ERROR_CLASSES else 'Exception','phase':phase if type(phase) is str and phase in PHASES else 'unknown','clients':observations.get('clients',[]),'serviceReaped':observations.get('serviceReaped') is True,'serviceExitCode':code if type(code) is int and -2147483648<=code<=2147483647 else None,'serviceCleanupConfirmed':observations.get('serviceCleanupConfirmed') is True,'nativeCleanupConfirmed':observations.get('nativeCleanupConfirmed') is True,'fixtureRetained':True,'generalToolAvailabilityEnabled':False}
+
+
+def diagnostic_wire(error,observations,canonical):
+    record=failure_record(error,observations);wire=canonical(record).encode()
+    if len(wire)>32768:
+        record={key:record[key] for key in ('kind','class','phase','serviceReaped','serviceExitCode','serviceCleanupConfirmed','nativeCleanupConfirmed','fixtureRetained','generalToolAvailabilityEnabled')}
+        record['diagnosticTruncated']=True;wire=canonical(record).encode()
+    return record,wire
 
 
 def outer_mountinfo():
@@ -255,8 +276,7 @@ def main():
     try:
         result=execute(directory,parent,oracle,observations)
     except BaseException as error:
-        diagnostic=failure_record(error,observations);wire=parent.canonical(diagnostic).encode()
-        if len(wire)>32768:raise ValueError('bounded utility failure diagnostic required') from error
+        diagnostic,wire=diagnostic_wire(error,observations,parent.canonical)
         parent.write_file(directory/'failure.json',wire,0o600)
         print(parent.canonical(diagnostic),file=sys.stderr)
         print(parent.canonical({'fixtureRetained':True,'retentionId':directory.name,'nativeCleanupConfirmed':diagnostic['nativeCleanupConfirmed']}),file=sys.stderr);raise

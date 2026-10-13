@@ -17,13 +17,14 @@ function processFailureObservation(result: { exitCode: number; termination: stri
   const classes = ["ModuleNotFoundError", "ImportError", "AssertionError", "SyntaxError", "PermissionError"];
   const stderrClass = classes.find(value => new RegExp(`\\b${value}\\s*:`).test(stderr)) ?? "unrecognized";
   const stderrCategory = stderrClass === "ModuleNotFoundError" ? "module_missing" : stderrClass === "ImportError" ? "import_error" : stderrClass === "AssertionError" ? "assertion_failed" : stderrClass === "SyntaxError" ? "syntax_error" : stderrClass === "PermissionError" ? "permission_denied" : stderr.includes("error while loading shared libraries:") ? "shared_library_load" : stderr ? "unknown" : "empty";
+  const errnoTokens = ["EACCES", "EPERM", "ENOENT", "ENOTDIR", "ELOOP", "ECONNREFUSED", "ECONNRESET", "EPIPE", "EAGAIN", "EMFILE", "ENOSPC", "EROFS", "ENXIO"].filter(token => new RegExp(`\\b${token}\\b`).test(stderr));
   const traceback: { source: "stdin" | "string"; line: number }[] = [];
   for (const match of stderr.matchAll(/^\s*File "<(stdin|string)>", line (\d{1,5})(?:,|$)/gm)) {
     const line = Number(match[2]);
     if (Number.isSafeInteger(line) && line >= 1 && line <= 10000) traceback.push({ source: match[1] as "stdin" | "string", line });
     if (traceback.length === 8) break;
   }
-  return { kind: "winter-tool-utility-client-failure", version: 1, phase: "smoke", scenario: "ordinary", invocation, process: { exitCode: result.exitCode, termination: result.termination, stdoutMarkers: knownMarkers.filter(value => lines.has(value)), stderrClass, stderrCategory, traceback } };
+  return { kind: "winter-tool-utility-client-failure", version: 1, phase: "smoke", scenario: "ordinary", invocation, process: { exitCode: result.exitCode, termination: result.termination, stdoutMarkers: knownMarkers.filter(value => lines.has(value)), stderrClass, stderrCategory, traceback, errnoTokens } };
 }
 if (process.platform !== "linux" || process.argv.length !== 4 || !["ordinary", "plan"].includes(process.argv[3]!)) throw new Error("fixed Linux utility client required");
 const plan = process.argv[3] === "plan", uid = plan ? 20002 : 20001, toolUid = plan ? 10002 : 10001;
