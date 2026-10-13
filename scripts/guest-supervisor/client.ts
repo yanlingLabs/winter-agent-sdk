@@ -2,6 +2,7 @@
 import { createConnection } from "node:net";
 import { createLinuxSupervisorSession } from "../../packages/runtime/src/guest/supervisor-client.ts";
 import { buildRegistryToolExecutor, type RegistryToolExecutorDeps } from "../../packages/runtime/src/tools/registry.ts";
+import { concurrencyDiagnostic, observeBuildSuccess, observeBuildFailure, type BuildObservation } from "./concurrency-diagnostic.ts";
 import "../../packages/runtime/src/tools/impl/index.ts";
 if (process.argv.length !== 6) throw new Error("fixed fixture arguments required");
 const endpoint=process.argv[2]!,sessionId=process.argv[3]!,uid=process.argv[4]!,scenario=process.argv[5]!;
@@ -19,10 +20,20 @@ if(scenario==="ordinary"){
  require(read.output==="hello\n","actual Read: "+JSON.stringify(read));
  const parallel=await Promise.all(Array.from({length:10},()=>run("Read",{file_path:"seed"})));require(parallel.every(value=>!value.isError&&value.output==="hello\n"),"ten concurrent actual Reads: "+JSON.stringify(parallel));
  let buildsFinished=0; const buildAbort=new AbortController();
- const builds=[1,2].map(i=>guest.executeProcess!(`printf ready > parallel-build-${i}; while [ ! -e parallel-build-release ]; do sleep 0.02; done`,cwd,8000,buildAbort.signal).finally(()=>{buildsFinished++;}));
+ const buildObservations: BuildObservation[]=[{phase:"pending"},{phase:"pending"}];
+ const builds=[1,2].map((i,index)=>{
+  const build=guest.executeProcess!(`printf ready > parallel-build-${i}; while [ ! -e parallel-build-release ]; do sleep 0.02; done`,cwd,8000,buildAbort.signal).finally(()=>{buildsFinished++;});
+  // Observe the same promise; preserve its original result/rejection and all cleanup.
+  void build.then(value=>{buildObservations[index]=observeBuildSuccess(value);},error=>{buildObservations[index]=observeBuildFailure(error);});
+  return build;
+ });
  try {
   for(let i=1;i<=2;i++){let started=false;for(let attempt=0;attempt<100;attempt++){try{await guest.read(`${cwd}/parallel-build-${i}`);started=true;break;}catch{await Bun.sleep(10);}}require(started,"parallel build started");}
   const during=await Promise.all(Array.from({length:10},()=>run("Read",{file_path:"seed"})));
+  if(buildsFinished!==0||!during.every(value=>!value.isError&&value.output==="hello\n")){
+   // Diagnostic failure never replaces the existing strict overlap/content oracle.
+   try{console.error(JSON.stringify(concurrencyDiagnostic(buildsFinished,buildObservations,during)));}catch{}
+  }
   require(buildsFinished===0&&during.every(value=>!value.isError&&value.output==="hello\n"),"file reads remain available while two Bash processes run");
  } finally {
   try {await guest.write(`${cwd}/parallel-build-release`,new TextEncoder().encode("release"),"absent");const finished=await Promise.all(builds);require(finished.every(result=>result.exitCode===0&&result.termination==="exit"),"parallel builds exit after barrier release");} finally {buildAbort.abort();await Promise.allSettled(builds);}
