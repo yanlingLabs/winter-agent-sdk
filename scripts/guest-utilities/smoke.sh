@@ -92,8 +92,7 @@ for pid in os.listdir('/proc'):
         with open('/proc/' + pid + '/status') as stream:
             status = dict(line.rstrip().split(':', 1) for line in stream if ':' in line)
         assert set(map(int, status['Uid'].split())) == {os.getuid()}
-        with open('/proc/' + pid + '/cmdline','rb') as stream:
-            assert b'winter-runtime' not in stream.read(65536)
+        assert os.readlink('/proc/' + pid + '/exe') in ('/file-worker', '/bin/bash', '/usr/bin/python3')
         for descriptor in os.listdir('/proc/' + pid + '/fd'):
             fd_path = '/proc/' + pid + '/fd/' + descriptor
             try:

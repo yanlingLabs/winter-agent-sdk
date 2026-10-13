@@ -15,7 +15,7 @@ function processFailureObservation(result: { exitCode: number; termination: stri
   const knownMarkers = ["tool-device-stdin-fds-ok", "tool-device-inventory-ok", "tool-device-boundaries-ok", "tool-entropy-multiprocessing-ok", "tool-device-smoke-ok"];
   const lines = new Set(stdout.split("\n"));
   const classes = ["ModuleNotFoundError", "ImportError", "AssertionError", "SyntaxError", "PermissionError"];
-  const stderrClass = classes.find(value => new RegExp(`\\b${value}\\s*:`).test(stderr)) ?? "unrecognized";
+  const stderrClass = classes.find(value => new RegExp(`\\b${value}\\s*:`).test(stderr) || value === "AssertionError" && /^\s*AssertionError\s*$/m.test(stderr)) ?? "unrecognized";
   const stderrCategory = stderrClass === "ModuleNotFoundError" ? "module_missing" : stderrClass === "ImportError" ? "import_error" : stderrClass === "AssertionError" ? "assertion_failed" : stderrClass === "SyntaxError" ? "syntax_error" : stderrClass === "PermissionError" ? "permission_denied" : stderr.includes("error while loading shared libraries:") ? "shared_library_load" : stderr ? "unknown" : "empty";
   const errnoTokens = ["EACCES", "EPERM", "ENOENT", "ENOTDIR", "ELOOP", "ECONNREFUSED", "ECONNRESET", "EPIPE", "EAGAIN", "EMFILE", "ENOSPC", "EROFS", "ENXIO"].filter(token => new RegExp(`\\b${token}\\b`).test(stderr));
   const traceback: { source: "stdin" | "string"; line: number }[] = [];

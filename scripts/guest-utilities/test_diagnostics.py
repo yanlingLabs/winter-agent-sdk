@@ -33,6 +33,8 @@ class UtilityDiagnosticsTests(unittest.TestCase):
 
     def test_unknown_stderr_and_exception_text_are_never_retained(self):
         self.assertEqual(v.normalized_stderr(b'UNCLASSIFIED_PRIVATE_VALUE /private/path'), '[stderr details redacted]')
+        self.assertEqual(v.normalized_stderr(b'  File "<stdin>", line 79, in <module>\nAssertionError\n'),'AssertionError: [message redacted]')
+        self.assertEqual(v.normalized_stderr(b'private message mentions AssertionError /secret/path'),'[stderr details redacted]')
         observations={'phase':'client-ordinary','clients':[v.client_observation('ordinary',1,b'{"ok":false,"code":"authority_denied"}',b'Error: private-value')],'serviceReaped':True,'serviceExitCode':0,'serviceCleanupConfirmed':True,'nativeCleanupConfirmed':False}
         record=v.failure_record(ValueError('private exception /secret/path token=raw'),observations)
         self.assertTrue(record['fixtureRetained']);self.assertFalse(record['generalToolAvailabilityEnabled'])
@@ -73,6 +75,7 @@ class UtilityDiagnosticsTests(unittest.TestCase):
         source=(HERE/'client.ts').read_text();start=source.index('function processFailureObservation(')
         helper=source[start:source.index('if (process.platform',start)]
         cases=[{'exitCode':1,'termination':'exit','stdout':'tool-device-stdin-fds-ok\nPRIVATE_BODY\n','stderr':'  File "<stdin>", line 47, in <module>\n  File "/secret/path", line 93, in <module>\n  File "<string>", line 7, in <module>\nModuleNotFoundError: No module named private_module /secret/path token=private-token ENOENT EACCES'},{'exitCode':126,'termination':'exit','stdout':'','stderr':'error while loading shared libraries: private-library.so: /secret/path'},{'exitCode':1,'termination':'exit','stdout':'','stderr':'PRIVATE_VALUE'+('x'*20000)+'AssertionError: outside bounded prefix'},{'exitCode':1,'termination':'exit','stdout':'','stderr':'  File "<stdin>", line 10001, in <module>\n'+('  File "<string>", line 3, in <module>\n'*12)}]
+        cases.extend([{'exitCode':1,'termination':'exit','stdout':'tool-device-stdin-fds-ok\ntool-device-inventory-ok\n','stderr':'  File "<stdin>", line 79, in <module>\nAssertionError\n'},{'exitCode':1,'termination':'exit','stdout':'','stderr':'private message mentions AssertionError /secret/path'}])
         with tempfile.TemporaryDirectory(prefix='winter-utility-diagnostic-helper-') as temp:
             script=Path(temp)/'helper.ts';script.write_text(helper+'\nconsole.log(JSON.stringify('+json.dumps(cases)+'.map((result,index)=>processFailureObservation(result,index===0?0:1))));\n')
             result=subprocess.run([bun,'run',str(script)],capture_output=True,text=True,timeout=5)
@@ -85,6 +88,13 @@ class UtilityDiagnosticsTests(unittest.TestCase):
         self.assertEqual(first['process']['errnoTokens'],['EACCES','ENOENT'])
         self.assertEqual(records[1]['process']['stderrCategory'],'shared_library_load');self.assertEqual(records[2]['process']['stderrCategory'],'unknown')
         self.assertEqual(records[3]['process']['traceback'],[{'source':'string','line':3}]*8)
+        bare=v.stdout_observation(json.dumps(records[4]).encode())
+        self.assertEqual(bare['classification'],'utility_process_failure')
+        self.assertEqual(bare['process']['stderrClass'],'AssertionError');self.assertEqual(bare['process']['stderrCategory'],'assertion_failed')
+        self.assertEqual(bare['process']['traceback'],[{'source':'stdin','line':79}])
+        self.assertEqual(bare['process']['stdoutMarkers'],['tool-device-stdin-fds-ok','tool-device-inventory-ok'])
+        self.assertEqual(bare['process']['errnoTokens'],[])
+        self.assertEqual(records[5]['process']['stderrClass'],'unrecognized')
         for value in ('PRIVATE_BODY','private_module','private-token','private-library','/secret','PRIVATE_VALUE'):
             self.assertNotIn(value,result.stdout);self.assertNotIn(value,json.dumps(first))
         for update in ({'stderrClass':{}},{'stdoutMarkers':['PRIVATE_MARKER']},{'exitCode':False},{'termination':'PRIVATE_TERMINATION'},{'traceback':[{'source':'/private/path','line':4}]},{'traceback':[{'source':'stdin','line':True}]},{'traceback':[{'source':'stdin','line':10001}]},{'traceback':[{'source':'string','line':3}]*9},{'errnoTokens':['PRIVATE_ERRNO']},{'errnoTokens':'ENOENT'},{'errnoTokens':[None]},{'errnoTokens':['ENOENT','ENOENT']}):

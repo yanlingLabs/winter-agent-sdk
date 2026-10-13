@@ -31,7 +31,7 @@ def normalized_stderr(data):
     text=data[:STDERR_LIMIT].decode('utf-8',errors='replace');lines=[]
     for line in text.splitlines():
         if re.match(r'^\s*\d+\s*\|',line):continue
-        classes=[name for name in ERROR_CLASSES if re.search(r'\b'+name+r'\s*:',line)]
+        classes=[name for name in ERROR_CLASSES if re.search(r'\b'+name+r'\s*:',line) or name=='AssertionError' and re.fullmatch(r'\s*AssertionError\s*',line)]
         messages=[message for message in CLIENT_MESSAGES if message in line]
         if classes or messages:
             value=(sorted(classes)[0] if classes else 'diagnostic')+': '+(messages[0] if messages else '[message redacted]')

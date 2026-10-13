@@ -219,5 +219,35 @@ class UtilityStageTests(unittest.TestCase):
         for arguments in ({'primary':10000},{'supplementary':(10001,)},{'directory_group':10001}):
             with self.subTest(arguments=arguments),self.assertRaises(AssertionError):run(**arguments)
 
+    def test_exact_proc_boundary_uses_kernel_exe_identity_instead_of_bash_argv(self):
+        smoke=(HERE/'smoke.sh').read_text();start=smoke.index("for pid in os.listdir('/proc'):")
+        check=smoke[start:smoke.index("print('tool-device-boundaries-ok')",start)]
+        def run(executable='/bin/bash',uid=10001,socket=False):
+            processes={'1':('/file-worker',10001),'2':(executable,uid),'3':('/usr/bin/python3',10001)}
+            # Bash -c legitimately carries the entire pinned smoke, including the
+            # old winter-runtime literal. Its argv is not executable identity.
+            old_smoke=smoke.replace("assert os.readlink('/proc/' + pid + '/exe') in ('/file-worker', '/bin/bash', '/usr/bin/python3')","with open('/proc/' + pid + '/cmdline','rb') as stream:\n            assert b'winter-runtime' not in stream.read(65536)")
+            argv=b'/bin/bash\0-c\0'+old_smoke.encode()+b'\0'
+            self.assertIn(b'winter-runtime',argv)
+            opened=[];identities=[]
+            def open_(path,mode='r'):
+                opened.append(path);pid=path.split('/')[2]
+                if path.endswith('/cmdline'):return io.BytesIO(argv)
+                self.assertEqual(path,'/proc/'+pid+'/status')
+                return io.StringIO('Uid:\t'+(' '.join([str(processes[pid][1])]*4))+'\n')
+            def listdir(path):
+                if path=='/proc':return ['self',*processes]
+                self.assertIn(path,['/proc/'+pid+'/fd' for pid in processes]);return ['0']
+            def readlink(path):
+                pid=path.split('/')[2];self.assertEqual(path,'/proc/'+pid+'/exe');identities.append(path)
+                return processes[pid][0]
+            fake=SimpleNamespace(getuid=lambda:10001,listdir=listdir,readlink=readlink,stat=lambda path:SimpleNamespace(st_mode=stat.S_IFSOCK if socket else stat.S_IFIFO))
+            exec(compile(check,'exact-proc-boundary-check','exec'),{'os':fake,'stat':stat,'open':open_})
+            self.assertFalse(any(path.endswith('/cmdline') for path in opened))
+            return identities
+        self.assertEqual(run(),['/proc/1/exe','/proc/2/exe','/proc/3/exe'])
+        for arguments in ({'executable':'/winter-runtime'},{'executable':'/bin/bash-other'},{'uid':20001},{'socket':True}):
+            with self.subTest(arguments=arguments),self.assertRaises(AssertionError):run(**arguments)
+
 
 if __name__=='__main__':unittest.main()
