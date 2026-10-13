@@ -49,18 +49,22 @@ It binds once to exact logical session + all authority revisions. Intake refusal
 closes every duplicate; originals and their flags stay with the caller. Held
 identities/flags are rechecked at claim, before spawn and during relay. The service
 owns accepted duplicates until terminal/startup-failed closure. A closed input
-refuses before Popen; later physical EOF requests cancellation, never cleanup.
+refuses before Popen if it contains no queued input. A clean later physical EOF
+stops new input, drains queued bytes and closes child stdin, never claiming cleanup.
 
 `_run_runtime` uses stdin PIPE only for host-query and integrates all relay I/O
 into its existing selector/control loop. Logical end_input is ordinary NDJSON;
-stdin stays open for pending permission replies. Actual input EOF closes stdin
-and requests termination. Partial writes preserve the remainder; EINTR/EAGAIN
+stdin stays open for pending permission replies. Clean physical input EOF drains queued input before closing stdin; the SDK
+finishes the current turn/transcript and denies unanswerable permission requests.
+Malformed/truncated input, output loss, explicit cancel and owner loss still fail
+or hard-stop. Partial writes preserve the remainder; EINTR/EAGAIN
 return to polling. Root callbacks cannot block the loop. Queue bounds are 2 MiB
 input, 2 MiB stdout and 64 KiB stderr, with at most 256 KiB initial prefetch,
 64 KiB I/O steps and 1 MiB input/stdout frames. Full queues disable their producer
-read interest. Two seconds without progress on a queued direction fails/retains;
-the native control loop still polls every 50 ms and its existing termination/
-cleanup deadlines remain. These are bounded allocations, not a measured RSS or
+read interest. Ordinary bounded backpressure has no short age timeout: paused
+consumers may resume without killing a healthy runtime. The native control loop
+still polls every 50 ms, including cancellation and the existing absolute runtime
+deadline; post-kill cleanup deadlines remain unchanged. These are bounded allocations, not a measured RSS or
 active-memory-return claim. Diagnostic capture retains only the existing bounded
 stdout/stderr prefixes; live output is forwarded without accumulating a complete
 conversation in Root memory.
@@ -74,7 +78,7 @@ runtime pipe does not block the independent Root receipt/cancellation loop. The
 old hardcoded fixture entry remains untouched. This new entry has only been
 bundled; no compiled native artifact is admitted or silently substituted.
 
-Transport cancellation/loss/stall/native-receipt mismatch preserves native debt
+Transport errors/cancellation/native-receipt mismatch preserve native debt
 and store holds. Normal completion still requires actual namespace-init terminal
 receipt + matching parent reap + tool revocation/drain + no native debt + durable
 diagnostic. OwnershipReleased remains false in runtime observations. EOF, kill
@@ -84,13 +88,15 @@ threads/debt instead of forgetting their descriptors/tenancy.
 
 ## Source evidence and remaining gates
 
-Selected Python checks: 52 tests, 51 passed and one Linux-only ancillary skip.
+Original `36b40107` source checks: 52 Python tests, 51 passed and one Linux-only
+ancillary skip. The follow-up evidence below supersedes EOF/backpressure semantics,
+not that original validation history.
 The real listener/socket-service saturation test was deliberately excluded; no
 service starts. New tests use disposable named FIFOs with real descriptor flags,
 UIDs/inodes and selectors, plus injected Popen/control receipts/signals. They cover
 partial intake cleanup/original preservation, stale scopes/closed input, partial
 and interrupted writes, both-direction backpressure, frame bounds/truncation,
-stalled/closed output consumers, logical end_input then permission reply, native
+paused/closed output consumers, logical end_input then permission reply, native
 terminal stale-event handling, startup failure, plan metadata/argv agreement and
 receipt/reap mismatch retaining store/debt. Injected receipts are never reported as
 native owner proof. The existing fresh and lifecycle diagnostic tests also pass.
@@ -109,3 +115,44 @@ host transport slice must own the actual callback/control/projector connection;
 there is no Core port registration, production capability enablement or native
 VM/worker launch in this commit. Source composition with later SDK main changes
 is separate; this branch does not silently merge or relabel another artifact base.
+
+
+## EOF/backpressure correction and pre-GA lifecycle limits
+
+The original `84dc16c9` entry passed `cancelOnEOF = profile !== fresh`, so host-query
+EOF aborted; `36b40107` consistently set runtime cancel and discarded queued input
+on physical EOF, and imposed a two-second queue-age failure. Those behaviors were
+implemented and tested as such; the correction is a compatibility change, not an
+assertion that EOF used to be graceful. The published entry branch is unchanged;
+this correction is on the stacked producer branch and requires separate review/
+backport. Its bounded input helper now cancels only errors/abandoned consumption,
+not clean EOF. The immutable main destroys its stdin reader after the embedded
+lifecycle returns so a pending read after logical end_input cannot keep a returned
+runtime alive; that close never supplies native stop proof.
+
+The two-second queue-age policy is removed. Queues stay bounded and producer reads
+pause when full, while native receipts/cancellation/absolute deadlines are polled.
+Explicit cancel remains immediate even with full output queues; closed/erroring
+output remains uncertain, with no byte drop/retry or native release claim. The
+separate bounded prelaunch nonblocking-input retry window remains two seconds;
+this does not time out an ordinary live consumer pause.
+
+These are pre-GA bounds, not product behavior: fresh-only empty store/home,
+no cold resume, and a Root-selected absolute runtime lifetime capped at ten
+minutes. Full Cowork still requires durable logical conversation/subagent history
+across cold restarts and an explicitly reviewed runtime/per-turn lifetime design
+for long conversations and pending approvals. Neither this deadline nor fresh-only
+refusal may silently become the product contract. General capabilities/registration
+remain false.
+
+Follow-up checks: 56 Python tests (55 passed, one Linux-only skip); 46 Bun tests /
+322 assertions; both repository TypeScript configurations pass; the immutable main
+bundles without execution. Regression evidence includes terminal-result → stdin EOF through the
+actual local SDK query + bounded input helper, queued-user → EOF + real persisted
+transcript/code0, already-pending permission → EOF denying the effect/code0,
+queued partial FIFO writes draining before close, malformed tails, >2 second
+consumer pauses followed by resume, explicit cancellation under full backpressure,
+and no SIGKILL on clean EOF in the injected supervisor loop. Local engine results
+and injected native statuses still do not prove real guest approval/owner/teardown.
+Retained follow-up logs and unexecuted bundle live separately under
+`out/linux-host-query-supervisor-eof-check/`.

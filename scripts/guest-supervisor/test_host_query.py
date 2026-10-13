@@ -129,24 +129,35 @@ class DuplexRelayTests(unittest.TestCase):
             while self.relay.buffers['stderr']:route(self.relay,self.selector,'host-stderr')
         self.assertEqual(os.read(self.pipes.output_reader,65536),output);self.assertEqual(os.read(self.pipes.error_reader,65536),error)
         self.relay.buffers['input']=bytearray(service.DUPLEX_QUEUE);self.relay.buffers['stdout']=bytearray(service.DUPLEX_QUEUE);self.relay.buffers['stderr']=bytearray(service.DUPLEX_STDERR_QUEUE)
-        self.relay.sync(self.selector)
+        with patch.object(service.time,'monotonic',return_value=time.monotonic()+3):self.relay.sync(self.selector)
         routes={key.data[1] for key in self.selector.get_map().values()}
         self.assertNotIn('host-input',routes);self.assertNotIn('child-stdout',routes);self.assertNotIn('child-stderr',routes)
         self.assertEqual(len(self.relay.buffers['stdout']),service.DUPLEX_QUEUE);self.assertEqual(len(self.relay.buffers['stderr']),service.DUPLEX_STDERR_QUEUE)
-    def test_backlog_stall_uses_fixed_deadline_without_blocking_receipt_interest(self):
+    def test_paused_consumer_over_two_seconds_preserves_bounds_then_resumes(self):
         receipt_read,receipt_write=os.pipe()
         try:
             self.selector.register(receipt_read,selectors.EVENT_READ,'native-control')
-            self.relay.buffers['stdout'].extend(b'pending\n');self.relay.progress['stdout']=10
-            with patch.object(service.time,'monotonic',return_value=10+service.DUPLEX_STALL_SECONDS+.01):
-                with self.assertRaisesRegex(service.Uncertain,'runtime_duplex_stalled'):self.relay.sync(self.selector)
-            self.assertIn(receipt_read,self.selector.get_map())
+            self.relay.buffers['stdout'].extend(b'{"type":"init"}\n')
+            with patch.object(service.time,'monotonic',return_value=time.monotonic()+3):self.relay.sync(self.selector)
+            self.assertIn(receipt_read,self.selector.get_map());self.assertFalse(self.pipes.cancel.is_set())
+            route(self.relay,self.selector,'host-stdout')
+            self.assertEqual(os.read(self.pipes.output_reader,65536),b'{"type":"init"}\n');self.assertFalse(self.relay.buffers['stdout'])
         finally:self.selector.unregister(receipt_read);os.close(receipt_read);os.close(receipt_write)
-    def test_physical_eof_cancels_but_does_not_invent_terminal_receipt(self):
+    def test_clean_physical_eof_drains_queued_partial_writes_before_closing_stdin(self):
+        data=b'{"type":"user","text":"go"}\n';os.write(self.pipes.input_writer,data);route(self.relay,self.selector,'host-input')
+        original=service.os.write
+        with patch.object(service.os,'write',side_effect=lambda fd,value:original(fd,value[:3])):route(self.relay,self.selector,'child-input')
         os.close(self.pipes.input_writer);route(self.relay,self.selector,'host-input')
-        self.assertTrue(self.pipes.cancel.is_set());self.assertFalse(self.relay.terminal);self.assertTrue(self.pipes.child.stdin.closed)
-        self.relay.sync(self.selector)
-        self.assertNotIn('child-input',{key.data[1] for key in self.selector.get_map().values()})
+        self.assertFalse(self.pipes.cancel.is_set());self.assertFalse(self.relay.terminal);self.assertFalse(self.pipes.child.stdin.closed)
+        self.assertTrue(self.relay.buffers['input'])
+        with patch.object(service.os,'write',side_effect=lambda fd,value:original(fd,value[:3])):
+            while self.relay.buffers['input']:route(self.relay,self.selector,'child-input')
+        self.assertEqual(os.read(self.pipes.child_input_reader,65536),data);self.assertEqual(os.read(self.pipes.child_input_reader,65536),b'')
+        self.assertTrue(self.pipes.child.stdin.closed);self.assertFalse(self.pipes.cancel.is_set());self.assertFalse(self.relay.terminal)
+    def test_truncated_input_eof_remains_an_error(self):
+        os.write(self.pipes.input_writer,b'{"type":');route(self.relay,self.selector,'host-input');os.close(self.pipes.input_writer)
+        with self.assertRaisesRegex(service.Uncertain,'runtime_duplex_input_truncated'):route(self.relay,self.selector,'host-input')
+        self.assertFalse(self.relay.terminal)
     def test_frame_bound_truncation_and_replaced_held_fd_refuse(self):
         self.relay._lines('input',b'x'*service.DUPLEX_FRAME)
         with self.assertRaisesRegex(service.Uncertain,'runtime_duplex_frame_limit'):self.relay._lines('input',b'x')
@@ -213,8 +224,10 @@ class ConfiguredHostRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime['state'],'retained');self.assertFalse(runtime['cleanupConfirmed']);self.assertIn('logical',self.obj.debt)
         diagnostic=json.loads((self.obj.directory/'logical'/'runtime-diagnostic.json').read_text())
         self.assertFalse(diagnostic['observations']['nativeReceiptObserved']);self.assertFalse(diagnostic['observations']['ownershipReleased'])
-    def run_injected(self,parent_code=0):
+    def run_injected(self,parent_code=0,clean_eof=False,cancel_requested=False,backpressure_cancel=False):
         runtime=self.configure();self.obj.runtime_artifacts={'launcher':10,'executable':11,'ownerLibrary':12};self.obj.runtime_pins={name:'test-pin' for name in self.obj.runtime_artifacts};self.obj.environment=-1
+        if clean_eof:
+            os.write(self.pipes.input_writer,b'{"type":"user","text":"go"}\n');os.close(self.pipes.input_writer)
         control,parent,bootstrap,guest=[MagicMock() for _ in range(4)]
         for fd,channel in enumerate((control,parent,bootstrap,guest),100):channel.fileno.return_value=fd
         control.recv.side_effect=[b'R'+struct.pack('=I',0),b''];bootstrap.sendmsg.side_effect=lambda buffers,*args:len(buffers[0])
@@ -225,8 +238,28 @@ class ConfiguredHostRuntimeTests(unittest.TestCase):
         def event(fd,route):return SimpleNamespace(fd=fd,fileobj=fd,data=('duplex',route))
         selector=MagicMock();selector.get_map.side_effect=[True,True,True,False]
         selector.select.side_effect=[[(event(stdout_fd,'child-stdout'),1),(event(stderr_fd,'child-stderr'),1)],[(SimpleNamespace(fileobj=control,data=None),1),(event(self.pipes.ports.fds['stdout'],'host-stdout'),2),(event(self.pipes.ports.fds['stderr'],'host-stderr'),2),(event(stdout_fd,'child-stdout'),1),(event(stderr_fd,'child-stderr'),1)],[(SimpleNamespace(fileobj=control,data=None),1)]]
-        with patch.object(service,'verify_held_artifact'),patch.object(service.socket,'socketpair',side_effect=[(control,parent),(bootstrap,guest)]),patch.object(service.subprocess,'Popen',return_value=child) as spawn,patch.object(service,'receive_init_pidfd',return_value=600),patch.object(service.os,'pidfd_open',return_value=700,create=True),patch.object(service.selectors,'DefaultSelector',return_value=selector),patch.object(service.os,'read',side_effect=read),patch.object(service.os,'close',side_effect=lambda fd:None if fd in (600,700) else original_close(fd)),patch.object(service.signal,'pidfd_send_signal',create=True):
+        if clean_eof:
+            selector.get_map.side_effect=[True,True,True,True,False]
+            rows=list(selector.select.side_effect)
+            rows.insert(0,[(event(self.pipes.ports.fds['input'],'host-input'),1),(event(child.stdin.fileno(),'child-input'),2)])
+            selector.select.side_effect=rows
+        original_sync=service.RuntimeDuplexRelay.sync
+        def sync(relay,selected):
+            if backpressure_cancel:
+                relay.buffers['stdout']=bytearray(service.DUPLEX_QUEUE);runtime['cancel'].set()
+            original_sync(relay,selected)
+        if backpressure_cancel:selector.select.side_effect=BrokenPipeError(32,'fixture consumer closed')
+        def admitted(_):
+            if cancel_requested:runtime['cancel'].set()
+            return 600
+        with patch.object(service,'verify_held_artifact'),patch.object(service.socket,'socketpair',side_effect=[(control,parent),(bootstrap,guest)]),patch.object(service.subprocess,'Popen',return_value=child) as spawn,patch.object(service,'receive_init_pidfd',side_effect=admitted),patch.object(service.os,'pidfd_open',return_value=700,create=True),patch.object(service.selectors,'DefaultSelector',return_value=selector),patch.object(service.RuntimeDuplexRelay,'sync',new=sync),patch.object(service.os,'read',side_effect=read),patch.object(service.os,'close',side_effect=lambda fd:None if fd in (600,700) else original_close(fd)),patch.object(service.signal,'pidfd_send_signal',create=True) as kill:
             self.obj._run_runtime(self.fixture.item,runtime)
+        if backpressure_cancel:
+            kill.assert_any_call(600,service.signal.SIGKILL)
+            observed=json.loads((self.obj.directory/'logical'/'runtime-diagnostic.json').read_text())['observations']
+            return runtime,observed
+        if cancel_requested:kill.assert_any_call(600,service.signal.SIGKILL)
+        elif parent_code==0:kill.assert_not_called()
         self.assertEqual(spawn.call_args.kwargs['stdin'],service.subprocess.PIPE)
         root=self.fixture.item['roots']['source']['root']
         self.assertEqual(spawn.call_args.args[0][-3:],['-9',root['guestPath'],'1' if root['readOnly'] else '0'])
@@ -238,6 +271,17 @@ class ConfiguredHostRuntimeTests(unittest.TestCase):
         runtime,observed=self.run_injected()
         self.assertEqual(runtime['state'],'stopped');self.assertTrue(runtime['cleanupConfirmed']);self.assertNotIn('logical',self.obj.debt)
         for key in ('nativeReceiptObserved','parentReaped','toolDrainConfirmed','nativeCleanupConfirmed'):self.assertTrue(observed[key])
+    def test_normal_eof_after_queued_input_reaches_injected_receipt_reap_cleanup_without_sigkill(self):
+        runtime,observed=self.run_injected(clean_eof=True)
+        self.assertEqual(runtime['state'],'stopped');self.assertEqual(runtime['exitCode'],0);self.assertTrue(observed['nativeCleanupConfirmed'])
+        self.assertEqual(os.read(self.pipes.child_input_reader,65536),b'{"type":"user","text":"go"}\n')
+    def test_explicit_cancellation_still_targets_injected_native_descriptor_promptly(self):
+        runtime,observed=self.run_injected(cancel_requested=True)
+        # Signal call only is asserted above; injected status is not native stop/effect authority.
+        self.assertTrue(observed['parentReaped'])
+    def test_explicit_cancel_with_full_output_queue_still_signals_and_retains_unconfirmed_cleanup(self):
+        runtime,observed=self.run_injected(backpressure_cancel=True)
+        self.assertEqual(runtime['state'],'retained');self.assertIn('logical',self.obj.debt);self.assertFalse(observed['nativeCleanupConfirmed']);self.assertFalse(observed['ownershipReleased'])
     def test_effective_plan_record_tool_descriptor_and_native_argv_agree(self):
         self.fixture.item['policy']='plan'
         self.fixture.item['roots']['source']['root']=service.runtime_root_metadata(self.fixture.item['roots']['source']['root'],'plan',True)

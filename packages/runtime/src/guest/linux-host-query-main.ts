@@ -17,6 +17,7 @@ function writeHeldStdio(fd: 1 | 2, chunk: string): void {
   }
 }
 const admission = admitHostQueryLinuxSession(3, 4);
+try {
 process.exitCode = await runAdmittedLinuxSession({
   admission,
   input: (async function* () {
@@ -31,3 +32,8 @@ process.exitCode = await runAdmittedLinuxSession({
   // Observations only. Runtime return never supplies native release authority.
   onProtectedStoreOwnershipOutcome(outcome) { writeHeldStdio(2, JSON.stringify({ hostQueryStoreOutcome: outcome }) + "\n"); },
 });
+} finally {
+  // A pending stdin read must not keep a returned runtime alive after logical end_input.
+  // Process/store death is still established by the supervisor, not by this close.
+  process.stdin.destroy();
+}

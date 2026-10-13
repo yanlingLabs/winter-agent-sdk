@@ -55,9 +55,9 @@ async function collect(chunks: string[]): Promise<{ output: string[]; cancelled:
   for await (const chunk of boundedLinuxSessionInput((async function* () { yield* chunks; })(), () => { cancelled++; })) output.push(chunk);
   return { output, cancelled };
 }
-test("bounded transport preserves fragmented text and permission-after-end-input; actual EOF cancels", async () => {
+test("bounded transport preserves fragmented text and permission-after-end-input; clean EOF does not cancel", async () => {
   const text = JSON.stringify({ type: "user", text: "go😀" }) + "\n";
-  expect(await collect([text.slice(0, 12), text.slice(12), '{"type":"control_request","requestId":"e","subtype":"end_input"}\n', '{"type":"control_response","requestId":"p","ok":true,"payload":{"behavior":"allow"}}\n'])).toEqual({ output: [text, '{"type":"control_request","requestId":"e","subtype":"end_input"}\n', '{"type":"control_response","requestId":"p","ok":true,"payload":{"behavior":"allow"}}\n'], cancelled: 1 });
+  expect(await collect([text.slice(0, 12), text.slice(12), '{"type":"control_request","requestId":"e","subtype":"end_input"}\n', '{"type":"control_response","requestId":"p","ok":true,"payload":{"behavior":"allow"}}\n'])).toEqual({ output: [text, '{"type":"control_request","requestId":"e","subtype":"end_input"}\n', '{"type":"control_response","requestId":"p","ok":true,"payload":{"behavior":"allow"}}\n'], cancelled: 0 });
   for (const chunks of [["x".repeat(LINUX_SESSION_CHUNK_BYTES + 1)], Array(5).fill("x".repeat(LINUX_SESSION_CHUNK_BYTES)), ['{"type":"user"}'], ['no-json\n']]) {
     let cancelled = 0;
     const consume = async () => { for await (const _ of boundedLinuxSessionInput((async function* () { yield* chunks; })(), () => { cancelled++; })) {} };
@@ -88,9 +88,9 @@ test("host-query record binds cwd to roots and plan requires read-only metadata,
 
 test("fresh profile bounded input preserves ordinary EOF and still cancels malformed input", async () => {
   let cancellations = 0;
-  for await (const _ of boundedLinuxSessionInput((async function* () { yield '{"type":"user","text":"go"}\n'; })(), () => { cancellations++; }, false)) {}
+  for await (const _ of boundedLinuxSessionInput((async function* () { yield '{"type":"user","text":"go"}\n'; })(), () => { cancellations++; })) {}
   expect(cancellations).toBe(0);
-  await expect((async () => { for await (const _ of boundedLinuxSessionInput((async function* () { yield 'bad\n'; })(), () => { cancellations++; }, false)) {} })()).rejects.toThrow();
+  await expect((async () => { for await (const _ of boundedLinuxSessionInput((async function* () { yield 'bad\n'; })(), () => { cancellations++; })) {} })()).rejects.toThrow();
   expect(cancellations).toBe(1);
 });
 

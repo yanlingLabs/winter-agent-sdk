@@ -147,7 +147,7 @@ DUPLEX_CHUNK=256*1024
 DUPLEX_FRAME=1024*1024
 DUPLEX_QUEUE=2*1024*1024
 DUPLEX_STDERR_QUEUE=64*1024
-DUPLEX_STALL_SECONDS=2
+DUPLEX_PREFLIGHT_SECONDS=2
 class RuntimeDuplexPorts:
     def __init__(self,logical_session_id,scope,input_fd,stdout_fd,stderr_fd):
         if not isinstance(logical_session_id,str) or not ID.fullmatch(logical_session_id):raise Refusal('runtime_duplex_scope')
@@ -174,7 +174,7 @@ class RuntimeDuplexPorts:
     def claim(self,item):
         self.verify()
         if self.phase!='configured' or self.logical_session_id!=item['logicalSessionId'] or self.scope!=item['authority']:raise Refusal('runtime_duplex_scope')
-        deadline=time.monotonic()+DUPLEX_STALL_SECONDS
+        deadline=time.monotonic()+DUPLEX_PREFLIGHT_SECONDS
         while True:
             try:self.initial=os.read(self.fds['input'],DUPLEX_CHUNK)
             except InterruptedError:
@@ -198,7 +198,7 @@ class RuntimeDuplexRelay:
         ports.verify();self.ports=ports;self.child=child;self.cancel=cancel
         self.buffers={'input':bytearray(ports.initial),'stdout':bytearray(),'stderr':bytearray()};ports.initial=b''
         self.eof={'input':False,'stdout':False,'stderr':False};self.terminal=False;self.line_bytes={'input':0,'stdout':0}
-        self.progress={name:time.monotonic() for name in self.buffers};self.registered=set()
+        self.registered=set()
         self._lines('input',self.buffers['input'])
         for stream in (child.stdin,child.stdout,child.stderr):os.set_blocking(stream.fileno(),False)
     def _lines(self,name,data):
@@ -212,8 +212,8 @@ class RuntimeDuplexRelay:
         self.terminal=True;self.eof['input']=True;self.buffers['input'].clear()
         self.child.stdin.close()
     def sync(self,selector):
-        self.ports.verify();now=time.monotonic()
-        if any(data and now-self.progress[name]>DUPLEX_STALL_SECONDS for name,data in self.buffers.items()):raise Uncertain('runtime_duplex_stalled')
+        self.ports.verify()
+        if self.eof['input'] and not self.buffers['input'] and not self.child.stdin.closed:self.child.stdin.close()
         desired={}
         if not self.eof['input'] and not self.terminal and len(self.buffers['input'])<DUPLEX_QUEUE:desired[self.ports.fds['input']]=(selectors.EVENT_READ,'host-input')
         if self.buffers['input'] and not self.terminal:desired[self.child.stdin.fileno()]=(selectors.EVENT_WRITE,'child-input')
@@ -228,23 +228,26 @@ class RuntimeDuplexRelay:
     def handle(self,event):
         self.ports.verify();route=event.data[1];fd=event.fd
         name='input' if route.endswith('input') else route.split('-')[1]
-        if name=='input' and (self.terminal or self.eof['input']):return None
+        if name=='input' and (self.terminal or route=='host-input' and self.eof['input']):return None
         writing=route=='child-input' or route.startswith('host-') and name!='input'
         if writing:
             try:count=os.write(fd,bytes(self.buffers[name][:65536]))
             except (BlockingIOError,InterruptedError):return None
             if count<=0:raise Uncertain('runtime_duplex_write_failed')
-            del self.buffers[name][:count];self.progress[name]=time.monotonic();return None
+            del self.buffers[name][:count]
+            if name=='input' and self.eof['input'] and not self.buffers['input']:self.child.stdin.close()
+            return None
         limit=DUPLEX_STDERR_QUEUE if name=='stderr' else DUPLEX_QUEUE
         try:data=os.read(fd,min(65536,limit-len(self.buffers[name])))
         except (BlockingIOError,InterruptedError):return None
         if not data:
             self.eof[name]=True
-            if name=='input':self.cancel.set();self.buffers['input'].clear();self.child.stdin.close()
+            if name=='input':
+                if self.line_bytes['input']:raise Uncertain('runtime_duplex_input_truncated')
+                if not self.buffers['input']:self.child.stdin.close()
             elif name=='stdout' and self.line_bytes[name]:raise Uncertain('runtime_duplex_output_truncated')
             return None
         if name in self.line_bytes:self._lines(name,data)
-        if not self.buffers[name]:self.progress[name]=time.monotonic()
         self.buffers[name].extend(data)
         return (name,data) if name!='input' else None
 
