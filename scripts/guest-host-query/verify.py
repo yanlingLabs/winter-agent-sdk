@@ -113,7 +113,7 @@ def readonly_canary_preflight(directory_fd):
                 if not 0<=maximum<=63:os._exit(63)
                 for capability in range(maximum+1):
                     if libc.prctl(24,capability,0,0,0)!=0:os._exit(64)
-                os.setgroups([GROUP]);os.setgid(TOOL_UID);os.setuid(TOOL_UID)
+                os.setgroups([GROUP]);os.setresgid(TOOL_UID,TOOL_UID,TOOL_UID);os.setresuid(TOOL_UID,TOOL_UID,TOOL_UID)
                 if os.getresuid()!=(TOOL_UID,)*3 or os.getresgid()!=(TOOL_UID,)*3:os._exit(65)
                 require_dac_identity(os.getuid(),os.getgid(),os.getgroups())
                 fields={line.split(':',1)[0]:line.split(':',1)[1].strip() for line in Path('/proc/self/status').read_text().splitlines() if ':' in line}
@@ -129,6 +129,11 @@ def readonly_canary_preflight(directory_fd):
         if waited!=pid or os.waitstatus_to_exitcode(status)!=0 or canary_identity(os.fstat(held))!=canary_identity(before) or os.pread(held,1024,0)!=DATA.CANARY:raise AssertionError('readonly DAC canary preflight')
         return canary_identity(before)
     finally:os.close(held)
+def require_readonly_binding(service,logical,directory_fd):
+    binding=service.conversations[logical]['roots']['readonly']
+    if binding['root']!={'id':'readonly','guestPath':'/workspace/folders/readonly','readOnly':True} or type(binding['fd'])!=int:raise AssertionError('readonly root binding')
+    held=os.fstat(directory_fd);mounted=os.fstat(binding['fd'])
+    if any(not stat.S_ISDIR(info.st_mode) or info.st_uid!=0 or stat.S_IMODE(info.st_mode)!=0o555 for info in (held,mounted)) or canary_identity(held)!=canary_identity(mounted):raise AssertionError('readonly root binding')
 def readonly_data_inventory():
     return {'marker':DATA.MARKER,'dac-canary':DATA.CANARY,**{'repo/'+name:wire for name,wire in DATA.git_fixture()[1].items()}}
 def verify_readonly_data(directory_fd,identity,expected,initial=None):
@@ -382,6 +387,7 @@ def run_case(kind,artifacts,receipt,helper):
         module=load('protected_fixture_service',ROOT/'packages/runtime/src/guest/linux-supervisor.py')
         phase='service-construct'
         ports=module.RuntimeDuplexPorts(logical,scope,pipes[0][0],pipes[1][1],pipes[2][1]);service=module.ToolService(config,host_query_ports={logical:ports})
+        require_readonly_binding(service,logical,readonly_fd)
         # Only the accepted relay duplicates retain these service ends. No hidden writer
         # may keep host stderr/stdout alive after actual service closure.
         for fd in (pipes[0][0],pipes[1][1],pipes[2][1]):os.close(fd);all_fds.remove(fd)
@@ -434,6 +440,7 @@ def run_case(kind,artifacts,receipt,helper):
             runtime=service.runtimes[logical]
             if runtime['exitCode']!=0 or not runtime['cleanupConfirmed'] or service.active or service.debt:raise AssertionError('native/reap/drain conjunction')
         phase='close'
+        require_readonly_binding(service,logical,readonly_fd)
         if not service.close():raise AssertionError('service/store ownership retained')
         # Independent real native/reap/drain + actual FD/store-lock release precede observer.
         phase='flock'
@@ -458,7 +465,7 @@ def run_case(kind,artifacts,receipt,helper):
         verify_readonly_data(readonly_fd,readonly_identity,readonly_expected,readonly_initial)
         phase='source-effects';effects=effect_oracle(kind,source)
         phase='persisted-history';history=transcript_oracle(kind,root/'store',host_record)
-        evidence={**effects,**history,'callbacks':host_record['callbacks'],'readonlyDataIdentityUnchanged':True,'backingCanariesUnchanged':True,'sameBackingDacWriteControl':True,'nativeServiceClosed':True,'storeLockReleased':True,'hostProviderReaped':True}
+        evidence={**effects,**history,'callbacks':host_record['callbacks'],'readonlyDataIdentityUnchanged':True,'sameBoundReadonlyRoot':True,'backingCanariesUnchanged':True,'sameBackingDacWriteControl':True,'nativeServiceClosed':True,'storeLockReleased':True,'hostProviderReaped':True}
         phase='mount-teardown';oracle.after(observed);evidence['mountIsolation']=observed
         for capture in (*captures,*errors):capture.stream.close()
         for channel in channels:channel.close()

@@ -42,3 +42,25 @@ class DataTests(unittest.TestCase):
     os.close(directory);root.chmod(0o755)
     for folder in root.rglob('*'):
      if folder.is_dir():folder.chmod(0o755)
+
+ def test_service_binding_requires_same_actual_held_directory_not_path_or_other_fd(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);(root/'held').mkdir(mode=0o555);(root/'other').mkdir(mode=0o555);(root/'file').write_bytes(b'inert')
+   held=os.open(root/'held',os.O_RDONLY|os.O_DIRECTORY);duplicate=os.dup(held);other=os.open(root/'other',os.O_RDONLY|os.O_DIRECTORY);file=os.open(root/'file',os.O_RDONLY)
+   metadata={'id':'readonly','guestPath':'/workspace/folders/readonly','readOnly':True}
+   binding={'root':metadata,'fd':duplicate};service=SimpleNamespace(conversations={'logical':{'roots':{'readonly':binding}}});original=os.fstat
+   def project(fd):
+    info=original(fd);return SimpleNamespace(st_mode=info.st_mode,st_uid=0,st_gid=0,st_ino=info.st_ino,st_dev=info.st_dev,st_nlink=info.st_nlink)
+   try:
+    with patch.object(v.os,'fstat',side_effect=project):
+     v.require_readonly_binding(service,'logical',held)
+     for wrong in (other,file,True):
+      binding['fd']=wrong
+      with self.assertRaises(AssertionError):v.require_readonly_binding(service,'logical',held)
+     binding['fd']=duplicate;binding['root']={**metadata,'readOnly':False}
+     with self.assertRaises(AssertionError):v.require_readonly_binding(service,'logical',held)
+     binding['root']=metadata;(root/'held').chmod(0o755)
+     with self.assertRaises(AssertionError):v.require_readonly_binding(service,'logical',held)
+   finally:
+    for fd in (held,duplicate,other,file):os.close(fd)
+    (root/'other').chmod(0o755)

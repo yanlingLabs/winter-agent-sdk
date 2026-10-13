@@ -467,3 +467,18 @@ superseded `python-inline-final.log` has one obsolete sealed-script test asserti
 from the removed proposal; `python-inline-final-corrected.log` (75 pass) closed
 that before the final additional FIFO/link regression. Other superseded logs are
 retained as history, not relabeled final evidence.
+
+The narrow Root-binding follow-up uses explicit setresgid/setresuid for all three
+IDs in the new canary child (the original Phase A DAC control is unchanged).
+Immediately after service construction, before threads/launch, and again before
+service.close while its FD remains live, the fixture requires its held readonly
+DATA directory to match the exact ToolService `roots['readonly']['fd']` by dev,
+inode, directory kind, Root owner and0555 mode. This is the descriptor the existing
+supervisor passes directly to the native clone; a matching pathname alone does
+not satisfy the check. `bound-readonly-root.log` records four passing selected
+portable tests, including different-directory, regular-file, boolean-FD, wrong
+readonly metadata and changed-mode refusals, with injected ownership only. No
+fork, Root identity transition, service construction or native operation executed
+in these tests. The earlier76-test full-suite record and both typechecks describe
+the prior freeze; this follow-up changed only verifier/test/docs and ran the exact
+new data-test module (four pass), without repeating unaffected checks.
