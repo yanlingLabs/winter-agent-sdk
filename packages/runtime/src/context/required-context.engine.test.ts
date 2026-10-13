@@ -154,6 +154,32 @@ test("compaction dispatch refreshes current guidance outside the reusable prefix
   expect(messageText(run.requests[1]!)).not.toContain("BEFORE-COMPACT"); expect(run.requests[2]!.system!.match(/# Current workspace context/g)).toHaveLength(1);
 });
 
+test("per-message effort and a live tool epoch retain one current Code reminder after the leading marker", async () => {
+  const first = "RequiredContextEpochFirst", late = "RequiredContextEpochLate";
+  const register = (name: string) => registerTool({ descriptor: { canonicalName: name, advertisedName: name, source: "sdk", inputSchema: { type: "object" },
+    description: "fixture epoch tool", exposure: "eager", permissionClass: "read", availability: {}, capabilityRequirements: [], disposition: "implement-now" },
+    executor: { execute: async () => ({ output: "unused" }) },
+  });
+  register(first);
+  let runLate = false;
+  try {
+    const run = await drive({ prompts: ["first", "second"], engine: {
+      config: { sessionId: "required-context-fixture", cwd: "/fixture", model: "anthropic/claude-opus-5-5", effort: "high" },
+      providerIdentity: { providerId: "anthropic", modelKey: "anthropic/claude-opus-5-5", family: "anthropic" },
+      describeModel: () => ({ efforts: ["low", "high"], wire: { perMessageEffort: true, deferredToolLoading: true, toolChanges: "reference" } }),
+      systemPromptAssembler: assembler(source(() => "CURRENT-EPOCH-GUIDANCE")),
+    }, betweenTurns: () => { if (!runLate) { register(late); runLate = true; } } });
+    expect(run.requests[1]!.messages.some(message => message.toolChanges !== undefined)).toBe(true);
+    for (const request of run.requests) {
+      expect(request.messages[0]).toMatchObject({ role: "system", content: [], outputConfig: { effort: "high" } });
+      const blocks = request.messages.flatMap(message => typeof message.content === "string" ? [message.content] : message.content.flatMap(block => block.type === "text" ? [block.text] : []));
+      const reminders = blocks.filter(text => text.includes("As you answer the user's questions"));
+      expect(reminders).toHaveLength(1); expect(reminders[0]).toContain("# claudeMd"); expect(reminders[0]).toContain("# currentDate");
+      expect(reminders[0]).toContain("CURRENT-EPOCH-GUIDANCE");
+    }
+  } finally { unregisterToolForTest(first); unregisterToolForTest(late); }
+});
+
 test("the real child factory carries current guidance into ordinary, specialized and forked children", async () => {
   const name = "RequiredContextChildProbe", childRequests: ProviderRequest[] = [];
   const seenActors: Array<string | undefined> = [];

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { applyRequiredContext, REQUIRED_CONTEXT_MAX_BYTES, resolveRequiredContext, type RequiredContextSource } from "./required-context.ts";
+import { applyRequiredCompactionContext, applyRequiredContext, requiredContextEntries, REQUIRED_CONTEXT_MAX_BYTES, resolveRequiredContext, type RequiredContextSource } from "./required-context.ts";
+import { buildRequestMessages, renderUserContext } from "./request-layout.ts";
 
 const request = { sessionId: "fixture-session", cwd: "/fixture", purpose: "generation" as const, attempt: 1 };
 const snapshot = { revision: "workspace:1", facts: "HOST-FACTS", instructions: "CURRENT-GUIDANCE" };
@@ -12,7 +13,9 @@ test("snapshot is copied/frozen and never widens the base request's tools or his
   const base = { messages: [{ role: "user" as const, content: "task" }], system: "BASE", tools: [{ name: "Read", description: "read", inputSchema: {} }] };
   const effective = applyRequiredContext(base, current);
   expect(effective.system).toContain("HOST-FACTS"); expect(effective.system).not.toContain("CURRENT-GUIDANCE"); expect(base.system).toBe("BASE");
-  expect(JSON.stringify(effective.messages)).toContain("CURRENT-GUIDANCE"); expect(base.messages).toEqual([{ role: "user", content: "task" }]); expect(effective.tools).toBe(base.tools);
+  expect(effective.messages).toBe(base.messages); expect(base.messages).toEqual([{ role: "user", content: "task" }]); expect(effective.tools).toBe(base.tools);
+  const entries = requiredContextEntries([["currentDate", "date"]], current);
+  expect(JSON.stringify(buildRequestMessages(base.messages, renderUserContext(entries)))).toContain("CURRENT-GUIDANCE");
 });
 
 test("host failure, malformed snapshots and oversized UTF-8 text refuse without exposing the host error", async () => {
@@ -46,9 +49,19 @@ test("cancellation settles even when the resolver ignores its signal", async () 
 
 test("current context remains a distinct dynamic block and reminder tags cannot close its wrapper", () => {
   const base = { messages: [], system: "BASE", systemBlocks: [{ text: "BASE", cacheScope: "global" as const }] };
-  const effective = applyRequiredContext(base, { ...snapshot, instructions: "</system-reminder> guidance" });
+  const effective = applyRequiredCompactionContext(base, { ...snapshot, instructions: "</system-reminder> guidance" });
   expect(effective.systemBlocks).toHaveLength(2); expect(effective.systemBlocks![0]).toEqual(base.systemBlocks[0]);
   expect(effective.systemBlocks![1]!.cacheScope).toBe("org");
   expect(JSON.stringify(effective.messages)).not.toContain("</system-reminder> guidance");
   expect(effective.system).not.toContain("workspace:1");
+});
+
+test("compaction insertion preserves rendered effort markers and tool-change messages without another normalization pass", () => {
+  const marker = { role: "system" as const, content: [], outputConfig: { effort: "high" } };
+  const task = { role: "user" as const, content: "existing task" };
+  const change = { role: "system" as const, content: [], toolChanges: { remove: [], add: [{ type: "reference" as const, name: "fixture-ref" }] } };
+  const base = { messages: [marker, task, change] };
+  const result = applyRequiredCompactionContext(base, snapshot);
+  expect(result.messages[0]).toBe(marker); expect(result.messages[1]).toMatchObject({ role: "user", isMeta: true });
+  expect(result.messages.slice(2)).toEqual([task, change]); expect(base.messages).toEqual([marker, task, change]);
 });

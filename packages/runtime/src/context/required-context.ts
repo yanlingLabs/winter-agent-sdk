@@ -1,6 +1,6 @@
 import type { ProviderRequest } from "../engine.ts";
 import { neutralizeReminderTags } from "./injection.ts";
-import { buildRequestMessages, renderUserContext } from "./request-layout.ts";
+import { renderUserContext, type ContextEntry } from "./request-layout.ts";
 
 export const REQUIRED_CONTEXT_MAX_BYTES = 128 * 1024;
 export interface RequiredContextRequest {
@@ -73,13 +73,29 @@ export async function resolveRequiredContext(source: RequiredContextSource, requ
   }
 }
 
-/** Apply only to a freshly constructed BASE request. Never persist/capture this layer.
- * Separate sections preserve provenance; grants are enforced outside this prompt. */
+export function requiredContextEntries(base: readonly ContextEntry[], snapshot: Readonly<RequiredContextSnapshot>): ContextEntry[] {
+  return [["claudeMd", neutralizeReminderTags(snapshot.instructions)], ...base.filter(([key]) => key !== "claudeMd")];
+}
+
+/** Host facts only. Main dispatch renders current guidance with its base user context
+ * in the engine's ONE request-messages pass. Never persist/capture the live layer. */
 export function applyRequiredContext(base: ProviderRequest, snapshot: Readonly<RequiredContextSnapshot>): ProviderRequest {
   const text = `# Current workspace context\n${neutralizeReminderTags(snapshot.facts)}`;
-  const instructions = renderUserContext([["claudeMd", neutralizeReminderTags(snapshot.instructions)]]);
+  const instructions = renderUserContext(requiredContextEntries([], snapshot));
   if (Buffer.byteLength(text, "utf8") + Buffer.byteLength(instructions ?? "", "utf8") > REQUIRED_CONTEXT_MAX_BYTES) throw new RequiredContextError("required_context_unavailable");
-  return { ...base, messages: buildRequestMessages(base.messages, instructions), system: [base.system, text].filter(Boolean).join("\n\n"),
+  return { ...base, system: [base.system, text].filter(Boolean).join("\n\n"),
     ...(base.systemBlocks !== undefined ? { systemBlocks: [...base.systemBlocks, { text, cacheScope: "org" as const }] } : {}),
   };
+}
+
+/** A controller may already have rendered/redacted its request. Insert only a
+ * current meta reminder, preserving its effort markers, attachments and tool epochs. */
+export function applyRequiredCompactionContext(base: ProviderRequest, snapshot: Readonly<RequiredContextSnapshot>): ProviderRequest {
+  const request = applyRequiredContext(base, snapshot), messages = [...base.messages];
+  let position = 0;
+  while (position < messages.length && messages[position]!.role === "system"
+    && Array.isArray(messages[position]!.content) && messages[position]!.content.length === 0
+    && messages[position]!.outputConfig !== undefined) position++;
+  messages.splice(position, 0, { role: "user", content: renderUserContext(requiredContextEntries([], snapshot))!, isMeta: true });
+  return { ...request, messages };
 }

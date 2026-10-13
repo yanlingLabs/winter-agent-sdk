@@ -124,7 +124,7 @@ import { parseMcpEnvConfig } from "./mcp/env.ts";
 // nothing from this module, and a value import in either direction would make the pair a runtime
 // cycle the compiled binary resolves differently from the dev leg.
 import type { AssembledPrompt, SkillListing, SystemPromptAssembler, SystemPromptInput } from "./context/seam.ts";
-import { applyRequiredContext, RequiredContextError, resolveRequiredContext } from "./context/required-context.ts";
+import { applyRequiredCompactionContext, applyRequiredContext, requiredContextEntries, RequiredContextError, resolveRequiredContext } from "./context/required-context.ts";
 import type { CompactBoundaryRecord, CompactBoundaryWriteResult, CompactionController, CompactionResult } from "./compaction/seam.ts";
 import { transcriptNote } from "./compaction/summarizer.ts";
 import { STRUCTURED_OUTPUT_TOOL_NAME, resolveMaxStructuredOutputAttempts, type StructuredOutputSeam } from "./structured/seam.ts";
@@ -7755,7 +7755,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         provider: requiredContext === undefined ? (opts.provider ?? activeProvider) : {
           // The controller may build either a cached-prefix request or an overflow/redacted
           // request. Apply current context at its actual dispatch, never to the cached base.
-          generate: async request => (opts.provider ?? activeProvider).generate(applyRequiredContext(request,
+          generate: async request => (opts.provider ?? activeProvider).generate(applyRequiredCompactionContext(request,
             await currentRequiredSnapshot("compaction", turnActive ? (currentTurnSignal ?? abortSignal) : abortSignal))),
         },
         ...(prefixRequest !== undefined ? { prefixRequest } : {}),
@@ -9578,9 +9578,11 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         // Resolve after host input/tool planning awaits. Tool rounds, fallbacks and
         // resumed generations each reach this point again; no stale snapshot fallback.
         const requiredSnapshot = requiredContext === undefined ? undefined : await currentRequiredSnapshot("generation", turnAbort.signal);
+        const liveEntries = requiredSnapshot === undefined ? undefined : requiredContextEntries(context.userContext, requiredSnapshot);
+        const liveContext = liveEntries === undefined ? context : { ...context, userContext: liveEntries, userContextText: renderUserContext(liveEntries) };
         const baseMessages = imagesOnlyNewest
-          ? withinImageBudget(requestMessages(context, effortPlan.markers, toolPlan.toolChanges), { maxImages: 1, maxBytes: Number.MAX_SAFE_INTEGER })
-          : requestMessages(context, effortPlan.markers, toolPlan.toolChanges);
+          ? withinImageBudget(requestMessages(liveContext, effortPlan.markers, toolPlan.toolChanges), { maxImages: 1, maxBytes: Number.MAX_SAFE_INTEGER })
+          : requestMessages(liveContext, effortPlan.markers, toolPlan.toolChanges);
         const baseSystem = requestSystem(assembled, context);
         const effective = requiredSnapshot === undefined ? undefined : applyRequiredContext({ messages: baseMessages,
           ...(baseSystem.system.length > 0 ? { system: baseSystem.system } : {}),

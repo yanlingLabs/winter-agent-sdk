@@ -39,6 +39,10 @@ the normal live `claudeMd` user-context framing, once. Diagnostic revisions stay
 outside model text, avoiding cache churn when only provenance changes. Capture only the base
 layout for forks and compaction prefixes. Do not persist the live layer as history
 or authoritative continuation state. Historical model replies remain history.
+Main requests render combined current guidance and base context in one pass through
+the existing layout pipeline. Controller-built compaction requests get a minimal
+meta reminder insertion after any leading effort-only marker; their attachment,
+tool-change and user-turn normalization is not run again.
 
 The resolver receives engine identity, live cwd, purpose, attempt and a cancellation
 signal. Its default deadline is 15 seconds, configurable between 1 ms and 30 seconds.
