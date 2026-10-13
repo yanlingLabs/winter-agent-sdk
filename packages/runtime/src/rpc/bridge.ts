@@ -39,7 +39,8 @@ export interface RpcBridge {
   // child-routed answer logged "dropping control_response for unknown or already-settled requestId"
   // on the SUCCESS path -- a misleading diagnostic that also masked the genuine unclaimed case the
   // message exists to report.
-  ownsRequest(requestId: string): boolean;
+  /** Optional subtype restriction is used by the closed Linux host-query input gate. */
+  ownsRequest(requestId: string, subtype?: string): boolean;
   // Task 8 (termination edge, WS-04 §3's no-park-timeout combined with P2-B's inverted pump
   // direction): rejects every still-pending request. Call this when the underlying transport is
   // PROVABLY dead (the pump's input hit true EOF, not just end_input) — a no-timeout RPC like
@@ -89,6 +90,7 @@ export interface RpcBridgeOptions {
 }
 
 interface PendingRpc {
+  subtype: string;
   resolve(payload: unknown): void;
   reject(err: unknown): void;
   timer?: ReturnType<typeof setTimeout>;
@@ -133,7 +135,7 @@ export function createRpcBridge(output: FrameSink, bridgeOpts: RpcBridgeOptions 
       }
       const requestId = opts?.requestId ?? randomUUID();
       return new Promise<T>((resolve, reject) => {
-        const entry: PendingRpc = { resolve: resolve as (payload: unknown) => void, reject };
+        const entry: PendingRpc = { subtype, resolve: resolve as (payload: unknown) => void, reject };
         if (opts?.timeoutMs !== undefined) {
           const timeoutMs = opts.timeoutMs;
           entry.timer = setTimeout(() => {
@@ -181,8 +183,9 @@ export function createRpcBridge(output: FrameSink, bridgeOpts: RpcBridgeOptions 
       held = undefined;
       for (const frame of queued) output.write(frame);
     },
-    ownsRequest(requestId: string): boolean {
-      return pending.has(requestId);
+    ownsRequest(requestId: string, subtype?: string): boolean {
+      const entry = pending.get(requestId);
+      return entry !== undefined && (subtype === undefined || entry.subtype === subtype);
     },
     handleResponse(frame: ControlResponseFrame): boolean {
       const entry = pending.get(frame.requestId);

@@ -1,4 +1,4 @@
-import { assertLinuxSession, assertRunningLinuxSession, assertFreshLinuxUserFrame, linuxSessionBindings, FRESH_LINUX_TOOLS, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
+import { assertLinuxSession, assertRunningLinuxSession, checkLinuxSessionFrame, linuxSessionBindings, FRESH_LINUX_TOOLS, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
 import { sourceReadRestrictionGeneration } from "./sandbox/source-read.ts";
 import { randomUUID } from "node:crypto";
 import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
@@ -4929,7 +4929,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const tools: ToolExecutor = opts.linuxSessionAdmission === undefined ? underlyingTools : {
     execute(call, executionOptions) {
       assertLinuxSession(opts.linuxSessionAdmission, config);
-      if (!(FRESH_LINUX_TOOLS as readonly string[]).includes(call.name)) return Promise.resolve({ output: "fresh Linux tool route unavailable", isError: true });
+      if (!(FRESH_LINUX_TOOLS as readonly string[]).includes(call.name) || !Array.isArray(config.tools) || !config.tools.includes(call.name)) return Promise.resolve({ output: "fresh Linux tool route unavailable", isError: true });
       return underlyingTools.execute(call, executionOptions);
     },
   };
@@ -6549,9 +6549,14 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         if (outcome.result.done) return; // true input EOF (path (a) above)
         const frame = outcome.result.value;
         if (opts.linuxSessionAdmission !== undefined) {
-          assertLinuxSession(opts.linuxSessionAdmission, config);
-          // Fresh scope has no host control/delegation/config mutation surface. EOF ends input.
-          assertFreshLinuxUserFrame(frame);
+          try {
+            if (checkLinuxSessionFrame(opts.linuxSessionAdmission, config, frame, id => bridge.ownsRequest(id, "permission")) === "drop") continue;
+          } catch (error) {
+            // A malformed confined input cancels pending approvals/in-flight work; it is not
+            // merely a logical end_input followed by continued execution.
+            hardStop();
+            throw error;
+          }
         }
 
         if (frame.type === "user") {
@@ -7180,7 +7185,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   // interrupted (its tools' process groups die through the turn's abort signal); a runtime->host
   // request nobody can answer is rejected; and the session-level abort makes the background wait stop
   // instead of holding the session open for a background agent.
-  const hardStop = (): void => {
+  function hardStop(): void {
     sessionHardStopped = true;
     announceHardStop();
     facetInputEnded = true;
@@ -7190,7 +7195,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     interruptCurrentTurn.current?.();
     signalBackgroundWait();
     bridge.rejectAllPending(new Error("winter: the session was stopped before this control request could be answered"));
-  };
+  }
   if (abortSignal?.aborted === true) hardStop();
   else abortSignal?.addEventListener("abort", hardStop, { once: true });
 
