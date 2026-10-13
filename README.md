@@ -31,6 +31,10 @@ which are the org's own test tooling but are consumed out of this repository by 
 test fixtures. `@yanlinglabs/winter-provider-runtime` follows by closure: the provider-conformance
 harness imports it, and a published manifest pins its dependencies at an exact version.
 
+The opt-in [required current-context RPC](docs/runtime-context.md) transports
+trusted host-resolved guidance through ordinary query transports. It remains
+refused by current confined Linux profiles and does not admit Cowork children.
+
 ## Install
 
 ### From public npm (anyone)

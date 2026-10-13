@@ -1,3 +1,4 @@
+import { RUNTIME_CONTEXT_SUBTYPE, RUNTIME_CONTEXT_VERSION, parseRuntimeContextRequest, parseRuntimeContextSnapshot } from "./runtime-context.ts";
 import { randomUUID } from "node:crypto";
 import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
@@ -885,7 +886,13 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     try { hostCodeRegistration?.dispose?.(); } catch { /* teardown must continue */ }
   };
   let removeHostCodeAbortListener = () => {};
+  if ((options.requireRuntimeContext !== undefined && typeof options.requireRuntimeContext !== "boolean")
+    || (options.requireRuntimeContext === true) !== (typeof options.onRuntimeContext === "function")
+    || (options.onRuntimeContext !== undefined && typeof options.onRuntimeContext !== "function")) throw new Error("required_context_unavailable");
+  if (options.requireRuntimeContext === true && options.executionPosture === "confined-guest") throw new Error("required_context_unavailable");
+  const contextBindingId = options.requireRuntimeContext === true ? randomUUID() : undefined;
   const config: RuntimeConfig = {
+    ...(contextBindingId !== undefined ? { requiredRuntimeContext: { version: RUNTIME_CONTEXT_VERSION, bindingId: contextBindingId } } : {}),
     ...(options.hostCodeProcessBroker !== undefined ? { hostCodeProcessBroker: { generationId: options.hostCodeProcessBroker.generationId } } : {}),
     ...(options.executionPosture !== undefined ? { executionPosture: options.executionPosture } : {}),
     // Task 9: a caller-supplied sessionId wins over the default auto-generated uuid — this is what
@@ -1015,6 +1022,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     // session with NO brand at all rather than "a Winter-branded one".
     brand,
   };
+  if (contextBindingId !== undefined && (typeof config.sessionId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(config.sessionId))) throw new Error("required_context_unavailable");
 
   // A custom spawnClaudeCodeProcess hook owns process creation entirely (containers, VMs, remote
   // runtimes, a supervising daemon — WS-04 §8): resolving a LOCAL platform binary would be wrong
@@ -1154,6 +1162,17 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   const controlRequestHandlers = new Map<string, ControlRequestHandler>();
   /** One abort per IN-FLIGHT runtime-originated request, fired by a `control_cancel_request` naming it. */
   const incomingRequestAborts = new Map<string, AbortController>();
+  const contextRequestAborts = new Map<string, AbortController>();
+  let contextTransportClosed = false;
+  const closeRuntimeContext = () => {
+    contextTransportClosed = true;
+    for (const [id, controller] of contextRequestAborts) {
+      if (incomingRequestAborts.get(id) === controller) incomingRequestAborts.delete(id);
+      controller.abort();
+    }
+    contextRequestAborts.clear();
+  };
+  if (contextBindingId !== undefined) void proc.exited.then(closeRuntimeContext, closeRuntimeContext);
   async function handleIncomingControlRequest(cf: ControlRequestFrame): Promise<void> {
     // The whole body is wrapped, not just the handler invocation: every proc.stdin.write below
     // (including the no-handler-registered answer) can throw on a real child whose stdin has
@@ -1176,6 +1195,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       }
       const cancel = new AbortController();
       incomingRequestAborts.set(cf.requestId, cancel);
+      if (cf.subtype === RUNTIME_CONTEXT_SUBTYPE) contextRequestAborts.set(cf.requestId, cancel);
       try {
         const result = await handler(cf.payload, { signal: cancel.signal });
         // CANCELLED while the handler ran: the runtime stopped waiting and dropped the request, so an
@@ -1198,7 +1218,10 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
         const message = err instanceof Error ? err.message : String(err);
         writeControlResponse({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "handler_threw", message } });
       } finally {
-        incomingRequestAborts.delete(cf.requestId);
+        if (cf.subtype !== RUNTIME_CONTEXT_SUBTYPE || incomingRequestAborts.get(cf.requestId) === cancel) {
+          incomingRequestAborts.delete(cf.requestId);
+        }
+        if (contextRequestAborts.get(cf.requestId) === cancel) contextRequestAborts.delete(cf.requestId);
       }
     } catch {
       /* see policy note above: a stdin write after the child has already exited is swallowed */
@@ -1271,6 +1294,20 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       }
       return { ok: true, payload: result };
     };
+  }
+  if (contextBindingId !== undefined && options.onRuntimeContext !== undefined) {
+    const resolve = options.onRuntimeContext;
+    controlRequestHandlers.set(RUNTIME_CONTEXT_SUBTYPE, async (payload, context) => {
+      const { controller, dispose } = abortableFor(options.abortController, context);
+      try {
+        const request = parseRuntimeContextRequest(payload);
+        if (request.bindingId !== contextBindingId || controller.signal.aborted || contextTransportClosed) throw new Error("required_context_unavailable");
+        const snapshot = parseRuntimeContextSnapshot(await resolve(request, { signal: controller.signal, trustedQuerySessionId: config.sessionId }));
+        return { ok: true, payload: snapshot };
+      } catch {
+        return { ok: false, error: { code: "required_context_unavailable", message: "required_context_unavailable" } };
+      } finally { dispose(); }
+    });
   }
   if (options.canUseTool) {
     controlRequestHandlers.set("permission", makePermissionHandler(options.canUseTool));
@@ -1429,7 +1466,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
           frames = split.frames;
           carry = split.carry;
         } catch (e) {
-          throw new ProtocolDecodeError(e instanceof ProtocolError ? e.message : String(e));
+          throw new ProtocolDecodeError(contextBindingId !== undefined ? "required_context_unavailable" : e instanceof ProtocolError ? e.message : String(e));
         }
 
         for (const frame of frames) {
@@ -1451,6 +1488,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
                 `protocol version mismatch: runtime speaks ${init.protocolVersion}, sdk expects ${PROTOCOL_VERSION}`,
               );
             }
+            if (contextBindingId !== undefined && init.runtimeContextVersion !== RUNTIME_CONTEXT_VERSION) throw new CLIConnectionError("required_context_unavailable");
             sawInit = true;
             continue; // internal handshake; the SDK system/init arrives as a data frame
           }
@@ -1486,6 +1524,13 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
             // Runtime-originated (WS-04 §3.1 direction inversion) — dispatched to the handler
             // registry. Fire-and-forget: answering it (a permission prompt may wait on a human)
             // must never block this loop from continuing to read/yield the turn's other frames.
+            const request = frame as ControlRequestFrame;
+            if (request.subtype === RUNTIME_CONTEXT_SUBTYPE
+              && (typeof request.requestId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(request.requestId)
+                || incomingRequestAborts.has(request.requestId) || contextRequestAborts.has(request.requestId)
+                || Object.keys(request).sort().join(",") !== "payload,requestId,subtype,type")) {
+              throw new ProtocolDecodeError("required_context_unavailable");
+            }
             void handleIncomingControlRequest(frame as ControlRequestFrame);
             continue;
           }
@@ -1537,6 +1582,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       // generator as terminated and fails fast instead of registering a promise nothing will ever
       // settle.
       generatorTerminated = true;
+      if (contextBindingId !== undefined) closeRuntimeContext();
       disposeHostCodeRegistration();
       removeHostCodeAbortListener();
       options.abortController?.signal.removeEventListener("abort", onAbort);

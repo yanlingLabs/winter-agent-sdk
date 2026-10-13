@@ -22,7 +22,7 @@ export const PROTOCOL_VERSION = "1.0" as const;
 // before the field existed.
 export interface WireMcpServerStatus { name: string; status: string; protocolVersion?: string; }
 
-export interface InitFrame { type: "init"; protocolVersion: ProtocolVersion; sessionId: string; cwd: string;
+export interface InitFrame { runtimeContextVersion?: 1; type: "init"; protocolVersion: ProtocolVersion; sessionId: string; cwd: string;
   model: string; permissionMode: string; tools: string[];
   // Phase 4 Task 3 (WS-09 §2.1's own consequence clause: "the next turn's system/init.tools
   // reflects the mutation" -- generalized here to the whole snapshot, mirrored onto the paired

@@ -1,3 +1,4 @@
+import type { RuntimeContextHandler } from "./runtime-context.ts";
 import type { SpawnClaudeCodeProcess } from "./transport.ts";
 import type { HostCodeProcessRegistration } from "./host-code-process.ts";
 import type { PermissionMode, CanUseTool, HookEvent, HookCallbackMatcher } from "./permissions/types.ts";
@@ -306,6 +307,9 @@ export function isWinterMcpServerInstance(value: unknown): value is WinterMcpSer
 export type AgentDefinition = Omit<RuntimeAgentDefinition, "permissionMode"> & { permissionMode?: PermissionMode };
 
 export interface Options {
+  /** Require the dedicated current-context RPC; callback remains host-local. Both fields must be supplied together. */
+  requireRuntimeContext?: boolean;
+  onRuntimeContext?: RuntimeContextHandler;
   /** Imperative trusted host port, never settings JSON. Cowork guest transports refuse this capability. */
   hostCodeProcessBroker?: HostCodeProcessRegistration;
   /** Explicit guest posture; runtimes without all mandatory compartments refuse startup. */
