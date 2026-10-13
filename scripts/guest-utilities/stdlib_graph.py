@@ -64,7 +64,7 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
         modules[name] = (guest, package)
     if len(modules) > MAX_MODULES or not 1 <= len(roots) <= 64:
         raise ValueError('static graph inventory limit')
-    visited = {};bindings = {};stars = {};module_imports = {};edges = [];optional = [];deferred = [];root_records = [];aliases = {}
+    visited = {};bindings = {};stars = {};module_imports = {};edges = [];optional = [];deferred = [];root_records = [];aliases = {};native_stars = {}
     total = 0
 
     def parse(data):
@@ -161,6 +161,10 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
         nt_bindings = [node for node in nt_branch.body if path_import(node, 'ntpath')] if nt_branch else []
         if len(posix_bindings) != 1 or len(nt_bindings) != 1:
             raise ValueError('captured os.path alias binding changed')
+        native_imports = [node for node in branch.body if isinstance(node, ast.ImportFrom) and node.module == 'posix' and node.level == 0 and len(node.names) == 1 and node.names[0].name == '*' and node.names[0].asname is None]
+        branch_stars = [node for statement in branch.body for node in ast.walk(statement) if isinstance(node, ast.ImportFrom) and any(alias.name == '*' for alias in node.names)]
+        if len(native_imports) != 1 or branch_stars != native_imports:
+            raise ValueError('captured Linux os native star provider changed')
         allowed = {'sys':sys_imports, '_names':names, 'path':posix_bindings + nt_bindings}
         def check_bindings(body):
             for node in body:
@@ -182,16 +186,21 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
                     bound.clear()  # The fixed source deletes this temporary after registration.
                 if any(name in bound and node not in nodes for name, nodes in allowed.items()):
                     raise ValueError('contradictory captured os.path alias binding')
-                if isinstance(node, ast.Assign):
-                    for target in node.targets:
+                if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
+                    for target in node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]:
                         if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == 'sys' and target.attr == 'modules':
                             raise ValueError('contradictory captured os.path alias registration')
+                        if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Attribute) and isinstance(target.value.value, ast.Name) and target.value.value.id == 'sys' and target.value.attr == 'modules' and isinstance(target.slice, ast.Constant) and target.slice.value == 'posix':
+                            raise ValueError('contradictory captured os native provider registration')
                         if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Attribute) and isinstance(target.value.value, ast.Name) and target.value.value.id == 'sys' and target.value.attr == 'modules' and isinstance(target.slice, ast.Constant) and target.slice.value == 'os.path' and node not in registrations:
                             raise ValueError('contradictory captured os.path alias registration')
                 for field in ('body', 'orelse', 'finalbody', 'handlers'):
                     check_bindings(getattr(node, field, []))
         check_bindings(tree.body)
         aliases['os.path'] = {'target':'posixpath', 'sourceGuest':modules['os'][0], 'sourceSha256':visited['os']['sha256'], 'bindingLine':posix_bindings[0].lineno, 'registrationLine':registrations[0].lineno, 'interpreterPlatform':interpreter_platform, 'builtin':'posix'}
+        stars['os'].append('posix')
+        edges.append({'importer':'os', 'module':'posix', 'line':native_imports[0].lineno})
+        native_stars['os'] = {'provider':'posix', 'sourceGuest':modules['os'][0], 'sourceSha256':visited['os']['sha256'], 'branchLine':branch.lineno, 'importLine':native_imports[0].lineno, 'interpreterPlatform':interpreter_platform, 'nativeAttributesVerified':False}
 
     def exported(module, symbol, seen=None):
         module = aliases.get(module, {}).get('target', module)
@@ -272,6 +281,7 @@ def validate(files, read_source, roots, builtin_names, builder_identity, seeds=S
     result = {'kind':'winter-utility-static-stdlib-graph', 'version':1, 'roots':root_records,
             'exercisedSeeds':list(seeds), 'builtinInterpreter':builder_identity,
             'interpreterPlatform':interpreter_platform, 'aliases':aliases,
+            'selectedNativeStarProviders':native_stars,
             'builtinModules':sorted(builtins), 'visited':dict(sorted(visited.items())),
             'requiredEdges':edges, 'optionalImports':optional, 'deferredImports':deferred,
             'requiredStaticImportsCaptured':True, 'dynamicCompletenessVerified':False,

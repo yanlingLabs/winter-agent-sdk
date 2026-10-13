@@ -223,6 +223,16 @@ predeclare itself into satisfying a required missing submodule. Required provide
 modules still recurse/refuse, and conditional/runtime binding values remain
 unverified. This adds no captured leaf or attribute-name allowlist.
 
+Build `38384715089` exposed the selected native-star provider behind `os.urandom`.
+Only the already source-validated Linux/posix os branch can contribute a native
+star provider: it must directly declare exactly `from posix import *`, using
+the same measured source and byte-bound platform/builtin evidence as the alias.
+`selectedNativeStarProviders` records that source fingerprint and import/branch
+lines. Other conditional stars remain optional observations. This provider has
+the same opaque attribute limitation as direct builtin imports: no native
+attribute value/presence or runtime behavior is proved. Those flags remain
+false, and required real modules and unknown aliases continue to refuse.
+
 Artifact audit of build `38333923765` found that loader bytes were measured but
 captured/copied as 0444. Execution intent now binds capture modes (0555/0444),
 bundle metadata, immutable staging modes (0500/0400), and verified runtime copy

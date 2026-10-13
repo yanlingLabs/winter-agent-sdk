@@ -133,7 +133,36 @@ class StaticStdlibGraphTests(unittest.TestCase):
             self.run_graph('from scope import local_value\n')
 
     def os_source(self):
-        return "import sys\n_names = sys.builtin_module_names\nif 'posix' in _names:\n    import posixpath as path\nelif 'nt' in _names:\n    import ntpath as path\nelse:\n    raise ImportError('no os specific module found')\nsys.modules['os.path'] = path\nfrom os.path import curdir\ndel _names\n"
+        return "import sys\n_names = sys.builtin_module_names\nif 'posix' in _names:\n    from posix import *\n    import posixpath as path\nelif 'nt' in _names:\n    import ntpath as path\nelse:\n    raise ImportError('no os specific module found')\nsys.modules['os.path'] = path\nfrom os.path import curdir\ndel _names\n"
+
+    def test_only_selected_linux_os_native_star_provider_supplies_opaque_attributes(self):
+        original = self.os_source();guest = self.source('os.py', original)
+        self.source('posixpath.py', "curdir = '.'\n")
+        self.source('random.py', 'from os import urandom as _urandom\n')
+        result = self.run_graph('import random\n', builtins=('sys', 'posix'))
+        provider = result['selectedNativeStarProviders']['os']
+        self.assertEqual(provider['provider'], 'posix');self.assertEqual(provider['sourceSha256'], self.files[guest]['sha256'])
+        self.assertEqual(provider['interpreterPlatform'], 'linux');self.assertFalse(provider['nativeAttributesVerified'])
+        self.assertFalse(any(edge['module'] == 'os.urandom' for edge in result['requiredEdges']))
+        self.assertFalse(result['optionalBranchesVerified']);self.assertFalse(result['dynamicCompletenessVerified'])
+        self.source('other.py', 'if True:\n    from posix import *\n')
+        with self.assertRaisesRegex(ValueError, 'missing required captured module: other.urandom'):
+            self.run_graph('from other import urandom\n', builtins=('sys', 'posix'))
+        self.source('pkg/__init__.py', '\n')
+        with self.assertRaisesRegex(ValueError, 'missing required captured module: pkg.missing'):
+            self.run_graph('from pkg import missing\n', builtins=('sys', 'posix'))
+        for code in (original.replace('from posix import *', 'from nt import *'), original.replace('from posix import *\n', '').replace("elif 'nt' in _names:\n", "elif 'nt' in _names:\n    from posix import *\n"), original.replace('from posix import *', 'from .posix import *'), original.replace('from posix import *', 'from posix import *\n    from nt import *'), original + "_names = ('posix',)\n", original.replace("if 'posix' in _names:", "sys.modules['posix'] = sys\nif 'posix' in _names:")):
+            self.source('os.py', code)
+            with self.subTest(code=code),self.assertRaises(ValueError):
+                self.run_graph('import random\n', builtins=('sys', 'posix'))
+        self.source('os.py', original)
+        for rebind in ("sys.modules['posix'] += sys", "sys.modules['posix']: object = sys", "del sys.modules['posix']"):
+            self.source('os.py', original.replace("if 'posix' in _names:", rebind + "\nif 'posix' in _names:"))
+            with self.subTest(rebind=rebind),self.assertRaises(ValueError):self.run_graph('import random\n', builtins=('sys', 'posix'))
+        self.source('os.py', original)
+        with self.assertRaises(ValueError):self.run_graph('import random\n', builtins=('sys', 'posix'), platform='darwin')
+        with self.assertRaises(ValueError):self.run_graph('import random\n', builtins=('sys', 'nt'))
+        with self.assertRaises(ValueError):self.run_graph('import random\n', builtins=('sys', 'posix'), builder={**self.builder, 'sha256':'0'*64})
 
     def test_linux_os_path_alias_uses_measured_source_and_follows_target_dependencies(self):
         os_guest = self.source('os.py', self.os_source())
