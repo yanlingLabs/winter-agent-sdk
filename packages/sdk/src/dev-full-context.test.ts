@@ -30,7 +30,7 @@ async function observe(command: string, colocated: boolean, mode: PermissionMode
     const candidates = recognizeEditOperation({ toolName: "Bash", input: { command } }, { home: root, sessionRoot: cwd })?.paths ?? [];
     return { colocated, parseable: flattenSubcommands(command) !== null, syntheticExecutions,
       callbacks: callbacks.map(({ blockedPath, decisionReason }) => ({ blockedPath, decisionReason })),
-      candidates: candidates.map(path => ({ path, resolvesInsideProtectedHome: resolve(cwd, path).startsWith(`${home}/`) || resolve(cwd, path) === home,
+      candidates: candidates.map(path => ({ path, resolvedPath: resolve(cwd, path), resolvesInsideProtectedHome: resolve(cwd, path).startsWith(`${home}/`) || resolve(cwd, path) === home,
         protected: isProtectedWrite(path, { cwd, home: root, winterHome: home, storeHome: home }) })) };
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
@@ -46,11 +46,13 @@ test("appended relative redirect changes the protected-home floor only in a colo
   }
 });
 
-test("one ordinary relative redirect is sufficient to change the reported blocked path without changing the device", async () => {
+test("consent names the protected relative target after an unrelated device redirect", async () => {
   const command = "printf x > /dev/full; printf y > relative-target";
   const disjoint = await observe(command, false), colocated = await observe(command, true);
   expect(disjoint.callbacks).toHaveLength(0); expect(colocated.callbacks).toHaveLength(1);
-  expect(colocated.callbacks[0]?.blockedPath).toBe("/dev/full");
+  // 664bf440 characterized the known-wrong first candidate (/dev/full).
+  // Consent integrity: deliberately flip that assertion to the actual protected match.
+  expect(colocated.callbacks[0]?.blockedPath).toBe(colocated.candidates.find(candidate => candidate.path === "relative-target")?.resolvedPath);
   expect(colocated.candidates.find(candidate => candidate.path === "/dev/full")?.protected).toBe(false);
   expect(colocated.candidates.find(candidate => candidate.path === "relative-target")?.protected).toBe(true);
   expect(disjoint.parseable).toBe(true); expect(colocated.parseable).toBe(true);
