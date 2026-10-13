@@ -35,6 +35,7 @@ export function fixtureTranscript(kind: Case, frames: unknown[], paths: ProbePat
         if (block.tool_use_id !== `call-${index}` || index >= calls.length) throw new Error("fixture tool result correlation");
         const denied = kind === "ask-deny" && (index === 1 || index === 2 || index === 3), outside = (kind === "bypass" && index >= 4) || (kind === "plan" && index === 1);
         if (Boolean(block.is_error) !== outside || Boolean(block.denied) !== denied) throw new Error("fixture tool result status");
+        if (denied && block.content !== "fixed fixture denied") throw new Error("fixture tool denial content");
         if (index === 0 && block.content !== "hello\n") throw new Error("fixture Read bytes");
         if (kind === "plan" && index === 1 && block.content !== "Error [read_only]: guest file operation refused") throw new Error("fixture native plan Write authority");
         if (kind === "plan" && index === 2 && block.content !== PLAN_BOUNDARY_RESULT) throw new Error("fixture native plan readonly Bash");
@@ -53,7 +54,7 @@ type HostFailureDiagnostic = { class: string; code: string; errnoCode?: string; 
 export function hostFailure(error: unknown): HostFailureDiagnostic {
   const codes: Record<string, string> = {
     "fixture case unavailable": "fixture_case", "fixture probe paths unavailable": "probe_paths", "bypass callback must never run": "bypass_callback", "unbound fixture approval": "approval_binding",
-    "fixture tool call binding": "tool_call", "fixture tool result correlation": "tool_result", "fixture tool result status": "tool_status",
+    "fixture tool call binding": "tool_call", "fixture tool result correlation": "tool_result", "fixture tool result status": "tool_status", "fixture tool denial content": "denial_content",
     "fixture Read bytes": "read_bytes", "fixture native plan Write authority": "plan_write", "fixture native plan readonly Bash": "plan_bash",
     "fixture Bash output": "bash_output", "fixture readonly proc write": "proc_write", "fixture missing tool results": "missing_results", "fixture pipe bound": "pipe_bound",
     "fixture input closed": "input_closed", "fixture input frame bound": "input_frame", "fixture control correlation": "control_correlation",

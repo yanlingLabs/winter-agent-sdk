@@ -97,6 +97,20 @@ class TranscriptTests(unittest.TestCase):
    (self.store/name).write_text(''.join(json.dumps(row)+'\n' for row in rows))
   return verify.transcript_oracle(self.kind,self.store,self.host)
  def test_actual_schema_golden_accepts(self):self.assertEqual(self.validate()['nativeStateAnchors'],5)
+ def test_ask_deny_requires_exact_denial_text_for_all_three_non_read_results(self):
+  import copy
+  self.kind='ask-deny';self.identity=verify.backend(self.kind)
+  for record in self.records:record['sessionId']=self.identity
+  for row in self.states:row['sessionId']=self.identity
+  self.records[-1]['message']['content'][0]['text']='host-query-ask-deny-complete'
+  for index in (1,2,3):
+   result=self.records[index*2+1]['message']['content'][0];result.update(denied=True,is_error=False,content='fixed fixture denied')
+  self.assertEqual(self.validate()['toolResults'],4)
+  original=copy.deepcopy(self.records)
+  for index in (1,2,3):
+   for content in ('host-query-proc-device-ok','another denial message'):
+    self.records=copy.deepcopy(original);self.records[index*2+1]['message']['content'][0]['content']=content
+    with self.assertRaisesRegex(AssertionError,'tool denial content'):self.validate()
  def test_wrong_anchor_items_schema_order_or_tool_input_refuse(self):
   import copy
   original_records=copy.deepcopy(self.records);original_states=copy.deepcopy(self.states)

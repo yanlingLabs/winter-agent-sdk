@@ -7,7 +7,7 @@ const PATHS: ProbePaths = { store: "/tmp/winter-host-query-run-fixture/store", h
 function frames(kind: typeof CASES[number]) {
   return toolScript(kind, PATHS).flatMap((call, index) => [
     { type: "assistant", message: { content: [{ type: "tool_use", id: `call-${index}`, ...call }] } },
-    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: `call-${index}`, is_error: (kind === "bypass" && index >= 4) || (kind === "plan" && index === 1), denied: kind === "ask-deny" && (index === 1 || index === 2 || index === 3), content: kind === "plan" && index === 1 ? "Error [read_only]: guest file operation refused" : kind === "plan" && index === 2 ? PLAN_BOUNDARY_RESULT : index === 3 ? PROC_WRITE_RESULT : index === 0 ? "hello\n" : index === 2 ? VIEW_RESULT : "fixture" }] } },
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: `call-${index}`, is_error: (kind === "bypass" && index >= 4) || (kind === "plan" && index === 1), denied: kind === "ask-deny" && (index === 1 || index === 2 || index === 3), content: kind === "ask-deny" && index >= 1 && index <= 3 ? "fixed fixture denied" : kind === "plan" && index === 1 ? "Error [read_only]: guest file operation refused" : kind === "plan" && index === 2 ? PLAN_BOUNDARY_RESULT : index === 3 ? PROC_WRITE_RESULT : index === 0 ? "hello\n" : index === 2 ? VIEW_RESULT : "fixture" }] } },
   ]);
 }
 test("closed fixture cases and bypass callback cannot be relaxed", () => {
@@ -172,5 +172,16 @@ test("generated view summary emits actual synthetic counters in the fixed order"
     const result = spawnSync("/bin/bash", ["-c", command], { encoding: "utf8" });
     expect(result.status).toBe(0);
     expect(result.stdout).toBe(`host-query-view-counts:${values.join(":")}\n`);
+  }
+});
+
+test("ask-deny requires exact per-call denial text even with otherwise correct flags", () => {
+  expect(fixtureTranscript("ask-deny", frames("ask-deny"), PATHS).toolResults).toBe(4);
+  for (const index of [1,2,3]) {
+    for (const content of [PROC_WRITE_RESULT, "another denial message"]) {
+      const data = frames("ask-deny") as any[];
+      data[index*2+1].message.content[0].content = content;
+      expect(() => fixtureTranscript("ask-deny", data, PATHS)).toThrow("fixture tool denial content");
+    }
   }
 });

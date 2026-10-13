@@ -343,3 +343,8 @@ in their fixed order rather than a hardcoded count literal. Mandatory guards
 and the exact host/Root expected string remain unchanged. A generated-printf
 inert test verifies both expected and deliberately different synthetic counters;
 it executes no probe or host proc/device access.
+
+The denial-oracle follow-up after `1f575ae9` requires exact `fixed fixture denied`
+content on ask-deny's Write and both Bash results in wire and persisted history,
+not merely denied/is_error flags. Synthetic goldens now use the actual engine
+denial text; positive proc markers or other messages cannot satisfy those calls.
