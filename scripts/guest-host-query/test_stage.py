@@ -26,6 +26,8 @@ s = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = s
 spec.loader.exec_module(s)
 
+from test_environment import elf, environment_fixture
+
 NATIVE = {
     'toolLauncher': 'linux-tool-compartment.c',
     'runtimeLauncher': 'linux-runtime-compartment.c',
@@ -68,6 +70,7 @@ class StageTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(('synthetic source ' + name + '\n').encode())
         (self.source / s.PARENT).write_bytes(MODULE.read_bytes())
+        for name in ('utilities.sh','utilities-plan.sh'):(self.source/'scripts/guest-host-query'/name).write_bytes((MODULE.parent/name).read_bytes())
         (self.source / 'scripts/linux-runtime-base.json').write_text(canonical(self.pin))
         self.dependency = self.source / 'node_modules/pkg/dist/index.js'
         self.dependency.parent.mkdir(parents=True)
@@ -81,7 +84,7 @@ class StageTests(unittest.TestCase):
             header = bytearray(20)
             header[:6] = b'\x7fELF\x02\x01'
             header[18:20] = (183).to_bytes(2, 'little')
-            (self.artifacts / name).write_bytes(header + b'SYNTHETIC-INERT-' + name.encode())
+            (self.artifacts / name).write_bytes(elf())
         for name, entry in s.ENTRIES.items():
             relative = f'scripts/guest-host-query/{entry}'
             bundled = {key: self.inputs[key] for key in
@@ -118,7 +121,7 @@ class StageTests(unittest.TestCase):
             'outputs': self.outputs, 'linuxExecutionVerified': False, 'vmExecutionVerified': False,
         }
         self.receipt = {
-            'formatVersion': 2,
+            'formatVersion': 3,
             'sources': {name: value['sha256'] for name, value in self.inputs.items()
                         if not name.startswith('node_modules/')},
             'artifacts': {name: digest((self.artifacts / name).read_bytes())
@@ -134,6 +137,7 @@ class StageTests(unittest.TestCase):
                                        'LC_ALL': 'C', 'TZ': 'UTC'},
             'linuxExecutionVerified': False, 'vmExecutionVerified': False,
         }
+        self.receipt.update(environment_fixture(self.source,self.artifacts,self.inputs))
         self.receipt_path = self.artifacts / 'receipt.json'
         self.staged_roots = []
         self.reseal()

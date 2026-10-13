@@ -51,6 +51,7 @@ ROOT=Path(__file__).resolve().parents[2]
 def load(name,path):
     spec=importlib.util.spec_from_file_location(name,path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 build=load('host_query_build',Path(__file__).with_name('build.py'))
+DATA=load('host_query_utility_data',Path(__file__).with_name('utility-data.py'))
 HELPERS=('checked','stage_environment','MountIsolationError','parse_mountinfo','mount_private','relevant_mounts','runtime_mount_proof','KernelMountReader','MountIsolationOracle','BoundedCapture','normalized_stderr','failure_metadata','native_status_observation','runtime_diagnostic_observation','snapshot_runtime_diagnostic','provider_receipt_observation')
 def stable_helpers():
     # Exact accepted source definitions after COMPLETE staged source/dependency/artifact admission.
@@ -93,6 +94,74 @@ def dac_writable_control(source):
     code=os.waitstatus_to_exitcode(status)
     if waited!=pid or code!=0 or snapshot(source/'dac-control')!=b'DAC-writable\n':
         failure=AssertionError('same source DAC positive control');failure.dacExitCode=code;raise failure
+def require_zero_capabilities(fields):
+    names=('CapInh','CapPrm','CapEff','CapBnd','CapAmb')
+    if any(type(fields.get(name))!=str or not re.fullmatch(r'[0-9a-fA-F]{1,16}',fields[name]) or int(fields[name],16)!=0 for name in names):raise AssertionError('DAC canary capabilities')
+def canary_identity(info):return (info.st_dev,info.st_ino,info.st_uid,info.st_gid,stat.S_IMODE(info.st_mode),info.st_nlink)
+def readonly_canary_preflight(directory_fd):
+    held=os.open('dac-canary',os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=directory_fd)
+    try:
+        before=os.fstat(held)
+        if not stat.S_ISREG(before.st_mode) or canary_identity(before)[2:]!=(TOOL_UID,GROUP,0o660,1) or os.pread(held,1024,0)!=DATA.CANARY:raise AssertionError('readonly DAC canary identity')
+        pid=os.fork()
+        if pid==0:
+            try:
+                # Child only, before threads: drop every bounding capability before UID drop.
+                import ctypes
+                libc=ctypes.CDLL(None,use_errno=True)
+                maximum=int(Path('/proc/sys/kernel/cap_last_cap').read_text())
+                if not 0<=maximum<=63:os._exit(63)
+                for capability in range(maximum+1):
+                    if libc.prctl(24,capability,0,0,0)!=0:os._exit(64)
+                os.setgroups([GROUP]);os.setgid(TOOL_UID);os.setuid(TOOL_UID)
+                if os.getresuid()!=(TOOL_UID,)*3 or os.getresgid()!=(TOOL_UID,)*3:os._exit(65)
+                require_dac_identity(os.getuid(),os.getgid(),os.getgroups())
+                fields={line.split(':',1)[0]:line.split(':',1)[1].strip() for line in Path('/proc/self/status').read_text().splitlines() if ':' in line}
+                require_zero_capabilities(fields)
+                fd=os.open('dac-canary',os.O_WRONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=directory_fd)
+                try:
+                    if canary_identity(os.fstat(fd))!=canary_identity(before) or os.write(fd,DATA.CANARY)!=len(DATA.CANARY):os._exit(67)
+                    os.fsync(fd)
+                finally:os.close(fd)
+                os._exit(0)
+            except BaseException:os._exit(68)
+        waited,status=os.waitpid(pid,0)
+        if waited!=pid or os.waitstatus_to_exitcode(status)!=0 or canary_identity(os.fstat(held))!=canary_identity(before) or os.pread(held,1024,0)!=DATA.CANARY:raise AssertionError('readonly DAC canary preflight')
+        return canary_identity(before)
+    finally:os.close(held)
+def readonly_data_inventory():
+    return {'marker':DATA.MARKER,'dac-canary':DATA.CANARY,**{'repo/'+name:wire for name,wire in DATA.git_fixture()[1].items()}}
+def verify_readonly_data(directory_fd,identity,expected,initial=None):
+    observed={};identities={};directories=set();wanted_dirs={str(parent) for name in expected for parent in Path(name).parents if str(parent)!='.'}
+    def walk(fd,prefix=''):
+        folder=os.fstat(fd)
+        if not stat.S_ISDIR(folder.st_mode) or folder.st_uid!=0 or stat.S_IMODE(folder.st_mode)!=0o555:raise AssertionError('readonly data directory mode')
+        with os.scandir(fd) as stream:
+            for entry in stream:
+                name=prefix+entry.name;info=os.stat(entry.name,dir_fd=fd,follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode):
+                    if name not in wanted_dirs:raise AssertionError('readonly extra directory')
+                    child=os.open(entry.name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd)
+                    try:
+                        if canary_identity(os.fstat(child))!=canary_identity(info):raise AssertionError('readonly directory replaced')
+                        directories.add(name);walk(child,name+'/')
+                    finally:os.close(child)
+                else:
+                    if name not in expected or not stat.S_ISREG(info.st_mode) or info.st_nlink!=1:raise AssertionError('readonly data leaf mode')
+                    leaf=os.open(entry.name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=fd)
+                    try:
+                        before=os.fstat(leaf);identities[name]=canary_identity(before)
+                        if canary_identity(before)!=canary_identity(info):raise AssertionError('readonly data replaced')
+                        if name=='dac-canary':
+                            if canary_identity(before)!=identity:raise AssertionError('readonly canary changed')
+                        elif before.st_uid!=0 or stat.S_IMODE(before.st_mode)!=0o444:raise AssertionError('readonly data leaf mode')
+                        observed[name]=os.pread(leaf,len(expected[name])+1,0)
+                        if canary_identity(os.fstat(leaf))!=canary_identity(before):raise AssertionError('readonly data changed')
+                    finally:os.close(leaf)
+    walk(directory_fd)
+    if observed!=expected or directories!=wanted_dirs or initial is not None and identities!=initial:raise AssertionError('readonly data bytes/identity')
+    return identities
+
 def effect_oracle(kind,source):
     if snapshot(source/'dac-control')!=b'DAC-writable\n':raise AssertionError('DAC control changed')
     if snapshot(source/'seed')!=b'hello\n':raise AssertionError('source sentinel changed')
@@ -134,9 +203,9 @@ def transcript_oracle(kind,store,host_record):
         if index==0:
             if content!='hello\n':raise AssertionError('Read exact seed bytes')
         if kind=='plan' and index==1 and str(content)!='Error [read_only]: guest file operation refused':raise AssertionError('native plan file authority')
-        if kind=='plan' and index==2 and content!='host-query-view-counts:2:5:3:10:1:1:1:5\nhost-query-boundary-ok\n[stderr]\n/bin/bash: line 1: plan-denied-write: Read-only file system\n\n[Exit code: 0; cwd changes apply to this command only]':raise AssertionError('native plan readonly mount')
-        if index==2 and kind in ('ask-allow','bypass') and content!='host-query-view-counts:2:5:3:10:1:1:1:5\nhost-query-boundary-ok\n[Exit code: 0; cwd changes apply to this command only]':raise AssertionError('Bash boundary did not run')
-        if index==3 and not denied and content!='host-query-proc-device-ok\n[stderr]\n/bin/bash: line 5: printf: write error: No space left on device\n/bin/bash: line 8: /proc/self/comm: Read-only file system\n\n[Exit code: 0; cwd changes apply to this command only]':raise AssertionError('native readonly proc write')
+        if kind=='plan' and index==2 and content!='host-query-view-v2-counts:2:5:3:10:1:1:1:5:3:1\nhost-query-boundary-ok\n[stderr]\n/bin/bash: line 1: plan-denied-write: Read-only file system\n\n[Exit code: 0; cwd changes apply to this command only]':raise AssertionError('native plan readonly mount')
+        if index==2 and kind in ('ask-allow','bypass') and content!='host-query-view-v2-counts:2:5:3:10:1:1:1:5:3:1\nhost-query-boundary-ok\n[Exit code: 0; cwd changes apply to this command only]':raise AssertionError('Bash boundary did not run')
+        if index==3 and not denied and content!='host-query-proc-device-ok\nsdk-daily-python-ok\nsdk-daily-cat-ok\nsdk-daily-temp-ok\nsdk-daily-openssl-ok\nsdk-daily-git-ok\nsdk-daily-tools-end\n[stderr]\n/bin/bash: line 5: printf: write error: No space left on device\n/bin/bash: line 8: /proc/self/comm: Read-only file system\n\n[Exit code: 0; cwd changes apply to this command only]':raise AssertionError('native readonly proc write')
     state_ids=set()
     for row in states:
         if row.get('type')!='winter_provider_state' or row.get('sessionId')!=identity or row.get('anchorUuid') not in anchors or row.get('kind') not in ('origin','native-state','effort','tool-epoch','tool-changes') or row.get('provider')!='openai' or row.get('model')!='openai/gpt-5.6' or not isinstance(row.get('uuid'),str) or row['uuid'] in state_ids or row['uuid'] in anchors:raise AssertionError('sidecar ancillary scope/identity')
@@ -273,10 +342,27 @@ def run_case(kind,artifacts,receipt,helper):
             if build.digest(target)!=receipt['artifacts'][name]:raise AssertionError('artifact changed')
             pins[name]={'path':str(target),'sha256':receipt['artifacts'][name]}
         phase='environment'
-        helper['stage_environment'](environment,['/bin/bash','/bin/sleep','/bin/cat','/usr/bin/setsid',binary/'runtimeEntry',binary/'ownerLibrary'])
+        parent=build.load_parent();sealed_environment=Path(sys._winter_host_query_stage_admission.directory)/'environment'
+        env_fd=parent.open_root(sealed_environment)
+        try:
+            for guest,item in receipt['environment'].items():
+                target=environment/guest[1:];target.parent.mkdir(parents=True,exist_ok=True,mode=0o755)
+                parent.copy_leaf(env_fd,guest[1:],target,item['sha256'],parent.MAX_ENV_FILE,0o555 if item['executable'] else 0o444)
+        finally:os.close(env_fd)
+        for folder in sorted((path for path in environment.rglob('*') if path.is_dir()),reverse=True):folder.chmod(0o555)
+        environment.chmod(0o555)
         source=root/'source';source.mkdir(mode=0o2770);os.chown(source,TOOL_UID,GROUP);source.chmod(0o2770)
         (source/'seed').write_bytes(b'hello\n');os.chown(source/'seed',TOOL_UID,GROUP);(source/'seed').chmod(0o660)
         phase='dac-control';dac_writable_control(source)
+        readonly=root/'readonly';readonly.mkdir(mode=0o755)
+        readonly_expected=readonly_data_inventory()
+        for name,wire in readonly_expected.items():
+            target=readonly/name;target.parent.mkdir(parents=True,exist_ok=True,mode=0o755);target.write_bytes(wire);target.chmod(0o444)
+        os.chown(readonly/'dac-canary',TOOL_UID,GROUP);(readonly/'dac-canary').chmod(0o660)
+        for folder in sorted((path for path in readonly.rglob('*') if path.is_dir()),reverse=True):folder.chmod(0o555)
+        readonly.chmod(0o555);readonly_fd=os.open(readonly,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);all_fds.append(readonly_fd)
+        readonly_identity=readonly_canary_preflight(readonly_fd)
+        readonly_initial=verify_readonly_data(readonly_fd,readonly_identity,readonly_expected)
         phase='canaries'
         (root/'host-only-credential').write_text('DISPOSABLE-HOST-CREDENTIAL-NOT-A-REAL-SECRET');(root/'host-only-credential').chmod(0o444)
         canary_store=root/'protected-canary-store';canary_store.mkdir(mode=0o755)
@@ -290,9 +376,9 @@ def run_case(kind,artifacts,receipt,helper):
         scope={'workspaceId':'workspace','sessionId':backend(kind),'incarnationId':'incarnation','leaseEpoch':1,'configRevision':1,'grantRevision':1,'policyRevision':1}
         selection={'providerId':'openai','modelKey':'openai/gpt-5.6','providerModelId':'gpt-5.6','family':'openai','protocol':'openai-responses','continuationDomain':'openai/gpt-5.6','capabilities':{'toolCalling':'native','readableState':'summary'}}
         route={'scope':{'homeId':'fixture-home','workspaceId':'workspace','sessionId':logical,'backendSessionId':backend(kind),'taskId':'task','incarnationId':'incarnation','bootId':boot,'leaseEpoch':1,'grantRevision':1,'accountRevision':1,'modelRevision':1},'selection':selection}
-        conversation={'authority':scope,'logicalSessionId':logical,'runtimeUid':RUNTIME_UID,'toolUid':TOOL_UID,'workspaceGid':GROUP,'policy':'bypass' if kind=='bypass' else 'plan' if kind=='plan' else 'ask','roots':[{'id':'source','guestPath':'/workspace/folders/source','readOnly':False,'source':str(source)}],'hostQueryRuntime':{'storeDirectory':str(root/'store'),'runhomeDirectory':str(root/'home'),'provider':route,'model':selection['modelKey'],'toolClasses':['read','write','execute'],'timeoutMs':30000}}
+        conversation={'authority':scope,'logicalSessionId':logical,'runtimeUid':RUNTIME_UID,'toolUid':TOOL_UID,'workspaceGid':GROUP,'policy':'bypass' if kind=='bypass' else 'plan' if kind=='plan' else 'ask','roots':[{'id':'source','guestPath':'/workspace/folders/source','readOnly':False,'source':str(source)},{'id':'readonly','guestPath':'/workspace/folders/readonly','readOnly':True,'source':str(readonly)}],'hostQueryRuntime':{'storeDirectory':str(root/'store'),'runhomeDirectory':str(root/'home'),'provider':route,'model':selection['modelKey'],'toolClasses':['read','write','execute'],'timeoutMs':30000}}
         config={'guestBootId':boot,'protectedStoreDirectories':[str(root/'store'),str(root/'home'),str(canary_store)],'artifacts':{'launcher':pins['toolLauncher'],'fileWorker':pins['fileWorker'],'processWorker':pins['processWorker']},'hostQueryRuntime':{'artifacts':{'launcher':pins['runtimeLauncher'],'executable':pins['runtimeEntry'],'ownerLibrary':pins['ownerLibrary']}},'environment':str(environment),'controlDirectory':str(control),'conversations':[conversation]}
-        pipes=[os.pipe2(os.O_CLOEXEC|os.O_NONBLOCK) for _ in range(5)];all_fds=[fd for pair in pipes for fd in pair]
+        pipes=[os.pipe2(os.O_CLOEXEC|os.O_NONBLOCK) for _ in range(5)];all_fds.extend(fd for pair in pipes for fd in pair)
         module=load('protected_fixture_service',ROOT/'packages/runtime/src/guest/linux-supervisor.py')
         phase='service-construct'
         ports=module.RuntimeDuplexPorts(logical,scope,pipes[0][0],pipes[1][1],pipes[2][1]);service=module.ToolService(config,host_query_ports={logical:ports})
@@ -369,9 +455,10 @@ def run_case(kind,artifacts,receipt,helper):
         for path in [root/'store',*list((root/'store').rglob('*.jsonl'))]:
             info=path.lstat()
             if info.st_uid!=RUNTIME_UID or info.st_mode&0o077:raise AssertionError('protected SDK state owner/mode')
+        verify_readonly_data(readonly_fd,readonly_identity,readonly_expected,readonly_initial)
         phase='source-effects';effects=effect_oracle(kind,source)
         phase='persisted-history';history=transcript_oracle(kind,root/'store',host_record)
-        evidence={**effects,**history,'callbacks':host_record['callbacks'],'backingCanariesUnchanged':True,'sameBackingDacWriteControl':True,'nativeServiceClosed':True,'storeLockReleased':True,'hostProviderReaped':True}
+        evidence={**effects,**history,'callbacks':host_record['callbacks'],'readonlyDataIdentityUnchanged':True,'backingCanariesUnchanged':True,'sameBackingDacWriteControl':True,'nativeServiceClosed':True,'storeLockReleased':True,'hostProviderReaped':True}
         phase='mount-teardown';oracle.after(observed);evidence['mountIsolation']=observed
         for capture in (*captures,*errors):capture.stream.close()
         for channel in channels:channel.close()
