@@ -7,7 +7,7 @@ def admitted():
     if __file__!=value.directory+'/source/scripts/guest-utilities/verify.py':raise SystemExit('fixed sealed utility runner required')
     return value
 ADMISSION=admitted()
-import hashlib,json,re,socket,stat,struct,subprocess,tempfile,threading,time
+import hashlib,json,re,shutil,socket,stat,struct,subprocess,tempfile,threading,time
 from pathlib import Path
 HERE=Path(__file__).resolve().parent
 
@@ -22,7 +22,7 @@ PROCESS_CLASSES={'ModuleNotFoundError','ImportError','AssertionError','SyntaxErr
 PROCESS_CATEGORIES={'module_missing','import_error','assertion_failed','syntax_error','permission_denied','shared_library_load','empty','unknown'}
 ERRNO_TOKENS=('EACCES','EPERM','ENOENT','ENOTDIR','ELOOP','ECONNREFUSED','ECONNRESET','EPIPE','EAGAIN','EMFILE','ENOSPC','EROFS','ENXIO')
 OPERATIONS=('connect','open','spawn','exec','read','write','bind')
-PHASES={'fixture-copy','service-startup','client-ordinary','client-plan','client-ordinary-receipt','client-plan-receipt','source-canaries','native-quiescence','service-close-wait','outer-mount-observation','complete'}
+PHASES={'fixture-copy','service-startup','client-ordinary','client-plan','client-ordinary-receipt','client-plan-receipt','source-canaries','native-quiescence','service-close-wait','outer-mount-observation','fixture-fd-close','fixture-removal','fixture-removal-checks','complete'}
 
 
 def normalized_stderr(data):
@@ -86,13 +86,13 @@ def client_observation(scenario,exit_code,out,err):
 
 def failure_record(error,observations):
     phase=observations.get('phase','fixture-copy');code=observations.get('serviceExitCode')
-    return {'kind':'winter-utility-failure','class':type(error).__name__ if type(error).__name__ in ERROR_CLASSES else 'Exception','phase':phase if type(phase) is str and phase in PHASES else 'unknown','clients':observations.get('clients',[]),'serviceReaped':observations.get('serviceReaped') is True,'serviceExitCode':code if type(code) is int and -2147483648<=code<=2147483647 else None,'serviceCleanupConfirmed':observations.get('serviceCleanupConfirmed') is True,'nativeCleanupConfirmed':observations.get('nativeCleanupConfirmed') is True,'fixtureRetained':True,'generalToolAvailabilityEnabled':False}
+    return {'kind':'winter-utility-failure','passed':False,'class':type(error).__name__ if type(error).__name__ in ERROR_CLASSES else 'Exception','phase':phase if type(phase) is str and phase in PHASES else 'unknown','clients':observations.get('clients',[]),'serviceReaped':observations.get('serviceReaped') is True,'serviceExitCode':code if type(code) is int and -2147483648<=code<=2147483647 else None,'serviceCleanupConfirmed':observations.get('serviceCleanupConfirmed') is True,'nativeCleanupConfirmed':observations.get('nativeCleanupConfirmed') is True,'fixtureFdsClosedConfirmed':observations.get('fixtureFdsClosedConfirmed') is True,'wholeFixtureRemovalConfirmed':observations.get('wholeFixtureRemovalConfirmed') is True,'fixtureRetained':observations.get('fixtureRetained',True) is True,'generalToolAvailabilityEnabled':False}
 
 
 def diagnostic_wire(error,observations,canonical):
     record=failure_record(error,observations);wire=canonical(record).encode()
     if len(wire)>32768:
-        record={key:record[key] for key in ('kind','class','phase','serviceReaped','serviceExitCode','serviceCleanupConfirmed','nativeCleanupConfirmed','fixtureRetained','generalToolAvailabilityEnabled')}
+        record={key:record[key] for key in ('kind','passed','class','phase','serviceReaped','serviceExitCode','serviceCleanupConfirmed','nativeCleanupConfirmed','fixtureFdsClosedConfirmed','wholeFixtureRemovalConfirmed','fixtureRetained','generalToolAvailabilityEnabled')}
         record['diagnosticTruncated']=True;wire=canonical(record).encode()
     return record,wire
 
@@ -109,6 +109,47 @@ def outer_mountinfo():
             chunks.append(wire)
         return b''.join(chunks)
     finally:os.close(fd)
+
+
+def remove_working_fixture(directory,result,observations):
+    directory=Path(directory)
+    if directory.parent!=Path('/tmp') or not re.fullmatch(r'winter-utility-run-[A-Za-z0-9_-]+',directory.name):raise ValueError('fixed working fixture removal scope required')
+    if result.get('passed') is not True or result.get('nativeCleanupConfirmed') is not True or any(observations.get(key) is not True for key in ('serviceReaped','serviceCleanupConfirmed','nativeCleanupConfirmed','fixtureFdsClosedConfirmed')) or type(observations.get('serviceExitCode')) is not int or observations['serviceExitCode']!=0 or result.get('outerMountObservation',{}).get('unchanged') is not True:raise ValueError('complete native/service/fd/outer evidence required before removal')
+    observations['phase']='fixture-removal'
+    shutil.rmtree(directory)
+    observations['phase']='fixture-removal-checks'
+    try:os.lstat(directory)
+    except FileNotFoundError:observations['fixtureRetained']=False
+    else:raise ValueError('working fixture still present after removal')
+    wire=outer_mountinfo();root=os.fsencode(directory)
+    if not wire or len(wire)>1024*1024:raise ValueError('working fixture mount observation bound')
+    for line in wire.splitlines():
+        fields=line.split();separator=fields.index(b'-') if b'-' in fields else -1
+        if separator<6 or len(fields)<separator+4:raise ValueError('working fixture mount observation malformed')
+        point=re.sub(rb'\\(040|011|012|134)',lambda match:bytes([int(match[1],8)]),fields[4])
+        if not point.startswith(b'/'):raise ValueError('working fixture mountpoint malformed')
+        if point==root or point.startswith(root+b'/'):raise ValueError('working fixture mount residue')
+    observations.update(wholeFixtureRemovalConfirmed=True,phase='complete')
+    result.update(fixtureFdsClosedConfirmed=True,wholeFixtureRemovalConfirmed=True,sealedInputStageRemovalConfirmed=False)
+
+
+def retain_failure(directory,parent,wire):
+    try:
+        parent.write_file(directory/'failure.json',wire,0o600)
+        return directory.name,'working-fixture'
+    except OSError:
+        # Removal can have already deleted the parent. Preserve a diagnostic;
+        # never recreate the fixture, retry deletion or recover a mount.
+        fd,name=tempfile.mkstemp(prefix='winter-utility-failure-',suffix='.json',dir='/tmp')
+        try:
+            at=0
+            while at<len(wire):
+                written=os.write(fd,wire[at:])
+                if written<=0:raise ValueError('failure diagnostic write')
+                at+=written
+            os.fsync(fd)
+        finally:os.close(fd)
+        return Path(name).name,'diagnostic-file'
 
 
 class OuterMountGuard:
@@ -189,7 +230,7 @@ def environment_mode(guest,item):
 
 def execute(directory,parent,oracle,observations=None):
     if observations is None:observations={}
-    observations.update(phase='fixture-copy',clients=[],serviceReaped=False,serviceExitCode=None,serviceCleanupConfirmed=False,nativeCleanupConfirmed=False)
+    observations.update(phase='fixture-copy',clients=[],serviceReaped=False,serviceExitCode=None,serviceCleanupConfirmed=False,nativeCleanupConfirmed=False,fixtureFdsClosedConfirmed=False)
     receipt=ADMISSION.receipt;directory=Path(directory);directory.chmod(0o711);binary=directory/'bin';binary.mkdir(mode=0o755);environment=directory/'environment';environment.mkdir(mode=0o755);control=directory/'control';control.mkdir(mode=0o711)
     def copy(relative,target,mode):
         fd=parent.leaf(ADMISSION.root_fd,relative)
@@ -250,7 +291,11 @@ def execute(directory,parent,oracle,observations=None):
         complete=True
         return {'kind':'winter-tool-utility-native-fixture','passed':True,'directToolViewExecutionVerified':True,'firstSDKEngineExecutionVerified':False,'linuxExecutionVerified':True,'vmExecutionVerified':False,'generalToolAvailabilityEnabled':False,'nativeCleanupConfirmed':True,'clientRecordsSha256':parent.sha(parent.canonical(records).encode()),'approvedReceiptSha256':ADMISSION.receipt_sha,'smokeSha256':receipt['smokeSha256'],'freshInvocations':2,'outerMountObservation':outer_result}
     finally:
+        if complete:observations['phase']='fixture-fd-close'
         if fd is not None:os.close(fd)
+        if complete:
+            if any(child.stdin is not None or not child.stdout.closed or not child.stderr.closed for child in clients) or server.stdin is not None or not server.stdout.closed or not server.stderr.closed:raise ValueError('working fixture service/client pipes must be closed')
+            observations.update(fixtureFdsClosedConfirmed=True,phase='complete')
         if not complete:
             # Retain every failure directory. Killing/reaping alone never makes it success.
             for child in clients:
@@ -272,16 +317,21 @@ def main():
     parent=checked_module('stage');parent.verify_staged(ADMISSION.directory,ADMISSION.receipt_sha,ADMISSION.parent_sha)
     capture=checked_module('closure');capture.validate_capture(ADMISSION.receipt['utilityCapture'],Path(ADMISSION.directory)/'environment',sealed=True)
     oracle=checked_module('oracle');directory=Path(tempfile.mkdtemp(prefix='winter-utility-run-',dir='/tmp'))
-    observations={'phase':'fixture-copy'}
+    observations={'phase':'fixture-copy','wholeFixtureRemovalConfirmed':False}
     try:
         result=execute(directory,parent,oracle,observations)
+        remove_working_fixture(directory,result,observations)
     except BaseException as error:
+        if observations.get('phase') in ('fixture-removal','fixture-removal-checks'):
+            try:os.lstat(directory)
+            except FileNotFoundError:observations['fixtureRetained']=False
+            except OSError:observations['fixtureRetained']=None
+            else:observations['fixtureRetained']=True
         diagnostic,wire=diagnostic_wire(error,observations,parent.canonical)
-        parent.write_file(directory/'failure.json',wire,0o600)
+        retention,scope=retain_failure(directory,parent,wire)
         print(parent.canonical(diagnostic),file=sys.stderr)
-        print(parent.canonical({'fixtureRetained':True,'retentionId':directory.name,'nativeCleanupConfirmed':diagnostic['nativeCleanupConfirmed']}),file=sys.stderr);raise
+        print(parent.canonical({'fixtureRetained':diagnostic['fixtureRetained'],'retentionId':retention,'retentionScope':scope,'nativeCleanupConfirmed':diagnostic['nativeCleanupConfirmed'],'wholeFixtureRemovalConfirmed':diagnostic['wholeFixtureRemovalConfirmed']}),file=sys.stderr);raise
     else:
-        parent.write_file(directory/'result.json',parent.canonical(result).encode(),0o600)
         print(parent.canonical(result))
 
 

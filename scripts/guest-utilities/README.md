@@ -3,7 +3,7 @@
 This is an independent source/capture/oracle slice. It prepares a disposable
 Linux tool-compatibility fixture. The native runner is implemented as source and
 requires separate exact source/artifact admission before execution. No native
-runner, utility, helper, namespace or VM was executed for this slice.
+runner, utility, helper, namespace or VM was executed during its initial preparation.
 The existing strict five-provider-turn/four-tool fresh-engine oracle is unchanged.
 General tool availability and production activation remain false.
 
@@ -95,8 +95,32 @@ and cancellation with uncertain effects. Success also requires positive source
 canaries, absent orphan writes after a bounded delay, exact zero active/debt
 status, the existing supervisor's immutable namespace-init wait receipts, client
 reaping and a clean service close/wait. No timeout, EOF or kill() substitutes for
-native wait confirmation. Result/client records and every failure directory are
-retained; no automatic unmount or ignoring EROFS is available.
+native wait confirmation. Client records are measured in the native receipt.
+Failure evidence is retained; no automatic unmount or ignoring EROFS is available.
+
+The source now adds a separate whole **working fixture** removal gate. Only the
+new `/tmp/winter-utility-run-*` directory created by that invocation is removed,
+after confirmed native/service waits, closed fixture control/process pipe FDs
+and unchanged outer mount observations. Plain `shutil.rmtree` must succeed;
+`lstat` must report FileNotFoundError, and a bounded fresh `/proc/self/mountinfo`
+read must contain no mountpoint equal to or beneath that exact directory.
+There is no retry, `umount`, permission repair, ignore-errors or EROFS recovery.
+Only then is success printed with `wholeFixtureRemovalConfirmed:true`.
+
+Native process/view cleanup and whole working-directory removal are distinct
+claims. A removal failure preserves actual prior native cleanup evidence while
+reporting overall failure and whole removal false. Remaining tree contents are
+retained; if deletion already removed the diagnostic parent or it cannot hold
+`failure.json`, an exclusive mode0600 bounded `/tmp/winter-utility-failure-*`
+diagnostic is retained instead. A deleted working tree is never recreated.
+The separate root-owned immutable **sealed input stage** is retained and has
+`sealedInputStageRemovalConfirmed:false`; borrowed input-stage FDs are outside
+the working-fixture FD claim. Earlier failed fixtures are never deleted.
+Run `38408642713` verified the prior native tool-view/process/drain gate; its
+runner did not remove the whole working fixture. The added removal gate needs
+fresh source/build/artifact review and a separately admitted rerun before it
+can be reported passing. Success receipts are printed after removal, rather
+than writing a premature `passed:true` result inside the working tree.
 
 The fixed descendant payload writes its readiness marker only in the child,
 after successful `setsid()`. Its foreground parent waits at most two seconds for
@@ -267,7 +291,7 @@ pnpm exec tsc --noEmit -p tsconfig.typecheck.json
 A later externally byte-checked parent may receive only the exact independently
 approved archive/receipt/parent hashes and `--run` for an isolated disposable
 Linux runner. No execution command or approval identity is preinstalled. The
-new native utility fixture remains unexecuted and unadmitted. General tool
-availability stays false even if this limited fixture later passes; first SDK,
+added working-fixture removal gate remains unexecuted and unadmitted. General tool
+availability stays false even when the limited native tool-view gate passes; first SDK,
 VM integration, cold continuity and resource/storage acceptance are separate.
 Neither held Mac two-disk nor native egress work is resumed by this slice.
