@@ -1,5 +1,10 @@
 # Admitted Linux SDK entry (source slice)
 
+Historical entry behavior at `84dc16c9` is recorded below. The reviewed entry-only
+backport `aa11dc0e` now shares graceful clean EOF with this supervisor slice; see
+[`LINUX-HOST-QUERY-SUPERVISOR.md`](../guest-supervisor/LINUX-HOST-QUERY-SUPERVISOR.md).
+Previously frozen artifacts are not relabeled as the corrected source.
+
 Base: SDK main `79cdeb082eaa5cf57940d80541baf279529a2d8b`. This adds a reusable
 SDK entry and a distinct fresh-store host-query profile. It does not launch a
 supervisor, expose a stream port, resume a store, or claim real guest approvals.
