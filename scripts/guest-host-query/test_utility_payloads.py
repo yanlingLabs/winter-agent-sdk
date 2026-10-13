@@ -28,6 +28,15 @@ class FakeOS:
     def close(self,fd):self.closed.append(fd)
 
 class PayloadTests(unittest.TestCase):
+    def test_optimized_python_refuses_before_imports_or_probe_io(self):
+        for name in PAYLOADS:
+            first=python_body(name).body[0]
+            self.assertIsInstance(first,ast.If)
+            tree=ast.fix_missing_locations(ast.Module(body=[first],type_ignores=[]))
+            with self.assertRaises(SystemExit) as raised:exec(compile(tree,'inert-debug','exec',optimize=1),{})
+            self.assertEqual(raised.exception.code,92)
+            exec(compile(tree,'inert-debug','exec',optimize=0),{})
+
     def test_shell_grammar_without_body_execution(self):
         for name in PAYLOADS:
             result=subprocess.run(['/bin/bash','-n',str(HERE/name)],capture_output=True,timeout=2)

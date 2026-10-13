@@ -7,6 +7,7 @@ export PYTHONPATH=
 export GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.invalid GIT_COMMITTER_NAME=Fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
 export GIT_AUTHOR_DATE='2000-01-01T00:00:00+0000' GIT_COMMITTER_DATE='2000-01-01T00:00:00+0000'
 python3 - <<'PY'
+if not __debug__: raise SystemExit(92)
 import errno,json,os,stat
 os.mkdir('/dev/shm/winter-daily-home',0o700)
 seed='/workspace/folders/source/seed'
