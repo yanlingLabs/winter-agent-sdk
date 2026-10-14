@@ -56,6 +56,21 @@ describe("compartment file-helper protocol", () => {
     await expect(f.helper.write("source", "file", Buffer.from("x"))).rejects.toMatchObject({ code: "transport_lost", effectsUncertain: true });
     expect(attempts).toBe(1);
   });
+  test("initial stat failure preserves errno and refuses reads/writes without replay", async () => {
+    const f = fixture();
+    let attempts = 0;
+    f.port.execute = async (request) => {
+      attempts++;
+      return { protocolVersion: 1, requestId: request.requestId, authority: request.authority, exitCode: 1,
+        stdout: '{"version":1,"ok":false,"code":"stat_failed","errno":5}' };
+    };
+    await expect(f.helper.read("source", "file")).rejects.toMatchObject({ code: "stat_failed", errno: 5, effectsUncertain: false });
+    expect(attempts).toBe(1);
+    await expect(f.helper.write("source", "file", Buffer.from("x"))).rejects.toMatchObject({ code: "stat_failed", errno: 5, effectsUncertain: true });
+    expect(attempts).toBe(2);
+    await expect(f.helper.writeChecked("source", "file", Buffer.from("x"), "absent")).rejects.toMatchObject({ code: "stat_failed", errno: 5, effectsUncertain: true });
+    expect(attempts).toBe(3);
+  });
   test("partial writes/flush failures retain uncertainty and oversized responses refuse", async () => {
     const f = fixture();
     const reply = (request: GuestFileRequest, stdout: string): GuestFileReply => ({ protocolVersion: 1, requestId: request.requestId, authority: request.authority, exitCode: 1, stdout });

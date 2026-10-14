@@ -67,7 +67,8 @@ export function createGuestFileHelper(options: {
     if (!result || typeof result !== "object" || result.version !== 1 || typeof result.ok !== "boolean") throw new GuestFileHelperError("invalid_response", "guest file worker response schema mismatch", operation !== "read");
     if (!result.ok) {
       if (reply.exitCode === 0 || typeof result.code !== "string" || typeof result.errno !== "number") throw new GuestFileHelperError("invalid_response", "guest file denial lacks actual failure evidence", operation !== "read");
-      throw new GuestFileHelperError(result.code, "guest file worker refused the operation", operation !== "read" && ["write_failed", "flush_failed"].includes(result.code), result.errno);
+      // Initial stat follows openat2; a write may already have created an empty file.
+      throw new GuestFileHelperError(result.code, "guest file worker refused the operation", operation !== "read" && ["stat_failed", "write_failed", "flush_failed"].includes(result.code), result.errno);
     }
     if (reply.exitCode !== 0 || !Number.isSafeInteger(result.bytes) || (result.bytes as number) < 0 || (result.bytes as number) > maxBytes) throw new GuestFileHelperError("invalid_response", "guest file success lacks valid exit/byte evidence", operation !== "read");
     if (typeof result.fileVersion === "string" && Number(result.fileVersion.split(":")[2]) !== result.bytes) throw new GuestFileHelperError("invalid_response", "descriptor identity size does not match its byte evidence", operation !== "read");
