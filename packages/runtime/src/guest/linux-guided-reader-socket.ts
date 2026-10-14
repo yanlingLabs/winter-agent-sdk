@@ -1,66 +1,109 @@
-/** Prospective inherited-FD adapter. No pathname/listener/reconnect route.
- * Native admission owns claim/shutdown. Injected sockets test ownership only;
- * they do not prove pinned Bun adoption or native channel admission. */
-import { Socket } from "node:net";
+/** Fixed inherited-FD Bun adapter. No pathname/listener/reconnect route.
+ * Only native admission supplies production claim/shutdown. Injected effects
+ * test ownership bookkeeping, never actual Bun/FD/native admission. */
 import { closeSync, fstatSync } from "node:fs";
 import type { LinuxGuidedReaderWire } from "./linux-guided-reader-channel.ts";
-interface ReaderSocket {
-  on(event: string, callback: (...values: any[]) => void): unknown;
-  connect(options: { fd: number }): unknown;
-  write(frame: Uint8Array, callback: (error?: Error | null) => void): unknown;
-  destroy(): unknown;
+interface ReaderSocket { write(bytes: Uint8Array): number; terminate(): void; }
+interface ReaderConnectOptions {
+  fd: number;
+  socket: {
+    open(socket: ReaderSocket): void; connectError(socket: ReaderSocket, error: Error): void;
+    error(socket: ReaderSocket, error: Error): void; close(socket: ReaderSocket): void; end(socket: ReaderSocket): void;
+    data(socket: ReaderSocket, chunk: Uint8Array): void; drain(socket: ReaderSocket): void;
+  };
 }
-interface SocketIdentity { dev: number; ino: number; }
+interface Write { bytes: Uint8Array; offset: number; resolve(): void; reject(error: Error): void; }
+const unavailable = () => new Error("required_context_unavailable");
 export function createLinuxGuidedReaderSocketWire(options: {
   claimDup(): number; shutdownOriginal(): void;
   /** Trusted source-test effects only; production admission passes none. */
-  socket?: () => ReaderSocket; identity?: (fd: number) => SocketIdentity; closeUnadopted?: (fd: number) => void;
+  connect?: (options: ReaderConnectOptions) => Promise<ReaderSocket>;
+  validateDup?: (fd: number) => void; closeUnadopted?: (fd: number) => void;
 }): LinuxGuidedReaderWire {
   const fd = options.claimDup();
-  if (!Number.isInteger(fd) || fd < 3) throw new Error("required_context_unavailable");
-  const identify = options.identity ?? (value => { const stat = fstatSync(value); if (!stat.isSocket()) throw new Error("required_context_unavailable"); return { dev: stat.dev, ino: stat.ino }; });
+  if (!Number.isInteger(fd) || fd < 3) throw unavailable();
+  // The pinned runtime implements Listener.connectInner's fd branch, while its
+  // ambient declarations expose only TCP/unix options. Keep this cast private
+  // and bounded to the reviewed FD/handler envelope; never supply a host/path.
+  const connect = options.connect ?? (Bun.connect as unknown as (config: ReaderConnectOptions) => Promise<ReaderSocket>);
   const closeRaw = options.closeUnadopted ?? closeSync;
-  let identity: SocketIdentity | undefined, socket: ReaderSocket | undefined, rawOwned = true, closed = false, adopted = false;
-  let receiver: ((chunk: Uint8Array) => void) | undefined, lost: (() => void) | undefined;
+  let closed = false, attempted = false, adopted = false, rawClosed = false, nativeStopped = false, subscribed = false, flushing = false, waitingDrain = false;
+  let socket: ReaderSocket | undefined, receiver: ((chunk: Uint8Array) => void) | undefined, lost: (() => void) | undefined;
+  const writes: Write[] = [];
+  const closeOwnedRaw = () => {
+    if (adopted || rawClosed) return;
+    rawClosed = true; // Before close: callbacks/reentrancy cannot claim another close.
+    try { closeRaw(fd); } catch { /* Root/runtime teardown still owns uncertainty. */ }
+  };
   const close = () => {
     if (closed) return; closed = true;
-    // shutdown() on the native original makes every surviving dup unusable.
-    // Native never closes the transferred JS dup by numeric descriptor.
-    try { options.shutdownOriginal(); } catch { /* Still destroy JS ownership; debt remains uncertain. */ }
-    try { socket?.destroy(); } catch { /* No cleanup receipt is fabricated. */ }
-    if (rawOwned) {
-      rawOwned = false;
-      try { const current = identify(fd); if (identity && current.dev === identity.dev && current.ino === identity.ino) closeRaw(fd); }
-      catch { /* Missing/reused descriptor cannot be closed by its stale number. */ }
-    }
-    lost?.();
+    if (!nativeStopped) { nativeStopped = true; try { options.shutdownOriginal(); } catch { /* Still close JS ownership. */ } }
+    if (!attempted) closeOwnedRaw();
+    const owned = socket; socket = undefined;
+    try { owned?.terminate(); } catch { /* No cleanup receipt is fabricated. */ }
+    for (const write of writes.splice(0)) write.reject(unavailable());
+    const notify = lost; lost = undefined; notify?.();
+    // A generic post-transfer error grants no numeric-close authority. An explicit
+    // late pre-open connectError from this same attempt may still return it once.
+  };
+  const flush = () => {
+    if (closed || !adopted || !socket || flushing || waitingDrain) return;
+    flushing = true;
+    try {
+      while (!closed && writes.length > 0) {
+        const write = writes[0]!, remaining = write.bytes.length - write.offset;
+        const count = socket.write(write.bytes.subarray(write.offset));
+        // write may reentrantly close us; all queued promises are already rejected.
+        if (closed) return;
+        if (!Number.isSafeInteger(count) || count < 0 || count > remaining) { close(); return; }
+        write.offset += count;
+        if (write.offset !== write.bytes.length) { waitingDrain = true; return; } // Keep only suffix, wait for drain.
+        writes.shift(); write.resolve();
+      }
+    } catch { close(); } finally { flushing = false; }
+  };
+  const handlers: ReaderConnectOptions["socket"] = {
+    open(value) {
+      // FIRST record ownership, before anything that can invoke a callback or
+      // throw. Pinned non-TLS Bun fromFd emits this synchronously on attachment.
+      adopted = true; socket = value;
+      if (closed) { socket = undefined; try { value.terminate(); } catch {} }
+    },
+    connectError(_value, _error) {
+      // Pinned Bun's detached failed-fromFd callback confirms this sole transfer
+      // never adopted/closed the raw fd. Generic rejection/throw cannot do that.
+      if (attempted && !adopted) closeOwnedRaw();
+      close();
+    },
+    error(_value, _error) { close(); }, close(_value) { close(); }, end(_value) { close(); },
+    data(value, chunk) {
+      if (closed) return;
+      if (!adopted || value !== socket || !receiver) { close(); return; }
+      try { receiver(chunk); } catch { close(); }
+    },
+    drain(value) { if (closed) return; if (!adopted || value !== socket) { close(); return; } waitingDrain = false; flush(); },
   };
   try {
-    identity = identify(fd);
-    const socketOptions = { allowHalfOpen: false, readableHighWaterMark: 64 * 1024, writableHighWaterMark: 64 * 1024 };
-    socket = options.socket?.() ?? new Socket(socketOptions) as unknown as ReaderSocket;
-    socket.on("connect", () => { if (closed) { socket!.destroy(); return; } adopted = true; rawOwned = false; });
-    socket.on("data", (chunk: Uint8Array) => { if (closed) return; if (!receiver) { close(); return; } receiver(chunk); });
-    for (const event of ["error", "end", "close"]) socket.on(event, close);
-  } catch { close(); throw new Error("required_context_unavailable"); }
-  let subscribed = false;
+    if (options.validateDup) options.validateDup(fd);
+    else if (!fstatSync(fd).isSocket()) throw unavailable();
+  } catch { close(); throw unavailable(); }
   return Object.freeze({
     close,
     subscribe(data: (chunk: Uint8Array) => void, onLost: () => void) {
-      if (closed || subscribed) throw new Error("required_context_unavailable");
+      if (closed || subscribed) throw unavailable();
       subscribed = true; receiver = data; lost = onLost;
-      // Pinned Bun 1.3.14 constructor does not adopt fd. Its explicit FD connect
-      // branch synchronously calls fromFd/onOpen; no host/path connect is allowed.
-      try { socket!.connect({ fd }); if (!adopted) throw new Error("required_context_unavailable"); }
-      catch { close(); throw new Error("required_context_unavailable"); }
+      attempted = true;
+      try {
+        const connected = connect({ fd, socket: handlers });
+        void connected.then(value => { if (!closed && (!adopted || value !== socket)) close(); }, close);
+        if (!adopted || closed) { close(); throw unavailable(); }
+      } catch { close(); throw unavailable(); }
       return () => { receiver = undefined; lost = undefined; };
     },
     send(frame: Uint8Array) {
-      if (closed || !adopted) return Promise.reject(new Error("required_context_unavailable"));
-      return new Promise<void>((resolve, reject) => {
-        try { socket!.write(frame, error => { if (error || closed) { close(); reject(new Error("required_context_unavailable")); } else resolve(); }); }
-        catch { close(); reject(new Error("required_context_unavailable")); }
-      });
+      if (closed || !adopted || !socket || !(frame instanceof Uint8Array) || frame.length < 1 || frame.length > 4100 || writes.length >= 16) return Promise.reject(unavailable());
+      const bytes = frame.slice();
+      return new Promise<void>((resolve, reject) => { writes.push({ bytes, offset: 0, resolve, reject }); flush(); });
     },
   });
 }

@@ -65,13 +65,15 @@ export function createLinuxGuidedReaderChannel(options: {
     }
     if (message.outcome === "ok" && !read.seenResult) throw unavailable();
     if (message.outcome !== "ok") read.result.reject(unavailable());
-    read.dispose(); pending.delete(readId); held(); read.drained.resolve();
+    // Keep the operation registered through the last owner check: if that
+    // throws, close() must still reject its drain promise and retain its debt.
+    held(); read.dispose(); read.drained.resolve(); pending.delete(readId);
     // This is reached only on this registered wire's matching closed terminal
     // receipt. Root must back that receipt with actual native reap/EOF/drain.
   };
   const data = (chunk: Uint8Array) => {
     try {
-      held(); if (!(chunk instanceof Uint8Array) || chunk.byteLength === 0 || chunk.byteLength > LINUX_GUIDED_READER_BODY_BYTES + 4) throw unavailable();
+      held(); if (!(chunk instanceof Uint8Array) || chunk.byteLength === 0) throw unavailable();
       let at = 0;
       while (at < chunk.byteLength) {
         if (!body) {
@@ -87,7 +89,8 @@ export function createLinuxGuidedReaderChannel(options: {
       }
     } catch { close(); }
   };
-  held(); detach = wire.subscribe(data, close); if (closed) detach();
+  try { held(); detach = wire.subscribe(data, close); if (closed) { detach(); throw unavailable(); } }
+  catch { close(); throw unavailable(); }
   return Object.freeze({
     close,
     diagnostics: () => Object.freeze({ closed, outstanding: pending.size, consumed: consumed.size }),

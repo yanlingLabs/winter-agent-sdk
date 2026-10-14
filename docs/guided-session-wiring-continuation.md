@@ -37,14 +37,38 @@ Root service, Socket or provider outside deterministic in-memory stubs.
 
 ## Actual checks
 
-Final source check: 83 tests passed, zero failures, 886 assertions across:
+Latest review-fix source check: 92 tests passed, zero failures, 986 assertions across ten files:
 
-- guest: guided reader channel, socket effects, protocol, parent bridge and v1 profile;
+- guest: guided reader construction, channel, socket effects, protocol, parent bridge and v1 profile;
 - context: ordinary channel, required-context unit/engine behavior and guided assembler.
 
 `tsconfig.typecheck.json`, `tsconfig.sdk-fence.json` and `git diff --check` passed.
 Cached dependencies are linked through ignored `node_modules` symlinks; no install,
 pin, version bump or release occurred. Native C was neither changed nor executed.
+
+## Review fixes after restart
+
+W1/W6 and missing-reader-symbol refusal are isolated in
+`b766e7bc13505aa481ae8e22332856e69dde47cd`. Channel construction failure after a
+wire claim now closes that wire and the native owner independently; cleanup
+exceptions are sanitized. Retry checks both existing reader and existing channel.
+No injected native admission factory was introduced.
+
+W2/W3 use the fixed inherited-FD `Bun.connect` branch instead of Node Socket
+construction/adoption. Before any transfer, a failed first descriptor observation
+closes the fresh caller-owned duplicate. After a transfer attempt, only the same
+attempt's explicit detached `connectError` returns raw ownership for one close;
+generic throws/rejections retain uncertainty. `open` first records adoption/socket,
+including after prior loss; adopted sockets close through `terminate`, never a
+saved descriptor number. These choices follow the pinned Bun source second opinion;
+injected tests do not prove actual runtime FD behavior.
+
+Outbound writes copy bytes into a FIFO capped at 16 including its active partial
+write, and at 4100 total bytes each. Short/zero writes retain the suffix and wait
+for `drain`; invalid counts/throws/reentrant closure reject every outstanding write.
+W4 keeps each read registered through the last owner check before drain settlement,
+so late owner loss rejects rather than hanging its promise. W5 limits each decoded
+frame, allowing a larger coalesced callback without retaining its complete chunk.
 
 ## Reviewed native delta remains DATA
 
@@ -84,9 +108,9 @@ and `/tmp/winter-linux-guided-owner-DATA.patch`.
    instruction-read handle and its confined preparation refusal remains intact.
    The Root host adapter must use exact preparation/correlation and canonical Core
    ownership; no generic control/filesystem API.
-5. Independently audit pinned Bun FD adoption/failure ownership. The source adapter
-   uses explicit `.connect({fd})`, not constructor adoption, plus identity-guarded
-   unadopted cleanup. Inert close-order/reuse tests are not actual Bun FD proof.
+5. Independently review and eventually validate the fixed direct-Bun FD adapter
+   and the pinned source ownership assumptions. Inert close-order/failure/write
+   tests are not actual Bun FD adoption/teardown proof.
 6. Decide production generation expiry/replay policy. This source channel fails
    closed after 4096 consumed IDs per registration; it is not a production ledger.
 7. Obtain exact Ubuntu24.04 base/libc DATA and kernel feature identity (separate
