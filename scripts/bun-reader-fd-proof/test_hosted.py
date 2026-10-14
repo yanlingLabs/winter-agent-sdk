@@ -40,6 +40,20 @@ def archive(entries):
 
 
 class HostedSourceTests(unittest.TestCase):
+    def test_exact_https_redirect_hosts_only(self):
+        for hostname in ("github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"):
+            with self.subTest(hostname=hostname):
+                self.assertTrue(hosted.redirect_allowed("https", hostname, None, None))
+                self.assertFalse(hosted.redirect_allowed("http", hostname, None, None))
+                self.assertFalse(hosted.redirect_allowed("https", hostname, "user", None))
+                self.assertFalse(hosted.redirect_allowed("https", hostname, None, "password"))
+                self.assertFalse(hosted.redirect_allowed("https", hostname, "", None))
+        for hostname in (None, "evil.example", "sub.objects.githubusercontent.com",
+                         "objects.githubusercontent.com.evil.example", "objects.githubusercontent.com.",
+                         "objects.githubusercontent.com@evil.example"):
+            with self.subTest(hostname=hostname):
+                self.assertFalse(hosted.redirect_allowed("https", hostname, None, None))
+
     def test_default_skip_cannot_enter_target(self):
         with patch.object(hosted, "target", side_effect=AssertionError("target entered")):
             with redirect_stdout(io.StringIO()) as output:

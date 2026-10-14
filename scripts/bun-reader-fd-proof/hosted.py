@@ -26,6 +26,12 @@ class Refusal(Exception):
     pass
 
 
+def redirect_allowed(scheme, hostname, username, password):
+    return scheme == "https" and hostname in (
+        "github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"
+    ) and username is None and password is None
+
+
 def gate(args, platform, machine, uid, euid):
     if not args.admitted_hosted_run:
         return "SKIP"
@@ -132,7 +138,7 @@ def target(args):
     class ClosedRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, request, fp, code, msg, headers, newurl):
             parsed = urllib.parse.urlparse(newurl)
-            if parsed.scheme != "https" or parsed.hostname not in ("github.com", "release-assets.githubusercontent.com") or parsed.username or parsed.password:
+            if not redirect_allowed(parsed.scheme, parsed.hostname, parsed.username, parsed.password):
                 raise Refusal("official_asset_redirect")
             return super().redirect_request(request, fp, code, msg, headers, newurl)
 

@@ -55,7 +55,7 @@ jobs:
                   raise SystemExit('reviewed source changed')
           finally:
               os.close(fd)
-          if hashlib.sha256(data).hexdigest() != '2b829140956b2f23d99d4d8bc7ea1bfb18b25f076bba313ffa8b8716cfb55a7d':
+          if hashlib.sha256(data).hexdigest() != '75c50242a6fd397d59310f03ffeba30d235607ebb310c3c66e38762685b2dab5':
               raise SystemExit('exact reviewed source digest required')
           sys.argv = [str(source), '--admitted-hosted-run', '--repository', repository, '--ref', ref,
                       '--before', before, '--head', head, '--attempt', attempt, '--run-id', run_id,

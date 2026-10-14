@@ -74,7 +74,8 @@ or reproduced-build guarantee. The hosted receipt explicitly sets
 `signatureVerified:false`; exact45/Root must accept this residual before execution.
 
 Proposed hosted acquisition disables proxies, allows HTTPS redirects only to
-github.com and release-assets.githubusercontent.com, downloads at most expected
+github.com, release-assets.githubusercontent.com and objects.githubusercontent.com,
+downloads at most expected
 size+1 and checks exact size/hash before ZIP parsing. It allows only the single
 `bun-linux-aarch64/bun` file plus an optional empty containing directory. No path
 extraction occurs; duplicates, unexpected entries, symlinks, encrypted entries,
@@ -109,7 +110,7 @@ numeric-close. Separate general ownership evidence and exact approval remain due
 
 ## Inert verification / source CI proposal
 
-Nineteen tests currently cover default skip, exact source/artifact DATA pins,
+Twenty tests currently cover default skip, exact source/artifact DATA pins,
 first-push/attempt/UID/architecture gates, closed ZIP parsing, scope/refusal oracle
 and workflow action/source pins. The existing eleven FD receipt tests remain
 synthetic DATA tests. The following source-only command is suitable for CI after
