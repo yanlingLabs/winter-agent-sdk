@@ -16,7 +16,10 @@ function fixture() {
     tools: ["Read", "Write", "Edit", "Bash"], allowedTools: [], settingSources: [], skills: [], plugins: [], strictMcpConfig: true,
     mcpServers: {}, permissionMode: "default", permissions: { disableBypassPermissionsMode: true }, allowDangerouslySkipPermissions: false,
     requiredRuntimeContext: { ...registration.requiredRuntimeContext } };
-  const result = { version: 1 as const, kind: "reader_result" as const, registrationId: uuid(1), readId, owner: { ...registration.owner }, frame: "{}\n" };
+  const { workspaceId: _workspaceId, ...innerOwner } = registration.owner;
+  const inner = { version: 1, readId, owner: innerOwner, views: registration.views, limits: registration.limits,
+    snapshot: { blocks: [], digest: "fixture", droppedImports: [], files: [], provenance: [], skippedLinks: [], text: "guidance", tiers: "admitted-only" } };
+  const result = { version: 1 as const, kind: "reader_result" as const, registrationId: uuid(1), readId, owner: { ...registration.owner }, frame: `${JSON.stringify(inner)}\n` };
   const terminal = { version: 1 as const, kind: "reader_terminal" as const, registrationId: uuid(1), readId, owner: { ...registration.owner },
     outcome: "ok" as const, namespaceInitReaped: true, monitorReaped: true, namespaceWaitStatus: 0, monitorWaitStatus: 0,
     stdoutEof: true, stderrEof: true, captureDrained: true };
@@ -112,6 +115,15 @@ test("in-memory frame validation refuses incomplete, oversized, invalid UTF8 and
     invalidUtf8, wire(` ${JSON.stringify(f.result)}`), wire(JSON.stringify(f.result).replace('"version":1', '"version":1,"version":1')),
     Buffer.alloc(LINUX_GUIDED_READER_BODY_BYTES + 5)]) expect(() => decodeLinuxGuidedReaderFrame(frame, f.registration, readId)).toThrow();
   for (const frame of ["{}", "{}\n{}\n", "[]\n", `${" ".repeat(320 * 1024)}{}\n`]) expect(() => parseLinuxGuidedReaderMessage({ ...f.result, frame }, f.registration, readId)).toThrow();
+});
+
+test("reader inner echo cannot substitute owner, views, budgets or add snapshot transport keys", () => {
+  const f = fixture(), inner = JSON.parse(f.result.frame);
+  for (const change of [{ version: 2 }, { readId: uuid(8) }, { owner: { ...inner.owner, generation: 2 } },
+    { views: { ...inner.views, sourceRoot: "/private" } }, { limits: { ...inner.limits, maxReadBytes: 1 } },
+    { snapshot: { ...inner.snapshot, executable: true } }, { extra: true }]) {
+    expect(() => parseLinuxGuidedReaderMessage({ ...f.result, frame: `${JSON.stringify({ ...inner, ...change })}\n` }, f.registration, readId)).toThrow("required_context_unavailable");
+  }
 });
 
 test("valid guided registration DATA cannot bypass current native admission/engine refusal", async () => {

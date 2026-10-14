@@ -93,7 +93,16 @@ export function parseLinuxGuidedReaderMessage(value: unknown, registration: Linu
     if (typeof data.frame !== "string" || Buffer.byteLength(data.frame, "utf8") > 320 * 1024 || !data.frame.endsWith("\n")
       || data.frame.slice(0, -1).includes("\n") || Buffer.from(data.frame, "utf8").toString("utf8") !== data.frame) return unavailable();
     const inner = json(data.frame);
-    if (!inner || typeof inner !== "object" || Array.isArray(inner)) return unavailable();
+    const echo = closedLinuxGuidedData(inner, ["version", "readId", "owner", "views", "limits", "snapshot"]);
+    const innerOwnerKeys = ownerKeys.filter(key => key !== "workspaceId"), innerOwner = closedLinuxGuidedData(echo.owner, innerOwnerKeys);
+    const innerViews = closedLinuxGuidedData(echo.views, Object.keys(fixed.views)), innerLimits = closedLinuxGuidedData(echo.limits, Object.keys(fixed.limits));
+    if (echo.version !== 1 || echo.readId !== readId || innerOwnerKeys.some(key => innerOwner[key] !== fixed.owner[key])
+      || Object.entries(fixed.views).some(([key, expected]) => innerViews[key] !== expected)
+      || Object.entries(fixed.limits).some(([key, expected]) => innerLimits[key] !== expected)
+      || `${JSON.stringify(inner)}\n` !== data.frame) return unavailable();
+    // The actual RuntimeSDK loader and existing Core mapper own snapshot semantics.
+    // These closed keys and echoes are transport consistency checks, never read authority.
+    closedLinuxGuidedData(echo.snapshot, ["blocks", "digest", "droppedImports", "files", "provenance", "skippedLinks", "text", "tiers"]);
   } else if (data.kind === "reader_terminal") {
     if (typeof data.outcome !== "string" || !["ok", "unavailable", "cancelled"].includes(data.outcome)
       || ["namespaceInitReaped", "monitorReaped", "stdoutEof", "stderrEof", "captureDrained"].some(key => data[key] !== true)
