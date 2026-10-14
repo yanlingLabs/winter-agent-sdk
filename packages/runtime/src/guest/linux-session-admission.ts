@@ -2,7 +2,8 @@
 import { assertLinuxHostQueryConfig, assertLinuxHostQueryRoots, checkLinuxHostQueryFrame, LINUX_HOST_QUERY_PROFILE } from "./linux-host-query-profile.ts";
 import { assertLinuxGuidedHostQueryConfig, assertLinuxGuidedHostQueryRoots, LINUX_GUIDED_HOST_QUERY_PROFILE } from "./linux-guided-host-query-profile.ts";
 import { parseLinuxGuidedReaderRegistration, type LinuxGuidedReaderRegistration } from "./linux-guided-reader-protocol.ts";
-import { createLinuxGuidedReaderChannel, type LinuxGuidedReaderChannel } from "./linux-guided-reader-channel.ts";
+import type { LinuxGuidedReaderChannel } from "./linux-guided-reader-channel.ts";
+import { constructLinuxGuidedReaderChannel, assertLinuxGuidedReaderSymbols } from "./linux-guided-reader-construction.ts";
 import { createLinuxGuidedReaderSocketWire } from "./linux-guided-reader-socket.ts";
 import { createGuidedParentBridge, type GuidedParentBridge } from "./guided-parent-bridge.ts";
 import type { FrameSink } from "../protocol/channel.ts";
@@ -116,6 +117,7 @@ function admitLinuxSession(bootstrapFd: number, ownerLibraryFd: number, profile:
   try {
     const raw = library.symbols.winter_owner_record(handle); if (!raw || Buffer.byteLength(raw.toString()) > 65536) return unavailable();
     const record = JSON.parse(raw.toString()) as BootstrapRecord; validateRecord(record, profile);
+    if (record.profile === LINUX_GUIDED_HOST_QUERY_PROFILE) assertLinuxGuidedReaderSymbols(library.symbols);
     const owner: ProtectedStoreOwner = {
       scope: Object.freeze({ ...record.scope }), ownerToken: record.ownerToken, signal: controller.signal, assertHeld: check,
       processIdentity(pid) { check(); if (pid !== process.pid) return null; const value = library.symbols.winter_owner_process_identity(handle, pid); if (!value) return null; const identity = JSON.parse(value.toString()); return typeof identity.bootId === "string" && typeof identity.startTicks === "string" && /^\d+$/.test(identity.startTicks) ? identity : null; },
@@ -136,9 +138,9 @@ function admitLinuxSession(bootstrapFd: number, ownerLibraryFd: number, profile:
     };
     const guided = record.profile === LINUX_GUIDED_HOST_QUERY_PROFILE ? { registration: record.readerRegistration!, createReader() {
       check();
-      const wire = createLinuxGuidedReaderSocketWire({ claimDup() { check(); return readerSymbols.winter_owner_claim_reader(handle); },
-        shutdownOriginal() { readerSymbols.winter_owner_reader_shutdown(handle); } });
-      return createLinuxGuidedReaderChannel({ registration: record.readerRegistration!, wire, assertOwnerHeld: check });
+      return constructLinuxGuidedReaderChannel({ registration: record.readerRegistration!, assertOwnerHeld: check, closeOwner,
+        createWire() { return createLinuxGuidedReaderSocketWire({ claimDup() { check(); return readerSymbols.winter_owner_claim_reader(handle); },
+          shutdownOriginal() { readerSymbols.winter_owner_reader_shutdown(handle); } }); } });
     } } : undefined;
     const state: State = { record, signal: controller.signal, check, files, provider, store, phase: "ready", ...(guided ? { guided } : {}),
       dispose() { state.guided?.channel?.close(); state.guided?.reader?.close(); provider.close(); closeOwner(); } };
@@ -157,7 +159,7 @@ export function checkLinuxSessionFrame(value: LinuxSessionAdmission, config: Run
 /** One output/channel binding for this actual admitted parent incarnation. */
 export function bindLinuxGuidedSessionChannel(value: LinuxSessionAdmission, config: RuntimeConfig, output: FrameSink): GuidedParentBridge {
   const state = stateOf(value); validateConfig(config, state.record);
-  if (state.phase !== "running" || !state.guided || state.guided.channel !== undefined) return unavailable();
+  if (state.phase !== "running" || !state.guided || state.guided.reader !== undefined || state.guided.channel !== undefined) return unavailable();
   const guided = state.guided;
   const reader = guided.createReader(); guided.reader = reader;
   const channel = createGuidedParentBridge({ binding: guided.registration.requiredRuntimeContext, backendSessionId: state.record.scope.sessionId,
