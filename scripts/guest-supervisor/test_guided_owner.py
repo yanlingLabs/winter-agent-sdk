@@ -64,14 +64,15 @@ DESCRIPTOR
 fail:return 0;
 }
 int main(void){
-    /* All eight crossed cases run the production envelope branch. */
+    /* Eight v1/guided crossed cases plus four profile-absent fresh cases. */
     const char *documents[]={
         "{\"profile\":\"host-query-v1\"}",
         "{\"profile\":\"host-query-v1\",\"readerRegistration\":{}}",
         "{\"profile\":\"host-query-guided-v1\"}",
-        "{\"profile\":\"host-query-guided-v1\",\"readerRegistration\":{}}"};
-    for(int i=0;i<4;i++)for(int count=4;count<=5;count++)
-        assert(envelope(documents[i],count)==((i==0&&count==4)||(i==3&&count==5)));
+        "{\"profile\":\"host-query-guided-v1\",\"readerRegistration\":{}}",
+        "{}", "{\"readerRegistration\":{}}"};
+    for(int i=0;i<6;i++)for(int count=4;count<=5;count++)
+        assert(envelope(documents[i],count)==(((i==0||i==4)&&count==4)||(i==3&&count==5)));
     assert(!envelope("{\"profile\":\"host-query-guided-v1\",\"readerRegistration\":null}",5));
     assert(!envelope("{\"profile\":\"host-query-guided-v1\",\"readerRegistration\":[]}",5));
     int held[5][2],bootstrap[2];struct validation owner={0};
@@ -115,6 +116,17 @@ int main(void){
         self.assertNotIn('reader_claimed', closed)
         self.assertIn('POLLERR|POLLHUP|POLLRDHUP|POLLNVAL', function(source, 'guided_stream_live'))
 
+    def test_target_fixture_requires_own_opt_in_and_retains_actual_oracles(self):
+        fixture = FIXTURE.read_text()
+        main = function(fixture, 'main')
+        self.assertLess(main.index('getenv("WINTER_GUIDED_OWNER_NATIVE_ADMISSION")'), main.index('prepare(argv[2])'))
+        self.assertIn(ADMISSION, main)
+        self.assertIn('#include "../../packages/runtime/src/guest/linux-session-owner.c"', fixture)
+        self.assertIn('run("ordinary-baseline",argv[2],4,0,0,1)', main)
+        self.assertIn('recv(duplicate,&probe,1,MSG_DONTWAIT)==0', fixture)
+        self.assertIn('send(duplicate,"x",1,MSG_NOSIGNAL|MSG_DONTWAIT)==-1&&errno==EPIPE', fixture)
+        self.assertIn('run(argv[1],argv[2],count,2,registration,count==4&&!registration)', main)
+
 
 class GuidedOwnerNativeTargetTests(unittest.TestCase):
     """No authority doubles. Every successful case invokes real owner_open/check."""
@@ -157,20 +169,26 @@ class GuidedOwnerNativeTargetTests(unittest.TestCase):
         if not older and self.kernel < (6, 9):
             self.skipTest('actual guided success/lifetime matrix requires Linux >=6.9 pidfs/SO_PEERPIDFD; target is ' + platform.release())
         with tempfile.TemporaryDirectory(prefix='winter-guided-target-home-') as fixture_home:
-            process = subprocess.Popen([str(self.binary), name, fixture_home], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True, cwd=fixture_home, env={'PATH': os.defpath, 'LANG': 'C'})
+            process = subprocess.Popen([str(self.binary), name, fixture_home], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True, cwd=fixture_home, env={'PATH': os.defpath, 'LANG': 'C', 'WINTER_GUIDED_OWNER_NATIVE_ADMISSION': ADMISSION})
+            signal_requested = False
             try:
                 stdout, stderr = process.communicate(timeout=15)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.communicate()
-                self.fail('actual native fixture timed out; entire fixture process group killed')
-            finally:
-                # Assertions/native failures must not leave a namespace child.
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-            self.assertEqual(process.returncode, 0, stderr)
+                signal_requested = True
+                process.communicate()
+                self.fail('actual native fixture timed out; process-group SIGKILL requested and parent reaped; namespace-child cleanup unconfirmed')
+            finally:
+                # Best-effort signal only. This is NOT a child reap/cleanup receipt.
+                if process.returncode != 0 and not signal_requested:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            self.assertEqual(process.returncode, 0, stderr + '; abnormal target namespace-child cleanup unconfirmed')
             self.assertEqual(stdout.strip(), name + ': actual kernel case passed')
 
     def test_crossed_four_five_guided_registration(self): self.case('crossed')

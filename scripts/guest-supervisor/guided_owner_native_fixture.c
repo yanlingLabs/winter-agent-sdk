@@ -26,12 +26,14 @@ static void prepare(const char *root){
 static void byte(int fd,char value){assert(send(fd,&value,1,MSG_NOSIGNAL)==1);}
 static char receive_byte(int fd){char value;assert(recv(fd,&value,1,0)==1);return value;}
 static int send_record(int channel,int *fds,int count,int guided,int registration){
-    char current[64],record[4096];assert(!boot(current));
+    char current[64],record[4096],profile[128];assert(!boot(current));
+    if(guided==2)profile[0]=0;
+    else snprintf(profile,sizeof profile,",\"profile\":\"%s\"",guided?"host-query-guided-v1":"host-query-v1");
     int length=snprintf(record,sizeof record,
-        "{\"protocolVersion\":1,\"freshOnly\":true,\"runtimeUid\":20001,\"logicalSessionId\":\"logical\","
-        "\"profile\":\"%s\"%s,\"scope\":{\"workspaceId\":\"workspace\",\"sessionId\":\"session\",\"incarnationId\":\"incarnation\","
+        "{\"protocolVersion\":1,\"freshOnly\":true,\"runtimeUid\":20001,\"logicalSessionId\":\"logical\""
+        "%s%s,\"scope\":{\"workspaceId\":\"workspace\",\"sessionId\":\"session\",\"incarnationId\":\"incarnation\","
         "\"leaseEpoch\":1,\"storeHome\":\"/workspace/.winter/conversations/logical\",\"currentBootId\":\"%s\"}}",
-        guided?"host-query-guided-v1":"host-query-v1",registration?",\"readerRegistration\":{}":"",current);
+        profile,registration?",\"readerRegistration\":{}":"",current);
     assert(length>0&&length<(int)sizeof record);
     char ancillary[CMSG_SPACE(sizeof(int)*5)]={0};struct iovec data={record,(size_t)length};struct msghdr message={0};
     message.msg_iov=&data;message.msg_iovlen=1;message.msg_control=ancillary;message.msg_controllen=CMSG_SPACE(sizeof(int)*(size_t)count);
@@ -53,6 +55,7 @@ static void child(int bootstrap,int control,int *inherited,int inherited_count,c
         int duplicate=winter_owner_claim_reader(owner);assert(duplicate>=3);assert(fcntl(duplicate,F_GETFD)&FD_CLOEXEC);assert(winter_owner_claim_reader(owner)==-1);
         if(!strcmp(name,"reader-shutdown")){
             winter_owner_reader_shutdown(owner);assert(winter_owner_check(owner)==-1);assert(!strcmp(winter_owner_error(),"owner_lost"));assert(fcntl(duplicate,F_GETFD)>=0);winter_owner_reader_shutdown(owner);
+            char probe;assert(recv(duplicate,&probe,1,MSG_DONTWAIT)==0);errno=0;assert(send(duplicate,"x",1,MSG_NOSIGNAL|MSG_DONTWAIT)==-1&&errno==EPIPE);
         }else assert(!winter_owner_check(owner));
         /* C shutdown/close must never numerically close the caller-owned dup,
          * even if the caller closes it and its number is reused by a new file. */
@@ -83,6 +86,8 @@ static void run(const char *name,const char *root,int count,int guided,int regis
     close(runtime);close(service);close(store);close(exe);close(other);if(bootstrap[0]>=0)close(bootstrap[0]);close(reader[0]);close(control[0]);
 }
 int main(int argc,char **argv){
+    const char *admission=getenv("WINTER_GUIDED_OWNER_NATIVE_ADMISSION");
+    if(!admission||strcmp(admission,"disposable-linux-guided-owner-matrix")){fputs("fixture explicit opt-in absent; no setup performed\n",stderr);return 77;}
     assert(argc==3&&geteuid()==0);prepare(argv[2]);
     /* This process owns the private namespace: no mount or credential changes
      * reach its caller. /workspace and /proc exist only in the fixture chroot. */
@@ -90,9 +95,12 @@ int main(int argc,char **argv){
     if(!strcmp(argv[1],"crossed")){
         for(int count=4;count<=5;count++)for(int guided=0;guided<=1;guided++)for(int registration=0;registration<=1;registration++)
             run(argv[1],argv[2],count,guided,registration,(guided&&registration&&count==5)||(!guided&&!registration&&count==4));
+        for(int count=4;count<=5;count++)for(int registration=0;registration<=1;registration++)
+            run(argv[1],argv[2],count,2,registration,count==4&&!registration);
     }else{
         int rejected=!strncmp(argv[1],"alias",5)||!strcmp(argv[1],"non-socket")||!strcmp(argv[1],"pidfs-absent");
         assert(rejected||!strcmp(argv[1],"claim-twice")||!strcmp(argv[1],"reader-shutdown")||!strcmp(argv[1],"bootstrap-close")||!strcmp(argv[1],"half-close"));
+        if(!strcmp(argv[1],"pidfs-absent"))run("ordinary-baseline",argv[2],4,0,0,1);
         run(argv[1],argv[2],5,1,1,!rejected);
     }
     printf("%s: actual kernel case passed\n",argv[1]);return 0;

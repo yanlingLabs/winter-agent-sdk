@@ -19,8 +19,9 @@ The resulting tracked C hash was verified to match the accepted reconstruction.
 `scripts/guest-supervisor/test_guided_owner.py` extracts the actual parser,
 envelope branch, file/type/alias prefix and inode identity function. Appleclang
 compiles and executes that validation slice with fixed portable test headers.
-The slice covers all eight 4/5-descriptor × guided/ordinary × registration
-presence combinations, non-object registration, FD4 aliasing each prior role,
+The slice covers all eight 4/5-descriptor × guided/v1 × registration
+presence combinations plus all four profile-absent fresh combinations,
+non-object registration, FD4 aliasing each prior role,
 FD4 aliasing the exact bootstrap endpoint and a distinct non-socket file.
 These are parser/predicate results; no successful predicate admits an owner.
 
@@ -28,6 +29,8 @@ A second test checks source ownership invariants: bootstrap authentication only
 at open, reader authentication on later checks, pidfs/service/runtime comparison,
 single CLOEXEC transfer, no numeric close of a caller-owned duplicate, terminal
 shutdown and stream half-close refusal. Static assertions are source evidence.
+A third source test checks the fixture's pre-effect opt-in guard, baseline and
+shutdown oracles without compiling or executing the target fixture.
 
 The existing `test_native_parser.py` now excludes Linux authority headers from
 its exact portable parser extraction, so adding `sys/vfs.h` to production C does
@@ -40,9 +43,9 @@ python3 -m unittest discover -s scripts/guest-supervisor -p test_guided_owner.py
 python3 -m unittest discover -s scripts/guest-supervisor -p test_native_parser.py -v
 ```
 
-Observed on Darwin on 2026-10-14: the first command passed exactly **2 portable
+Observed on Darwin on 2026-10-14: the first command passed exactly **3 portable
 source tests** and skipped all **12 target entries**. The second passed exactly
-**1 parser test**. `git diff --check` and Python syntax parsing passed. These three
+**1 parser test**. `git diff --check` and Python syntax parsing passed. These four
 portable passes do not include any native ownership or Linux whole-source compile
 result. The target fixture has not been compiled or launched.
 
@@ -59,21 +62,26 @@ an actual missing feature on a declared compatible target fails the positive cas
 
 `guided_owner_native_fixture.c` includes production C unchanged. It uses actual
 pidfds and `SO_PEERPIDFD`, private mount/PID namespaces, a fixture-only chroot,
-procfs and store. No native checks are replaced by doubles. The child retains
+procfs and store. No native checks are replaced by doubles. Both the Python
+runner and compiled fixture require the exact fixed test opt-in before setup;
+the runner forwards only that fixed token after its prerequisites pass. The child retains
 only its bootstrap/control endpoints before admission; Root closes its copy of
 the reader endpoint after SCM_RIGHTS transfer. The runner supplies no inherited
-credential environment and kills the entire fixture process group after failure
-or timeout. It does not use network, real workspace files, Winter homes or keys.
+credential environment and requests process-group SIGKILL after failure or
+timeout. This signal is not a namespace-child reaping/cleanup observation:
+abnormal paths explicitly report cleanup unconfirmed. Successful direct-child
+`waitpid` is observed by the fixture; no broader native cleanup claim follows.
+It does not use network, real workspace files, Winter homes or keys.
 
 | Target entry | Actual required observation |
 | --- | --- |
-| Crossed envelope | Only guided+five+registration and ordinary+four+no-registration open successfully; all other six refuse |
-| FD4 aliases 0, 1, 2, 3 | Each transferred alias refuses |
+| Crossed envelope | Only guided+five+registration, v1+four+no-registration and profile-absent fresh+four+no-registration open successfully; other nine refuse |
+| FD4 aliases 0, 1, 2, 3 | Each actual transferred alias refuses at non-socket validation; portable all-socket aliases independently cover the inode-comparison branch |
 | FD4 bootstrap alias | Same receiving-endpoint inode refuses |
 | FD4 non-socket | Distinct regular-file descriptor refuses |
-| pidfs absent before 6.9 | Actual older-kernel guided admission refuses |
+| pidfs absent before 6.9 | First actual older-kernel v1+four+no-registration admission succeeds, then guided admission refuses |
 | Claim twice | First CLOEXEC duplicate succeeds, second refuses; owner close preserves a reused caller-owned FD number |
-| Reader shutdown | Shutdown leaves caller duplicate owned but makes `owner_check` return `owner_lost` |
+| Reader shutdown | Shutdown leaves caller duplicate owned, makes `owner_check` return `owner_lost`, and makes actual duplicate recv return EOF and send return EPIPE |
 | Bootstrap peer closed | Closing Root bootstrap after open leaves reader owner valid |
 | Stream half-close | Root reader peer `SHUT_WR` makes `owner_check` return `owner_lost` |
 
