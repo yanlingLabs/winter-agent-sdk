@@ -1,5 +1,7 @@
 import { RUNTIME_CONTEXT_SUBTYPE, RUNTIME_CONTEXT_VERSION, parseRuntimeContextRequest, parseRuntimeContextSnapshot } from "./runtime-context.ts";
-import { claimGuidedQuery, closeGuidedQuery, assertGuidedQueryCorrelation, type GuidedQueryClaim, type GuidedQueryCorrelation } from "./guided-query-preparation.ts";
+import { claimGuidedQuery, closeGuidedQuery, assertGuidedQueryCorrelation, type GuidedQueryClaim, type GuidedQueryCorrelation, type GuidedQueryPreparation } from "./guided-query-preparation.ts";
+import { installGuidedQueryReader } from "./guided-query-reader.ts";
+import { GUIDED_READER_SUBTYPE, parseGuidedInstructionResponse, type GuidedInstructionRequest } from "./guided-reader-protocol.ts";
 import { randomUUID } from "node:crypto";
 import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
@@ -778,6 +780,7 @@ function abortedBeforeSpawn(): SpawnedRuntimeProcess {
 }
 
 interface QueryPreparationLifecycle {
+  preparation: GuidedQueryPreparation;
   claim: GuidedQueryClaim;
   callback: NonNullable<Options["onRuntimeContext"]>;
   spawn: NonNullable<Options["spawnClaudeCodeProcess"]>;
@@ -824,7 +827,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     if (signal?.aborted) { close(); return queryImplementation(ownedArgs); }
     signal?.addEventListener("abort", close, { once: true });
     const lifecycle: QueryPreparationLifecycle = {
-      claim, close, callback: pair.onRuntimeContext, spawn: pair.spawnClaudeCodeProcess,
+      preparation, claim, close, callback: pair.onRuntimeContext, spawn: pair.spawnClaudeCodeProcess,
       assert(expected) { if (closed) throw new Error("required_context_unavailable"); assertGuidedQueryCorrelation(claim, expected); },
       attach(proc) { void proc.exited.then(close, close); },
       teardown(action) { teardown = action; },
@@ -1193,6 +1196,8 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
   // the correlation idea is identical. No timeout support here: nothing in this task's scope needs
   // one (interrupt/setPermissionMode both just await their ack).
   const pendingHostRequests = new Map<string, { resolve(payload: unknown): void; reject(err: unknown): void }>();
+  const pendingInstructionReads = new Map<string, { request: GuidedInstructionRequest; accept(frame: unknown): void; reject(): void }>();
+  const instructionReadIds = new Set<string>();
   // Item 1 (P2 fix-wave): mirrors rpc/bridge.ts's own `closed` latch on the runtime side (a
   // deliberate parity, not a coincidence — the two are the SAME correlation idea in opposite
   // directions, see this const's own header). Set once, in iterate()'s own `finally` below,
@@ -1208,6 +1213,7 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
       return Promise.reject(new WinterRpcError("connection_closed", `query() has already completed: cannot issue a '${subtype}' control request`));
     }
     const requestId = randomUUID();
+    if (instructionReadIds.has(requestId)) return Promise.reject(new Error("required_context_unavailable"));
     return new Promise((resolve, reject) => {
       pendingHostRequests.set(requestId, { resolve, reject });
       proc.stdin.write(encodeFrame({ type: "control_request", requestId, subtype, payload }));
@@ -1236,6 +1242,7 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
   /** One abort per IN-FLIGHT runtime-originated request, fired by a `control_cancel_request` naming it. */
   const incomingRequestAborts = new Map<string, AbortController>();
   const contextRequestAborts = new Map<string, AbortController>();
+  const contextRequestIds = new WeakMap<AbortSignal, string>();
   let contextTransportClosed = false;
   const closeRuntimeContext = () => {
     contextTransportClosed = true;
@@ -1244,7 +1251,32 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
       controller.abort();
     }
     contextRequestAborts.clear();
+    for (const read of pendingInstructionReads.values()) read.reject();
   };
+  function sendInstructionRead(contextRequestId: string, signal: AbortSignal): Promise<string> {
+    if (preparation === undefined || contextBindingId === undefined || signal.aborted || generatorTerminated || contextTransportClosed || !contextRequestAborts.has(contextRequestId)) return Promise.reject(new Error("required_context_unavailable"));
+    preparation.assert(config.requiredRuntimeContext!);
+    const readId = randomUUID();
+    if (pendingInstructionReads.size >= 16 || instructionReadIds.size >= 4096 || readId === contextRequestId || instructionReadIds.has(readId) || pendingHostRequests.has(readId) || incomingRequestAborts.has(readId)) return Promise.reject(new Error("required_context_unavailable"));
+    const request: GuidedInstructionRequest = Object.freeze({ version: 1, bindingId: contextBindingId, contextRequestId, readId });
+    return new Promise<string>((resolve, reject) => {
+      let done = false;
+      const timer = setTimeout(fail, 15_000); timer.unref?.();
+      function finish() { if (done) return false; done = true; clearTimeout(timer); signal.removeEventListener("abort", fail); pendingInstructionReads.delete(readId); return true; }
+      function fail() { if (finish()) reject(new Error("required_context_unavailable")); }
+      pendingInstructionReads.set(readId, { request, reject: fail, accept(frame) {
+        try {
+          if (signal.aborted || generatorTerminated || contextTransportClosed || !contextRequestAborts.has(contextRequestId)) throw new Error();
+          preparation!.assert(config.requiredRuntimeContext!);
+          const value = parseGuidedInstructionResponse(frame, request); if (finish()) resolve(value);
+        } catch { fail(); }
+      } });
+      instructionReadIds.add(readId);
+      signal.addEventListener("abort", fail, { once: true });
+      try { if (signal.aborted) { fail(); return; } proc.stdin.write(encodeFrame({ type: "control_request", subtype: GUIDED_READER_SUBTYPE, requestId: readId, payload: request })); }
+      catch { fail(); }
+    });
+  }
   if (contextBindingId !== undefined) void proc.exited.then(closeRuntimeContext, closeRuntimeContext);
   async function handleIncomingControlRequest(cf: ControlRequestFrame): Promise<void> {
     // The whole body is wrapped, not just the handler invocation: every proc.stdin.write below
@@ -1268,7 +1300,7 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
       }
       const cancel = new AbortController();
       incomingRequestAborts.set(cf.requestId, cancel);
-      if (cf.subtype === RUNTIME_CONTEXT_SUBTYPE) contextRequestAborts.set(cf.requestId, cancel);
+      if (cf.subtype === RUNTIME_CONTEXT_SUBTYPE) { contextRequestAborts.set(cf.requestId, cancel); contextRequestIds.set(cancel.signal, cf.requestId); }
       try {
         const result = await handler(cf.payload, { signal: cancel.signal });
         // CANCELLED while the handler ran: the runtime stopped waiting and dropped the request, so an
@@ -1295,6 +1327,7 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
           incomingRequestAborts.delete(cf.requestId);
         }
         if (contextRequestAborts.get(cf.requestId) === cancel) contextRequestAborts.delete(cf.requestId);
+        contextRequestIds.delete(cancel.signal);
       }
     } catch {
       /* see policy note above: a stdin write after the child has already exited is swallowed */
@@ -1372,16 +1405,24 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
     const resolve = preparation !== undefined ? preparation.callback : options.onRuntimeContext!;
     controlRequestHandlers.set(RUNTIME_CONTEXT_SUBTYPE, async (payload, context) => {
       const { controller, dispose } = abortableFor(options.abortController, context);
+      let reader: ReturnType<typeof installGuidedQueryReader> | undefined;
       try {
         const request = parseRuntimeContextRequest(payload);
         if (request.bindingId !== contextBindingId || controller.signal.aborted || contextTransportClosed) throw new Error("required_context_unavailable");
         preparation?.assert(config.requiredRuntimeContext!);
+        const contextRequestId = context?.signal !== undefined ? contextRequestIds.get(context.signal) : undefined;
+        if (preparation !== undefined && request.agentId === undefined && request.sessionId === config.sessionId
+          && contextRequestId !== undefined && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(contextRequestId)) {
+          reader = installGuidedQueryReader({ preparation: preparation.preparation, claim: preparation.claim, binding: config.requiredRuntimeContext!, signal: controller.signal,
+            read: signal => sendInstructionRead(contextRequestId, signal) });
+        }
         const snapshot = parseRuntimeContextSnapshot(await resolve(request, { signal: controller.signal, trustedQuerySessionId: config.sessionId }));
+        reader?.assertSettled();
         preparation?.assert(config.requiredRuntimeContext!);
         return { ok: true, payload: snapshot };
       } catch {
         return { ok: false, error: { code: "required_context_unavailable", message: "required_context_unavailable" } };
-      } finally { dispose(); }
+      } finally { reader?.close(); dispose(); }
     });
   }
   if (options.canUseTool) {
@@ -1577,6 +1618,9 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
             // and every query() call's own routine end_input ack would otherwise never match
             // anything here worth telling the consumer about.
             const cf = frame as ControlResponseFrame;
+            const instruction = pendingInstructionReads.get(cf.requestId);
+            if (instruction !== undefined) { instruction.accept(cf); continue; }
+            if (instructionReadIds.has(cf.requestId)) continue;
             const pendingReq = pendingHostRequests.get(cf.requestId);
             if (pendingReq) {
               pendingHostRequests.delete(cf.requestId);
@@ -1601,7 +1645,7 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
             // registry. Fire-and-forget: answering it (a permission prompt may wait on a human)
             // must never block this loop from continuing to read/yield the turn's other frames.
             const request = frame as ControlRequestFrame;
-            if (contextRequestAborts.has(request.requestId)
+            if (instructionReadIds.has(request.requestId) || contextRequestAborts.has(request.requestId)
               || (request.subtype === RUNTIME_CONTEXT_SUBTYPE
                 && (typeof request.requestId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(request.requestId)
                   || incomingRequestAborts.has(request.requestId)
