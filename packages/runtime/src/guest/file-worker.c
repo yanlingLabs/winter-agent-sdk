@@ -99,7 +99,12 @@ int main(int argc, char **argv) {
     close(root);
     if (file < 0) { free(data); return error_result(errno == ENOSYS ? "openat2_unavailable" : "path_denied"); }
     struct stat st;
-    if (fstat(file, &st) || !S_ISREG(st.st_mode)) { errno = EINVAL; close(file); free(data); return error_result("regular_file_required"); }
+    if (fstat(file, &st)) {
+        int saved_errno = errno;
+        close(file); free(data); errno = saved_errno;
+        return error_result("stat_failed");
+    }
+    if (!S_ISREG(st.st_mode)) { close(file); free(data); errno = EINVAL; return error_result("regular_file_required"); }
     char before_version[256], after_version[256];
     file_version(&st, before_version, sizeof(before_version));
     if (conditional && !creating && strcmp(argv[6], before_version)) { errno = EAGAIN; close(file); free(data); return error_result("file_changed"); }
