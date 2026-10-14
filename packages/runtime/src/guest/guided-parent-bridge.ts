@@ -4,7 +4,8 @@ import { parseRuntimeContextConfig, parseRuntimeContextRequest, parseRuntimeCont
   RUNTIME_CONTEXT_SUBTYPE, type ControlResponseFrame, type RuntimeContextConfig } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSink } from "../protocol/channel.ts";
 import type { RpcBridge } from "../rpc/bridge.ts";
-import { RequiredContextError, type RequiredContextSource } from "../context/required-context.ts";
+import { RequiredContextError } from "../context/required-context.ts";
+import type { RuntimeContextChannel } from "../context/runtime-context-channel.ts";
 import { checkLinuxHostQueryFrame } from "./linux-host-query-profile.ts";
 
 export const GUIDED_READER_SUBTYPE = "instruction_reader";
@@ -15,7 +16,7 @@ export interface GuidedReaderResponse extends GuidedReaderRequest { readonly fra
 export interface GuidedReaderOperation {
   result: Promise<GuidedReaderResponse>; drained: Promise<void>; cancel(): void;
 }
-export interface GuidedParentBridge extends RequiredContextSource {
+export interface GuidedParentBridge extends RuntimeContextChannel {
   bind(bridge: RpcBridge): void;
   handleResponse(frame: unknown): "accept" | "drop";
   handleReaderRequest(frame: unknown): Promise<"accept" | "drop">;
@@ -68,6 +69,7 @@ export function createGuidedParentBridge(options: {
   const held = (): void => { if (closed) throw unavailable(); try { assertOwner(); } catch { stopAll(); throw unavailable(); } };
   const reply = (frame: ControlResponseFrame): void => { held(); write(frame); };
   const channel: GuidedParentBridge = {
+    bindingId: binding.bindingId,
     timeoutMs,
     bind(value) { held(); if (bound) throw unavailable(); bound = true; bridge = value; },
     close: stopAll,

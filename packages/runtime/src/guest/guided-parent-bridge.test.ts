@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import type { WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { createRpcBridge } from "../rpc/bridge.ts";
+import type { RuntimeContextChannel } from "../context/runtime-context-channel.ts";
 import {
   createGuidedParentBridge, GUIDED_PARENT_PENDING_MAX, GUIDED_READER_FRAME_BYTES,
   GUIDED_READER_SUBTYPE, type GuidedReaderRequest, type GuidedReaderResponse,
@@ -71,6 +72,23 @@ test("unbound, foreign parent, wrong directory, children and pre-aborted context
   await expect(f.context(request, abort.signal).promise).rejects.toThrow(/^required_context_unavailable$/);
   expect(f.frames).toEqual([]); expect(f.reads).toEqual([]);
   expect(() => f.source.bind(createRpcBridge({ write() { throw new Error("second bridge must not write"); }, end() {} }))).toThrow(/^required_context_unavailable$/);
+});
+
+test("guided bridge is a runtime context channel with immutable captured binding identity", () => {
+  const f = fixture();
+  const channel: RuntimeContextChannel = f.source;
+  expect(channel).toBe(f.source);
+  expect(channel.bindingId).toBe("binding");
+  expect(Object.getOwnPropertyDescriptor(channel, "bindingId")).toEqual({
+    value: "binding", writable: false, enumerable: true, configurable: false,
+  });
+  f.binding.bindingId = "changed-after-construction";
+  expect(Reflect.set(channel, "bindingId", "foreign")).toBe(false);
+  expect(Reflect.defineProperty(channel, "bindingId", { value: "foreign" })).toBe(false);
+  expect(channel.bindingId).toBe("binding");
+  f.context();
+  expect(f.frames[0]).toEqual({ type: "control_request", requestId: uuid(1), subtype: "runtime_context", payload: { ...request, bindingId: channel.bindingId } });
+  expect(f.reads).toEqual([]);
 });
 
 test("wire binding is captured at creation; context requires valid reader result and confirmed drain", async () => {
