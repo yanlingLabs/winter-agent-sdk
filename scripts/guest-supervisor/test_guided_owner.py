@@ -127,6 +127,22 @@ int main(void){
         self.assertIn('send(duplicate,"x",1,MSG_NOSIGNAL|MSG_DONTWAIT)==-1&&errno==EPIPE', fixture)
         self.assertIn('run(argv[1],argv[2],count,2,registration,count==4&&!registration)', main)
 
+    def test_each_native_case_has_fresh_root_supervisor_and_owned_waits(self):
+        fixture = FIXTURE.read_text()
+        wrapper = function(fixture, 'run')
+        case = function(fixture, 'run_case')
+        self.assertLess(wrapper.index('supervisor=fork()'), wrapper.index('run_case('))
+        self.assertIn('if(supervisor==0){run_case(', wrapper)
+        self.assertIn('waitpid(supervisor,&status,0)==supervisor', wrapper)
+        self.assertIn('WIFEXITED(status)&&WEXITSTATUS(status)==0', wrapper)
+        self.assertNotIn('unshare(', wrapper)
+        self.assertNotIn('socketpair(', wrapper)
+        self.assertEqual(case.count('unshare(CLONE_NEWPID)'), 1)
+        self.assertLess(case.index('socketpair('), case.index('unshare(CLONE_NEWPID)'))
+        self.assertLess(case.index('SYS_pidfd_open,getpid()'), case.index('unshare(CLONE_NEWPID)'))
+        self.assertIn('waitpid(pid,&status,0)==pid', case)
+        self.assertIn('WIFEXITED(status)&&WEXITSTATUS(status)==0', case)
+
 
 class GuidedOwnerNativeTargetTests(unittest.TestCase):
     """No authority doubles. Every successful case invokes real owner_open/check."""

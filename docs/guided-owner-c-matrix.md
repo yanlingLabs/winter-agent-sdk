@@ -31,6 +31,9 @@ single CLOEXEC transfer, no numeric close of a caller-owned duplicate, terminal
 shutdown and stream half-close refusal. Static assertions are source evidence.
 A third source test checks the fixture's pre-effect opt-in guard, baseline and
 shutdown oracles without compiling or executing the target fixture.
+A fourth checks that every case normally forks a fresh Root supervisor before
+creating peers and changing `pid_ns_for_children` once, then requires actual
+`waitpid` success for both the runtime child and that case supervisor.
 
 The existing `test_native_parser.py` now excludes Linux authority headers from
 its exact portable parser extraction, so adding `sys/vfs.h` to production C does
@@ -43,9 +46,9 @@ python3 -m unittest discover -s scripts/guest-supervisor -p test_guided_owner.py
 python3 -m unittest discover -s scripts/guest-supervisor -p test_native_parser.py -v
 ```
 
-Observed on Darwin on 2026-10-14: the first command passed exactly **3 portable
+Observed on Darwin on 2026-10-14: the first command passed exactly **4 portable
 source tests** and skipped all **12 target entries**. The second passed exactly
-**1 parser test**. `git diff --check` and Python syntax parsing passed. These four
+**1 parser test**. `git diff --check` and Python syntax parsing passed. These five
 portable passes do not include any native ownership or Linux whole-source compile
 result. The target fixture has not been compiled or launched.
 
@@ -72,6 +75,14 @@ timeout. This signal is not a namespace-child reaping/cleanup observation:
 abnormal paths explicitly report cleanup unconfirmed. Successful direct-child
 `waitpid` is observed by the fixture; no broader native cleanup claim follows.
 It does not use network, real workspace files, Winter homes or keys.
+
+Each matrix case creates its own Root supervisor using a normal fork before
+creating the Root-owned peers and service pidfd. That supervisor unshares a new
+PID namespace once, starts and waits for its PID1 runtime, closes resources and
+exits. The outer fixture waits for each supervisor before starting the next case.
+It never repeatedly unshares `CLONE_NEWPID` in the outer process or reuses a
+namespace whose PID1 has died. These are source topology assertions until actual
+target execution is separately admitted.
 
 | Target entry | Actual required observation |
 | --- | --- |

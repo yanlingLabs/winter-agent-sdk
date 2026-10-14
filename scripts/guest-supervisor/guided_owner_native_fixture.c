@@ -66,7 +66,7 @@ static void child(int bootstrap,int control,int *inherited,int inherited_count,c
     if(owner)winter_owner_close(owner);
     close(control);_exit(0);
 }
-static void run(const char *name,const char *root,int count,int guided,int registration,int expected){
+static void run_case(const char *name,const char *root,int count,int guided,int registration,int expected){
     int bootstrap[2],reader[2],control[2];must(socketpair(AF_UNIX,SOCK_SEQPACKET|SOCK_CLOEXEC,0,bootstrap),"fixture bootstrap");must(socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,reader),"fixture reader");must(socketpair(AF_UNIX,SOCK_SEQPACKET|SOCK_CLOEXEC,0,control),"fixture control");
     int service=(int)syscall(SYS_pidfd_open,getpid(),0);must(service,"fixture service pidfd");
     char storepath[4096];path(storepath,root,"/workspace/.winter/conversations/logical");int store=open(storepath,O_RDONLY|O_DIRECTORY|O_CLOEXEC),exe=open("/proc/self/exe",O_RDONLY|O_CLOEXEC);must(store,"fixture store");must(exe,"fixture executable");
@@ -84,6 +84,14 @@ static void run(const char *name,const char *root,int count,int guided,int regis
     if(expected){if(!strcmp(name,"bootstrap-close")){close(bootstrap[0]);bootstrap[0]=-1;}if(!strcmp(name,"half-close"))must(shutdown(reader[0],SHUT_WR),"fixture stream half-close");byte(control[0],'C');}
     int status;assert(waitpid(pid,&status,0)==pid);assert(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     close(runtime);close(service);close(store);close(exe);close(other);if(bootstrap[0]>=0)close(bootstrap[0]);close(reader[0]);close(control[0]);
+}
+static void run(const char *name,const char *root,int count,int guided,int registration,int expected){
+    /* A normal fork gives every case a fresh Root creator/supervisor. Only that
+     * supervisor changes pid_ns_for_children, once. The outer fixture must not
+     * reuse the namespace after its PID1 exits or unshare NEWPID repeatedly. */
+    pid_t supervisor=fork();must(supervisor,"fixture case supervisor fork");
+    if(supervisor==0){run_case(name,root,count,guided,registration,expected);_exit(0);}
+    int status;assert(waitpid(supervisor,&status,0)==supervisor);assert(WIFEXITED(status)&&WEXITSTATUS(status)==0);
 }
 int main(int argc,char **argv){
     const char *admission=getenv("WINTER_GUIDED_OWNER_NATIVE_ADMISSION");
