@@ -1,17 +1,20 @@
 /** Closed DATA validators for the future inherited reader channel. These never admit
  * an owner, open a descriptor or discharge native reader debt. */
-import { parseRuntimeContextConfig, type RuntimeContextConfig } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, parseRuntimeContextConfig, type RuntimeContextConfig } from "@yanlinglabs/winter-agent-sdk";
 import { GUIDED_READER_FRAME_BYTES, type GuidedReaderRequest } from "./guided-parent-bridge.ts";
 
 export const LINUX_GUIDED_READER_LIMITS = Object.freeze({ maxFileBytes: 128 * 1024, maxReadBytes: 256 * 1024, maxReadOccurrences: 256, maxExpandedBytes: 128 * 1024 });
 export const LINUX_GUIDED_READER_BODY_BYTES = GUIDED_READER_FRAME_BYTES + 4096;
+// The closed native profile has no caller-selected brand; keep its Winter wire path exact.
+// BrandProfile types the filename as string, so the parser's exact comparison enforces it.
+const LINUX_GUIDED_READER_SHARED_PATH = `/run/winter/shared-instructions/${WINTER_BRAND.instructionsFile}` as const;
 export interface LinuxGuidedReaderOwner {
   readonly workspaceId: string; readonly logicalSessionId: string; readonly backendSessionId: string;
   readonly incarnationId: string; readonly leaseEpoch: number; readonly bootId: string; readonly generation: number;
 }
 export interface LinuxGuidedReaderRegistration {
   readonly version: 1; readonly registrationId: string; readonly owner: Readonly<LinuxGuidedReaderOwner>;
-  readonly views: Readonly<{ sourceRoot: string; sourceCwd: string; sharedRoot: "/run/winter/shared-instructions"; sharedPath: "/run/winter/shared-instructions/WINTER.md" }>;
+  readonly views: Readonly<{ sourceRoot: string; sourceCwd: string; sharedRoot: "/run/winter/shared-instructions"; sharedPath: typeof LINUX_GUIDED_READER_SHARED_PATH }>;
   readonly limits: Readonly<typeof LINUX_GUIDED_READER_LIMITS>; readonly requiredRuntimeContext: Readonly<RuntimeContextConfig>;
 }
 interface Correlation { readonly version: 1; readonly registrationId: string; readonly readId: string; readonly owner: Readonly<LinuxGuidedReaderOwner>; }
@@ -59,7 +62,7 @@ export function parseLinuxGuidedReaderRegistration(value: unknown): Readonly<Lin
   for (const key of Object.keys(views)) views[key] = path(views[key]);
   if (typeof views.sourceRoot !== "string" || !/^\/workspace\/(folders|repos)\/[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(views.sourceRoot)
     || typeof views.sourceCwd !== "string" || (views.sourceCwd !== views.sourceRoot && !views.sourceCwd.startsWith(`${views.sourceRoot}/`))
-    || views.sharedRoot !== "/run/winter/shared-instructions" || views.sharedPath !== "/run/winter/shared-instructions/WINTER.md") return unavailable();
+    || views.sharedRoot !== "/run/winter/shared-instructions" || views.sharedPath !== LINUX_GUIDED_READER_SHARED_PATH) return unavailable();
   const limits = closedLinuxGuidedData(data.limits, Object.keys(LINUX_GUIDED_READER_LIMITS));
   for (const [key, expected] of Object.entries(LINUX_GUIDED_READER_LIMITS)) if (limits[key] !== expected) return unavailable();
   const binding = parseRuntimeContextConfig(data.requiredRuntimeContext);

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, type RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import { assertLinuxGuidedHostQueryConfig, assertLinuxGuidedHostQueryRoots } from "./linux-guided-host-query-profile.ts";
 import { assertLinuxHostQueryConfig } from "./linux-host-query-profile.ts";
 import { decodeLinuxGuidedReaderFrame, linuxGuidedReaderStart, linuxGuidedReaderCancel, LINUX_GUIDED_READER_BODY_BYTES, LINUX_GUIDED_READER_LIMITS,
@@ -34,6 +34,16 @@ test("registration copies and freezes correlation, exact views and pre-read budg
   expect(fixed.limits.maxReadBytes).toBe(256 * 1024);
   for (const part of [fixed, fixed.owner, fixed.views, fixed.limits, fixed.requiredRuntimeContext]) expect(Object.isFrozen(part)).toBe(true);
   expect(Reflect.set(fixed.owner, "generation", 2)).toBe(false);
+});
+
+test("guided native wire retains Winter's exact instruction view and refuses alternate branded filenames", () => {
+  const { registration, config } = fixture();
+  expect(parseLinuxGuidedReaderRegistration(registration).views.sharedPath).toBe("/run/winter/shared-instructions/WINTER.md");
+  for (const sharedPath of ["/run/winter/shared-instructions/ACME.md", "/run/winter/shared-instructions/CLAUDE.md", "/run/winter/shared-instructions/WINTER.local.md"]) {
+    expect(() => parseLinuxGuidedReaderRegistration({ ...registration, views: { ...registration.views, sharedPath } })).toThrow("required_context_unavailable");
+  }
+  // This closed native profile has no caller-selected brand or alternate instruction path.
+  expect(() => assertLinuxGuidedHostQueryConfig({ ...config, brand: { ...WINTER_BRAND, instructionsFile: "ACME.md" } }, registration)).toThrow();
 });
 
 test("registration refuses foreign views, widened budgets, executable options and accessors before any callback", () => {
