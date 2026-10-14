@@ -56,9 +56,10 @@ No injected native admission factory was introduced.
 
 W2/W3 use the fixed inherited-FD `Bun.connect` branch instead of Node Socket
 construction/adoption. Before any transfer, a failed first descriptor observation
-closes the fresh caller-owned duplicate. After a transfer attempt, only the same
-attempt's explicit detached `connectError` returns raw ownership for one close;
-generic throws/rejections retain uncertainty. `open` first records adoption/socket,
+closes the fresh caller-owned duplicate. After a transfer attempt, all failures,
+including explicit `connectError`, retain uncertainty and never numerically close
+the duplicate while actual pinned-Bun descriptor/reuse proof remains pending.
+There is no caller or test DTO that enables this disposal path. `open` first records adoption/socket,
 including after prior loss; adopted sockets close through `terminate`, never a
 saved descriptor number. These choices follow the pinned Bun source second opinion;
 injected tests do not prove actual runtime FD behavior.

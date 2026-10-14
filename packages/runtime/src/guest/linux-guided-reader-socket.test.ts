@@ -44,17 +44,17 @@ test("first fresh-descriptor observation failure closes caller-owned raw dup bef
   expect(actions).toEqual(["claim", "first-observation", "shutdown-original", "close-raw:7"]);
 });
 
-test("explicit detached connectError alone returns raw ownership once, including after generic loss", async () => {
+test("connectError and late failure retain unknown transfer ownership until actual Bun proof", async () => {
   const failed = fixture({ transfer: "connect-error" }); expect(() => failed.subscribe()).toThrow("required_context_unavailable");
   await tick(); failed.handlers().connectError(failed.socket, new Error("duplicate")); failed.wire.close();
-  expect(failed.actions.filter(action => action === "close-raw:7")).toHaveLength(1);
+  expect(failed.actions).not.toContain("close-raw:7");
   expect(failed.actions).not.toContain("terminate-adopted");
   for (const transfer of ["throw", "reject", "deferred"] as const) {
     const f = fixture({ transfer }); expect(() => f.subscribe()).toThrow("required_context_unavailable"); await tick();
     expect(f.actions).not.toContain("close-raw:7");
     f.handlers().connectError(f.socket, new Error("explicit late detached failure"));
     f.handlers().connectError(f.socket, new Error("duplicate"));
-    expect(f.actions.filter(action => action === "close-raw:7")).toHaveLength(1);
+    expect(f.actions).not.toContain("close-raw:7");
   }
 });
 

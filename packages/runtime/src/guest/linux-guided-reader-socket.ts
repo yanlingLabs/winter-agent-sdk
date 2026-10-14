@@ -43,8 +43,8 @@ export function createLinuxGuidedReaderSocketWire(options: {
     try { owned?.terminate(); } catch { /* No cleanup receipt is fabricated. */ }
     for (const write of writes.splice(0)) write.reject(unavailable());
     const notify = lost; lost = undefined; notify?.();
-    // A generic post-transfer error grants no numeric-close authority. An explicit
-    // late pre-open connectError from this same attempt may still return it once.
+    // Post-transfer failure never grants numeric-close authority while actual
+    // pinned-Bun descriptor disposal proof remains unverified.
   };
   const flush = () => {
     if (closed || !adopted || !socket || flushing || waitingDrain) return;
@@ -70,9 +70,9 @@ export function createLinuxGuidedReaderSocketWire(options: {
       if (closed) { socket = undefined; try { value.terminate(); } catch {} }
     },
     connectError(_value, _error) {
-      // Pinned Bun's detached failed-fromFd callback confirms this sole transfer
-      // never adopted/closed the raw fd. Generic rejection/throw cannot do that.
-      if (attempted && !adopted) closeOwnedRaw();
+      // Source analysis alone cannot establish the actual runtime's FD reuse /
+      // disposal order. Retain uncertainty; Root must terminate the runtime.
+      // No callback, correlation DTO or injected test can enable numeric close.
       close();
     },
     error(_value, _error) { close(); }, close(_value) { close(); }, end(_value) { close(); },

@@ -85,6 +85,7 @@ export function createLinuxGuidedReaderChannel(options: {
         const length = Math.min(body.length - bodyBytes, chunk.byteLength - at); body.set(chunk.subarray(at, at + length), bodyBytes); bodyBytes += length; at += length;
         if (bodyBytes === body.length) {
           const frame = Buffer.concat([header, body]); body = undefined; bodyBytes = 0; header = Buffer.alloc(4); headerBytes = 0; accept(frame);
+          if (closed) return;
         }
       }
     } catch { close(); }
