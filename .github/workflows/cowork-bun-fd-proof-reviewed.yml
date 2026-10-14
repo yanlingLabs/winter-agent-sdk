@@ -1,0 +1,97 @@
+name: Reviewed one-shot unprivileged Bun FD proof
+on:
+  push:
+    branches: ['cowork/bun-reader-fd-hosted-proof']
+permissions:
+  contents: read
+concurrency:
+  group: cowork-bun-fd-proof-one-shot
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+jobs:
+  fd-behavior-only:
+    if: github.repository == 'yanlingLabs/winter-agent-sdk' && github.ref == 'refs/heads/cowork/bun-reader-fd-hosted-proof' && github.event.before == '0000000000000000000000000000000000000000' && github.run_attempt == 1
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+          lfs: false
+      - name: Execute only exact reviewed source in a closed unprivileged environment
+        env:
+          FACT_REPOSITORY: ${{ github.repository }}
+          FACT_REF: ${{ github.ref }}
+          FACT_BEFORE: ${{ github.event.before }}
+          FACT_HEAD: ${{ github.sha }}
+          FACT_ATTEMPT: ${{ github.run_attempt }}
+          FACT_RUN_ID: ${{ github.run_id }}
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/bun-fd-home"
+          env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C HOME="$RUNNER_TEMP/bun-fd-home" TMPDIR="$RUNNER_TEMP/bun-fd-home" \
+            /usr/bin/python3 -I -S -B - "$FACT_REPOSITORY" "$FACT_REF" "$FACT_BEFORE" "$FACT_HEAD" "$FACT_ATTEMPT" "$FACT_RUN_ID" <<'PY'
+          import hashlib, json, os, stat, sys
+          from pathlib import Path
+          repository, ref, before, head, attempt, run_id = sys.argv[1:]
+          destination = Path('out/bun-fd-proof')
+          destination.mkdir(parents=True, mode=0o700)
+          (destination / 'result.json').write_text('{"status":"FAIL","reason":"source_bootstrap_refused","vmExecutionVerified":false,"productionActivation":false}\n')
+          if os.getuid() == 0 or os.geteuid() == 0:
+              raise SystemExit('ordinary runner required')
+          source = Path('scripts/bun-reader-fd-proof/hosted.py')
+          fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+          try:
+              before_stat = os.fstat(fd)
+              if not stat.S_ISREG(before_stat.st_mode) or before_stat.st_nlink != 1 or before_stat.st_size > 65536:
+                  raise SystemExit('reviewed source identity refused')
+              data = os.pread(fd, 65537, 0)
+              after_stat = os.fstat(fd)
+              identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_nlink)
+              if identity(before_stat) != identity(after_stat) or len(data) != before_stat.st_size:
+                  raise SystemExit('reviewed source changed')
+          finally:
+              os.close(fd)
+          if hashlib.sha256(data).hexdigest() != '2b829140956b2f23d99d4d8bc7ea1bfb18b25f076bba313ffa8b8716cfb55a7d':
+              raise SystemExit('exact reviewed source digest required')
+          sys.argv = [str(source), '--admitted-hosted-run', '--repository', repository, '--ref', ref,
+                      '--before', before, '--head', head, '--attempt', attempt, '--run-id', run_id,
+                      '--result', 'out/bun-fd-proof/result.json']
+          exec(compile(data, '<reviewed-bun-fd-hosted-source>', 'exec'), {'__name__': '__main__', '__file__': str(source)})
+          PY
+      - name: Retain exact bounded result bytes and hash
+        if: always()
+        run: |
+          env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C /usr/bin/python3 -I -S -B - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          folder = Path('out/bun-fd-proof')
+          if not (folder / 'result.json').is_file():
+              raise SystemExit('result absent; no execution or cleanup proof')
+          data = (folder / 'result.json').read_bytes()
+          if len(data) > 65536:
+              raise SystemExit('bounded result required')
+          value = json.loads(data)
+          if value.get('status') not in ('PASS', 'FAIL'):
+              raise SystemExit('closed result required')
+          receipt = {'resultBytes': len(data), 'resultSha256': hashlib.sha256(data).hexdigest(),
+                     'status': value['status'], 'scope': 'unprivileged_cli_bun_fd_behavior_only',
+                     'vmExecutionVerified': False, 'productionActivation': False}
+          (folder / 'receipt.json').write_text(json.dumps(receipt, sort_keys=True) + '\n')
+          print(json.dumps(receipt, sort_keys=True))
+          PY
+      - name: Preserve result DATA only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bun-fd-proof-${{ github.run_id }}-attempt1
+          path: |
+            out/bun-fd-proof/result.json
+            out/bun-fd-proof/receipt.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false
+          include-hidden-files: false

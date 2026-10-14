@@ -1,5 +1,10 @@
 name: ci
-on: [push, pull_request]
+on:
+  push:
+    # Dedicated one-shot unprivileged fixture has its own reviewed workflow.
+    branches-ignore: ['cowork/bun-reader-fd-hosted-proof']
+    tags: ['**']
+  pull_request:
 jobs:
   guest-file-boundary:
     # Real file worker and foreground Bash in disposable Linux process/mount namespaces,

@@ -1,0 +1,34 @@
+{
+  "assets": {
+    "SHASUMS256.txt": {
+      "id": 418956640,
+      "name": "SHASUMS256.txt",
+      "sha256": "0fec8a7c8c72e903dba7ca24b533f9e924da296e65dec32418f68389ccd26165",
+      "size": 3431,
+      "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/SHASUMS256.txt"
+    },
+    "SHASUMS256.txt.asc": {
+      "id": 418956648,
+      "name": "SHASUMS256.txt.asc",
+      "sha256": "f7dae34eb12b0752232f284a517457d9e7de44db90c8b8cfd6a494fcee410c9e",
+      "size": 3709,
+      "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/SHASUMS256.txt.asc"
+    },
+    "bun-linux-aarch64.zip": {
+      "id": 418773677,
+      "name": "bun-linux-aarch64.zip",
+      "sha256": "a27ffb63a8310375836e0d6f668ae17fa8d8d18b88c37c821c65331973a19a3b",
+      "size": 35700603,
+      "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-aarch64.zip"
+    }
+  },
+  "observedDate": "2026-10-14",
+  "publishedAt": "2026-05-13T03:48:28Z",
+  "releaseApi": "https://api.github.com/repos/oven-sh/bun/releases/tags/bun-v1.3.14",
+  "releaseId": 320260981,
+  "repository": "oven-sh/bun",
+  "schema": 1,
+  "signatureResidual": "GitHub API digest and matching official checksum text only; detached/clearsigned PGP signature not independently verified against authenticated maintainer key. No binary downloaded locally.",
+  "tag": "bun-v1.3.14",
+  "targetCommit": "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+}
