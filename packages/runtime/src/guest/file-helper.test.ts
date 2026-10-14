@@ -65,8 +65,10 @@ describe("compartment file-helper protocol", () => {
         stdout: '{"version":1,"ok":false,"code":"stat_failed","errno":5}' };
     };
     await expect(f.helper.read("source", "file")).rejects.toMatchObject({ code: "stat_failed", errno: 5, effectsUncertain: false });
-    await expect(f.helper.write("source", "file", Buffer.from("x"))).rejects.toMatchObject({ code: "stat_failed", errno: 5, effectsUncertain: false });
-    await expect(f.helper.writeChecked("source", "file", Buffer.from("x"), "absent")).rejects.toMatchObject({ code: "stat_failed", errno: 5, effectsUncertain: false });
+    expect(attempts).toBe(1);
+    await expect(f.helper.write("source", "file", Buffer.from("x"))).rejects.toMatchObject({ code: "stat_failed", errno: 5, effectsUncertain: true });
+    expect(attempts).toBe(2);
+    await expect(f.helper.writeChecked("source", "file", Buffer.from("x"), "absent")).rejects.toMatchObject({ code: "stat_failed", errno: 5, effectsUncertain: true });
     expect(attempts).toBe(3);
   });
   test("partial writes/flush failures retain uncertainty and oversized responses refuse", async () => {
