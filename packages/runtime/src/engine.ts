@@ -1,6 +1,8 @@
 import type { RuntimeContextChannel } from "./context/runtime-context-channel.ts";
-import { parseRuntimeContextConfig, RUNTIME_CONTEXT_VERSION } from "@yanlinglabs/winter-agent-sdk";
-import { assertLinuxSession, assertRunningLinuxSession, checkLinuxSessionFrame, linuxSessionProfile, linuxSessionBindings, FRESH_LINUX_TOOLS, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
+import { parseRuntimeContextConfig, RUNTIME_CONTEXT_VERSION, RUNTIME_CONTEXT_SUBTYPE } from "@yanlinglabs/winter-agent-sdk";
+import { assertLinuxSession, assertRunningLinuxSession, checkLinuxSessionFrame, linuxSessionProfile, linuxSessionBindings, linuxGuidedSessionChannel, FRESH_LINUX_TOOLS, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
+import { LINUX_GUIDED_HOST_QUERY_PROFILE } from "./guest/linux-guided-host-query-profile.ts";
+import { dispatchGuidedParentControl } from "./guest/guided-parent-input.ts";
 import { LINUX_HOST_QUERY_PROFILE } from "./guest/linux-host-query-profile.ts";
 import { sourceReadRestrictionGeneration } from "./sandbox/source-read.ts";
 import { randomUUID } from "node:crypto";
@@ -2575,7 +2577,13 @@ function withLegacyToolNameRules(opts: EngineOptions): EngineOptions {
 }
 
 export async function runEngine(opts: EngineOptions): Promise<number> {
-  if (opts.config.requiredRuntimeContext !== undefined && opts.config.executionPosture === "confined-guest") throw new Error("required_context_unavailable");
+  if (opts.config.requiredRuntimeContext !== undefined && opts.config.executionPosture === "confined-guest") {
+    const descriptor = Object.getOwnPropertyDescriptor(opts, "linuxSessionAdmission");
+    if (!descriptor || !("value" in descriptor)) throw new Error("required_context_unavailable");
+    const channel = linuxGuidedSessionChannel(descriptor.value, opts.config);
+    if (opts.runtimeContextChannel !== channel || opts.systemPromptAssembler?.requiredContext !== channel
+      || linuxGuidedSessionChannel(descriptor.value, opts.config, opts.output) !== channel) throw new Error("required_context_unavailable");
+  }
   assertRuntimeExecutionPosture(opts.config, opts.linuxSessionAdmission);
   if (opts.linuxSessionAdmission !== undefined) assertRunningLinuxSession(opts.linuxSessionAdmission, opts.config, opts.provider);
   if (opts.linuxSessionAdmission !== undefined && (opts.tools !== undefined || opts.unregisteredToolExecutor !== undefined)) throw new Error("fresh Linux execution cannot replace its enforced tools");
@@ -3028,6 +3036,8 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     holdUntilOpen: true,
     ...(opts.linuxSessionAdmission !== undefined && linuxSessionProfile(opts.linuxSessionAdmission) === LINUX_HOST_QUERY_PROFILE
       ? { allowedSubtypes: ["permission"] } : {}),
+    ...(opts.linuxSessionAdmission !== undefined && linuxSessionProfile(opts.linuxSessionAdmission) === LINUX_GUIDED_HOST_QUERY_PROFILE
+      ? { allowedSubtypes: ["permission", RUNTIME_CONTEXT_SUBTYPE] } : {}),
   });
   if (config.hostCodeProcessBroker !== undefined) {
     if (typeof config.hostCodeProcessBroker.generationId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(config.hostCodeProcessBroker.generationId)) throw new Error("invalid host Code broker generation");
@@ -6575,6 +6585,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         const frame = outcome.result.value;
         if (opts.linuxSessionAdmission !== undefined) {
           try {
+            if (linuxSessionProfile(opts.linuxSessionAdmission) === LINUX_GUIDED_HOST_QUERY_PROFILE) {
+              const channel = linuxGuidedSessionChannel(opts.linuxSessionAdmission, config, output);
+              if (dispatchGuidedParentControl(channel, frame, () => { channel.close(); hardStop(); })) continue;
+            }
             if (checkLinuxSessionFrame(opts.linuxSessionAdmission, config, frame, id => bridge.ownsRequest(id, "permission")) === "drop") continue;
           } catch (error) {
             // A malformed confined input cancels pending approvals/in-flight work; it is not

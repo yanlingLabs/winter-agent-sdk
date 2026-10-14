@@ -1,5 +1,6 @@
 import { parseRuntimeContextConfig } from "@yanlinglabs/winter-agent-sdk";
 import { createRuntimeContextChannel, type RuntimeContextChannel } from "./context/runtime-context-channel.ts";
+import { linuxGuidedSessionChannel } from "./guest/linux-session-admission.ts";
 import { assertLinuxSession, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
 import { installSourceReadRestrictions } from "./sandbox/source-read.ts";
 // Phase 5 Task 8: THE ONE PLACE every P5 lane's implementation is wired into a live session.
@@ -767,7 +768,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
 
 async function buildProductionWiringImpl(opts: ProductionWiringOptions, restrictReads: (paths: readonly string[] | undefined) => void): Promise<ProductionWiring> {
   const { config, env } = opts;
-  if (config.requiredRuntimeContext !== undefined && config.executionPosture === "confined-guest") throw new Error("required_context_unavailable");
+  let admittedContext: RuntimeContextChannel | undefined;
+  if (config.requiredRuntimeContext !== undefined && config.executionPosture === "confined-guest") {
+    const descriptor = Object.getOwnPropertyDescriptor(opts, "linuxSessionAdmission");
+    if (!descriptor || !("value" in descriptor)) throw new Error("required_context_unavailable");
+    admittedContext = linuxGuidedSessionChannel(descriptor.value, config);
+  }
   if (config.requiredRuntimeContext !== undefined) parseRuntimeContextConfig(config.requiredRuntimeContext);
   const freshLinux = opts.linuxSessionAdmission !== undefined;
   if (freshLinux) assertLinuxSession(opts.linuxSessionAdmission, config);
@@ -1111,9 +1117,10 @@ async function buildProductionWiringImpl(opts: ProductionWiringOptions, restrict
 
   // (10) THE ASSEMBLER (Lane C). Its `home` is the resolved winter root and its `settings` is the
   // post-OVERLAY_NEVER_KEYS effective getter (rider 24, asserted above).
-  const runtimeContextChannel = config.requiredRuntimeContext !== undefined ? createRuntimeContextChannel(config.requiredRuntimeContext) : undefined;
+  const runtimeContextChannel = admittedContext ?? (config.requiredRuntimeContext !== undefined ? createRuntimeContextChannel(config.requiredRuntimeContext) : undefined);
   const systemPromptAssembler = createSystemPromptAssembler({ home: winterHome, settings: settingsGetter, pluginOutputStyles,
-    ...(runtimeContextChannel !== undefined ? { requiredContext: runtimeContextChannel } : {}) });
+    ...(runtimeContextChannel !== undefined ? { requiredContext: runtimeContextChannel } : {}),
+    ...(admittedContext !== undefined ? { admittedGuidanceOnly: true } : {}) });
 
   // (10b) THE TWO PROCESS-LEVEL SURFACES A BRAND CANNOT REACH BY PARAMETER (P7a, D19).
   //

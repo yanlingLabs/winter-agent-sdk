@@ -23,6 +23,7 @@ interface PreparationRecord {
   onRuntimeContext: RuntimeContextHandler | undefined;
   spawnClaudeCodeProcess: SpawnClaudeCodeProcess | undefined;
   correlation?: Readonly<GuidedQueryCorrelation>;
+  contextDisposers?: Set<() => void>;
 }
 const preparations = new WeakMap<GuidedQueryPreparation, PreparationRecord>();
 const claims = new WeakMap<GuidedQueryClaim, GuidedQueryPreparation>();
@@ -52,9 +53,25 @@ function record(value: GuidedQueryPreparation): PreparationRecord {
 }
 function closeRecord(value: PreparationRecord): void {
   value.state = "closed";
+  for (const dispose of value.contextDisposers ?? []) { try { dispose(); } catch { /* Closing remains terminal. */ } }
+  value.contextDisposers?.clear();
   value.onRuntimeContext = undefined;
   value.spawnClaudeCodeProcess = undefined;
   delete value.correlation;
+}
+/** Internal correlation checks only. A preparation/claim never establishes
+ * native owner, views or filesystem authority. */
+export function assertGuidedPreparationClaim(preparation: GuidedQueryPreparation, claim: GuidedQueryClaim, expected: Readonly<GuidedQueryCorrelation>): void {
+  if (claims.get(claim) !== preparation) return fail();
+  assertGuidedQueryCorrelation(claim, expected);
+}
+export function registerGuidedContextDisposer(claim: GuidedQueryClaim, dispose: () => void): () => void {
+  const preparation = claims.get(claim);
+  if (preparation === undefined || typeof dispose !== "function") return fail();
+  const current = record(preparation);
+  if (current.state !== "correlated") return fail();
+  (current.contextDisposers ??= new Set()).add(dispose);
+  return () => { current.contextDisposers?.delete(dispose); };
 }
 
 /** Stores the exact functions without calling them. Does not grant query/runtime access. */

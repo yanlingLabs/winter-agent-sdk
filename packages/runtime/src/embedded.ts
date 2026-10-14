@@ -1,4 +1,4 @@
-import { claimLinuxSession, linuxSessionBindings, closeLinuxSession, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
+import { claimLinuxSession, linuxSessionBindings, bindLinuxGuidedSessionChannel, closeLinuxSession, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
 // WS-23 (embedded chat/dispatch): `runEmbeddedSession` -- ONE Winter session, run to completion, with
 // every process global turned into a parameter.
 //
@@ -266,6 +266,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
       claimLinuxSession(opts.linuxSessionAdmission, config);
       const binding = linuxSessionBindings(opts.linuxSessionAdmission);
       if (opts.protectedStoreBootstrap !== binding.store || opts.hostCodeProtection !== undefined || opts.hostChildFloor !== undefined || opts.brokerRequired || opts.workflowWorkerCommand !== undefined) throw new Error("fresh Linux bootstrap binding mismatch");
+      if (config.requiredRuntimeContext !== undefined) bindLinuxGuidedSessionChannel(opts.linuxSessionAdmission, config, output);
     }
     if (opts.protectedStoreBootstrap !== undefined) {
       if (typeof opts.onProtectedStoreOwnershipOutcome !== "function") throw new Error("protected store bootstrap requires a machine-readable terminal ownership observer");

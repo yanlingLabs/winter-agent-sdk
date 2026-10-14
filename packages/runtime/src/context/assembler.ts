@@ -55,6 +55,8 @@ import type { RequiredContextSource } from "./required-context.ts";
 export interface SystemPromptAssemblerDeps {
   /** Complete current guidance from a trusted host/guest context owner, not project settings. */
   requiredContext?: RequiredContextSource;
+  /** Internal native-guided parent wiring only; never serialized in RuntimeConfig. */
+  admittedGuidanceOnly?: true;
   /**
    * The resolved winter home. Omitted resolves from `SystemPromptInput.env` (so `<PREFIX>HOME` is
    * honoured per session, not per process). Tests pass an mkdtemp directory here rather than
@@ -198,10 +200,10 @@ function resolveContext(deps: SystemPromptAssemblerDeps, input: SystemPromptInpu
   // whitespace-only read as ABSENT (falling through to the settings key, not to the home itself).
   // The settings key is never taken from PROJECT settings -- `OVERLAY_NEVER_KEYS` enforces that
   // upstream, in the settings layer, and this consumes whatever survived it.
-  const hostMemory = config.autoMemory;
-  const memoryOn = hostMemory?.enabled ?? autoMemoryEnabled(settings);
+  const hostMemory = deps.admittedGuidanceOnly === true ? undefined : config.autoMemory;
+  const memoryOn = deps.admittedGuidanceOnly === true ? false : hostMemory?.enabled ?? autoMemoryEnabled(settings);
   const hostDirectory = hostMemory?.directory !== undefined && hostMemory.directory.trim().length > 0 ? hostMemory.directory : undefined;
-  const directoryOverride = hostDirectory ?? settings?.autoMemoryDirectory;
+  const directoryOverride = deps.admittedGuidanceOnly === true ? undefined : hostDirectory ?? settings?.autoMemoryDirectory;
   const memoryDir = memoryOn
     ? (input.memoryDir ??
       memoryDirFor({
@@ -229,6 +231,7 @@ function resolveContext(deps: SystemPromptAssemblerDeps, input: SystemPromptInpu
 }
 
 export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}): SystemPromptAssembler {
+  if (deps.admittedGuidanceOnly === true && deps.requiredContext === undefined) throw new Error("required_context_unavailable");
   return {
     ...(deps.requiredContext !== undefined ? { requiredContext: deps.requiredContext } : {}),
     assemble(input: SystemPromptInput): AssembledPrompt {
@@ -334,7 +337,7 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       // `claudeMd`: every instructions file (user, then each directory from the repository root down,
       // checked-in before local) and the MEMORY.md index last, as ONE value. `omitProjectContext`
       // drops the whole key (as claude's Explore/Plan agents get no instructions files).
-      if (input.omitProjectContext !== true) {
+      if (deps.admittedGuidanceOnly !== true && input.omitProjectContext !== true) {
         // WS-21 §6.3 item 2 (fix round 1, Critical 1), CORRECTED by the router's same-view test
         // (SV-1): UNCONDITIONAL rules ride the SAME claudeMd value the instructions files do,
         // rendered after them (winter-md.ts's own ordering). `loadRules`'s `home` param is
