@@ -5,6 +5,9 @@
  * The ordinary Python source suite never compiles or launches this fixture.
  */
 #define _GNU_SOURCE
+#ifdef NDEBUG
+#error "guided owner target fixture requires active assert effects; NDEBUG forbidden"
+#endif
 #include <assert.h>
 #include <grp.h>
 #include <sched.h>

@@ -143,6 +143,17 @@ int main(void){
         self.assertIn('waitpid(pid,&status,0)==pid', case)
         self.assertIn('WIFEXITED(status)&&WEXITSTATUS(status)==0', case)
 
+    def test_ndebug_is_rejected_before_target_headers_or_setup(self):
+        compiler = shutil.which('cc')
+        if not compiler:
+            self.skipTest('existing local C preprocessor unavailable; NDEBUG guard not checked')
+        fixture = FIXTURE.read_text()
+        # Exact test-guard prefix only: no Linux headers, binary or native setup.
+        prefix = fixture[:fixture.index('#include <assert.h>')]
+        result = subprocess.run([compiler, '-E', '-DNDEBUG', '-x', 'c', '-'], input=prefix, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('NDEBUG forbidden', result.stderr)
+
 
 class GuidedOwnerNativeTargetTests(unittest.TestCase):
     """No authority doubles. Every successful case invokes real owner_open/check."""

@@ -14,6 +14,19 @@ original commit `b766e7bc13505aa481ae8e22332856e69dde47cd`, cherry-picked as
 `ba3ef733` on branch `cowork/guided-owner-c`, based on `fbec8856`.
 The resulting tracked C hash was verified to match the accepted reconstruction.
 
+Current composition is a new worktree/branch `sdk-guided-owner-composition` /
+`cowork/guided-owner-composition`, based on accepted SDK
+`0bed853a1bad07d50994a780334965d5ff918851`. Only the C/fixture leaves
+`f469af97`, `ec4e6960` and `102422cb` were cherry-picked, as `cf889ab1`,
+`1c69465e` and `b5a61458`. W1 is already in this accepted base. No older TS
+ancestor was merged. All private host-reader and guarded reader-socket source
+and test blobs remain identical to that base.
+The private host-reader source blob is
+`41e13a40971a41d498220f089f02bfc9e10a8bd5`; the guarded reader-socket source blob
+is `b4f2d6aa654b2a8823176cd517219f72fa9d3e46`. Twelve corresponding private
+reader/preparation/query, socket/channel/construction and admission source/test
+blobs were compared directly with `0bed853a` and matched.
+
 ## Portable evidence
 
 `scripts/guest-supervisor/test_guided_owner.py` extracts the actual parser,
@@ -34,6 +47,10 @@ shutdown oracles without compiling or executing the target fixture.
 A fourth checks that every case normally forks a fresh Root supervisor before
 creating peers and changing `pid_ns_for_children` once, then requires actual
 `waitpid` success for both the runtime child and that case supervisor.
+A fifth preprocesses only the fixture's exact header-free prefix to confirm
+`NDEBUG` produces the explicit compile error. It compiles no Linux source and
+runs no target setup. The target fixture refuses `NDEBUG` because assertions
+contain required effects and observations.
 
 The existing `test_native_parser.py` now excludes Linux authority headers from
 its exact portable parser extraction, so adding `sys/vfs.h` to production C does
@@ -46,11 +63,14 @@ python3 -m unittest discover -s scripts/guest-supervisor -p test_guided_owner.py
 python3 -m unittest discover -s scripts/guest-supervisor -p test_native_parser.py -v
 ```
 
-Observed on Darwin on 2026-10-14: the first command passed exactly **4 portable
+Observed on Darwin on 2026-10-14: the first command passed exactly **5 portable
 source tests** and skipped all **12 target entries**. The second passed exactly
-**1 parser test**. `git diff --check` and Python syntax parsing passed. These five
+**1 parser test**. `git diff --check` and Python syntax parsing passed. These six
 portable passes do not include any native ownership or Linux whole-source compile
 result. The target fixture has not been compiled or launched.
+The composed checkout also passed both `tsconfig.typecheck.json` and
+`tsconfig.sdk-fence.json` with `--noEmit`, using cached dependency links only.
+No install, release, artifact build or consumer pin change occurred.
 
 ## Target-only evidence still required
 
@@ -62,6 +82,7 @@ a compiler and explicit target admission are needed for the success/lifetime
 matrix. Actual absence of pidfs additionally needs a pre-6.9 target, so that case
 is separately skipped on a newer kernel. Version alone does not prove features:
 an actual missing feature on a declared compatible target fails the positive case.
+No pre-6.9 target has been separately admitted in this lane.
 
 `guided_owner_native_fixture.c` includes production C unchanged. It uses actual
 pidfds and `SO_PEERPIDFD`, private mount/PID namespaces, a fixture-only chroot,
