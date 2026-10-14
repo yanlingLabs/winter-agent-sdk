@@ -1,0 +1,128 @@
+--- a/packages/runtime/src/guest/linux-session-owner.c
++++ b/packages/runtime/src/guest/linux-session-owner.c
+@@ -11,6 +11,13 @@
+ #include <sys/socket.h>
+ #include <sys/stat.h>
+ #include <sys/types.h>
++#include <sys/vfs.h>
++#ifndef SO_PEERPIDFD
++#define SO_PEERPIDFD 77
++#endif
++#ifndef PID_FS_MAGIC
++#define PID_FS_MAGIC 0x50494446
++#endif
+ #include <unistd.h>
+ 
+ #define LIMIT 65536
+@@ -70,7 +77,34 @@
+ static int immutable(int fd){struct stat s;return !fstat(fd,&s)&&S_ISREG(s.st_mode)&&s.st_uid==0&&s.st_nlink==1&&!(s.st_mode&0222)&&(fcntl(fd,F_GETFL)&O_ACCMODE)==O_RDONLY;}
+ static int identity(int a,int b){struct stat x,y;return !fstat(a,&x)&&!fstat(b,&y)&&x.st_dev==y.st_dev&&x.st_ino==y.st_ino;}
+ static int boot(char out[64]){FILE *f=fopen("/proc/sys/kernel/random/boot_id","re");if(!f)return -1;int ok=fgets(out,64,f)!=NULL;fclose(f);if(!ok)return -1;out[strcspn(out,"\r\n")]=0;return strlen(out)==36?0:-1;}
+-struct owner { int fd[4],socket; uid_t uid; char record[LIMIT+1],store[512],boot[64],identity[256]; uint64_t serial; struct owner *next; };
++/* Guided-only feature requirement: pidfs identity, never namespace-visible PID text.
++ * Root creates both peers, retains exclusive owner/view registration, and hands
++ * the guest endpoint only to the admitted runtime incarnation. This helper
++ * authenticates the creator, not arbitrary later holders of that endpoint. */
++static int pidfs(int fd){struct statfs fs;return !fstatfs(fd,&fs)&&fs.f_type==PID_FS_MAGIC&&pidfd_type(fd);}
++static int guided_stream_live(int fd){
++    struct pollfd channel={fd,POLLRDHUP,0};int result=poll(&channel,1,0);
++    return result>=0&&!(channel.revents&(POLLERR|POLLHUP|POLLRDHUP|POLLNVAL));
++}
++static int guided_peer(int socketfd,int type,int service,int runtime){
++    struct sockaddr address; socklen_t addresssize=sizeof address;
++    struct ucred peer; socklen_t credentials=sizeof peer;
++    int actual,accepting,peerfd=-1; socklen_t size=sizeof actual;
++    if(socketfd<3||!pidfs(service)||!pidfs(runtime)||identity(service,runtime)||!live(service)||!live(runtime)
++        ||getsockopt(socketfd,SOL_SOCKET,SO_TYPE,&actual,&size)||size!=sizeof actual||actual!=type)return 0;
++    size=sizeof accepting;
++    if(getsockopt(socketfd,SOL_SOCKET,SO_ACCEPTCONN,&accepting,&size)||size!=sizeof accepting||accepting!=0
++        ||getpeername(socketfd,&address,&addresssize)||address.sa_family!=AF_UNIX
++        ||getsockopt(socketfd,SOL_SOCKET,SO_PEERCRED,&peer,&credentials)||credentials!=sizeof peer||peer.uid!=0)return 0;
++    size=sizeof peerfd;
++    if(getsockopt(socketfd,SOL_SOCKET,SO_PEERPIDFD,&peerfd,&size))return 0;
++    int ok=size==sizeof peerfd&&peerfd>=3&&pidfs(peerfd)&&identity(peerfd,service)&&!identity(peerfd,runtime)
++        &&live(peerfd)&&live(service)&&live(runtime);
++    if(peerfd>=0)close(peerfd);
++    /* Liveness again after all identity comparisons and temporary-FD closure. */
++    return ok&&live(service)&&live(runtime)&&(type!=SOCK_STREAM||guided_stream_live(socketfd));
++}
++struct owner { int fd[5],count,socket,guided,reader_claimed; uid_t uid; char record[LIMIT+1],store[512],boot[64],identity[256]; uint64_t serial; struct owner *next; };
+ static struct owner *owners;static uint64_t serial;static const char *error="none";
+ static struct owner *get(uint64_t h){for(struct owner *o=owners;o;o=o->next)if(o->serial==h)return o;error="owner_closed";return NULL;}
+ const char *winter_owner_error(void){return error;}
+@@ -78,7 +112,7 @@
+     struct owner *o=get(h);if(!o)return -1;
+     char resolved[4096],current[64];struct stat s;
+     int pathfd=open(o->store,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);int exe=open("/proc/self/exe",O_RDONLY|O_CLOEXEC);
+-    int ok=getuid()==o->uid&&geteuid()==o->uid&&getpid()==1&&live(o->fd[0])&&live(o->fd[1])&&pidfd_pid(o->fd[0])==getpid()&&pathfd>=0&&exe>=0&&identity(pathfd,o->fd[2])&&identity(exe,o->fd[3])&&immutable(o->fd[3])&&!fstat(o->fd[2],&s)&&S_ISDIR(s.st_mode)&&s.st_uid==o->uid&&(s.st_mode&0777)==0700&&realpath(o->store,resolved)&&!strcmp(resolved,o->store)&&!boot(current)&&!strcmp(current,o->boot);
++    int ok=(!o->guided||(o->fd[4]>=3&&guided_peer(o->fd[4],SOCK_STREAM,o->fd[1],o->fd[0])))&&getuid()==o->uid&&geteuid()==o->uid&&getpid()==1&&live(o->fd[0])&&live(o->fd[1])&&pidfd_pid(o->fd[0])==getpid()&&pathfd>=0&&exe>=0&&identity(pathfd,o->fd[2])&&identity(exe,o->fd[3])&&immutable(o->fd[3])&&!fstat(o->fd[2],&s)&&S_ISDIR(s.st_mode)&&s.st_uid==o->uid&&(s.st_mode&0777)==0700&&realpath(o->store,resolved)&&!strcmp(resolved,o->store)&&!boot(current)&&!strcmp(current,o->boot);
+     if(pathfd>=0)close(pathfd);
+     if(exe>=0)close(exe);
+     if(!ok){error="owner_lost";return -1;}return 0;
+@@ -89,29 +123,38 @@
+     struct ucred peer;socklen_t credentials=sizeof peer;int type;socklen_t typesize=sizeof type;
+     if(getpeername(socketfd,(struct sockaddr *)&address,&size)||address.family!=AF_UNIX||getsockopt(socketfd,SOL_SOCKET,SO_TYPE,&type,&typesize)||type!=SOCK_SEQPACKET||getsockopt(socketfd,SOL_SOCKET,SO_PEERCRED,&peer,&credentials)||credentials!=sizeof peer||peer.uid!=0)return 0;
+     struct pollfd ready={socketfd,POLLIN,0};if(poll(&ready,1,3000)!=1)return 0;
+-    struct owner *o=calloc(1,sizeof *o);if(!o){error="allocation_failed";return 0;}o->socket=-1;for(int i=0;i<4;i++)o->fd[i]=-1;
++    struct owner *o=calloc(1,sizeof *o);if(!o){error="allocation_failed";return 0;}o->socket=-1;for(int i=0;i<5;i++)o->fd[i]=-1;
+     char ancillary[CMSG_SPACE(sizeof(int)*16)]={0};struct iovec vector={o->record,LIMIT};struct msghdr message={0};message.msg_iov=&vector;message.msg_iovlen=1;message.msg_control=ancillary;message.msg_controllen=sizeof ancillary;
+     ssize_t count=recvmsg(socketfd,&message,MSG_CMSG_CLOEXEC);int fds[16],used=0,envelopes=0;
+     for(struct cmsghdr *c=CMSG_FIRSTHDR(&message);c;c=CMSG_NXTHDR(&message,c)){
+         if(c->cmsg_level==SOL_SOCKET&&c->cmsg_type==SCM_RIGHTS){envelopes++;size_t bytes=c->cmsg_len-CMSG_LEN(0);for(size_t j=0;j+sizeof(int)<=bytes;j+=sizeof(int)){int fd;memcpy(&fd,(char *)CMSG_DATA(c)+j,sizeof fd);if(used<16)fds[used++]=fd;else close(fd);}}
+         else envelopes+=100;
+     }
+-    if(count<1||message.msg_flags&~MSG_CMSG_CLOEXEC||used!=4||envelopes!=1){for(int i=0;i<used;i++)close(fds[i]);free(o);return 0;}
+-    for(int i=0;i<4;i++){o->fd[i]=fds[i];}
++    if(count<1||message.msg_flags&~MSG_CMSG_CLOEXEC||(used!=4&&used!=5)||envelopes!=1){for(int i=0;i<used;i++)close(fds[i]);free(o);return 0;}
++    o->count=used;for(int i=0;i<used;i++){o->fd[i]=fds[i];}
+     o->record[count]=0;
+     struct parser p={.s=o->record,.n=(int)count};if(parse(&p,0)!=0)goto fail;space(&p);if(p.pos!=p.n||p.t[0].type!='{')goto fail;
++    int profile=field(&p,0,"profile"),registration=field(&p,0,"readerRegistration");
++    o->guided=eq(&p,profile,"host-query-guided-v1");
++    if(o->guided?(used!=5||registration<0||p.t[registration].type!='{'):(used!=4||registration>=0))goto fail;
++    if(o->guided){
++        struct stat channel;
++        if(fstat(o->fd[4],&channel)||!S_ISSOCK(channel.st_mode)||identity(o->fd[4],socketfd))goto fail;
++        for(int i=0;i<4;i++)if(identity(o->fd[4],o->fd[i]))goto fail;
++        if(!guided_peer(socketfd,SOCK_SEQPACKET,o->fd[1],o->fd[0])||!guided_peer(o->fd[4],SOCK_STREAM,o->fd[1],o->fd[0]))goto fail;
++    }
+     int fresh=field(&p,0,"freshOnly"),scope=field(&p,0,"scope");char logical[129],id[129],expected[512];
+     if(integer(&p,field(&p,0,"protocolVersion"))!=1||fresh<0||p.t[fresh].end-p.t[fresh].start!=4||memcmp(p.s+p.t[fresh].start,"true",4)||integer(&p,field(&p,0,"runtimeUid"))!=(long)getuid()||string(&p,field(&p,0,"logicalSessionId"),logical,sizeof logical)||!identifier(logical))goto fail;
+     for(int i=0;i<3;i++){const char *keys[]={"workspaceId","sessionId","incarnationId"};if(string(&p,field(&p,scope,keys[i]),id,sizeof id)||!identifier(id))goto fail;}
+     if(integer(&p,field(&p,scope,"leaseEpoch"))<1||string(&p,field(&p,scope,"storeHome"),o->store,sizeof o->store)||string(&p,field(&p,scope,"currentBootId"),o->boot,sizeof o->boot))goto fail;
+     snprintf(expected,sizeof expected,"/workspace/.winter/conversations/%s",logical);if(strcmp(expected,o->store))goto fail;
+-    for(int i=0;i<4;i++)if(!(fcntl(o->fd[i],F_GETFD)&FD_CLOEXEC))goto fail;
++    for(int i=0;i<o->count;i++)if(!(fcntl(o->fd[i],F_GETFD)&FD_CLOEXEC))goto fail;
+     if(!pidfd_type(o->fd[0])||!pidfd_type(o->fd[1])||!immutable(o->fd[3])||(fcntl(o->fd[2],F_GETFL)&O_ACCMODE)!=O_RDONLY)goto fail;
+-    o->uid=getuid();o->serial=++serial;if(!o->serial)o->serial=++serial;o->next=owners;owners=o;
++    o->socket=socketfd;o->uid=getuid();o->serial=++serial;if(!o->serial)o->serial=++serial;o->next=owners;owners=o;
+     if(winter_owner_check(o->serial)){owners=o->next;goto fail;}
+     o->socket=socketfd;fcntl(socketfd,F_SETFD,FD_CLOEXEC);error="none";return o->serial;
+ fail:
+-    for(int i=0;i<4;i++){if(o->fd[i]>=0)close(o->fd[i]);}
++    for(int i=0;i<o->count;i++){if(o->fd[i]>=0)close(o->fd[i]);}
+     free(o);return 0;
+ }
+ const char *winter_owner_record(uint64_t h){struct owner *o=get(h);return o&&!winter_owner_check(h)?o->record:NULL;}
+@@ -123,7 +166,20 @@
+     if(fieldnumber!=22)return NULL;
+     snprintf(o->identity,sizeof o->identity,"{\"bootId\":\"%s\",\"startTicks\":\"%llu\"}",o->boot,ticks);return o->identity;
+ }
+-void winter_owner_close(uint64_t h){struct owner **link=&owners;while(*link&&(*link)->serial!=h)link=&(*link)->next;if(!*link)return;struct owner *o=*link;*link=o->next;for(int i=0;i<4;i++)close(o->fd[i]);if(o->socket>=0)close(o->socket);memset(o,0,sizeof *o);free(o);}
++void winter_owner_close(uint64_t h){struct owner **link=&owners;while(*link&&(*link)->serial!=h)link=&(*link)->next;if(!*link)return;struct owner *o=*link;*link=o->next;if(o->guided&&o->fd[4]>=0)shutdown(o->fd[4],SHUT_RDWR);for(int i=0;i<o->count;i++)if(o->fd[i]>=0)close(o->fd[i]);if(o->socket>=0)close(o->socket);memset(o,0,sizeof *o);free(o);}
++/* ONE transfer: the caller owns the returned CLOEXEC dup immediately. Native
++ * retains only its original; it never closes a transferred dup by number. */
++int winter_owner_claim_reader(uint64_t h){
++    struct owner *o=get(h);if(!o||!o->guided||o->reader_claimed||winter_owner_check(h))return -1;
++    o->reader_claimed=1;
++    return fcntl(o->fd[4],F_DUPFD_CLOEXEC,3);
++}
++/* Terminal owner loss: this shuts down every dup, not a normal read completion.
++ * Persistent framed responses never half-close the shared channel. */
++void winter_owner_reader_shutdown(uint64_t h){
++    struct owner *o=get(h);if(!o||!o->guided||o->fd[4]<0)return;
++    int fd=o->fd[4];o->fd[4]=-1;shutdown(fd,SHUT_RDWR);close(fd);
++}
+ /* Fixture provider worker admission: only the root harness passes the service's
+  * actual outer-namespace init pidfd. No guest packet can select its own PID/UID. */
+ int winter_provider_receive_owner(int channel){

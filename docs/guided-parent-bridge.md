@@ -1,8 +1,10 @@
 # Internal parent context/reader protocol — source prerequisite
 
 `packages/runtime/src/guest/guided-parent-bridge.ts` is an unwired, injected protocol
-component. No query, engine, production wiring, Linux admission or profile gate
-imports it. Existing confined-context refusal remains unconditional. This is not
+component. The guided-session source continuation now connects it to the native
+admission registry, assembler and engine; see `guided-session-wiring-continuation.md`.
+The current native owner and producer do not supply that guided registration or
+channel, and no guided entry is activated. Unregistered confined callers refuse. This is not
 an authority factory: `assertOwnerHeld` is a trusted synchronous dependency in
 source tests; matching identifiers, response shapes and a successful assertion do
 not create a native admission or grant a source path.
