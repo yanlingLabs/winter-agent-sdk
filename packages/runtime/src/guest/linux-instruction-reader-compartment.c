@@ -2,19 +2,30 @@
 /* SOURCE PREREQUISITE ONLY: distinct Root-created one-shot reader role. This is
  * deliberately unwired: no runtime/profile/producer or existing launcher change.
  * Root must admit the complete immutable loader closure and reserve reader UID.
- * Source compilation is not Linux confinement or honest Bun compatibility proof. */
+ * Source compilation is not Linux confinement or honest Bun compatibility proof.
+ *
+ * Runtime-compatibility view: pinned WebKit opens /dev/urandom directly and glibc's
+ * initial-thread pthread_getattr_np reads /proc/self/maps, so the sealed view gains
+ * EXACTLY two things: an otherwise-empty /dev holding only a read-only bind of the
+ * host character device 1:9, and a fresh subset=pid procfs mounted by the PID
+ * namespace's own init. This is a source-derived requirement; it diagnoses no run.
+ * Pre-exec invariants below re-prove that view from inside it, fail closed. */
 #include "linux-compartment.h"
 #include <stdint.h>
 #include <poll.h>
 #include <signal.h>
 #include <time.h>
 #include <sys/resource.h>
+#include <sys/sysmacros.h>
 #include <linux/mount.h>
 
 #define READER_DEPENDENCIES 32
 #define READER_WALL_MS 4000
 #define READER_SHARED "/run/winter/shared-instructions"
 #define READER_HOME "/run/winter/instruction-reader"
+#define READER_ENTROPY "/dev/urandom"
+#define READER_PROC "/proc"
+#define READER_PROC_OPTIONS "subset=pid,hidepid=invisible"
 
 /* BEGIN PORTABLE CONTRACT -- pure parsing, no descriptor or native effects. */
 struct reader_plan {
@@ -155,6 +166,216 @@ static void reader_point(const char *root, const char *guest, char out[8192], in
     else require(mkdir(out,0755),"reader directory mountpoint");
 }
 
+/* BEGIN PORTABLE VIEW CONTRACT -- pure name/text classifiers, no descriptor or native effects. */
+struct reader_slice { const char *at; size_t length; };
+struct reader_proc_names { int init, self, thread_self; };
+struct reader_mounts { int root, source, shared, executable, tmp, entropy, proc, dependencies[READER_DEPENDENCIES]; };
+
+/* Final /proc root of this namespace's subset=pid instance: PID 1 and the two
+ * self links, each once, and nothing else. Any other name or number is refused. */
+static int reader_proc_name(struct reader_proc_names *seen, const char *name) {
+    if(!strcmp(name,".")||!strcmp(name,".."))return 1;
+    if(!strcmp(name,"self"))return !seen->self++;
+    if(!strcmp(name,"thread-self"))return !seen->thread_self++;
+    if(!strcmp(name,"1"))return !seen->init++;
+    return 0;
+}
+/* Reviewed exec inventory: exactly descriptors 0, 1 and 2. The enumerating
+ * directory's own handle (listing) is the only other name that may appear. */
+static int reader_descriptor_name(unsigned int *seen, int listing, const char *name) {
+    int fd;
+    if(!strcmp(name,".")||!strcmp(name,".."))return 1;
+    if(!reader_number(name,0,65535,&fd))return 0;
+    if(fd==listing)return 1;
+    if(fd>2||(*seen&(1U<<fd)))return 0;
+    *seen|=1U<<fd;return 1;
+}
+/* mountinfo fields are single-space separated; paths escape space/tab/newline/backslash. */
+static int reader_next(const char **cursor, const char *end, struct reader_slice *out) {
+    const char *p=*cursor;
+    if(p>=end)return 0;
+    out->at=p;while(p<end&&*p!=' ')p++;
+    out->length=(size_t)(p-out->at);*cursor=p<end?p+1:p;return 1;
+}
+static int reader_same(struct reader_slice value, const char *text) {
+    size_t length=strlen(text);
+    return value.length==length&&!memcmp(value.at,text,length);
+}
+static int reader_below(struct reader_slice value, const char *root) {
+    size_t length=strlen(root);
+    return value.length>length+1&&!memcmp(value.at,root,length)&&value.at[length]=='/';
+}
+/* Exact comma-separated option tokens; csv is a fixed comma list, "" matches vacuously. */
+static int reader_options(struct reader_slice list, const char *csv, int present) {
+    for(const char *item=csv;*item;) {
+        size_t length=strcspn(item,",");
+        int found=0;
+        for(size_t at=0;at<=list.length&&!found;) {
+            size_t stop=at;while(stop<list.length&&list.at[stop]!=',')stop++;
+            found=stop-at==length&&!memcmp(list.at+at,item,length);at=stop+1;
+        }
+        if(found!=present)return 0;
+        item+=length+(item[length]==','?1:0);
+    }
+    return 1;
+}
+static int reader_rule(struct reader_slice options, struct reader_slice type, struct reader_slice super,
+                       const char *required, const char *forbidden, const char *fs, const char *super_required) {
+    return reader_options(options,required,1)&&reader_options(options,forbidden,0)&&
+           (!fs||reader_same(type,fs))&&(!super_required||reader_options(super,super_required,1));
+}
+static int reader_mount_line(const char *line, const char *end, const struct reader_plan *plan, struct reader_mounts *seen) {
+    const struct reader_slice none={NULL,0};
+    struct reader_slice head[6],token=none,type=none,device=none,super=none;
+    const char *cursor=line;memset(head,0,sizeof head);
+    for(int i=0;i<6;i++)if(!reader_next(&cursor,end,&head[i]))return 0;
+    for(int i=0;;i++) {
+        if(i==8||!reader_next(&cursor,end,&token))return 0;
+        if(token.length==1&&token.at[0]=='-')break;
+    }
+    if(!reader_next(&cursor,end,&type)||!reader_next(&cursor,end,&device)||!reader_next(&cursor,end,&super)||
+       reader_next(&cursor,end,&token))return 0;
+    const struct reader_slice point=head[4],options=head[5];
+    const char *sealed="ro,nosuid,nodev,noexec";
+    if(reader_same(point,"/"))return !seen->root++&&reader_rule(options,type,super,sealed,"","tmpfs",NULL);
+    if(reader_same(point,plan->source_path))return !seen->source++&&reader_rule(options,type,super,sealed,"",NULL,NULL);
+    if(reader_below(point,plan->source_path))return reader_rule(options,type,super,sealed,"",NULL,NULL);
+    if(reader_same(point,READER_SHARED))return !seen->shared++&&reader_rule(options,type,super,sealed,"",NULL,NULL);
+    if(reader_below(point,READER_SHARED))return reader_rule(options,type,super,sealed,"",NULL,NULL);
+    if(reader_same(point,"/instruction-reader"))return !seen->executable++&&reader_rule(options,type,super,"ro,nosuid,nodev","",NULL,NULL);
+    for(int i=0;i<plan->dependencies;i++)
+        if(reader_same(point,plan->dependency_paths[i]))return !seen->dependencies[i]++&&reader_rule(options,type,super,"ro,nosuid,nodev","",NULL,NULL);
+    if(reader_same(point,"/tmp"))return !seen->tmp++&&reader_rule(options,type,super,"rw,nosuid,nodev,noexec","ro","tmpfs",NULL);
+    /* The one device node: read-only, nosuid, noexec, and the only mount without nodev. */
+    if(reader_same(point,READER_ENTROPY))return !seen->entropy++&&reader_rule(options,type,super,"ro,nosuid,noexec","nodev",NULL,NULL);
+    if(reader_same(point,READER_PROC))return !seen->proc++&&reader_rule(options,type,super,sealed,"","proc",READER_PROC_OPTIONS);
+    return 0;
+}
+/* The complete reachable mount list of the final view: nothing beyond the expected
+ * table (recursive source/guidance clones may nest beneath their own mountpoints). */
+static int reader_mountinfo_ok(const char *text, size_t length, const struct reader_plan *plan) {
+    struct reader_mounts seen;memset(&seen,0,sizeof seen);
+    const char *end=text+length;
+    if(!length||text[length-1]!='\n')return 0;
+    for(const char *line=text;line<end;) {
+        const char *stop=memchr(line,'\n',(size_t)(end-line));
+        if(!stop||stop==line||!reader_mount_line(line,stop,plan,&seen))return 0;
+        line=stop+1;
+    }
+    for(int i=0;i<plan->dependencies;i++)if(seen.dependencies[i]!=1)return 0;
+    return seen.root==1&&seen.source==1&&seen.shared==1&&seen.executable==1&&seen.tmp==1&&seen.entropy==1&&seen.proc==1;
+}
+/* END PORTABLE VIEW CONTRACT */
+
+/* An invariant violation has no errno of its own: raise a fixed one so require()
+ * audits it by its distinct label, exit 77 like every other setup failure. */
+static void reader_expect(int holds, int error, const char *label) {
+    if(!holds){errno=error;require(-1,label);}
+}
+/* Host entropy device for WebKit's direct /dev/urandom read. Pin the kernel
+ * identity on the descriptor that is cloned, never a re-opened checked path, and
+ * clone BEFORE unshare while the host mount namespace still resolves it. NODEV is
+ * cleared on this one mount only; read-only protects mount metadata, not device writes. */
+static int reader_entropy(void) {
+    int fd=open(READER_ENTROPY,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);require(fd,"reader entropy device");
+    struct stat info;require(fstat(fd,&info),"reader entropy identity");
+    reader_expect(S_ISCHR(info.st_mode)&&major(info.st_rdev)==1&&minor(info.st_rdev)==9&&(fcntl(fd,F_GETFL)&O_ACCMODE)==O_RDONLY,ENODEV,"reader entropy identity");
+    int tree=(int)syscall(SYS_open_tree,fd,"",OPEN_TREE_CLONE|OPEN_TREE_CLOEXEC|AT_EMPTY_PATH);require(tree,"reader entropy clone");
+    struct mount_attr attr={.attr_set=MOUNT_ATTR_RDONLY|MOUNT_ATTR_NOSUID|MOUNT_ATTR_NOEXEC,.attr_clr=MOUNT_ATTR_NODEV,.propagation=MS_PRIVATE};
+    require((int)syscall(SYS_mount_setattr,tree,"",AT_EMPTY_PATH,&attr,sizeof attr),"reader entropy mount flags");
+    close(fd);return tree;
+}
+/* Same kernel identity re-proved on the node as mounted (O_PATH: never opened as a device). */
+static void reader_entropy_identity(const char *target, const char *label) {
+    int fd=open(target,O_PATH|O_NOFOLLOW|O_CLOEXEC);require(fd,label);
+    struct stat info;require(fstat(fd,&info),label);close(fd);
+    reader_expect(S_ISCHR(info.st_mode)&&major(info.st_rdev)==1&&minor(info.st_rdev)==9,ENODEV,label);
+}
+#define READER_DIRENT_RECLEN 16
+#define READER_DIRENT_NAME 19
+/* 0: every entry accepted; 1: refused; -1: errno. Raw getdents64 records, no allocation. */
+static int reader_walk(const char *directory, int (*visit)(void *state, int listing, const char *name), void *state) {
+    int fd=open(directory,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);if(fd<0)return -1;
+    union { char bytes[8192]; uint64_t alignment; } buffer;
+    int result=0;
+    while(!result) {
+        long count=syscall(SYS_getdents64,fd,buffer.bytes,sizeof buffer.bytes);
+        if(count<0){result=-1;break;}
+        if(!count)break;
+        for(long at=0;at<count&&!result;) {
+            uint16_t length;memcpy(&length,buffer.bytes+at+READER_DIRENT_RECLEN,sizeof length);
+            if(length<READER_DIRENT_NAME+2||length>count-at||!memchr(buffer.bytes+at+READER_DIRENT_NAME,0,(size_t)(length-READER_DIRENT_NAME))) {
+                errno=EBADMSG;result=-1;break;
+            }
+            if(!visit(state,fd,buffer.bytes+at+READER_DIRENT_NAME))result=1;
+            at+=length;
+        }
+    }
+    int saved=errno;close(fd);errno=saved;return result;
+}
+static int reader_proc_accept(void *state, int listing, const char *name) {
+    (void)listing;return reader_proc_name((struct reader_proc_names *)state,name);
+}
+static int reader_descriptor_accept(void *state, int listing, const char *name) {
+    return reader_descriptor_name((unsigned int *)state,listing,name);
+}
+/* B1: the only numeric /proc entry is PID 1. */
+static void reader_proc_inventory(void) {
+    struct reader_proc_names seen={0,0,0};
+    int walked=reader_walk(READER_PROC,reader_proc_accept,&seen);
+    require(walked,"reader proc root inventory");
+    reader_expect(!walked&&seen.init==1,ECHILD,"reader proc root inventory");
+}
+/* B2: this process is the namespace init, and /proc/1 names the sealed root and cwd. */
+static void reader_proc_identity(void) {
+    reader_expect(getpid()==1,ECHILD,"reader init process id");
+    struct stat view,proc_view;
+    require(stat("/",&view),"reader proc root identity");
+    require(stat(READER_PROC "/1/root",&proc_view),"reader proc root identity");
+    reader_expect(view.st_dev==proc_view.st_dev&&view.st_ino==proc_view.st_ino,EXDEV,"reader proc root identity");
+    require(stat(".",&view),"reader proc cwd identity");
+    require(stat(READER_PROC "/1/cwd",&proc_view),"reader proc cwd identity");
+    reader_expect(view.st_dev==proc_view.st_dev&&view.st_ino==proc_view.st_ino,EXDEV,"reader proc cwd identity");
+}
+/* B4: the reachable mount list is exactly the expected table. */
+static void reader_mount_inventory(const struct reader_plan *plan) {
+    static char text[1<<18];
+    int fd=open(READER_PROC "/self/mountinfo",O_RDONLY|O_CLOEXEC);require(fd,"reader mount inventory");
+    size_t length=0;
+    for(;;) {
+        ssize_t count=read(fd,text+length,sizeof text-length);
+        if(count<0&&errno==EINTR)continue;
+        require((int)count,"reader mount inventory");
+        if(!count)break;
+        length+=(size_t)count;
+        reader_expect(length<sizeof text,EFBIG,"reader mount inventory");
+    }
+    close(fd);
+    reader_expect(reader_mountinfo_ok(text,length,plan),EBUSY,"reader mount inventory");
+}
+/* B5: the exec descriptor table is exactly 0/1/2, still the verified pipe kinds. */
+static void reader_descriptor_inventory(void) {
+    unsigned int seen=0;
+    int walked=reader_walk(READER_PROC "/self/fd",reader_descriptor_accept,&seen);
+    require(walked,"reader descriptor inventory");
+    reader_expect(!walked&&seen==7U,EBADF,"reader descriptor inventory");
+    for(int fd=0;fd<3;fd++) {
+        struct stat st;require(fstat(fd,&st),"reader descriptor kind");
+        int flags=fcntl(fd,F_GETFL),descriptor_flags=fcntl(fd,F_GETFD);
+        require(flags,"reader descriptor kind");require(descriptor_flags,"reader descriptor kind");
+        reader_expect(S_ISFIFO(st.st_mode)&&(flags&O_ACCMODE)==(fd==0?O_RDONLY:O_WRONLY)&&!(descriptor_flags&FD_CLOEXEC),EBADF,"reader descriptor kind");
+    }
+}
+/* Run as the reader identity, under the final filter, after the last irreversible
+ * step. B3 (an outside canary must stay invisible) needs the harness, not this file. */
+static void reader_verify_view(const struct reader_plan *plan) {
+    reader_proc_inventory();
+    reader_proc_identity();
+    reader_entropy_identity(READER_ENTROPY,"reader final entropy identity");
+    reader_mount_inventory(plan);
+    reader_descriptor_inventory();
+}
+
 /* Separate filter: no sockets at all, no child processes. Bun threads may use
  * only the explicit pthread flags; clone3 ENOSYS allows libc's checked fallback.
  * Honest compiled Bun compatibility has NOT been exercised with this filter. */
@@ -273,6 +494,7 @@ int main(int argc, char **argv) {
     int source_tree=reader_clone(plan.source,0),shared_tree=reader_clone(plan.shared,0),executable_tree=reader_clone(plan.executable,1);
     int dependencies[READER_DEPENDENCIES];
     for(int i=0;i<plan.dependencies;i++)dependencies[i]=reader_clone(plan.dependency_fds[i],1);
+    int entropy_tree=reader_entropy();
     require(unshare(CLONE_NEWNS|CLONE_NEWPID|CLONE_NEWIPC|CLONE_NEWUTS|CLONE_NEWNET),"reader namespaces");
     require(mount(NULL,"/",NULL,MS_REC|MS_PRIVATE,NULL),"reader private propagation");
     pid_t child=fork();require(child,"reader namespace init");
@@ -293,6 +515,11 @@ int main(int argc, char **argv) {
     reader_point(plan.view,READER_HOME,target,0);
     reader_point(plan.view,"/tmp",target,0);
     require(mount("tmpfs",target,"tmpfs",MS_NOSUID|MS_NODEV|MS_NOEXEC,"mode=1777,size=8m"),"reader private temporary files");
+    reader_point(plan.view,READER_ENTROPY,target,1);reader_attach(entropy_tree,target);
+    reader_entropy_identity(target,"reader attached entropy identity");
+    /* Mounted here, by the namespace's own init, so the instance is THIS PID namespace's. */
+    reader_point(plan.view,READER_PROC,target,0);
+    require(mount("proc",target,"proc",MS_RDONLY|MS_NOSUID|MS_NODEV|MS_NOEXEC,READER_PROC_OPTIONS),"reader private proc");
     require(mount(NULL,plan.view,NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NODEV|MS_NOEXEC,NULL),"reader readonly skeleton");
     require(chdir(plan.view),"reader view cwd");require(chroot("."),"reader root");require(chdir(READER_HOME),"reader empty readonly cwd");
     reader_limit(RLIMIT_CPU,3);reader_limit(RLIMIT_NOFILE,64);reader_limit(RLIMIT_NPROC,32);
@@ -312,6 +539,7 @@ int main(int argc, char **argv) {
      * rely on CLOEXEC. There is no bootstrap, owner library, socket or root fd. */
     require((int)syscall(SYS_close_range,3U,~0U,0U),"reader explicit pipe-only envelope");
     reader_filter();umask(0077);
+    reader_verify_view(&plan);
     char *args[]={"/instruction-reader","--instruction-reader-v1",NULL};
     char *environment[]={"LANG=C","LC_ALL=C","TZ=UTC","HOME=" READER_HOME,"TMPDIR=/tmp","PATH=/usr/bin:/bin",NULL};
     execve(args[0],args,environment);require(-1,"reader immutable exec");return 77;

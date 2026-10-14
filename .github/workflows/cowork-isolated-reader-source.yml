@@ -2,10 +2,11 @@ name: cowork-isolated-reader-source
 
 on:
   push:
-    branches: [cowork/isolated-instruction-reader]
+    branches: [cowork/isolated-instruction-reader, cowork/reader-runtime-compatibility]
     paths:
       - .github/workflows/cowork-isolated-reader-source.yml
       - packages/runtime/src/guest/linux-instruction-reader-compartment.c
+      - packages/runtime/src/guest/linux-instruction-reader-dependency-probe.c
       - packages/runtime/src/guest/linux-compartment.h
       - scripts/guest-engine/test_instruction_reader_source.py
       - docs/linux-isolated-instruction-reader-source.md
@@ -13,6 +14,7 @@ on:
     paths:
       - .github/workflows/cowork-isolated-reader-source.yml
       - packages/runtime/src/guest/linux-instruction-reader-compartment.c
+      - packages/runtime/src/guest/linux-instruction-reader-dependency-probe.c
       - packages/runtime/src/guest/linux-compartment.h
       - scripts/guest-engine/test_instruction_reader_source.py
       - docs/linux-isolated-instruction-reader-source.md
@@ -22,7 +24,7 @@ permissions:
 
 jobs:
   source-only:
-    if: github.event_name == 'push' || github.head_ref == 'cowork/isolated-instruction-reader'
+    if: github.event_name == 'push' || github.head_ref == 'cowork/isolated-instruction-reader' || github.head_ref == 'cowork/reader-runtime-compatibility'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
     steps:
