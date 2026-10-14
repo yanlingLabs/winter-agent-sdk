@@ -13,6 +13,12 @@ described in "Runtime-compatibility view" below. The role stays unwired and noth
 else about the launch envelope changes. No Linux code was executed for this change
 either; every statement about kernel behavior below is source-derived and unverified.
 
+2026-10-15 amendment, after independent security review (no escape, no fail-open found):
+the host `/dev/urandom` bind is replaced by a private node on a tiny tmpfs; the child
+fixes `umask(022)` first; nested mounts of pseudo/device filesystems under the source
+and guidance trees are refused by the mount inventory; and what `subset=pid` still
+exposes is documented below.
+
 ## Exact Root-only launch envelope
 
 ```
@@ -84,7 +90,7 @@ recursively private.
 The skeleton is a 16 MiB tmpfs, remounted read-only/nosuid/nodev/noexec. It has an
 empty Root-owned read-only `/run/winter/instruction-reader` and a private 8 MiB
 tmpfs `/tmp` with nosuid/nodev/noexec, plus the two additions below (an
-otherwise-empty `/dev` holding one read-only entropy node, and a subset procfs).
+private tmpfs `/dev` holding one entropy device node, and a subset procfs).
 There is no host proc, sysfs, other device node, conversation/store/run home,
 owner library, bootstrap FD, control socket, credential, peer handle or canonical
 `.winter` alias in this reader view.
@@ -152,17 +158,19 @@ credential or environment change, and no JIT or randomness workaround):
 
 | Addition | Construction | Flags |
 | --- | --- | --- |
-| `/dev` holding only `urandom` | `/dev` is a plain directory on the skeleton tmpfs (no mount of its own). `/dev/urandom` is a read-only bind of the host character device, cloned from the opened descriptor with `open_tree` **before** `unshare` (mirrors the runtime and tool compartments), then attached with `move_mount`. | mount `ro,nosuid,noexec`, `nodev` cleared on this one mount only; kernel identity char 1:9 proven by `fstat` on the host descriptor, again on the attached node (`O_PATH`), and again in the final view |
+| private `/dev` holding only `urandom` | While still root in the namespace init, a tmpfs is mounted at `/dev` (`mode=0755,size=4k,nr_inodes=4`; device nodes **allowed**), `/dev/urandom` is created with `mknod` as character device 1:9 mode 0444, its identity and mode are verified, then the mount is remounted read-only. The host `/dev/urandom` is never opened, cloned or bound, so no host inode is reachable through the view: not a writable pool entry, not notifications on host reads. Nothing is cloned for it with `open_tree`. | mount `ro,nosuid,noexec` and **without** `nodev` (the only mount in the view that allows devices); node char 1:9, mode 0444, checked right after creation and again in the final view |
 | `/proc` | `mount("proc", ..., "subset=pid,hidepid=invisible")`, called by the forked namespace init, i.e. PID 1 of the new PID namespace, so the instance belongs to that namespace. | `MS_RDONLY\|MS_NOSUID\|MS_NODEV\|MS_NOEXEC` |
 
-Order: entropy clone (host side, in the original mount namespace) → `unshare` of the mount,
-PID, IPC, UTS and network namespaces → recursive-private `/` → `fork` → namespace init arms death/pidfd → skeleton tmpfs →
-source, guidance, executable, dependency attaches → `/tmp` tmpfs → **entropy attach and
-identity re-check** → **procfs mount** → read-only skeleton remount → `chroot`/`chdir`
-→ rlimits → no_new_privs/capability drop/credential change → `close_range(3, ~0)` →
-seccomp filter → `umask` → **final-view invariants** → `execve`. Both mounts need a
-writable skeleton and CAP_SYS_ADMIN, so both precede the remount and the capability drop.
-A procfs mounted before the PID-namespace `fork` would belong to the parent namespace.
+Order: `unshare` of the mount, PID, IPC, UTS and network namespaces → recursive-private `/`
+→ `fork` → the namespace init sets `umask(022)` (so no directory, mountpoint or node mode
+depends on Root's umask; the pre-exec `umask(0077)` stays) → arms death/pidfd → skeleton
+tmpfs → source, guidance, executable, dependency attaches → `/tmp` tmpfs → **private `/dev`
+(tmpfs, `mknod`, identity check, read-only remount)** → **procfs mount** → read-only skeleton
+remount → `chroot`/`chdir` → rlimits → no_new_privs/capability drop/credential change →
+`close_range(3, ~0)` → seccomp filter → `umask(0077)` → **final-view invariants** →
+`execve`. The mounts and `mknod` need CAP_SYS_ADMIN/CAP_MKNOD and a writable skeleton, so
+all of them precede the remount and the capability drop. A procfs mounted before the
+PID-namespace `fork` would belong to the parent namespace.
 
 **Pre-exec invariants** (checked as the reader identity, under the final filter,
 immediately before `execve`; each failure sets a fixed `errno`, prints one
@@ -170,16 +178,25 @@ immediately before `execve`; each failure sets a fixed `errno`, prints one
 
 | Id | Check | Label |
 | --- | --- | --- |
-| B1 | getdents of the `/proc` root yields only `.`, `..`, `self`, `thread-self` (each at most once) and exactly one numeric entry, `1`. Because of `hidepid=invisible` this proves the instance is this namespace's own view, not the absence of other users' processes; that guarantee comes from the fresh PID namespace plus the unchanged clone filter, which still forbids child processes (threads only). Whether `.`/`..` are emitted under `subset=pid` is unverified; the classifier accepts both. | `reader proc root inventory` |
-| B2 | process is PID 1; `stat("/proc/1/root")` and `stat("/")` have equal dev/ino; `stat("/proc/1/cwd")` and `stat(".")` have equal dev/ino. | `reader init process id`, `reader proc root identity`, `reader proc cwd identity` |
+| B1 | getdents of the `/proc` root yields only `self`, `thread-self` (each at most once) and exactly one numeric entry, `1`. Under `subset=pid` the root listing carries no `.`/`..` entries (`proc_readdir` returns early, fs/proc/generic.c); the classifier tolerates both. Because of `hidepid=invisible` this proves the instance is this namespace's own view, not the absence of other users' processes; that guarantee comes from the fresh PID namespace plus the unchanged clone filter, which still forbids child processes (threads only). | `reader proc root inventory` |
+| B2 | process is PID 1; `stat("/proc/1/root")` and `stat("/")` have equal dev/ino; `stat("/proc/1/cwd")` and `stat(".")` have equal dev/ino. This proves the procfs is this PID namespace's own and that PID 1's root and cwd are this process's own root and cwd. It does not prove the root is the intended view: that is B4 plus the Root-side oracle. | `reader init process id`, `reader proc root identity`, `reader proc cwd identity` |
 | B3 | An outside canary stays invisible. **Harness obligation, not implemented in C**: the harness must plant a canary process/file outside the namespace (a host PID the probe's `proc_numeric` must not count, a host device node that must not appear) and bind observations to the received namespace-init pidfd. | (harness) |
-| B4 | `/proc/self/mountinfo` lists exactly the expected table and nothing else: `/` tmpfs `ro,nosuid,nodev,noexec`; source and shared guidance (and mounts nested beneath them by the recursive clone) `ro,nosuid,nodev,noexec`; `/instruction-reader` and every dependency path `ro,nosuid,nodev`; `/tmp` tmpfs `rw,nosuid,nodev,noexec`; `/dev/urandom` `ro,nosuid,noexec` without `nodev`; `/proc` type `proc` `ro,nosuid,nodev,noexec` with superblock options containing `subset=pid` and `hidepid=invisible`. Each exactly once. Unreachable host mounts are not listed by the kernel after `chroot`. | `reader mount inventory` |
+| B4 | `/proc/self/mountinfo` lists exactly the expected table and nothing else: `/` tmpfs `ro,nosuid,nodev,noexec`; source and shared guidance `ro,nosuid,nodev,noexec`; `/instruction-reader` and every dependency path `ro,nosuid,nodev`; `/tmp` tmpfs `rw,nosuid,nodev,noexec`; `/dev` tmpfs `ro,nosuid,noexec` without `nodev` (there is no `/dev/urandom` mount; superblock sizes are not pinned because they depend on the page size); `/proc` type `proc` `ro,nosuid,nodev,noexec` with superblock options containing `subset=pid` and `hidepid=invisible`. Each exactly once. Mounts nested beneath source or guidance by the recursive clone must carry the sealed flags and a data filesystem type: nested `proc`, `sysfs`, `devtmpfs`, `devpts`, `debugfs`, `tracefs`, `securityfs`, `cgroup`, `cgroup2`, `bpf`, `mqueue`, `configfs`, `fusectl`, `pstore`, `efivarfs`, `binfmt_misc`, `hugetlbfs`, `autofs`, `selinuxfs` and `nsfs` are refused (exact fstype match). Unreachable host mounts are not listed by the kernel after `chroot`. | `reader mount inventory` |
 | B5 | the open-descriptor table (`/proc/self/fd`, the enumerating handle excluded) is exactly 0, 1, 2, each still the verified FIFO with the right direction and no close-on-exec flag. | `reader descriptor inventory`, `reader descriptor kind` |
-| - | the entropy node is char 1:9 again in the final view (`O_PATH` + `fstat`). | `reader final entropy identity` |
+| - | the entropy node is char 1:9 with mode exactly 0444 again in the final view (`O_PATH` + `fstat`); right after `mknod` the same check runs under `reader created entropy identity`. | `reader final entropy identity` |
 
 The in-guest checks run inside the process being constrained: they fail closed on a
 mistaken view but are defense in depth, not a replacement for the Root-side pidfd-bound
 post-exec oracle in the remaining native gate.
+
+**What `subset=pid` still exposes.** Hiding the top-level files does not hide the reader's
+own `/proc/self` directory. The reader can therefore still read `/proc/self/mountinfo`,
+`mounts` and `mountstats` (the view's own mounts only: the kernel omits unreachable ones
+after `chroot`), `/proc/self/cgroup` (its path in the host's cgroup hierarchy; no cgroup
+namespace is created here), `loginuid` and `sessionid`, and `/proc/self/net/*` (a fresh
+network namespace, but some entries include host-global counters). This is host
+fingerprinting only: it grants no access to host objects, files or processes. A cgroup
+namespace is deliberately **not** added in this change; it is documented, not closed.
 
 **Dependency probe.** `linux-instruction-reader-dependency-probe.c` (same directory) is
 exec'd by a separately admitted harness *in place of* `/instruction-reader`, under the
@@ -202,15 +219,21 @@ the other guest helpers, with the compile-only flags below).
 
 **Unverified assumptions** (none were executed): `subset=pid`/`hidepid=invisible`
 spelling in superblock options and the `/proc` root listing being exactly `1`, `self`,
-`thread-self` follow the 5.8+ kernel source and must be confirmed on the 6.8 guest;
-procfs mounting needs CAP_SYS_ADMIN over the PID namespace's owning user namespace
-(held here; a future user-namespace change would alter this); the checks assume access
-to the process's own `/proc/self` entries as a non-dumpable reader identity with zero
-capabilities, which follows the same-thread-group exemptions in the kernel; `MS_RDONLY`
-on the char-device bind protects mount metadata, **not** device writes (the node stays
-mode 0666 as on the host, so the reader may write entropy input, which grants no credit).
-Static versus dynamic probe linking does not change glibc's `/proc/self/maps` dependency
-but is unmeasured.
+`thread-self` follow the 5.8+ kernel source (checked against v6.8 by the reviewer) and must
+be confirmed on the 6.8 guest; procfs mounting needs CAP_SYS_ADMIN over the PID namespace's
+owning user namespace, and `mknod` needs CAP_MKNOD (both held until the capability drop; a
+future user-namespace change would alter this); the checks assume access to the process's own
+`/proc/self` entries as a non-dumpable reader identity with zero capabilities, which follows
+the same-thread-group exemptions in the kernel. The private node is only a new name for the
+kernel's character device 1:9: an opened descriptor reaches the same driver as the host node
+would, so driver `ioctl`s that need no privilege (for example the read-only entropy-count
+query) remain reachable and the seccomp filter does not restrict `ioctl`; privileged ones
+need CAP_SYS_ADMIN, which is dropped. What the private node removes is the host inode: the
+write-open path (mode 0444, root-owned) and any notification or timestamp state on it. A
+tmpfs with `size=4k,nr_inodes=4` leaves room for its root and the one device inode; that
+accounting is source-derived. An LSM or a device-cgroup policy on the reader's cgroup could
+still deny opening 1:9, which the probe's `urandom_open` would report. Static versus dynamic
+probe linking does not change glibc's `/proc/self/maps` dependency but is unmeasured.
 
 The design also leans on these kernel facts, none exercised here: since 5.8 every
 `mount("proc")` gets its own superblock, which is why `subset=pid,hidepid=invisible` are
@@ -218,13 +241,11 @@ honored independently of any other proc instance; procfs mount admission and the
 `mount_too_revealing` exemption hold only because the mount namespace is owned by the
 initial user namespace (any `CLONE_NEWUSER` change alters both); the superblock option
 string is expected to begin `ro` but B4 checks token presence only, and the rows in the
-portable tests are illustrative, not kernel-captured; mount attributes are set
-explicitly on the entropy clone (`ro,nosuid,noexec`, `nodev` cleared), so the expected
-flags do not depend on the host `/dev` flags; the `getdents64` record layout (reclen at
-byte 16, name at byte 19) is stable ABI but unverified on target; an LSM such as
-AppArmor could deny the procfs mount if the launcher were ever confined (it is assumed
-unconfined and root); and `RLIMIT_FSIZE 0` does not limit pipe writes, which the probe's
-single `write` to descriptor 1 depends on.
+portable tests are illustrative, not kernel-captured; the `getdents64` record layout
+(reclen at byte 16, name at byte 19) is stable ABI but unverified on target; an LSM such as
+AppArmor could deny the mounts if the launcher were ever confined (it is assumed unconfined
+and root); and `RLIMIT_FSIZE 0` does not limit pipe writes, which the probe's single `write`
+to descriptor 1 depends on.
 
 ## Native lifecycle versus outstanding reader debt
 
@@ -298,15 +319,19 @@ grammar, maximum dependency count, double-dot IDs, recursive RO/private clone
 flags, failure paths, socket/process denial, original-parent death/reparenting
 schedules and source lifecycle ordering.
 Six further portable tests cover the runtime-compatibility view: exact source gates
-(the complete `mount(2)` inventory, `move_mount`/`open_tree`/`mount_setattr` counts,
-the single `/dev` and `/proc` literals, the unchanged seccomp filter by hash, rlimits
-and environment, and statement order against `unshare`, `fork`, the read-only remount,
-`chroot`, credential drop, filter and `execve`); distinct invariant labels with no
+(the complete `mount(2)` inventory, the single `mknod`, `move_mount`/`open_tree`/
+`mount_setattr` counts, the single `/dev` and `/proc` literals, no open or clone of the
+host device, the unchanged seccomp filter by hash, rlimits and environment, and statement
+order against `unshare`, `fork`, `umask`, the read-only remounts, `chroot`, credential
+drop, filter and `execve`); distinct invariant labels with no
 reuse or prefix collision against the pre-existing labels; a mountinfo validator
 exercised over positive, mutated, duplicated, missing, weakened-flag and malformed
-tables; the `/proc` and descriptor name classifiers; the real extracted helpers
-(entropy clone and both identity checks, getdents walking, B1/B2/B4/B5 and their
-composed order) run against an injected kernel world that returns every fault, with
+tables, including a refusal for each pseudo or device filesystem nested under the
+source and guidance trees; the `/proc` and descriptor name classifiers; the real
+extracted helpers (the private `/dev` sequence with its mount flags and call order, both
+identity checks including mode 0444, `reader_point`'s preserved `open` errno, getdents
+walking with and without dot entries, B1/B2/B4/B5 and their composed order) run against
+an injected kernel world that returns every fault, with
 exit status 77, a single audited label and the expected `errno` text asserted and
 every injected descriptor shown closed; and the dependency probe's line formatter
 against a strict grammar plus exposure gates. The portable tests do not run any

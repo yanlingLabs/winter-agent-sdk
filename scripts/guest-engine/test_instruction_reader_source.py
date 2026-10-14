@@ -394,7 +394,7 @@ int main(void) {
         # The sealed view is no longer proc/dev-free: exactly the two reviewed additions
         # exist, gated in detail by test_runtime_view_adds_exactly_two_things_in_order.
         self.assertEqual(source.count('mount("proc"'), 1)
-        self.assertEqual(source.count('"/dev/'), 1)
+        self.assertEqual(source.count('"/dev'), 1)
         self.assertNotIn('"/workspace/.winter', source)
         self.assertIn('require(chdir(READER_HOME),"reader empty readonly cwd")', source)
         self.assertIn('"HOME=" READER_HOME', source)
@@ -426,37 +426,57 @@ int main(void) {
         start = header.index('static inline void require(')
         require = header[start:header.index('static inline void path(', start)]
         helpers = source[source.index('static void reader_expect('):source.index('/* Separate filter')]
-        return source, defines, contract, view, require, helpers
+        point = source[source.index('static void reader_point('):source.index('/* BEGIN PORTABLE VIEW CONTRACT')]
+        pathfn = header[header.index('static inline void path('):header.index('static inline void guest_bind(')]
+        return source, defines, contract, view, require, helpers, point, pathfn
 
     def test_runtime_view_adds_exactly_two_things_in_order(self):
         source = SOURCE.read_text()
+        pseudo_block = source[source.index('reader_pseudo[]={'):source.index('};', source.index('reader_pseudo[]={'))]
+        scan = source.replace(pseudo_block, '')
         # (A) exactly two additions, each defined once.
-        self.assertIn('#define READER_ENTROPY "/dev/urandom"', source)
+        self.assertIn('#define READER_DEV "/dev"', source)
+        self.assertIn('#define READER_DEV_OPTIONS "mode=0755,size=4k,nr_inodes=4"', source)
+        self.assertIn('#define READER_ENTROPY READER_DEV "/urandom"', source)
         self.assertIn('#define READER_PROC "/proc"', source)
         self.assertIn('#define READER_PROC_OPTIONS "subset=pid,hidepid=invisible"', source)
-        self.assertEqual(source.count('"/dev'), 1)
-        for forbidden in ('"/dev/null"', '"/dev/zero"', '"/dev/random"', '"/dev/tty', '"/dev/shm', '"/sys', 'MS_BIND', 'devtmpfs', 'devpts', 'sysfs'):
-            self.assertNotIn(forbidden, source)
+        self.assertEqual(scan.count('"/dev'), 1)
+        self.assertEqual(scan.count('"/urandom"'), 1)
+        for forbidden in ('"/dev/', '"/dev/null"', '"/dev/zero"', '"/dev/random"', '"/dev/tty', '"/dev/shm', '"/sys', 'MS_BIND', 'devtmpfs', 'devpts', 'sysfs'):
+            self.assertNotIn(forbidden, scan)
         self.assertEqual(re.findall(r'"/proc[^"]*"', source), ['"/proc"'])
         self.assertEqual(sorted(re.findall(r'(?<!define )READER_PROC "([^"]*)"', source)), ['/1/cwd', '/1/root', '/self/fd', '/self/mountinfo'])
-        # The complete mount(2) inventory: nothing is added beyond the one procfs.
+        # The host device file is never opened or bound: no clone of it, no descriptor mount for it.
+        for gone in ('open(READER_ENTROPY', 'O_NONBLOCK', 'reader_entropy(', 'entropy_tree', 'reader attached entropy identity', 'reader entropy device', 'reader entropy clone'):
+            self.assertNotIn(gone, source)
+        # The complete mount(2) inventory, in file order: the private /dev (RW tmpfs, then read-only),
+        # then the unchanged skeleton mounts and the one procfs.
         mounts = re.findall(r'(?<![A-Za-z_])mount\((.*?)\),"reader', source)
         self.assertEqual(mounts, [
+            '"tmpfs",target,"tmpfs",MS_NOSUID|MS_NOEXEC,READER_DEV_OPTIONS',
+            'NULL,target,NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NOEXEC,NULL',
             'NULL,"/",NULL,MS_REC|MS_PRIVATE,NULL',
             '"tmpfs",plan.view,"tmpfs",MS_NOSUID|MS_NODEV|MS_NOEXEC,"mode=0755,size=16m"',
             '"tmpfs",target,"tmpfs",MS_NOSUID|MS_NODEV|MS_NOEXEC,"mode=1777,size=8m"',
             '"proc",target,"proc",MS_RDONLY|MS_NOSUID|MS_NODEV|MS_NOEXEC,READER_PROC_OPTIONS',
             'NULL,plan.view,NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NODEV|MS_NOEXEC,NULL',
         ])
-        self.assertEqual(re.findall(r'reader_attach\((\w+(?:\[i\])?),target\)', source), ['source_tree', 'shared_tree', 'executable_tree', 'dependencies[i]', 'entropy_tree'])
+        self.assertEqual(re.findall(r'reader_attach\((\w+(?:\[i\])?),target\)', source), ['source_tree', 'shared_tree', 'executable_tree', 'dependencies[i]'])
         self.assertEqual(source.count('SYS_move_mount'), 1)
-        self.assertEqual(source.count('SYS_open_tree'), 2)
-        self.assertEqual(source.count('SYS_mount_setattr'), 2)
-        # The one device bind is the only mount that clears NODEV, and is read-only/nosuid/noexec.
-        entropy = source[source.index('static int reader_entropy('):source.index('/* Same kernel identity')]
-        self.assertEqual(source.count('MOUNT_ATTR_NODEV'), 2)  # the general clone's set, and the one entropy clear
-        self.assertIn('.attr_set=MOUNT_ATTR_RDONLY|MOUNT_ATTR_NOSUID|MOUNT_ATTR_NOEXEC,.attr_clr=MOUNT_ATTR_NODEV,.propagation=MS_PRIVATE', entropy)
-        self.assertIn('S_ISCHR(info.st_mode)&&major(info.st_rdev)==1&&minor(info.st_rdev)==9', entropy)
+        self.assertEqual(source.count('SYS_open_tree'), 1)
+        self.assertEqual(source.count('SYS_mount_setattr'), 1)
+        self.assertEqual(source.count('MOUNT_ATTR_NODEV'), 1)  # only the general clone sets it; no mount clears it
+        self.assertNotIn('attr_clr', source)
+        # The device node: one mknod of character device 1:9, mode 0444, on a tmpfs where only dev is allowed.
+        node = source[source.index('static void reader_entropy_node('):source.index('#define READER_DIRENT_RECLEN')]
+        self.assertEqual(source.count('mknod('), 1)
+        self.assertIn('require(mknod(node,S_IFCHR|0444,makedev(1,9)),"reader entropy node");', node)
+        self.assertNotIn('MS_NODEV', node)
+        steps = ['reader_point(view,READER_DEV,target,0);', 'mount("tmpfs",target,"tmpfs",MS_NOSUID|MS_NOEXEC,READER_DEV_OPTIONS)', 'mknod(node', 'reader_entropy_identity(node,"reader created entropy identity");', 'mount(NULL,target,NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NOEXEC,NULL)']
+        self.assertEqual([node.index(step) for step in steps], sorted(node.index(step) for step in steps))
+        identity = source[source.index('static void reader_entropy_identity('):source.index('/* WebKit opens /dev/urandom directly.')]
+        self.assertIn('S_ISCHR(info.st_mode)&&major(info.st_rdev)==1&&minor(info.st_rdev)==9&&(info.st_mode&07777)==0444', identity)
+        self.assertIn('open(target,O_PATH|O_NOFOLLOW|O_CLOEXEC)', identity)
         # No seccomp, rlimit, credential or environment change.
         function = source[source.index('static void reader_filter('):source.index('static void reader_limit(')]
         self.assertEqual(hashlib.sha256(function.encode()).hexdigest(), BASE_FILTER_SHA256)
@@ -466,17 +486,24 @@ int main(void) {
         self.assertNotIn('RLIMIT_AS', source.replace('NO RLIMIT_AS', ''))
         for workaround in ('getrandom', 'PR_SET_DUMPABLE', 'personality', 'setenv', 'putenv', 'BUN_', 'JSC_'):
             self.assertNotIn(workaround, source)
-        # Ordering. Entropy is cloned from the host BEFORE unshare; the procfs is mounted by
-        # the forked namespace init, after the setup death-arming and before the read-only
-        # remount, chroot, credential drop and filter.
+        # Ordering. The device directory and procfs are made by the forked namespace init, after the
+        # setup death-arming, before the read-only remount, chroot, credential drop and filter; the
+        # umask is fixed first so no mountpoint or mkdir depends on Root's.
         main = source[source.index('int main('):]
-        self.assertLess(main.index('int entropy_tree=reader_entropy();'), main.index('unshare('))
+        self.assertEqual(source.count('umask('), 2)
+        self.assertIn('    umask(022);\n', main)
+        self.assertLess(main.index('if(child)return reader_monitor'), main.index('umask(022);'))
+        self.assertLess(main.index('umask(022);'), main.index('"reader setup monitor death"'))
+        self.assertLess(main.index('umask(022);'), main.index('char target[8192];'))
+        self.assertLess(main.index('umask(022);'), main.index('mount("tmpfs",plan.view'))
+        self.assertLess(main.index('umask(022);'), main.index('reader_point('))
         self.assertLess(main.index('MS_REC|MS_PRIVATE'), main.index('reader_attach(source_tree'))
+        self.assertLess(main.index('reader_service_owner(plan.receipt)'), main.index('unshare('))
         self.assertLess(main.index('pid_t child=fork()'), main.index('"reader setup monitor death"'))
         self.assertLess(main.index('"reader setup monitor death"'), main.index('mount("tmpfs",plan.view'))
-        self.assertLess(main.index('"reader private temporary files"'), main.index('reader_point(plan.view,READER_ENTROPY,target,1);reader_attach(entropy_tree,target);'))
-        self.assertLess(main.index('reader_attach(entropy_tree,target);'), main.index('reader_entropy_identity(target,"reader attached entropy identity");'))
-        self.assertLess(main.index('"reader attached entropy identity"'), main.index('mount("proc"'))
+        self.assertLess(main.index('"reader private temporary files"'), main.index('reader_entropy_node(plan.view,target);'))
+        self.assertLess(main.index('reader_entropy_node(plan.view,target);'), main.index('reader_point(plan.view,READER_PROC,target,0);'))
+        self.assertLess(main.index('reader_point(plan.view,READER_PROC,target,0);'), main.index('mount("proc"'))
         self.assertLess(main.index('"reader private proc"'), main.index('MS_REMOUNT|MS_RDONLY'))
         self.assertLess(main.index('MS_REMOUNT|MS_RDONLY'), main.index('chroot(".")'))
         self.assertLess(main.index('if(child)return reader_monitor'), main.index('mount("proc"'))
@@ -492,6 +519,8 @@ int main(void) {
         # Existing checks are all kept.
         for kept in ('require(chdir(READER_HOME),"reader empty readonly cwd")', 'require(prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0)', 'require(setgroups(1,&group)', 'require(setresgid(plan.uid,plan.uid,plan.uid)', 'require(setresuid(plan.uid,plan.uid,plan.uid)', 'require((int)syscall(SYS_close_range,3U,~0U,0U)', 'reader_pipes();reader_view(plan.view);'):
             self.assertIn(kept, source)
+        # reader_point keeps open's own errno (close(-1) would have replaced it with EBADF).
+        self.assertNotIn('close(open(', source)
 
     def test_new_invariant_labels_are_distinct_and_owned_by_one_function(self):
         source = SOURCE.read_text()
@@ -500,8 +529,8 @@ int main(void) {
             'reader_proc_identity': {'reader init process id', 'reader proc root identity', 'reader proc cwd identity'},
             'reader_mount_inventory': {'reader mount inventory'},
             'reader_descriptor_inventory': {'reader descriptor inventory', 'reader descriptor kind'},
-            'reader_entropy': {'reader entropy device', 'reader entropy identity', 'reader entropy clone', 'reader entropy mount flags'},
-            'main': {'reader attached entropy identity', 'reader private proc'},
+            'reader_entropy_node': {'reader private device directory', 'reader entropy node', 'reader created entropy identity', 'reader readonly device directory'},
+            'main': {'reader private proc'},
             'reader_verify_view': {'reader final entropy identity'},
         }
         labels = [label for group in groups.values() for label in group]
@@ -521,7 +550,7 @@ int main(void) {
             self.assertIn('"' + existing + '"', source)
 
     def test_final_view_mount_inventory_accepts_only_the_expected_table(self):
-        _, defines, contract, view, _, _ = self.parts()
+        _, defines, contract, view, _, _, _, _ = self.parts()
         harness = r'''
 #include <assert.h>
 #include <stdio.h>
@@ -549,14 +578,14 @@ int main(int argc,char **argv) {
                 [DEPENDENCIES[0], 'ro,nosuid,nodev,relatime', 'ext4', '/dev/vda3', 'rw'],
                 [DEPENDENCIES[1], 'ro,nosuid,nodev,relatime', 'ext4', '/dev/vda3', 'rw'],
                 ['/tmp', 'rw,nosuid,nodev,noexec,relatime', 'tmpfs', 'tmpfs', 'rw,size=8192k,mode=1777'],
-                ['/dev/urandom', 'ro,nosuid,noexec,relatime', 'devtmpfs', 'devtmpfs', 'rw,size=4k,mode=755'],
+                ['/dev', 'ro,nosuid,noexec,relatime', 'tmpfs', 'tmpfs', 'rw,size=4k,nr_inodes=4,mode=755'],
                 ['/proc', SEALED, 'proc', 'proc', 'rw,hidepid=invisible,subset=pid'],
             ]
 
         def render(table, optional=''):
             return ''.join(f'{100 + i} 99 0:{50 + i} / {r[0]} {r[1]} {optional}- {r[2]} {r[3]} {r[4]}\n' for i, r in enumerate(table))
 
-        names = ['root', 'source', 'shared', 'executable', 'dep0', 'dep1', 'tmp', 'urandom', 'proc']
+        names = ['root', 'source', 'shared', 'executable', 'dep0', 'dep1', 'tmp', 'dev', 'proc']
         cases = [('baseline', render(rows()), 0)]
         shuffled = rows(); shuffled.reverse()
         cases.append(('order does not matter', render(shuffled), 0))
@@ -568,7 +597,7 @@ int main(int argc,char **argv) {
             cases.append((f'missing {name}', render(missing), 64))
             doubled = rows(); doubled.insert(index, list(doubled[index]))
             cases.append((f'duplicate {name}', render(doubled), 64))
-        for point in ('/sys', '/dev', '/dev/null', '/dev/random', '/dev/urandomx', '/dev/urandom/x', '/proc/sys', '/proc/1', '/run', '/workspace', '/workspace/folders', SOURCE_PATH + '-two', SOURCE_PATH[:-1], '/instruction-reader/x', '/tmpx', '/tmp/x', '/lib', '/usr/lib', '/etc', '/home', '/run/winter', '/run/winter/instruction-reader', DEPENDENCIES[0] + '/x'):
+        for point in ('/sys', '/dev/urandom', '/dev/null', '/dev/random', '/dev/urandomx', '/dev/urandom/x', '/dev/shm', '/proc/sys', '/proc/1', '/run', '/workspace', '/workspace/folders', SOURCE_PATH + '-two', SOURCE_PATH[:-1], '/instruction-reader/x', '/tmpx', '/tmp/x', '/lib', '/usr/lib', '/etc', '/home', '/run/winter', '/run/winter/instruction-reader', DEPENDENCIES[0] + '/x'):
             cases.append((f'unexpected mount {point}', render(rows() + [[point, SEALED, 'tmpfs', 'tmpfs', 'rw']]), 64))
 
         def changed(point, column, value):
@@ -588,7 +617,23 @@ int main(int argc,char **argv) {
         cases.append(('/tmp is not tmpfs', changed('/tmp', 2, 'ext4'), 64))
         cases.append(('/ is not tmpfs', changed('/', 2, 'ext4'), 64))
         for weaker in ('rw,nosuid,noexec,relatime', 'ro,nosuid,nodev,noexec,relatime', 'ro,noexec,relatime', 'ro,nosuid,relatime', 'ro,nosuid,noexec,nodev'):
-            cases.append((f'/dev/urandom with {weaker}', changed('/dev/urandom', 1, weaker), 64))
+            cases.append((f'/dev with {weaker}', changed('/dev', 1, weaker), 64))
+        for substitute in ('devtmpfs', 'ext4', 'proc', 'sysfs', 'overlay'):
+            cases.append((f'/dev is {substitute}, not its own tmpfs', changed('/dev', 2, substitute), 64))
+        cases.append(('/dev tmpfs superblock options are not pinned (page size varies)', changed('/dev', 4, 'rw,size=64k,nr_inodes=4,mode=755'), 0))
+        # Pseudo and device filesystems may not nest beneath a source or guidance tree.
+        pseudo = ['proc', 'sysfs', 'devtmpfs', 'devpts', 'debugfs', 'tracefs', 'securityfs', 'cgroup', 'cgroup2', 'bpf', 'mqueue', 'configfs', 'fusectl', 'pstore', 'efivarfs', 'binfmt_misc', 'hugetlbfs', 'autofs', 'selinuxfs', 'nsfs']
+        listed = re.findall(r'"(\w+)"', SOURCE.read_text().split('reader_pseudo[]={')[1].split('};')[0])
+        self.assertEqual(listed, pseudo)
+        for kind in pseudo:
+            for root_path in (SOURCE_PATH, SHARED_PATH):
+                cases.append((f'nested {kind} under {root_path}', render(rows() + [[root_path + '/nested', SEALED, kind, kind, 'rw']]), 64))
+                cases.append((f'deeply nested {kind} under {root_path}', render(rows() + [[root_path + '/a/b/c', SEALED, kind, kind, 'rw']]), 64))
+        for kind in ('ext4', 'xfs', 'btrfs', 'virtiofs', '9p', 'nfs4', 'overlay', 'tmpfs', 'fuse.sshfs', 'fuseblk', 'vfat', 'sysfs2', 'procfs', 'cgroup3', 'Proc'):
+            for root_path in (SOURCE_PATH, SHARED_PATH):
+                cases.append((f'data filesystem {kind} may nest under {root_path}', render(rows() + [[root_path + '/nested', SEALED, kind, kind, 'rw']]), 0))
+        for kind in ('proc', 'sysfs', 'devtmpfs', 'cgroup2'):
+            cases.append((f'a pseudo filesystem nested beneath the source tree still needs the sealed flags {kind}', render(rows() + [[SOURCE_PATH + '/nested', 'rw,nosuid,nodev,noexec', kind, kind, 'rw']]), 64))
         for weaker in ('rw,subset=pid', 'rw,hidepid=invisible', 'rw,hidepid=noaccess,subset=pid', 'rw,hidepid=ptraceable,subset=pid', 'rw,hidepid=off,subset=pid', 'rw,hidepid=2,subset=pid', 'rw,hidepid=invisibles,subset=pid', 'rw,hidepid=invisible,subset=pids', 'rw', 'rw,hidepid=invisible,subset=pid'.replace('subset', 'xsubset')):
             cases.append((f'/proc super options {weaker}', changed('/proc', 4, weaker), 64))
         cases.append(('/proc with extra gid option still passes', changed('/proc', 4, 'rw,gid=0,hidepid=invisible,subset=pid'), 0))
@@ -617,7 +662,7 @@ int main(int argc,char **argv) {
                     self.assertEqual(run.returncode, expected, name)
 
     def test_proc_and_descriptor_classifiers_are_exact(self):
-        _, defines, contract, view, _, _ = self.parts()
+        _, defines, contract, view, _, _, _, _ = self.parts()
         harness = r'''
 #include <assert.h>
 #include <stdio.h>
@@ -664,7 +709,7 @@ int main(int argc,char **argv) {
 
     def test_final_view_checks_pass_and_fail_closed_with_distinct_labels(self):
         """The real extracted helpers run against an injected kernel world: no real /proc, device or mount."""
-        _, defines, contract, view, require, helpers = self.parts()
+        _, defines, contract, view, require, helpers, point, pathfn = self.parts()
         world = r'''
 #define _GNU_SOURCE
 #include <assert.h>
@@ -695,28 +740,24 @@ int main(int argc,char **argv) {
 #ifndef OPEN_TREE_CLOEXEC
 #define OPEN_TREE_CLOEXEC O_CLOEXEC
 #endif
-#ifndef MOUNT_ATTR_RDONLY
-#define MOUNT_ATTR_RDONLY 0x1
-#define MOUNT_ATTR_NOSUID 0x2
-#define MOUNT_ATTR_NODEV 0x4
-#define MOUNT_ATTR_NOEXEC 0x8
+#ifndef MS_RDONLY
+#define MS_RDONLY 1UL
+#define MS_NOSUID 2UL
+#define MS_NODEV 4UL
+#define MS_NOEXEC 8UL
+#define MS_REMOUNT 32UL
 #endif
-#ifndef MS_PRIVATE
-#define MS_PRIVATE (1UL<<18)
-#endif
-#define SYS_open_tree 428
-#define SYS_mount_setattr 442
 #define SYS_getdents64 217
-struct mount_attr { uint64_t attr_set,attr_clr,propagation,userns_fd; };
 @@DEFINES@@
 @@REQUIRE@@
+@@PATH@@
 @@CONTRACT@@
 @@VIEW@@
 
 /* ---- injected world; every field is chosen by a key=value argument ---- */
-static int world_pid=1,chunk=1000,open_fds[64];
+static int world_pid=1,chunk=1000,dots=0,open_fds[64],mount_calls,node_made,identity_opens;
 static const char *proc_listing="1,self,thread-self",*fd_listing="0,1,2,@",*mountinfo_file="";
-static const char *root_match="ok",*cwd_match="ok",*host_device="ok",*bound_device="ok",*kinds="ok",*corrupt="",*fault="";
+static const char *root_match="ok",*cwd_match="ok",*bound_device="ok",*kinds="ok",*corrupt="",*fault="";
 static char mount_text[1<<20];static size_t mount_length,mount_offset;
 static int faulted(const char *prefix,const char *what) {
     char want[160];snprintf(want,sizeof want,"%s:%s",prefix,what);return !strcmp(fault,want);
@@ -725,8 +766,11 @@ static void track(int fd){assert(fd>0&&fd<64&&!open_fds[fd]);open_fds[fd]=1;}
 static int fake_open(const char *path,int flags,...) {
     int fd;
     if(faulted("open",path)){errno=ENOENT;return -1;}
-    if(!strcmp(path,"/dev/urandom")&&flags==(O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC))fd=17;
-    else if((!strcmp(path,"/dev/urandom")||!strcmp(path,"/view/dev/urandom"))&&flags==(O_PATH|O_NOFOLLOW|O_CLOEXEC))fd=18;
+    if(!strcmp(path,"/view/file")&&flags==(O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC)){
+        va_list args;va_start(args,flags);assert(va_arg(args,int)==0555);va_end(args);fd=19;
+    }
+    else if(!strcmp(path,"/view/dev/urandom")&&flags==(O_PATH|O_NOFOLLOW|O_CLOEXEC)){assert(node_made&&mount_calls==1);identity_opens++;fd=18;}
+    else if(!strcmp(path,"/dev/urandom")&&flags==(O_PATH|O_NOFOLLOW|O_CLOEXEC))fd=18; /* final view: the private node, by its guest path */
     else if(!strcmp(path,"/proc")&&flags==(O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC))fd=20;
     else if(!strcmp(path,"/proc/self/fd")&&flags==(O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC))fd=21;
     else if(!strcmp(path,"/proc/self/mountinfo")&&flags==(O_RDONLY|O_CLOEXEC))fd=22;
@@ -738,22 +782,26 @@ static int fake_fstat(int fd,struct stat *out) {
     memset(out,0,sizeof *out);
     char number[16];snprintf(number,sizeof number,"%d",fd);
     if(faulted("fstat",number)){errno=EBADF;return -1;}
-    if(fd==17||fd==18) {
-        const char *device=fd==17?host_device:bound_device;
-        mode_t type=S_IFCHR;unsigned int major_number=1,minor_number=9;
+    if(fd==18) {
+        const char *device=bound_device;
+        mode_t type=S_IFCHR,permissions=0444;unsigned int major_number=1,minor_number=9;
         if(!strcmp(device,"file"))type=S_IFREG;
         if(!strcmp(device,"block"))type=S_IFBLK;
         if(!strcmp(device,"fifo"))type=S_IFIFO;
         if(!strcmp(device,"major2"))major_number=2;
         if(!strcmp(device,"minor8"))minor_number=8;
-        out->st_mode=type|0666;out->st_rdev=makedev(major_number,minor_number);return 0;
+        if(!strcmp(device,"mode0666"))permissions=0666;
+        if(!strcmp(device,"mode0644"))permissions=0644;
+        if(!strcmp(device,"mode0400"))permissions=0400;
+        if(!strcmp(device,"mode0445"))permissions=0445;
+        if(!strcmp(device,"setuid"))permissions=04444;
+        out->st_mode=type|permissions;out->st_rdev=makedev(major_number,minor_number);return 0;
     }
     assert(fd>=0&&fd<=2);
     out->st_mode=(!strcmp(kinds,"not-fifo")&&fd==1?S_IFREG:S_IFIFO)|0600;return 0;
 }
 static int fake_fcntl(int fd,int command,...) {
     if(command==F_GETFL) {
-        if(fd==17)return !strcmp(host_device,"rdwr")?O_RDWR:O_RDONLY;
         if(!strcmp(kinds,"getfl-error")&&fd==1){errno=EBADF;return -1;}
         if(fd==0)return O_RDONLY;
         if(fd==1)return !strcmp(kinds,"wrong-mode")?O_RDONLY:O_WRONLY;
@@ -796,7 +844,8 @@ static long fake_getdents(int fd,char *buffer,size_t size) {
     if(faulted("getdents",fd==20?"proc":"fd")){errno=EIO;return -1;}
     if(!strcmp(fault,fd==20?"getdents-late:proc":"getdents-late:fd")&&served[fd]){errno=EIO;return -1;}
     served[fd]++;
-    char names[1024];snprintf(names,sizeof names,".,..,%s",fd==20?proc_listing:fd_listing);
+    /* The proc root has no dot entries under subset=pid (proc_readdir returns early); /proc/self/fd has them. */
+    char names[1024];snprintf(names,sizeof names,"%s%s",fd==21||dots?".,..,":"",fd==20?proc_listing:fd_listing);
     char *save=NULL;size_t used=0;int index=0,emitted=0;
     for(char *name=strtok_r(names,",",&save);name;name=strtok_r(NULL,",",&save),index++) {
         if(index<next[fd])continue;
@@ -812,19 +861,32 @@ static long fake_syscall(long call,...) {
         int fd=va_arg(args,int);char *buffer=va_arg(args,char *);size_t size=va_arg(args,size_t);
         va_end(args);return fake_getdents(fd,buffer,size);
     }
-    if(call==SYS_open_tree) {
-        assert(va_arg(args,int)==17);assert(!strcmp(va_arg(args,const char *),""));
-        assert(va_arg(args,int)==(OPEN_TREE_CLONE|OPEN_TREE_CLOEXEC|AT_EMPTY_PATH));va_end(args);
-        if(!strcmp(fault,"open_tree")){errno=EPERM;return -1;}
-        return 91;
+    abort(); /* no other raw syscall is used by the view helpers */
+}
+/* The private device directory: mount a tiny dev-allowing tmpfs, mknod, verify, then remount read-only. */
+static int fake_mkdir(const char *path,mode_t mode) {
+    if(faulted("mkdir",path)){errno=EACCES;return -1;}
+    assert(!strcmp(path,"/view/dev")&&mode==0755);return 0;
+}
+static int fake_mount(const char *source,const char *target,const char *type,unsigned long flags,const void *data) {
+    assert(!strcmp(target,"/view/dev"));
+    if(!mount_calls) {
+        assert(!node_made&&source&&!strcmp(source,"tmpfs")&&type&&!strcmp(type,"tmpfs"));
+        assert(flags==(MS_NOSUID|MS_NOEXEC)&&!(flags&(MS_NODEV|MS_RDONLY)));  /* device nodes allowed, writable until sealed */
+        assert(data&&!strcmp((const char *)data,READER_DEV_OPTIONS));
+        if(!strcmp(fault,"mount:tmpfs")){errno=EPERM;return -1;}
+    } else {
+        assert(mount_calls==1&&node_made&&identity_opens==1&&!source&&!type&&!data);
+        assert(flags==(MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NOEXEC)&&!(flags&MS_NODEV));
+        if(!strcmp(fault,"mount:remount")){errno=EPERM;return -1;}
     }
-    assert(call==SYS_mount_setattr);
-    assert(va_arg(args,int)==91);assert(!strcmp(va_arg(args,const char *),""));assert(va_arg(args,int)==AT_EMPTY_PATH);
-    struct mount_attr *attr=va_arg(args,struct mount_attr *);assert(va_arg(args,size_t)==sizeof *attr);va_end(args);
-    assert(attr->attr_set==(uint64_t)(MOUNT_ATTR_RDONLY|MOUNT_ATTR_NOSUID|MOUNT_ATTR_NOEXEC));
-    assert(attr->attr_clr==(uint64_t)MOUNT_ATTR_NODEV&&attr->propagation==MS_PRIVATE&&!attr->userns_fd);
-    if(!strcmp(fault,"mount_setattr")){errno=EPERM;return -1;}
-    return 0;
+    mount_calls++;return 0;
+}
+static int fake_mknod(const char *path,mode_t mode,dev_t device) {
+    assert(mount_calls==1&&!node_made);
+    assert(!strcmp(path,"/view/dev/urandom")&&mode==(S_IFCHR|0444)&&device==makedev(1,9));
+    if(!strcmp(fault,"mknod")){errno=EPERM;return -1;}
+    node_made=1;return 0;
 }
 #define open fake_open
 #define close fake_close
@@ -834,7 +896,11 @@ static long fake_syscall(long call,...) {
 #define getpid fake_getpid
 #define syscall fake_syscall
 #define stat(path,out) fake_stat(path,out)
+#define mkdir fake_mkdir
+#define mount fake_mount
+#define mknod fake_mknod
 
+@@POINT@@
 @@HELPERS@@
 
 int main(int argc,char **argv) {
@@ -849,7 +915,7 @@ int main(int argc,char **argv) {
         else if(!strcmp(key,"mountinfo"))mountinfo_file=value;
         else if(!strcmp(key,"root"))root_match=value;
         else if(!strcmp(key,"cwd"))cwd_match=value;
-        else if(!strcmp(key,"host"))host_device=value;
+        else if(!strcmp(key,"dots"))dots=atoi(value);
         else if(!strcmp(key,"bound"))bound_device=value;
         else if(!strcmp(key,"kinds"))kinds=value;
         else if(!strcmp(key,"corrupt"))corrupt=value;
@@ -861,8 +927,9 @@ int main(int argc,char **argv) {
         mount_length=fread(mount_text,1,sizeof mount_text,file);fclose(file);
     }
     const char *function=argv[1];
-    if(!strcmp(function,"entropy")){int tree=reader_entropy();assert(tree==91);}
-    else if(!strcmp(function,"attached"))reader_entropy_identity("/view/dev/urandom","reader attached entropy identity");
+    char target[8192];
+    if(!strcmp(function,"devnode")){reader_entropy_node("/view",target);assert(mount_calls==2&&node_made&&identity_opens==1&&!strcmp(target,"/view/dev"));}
+    else if(!strcmp(function,"pointfile")){reader_point("/view","/file",target,1);assert(!strcmp(target,"/view/file"));}
     else if(!strcmp(function,"proc"))reader_proc_inventory();
     else if(!strcmp(function,"identity"))reader_proc_identity();
     else if(!strcmp(function,"mounts"))reader_mount_inventory(&plan);
@@ -872,14 +939,14 @@ int main(int argc,char **argv) {
     for(int fd=0;fd<64;fd++)assert(!open_fds[fd]); /* every injected descriptor was closed */
     return 0;
 }
-'''.replace('@@DEFINES@@', defines).replace('@@REQUIRE@@', require).replace('@@CONTRACT@@', contract).replace('@@VIEW@@', view).replace('@@HELPERS@@', helpers).replace('@@PLAN@@', PLAN_C)
+'''.replace('@@DEFINES@@', defines).replace('@@REQUIRE@@', require).replace('@@CONTRACT@@', contract).replace('@@VIEW@@', view).replace('@@PATH@@', pathfn).replace('@@POINT@@', point).replace('@@HELPERS@@', helpers).replace('@@PLAN@@', PLAN_C)
         # The helper slice must be exactly the invariant code (no other native routine).
         self.assertTrue(helpers.startswith('static void reader_expect('))
         self.assertTrue(helpers.rstrip().endswith('}'))
         good_mountinfo = ''.join(f'{100 + i} 99 0:{50 + i} / {r[0]} {r[1]} - {r[2]} {r[3]} {r[4]}\n' for i, r in enumerate([
             ['/', SEALED, 'tmpfs', 'tmpfs', 'rw'], [SOURCE_PATH, SEALED, 'ext4', 'a', 'rw'], [SHARED_PATH, SEALED, 'ext4', 'a', 'rw'],
             ['/instruction-reader', 'ro,nosuid,nodev', 'ext4', 'a', 'rw'], [DEPENDENCIES[0], 'ro,nosuid,nodev', 'ext4', 'a', 'rw'], [DEPENDENCIES[1], 'ro,nosuid,nodev', 'ext4', 'a', 'rw'],
-            ['/tmp', 'rw,nosuid,nodev,noexec', 'tmpfs', 'tmpfs', 'rw'], ['/dev/urandom', 'ro,nosuid,noexec', 'devtmpfs', 'devtmpfs', 'rw'],
+            ['/tmp', 'rw,nosuid,nodev,noexec', 'tmpfs', 'tmpfs', 'rw'], ['/dev', 'ro,nosuid,noexec', 'tmpfs', 'tmpfs', 'rw'],
             ['/proc', SEALED, 'proc', 'proc', 'rw,hidepid=invisible,subset=pid']]))
         compiler = shutil.which('cc')
         self.assertIsNotNone(compiler)
@@ -889,7 +956,7 @@ int main(int argc,char **argv) {
             (root / 'good.txt').write_text(good_mountinfo)
             (root / 'extra.txt').write_text(good_mountinfo + '200 99 0:70 / /sys ro,nosuid,nodev,noexec - sysfs sysfs rw\n')
             (root / 'noprocopts.txt').write_text(good_mountinfo.replace('hidepid=invisible,subset=pid', 'subset=pid'))
-            (root / 'urandom-nodev.txt').write_text(good_mountinfo.replace('ro,nosuid,noexec', 'ro,nosuid,nodev,noexec'))
+            (root / 'dev-nodev.txt').write_text(good_mountinfo.replace('ro,nosuid,noexec', 'ro,nosuid,nodev,noexec'))
             built = subprocess.run([compiler, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', str(root / 'world.c'), '-o', str(root / 'world')], capture_output=True, text=True, timeout=30)
             self.assertEqual(built.returncode, 0, built.stderr)
             good = f'mountinfo={root / "good.txt"}'
@@ -906,32 +973,34 @@ int main(int argc,char **argv) {
                     if error is not None:
                         self.assertEqual(run.stderr, f'{expected_label}: {os.strerror(getattr(errno, error))}\n', (function, arguments))
 
-            # (A) entropy: identity before binding, clone and mount attributes.
-            check('entropy', None)
-            for device in ('file', 'block', 'fifo', 'major2', 'minor8', 'rdwr'):
-                check('entropy', 'reader entropy identity', f'host={device}', error='ENODEV')
-            check('entropy', 'reader entropy device', 'fault=open:/dev/urandom', error='ENOENT')
-            check('entropy', 'reader entropy identity', 'fault=fstat:17', error='EBADF')
-            check('entropy', 'reader entropy clone', 'fault=open_tree', error='EPERM')
-            check('entropy', 'reader entropy mount flags', 'fault=mount_setattr', error='EPERM')
-            # (A) entropy: identity after binding.
-            check('attached', None)
-            for device in ('file', 'block', 'fifo', 'major2', 'minor8'):
-                check('attached', 'reader attached entropy identity', f'bound={device}', error='ENODEV')
-            check('attached', 'reader attached entropy identity', 'fault=fstat:18', error='EBADF')
-            check('attached', 'reader attached entropy identity', 'fault=open:/view/dev/urandom', error='ENOENT')
+            # (A) the private device directory: tmpfs (dev allowed) -> mknod -> identity -> read-only.
+            check('devnode', None)
+            for device in ('file', 'block', 'fifo', 'major2', 'minor8', 'mode0666', 'mode0644', 'mode0400', 'mode0445', 'setuid'):
+                check('devnode', 'reader created entropy identity', f'bound={device}', error='ENODEV')
+            check('devnode', 'reader created entropy identity', 'fault=fstat:18', error='EBADF')
+            check('devnode', 'reader created entropy identity', 'fault=open:/view/dev/urandom', error='ENOENT')
+            check('devnode', 'reader directory mountpoint', 'fault=mkdir:/view/dev', error='EACCES')
+            check('devnode', 'reader private device directory', 'fault=mount:tmpfs', error='EPERM')
+            check('devnode', 'reader entropy node', 'fault=mknod', error='EPERM')
+            check('devnode', 'reader readonly device directory', 'fault=mount:remount', error='EPERM')
+            # reader_point reports open's own errno, never close(-1)'s EBADF.
+            check('pointfile', None)
+            check('pointfile', 'reader file mountpoint', 'fault=open:/view/file', error='ENOENT')
             # B1: only PID 1, plus self and thread-self; splits across getdents calls are fine.
+            # The real subset=pid root has no dot entries; the classifier also tolerates them.
             for listing in ('1,self,thread-self', 'self,thread-self,1', '1', 'thread-self,1'):
                 for chunk in (1, 2, 1000):
-                    check('proc', None, f'proc={listing}', f'chunk={chunk}')
+                    for dots in (0, 1):
+                        check('proc', None, f'proc={listing}', f'chunk={chunk}', f'dots={dots}')
             for listing in ('1,self,thread-self,2', '1,self,thread-self,10', '2', 'self,thread-self', '1,1', '1,self,self', '1,self,thread-self,sys', '1,self,thread-self,cpuinfo', '1,self,thread-self,net', '01', '1,self,thread-self,99999', ''):
                 for chunk in (1, 1000):
-                    check('proc', 'reader proc root inventory', f'proc={listing}', f'chunk={chunk}', error='ECHILD')
+                    for dots in (0, 1):
+                        check('proc', 'reader proc root inventory', f'proc={listing}', f'chunk={chunk}', f'dots={dots}', error='ECHILD')
             for fault, error in (('getdents:proc', 'EIO'), ('getdents-late:proc', 'EIO'), ('open:/proc', 'ENOENT')):
                 check('proc', 'reader proc root inventory', f'fault={fault}', 'chunk=1', error=error)
             for corrupt in ('reclen-big', 'reclen-small', 'no-nul'):
                 check('proc', 'reader proc root inventory', f'corrupt={corrupt}', error='EBADMSG')
-            # B2: this process is the namespace init, and /proc/1 names the sealed root and cwd.
+            # B2: this process is the namespace init of this procfs, and /proc/1 root and cwd equal its own.
             check('identity', None)
             check('identity', 'reader init process id', 'pid=2', error='ECHILD')
             check('identity', 'reader init process id', 'pid=0')
@@ -946,7 +1015,7 @@ int main(int argc,char **argv) {
             check('mounts', None, good)
             check('mounts', 'reader mount inventory', f'mountinfo={root / "extra.txt"}', error='EBUSY')
             check('mounts', 'reader mount inventory', f'mountinfo={root / "noprocopts.txt"}')
-            check('mounts', 'reader mount inventory', f'mountinfo={root / "urandom-nodev.txt"}')
+            check('mounts', 'reader mount inventory', f'mountinfo={root / "dev-nodev.txt"}')
             check('mounts', 'reader mount inventory', 'fault=open:/proc/self/mountinfo', error='ENOENT')
             check('mounts', 'reader mount inventory', 'fault=read', good, error='EIO')
             check('mounts', 'reader mount inventory', 'fault=huge', error='EFBIG')
@@ -969,6 +1038,7 @@ int main(int argc,char **argv) {
             check('verify', 'reader init process id', good, 'pid=9')
             check('verify', 'reader proc root identity', good, 'root=ino')
             check('verify', 'reader final entropy identity', good, 'bound=minor8')
+            check('verify', 'reader final entropy identity', good, 'bound=mode0666')
             check('verify', 'reader mount inventory', f'mountinfo={root / "extra.txt"}')
             check('verify', 'reader descriptor inventory', good, 'fds=0,1,2,3,@')
             check('verify', 'reader descriptor kind', good, 'kinds=wrong-mode')

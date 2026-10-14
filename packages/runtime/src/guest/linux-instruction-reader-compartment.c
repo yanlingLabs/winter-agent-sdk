@@ -6,10 +6,11 @@
  *
  * Runtime-compatibility view: pinned WebKit opens /dev/urandom directly and glibc's
  * initial-thread pthread_getattr_np reads /proc/self/maps, so the sealed view gains
- * EXACTLY two things: an otherwise-empty /dev holding only a read-only bind of the
- * host character device 1:9, and a fresh subset=pid procfs mounted by the PID
- * namespace's own init. This is a source-derived requirement; it diagnoses no run.
- * Pre-exec invariants below re-prove that view from inside it, fail closed. */
+ * EXACTLY two things: a private, otherwise-empty tmpfs /dev holding one node made
+ * here (character device 1:9, mode 0444; the host device file is never opened or
+ * bound), and a fresh subset=pid procfs mounted by the PID namespace's own init.
+ * This is a source-derived requirement; it diagnoses no run. Pre-exec invariants
+ * below re-prove that view from inside it, fail closed. */
 #include "linux-compartment.h"
 #include <stdint.h>
 #include <poll.h>
@@ -23,7 +24,9 @@
 #define READER_WALL_MS 4000
 #define READER_SHARED "/run/winter/shared-instructions"
 #define READER_HOME "/run/winter/instruction-reader"
-#define READER_ENTROPY "/dev/urandom"
+#define READER_DEV "/dev"
+#define READER_DEV_OPTIONS "mode=0755,size=4k,nr_inodes=4"
+#define READER_ENTROPY READER_DEV "/urandom"
 #define READER_PROC "/proc"
 #define READER_PROC_OPTIONS "subset=pid,hidepid=invisible"
 
@@ -162,14 +165,16 @@ static void reader_point(const char *root, const char *guest, char out[8192], in
     for(char *p=parents+strlen(root)+1;*p;p++)if(*p=='/') {
         *p=0;if(mkdir(parents,0755)&&errno!=EEXIST)require(-1,"reader skeleton ancestor");*p='/';
     }
-    if(file)require(close(open(out,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0555)),"reader file mountpoint");
-    else require(mkdir(out,0755),"reader directory mountpoint");
+    if(file) {
+        /* Keep open's own errno: close(-1) would replace it with EBADF. */
+        int fd=open(out,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0555);require(fd,"reader file mountpoint");close(fd);
+    } else require(mkdir(out,0755),"reader directory mountpoint");
 }
 
 /* BEGIN PORTABLE VIEW CONTRACT -- pure name/text classifiers, no descriptor or native effects. */
 struct reader_slice { const char *at; size_t length; };
 struct reader_proc_names { int init, self, thread_self; };
-struct reader_mounts { int root, source, shared, executable, tmp, entropy, proc, dependencies[READER_DEPENDENCIES]; };
+struct reader_mounts { int root, source, shared, executable, tmp, device, proc, dependencies[READER_DEPENDENCIES]; };
 
 /* Final /proc root of this namespace's subset=pid instance: PID 1 and the two
  * self links, each once, and nothing else. Any other name or number is refused. */
@@ -205,6 +210,16 @@ static int reader_below(struct reader_slice value, const char *root) {
     size_t length=strlen(root);
     return value.length>length+1&&!memcmp(value.at,root,length)&&value.at[length]=='/';
 }
+/* Pseudo and device filesystems that must never appear beneath a source or guidance
+ * tree: the recursive clone could otherwise smuggle kernel interfaces into the view. */
+static const char *const reader_pseudo[]={
+    "proc","sysfs","devtmpfs","devpts","debugfs","tracefs","securityfs","cgroup","cgroup2","bpf","mqueue",
+    "configfs","fusectl","pstore","efivarfs","binfmt_misc","hugetlbfs","autofs","selinuxfs","nsfs"
+};
+static int reader_pseudo_type(struct reader_slice type) {
+    for(size_t i=0;i<sizeof reader_pseudo/sizeof reader_pseudo[0];i++)if(reader_same(type,reader_pseudo[i]))return 1;
+    return 0;
+}
 /* Exact comma-separated option tokens; csv is a fixed comma list, "" matches vacuously. */
 static int reader_options(struct reader_slice list, const char *csv, int present) {
     for(const char *item=csv;*item;) {
@@ -239,15 +254,16 @@ static int reader_mount_line(const char *line, const char *end, const struct rea
     const char *sealed="ro,nosuid,nodev,noexec";
     if(reader_same(point,"/"))return !seen->root++&&reader_rule(options,type,super,sealed,"","tmpfs",NULL);
     if(reader_same(point,plan->source_path))return !seen->source++&&reader_rule(options,type,super,sealed,"",NULL,NULL);
-    if(reader_below(point,plan->source_path))return reader_rule(options,type,super,sealed,"",NULL,NULL);
+    if(reader_below(point,plan->source_path))return !reader_pseudo_type(type)&&reader_rule(options,type,super,sealed,"",NULL,NULL);
     if(reader_same(point,READER_SHARED))return !seen->shared++&&reader_rule(options,type,super,sealed,"",NULL,NULL);
-    if(reader_below(point,READER_SHARED))return reader_rule(options,type,super,sealed,"",NULL,NULL);
+    if(reader_below(point,READER_SHARED))return !reader_pseudo_type(type)&&reader_rule(options,type,super,sealed,"",NULL,NULL);
     if(reader_same(point,"/instruction-reader"))return !seen->executable++&&reader_rule(options,type,super,"ro,nosuid,nodev","",NULL,NULL);
     for(int i=0;i<plan->dependencies;i++)
         if(reader_same(point,plan->dependency_paths[i]))return !seen->dependencies[i]++&&reader_rule(options,type,super,"ro,nosuid,nodev","",NULL,NULL);
     if(reader_same(point,"/tmp"))return !seen->tmp++&&reader_rule(options,type,super,"rw,nosuid,nodev,noexec","ro","tmpfs",NULL);
-    /* The one device node: read-only, nosuid, noexec, and the only mount without nodev. */
-    if(reader_same(point,READER_ENTROPY))return !seen->entropy++&&reader_rule(options,type,super,"ro,nosuid,noexec","nodev",NULL,NULL);
+    /* The private device directory: its own tmpfs, read-only, nosuid, noexec, and the
+     * only mount without nodev (the one node in it must stay usable). */
+    if(reader_same(point,READER_DEV))return !seen->device++&&reader_rule(options,type,super,"ro,nosuid,noexec","nodev","tmpfs",NULL);
     if(reader_same(point,READER_PROC))return !seen->proc++&&reader_rule(options,type,super,sealed,"","proc",READER_PROC_OPTIONS);
     return 0;
 }
@@ -263,7 +279,7 @@ static int reader_mountinfo_ok(const char *text, size_t length, const struct rea
         line=stop+1;
     }
     for(int i=0;i<plan->dependencies;i++)if(seen.dependencies[i]!=1)return 0;
-    return seen.root==1&&seen.source==1&&seen.shared==1&&seen.executable==1&&seen.tmp==1&&seen.entropy==1&&seen.proc==1;
+    return seen.root==1&&seen.source==1&&seen.shared==1&&seen.executable==1&&seen.tmp==1&&seen.device==1&&seen.proc==1;
 }
 /* END PORTABLE VIEW CONTRACT */
 
@@ -272,24 +288,24 @@ static int reader_mountinfo_ok(const char *text, size_t length, const struct rea
 static void reader_expect(int holds, int error, const char *label) {
     if(!holds){errno=error;require(-1,label);}
 }
-/* Host entropy device for WebKit's direct /dev/urandom read. Pin the kernel
- * identity on the descriptor that is cloned, never a re-opened checked path, and
- * clone BEFORE unshare while the host mount namespace still resolves it. NODEV is
- * cleared on this one mount only; read-only protects mount metadata, not device writes. */
-static int reader_entropy(void) {
-    int fd=open(READER_ENTROPY,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);require(fd,"reader entropy device");
-    struct stat info;require(fstat(fd,&info),"reader entropy identity");
-    reader_expect(S_ISCHR(info.st_mode)&&major(info.st_rdev)==1&&minor(info.st_rdev)==9&&(fcntl(fd,F_GETFL)&O_ACCMODE)==O_RDONLY,ENODEV,"reader entropy identity");
-    int tree=(int)syscall(SYS_open_tree,fd,"",OPEN_TREE_CLONE|OPEN_TREE_CLOEXEC|AT_EMPTY_PATH);require(tree,"reader entropy clone");
-    struct mount_attr attr={.attr_set=MOUNT_ATTR_RDONLY|MOUNT_ATTR_NOSUID|MOUNT_ATTR_NOEXEC,.attr_clr=MOUNT_ATTR_NODEV,.propagation=MS_PRIVATE};
-    require((int)syscall(SYS_mount_setattr,tree,"",AT_EMPTY_PATH,&attr,sizeof attr),"reader entropy mount flags");
-    close(fd);return tree;
-}
-/* Same kernel identity re-proved on the node as mounted (O_PATH: never opened as a device). */
+/* Kernel identity of the one device node: character device 1:9, mode exactly 0444.
+ * O_PATH: the node is examined, never opened as a device. */
 static void reader_entropy_identity(const char *target, const char *label) {
     int fd=open(target,O_PATH|O_NOFOLLOW|O_CLOEXEC);require(fd,label);
     struct stat info;require(fstat(fd,&info),label);close(fd);
-    reader_expect(S_ISCHR(info.st_mode)&&major(info.st_rdev)==1&&minor(info.st_rdev)==9,ENODEV,label);
+    reader_expect(S_ISCHR(info.st_mode)&&major(info.st_rdev)==1&&minor(info.st_rdev)==9&&(info.st_mode&07777)==0444,ENODEV,label);
+}
+/* WebKit opens /dev/urandom directly. Give the view a PRIVATE node instead of binding
+ * the host's: a tiny tmpfs with device nodes allowed (nosuid, noexec; nr_inodes bounds
+ * it), one mknod while still root, then the whole mount read-only. The host device
+ * file is never opened, so no host inode (pool writes, notifications) is reachable. */
+static void reader_entropy_node(const char *view, char target[8192]) {
+    reader_point(view,READER_DEV,target,0);
+    require(mount("tmpfs",target,"tmpfs",MS_NOSUID|MS_NOEXEC,READER_DEV_OPTIONS),"reader private device directory");
+    const char *guest=READER_ENTROPY;char node[8192];path(node,sizeof node,view,guest+1);
+    require(mknod(node,S_IFCHR|0444,makedev(1,9)),"reader entropy node");
+    reader_entropy_identity(node,"reader created entropy identity");
+    require(mount(NULL,target,NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NOEXEC,NULL),"reader readonly device directory");
 }
 #define READER_DIRENT_RECLEN 16
 #define READER_DIRENT_NAME 19
@@ -326,7 +342,8 @@ static void reader_proc_inventory(void) {
     require(walked,"reader proc root inventory");
     reader_expect(!walked&&seen.init==1,ECHILD,"reader proc root inventory");
 }
-/* B2: this process is the namespace init, and /proc/1 names the sealed root and cwd. */
+/* B2: this process is the namespace init of the PID namespace whose procfs this is, and
+ * /proc/1 root and cwd are identical to this process's own root and cwd. */
 static void reader_proc_identity(void) {
     reader_expect(getpid()==1,ECHILD,"reader init process id");
     struct stat view,proc_view;
@@ -494,12 +511,13 @@ int main(int argc, char **argv) {
     int source_tree=reader_clone(plan.source,0),shared_tree=reader_clone(plan.shared,0),executable_tree=reader_clone(plan.executable,1);
     int dependencies[READER_DEPENDENCIES];
     for(int i=0;i<plan.dependencies;i++)dependencies[i]=reader_clone(plan.dependency_fds[i],1);
-    int entropy_tree=reader_entropy();
     require(unshare(CLONE_NEWNS|CLONE_NEWPID|CLONE_NEWIPC|CLONE_NEWUTS|CLONE_NEWNET),"reader namespaces");
     require(mount(NULL,"/",NULL,MS_REC|MS_PRIVATE,NULL),"reader private propagation");
     pid_t child=fork();require(child,"reader namespace init");
     if(child)return reader_monitor(child,plan.receipt,parent,deadline);
     close(plan.receipt);
+    /* Every directory and mountpoint below is made with fixed modes; do not inherit Root's umask. */
+    umask(022);
     /* Arm before privileged child setup, then re-arm after the UID transition
      * which clears PDEATHSIG. The held pidfd closes the pre-arm death race. */
     require(prctl(PR_SET_PDEATHSIG,SIGKILL),"reader setup monitor death");
@@ -515,8 +533,7 @@ int main(int argc, char **argv) {
     reader_point(plan.view,READER_HOME,target,0);
     reader_point(plan.view,"/tmp",target,0);
     require(mount("tmpfs",target,"tmpfs",MS_NOSUID|MS_NODEV|MS_NOEXEC,"mode=1777,size=8m"),"reader private temporary files");
-    reader_point(plan.view,READER_ENTROPY,target,1);reader_attach(entropy_tree,target);
-    reader_entropy_identity(target,"reader attached entropy identity");
+    reader_entropy_node(plan.view,target);
     /* Mounted here, by the namespace's own init, so the instance is THIS PID namespace's. */
     reader_point(plan.view,READER_PROC,target,0);
     require(mount("proc",target,"proc",MS_RDONLY|MS_NOSUID|MS_NODEV|MS_NOEXEC,READER_PROC_OPTIONS),"reader private proc");
