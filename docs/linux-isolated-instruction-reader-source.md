@@ -15,9 +15,9 @@ either; every statement about kernel behavior below is source-derived and unveri
 
 2026-10-15 amendment, after independent security review (no escape, no fail-open found):
 the host `/dev/urandom` bind is replaced by a private node on a tiny tmpfs; the child
-fixes `umask(022)` first; nested mounts of pseudo/device filesystems under the source
-and guidance trees are refused by the mount inventory; and what `subset=pid` still
-exposes is documented below.
+fixes `umask(022)` first; the source and guidance mounts, and every mount nested beneath
+them, must be on an allowlist of data filesystems (`ext4`, `virtiofs`) or the mount
+inventory fails closed; and what `subset=pid` still exposes is documented below.
 
 ## Exact Root-only launch envelope
 
@@ -89,7 +89,7 @@ recursively private.
 
 The skeleton is a 16 MiB tmpfs, remounted read-only/nosuid/nodev/noexec. It has an
 empty Root-owned read-only `/run/winter/instruction-reader` and a private 8 MiB
-tmpfs `/tmp` with nosuid/nodev/noexec, plus the two additions below (an
+tmpfs `/tmp` with nosuid/nodev/noexec, plus the two additions below (a
 private tmpfs `/dev` holding one entropy device node, and a subset procfs).
 There is no host proc, sysfs, other device node, conversation/store/run home,
 owner library, bootstrap FD, control socket, credential, peer handle or canonical
@@ -158,7 +158,7 @@ credential or environment change, and no JIT or randomness workaround):
 
 | Addition | Construction | Flags |
 | --- | --- | --- |
-| private `/dev` holding only `urandom` | While still root in the namespace init, a tmpfs is mounted at `/dev` (`mode=0755,size=4k,nr_inodes=4`; device nodes **allowed**), `/dev/urandom` is created with `mknod` as character device 1:9 mode 0444, its identity and mode are verified, then the mount is remounted read-only. The host `/dev/urandom` is never opened, cloned or bound, so no host inode is reachable through the view: not a writable pool entry, not notifications on host reads. Nothing is cloned for it with `open_tree`. | mount `ro,nosuid,noexec` and **without** `nodev` (the only mount in the view that allows devices); node char 1:9, mode 0444, checked right after creation and again in the final view |
+| private `/dev` holding only `urandom` | While still root in the namespace init, a tmpfs is mounted at `/dev` (`mode=0755,size=4k,nr_inodes=4`; device nodes **allowed**), `/dev/urandom` is created with `mknod` as character device 1:9 mode 0444 owned by root, its identity, mode and owner are verified, then the mount is remounted read-only. The host `/dev/urandom` is never opened, cloned or bound, so no host inode is reachable through the view: not a writable pool entry, not notifications on host reads. Nothing is cloned for it with `open_tree`. | mount `ro,nosuid,noexec` and **without** `nodev` (the only mount in the view that allows devices); node char 1:9, mode 0444, uid 0 gid 0, checked right after creation and again in the final view |
 | `/proc` | `mount("proc", ..., "subset=pid,hidepid=invisible")`, called by the forked namespace init, i.e. PID 1 of the new PID namespace, so the instance belongs to that namespace. | `MS_RDONLY\|MS_NOSUID\|MS_NODEV\|MS_NOEXEC` |
 
 Order: `unshare` of the mount, PID, IPC, UTS and network namespaces → recursive-private `/`
@@ -181,9 +181,28 @@ immediately before `execve`; each failure sets a fixed `errno`, prints one
 | B1 | getdents of the `/proc` root yields only `self`, `thread-self` (each at most once) and exactly one numeric entry, `1`. Under `subset=pid` the root listing carries no `.`/`..` entries (`proc_readdir` returns early, fs/proc/generic.c); the classifier tolerates both. Because of `hidepid=invisible` this proves the instance is this namespace's own view, not the absence of other users' processes; that guarantee comes from the fresh PID namespace plus the unchanged clone filter, which still forbids child processes (threads only). | `reader proc root inventory` |
 | B2 | process is PID 1; `stat("/proc/1/root")` and `stat("/")` have equal dev/ino; `stat("/proc/1/cwd")` and `stat(".")` have equal dev/ino. This proves the procfs is this PID namespace's own and that PID 1's root and cwd are this process's own root and cwd. It does not prove the root is the intended view: that is B4 plus the Root-side oracle. | `reader init process id`, `reader proc root identity`, `reader proc cwd identity` |
 | B3 | An outside canary stays invisible. **Harness obligation, not implemented in C**: the harness must plant a canary process/file outside the namespace (a host PID the probe's `proc_numeric` must not count, a host device node that must not appear) and bind observations to the received namespace-init pidfd. | (harness) |
-| B4 | `/proc/self/mountinfo` lists exactly the expected table and nothing else: `/` tmpfs `ro,nosuid,nodev,noexec`; source and shared guidance `ro,nosuid,nodev,noexec`; `/instruction-reader` and every dependency path `ro,nosuid,nodev`; `/tmp` tmpfs `rw,nosuid,nodev,noexec`; `/dev` tmpfs `ro,nosuid,noexec` without `nodev` (there is no `/dev/urandom` mount; superblock sizes are not pinned because they depend on the page size); `/proc` type `proc` `ro,nosuid,nodev,noexec` with superblock options containing `subset=pid` and `hidepid=invisible`. Each exactly once. Mounts nested beneath source or guidance by the recursive clone must carry the sealed flags and a data filesystem type: nested `proc`, `sysfs`, `devtmpfs`, `devpts`, `debugfs`, `tracefs`, `securityfs`, `cgroup`, `cgroup2`, `bpf`, `mqueue`, `configfs`, `fusectl`, `pstore`, `efivarfs`, `binfmt_misc`, `hugetlbfs`, `autofs`, `selinuxfs` and `nsfs` are refused (exact fstype match). Unreachable host mounts are not listed by the kernel after `chroot`. | `reader mount inventory` |
+| B4 | `/proc/self/mountinfo` lists exactly the expected table and nothing else: `/` tmpfs `ro,nosuid,nodev,noexec`; source and shared guidance `ro,nosuid,nodev,noexec`; `/instruction-reader` and every dependency path `ro,nosuid,nodev`; `/tmp` tmpfs `rw,nosuid,nodev,noexec`; `/dev` tmpfs `ro,nosuid,noexec` without `nodev`, and a read-only superblock (`ro` in the superblock options field. In v6.8 `show_mountinfo` prints `sb_rdonly(sb)` there, `fs/proc_namespace.c:182`; the remount without `MS_BIND` runs `do_remount`, which builds its context with `sb_flags` and `MS_RMT_MASK`, `fs/namespace.c:2877`, and `reconfigure_super` stores them into `sb->s_flags`, `fs/super.c:1081-1082`, so the tmpfs superblock itself becomes read-only; sizes are not pinned because they depend on the page size). There is no `/dev/urandom` mount, and a nested path never counts as the `/dev` mount; `/proc` type `proc` `ro,nosuid,nodev,noexec` with superblock options containing `subset=pid` and `hidepid=invisible`. Each exactly once. The source and guidance mounts, and every mount nested beneath them by the recursive clone, must carry the sealed flags **and** be on the data-filesystem allowlist below; any other type fails closed (see "Data-filesystem allowlist"). Unreachable host mounts are not listed by the kernel after `chroot`. | `reader mount inventory` |
 | B5 | the open-descriptor table (`/proc/self/fd`, the enumerating handle excluded) is exactly 0, 1, 2, each still the verified FIFO with the right direction and no close-on-exec flag. | `reader descriptor inventory`, `reader descriptor kind` |
-| - | the entropy node is char 1:9 with mode exactly 0444 again in the final view (`O_PATH` + `fstat`); right after `mknod` the same check runs under `reader created entropy identity`. | `reader final entropy identity` |
+| - | the entropy node is char 1:9 with mode exactly 0444, owned by uid 0 gid 0, again in the final view (`O_PATH` + `fstat`); right after `mknod` the same check runs under `reader created entropy identity`. | `reader final entropy identity` |
+
+**Data-filesystem allowlist.** An allowlist replaced the earlier denylist of pseudo and
+device filesystems, which was incomplete (v6.8 also registers `binder`, `smackfs`,
+`rpc_pipefs`, `nfsd` and the FUSE family) and left the two root mounts unchecked. The
+exact fstype string printed by `/proc/self/mountinfo` must equal a member; there are no
+prefixes, so `fuse`, `fuseblk` and `fuse.<subtype>` never match. Members need evidence:
+
+| Member | Evidence | Status |
+| --- | --- | --- |
+| `virtiofs` | Host-backed folders and shared guidance reach the guest by virtiofs. The Cowork gate-1 run recorded raw guest mountinfo lines identifying `virtiofs` (`winter/docs/research/2026-10-11-cowork-gate1-results.md:139`); the guest supervisor fixture requires a mountinfo line whose filesystem is `virtiofs` (`winter/spikes/cowork-vm/guest/README.md:131`); the production backend is libkrun's virtiofs device (`winter/spikes/cowork-hvf/production-prerequisites.md:17`). | measured on the Apple VZ fixture; libkrun guest not yet measured |
+| `ext4` | The Cowork contract names a "live writable ext4 volume" for guest-only data and puts repositories and scratch there (`winter/docs/cowork-execution-contracts.md:138,134`). The hosted native-reader fixture creates its source and guidance directories under `$RUNNER_TEMP` on the hosted runner's root filesystem, which is expected to be ext4. | contract text for the guest; **inferred** for the hosted runner (no mountinfo from any hosted run is recorded) |
+
+`xfs`, `btrfs`, `tmpfs`, `overlay`, `9p`, `nfs*` and every other type are deliberately
+absent: nothing in the repositories evidences them. A member that is wrongly absent costs
+availability, never safety: the launcher exits 77 with `reader mount inventory: Device or
+resource busy` before `execve`. A hosted native run failing that way on its first
+attempt, with source and guidance mounts as the only unexplained rows, would reveal a
+missing member (the runner's `$RUNNER_TEMP` filesystem type is the first thing to check);
+a guest run failing that way would point at the share type the libkrun guest reports.
 
 The in-guest checks run inside the process being constrained: they fail closed on a
 mistaken view but are defense in depth, not a replacement for the Root-side pidfd-bound
@@ -231,8 +250,16 @@ query) remain reachable and the seccomp filter does not restrict `ioctl`; privil
 need CAP_SYS_ADMIN, which is dropped. What the private node removes is the host inode: the
 write-open path (mode 0444, root-owned) and any notification or timestamp state on it. A
 tmpfs with `size=4k,nr_inodes=4` leaves room for its root and the one device inode; that
-accounting is source-derived. An LSM or a device-cgroup policy on the reader's cgroup could
-still deny opening 1:9, which the probe's `urandom_open` would report. Static versus dynamic
+accounting is source-derived. Creating the node has availability prerequisites that fail
+closed: the launcher needs `CAP_MKNOD` (held until the capability drop), and the launcher's
+**own cgroup** must permit `mknod` of character device 1:9 (`devcgroup_inode_mknod`; a
+device-controller or device-program policy that denies it makes `mknod` fail with `EPERM`
+and the launcher exits 77 as `reader entropy node`). A tmpfs mounted from a non-initial user
+namespace would carry `SB_I_NODEV` and make the node unopenable (`EACCES`); the launcher
+runs in the initial user namespace, so this is not reachable today, and the pre-exec checks
+never open the node, so only the probe's `urandom_open` (or the reader's own open) would
+reveal it. An LSM or a device-cgroup policy on the reader's cgroup could likewise deny
+*opening* 1:9, which the probe's `urandom_open` would report. Static versus dynamic
 probe linking does not change glibc's `/proc/self/maps` dependency but is unmeasured.
 
 The design also leans on these kernel facts, none exercised here: since 5.8 every
@@ -326,8 +353,10 @@ order against `unshare`, `fork`, `umask`, the read-only remounts, `chroot`, cred
 drop, filter and `execve`); distinct invariant labels with no
 reuse or prefix collision against the pre-existing labels; a mountinfo validator
 exercised over positive, mutated, duplicated, missing, weakened-flag and malformed
-tables, including a refusal for each pseudo or device filesystem nested under the
-source and guidance trees; the `/proc` and descriptor name classifiers; the real
+tables, including the data-filesystem allowlist (two accepted types and about fifty
+refused ones, each at the source mount, the guidance mount, and nested and deeply nested
+beneath each), the read-only `/dev` superblock, and the old shape where a `/dev/urandom`
+bind replaces the `/dev` mount; the `/proc` and descriptor name classifiers; the real
 extracted helpers (the private `/dev` sequence with its mount flags and call order, both
 identity checks including mode 0444, `reader_point`'s preserved `open` errno, getdents
 walking with and without dot entries, B1/B2/B4/B5 and their composed order) run against

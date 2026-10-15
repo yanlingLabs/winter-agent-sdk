@@ -432,8 +432,7 @@ int main(void) {
 
     def test_runtime_view_adds_exactly_two_things_in_order(self):
         source = SOURCE.read_text()
-        pseudo_block = source[source.index('reader_pseudo[]={'):source.index('};', source.index('reader_pseudo[]={'))]
-        scan = source.replace(pseudo_block, '')
+        scan = source
         # (A) exactly two additions, each defined once.
         self.assertIn('#define READER_DEV "/dev"', source)
         self.assertIn('#define READER_DEV_OPTIONS "mode=0755,size=4k,nr_inodes=4"', source)
@@ -444,6 +443,10 @@ int main(void) {
         self.assertEqual(scan.count('"/urandom"'), 1)
         for forbidden in ('"/dev/', '"/dev/null"', '"/dev/zero"', '"/dev/random"', '"/dev/tty', '"/dev/shm', '"/sys', 'MS_BIND', 'devtmpfs', 'devpts', 'sysfs'):
             self.assertNotIn(forbidden, scan)
+        # The data-filesystem allowlist guards the exact source/guidance mounts and everything nested under them.
+        self.assertIn('static const char *const reader_data[]={"ext4","virtiofs"};', source)
+        self.assertEqual(source.count('reader_data_type(type)&&reader_rule('), 4)
+        self.assertNotIn('pseudo', source)
         self.assertEqual(re.findall(r'"/proc[^"]*"', source), ['"/proc"'])
         self.assertEqual(sorted(re.findall(r'(?<!define )READER_PROC "([^"]*)"', source)), ['/1/cwd', '/1/root', '/self/fd', '/self/mountinfo'])
         # The host device file is never opened or bound: no clone of it, no descriptor mount for it.
@@ -475,7 +478,8 @@ int main(void) {
         steps = ['reader_point(view,READER_DEV,target,0);', 'mount("tmpfs",target,"tmpfs",MS_NOSUID|MS_NOEXEC,READER_DEV_OPTIONS)', 'mknod(node', 'reader_entropy_identity(node,"reader created entropy identity");', 'mount(NULL,target,NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NOEXEC,NULL)']
         self.assertEqual([node.index(step) for step in steps], sorted(node.index(step) for step in steps))
         identity = source[source.index('static void reader_entropy_identity('):source.index('/* WebKit opens /dev/urandom directly.')]
-        self.assertIn('S_ISCHR(info.st_mode)&&major(info.st_rdev)==1&&minor(info.st_rdev)==9&&(info.st_mode&07777)==0444', identity)
+        self.assertIn('S_ISCHR(info.st_mode)&&major(info.st_rdev)==1&&minor(info.st_rdev)==9&&(info.st_mode&07777)==0444&&info.st_uid==0&&info.st_gid==0', identity)
+        self.assertIn('reader_rule(options,type,super,"ro,nosuid,noexec","nodev","tmpfs","ro")', source)
         self.assertIn('open(target,O_PATH|O_NOFOLLOW|O_CLOEXEC)', identity)
         # No seccomp, rlimit, credential or environment change.
         function = source[source.index('static void reader_filter('):source.index('static void reader_limit(')]
@@ -578,7 +582,7 @@ int main(int argc,char **argv) {
                 [DEPENDENCIES[0], 'ro,nosuid,nodev,relatime', 'ext4', '/dev/vda3', 'rw'],
                 [DEPENDENCIES[1], 'ro,nosuid,nodev,relatime', 'ext4', '/dev/vda3', 'rw'],
                 ['/tmp', 'rw,nosuid,nodev,noexec,relatime', 'tmpfs', 'tmpfs', 'rw,size=8192k,mode=1777'],
-                ['/dev', 'ro,nosuid,noexec,relatime', 'tmpfs', 'tmpfs', 'rw,size=4k,nr_inodes=4,mode=755'],
+                ['/dev', 'ro,nosuid,noexec,relatime', 'tmpfs', 'tmpfs', 'ro,size=4k,nr_inodes=4,mode=755'],
                 ['/proc', SEALED, 'proc', 'proc', 'rw,hidepid=invisible,subset=pid'],
             ]
 
@@ -620,20 +624,38 @@ int main(int argc,char **argv) {
             cases.append((f'/dev with {weaker}', changed('/dev', 1, weaker), 64))
         for substitute in ('devtmpfs', 'ext4', 'proc', 'sysfs', 'overlay'):
             cases.append((f'/dev is {substitute}, not its own tmpfs', changed('/dev', 2, substitute), 64))
-        cases.append(('/dev tmpfs superblock options are not pinned (page size varies)', changed('/dev', 4, 'rw,size=64k,nr_inodes=4,mode=755'), 0))
-        # Pseudo and device filesystems may not nest beneath a source or guidance tree.
-        pseudo = ['proc', 'sysfs', 'devtmpfs', 'devpts', 'debugfs', 'tracefs', 'securityfs', 'cgroup', 'cgroup2', 'bpf', 'mqueue', 'configfs', 'fusectl', 'pstore', 'efivarfs', 'binfmt_misc', 'hugetlbfs', 'autofs', 'selinuxfs', 'nsfs']
-        listed = re.findall(r'"(\w+)"', SOURCE.read_text().split('reader_pseudo[]={')[1].split('};')[0])
-        self.assertEqual(listed, pseudo)
-        for kind in pseudo:
-            for root_path in (SOURCE_PATH, SHARED_PATH):
-                cases.append((f'nested {kind} under {root_path}', render(rows() + [[root_path + '/nested', SEALED, kind, kind, 'rw']]), 64))
-                cases.append((f'deeply nested {kind} under {root_path}', render(rows() + [[root_path + '/a/b/c', SEALED, kind, kind, 'rw']]), 64))
-        for kind in ('ext4', 'xfs', 'btrfs', 'virtiofs', '9p', 'nfs4', 'overlay', 'tmpfs', 'fuse.sshfs', 'fuseblk', 'vfat', 'sysfs2', 'procfs', 'cgroup3', 'Proc'):
-            for root_path in (SOURCE_PATH, SHARED_PATH):
-                cases.append((f'data filesystem {kind} may nest under {root_path}', render(rows() + [[root_path + '/nested', SEALED, kind, kind, 'rw']]), 0))
-        for kind in ('proc', 'sysfs', 'devtmpfs', 'cgroup2'):
-            cases.append((f'a pseudo filesystem nested beneath the source tree still needs the sealed flags {kind}', render(rows() + [[SOURCE_PATH + '/nested', 'rw,nosuid,nodev,noexec', kind, kind, 'rw']]), 64))
+        cases.append(('/dev tmpfs size and inode options are not pinned (page size varies)', changed('/dev', 4, 'ro,size=64k,nr_inodes=4,mode=755'), 0))
+        for weaker in ('rw,size=4k,nr_inodes=4,mode=755', 'rw', 'rox,size=4k', 'size=4k,nr_inodes=4,mode=755', ''):
+            cases.append((f'/dev superblock must be read-only, not {weaker!r}', changed('/dev', 4, weaker), 64))
+        cases.append(('/dev superblock read-only alone passes', changed('/dev', 4, 'ro'), 0))
+        # The old shape: a bind of the device node REPLACES the /dev mount. Nested paths must not count
+        # as the /dev mount, whatever type and flags the bind row claims.
+        for kind, flags, super_options in (('devtmpfs', 'ro,nosuid,noexec,relatime', 'rw,size=4k,mode=755'), ('tmpfs', 'ro,nosuid,noexec,relatime', 'ro'), ('tmpfs', 'ro,nosuid,noexec', 'ro,size=4k,nr_inodes=4,mode=755')):
+            old_shape = [r if r[0] != '/dev' else ['/dev/urandom', flags, kind, kind, super_options] for r in rows()]
+            cases.append((f'old shape: a {kind} /dev/urandom bind replaces the /dev mount', render(old_shape), 64))
+        cases.append(('a /dev/urandom bind added beside the /dev mount', render(rows() + [['/dev/urandom', 'ro,nosuid,noexec,relatime', 'tmpfs', 'tmpfs', 'ro']]), 64))
+        # Source and guidance trees (the exact mounts and everything nested below) are an ALLOWLIST:
+        # ext4 and virtiofs only. Everything else, named or not, fails closed. Exact match, no prefixes.
+        allowed = ['ext4', 'virtiofs']
+        listed = re.findall(r'"(\w+)"', SOURCE.read_text().split('reader_data[]={')[1].split('};')[0])
+        self.assertEqual(listed, allowed)
+        rejected = ['proc', 'sysfs', 'devtmpfs', 'devpts', 'debugfs', 'tracefs', 'securityfs', 'cgroup', 'cgroup2', 'bpf', 'mqueue',
+                    'configfs', 'fusectl', 'pstore', 'efivarfs', 'binfmt_misc', 'hugetlbfs', 'autofs', 'selinuxfs', 'nsfs',
+                    'binder', 'smackfs', 'rpc_pipefs', 'nfsd', 'fuse', 'fuseblk', 'fuse.sshfs', 'fuse.virtiofsd', 'fuse.ext4',
+                    'tmpfs', 'ramfs', 'overlay', 'xfs', 'btrfs', 'f2fs', 'erofs', 'squashfs', 'iso9660', 'vfat', 'exfat', 'ntfs3', '9p', 'cifs',
+                    'nfs', 'nfs4', 'ext2', 'ext3', 'ext', 'ext44', 'EXT4', 'Ext4', 'ext4 ', 'virtiofsx', 'virtio', 'Virtiofs', 'virtiofs.', '']
+        self.assertEqual(set(allowed) & set(rejected), set())
+        positions = [('source mount', lambda kind: changed(SOURCE_PATH, 2, kind)), ('guidance mount', lambda kind: changed(SHARED_PATH, 2, kind))]
+        positions += [(f'nested {label} under {root_path}', (lambda root_path, suffix: lambda kind: render(rows() + [[root_path + suffix, SEALED, kind, kind, 'rw']]))(root_path, suffix))
+                      for root_path in (SOURCE_PATH, SHARED_PATH) for label, suffix in (('', '/nested'), ('deeply', '/a/b/c'))]
+        for label, build in positions:
+            for kind in allowed:
+                cases.append((f'{kind} is allowed as {label}', build(kind), 0))
+            for kind in rejected:
+                cases.append((f'{kind!r} is refused as {label}', build(kind), 64))
+        for kind in allowed:
+            weaker = 'rw,nosuid,nodev,noexec'
+            cases.append((f'allowed type {kind} nested under the source tree still needs the sealed flags', render(rows() + [[SOURCE_PATH + '/nested', weaker, kind, kind, 'rw']]), 64))
         for weaker in ('rw,subset=pid', 'rw,hidepid=invisible', 'rw,hidepid=noaccess,subset=pid', 'rw,hidepid=ptraceable,subset=pid', 'rw,hidepid=off,subset=pid', 'rw,hidepid=2,subset=pid', 'rw,hidepid=invisibles,subset=pid', 'rw,hidepid=invisible,subset=pids', 'rw', 'rw,hidepid=invisible,subset=pid'.replace('subset', 'xsubset')):
             cases.append((f'/proc super options {weaker}', changed('/proc', 4, weaker), 64))
         cases.append(('/proc with extra gid option still passes', changed('/proc', 4, 'rw,gid=0,hidepid=invisible,subset=pid'), 0))
@@ -797,6 +819,8 @@ static int fake_fstat(int fd,struct stat *out) {
         if(!strcmp(device,"mode0400"))permissions=0400;
         if(!strcmp(device,"mode0445"))permissions=0445;
         if(!strcmp(device,"setuid"))permissions=04444;
+        if(!strcmp(device,"uid1000"))out->st_uid=1000;
+        if(!strcmp(device,"gid1000"))out->st_gid=1000;
         out->st_mode=type|permissions;out->st_rdev=makedev(major_number,minor_number);return 0;
     }
     assert(fd>=0&&fd<=2);
@@ -955,7 +979,7 @@ int main(int argc,char **argv) {
         good_mountinfo = ''.join(f'{100 + i} 99 0:{50 + i} / {r[0]} {r[1]} - {r[2]} {r[3]} {r[4]}\n' for i, r in enumerate([
             ['/', SEALED, 'tmpfs', 'tmpfs', 'rw'], [SOURCE_PATH, SEALED, 'ext4', 'a', 'rw'], [SHARED_PATH, SEALED, 'ext4', 'a', 'rw'],
             ['/instruction-reader', 'ro,nosuid,nodev', 'ext4', 'a', 'rw'], [DEPENDENCIES[0], 'ro,nosuid,nodev', 'ext4', 'a', 'rw'], [DEPENDENCIES[1], 'ro,nosuid,nodev', 'ext4', 'a', 'rw'],
-            ['/tmp', 'rw,nosuid,nodev,noexec', 'tmpfs', 'tmpfs', 'rw'], ['/dev', 'ro,nosuid,noexec', 'tmpfs', 'tmpfs', 'rw'],
+            ['/tmp', 'rw,nosuid,nodev,noexec', 'tmpfs', 'tmpfs', 'rw'], ['/dev', 'ro,nosuid,noexec', 'tmpfs', 'tmpfs', 'ro'],
             ['/proc', SEALED, 'proc', 'proc', 'rw,hidepid=invisible,subset=pid']]))
         compiler = shutil.which('cc')
         self.assertIsNotNone(compiler)
@@ -965,6 +989,7 @@ int main(int argc,char **argv) {
             (root / 'good.txt').write_text(good_mountinfo)
             (root / 'extra.txt').write_text(good_mountinfo + '200 99 0:70 / /sys ro,nosuid,nodev,noexec - sysfs sysfs rw\n')
             (root / 'noprocopts.txt').write_text(good_mountinfo.replace('hidepid=invisible,subset=pid', 'subset=pid'))
+            (root / 'dev-rw-superblock.txt').write_text(good_mountinfo.replace('- tmpfs tmpfs ro\n', '- tmpfs tmpfs rw\n'))
             (root / 'dev-nodev.txt').write_text(good_mountinfo.replace('ro,nosuid,noexec', 'ro,nosuid,nodev,noexec'))
             built = subprocess.run([compiler, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', str(root / 'world.c'), '-o', str(root / 'world')], capture_output=True, text=True, timeout=30)
             self.assertEqual(built.returncode, 0, built.stderr)
@@ -984,7 +1009,7 @@ int main(int argc,char **argv) {
 
             # (A) the private device directory: tmpfs (dev allowed) -> mknod -> identity -> read-only.
             check('devnode', None)
-            for device in ('file', 'block', 'fifo', 'major2', 'minor8', 'mode0666', 'mode0644', 'mode0400', 'mode0445', 'setuid'):
+            for device in ('file', 'block', 'fifo', 'major2', 'minor8', 'mode0666', 'mode0644', 'mode0400', 'mode0445', 'setuid', 'uid1000', 'gid1000'):
                 check('devnode', 'reader created entropy identity', f'bound={device}', error='ENODEV')
             check('devnode', 'reader created entropy identity', 'fault=fstat:18', error='EBADF')
             check('devnode', 'reader created entropy identity', 'fault=open:/view/dev/urandom', error='ENOENT')
@@ -1025,6 +1050,7 @@ int main(int argc,char **argv) {
             check('mounts', 'reader mount inventory', f'mountinfo={root / "extra.txt"}', error='EBUSY')
             check('mounts', 'reader mount inventory', f'mountinfo={root / "noprocopts.txt"}')
             check('mounts', 'reader mount inventory', f'mountinfo={root / "dev-nodev.txt"}')
+            check('mounts', 'reader mount inventory', f'mountinfo={root / "dev-rw-superblock.txt"}', error='EBUSY')
             check('mounts', 'reader mount inventory', 'fault=open:/proc/self/mountinfo', error='ENOENT')
             check('mounts', 'reader mount inventory', 'fault=read', good, error='EIO')
             check('mounts', 'reader mount inventory', 'fault=huge', error='EFBIG')
@@ -1048,6 +1074,8 @@ int main(int argc,char **argv) {
             check('verify', 'reader proc root identity', good, 'root=ino')
             check('verify', 'reader final entropy identity', good, 'bound=minor8')
             check('verify', 'reader final entropy identity', good, 'bound=mode0666')
+            check('verify', 'reader final entropy identity', good, 'bound=uid1000')
+            check('verify', 'reader final entropy identity', good, 'bound=gid1000')
             check('verify', 'reader mount inventory', f'mountinfo={root / "extra.txt"}')
             check('verify', 'reader descriptor inventory', good, 'fds=0,1,2,3,@')
             check('verify', 'reader descriptor kind', good, 'kinds=wrong-mode')

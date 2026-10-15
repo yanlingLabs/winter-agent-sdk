@@ -210,14 +210,16 @@ static int reader_below(struct reader_slice value, const char *root) {
     size_t length=strlen(root);
     return value.length>length+1&&!memcmp(value.at,root,length)&&value.at[length]=='/';
 }
-/* Pseudo and device filesystems that must never appear beneath a source or guidance
- * tree: the recursive clone could otherwise smuggle kernel interfaces into the view. */
-static const char *const reader_pseudo[]={
-    "proc","sysfs","devtmpfs","devpts","debugfs","tracefs","securityfs","cgroup","cgroup2","bpf","mqueue",
-    "configfs","fusectl","pstore","efivarfs","binfmt_misc","hugetlbfs","autofs","selinuxfs","nsfs"
-};
-static int reader_pseudo_type(struct reader_slice type) {
-    for(size_t i=0;i<sizeof reader_pseudo/sizeof reader_pseudo[0];i++)if(reader_same(type,reader_pseudo[i]))return 1;
+/* Source and guidance trees, and every mount nested beneath them (the clone is
+ * recursive), must be one of these data filesystems; anything else fails closed. That
+ * covers kernel-interface and device filesystems, FUSE (printed "fuse.<subtype>" or
+ * "fuseblk") and any type added later. Exact match, no prefixes. Add a member only
+ * with evidence: ext4 is the guest-local data volume (repositories, scratch) and,
+ * inferred, a hosted runner's root filesystem; virtiofs is the host-backed folder
+ * and shared-guidance share in the guest. A missing member costs availability only. */
+static const char *const reader_data[]={"ext4","virtiofs"};
+static int reader_data_type(struct reader_slice type) {
+    for(size_t i=0;i<sizeof reader_data/sizeof reader_data[0];i++)if(reader_same(type,reader_data[i]))return 1;
     return 0;
 }
 /* Exact comma-separated option tokens; csv is a fixed comma list, "" matches vacuously. */
@@ -253,17 +255,17 @@ static int reader_mount_line(const char *line, const char *end, const struct rea
     const struct reader_slice point=head[4],options=head[5];
     const char *sealed="ro,nosuid,nodev,noexec";
     if(reader_same(point,"/"))return !seen->root++&&reader_rule(options,type,super,sealed,"","tmpfs",NULL);
-    if(reader_same(point,plan->source_path))return !seen->source++&&reader_rule(options,type,super,sealed,"",NULL,NULL);
-    if(reader_below(point,plan->source_path))return !reader_pseudo_type(type)&&reader_rule(options,type,super,sealed,"",NULL,NULL);
-    if(reader_same(point,READER_SHARED))return !seen->shared++&&reader_rule(options,type,super,sealed,"",NULL,NULL);
-    if(reader_below(point,READER_SHARED))return !reader_pseudo_type(type)&&reader_rule(options,type,super,sealed,"",NULL,NULL);
+    if(reader_same(point,plan->source_path))return !seen->source++&&reader_data_type(type)&&reader_rule(options,type,super,sealed,"",NULL,NULL);
+    if(reader_below(point,plan->source_path))return reader_data_type(type)&&reader_rule(options,type,super,sealed,"",NULL,NULL);
+    if(reader_same(point,READER_SHARED))return !seen->shared++&&reader_data_type(type)&&reader_rule(options,type,super,sealed,"",NULL,NULL);
+    if(reader_below(point,READER_SHARED))return reader_data_type(type)&&reader_rule(options,type,super,sealed,"",NULL,NULL);
     if(reader_same(point,"/instruction-reader"))return !seen->executable++&&reader_rule(options,type,super,"ro,nosuid,nodev","",NULL,NULL);
     for(int i=0;i<plan->dependencies;i++)
         if(reader_same(point,plan->dependency_paths[i]))return !seen->dependencies[i]++&&reader_rule(options,type,super,"ro,nosuid,nodev","",NULL,NULL);
     if(reader_same(point,"/tmp"))return !seen->tmp++&&reader_rule(options,type,super,"rw,nosuid,nodev,noexec","ro","tmpfs",NULL);
-    /* The private device directory: its own tmpfs, read-only, nosuid, noexec, and the
-     * only mount without nodev (the one node in it must stay usable). */
-    if(reader_same(point,READER_DEV))return !seen->device++&&reader_rule(options,type,super,"ro,nosuid,noexec","nodev","tmpfs",NULL);
+    /* The private device directory: its own tmpfs, read-only (mount and superblock),
+     * nosuid, noexec, and the only mount without nodev (its one node must stay usable). */
+    if(reader_same(point,READER_DEV))return !seen->device++&&reader_rule(options,type,super,"ro,nosuid,noexec","nodev","tmpfs","ro");
     if(reader_same(point,READER_PROC))return !seen->proc++&&reader_rule(options,type,super,sealed,"","proc",READER_PROC_OPTIONS);
     return 0;
 }
@@ -288,12 +290,12 @@ static int reader_mountinfo_ok(const char *text, size_t length, const struct rea
 static void reader_expect(int holds, int error, const char *label) {
     if(!holds){errno=error;require(-1,label);}
 }
-/* Kernel identity of the one device node: character device 1:9, mode exactly 0444.
- * O_PATH: the node is examined, never opened as a device. */
+/* Kernel identity of the one device node: character device 1:9, mode exactly 0444,
+ * owned by root. O_PATH: the node is examined, never opened as a device. */
 static void reader_entropy_identity(const char *target, const char *label) {
     int fd=open(target,O_PATH|O_NOFOLLOW|O_CLOEXEC);require(fd,label);
     struct stat info;require(fstat(fd,&info),label);close(fd);
-    reader_expect(S_ISCHR(info.st_mode)&&major(info.st_rdev)==1&&minor(info.st_rdev)==9&&(info.st_mode&07777)==0444,ENODEV,label);
+    reader_expect(S_ISCHR(info.st_mode)&&major(info.st_rdev)==1&&minor(info.st_rdev)==9&&(info.st_mode&07777)==0444&&info.st_uid==0&&info.st_gid==0,ENODEV,label);
 }
 /* WebKit opens /dev/urandom directly. Give the view a PRIVATE node instead of binding
  * the host's: a tiny tmpfs with device nodes allowed (nosuid, noexec; nr_inodes bounds
