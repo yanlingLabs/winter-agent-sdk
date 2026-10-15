@@ -33,5 +33,6 @@ jobs:
           persist-credentials: false
       - name: Portable inert checks and complete Linux role compilation only
         # No sudo, native helper execution, namespaces, mounts, VM or proc fixture.
-        # Full-role test emits an object only and NEVER executes that output.
+        # The Linux gate compiles objects and also compiles AND links ELF files with the packet
+        # builder's flags; every output is only inspected as bytes and is NEVER executed.
         run: python3 -I -S scripts/guest-engine/test_instruction_reader_source.py

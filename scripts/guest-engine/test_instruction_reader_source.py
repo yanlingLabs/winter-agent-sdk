@@ -3,6 +3,7 @@
 All syscall/filter/mount stand-ins are inert. These tests do not establish Linux
 confinement, a measured reader artifact, honest Bun compatibility or cleanup.
 """
+import ast
 import errno
 import hashlib
 import inspect
@@ -12,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -24,9 +26,12 @@ HEADER = ROOT / 'packages/runtime/src/guest/linux-compartment.h'
 BASE_FILTER_SHA256 = 'a526940cfb0c3604e17ced12c14b81c7ae33e6d8aec6fcb7dca00b322bc7d5a6'
 
 # The packet builder's native compile-and-link flags, copied LITERALLY (never imported across
-# repositories) from runtime-sdk scripts/guest-reader-build/build.py:33 NATIVE_FLAGS, as read at
-# worktree commit 67dca46. build.py compiles and links in ONE invocation with these flags, plus
-# -I<guest source dir> and -MD -MF <depfile>; the Linux gate below does the same.
+# repositories) from yanlingLabs/winter-runtime-sdk scripts/guest-reader-build/build.py:33
+# NATIVE_FLAGS at commit 67dca46abce706e3679648c0114a81aa363a5e17 (branch
+# cowork/reader-report-classifier). build.py compiles and links in ONE invocation with these flags,
+# plus -I<guest source dir> and -MD -MF <depfile>; the Linux gate below does the same.
+# HONEST LIMIT: this tuple is a copy. If build.py's NATIVE_FLAGS later changes, nothing in THIS
+# repository notices; that drift is caught on the runtime-sdk side, which owns the real list.
 BUILD_NATIVE_FLAGS = ('-O2', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-D_FORTIFY_SOURCE=2', '-fstack-protector-strong',
                       '-fPIE', '-pie', '-Wl,-z,relro,-z,now,-z,noexecstack')
 
@@ -99,6 +104,48 @@ PLAN_C = r'''
 '''
 
 
+# The Linux compile gate may call exactly these callables. Anything else, however spelled (an alias, getattr,
+# __import__, a method on the linked file), could run the linked output and fails the lint.
+GATE_CALL_ALLOWLIST = frozenset({
+    'shutil.which', 'tempfile.TemporaryDirectory', 'Path', 'str', 'subprocess.run',
+    'self.assertIsNotNone', 'self.assertEqual', 'self.assertGreater',
+    'output.stat', 'depfile.stat', 'linked.read_bytes',
+})
+GATE_RUN_KEYWORDS = frozenset({'capture_output', 'text', 'timeout'})
+
+
+def call_name(node):
+    """Dotted name of a call target, or None when it is not a plain name chain (dynamic)."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = call_name(node.value)
+        return None if base is None else base + '.' + node.attr
+    return None
+
+
+def never_execute_violations(source):
+    """AST allowlist for the Linux compile gate: the only subprocess call is the compiler invocation."""
+    problems = []
+    module = ast.parse(textwrap.dedent(source))
+    # A gate given as a function is judged by its body; its decorators (skipUnless) run at import, not in the test.
+    scope = module.body[0].body if len(module.body) == 1 and isinstance(module.body[0], ast.FunctionDef) else module.body
+    for node in (inner for statement in scope for inner in ast.walk(statement)):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            problems.append('import inside the gate')
+        elif isinstance(node, ast.Call):
+            name = call_name(node.func)
+            if name not in GATE_CALL_ALLOWLIST:
+                problems.append('call not on the allowlist: ' + str(name))
+            elif name == 'subprocess.run':
+                first = node.args[0] if len(node.args) == 1 else None
+                if not (isinstance(first, ast.List) and first.elts and isinstance(first.elts[0], ast.Name) and first.elts[0].id == 'compiler'):
+                    problems.append('subprocess.run must be a single list argument starting with the compiler')
+                if any(keyword.arg not in GATE_RUN_KEYWORDS for keyword in node.keywords):
+                    problems.append('subprocess.run keyword outside capture_output/text/timeout')
+    return problems
+
+
 class ReaderSourceTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == 'linux', 'complete Linux role compilation requires existing Linux headers/compiler; Mac portable tests are not full-role compilation')
     def test_full_linux_role_compile_only_never_execute(self):
@@ -129,10 +176,39 @@ class ReaderSourceTests(unittest.TestCase):
         gate = inspect.getsource(ReaderSourceTests.test_full_linux_role_compile_only_never_execute)
         self.assertIn('*BUILD_NATIVE_FLAGS', gate)
         self.assertIn("'-I' + str(SOURCE.parent)", gate)
-        # Both subprocess invocations run the compiler itself; no built output is ever launched.
-        self.assertEqual(re.findall(r'subprocess\.run\(\[(\w+)', gate), ['compiler', 'compiler'])
-        for launcher in ('os.exec', 'Popen', 'os.system', 'check_call', 'check_output', 'ctypes', 'dlopen'):
-            self.assertNotIn(launcher, gate)
+        # AST allowlist, not a denylist: the only subprocess call in the gate is the compiler invocation, and
+        # no other call that could run the linked output exists, however it is spelled.
+        self.assertEqual(never_execute_violations(gate), [])
+        self.assertEqual(len(re.findall(r'subprocess\.run\(', gate)), 2)  # the two compiler invocations
+        # The lint is itself tested: each of these, injected into the real gate, must be caught.
+        anchor = '                self.assertGreater(depfile.stat().st_size, 0)\n'
+        self.assertEqual(gate.count(anchor), 1)
+        launches = {
+            'subprocess.call([str(linked)])': 'subprocess.call([str(linked)])',
+            'subprocess.run(str(linked))': 'subprocess.run(str(linked))',
+            'os.spawnv(...)': 'os.spawnv(os.P_WAIT, str(linked), [str(linked)])',
+            'subprocess.run([str(linked)])': 'subprocess.run([str(linked)], capture_output=True)',
+            'subprocess.run through a shell': "subprocess.run(['sh', '-c', str(linked)], capture_output=True)",
+            'subprocess.run(shell=True)': 'subprocess.run([compiler, str(linked)], shell=True)',
+            'subprocess.Popen': 'subprocess.Popen([str(linked)])',
+            'subprocess.check_output': 'subprocess.check_output([str(linked)])',
+            'os.system': 'os.system(str(linked))',
+            'os.execv': 'os.execv(str(linked), [str(linked)])',
+            'ctypes.CDLL': 'ctypes.CDLL(str(linked))',
+            'an alias of subprocess.run': 'launch = subprocess.run; launch([str(linked)])',
+            'getattr(subprocess, ...)': "getattr(subprocess, 'call')([str(linked)])",
+            'a call through a subscript (dynamic target only)': '[subprocess.call][0]([str(linked)])',
+            '__import__("os").system': "__import__('os').system(str(linked))",
+            'exec of a string': "exec('import os; os.system(str(linked))')",
+            'running the linked file as a Path method': 'linked.chmod(0o755)',
+            'an import': 'import os',
+        }
+        for label, statement in launches.items():
+            with self.subTest(injected=label):
+                self.assertNotEqual(never_execute_violations(gate.replace(anchor, anchor + '                ' + statement + '\n')), [], label)
+        # A second, legitimate compiler invocation is still fine.
+        legitimate = "subprocess.run([compiler, '-fsyntax-only', str(source)], capture_output=True, text=True, timeout=30)"
+        self.assertEqual(never_execute_violations(gate.replace(anchor, anchor + '                ' + legitimate + '\n')), [])
 
     def build_harness(self, root, name, text):
         """Compile one generated harness exactly as the CI does: strict -std=c11, -Wall -Wextra -Werror.
@@ -652,11 +728,18 @@ int main(int argc,char **argv) {
         def changed(point, column, value):
             return render([r[:column] + [value] + r[column + 1:] if r[0] == point else r for r in rows()])
 
+        def weaken(option):
+            return SEALED.replace(option, 'rw' if option == 'ro' else 'x' + option)
+
         for option in ('ro', 'nosuid', 'nodev', 'noexec'):
-            weaker = SEALED.replace(option, 'rw' if option == 'ro' else 'x' + option)
+            weaker = weaken(option)
             for point in ('/', SOURCE_PATH, SHARED_PATH, '/proc'):
                 cases.append((f'{point} loses {option}', changed(point, 1, weaker), 64))
-            cases.append((f'nested clone loses {option}', render(rows() + [[SOURCE_PATH + '/n', weaker, 'ext4', 'x', 'rw']]), 64))
+            # Mounts the recursive clone nests beneath EITHER root need every sealed flag, at any depth.
+            for root_path in (SOURCE_PATH, SHARED_PATH):
+                for suffix in ('/n', '/a/b/c'):
+                    for kind in ('ext4', 'tmpfs', 'virtiofs'):
+                        cases.append((f'nested {kind} under {root_path}{suffix} loses {option}', render(rows() + [[root_path + suffix, weaker, kind, 'x', 'rw']]), 64))
         for point in ('/instruction-reader', DEPENDENCIES[0], DEPENDENCIES[1]):
             for weaker in ('rw,nosuid,nodev,relatime', 'ro,nodev,relatime', 'ro,nosuid,relatime', 'ro,nosuid,nodevx,relatime'):
                 cases.append((f'{point} with {weaker}', changed(point, 1, weaker), 64))
@@ -700,8 +783,10 @@ int main(int argc,char **argv) {
             for kind in rejected:
                 cases.append((f'{kind!r} is refused as {label}', build(kind), 64))
         for kind in allowed:
-            weaker = 'rw,nosuid,nodev,noexec'
-            cases.append((f'allowed type {kind} nested under the source tree still needs the sealed flags', render(rows() + [[SOURCE_PATH + '/nested', weaker, kind, kind, 'rw']]), 64))
+            for root_path in (SOURCE_PATH, SHARED_PATH):
+                for option in ('ro', 'nosuid', 'nodev', 'noexec'):
+                    cases.append((f'allowed type {kind} nested under {root_path} still needs {option}', render(rows() + [[root_path + '/nested', weaken(option), kind, kind, 'rw']]), 64))
+                cases.append((f'allowed type {kind} nested under {root_path} with every sealed flag passes', render(rows() + [[root_path + '/nested', SEALED, kind, kind, 'rw']]), 0))
         for weaker in ('rw,subset=pid', 'rw,hidepid=invisible', 'rw,hidepid=noaccess,subset=pid', 'rw,hidepid=ptraceable,subset=pid', 'rw,hidepid=off,subset=pid', 'rw,hidepid=2,subset=pid', 'rw,hidepid=invisibles,subset=pid', 'rw,hidepid=invisible,subset=pids', 'rw', 'rw,hidepid=invisible,subset=pid'.replace('subset', 'xsubset')):
             cases.append((f'/proc super options {weaker}', changed('/proc', 4, weaker), 64))
         cases.append(('/proc with extra gid option still passes', changed('/proc', 4, 'rw,gid=0,hidepid=invisible,subset=pid'), 0))

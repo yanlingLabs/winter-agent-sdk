@@ -180,7 +180,7 @@ immediately before `execve`; each failure sets a fixed `errno`, prints one
 | --- | --- | --- |
 | B1 | getdents of the `/proc` root yields only `self`, `thread-self` (each at most once) and exactly one numeric entry, `1`. Under `subset=pid` the root listing carries no `.`/`..` entries (`proc_readdir` returns early, fs/proc/generic.c); the classifier tolerates both. Because of `hidepid=invisible` this proves the instance is this namespace's own view, not the absence of other users' processes; that guarantee comes from the fresh PID namespace plus the unchanged clone filter, which still forbids child processes (threads only). | `reader proc root inventory` |
 | B2 | process is PID 1; `stat("/proc/1/root")` and `stat("/")` have equal dev/ino; `stat("/proc/1/cwd")` and `stat(".")` have equal dev/ino. This proves the procfs is this PID namespace's own and that PID 1's root and cwd are this process's own root and cwd. It does not prove the root is the intended view: that is B4 plus the Root-side oracle. | `reader init process id`, `reader proc root identity`, `reader proc cwd identity` |
-| B3 | An outside canary stays invisible. **Harness obligation, not implemented in the launcher C**; the probe supplies both halves of the observation. *Process half*: the harness runs a canary process at a known host PID, and the probe's `proc_numeric` must not count it and `proc_root` must be 1, with observations bound to the received namespace-init pidfd. *File half*: the harness creates a Root-owned mode 0444 regular file named `/winter-outside-canary` at the TOP of the launch root (the launcher's `/` after the producer's `chroot`); the probe opens that fixed path `O_RDONLY\|O_NOFOLLOW\|O_NONBLOCK\|O_CLOEXEC`, closes it at once, never reads it, and reports `canary_open`: `2` (ENOENT) means invisible, `0` means visible (an escape), anything else is unknown. | (harness) |
+| B3 | An outside canary stays invisible. **Harness obligation, not implemented in the launcher C**; the probe supplies both halves of the observation. *Process half*: the harness runs a canary process at a known host PID, and the probe's `proc_numeric` must not count it and `proc_root` must be 1, with observations bound to the received namespace-init pidfd. *File half*: the harness creates a Root-owned mode 0444 regular file named `/winter-outside-canary` at the TOP of the launch root (the launcher's `/` after the producer's `chroot`); the probe opens that fixed path `O_RDONLY\|O_NOFOLLOW\|O_NONBLOCK\|O_CLOEXEC`, closes it at once, never reads it, and reports `canary_open`. **Only `2` (ENOENT) counts as not visible.** `0` means visible (an escape); every other value (for example `EACCES`, `ELOOP`, `ENOTDIR`) is unknown and must not be read as invisible. | (harness) |
 | B4 | `/proc/self/mountinfo` lists exactly the expected table and nothing else: `/` tmpfs `ro,nosuid,nodev,noexec`; source and shared guidance `ro,nosuid,nodev,noexec`; `/instruction-reader` and every dependency path `ro,nosuid,nodev`; `/tmp` tmpfs `rw,nosuid,nodev,noexec`; `/dev` tmpfs `ro,nosuid,noexec` without `nodev`, and a read-only superblock (`ro` in the superblock options field. In v6.8 `show_mountinfo` prints `sb_rdonly(sb)` there, `fs/proc_namespace.c:182`; the remount without `MS_BIND` runs `do_remount`, which builds its context with `sb_flags` and `MS_RMT_MASK`, `fs/namespace.c:2877`, and `reconfigure_super` stores them into `sb->s_flags`, `fs/super.c:1081-1082`, so the tmpfs superblock itself becomes read-only; sizes are not pinned because they depend on the page size). There is no `/dev/urandom` mount, and a nested path never counts as the `/dev` mount; `/proc` type `proc` `ro,nosuid,nodev,noexec` with superblock options containing `subset=pid` and `hidepid=invisible`. Each exactly once. The source and guidance mounts, and every mount nested beneath them by the recursive clone, must carry the sealed flags **and** be on the data-filesystem allowlist below; any other type fails closed (see "Data-filesystem allowlist"). Unreachable host mounts are not listed by the kernel after `chroot`. | `reader mount inventory` |
 | B5 | the open-descriptor table (`/proc/self/fd`, the enumerating handle excluded) is exactly 0, 1, 2, each still the verified FIFO with the right direction and no close-on-exec flag. | `reader descriptor inventory`, `reader descriptor kind` |
 | - | the entropy node is char 1:9 with mode exactly 0444, owned by uid 0 gid 0, again in the final view (`O_PATH` + `fstat`); right after `mknod` the same check runs under `reader created entropy identity`. | `reader final entropy identity` |
@@ -189,28 +189,41 @@ immediately before `execve`; each failure sets a fixed `errno`, prints one
 device filesystems, which was incomplete (v6.8 also registers `binder`, `smackfs`,
 `rpc_pipefs`, `nfsd` and the FUSE family) and left the two root mounts unchecked. The
 exact fstype string printed by `/proc/self/mountinfo` must equal a member; there are no
-prefixes, so `fuse`, `fuseblk` and `fuse.<subtype>` never match. Members need a cited consumer:
+prefixes, so `fuse`, `fuseblk` and `fuse.<subtype>` never match. Members need a cited consumer.
+Citations use public sources only, pinned to commits so line numbers cannot drift:
+**W** = `yanlingLabs/winter` `origin/main` at `7523c60c37ddbca79448bdff21a836c11ed810b5`;
+**R** = `yanlingLabs/winter-runtime-sdk`, branch `cowork/reader-report-classifier`, at
+`67dca46abce706e3679648c0114a81aa363a5e17`; **S** = `systemd/systemd` at tag `v255`.
 
 | Member | Consumer and evidence | Status |
 | --- | --- | --- |
-| `tmpfs` | The **hosted native-reader fixture**. Its Root stage requires its protected parent to be a direct child of `/run` (runtime-sdk `scripts/guest-reader-native/bootstrap.py:790`; the workflow creates it with `tempfile.mkdtemp(prefix='winter-reader-native-', dir='/run')`), the producer refuses any reopen path that does not start with `/run/` (`producer.py:303`), and the lease, launch root and fixture are siblings under that parent, with `source_path = fixture/'source'` and `shared_path = fixture/'shared'` (`wrapper.py:369,402-403,441-442`). The `$RUNNER_TEMP` directory in the workflow is only the private download directory. So the source and shared mount lines carry the filesystem of `/run`. On a systemd host that is a tmpfs: systemd mounts `/run` as `tmpfs` with `mode=0755` in the `mount_table` of `src/shared/mount-setup.c` (line 102 at tag v255, entry `{ "tmpfs", "/run", "tmpfs", "mode=0755" TMPFS_LIMITS_RUN, MS_NOSUID\|MS_NODEV\|MS_STRICTATIME, ..., MNT_FATAL\|MNT_IN_CONTAINER }`), and the `ubuntu-24.04-arm` runner is a VM with no job `container:`. | **expected, not measured**: no hosted run recorded any mountinfo (the review notes only say old mountinfo was not retained) |
-| `virtiofs` | The guest's host-backed folders (`/workspace/folders/<id>`) and shared guidance. The Cowork gate-1 run recorded raw guest mountinfo lines identifying `virtiofs` (`winter/docs/research/2026-10-11-cowork-gate1-results.md:139`); the guest supervisor fixture requires a mountinfo line whose filesystem is `virtiofs` (`winter/spikes/cowork-vm/guest/README.md:131`); the production backend is libkrun's virtiofs device (`winter/spikes/cowork-hvf/production-prerequisites.md:17`). | measured on the Apple VZ fixture; libkrun guest not yet measured |
-| `ext4` | The guest's own repositories (`/workspace/repos/<id>`, one of the two source paths this reader accepts). The Cowork contract keeps repositories and scratch as guest-only data (`winter/docs/cowork-execution-contracts.md:134`) on a "live writable ext4 volume" (`:138`, contrasted with mounted folders at `:186`), and the volume tooling validates a real ext4 feature set (`winter/docs/research/2026-10-12-cowork-filesystem-recovery-independent-review.md:5`). It is not needed by the hosted run. | contract text for the production guest; not measured |
+| `tmpfs` | The **hosted native-reader fixture**. Its Root stage requires its protected parent to be a direct child of `/run` (R `scripts/guest-reader-native/bootstrap.py:790`; the workflow creates it with `tempfile.mkdtemp(prefix='winter-reader-native-', dir='/run')`, R `.github/workflows/cowork-reader-native-reviewed.yml:97`), the producer refuses any reopen path that does not start with `/run/` (R `producer.py:303`), and the lease, launch root and fixture are siblings under that parent, with `source_path = fixture/'source'` and `shared_path = fixture/'shared'` (R `wrapper.py:369,402-403,441-442`). The `$RUNNER_TEMP` directory in the workflow is only the private download directory. So the source and shared mount lines carry the filesystem of `/run`. On a systemd host that is a tmpfs: systemd mounts `/run` as `tmpfs` with `mode=0755` in the `mount_table` of S `src/shared/mount-setup.c` (line 102, entry `{ "tmpfs", "/run", "tmpfs", "mode=0755" TMPFS_LIMITS_RUN, MS_NOSUID\|MS_NODEV\|MS_STRICTATIME, ..., MNT_FATAL\|MNT_IN_CONTAINER }`), and the `ubuntu-24.04-arm` runner is a VM with no job `container:`. | **expected, not measured**: no hosted run recorded any mountinfo (the review notes only say old mountinfo was not retained) |
+| `virtiofs` | The guest's host-backed folders (`/workspace/folders/<id>`) and shared guidance. W `docs/research/2026-10-11-cowork-gate1-results.md:139` records raw guest mountinfo lines identifying `virtiofs`, and W `spikes/cowork-vm/guest/README.md:131` has the supervisor fixture require a mountinfo line whose filesystem is `virtiofs`. | measured on the Apple VZ fixture only. **No public source shows what the production libkrun guest reports** for a host share; `virtiofs` there is inferred from the device being a virtio-fs device |
+| `ext4` | The guest's own repositories (`/workspace/repos/<id>`, one of the two source paths this reader accepts). W `docs/cowork-execution-contracts.md` keeps repositories and scratch as guest-only data (`:134`) on a "live writable ext4 volume" (`:138`, contrasted with mounted folders at `:186`). It is not needed by the hosted run. | contract text only. **No public source records a guest mountinfo showing `ext4`**, nor states that `/workspace/repos/<id>` sits on that volume; inferred, not measured |
 
-**Hosted fixture expectation (to preregister).** The source mount line (`/workspace/folders/source`) and the
-shared-guidance mount line (`/run/winter/shared-instructions`) in the final view's
-`/proc/self/mountinfo` are expected to show fstype exactly `tmpfs`. They are bind clones of
-directories on `/run`, so the mount-root column names the fixture directory while the type
-is the superblock's. Any other value, or a nested mount under either, ends the run at exit
-77 as `reader mount inventory: Device or resource busy` before `execve`.
+**Preregistered hosted expectation (a prediction, not the rule).** The source mount line
+(`/workspace/folders/source`) and the shared-guidance mount line
+(`/run/winter/shared-instructions`) in the final view's `/proc/self/mountinfo` are
+expected to show fstype exactly `tmpfs`. They are bind clones of directories on `/run`, so
+the mount-root column names the fixture directory while the type is the superblock's. A
+different value is a contradicted prediction for the harness to record; it is not by
+itself a launcher failure.
+
+**Enforced rule (what the launcher checks, independent of the prediction).** The fstype of
+the source mount, the guidance mount and every mount nested beneath either must equal
+`ext4`, `tmpfs` or `virtiofs` exactly, and each must carry the sealed flags
+`ro,nosuid,nodev,noexec`. A nested mount of an allowed type with all sealed flags passes.
+Any other type, or an allowed type missing a flag, ends the run at exit 77 as `reader mount
+inventory: Device or resource busy` before `execve`. So the run dies at exit 77 only if a
+mount falls outside that rule, not whenever a line differs from the prediction.
 
 `xfs`, `btrfs`, `overlay`, `9p`, `nfs*` and every other type are deliberately absent:
-nothing in the repositories evidences them. A member that is wrongly absent costs
-availability, never safety: the launcher exits 77 as above. A hosted native run failing that
-way on its first attempt, with source and guidance mounts as the only unexplained rows,
-would reveal a missing or wrong expectation (check the filesystem type of `/run` on the
-runner first: it is only expected to be `tmpfs`); a guest run failing that way would point at
-the share or volume type the libkrun guest reports.
+nothing public evidences them. A member that is wrongly absent costs availability, never
+safety: the launcher exits 77 as above. A hosted native run failing that way on its first
+attempt, with source and guidance mounts as the only unexplained rows, would reveal a
+missing or wrong expectation (check the filesystem type of `/run` on the runner first: it is
+only expected to be `tmpfs`); a guest run failing that way would point at the share or
+volume type the libkrun guest reports.
 
 The in-guest checks run inside the process being constrained: they fail closed on a
 mistaken view but are defense in depth, not a replacement for the Root-side pidfd-bound
@@ -362,9 +375,10 @@ order against `unshare`, `fork`, `umask`, the read-only remounts, `chroot`, cred
 drop, filter and `execve`); distinct invariant labels with no
 reuse or prefix collision against the pre-existing labels; a mountinfo validator
 exercised over positive, mutated, duplicated, missing, weakened-flag and malformed
-tables, including the data-filesystem allowlist (two accepted types and about fifty
-refused ones, each at the source mount, the guidance mount, and nested and deeply nested
-beneath each), the read-only `/dev` superblock, and the old shape where a `/dev/urandom`
+tables, including the data-filesystem allowlist (three accepted types, `ext4`, `tmpfs` and
+`virtiofs`, and 61 refused ones, each at six positions: the source mount, the guidance mount,
+and nested and deeply nested beneath each of the two roots), every sealed flag dropped from a
+nested mount under either root at two depths for each allowed type, the read-only `/dev` superblock, and the old shape where a `/dev/urandom`
 bind replaces the `/dev` mount; the `/proc` and descriptor name classifiers; the real
 extracted helpers (the private `/dev` sequence with its mount flags and call order, both
 identity checks including mode 0444, `reader_point`'s preserved `open` errno, getdents
@@ -382,11 +396,14 @@ objects with existing `cc`, `-std=c11 -O2 -Wall -Wextra -Werror -D_FORTIFY_SOURC
 -fstack-protector-strong -fPIE -c`, and then again with the packet builder's exact
 native flags (`-O2 -std=gnu11 -Wall -Wextra -Werror -D_FORTIFY_SOURCE=2
 -fstack-protector-strong -fPIE -pie -Wl,-z,relro,-z,now,-z,noexecstack`, the literal
-`NATIVE_FLAGS` of runtime-sdk `scripts/guest-reader-build/build.py:33`, copied rather
-than imported) plus `-I<guest source dir>` and `-MD -MF`, compiling and linking in one
+`NATIVE_FLAGS` of `yanlingLabs/winter-runtime-sdk` `scripts/guest-reader-build/build.py:33`
+at `67dca46abce706e3679648c0114a81aa363a5e17`, copied rather than imported; the tuple is a
+copy, so a later change to `build.py` is caught on the runtime-sdk side, not here) plus `-I<guest source dir>` and `-MD -MF`, compiling and linking in one
 invocation exactly as that builder does. The linked files are only checked for an ELF
 header; neither it nor any object is ever executed. A portable test pins the flag
-literal and that the gate runs nothing but the compiler. On this
+literal and applies an AST allowlist to the gate: the only subprocess call permitted is the
+compiler invocation, and any other call that could run the linked output (an alias,
+`getattr`, `os.spawn*`, `Popen`, a different `subprocess` function or a shell) fails it. On this
 Mac the Linux-only test is explicitly skipped; complete Linux role compilation remains unverified
 until the separately reviewed source CI actually passes. The new narrowly scoped
 `cowork-isolated-reader-source.yml` runs those checks on ubuntu-24.04-arm only for
