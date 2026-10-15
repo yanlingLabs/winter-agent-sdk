@@ -17,7 +17,7 @@
  * STDOUT is exactly ONE line and nothing else; STDERR is never written. Exit
  * status is 0 once the whole line is written, 70 if it could not be written.
  *
- *   line  = "probe=reader-v1"
+ *   line  = "probe=reader-v2"
  *           " stack_rc="       N     ; initial-thread pthread_getattr_np return (0 = success, else errno)
  *           " stack_bounds="   B     ; reported stack base nonzero and size nonzero
  *           " stack_contains=" B     ; a local in the probe's current stack frame lies inside [base, base+size)
@@ -27,13 +27,21 @@
  *           " proc_list="      N     ; errno of listing the proc root (0 = listed)
  *           " proc_numeric="   N     ; count of all-digit entries (0 whenever proc_list != 0)
  *           " proc_root="      B     ; stat of proc PID 1 root equals stat of "/" (dev and inode)
+ *           " canary_open="    N     ; errno of open of the fixed outside-canary path (0 = opened); see below
  *           LF
  *   N     = "0" / ( %x31-39 *DIGIT )   ; canonical unsigned decimal, at most 10 digits, no sign
  *   B     = "0" / "1"
  *
  * Keys appear exactly once, in exactly this order, separated by single spaces.
  * No address, mapping text, path, random byte, pid, name or argv value is ever
- * printed. A missing, shortened, reordered or additional field is a harness failure. */
+ * printed. A missing, shortened, reordered or additional field is a harness failure.
+ *
+ * Outside canary (the file half of B3). The harness creates a Root-owned mode 0444
+ * regular file named "/winter-outside-canary" at the TOP of the launch root, which is
+ * the launcher's "/" after the producer's chroot; it must NOT exist in the reader view.
+ * The probe opens that fixed path O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC, closes the
+ * descriptor at once on success and never reads it. canary_open=2 (ENOENT) means not
+ * visible; canary_open=0 means visible (an escape); any other value is unknown. */
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -47,19 +55,20 @@
 
 #define PROBE_ENTROPY "/dev/urandom"
 #define PROBE_PROC "/proc"
+#define PROBE_CANARY "/winter-outside-canary"
 #define PROBE_GRND_NONBLOCK 1
 
 /* BEGIN PORTABLE PROBE LINE -- pure formatting, no descriptor or native effects. */
 struct probe_report {
     unsigned int stack_rc, stack_bounds, stack_contains, urandom_open, urandom_read,
-                 getrandom_errno, proc_list, proc_numeric, proc_root;
+                 getrandom_errno, proc_list, proc_numeric, proc_root, canary_open;
 };
 static int probe_line(char *out, size_t size, const struct probe_report *report) {
-    int length=snprintf(out,size,"probe=reader-v1 stack_rc=%u stack_bounds=%u stack_contains=%u "
-        "urandom_open=%u urandom_read=%u getrandom=%u proc_list=%u proc_numeric=%u proc_root=%u\n",
+    int length=snprintf(out,size,"probe=reader-v2 stack_rc=%u stack_bounds=%u stack_contains=%u "
+        "urandom_open=%u urandom_read=%u getrandom=%u proc_list=%u proc_numeric=%u proc_root=%u canary_open=%u\n",
         report->stack_rc,report->stack_bounds?1U:0U,report->stack_contains?1U:0U,
         report->urandom_open,report->urandom_read?1U:0U,report->getrandom_errno,
-        report->proc_list,report->proc_numeric,report->proc_root?1U:0U);
+        report->proc_list,report->proc_numeric,report->proc_root?1U:0U,report->canary_open);
     return length>0&&(size_t)length<size?length:-1;
 }
 /* END PORTABLE PROBE LINE */
@@ -118,9 +127,15 @@ static void probe_proc(struct probe_report *report) {
     if(failed)report->proc_list=(unsigned int)failed;
     else report->proc_numeric=numeric;
 }
+/* Opened, never read: visibility is the whole question. The descriptor is closed at once. */
+static void probe_canary(struct probe_report *report) {
+    int fd=open(PROBE_CANARY,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+    if(fd<0){report->canary_open=(unsigned int)errno;return;}
+    close(fd);
+}
 int main(void) {
     struct probe_report report;memset(&report,0,sizeof report);
-    probe_stack(&report);probe_entropy(&report);probe_proc(&report);
+    probe_stack(&report);probe_entropy(&report);probe_proc(&report);probe_canary(&report);
     char line[512];int length=probe_line(line,sizeof line,&report);
     if(length<0)return 70;
     for(int written=0;written<length;) {

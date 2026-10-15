@@ -180,7 +180,7 @@ immediately before `execve`; each failure sets a fixed `errno`, prints one
 | --- | --- | --- |
 | B1 | getdents of the `/proc` root yields only `self`, `thread-self` (each at most once) and exactly one numeric entry, `1`. Under `subset=pid` the root listing carries no `.`/`..` entries (`proc_readdir` returns early, fs/proc/generic.c); the classifier tolerates both. Because of `hidepid=invisible` this proves the instance is this namespace's own view, not the absence of other users' processes; that guarantee comes from the fresh PID namespace plus the unchanged clone filter, which still forbids child processes (threads only). | `reader proc root inventory` |
 | B2 | process is PID 1; `stat("/proc/1/root")` and `stat("/")` have equal dev/ino; `stat("/proc/1/cwd")` and `stat(".")` have equal dev/ino. This proves the procfs is this PID namespace's own and that PID 1's root and cwd are this process's own root and cwd. It does not prove the root is the intended view: that is B4 plus the Root-side oracle. | `reader init process id`, `reader proc root identity`, `reader proc cwd identity` |
-| B3 | An outside canary stays invisible. **Harness obligation, not implemented in C**: the harness must plant a canary process/file outside the namespace (a host PID the probe's `proc_numeric` must not count, a host device node that must not appear) and bind observations to the received namespace-init pidfd. | (harness) |
+| B3 | An outside canary stays invisible. **Harness obligation, not implemented in the launcher C**; the probe supplies both halves of the observation. *Process half*: the harness runs a canary process at a known host PID, and the probe's `proc_numeric` must not count it and `proc_root` must be 1, with observations bound to the received namespace-init pidfd. *File half*: the harness creates a Root-owned mode 0444 regular file named `/winter-outside-canary` at the TOP of the launch root (the launcher's `/` after the producer's `chroot`); the probe opens that fixed path `O_RDONLY\|O_NOFOLLOW\|O_NONBLOCK\|O_CLOEXEC`, closes it at once, never reads it, and reports `canary_open`: `2` (ENOENT) means invisible, `0` means visible (an escape), anything else is unknown. | (harness) |
 | B4 | `/proc/self/mountinfo` lists exactly the expected table and nothing else: `/` tmpfs `ro,nosuid,nodev,noexec`; source and shared guidance `ro,nosuid,nodev,noexec`; `/instruction-reader` and every dependency path `ro,nosuid,nodev`; `/tmp` tmpfs `rw,nosuid,nodev,noexec`; `/dev` tmpfs `ro,nosuid,noexec` without `nodev`, and a read-only superblock (`ro` in the superblock options field. In v6.8 `show_mountinfo` prints `sb_rdonly(sb)` there, `fs/proc_namespace.c:182`; the remount without `MS_BIND` runs `do_remount`, which builds its context with `sb_flags` and `MS_RMT_MASK`, `fs/namespace.c:2877`, and `reconfigure_super` stores them into `sb->s_flags`, `fs/super.c:1081-1082`, so the tmpfs superblock itself becomes read-only; sizes are not pinned because they depend on the page size). There is no `/dev/urandom` mount, and a nested path never counts as the `/dev` mount; `/proc` type `proc` `ro,nosuid,nodev,noexec` with superblock options containing `subset=pid` and `hidepid=invisible`. Each exactly once. The source and guidance mounts, and every mount nested beneath them by the recursive clone, must carry the sealed flags **and** be on the data-filesystem allowlist below; any other type fails closed (see "Data-filesystem allowlist"). Unreachable host mounts are not listed by the kernel after `chroot`. | `reader mount inventory` |
 | B5 | the open-descriptor table (`/proc/self/fd`, the enumerating handle excluded) is exactly 0, 1, 2, each still the verified FIFO with the right direction and no close-on-exec flag. | `reader descriptor inventory`, `reader descriptor kind` |
 | - | the entropy node is char 1:9 with mode exactly 0444, owned by uid 0 gid 0, again in the final view (`O_PATH` + `fstat`); right after `mknod` the same check runs under `reader created entropy identity`. | `reader final entropy identity` |
@@ -231,7 +231,7 @@ identical view, identity, limits, filter and pipe envelope. It prints exactly on
 and nothing else; the strict grammar is the doc comment at the top of that file:
 
 ```
-probe=reader-v1 stack_rc=N stack_bounds=B stack_contains=B urandom_open=N urandom_read=B getrandom=N proc_list=N proc_numeric=N proc_root=B
+probe=reader-v2 stack_rc=N stack_bounds=B stack_contains=B urandom_open=N urandom_read=B getrandom=N proc_list=N proc_numeric=N proc_root=B canary_open=N
 ```
 
 (`N` canonical unsigned decimal, `B` is `0`/`1`, fixed key order, one LF.) It measures the
@@ -239,7 +239,8 @@ initial-thread `pthread_getattr_np` result, whether the reported bounds are nonz
 contain a local in the probe's current stack frame, the `/dev/urandom` open errno and a 16-byte read (bytes zeroed,
 never printed), a non-blocking `getrandom` errno, the proc-listing errno and count of
 all-digit entries (`proc_list` is the one field beyond the minimum so a zero count is
-unambiguous), and whether `/proc/1/root` equals `/`. It never prints an address, mapping
+unambiguous), whether `/proc/1/root` equals `/`, and the errno of opening the fixed outside
+canary path (`canary_open`, last; B3 above). It never prints an address, mapping
 text, random byte or path, and its success is not Bun's. It is unwired like the role;
 there is no build list to extend, so the harness builds it (reference: statically, like
 the other guest helpers, with the compile-only flags below).

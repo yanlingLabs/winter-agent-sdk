@@ -1125,20 +1125,20 @@ int main(int argc,char **argv) {
 #include <string.h>
 @@BLOCK@@
 int main(int argc,char **argv) {
-    if(argc!=11)return 2;
+    if(argc!=12)return 2;
     struct probe_report report;
     unsigned int *fields[]={&report.stack_rc,&report.stack_bounds,&report.stack_contains,&report.urandom_open,&report.urandom_read,
-                            &report.getrandom_errno,&report.proc_list,&report.proc_numeric,&report.proc_root};
-    for(int i=0;i<9;i++)*fields[i]=(unsigned int)strtoul(argv[i+1],NULL,10);
+                            &report.getrandom_errno,&report.proc_list,&report.proc_numeric,&report.proc_root,&report.canary_open};
+    for(int i=0;i<10;i++)*fields[i]=(unsigned int)strtoul(argv[i+1],NULL,10);
     char line[512];
-    int length=probe_line(line,(size_t)atoi(argv[10]),&report);
+    int length=probe_line(line,(size_t)atoi(argv[11]),&report);
     if(length<0)return 3;
     fwrite(line,1,(size_t)length,stdout);
     return 0;
 }
 '''.replace('@@BLOCK@@', block)
-        grammar = re.compile(r'probe=reader-v1 stack_rc=(0|[1-9]\d{0,9}) stack_bounds=[01] stack_contains=[01] urandom_open=(0|[1-9]\d{0,9}) urandom_read=[01] '
-                             r'getrandom=(0|[1-9]\d{0,9}) proc_list=(0|[1-9]\d{0,9}) proc_numeric=(0|[1-9]\d{0,9}) proc_root=[01]\n')
+        grammar = re.compile(r'probe=reader-v2 stack_rc=(0|[1-9]\d{0,9}) stack_bounds=[01] stack_contains=[01] urandom_open=(0|[1-9]\d{0,9}) urandom_read=[01] '
+                             r'getrandom=(0|[1-9]\d{0,9}) proc_list=(0|[1-9]\d{0,9}) proc_numeric=(0|[1-9]\d{0,9}) proc_root=[01] canary_open=(0|[1-9]\d{0,9})\n')
         compiler = shutil.which('cc')
         self.assertIsNotNone(compiler)
         with tempfile.TemporaryDirectory(prefix='winter-reader-probe-') as directory:
@@ -1151,27 +1151,34 @@ int main(int argc,char **argv) {
                 run = subprocess.run([str(root / 'probe'), *map(str, values), str(size)], capture_output=True, text=True, timeout=3)
                 return run.returncode, run.stdout
 
-            healthy = line(0, 1, 1, 0, 1, 0, 0, 1, 1)
-            self.assertEqual(healthy, (0, 'probe=reader-v1 stack_rc=0 stack_bounds=1 stack_contains=1 urandom_open=0 urandom_read=1 getrandom=0 proc_list=0 proc_numeric=1 proc_root=1\n'))
-            unhealthy = line(2, 0, 0, 2, 0, 38, 2, 0, 0)
-            self.assertEqual(unhealthy, (0, 'probe=reader-v1 stack_rc=2 stack_bounds=0 stack_contains=0 urandom_open=2 urandom_read=0 getrandom=38 proc_list=2 proc_numeric=0 proc_root=0\n'))
-            maximum = line(*([4294967295] * 9))
+            # Golden vectors. The canary is last: 2 (ENOENT) = not visible, 0 = visible (an escape), else unknown.
+            healthy = line(0, 1, 1, 0, 1, 0, 0, 1, 1, 2)
+            self.assertEqual(healthy, (0, 'probe=reader-v2 stack_rc=0 stack_bounds=1 stack_contains=1 urandom_open=0 urandom_read=1 getrandom=0 proc_list=0 proc_numeric=1 proc_root=1 canary_open=2\n'))
+            unhealthy = line(2, 0, 0, 2, 0, 38, 2, 0, 0, 0)
+            self.assertEqual(unhealthy, (0, 'probe=reader-v2 stack_rc=2 stack_bounds=0 stack_contains=0 urandom_open=2 urandom_read=0 getrandom=38 proc_list=2 proc_numeric=0 proc_root=0 canary_open=0\n'))
+            self.assertEqual(line(0, 1, 1, 0, 1, 0, 0, 1, 1, 13)[1], 'probe=reader-v2 stack_rc=0 stack_bounds=1 stack_contains=1 urandom_open=0 urandom_read=1 getrandom=0 proc_list=0 proc_numeric=1 proc_root=1 canary_open=13\n')
+            maximum = line(*([4294967295] * 10))
             self.assertEqual(maximum[0], 0)
-            self.assertEqual(maximum[1], 'probe=reader-v1 stack_rc=4294967295 stack_bounds=1 stack_contains=1 urandom_open=4294967295 urandom_read=1 getrandom=4294967295 proc_list=4294967295 proc_numeric=4294967295 proc_root=1\n')
-            for values in [(0,) * 9, (13, 7, 9, 4095, 3, 99, 5, 65535, 2)]:
+            self.assertEqual(maximum[1], 'probe=reader-v2 stack_rc=4294967295 stack_bounds=1 stack_contains=1 urandom_open=4294967295 urandom_read=1 getrandom=4294967295 proc_list=4294967295 proc_numeric=4294967295 proc_root=1 canary_open=4294967295\n')
+            for values in [(0,) * 10, (13, 7, 9, 4095, 3, 99, 5, 65535, 2, 2), (0, 1, 1, 0, 1, 0, 0, 1, 1, 0), (0, 1, 1, 0, 1, 0, 0, 1, 1, 4095)]:
                 code, text = line(*values)
                 self.assertEqual(code, 0)
                 self.assertTrue(grammar.fullmatch(text), text)
                 self.assertEqual(text.count('\n'), 1)
-            zero = line(*([0] * 9))
+                self.assertTrue(text.endswith(' canary_open=%d\n' % values[-1]), text)  # appended last, value verbatim
+            zero = line(*([0] * 10))
             self.assertTrue(grammar.fullmatch(zero[1]), zero)
-            self.assertEqual(line(*([0] * 9), size=10)[0], 3)  # never a truncated line
-            self.assertEqual(line(*([0] * 9), size=len(zero[1]))[0], 3)
-            self.assertEqual(line(*([0] * 9), size=len(zero[1]) + 1), zero)
+            self.assertEqual(line(*([0] * 10), size=10)[0], 3)  # never a truncated line
+            self.assertEqual(line(*([0] * 10), size=len(zero[1]))[0], 3)
+            self.assertEqual(line(*([0] * 10), size=len(zero[1]) + 1), zero)
+            # The previous version's line is not a v2 line: a v1 parser and a v2 parser can never be confused.
+            self.assertFalse(grammar.fullmatch('probe=reader-v1 stack_rc=0 stack_bounds=1 stack_contains=1 urandom_open=0 urandom_read=1 getrandom=0 proc_list=0 proc_numeric=1 proc_root=1\n'))
+            self.assertFalse(grammar.fullmatch(healthy[1].replace(' canary_open=2', '')))
+            self.assertFalse(grammar.fullmatch(healthy[1].replace('proc_root=1 canary_open=2', 'canary_open=2 proc_root=1')))
             # The documented grammar and the real format name the same keys in the same order.
             documented = re.findall(r'^ \*\s+"?\s*([a-z_]+)="', probe[:probe.index('#include')], re.MULTILINE)
             formatted = re.findall(r'([a-z_]+)=%u', probe[probe.index('snprintf'):probe.index('/* END PORTABLE PROBE LINE')])
-            self.assertEqual(formatted, ['stack_rc', 'stack_bounds', 'stack_contains', 'urandom_open', 'urandom_read', 'getrandom', 'proc_list', 'proc_numeric', 'proc_root'])
+            self.assertEqual(formatted, ['stack_rc', 'stack_bounds', 'stack_contains', 'urandom_open', 'urandom_read', 'getrandom', 'proc_list', 'proc_numeric', 'proc_root', 'canary_open'])
             self.assertEqual(documented, formatted)
         # Source-level exposure gates: one fixed format, numbers only, nothing else printed.
         template = probe[probe.index('snprintf('):probe.index('/* END PORTABLE PROBE LINE')]
@@ -1186,10 +1193,81 @@ int main(int argc,char **argv) {
         self.assertIn('pthread_getattr_np(pthread_self()', probe)
         self.assertIn('#define PROBE_ENTROPY "/dev/urandom"', probe)
         code = re.sub(r'/\*.*?\*/', '', probe, flags=re.DOTALL)
-        self.assertEqual(re.findall(r'"/[^"]*"', code.replace('PROBE_PROC "/1/root"', '')), ['"/dev/urandom"', '"/proc"', '"/"'])
+        self.assertEqual(re.findall(r'"/[^"]*"', code.replace('PROBE_PROC "/1/root"', '')), ['"/dev/urandom"', '"/proc"', '"/winter-outside-canary"', '"/"'])
+        # The canary: one fixed path, opened with the exact flags, closed at once, never read.
+        self.assertIn('#define PROBE_CANARY "/winter-outside-canary"', probe)
+        self.assertEqual(probe.count('PROBE_CANARY'), 2)  # the define and the single open
+        canary = probe[probe.index('static void probe_canary('):probe.index('int main(void)')]
+        self.assertIn('open(PROBE_CANARY,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC)', canary)
+        self.assertIn('close(fd);', canary)
+        for forbidden in ('read(', 'write(', 'mmap', 'stat(', 'fstat', 'getdents', 'readdir', 'opendir'):
+            self.assertNotIn(forbidden, canary, forbidden)
         # The probe is standalone and unwired: not part of the compartment, nor named by it.
         self.assertNotIn('dependency-probe', SOURCE.read_text())
         self.assertNotIn('#include "linux-compartment.h"', probe)
+
+
+    def test_probe_canary_reports_the_open_errno_and_closes_without_reading(self):
+        """The real extracted probe_canary against an injected open: path, flags, errno and descriptor use."""
+        probe = PROBE.read_text()
+        block = probe.split('/* BEGIN PORTABLE PROBE LINE')[1].split('*/', 1)[1].split('/* END PORTABLE PROBE LINE */')[0]
+        canary = probe[probe.index('static void probe_canary('):probe.index('int main(void)')]
+        define = '#define PROBE_CANARY "/winter-outside-canary"'
+        self.assertIn(define, probe)
+        harness = r'''
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#pragma GCC diagnostic ignored "-Wunused-function"
+@@DEFINE@@
+@@BLOCK@@
+static int mode,opened,closed;
+static int fake_open(const char *path,int flags,...) {
+    assert(!strcmp(path,"/winter-outside-canary"));
+    assert(flags==(O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC));
+    assert(!opened++);
+    if(mode==0)return 7;
+    errno=mode;return -1;
+}
+static int fake_close(int fd){assert(fd==7&&mode==0&&!closed++);return 0;}
+static ssize_t fake_read(int fd,void *buffer,size_t size){(void)fd;(void)buffer;(void)size;abort();}
+#define open fake_open
+#define close fake_close
+#define read fake_read
+@@CANARY@@
+int main(int argc,char **argv) {
+    assert(argc==2);
+    mode=atoi(argv[1]);
+    struct probe_report report;memset(&report,0,sizeof report);
+    probe_canary(&report);
+    assert(opened==1&&closed==(mode==0?1:0));
+    assert(report.canary_open==(unsigned int)mode);
+    assert(!report.stack_rc&&!report.urandom_open&&!report.proc_list&&!report.proc_numeric&&!report.proc_root); /* touches nothing else */
+    return 0;
+}
+'''.replace('@@DEFINE@@', define).replace('@@BLOCK@@', block).replace('@@CANARY@@', canary)
+        compiler = shutil.which('cc')
+        self.assertIsNotNone(compiler)
+        with tempfile.TemporaryDirectory(prefix='winter-reader-canary-') as directory:
+            root = Path(directory)
+            (root / 'canary.c').write_text(harness)
+            built = subprocess.run([compiler, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', str(root / 'canary.c'), '-o', str(root / 'canary')], capture_output=True, text=True, timeout=30)
+            self.assertEqual(built.returncode, 0, built.stderr)
+            # 0 = opened (visible, an escape), ENOENT = invisible, anything else is recorded verbatim.
+            for value in (0, errno.ENOENT, errno.EACCES, errno.ELOOP, errno.EPERM, errno.ENXIO, errno.EIO, 4095):
+                with self.subTest(open_result=value):
+                    run = subprocess.run([str(root / 'canary'), str(value)], capture_output=True, text=True, timeout=3)
+                    self.assertEqual((run.returncode, run.stdout, run.stderr), (0, '', ''))
+        # The measurements run in a fixed order and the canary is the last one before the line is built.
+        main = probe[probe.index('int main(void)'):]
+        self.assertEqual(main.count('probe_canary(&report);'), 1)
+        self.assertIn('probe_stack(&report);probe_entropy(&report);probe_proc(&report);probe_canary(&report);', main)
+        self.assertLess(main.index('probe_canary(&report);'), main.index('probe_line('))
 
 
 if __name__ == '__main__':
