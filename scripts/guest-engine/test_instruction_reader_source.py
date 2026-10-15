@@ -5,6 +5,7 @@ confinement, a measured reader artifact, honest Bun compatibility or cleanup.
 """
 import errno
 import hashlib
+import inspect
 import os
 import re
 import shutil
@@ -21,6 +22,13 @@ HEADER = ROOT / 'packages/runtime/src/guest/linux-compartment.h'
 # reader_filter text is byte-identical to the reviewed base f6d88d9a: the
 # runtime-compatibility view adds no seccomp change.
 BASE_FILTER_SHA256 = 'a526940cfb0c3604e17ced12c14b81c7ae33e6d8aec6fcb7dca00b322bc7d5a6'
+
+# The packet builder's native compile-and-link flags, copied LITERALLY (never imported across
+# repositories) from runtime-sdk scripts/guest-reader-build/build.py:33 NATIVE_FLAGS, as read at
+# worktree commit 67dca46. build.py compiles and links in ONE invocation with these flags, plus
+# -I<guest source dir> and -MD -MF <depfile>; the Linux gate below does the same.
+BUILD_NATIVE_FLAGS = ('-O2', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-D_FORTIFY_SOURCE=2', '-fstack-protector-strong',
+                      '-fPIE', '-pie', '-Wl,-z,relro,-z,now,-z,noexecstack')
 
 # Every audited perror label present at the reviewed base f6d88d9a.
 EXISTING_LABELS = (
@@ -103,7 +111,28 @@ class ReaderSourceTests(unittest.TestCase):
                 built = subprocess.run([compiler, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', '-D_FORTIFY_SOURCE=2', '-fstack-protector-strong', '-fPIE', '-c', str(source), '-o', str(output)], capture_output=True, text=True, timeout=30)
                 self.assertEqual(built.returncode, 0, source.name + ': ' + built.stderr)
                 self.assertGreater(output.stat().st_size, 0)
-            # No linking, admission or execution of this output, on any platform.
+            # Packet-builder parity: the builder's exact flags (gnu11, PIE, relro/now/noexecstack), include
+            # directory and dependency file, compiling AND linking in one invocation as build.py does.
+            for source in (SOURCE, PROBE):
+                linked = Path(directory) / (source.stem + '.linked')
+                depfile = Path(directory) / (source.stem + '.d')
+                built = subprocess.run([compiler, *BUILD_NATIVE_FLAGS, '-I' + str(SOURCE.parent), '-MD', '-MF', str(depfile), str(source), '-o', str(linked)], capture_output=True, text=True, timeout=60)
+                self.assertEqual(built.returncode, 0, 'packet flags ' + source.name + ': ' + built.stderr)
+                self.assertEqual(linked.read_bytes()[:4], b'\x7fELF')  # inspected as bytes only
+                self.assertGreater(depfile.stat().st_size, 0)
+            # No admission or execution of any output, on any platform.
+
+    def test_packet_builder_flag_parity_is_literal_and_nothing_is_executed(self):
+        self.assertEqual(BUILD_NATIVE_FLAGS, ('-O2', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-D_FORTIFY_SOURCE=2', '-fstack-protector-strong', '-fPIE', '-pie', '-Wl,-z,relro,-z,now,-z,noexecstack'))
+        self.assertEqual(len(BUILD_NATIVE_FLAGS), len(set(BUILD_NATIVE_FLAGS)))
+        self.assertNotIn('-static', BUILD_NATIVE_FLAGS)
+        gate = inspect.getsource(ReaderSourceTests.test_full_linux_role_compile_only_never_execute)
+        self.assertIn('*BUILD_NATIVE_FLAGS', gate)
+        self.assertIn("'-I' + str(SOURCE.parent)", gate)
+        # Both subprocess invocations run the compiler itself; no built output is ever launched.
+        self.assertEqual(re.findall(r'subprocess\.run\(\[(\w+)', gate), ['compiler', 'compiler'])
+        for launcher in ('os.exec', 'Popen', 'os.system', 'check_call', 'check_output', 'ctypes', 'dlopen'):
+            self.assertNotIn(launcher, gate)
 
     def run_c(self, text, cases=((),)):
         compiler = shutil.which('cc')

@@ -376,10 +376,17 @@ against a strict grammar plus exposure gates. The portable tests do not run any
 Source substring checks are structural regression evidence, not kernel or Bun
 proof. No new native launcher or compiled reader is executed.
 
-A twelfth Linux-only test compiles the entire role and the dependency probe to
+The Linux-only test compiles the entire role and the dependency probe to
 objects with existing `cc`, `-std=c11 -O2 -Wall -Wextra -Werror -D_FORTIFY_SOURCE=2
--fstack-protector-strong -fPIE -c`. It never links or executes that output. On this
-Mac it is explicitly skipped; complete Linux role compilation remains unverified
+-fstack-protector-strong -fPIE -c`, and then again with the packet builder's exact
+native flags (`-O2 -std=gnu11 -Wall -Wextra -Werror -D_FORTIFY_SOURCE=2
+-fstack-protector-strong -fPIE -pie -Wl,-z,relro,-z,now,-z,noexecstack`, the literal
+`NATIVE_FLAGS` of runtime-sdk `scripts/guest-reader-build/build.py:33`, copied rather
+than imported) plus `-I<guest source dir>` and `-MD -MF`, compiling and linking in one
+invocation exactly as that builder does. The linked files are only checked for an ELF
+header; neither it nor any object is ever executed. A portable test pins the flag
+literal and that the gate runs nothing but the compiler. On this
+Mac the Linux-only test is explicitly skipped; complete Linux role compilation remains unverified
 until the separately reviewed source CI actually passes. The new narrowly scoped
 `cowork-isolated-reader-source.yml` runs those checks on ubuntu-24.04-arm only for
 the feature branches' push/PR, with read-only repository permission and no sudo,
