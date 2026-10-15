@@ -760,7 +760,9 @@ static const char *proc_listing="1,self,thread-self",*fd_listing="0,1,2,@",*moun
 static const char *root_match="ok",*cwd_match="ok",*bound_device="ok",*kinds="ok",*corrupt="",*fault="";
 static char mount_text[1<<20];static size_t mount_length,mount_offset;
 static int faulted(const char *prefix,const char *what) {
-    char want[160];snprintf(want,sizeof want,"%s:%s",prefix,what);return !strcmp(fault,want);
+    /* "prefix:what" compared in place: no formatted buffer, so no truncation (GCC -Wformat-truncation) for long paths. */
+    size_t length=strlen(prefix);
+    return !strncmp(fault,prefix,length)&&fault[length]==':'&&!strcmp(fault+length+1,what);
 }
 static void track(int fd){assert(fd>0&&fd<64&&!open_fds[fd]);open_fds[fd]=1;}
 static int fake_open(const char *path,int flags,...) {
@@ -845,7 +847,9 @@ static long fake_getdents(int fd,char *buffer,size_t size) {
     if(!strcmp(fault,fd==20?"getdents-late:proc":"getdents-late:fd")&&served[fd]){errno=EIO;return -1;}
     served[fd]++;
     /* The proc root has no dot entries under subset=pid (proc_readdir returns early); /proc/self/fd has them. */
-    char names[1024];snprintf(names,sizeof names,"%s%s",fd==21||dots?".,..,":"",fd==20?proc_listing:fd_listing);
+    char names[1024];
+    int written=snprintf(names,sizeof names,"%s%s",fd==21||dots?".,..,":"",fd==20?proc_listing:fd_listing);
+    if(written<0||(size_t)written>=sizeof names)abort(); /* never silently truncate a listing */
     char *save=NULL;size_t used=0;int index=0,emitted=0;
     for(char *name=strtok_r(names,",",&save);name;name=strtok_r(NULL,",",&save),index++) {
         if(index<next[fd])continue;
@@ -940,6 +944,11 @@ int main(int argc,char **argv) {
     return 0;
 }
 '''.replace('@@DEFINES@@', defines).replace('@@REQUIRE@@', require).replace('@@CONTRACT@@', contract).replace('@@VIEW@@', view).replace('@@PATH@@', pathfn).replace('@@POINT@@', point).replace('@@HELPERS@@', helpers).replace('@@PLAN@@', PLAN_C)
+        # GCC (-Wformat-truncation, not raised by clang) rejects a %s snprintf into a fixed buffer whose
+        # result is ignored; no such statement-position call may exist in the generated harness.
+        for number, text in enumerate(world.splitlines(), 1):
+            if '%s' in text:
+                self.assertIsNone(re.search(r'(^|[;{}])\s*snprintf\(', text), f'generated world line {number}: {text}')
         # The helper slice must be exactly the invariant code (no other native routine).
         self.assertTrue(helpers.startswith('static void reader_expect('))
         self.assertTrue(helpers.rstrip().endswith('}'))
