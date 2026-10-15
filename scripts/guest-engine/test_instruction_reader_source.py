@@ -134,6 +134,22 @@ class ReaderSourceTests(unittest.TestCase):
         for launcher in ('os.exec', 'Popen', 'os.system', 'check_call', 'check_output', 'ctypes', 'dlopen'):
             self.assertNotIn(launcher, gate)
 
+    def build_harness(self, root, name, text):
+        """Compile one generated harness exactly as the CI does: strict -std=c11, -Wall -Wextra -Werror.
+
+        Under strict ISO C, glibc hides POSIX/GNU names (O_NOFOLLOW, O_CLOEXEC, ssize_t, pid_t, S_IS*, ...)
+        unless a feature-test macro precedes every include; Apple's headers expose them regardless, so a
+        gap only shows on Linux. The real sources define _GNU_SOURCE first, and so must every harness
+        built here.
+        """
+        self.assertTrue(text.lstrip().startswith('#define _GNU_SOURCE\n'), name + ': harness must define _GNU_SOURCE before any include')
+        compiler = shutil.which('cc')
+        self.assertIsNotNone(compiler)
+        (root / (name + '.c')).write_text(text)
+        built = subprocess.run([compiler, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', str(root / (name + '.c')), '-o', str(root / name)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(built.returncode, 0, name + ': ' + built.stderr)
+        return root / name
+
     def run_c(self, text, cases=((),)):
         compiler = shutil.which('cc')
         self.assertIsNotNone(compiler, 'portable source validation requires existing cc')
@@ -584,7 +600,7 @@ int main(void) {
 
     def test_final_view_mount_inventory_accepts_only_the_expected_table(self):
         _, defines, contract, view, _, _, _, _ = self.parts()
-        harness = r'''
+        harness = r'''#define _GNU_SOURCE
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -702,11 +718,7 @@ int main(int argc,char **argv) {
             cases.append((name, text, 64))
         with tempfile.TemporaryDirectory(prefix='winter-reader-mountinfo-') as directory:
             root = Path(directory)
-            compiler = shutil.which('cc')
-            self.assertIsNotNone(compiler)
-            (root / 'mountinfo.c').write_text(harness)
-            built = subprocess.run([compiler, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', str(root / 'mountinfo.c'), '-o', str(root / 'mountinfo')], capture_output=True, text=True, timeout=30)
-            self.assertEqual(built.returncode, 0, built.stderr)
+            self.build_harness(root, 'mountinfo', harness)
             for number, (name, text, expected) in enumerate(cases):
                 with self.subTest(case=name):
                     (root / f'case-{number}.txt').write_text(text)
@@ -715,7 +727,7 @@ int main(int argc,char **argv) {
 
     def test_proc_and_descriptor_classifiers_are_exact(self):
         _, defines, contract, view, _, _, _, _ = self.parts()
-        harness = r'''
+        harness = r'''#define _GNU_SOURCE
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -746,10 +758,8 @@ int main(int argc,char **argv) {
                        ('3', '0,1,2,3,x', 64), ('3', '0,1,2,3,03', 64), ('3', '0,1,2,3,-1', 64), ('3', '0,1,2,3,65536', 64), ('3', '', 64), ('3', '0,1', 64),
                        ('3', '0,1,2,7,3', 64), ('3', '0,1,2,3,3.', 64)]
         with tempfile.TemporaryDirectory(prefix='winter-reader-names-') as directory:
-            root = Path(directory); compiler = shutil.which('cc'); self.assertIsNotNone(compiler)
-            (root / 'names.c').write_text(harness)
-            built = subprocess.run([compiler, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', str(root / 'names.c'), '-o', str(root / 'names')], capture_output=True, text=True, timeout=30)
-            self.assertEqual(built.returncode, 0, built.stderr)
+            root = Path(directory)
+            self.build_harness(root, 'names', harness)
             for text, expected in proc:
                 with self.subTest(proc=text):
                     run = subprocess.run([str(root / 'names'), 'proc', *([] if text == '' else names(text))], capture_output=True, text=True, timeout=3)
@@ -1011,18 +1021,14 @@ int main(int argc,char **argv) {
             ['/instruction-reader', 'ro,nosuid,nodev', 'ext4', 'a', 'rw'], [DEPENDENCIES[0], 'ro,nosuid,nodev', 'ext4', 'a', 'rw'], [DEPENDENCIES[1], 'ro,nosuid,nodev', 'ext4', 'a', 'rw'],
             ['/tmp', 'rw,nosuid,nodev,noexec', 'tmpfs', 'tmpfs', 'rw'], ['/dev', 'ro,nosuid,noexec', 'tmpfs', 'tmpfs', 'ro'],
             ['/proc', SEALED, 'proc', 'proc', 'rw,hidepid=invisible,subset=pid']]))
-        compiler = shutil.which('cc')
-        self.assertIsNotNone(compiler)
         with tempfile.TemporaryDirectory(prefix='winter-reader-world-') as directory:
             root = Path(directory)
-            (root / 'world.c').write_text(world)
             (root / 'good.txt').write_text(good_mountinfo)
             (root / 'extra.txt').write_text(good_mountinfo + '200 99 0:70 / /sys ro,nosuid,nodev,noexec - sysfs sysfs rw\n')
             (root / 'noprocopts.txt').write_text(good_mountinfo.replace('hidepid=invisible,subset=pid', 'subset=pid'))
             (root / 'dev-rw-superblock.txt').write_text(good_mountinfo.replace('- tmpfs tmpfs ro\n', '- tmpfs tmpfs rw\n'))
             (root / 'dev-nodev.txt').write_text(good_mountinfo.replace('ro,nosuid,noexec', 'ro,nosuid,nodev,noexec'))
-            built = subprocess.run([compiler, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', str(root / 'world.c'), '-o', str(root / 'world')], capture_output=True, text=True, timeout=30)
-            self.assertEqual(built.returncode, 0, built.stderr)
+            self.build_harness(root, 'world', world)
             good = f'mountinfo={root / "good.txt"}'
 
             def check(function, expected_label, *arguments, error=None):
@@ -1119,7 +1125,7 @@ int main(int argc,char **argv) {
     def test_dependency_probe_prints_one_strict_line_and_nothing_else(self):
         probe = PROBE.read_text()
         block = probe.split('/* BEGIN PORTABLE PROBE LINE')[1].split('*/', 1)[1].split('/* END PORTABLE PROBE LINE */')[0]
-        harness = r'''
+        harness = r'''#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1139,13 +1145,9 @@ int main(int argc,char **argv) {
 '''.replace('@@BLOCK@@', block)
         grammar = re.compile(r'probe=reader-v2 stack_rc=(0|[1-9]\d{0,9}) stack_bounds=[01] stack_contains=[01] urandom_open=(0|[1-9]\d{0,9}) urandom_read=[01] '
                              r'getrandom=(0|[1-9]\d{0,9}) proc_list=(0|[1-9]\d{0,9}) proc_numeric=(0|[1-9]\d{0,9}) proc_root=[01] canary_open=(0|[1-9]\d{0,9})\n')
-        compiler = shutil.which('cc')
-        self.assertIsNotNone(compiler)
         with tempfile.TemporaryDirectory(prefix='winter-reader-probe-') as directory:
             root = Path(directory)
-            (root / 'probe.c').write_text(harness)
-            built = subprocess.run([compiler, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', str(root / 'probe.c'), '-o', str(root / 'probe')], capture_output=True, text=True, timeout=30)
-            self.assertEqual(built.returncode, 0, built.stderr)
+            self.build_harness(root, 'probe', harness)
 
             def line(*values, size=512):
                 run = subprocess.run([str(root / 'probe'), *map(str, values), str(size)], capture_output=True, text=True, timeout=3)
@@ -1214,7 +1216,7 @@ int main(int argc,char **argv) {
         canary = probe[probe.index('static void probe_canary('):probe.index('int main(void)')]
         define = '#define PROBE_CANARY "/winter-outside-canary"'
         self.assertIn(define, probe)
-        harness = r'''
+        harness = r'''#define _GNU_SOURCE
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -1251,13 +1253,9 @@ int main(int argc,char **argv) {
     return 0;
 }
 '''.replace('@@DEFINE@@', define).replace('@@BLOCK@@', block).replace('@@CANARY@@', canary)
-        compiler = shutil.which('cc')
-        self.assertIsNotNone(compiler)
         with tempfile.TemporaryDirectory(prefix='winter-reader-canary-') as directory:
             root = Path(directory)
-            (root / 'canary.c').write_text(harness)
-            built = subprocess.run([compiler, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', str(root / 'canary.c'), '-o', str(root / 'canary')], capture_output=True, text=True, timeout=30)
-            self.assertEqual(built.returncode, 0, built.stderr)
+            self.build_harness(root, 'canary', harness)
             # 0 = opened (visible, an escape), ENOENT = invisible, anything else is recorded verbatim.
             for value in (0, errno.ENOENT, errno.EACCES, errno.ELOOP, errno.EPERM, errno.ENXIO, errno.EIO, 4095):
                 with self.subTest(open_result=value):
