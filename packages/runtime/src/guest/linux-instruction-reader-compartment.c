@@ -213,11 +213,13 @@ static int reader_below(struct reader_slice value, const char *root) {
 /* Source and guidance trees, and every mount nested beneath them (the clone is
  * recursive), must be one of these data filesystems; anything else fails closed. That
  * covers kernel-interface and device filesystems, FUSE (printed "fuse.<subtype>" or
- * "fuseblk") and any type added later. Exact match, no prefixes. Add a member only
- * with evidence: ext4 is the guest-local data volume (repositories, scratch) and,
- * inferred, a hosted runner's root filesystem; virtiofs is the host-backed folder
- * and shared-guidance share in the guest. A missing member costs availability only. */
-static const char *const reader_data[]={"ext4","virtiofs"};
+ * "fuseblk") and any type added later. Exact match, no prefixes. A member needs a
+ * cited consumer; a missing one costs availability only (exit 77):
+ *   tmpfs     the hosted fixture: its source and shared directories live under /run,
+ *             which systemd mounts as a tmpfs (expected; no hosted mountinfo recorded);
+ *   virtiofs  the guest's host-backed folders and shared guidance (measured on Apple VZ);
+ *   ext4      guest-local repositories under /workspace/repos on the guest data volume. */
+static const char *const reader_data[]={"ext4","tmpfs","virtiofs"};
 static int reader_data_type(struct reader_slice type) {
     for(size_t i=0;i<sizeof reader_data/sizeof reader_data[0];i++)if(reader_same(type,reader_data[i]))return 1;
     return 0;

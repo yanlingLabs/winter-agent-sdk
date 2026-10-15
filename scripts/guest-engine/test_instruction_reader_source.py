@@ -444,7 +444,7 @@ int main(void) {
         for forbidden in ('"/dev/', '"/dev/null"', '"/dev/zero"', '"/dev/random"', '"/dev/tty', '"/dev/shm', '"/sys', 'MS_BIND', 'devtmpfs', 'devpts', 'sysfs'):
             self.assertNotIn(forbidden, scan)
         # The data-filesystem allowlist guards the exact source/guidance mounts and everything nested under them.
-        self.assertIn('static const char *const reader_data[]={"ext4","virtiofs"};', source)
+        self.assertIn('static const char *const reader_data[]={"ext4","tmpfs","virtiofs"};', source)
         self.assertEqual(source.count('reader_data_type(type)&&reader_rule('), 4)
         self.assertNotIn('pseudo', source)
         self.assertEqual(re.findall(r'"/proc[^"]*"', source), ['"/proc"'])
@@ -635,14 +635,15 @@ int main(int argc,char **argv) {
             cases.append((f'old shape: a {kind} /dev/urandom bind replaces the /dev mount', render(old_shape), 64))
         cases.append(('a /dev/urandom bind added beside the /dev mount', render(rows() + [['/dev/urandom', 'ro,nosuid,noexec,relatime', 'tmpfs', 'tmpfs', 'ro']]), 64))
         # Source and guidance trees (the exact mounts and everything nested below) are an ALLOWLIST:
-        # ext4 and virtiofs only. Everything else, named or not, fails closed. Exact match, no prefixes.
-        allowed = ['ext4', 'virtiofs']
+        # ext4, tmpfs (the hosted fixture under /run) and virtiofs only. Everything else, named or not,
+        # fails closed. Exact match, no prefixes.
+        allowed = ['ext4', 'tmpfs', 'virtiofs']
         listed = re.findall(r'"(\w+)"', SOURCE.read_text().split('reader_data[]={')[1].split('};')[0])
         self.assertEqual(listed, allowed)
         rejected = ['proc', 'sysfs', 'devtmpfs', 'devpts', 'debugfs', 'tracefs', 'securityfs', 'cgroup', 'cgroup2', 'bpf', 'mqueue',
                     'configfs', 'fusectl', 'pstore', 'efivarfs', 'binfmt_misc', 'hugetlbfs', 'autofs', 'selinuxfs', 'nsfs',
                     'binder', 'smackfs', 'rpc_pipefs', 'nfsd', 'fuse', 'fuseblk', 'fuse.sshfs', 'fuse.virtiofsd', 'fuse.ext4',
-                    'tmpfs', 'ramfs', 'overlay', 'xfs', 'btrfs', 'f2fs', 'erofs', 'squashfs', 'iso9660', 'vfat', 'exfat', 'ntfs3', '9p', 'cifs',
+                    'ramfs', 'shmem', 'tmpfs ', 'Tmpfs', 'tmpfs2', 'tmpfs.', 'overlay', 'xfs', 'btrfs', 'f2fs', 'erofs', 'squashfs', 'iso9660', 'vfat', 'exfat', 'ntfs3', '9p', 'cifs',
                     'nfs', 'nfs4', 'ext2', 'ext3', 'ext', 'ext44', 'EXT4', 'Ext4', 'ext4 ', 'virtiofsx', 'virtio', 'Virtiofs', 'virtiofs.', '']
         self.assertEqual(set(allowed) & set(rejected), set())
         positions = [('source mount', lambda kind: changed(SOURCE_PATH, 2, kind)), ('guidance mount', lambda kind: changed(SHARED_PATH, 2, kind))]

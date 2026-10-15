@@ -16,7 +16,7 @@ either; every statement about kernel behavior below is source-derived and unveri
 2026-10-15 amendment, after independent security review (no escape, no fail-open found):
 the host `/dev/urandom` bind is replaced by a private node on a tiny tmpfs; the child
 fixes `umask(022)` first; the source and guidance mounts, and every mount nested beneath
-them, must be on an allowlist of data filesystems (`ext4`, `virtiofs`) or the mount
+them, must be on an allowlist of data filesystems (`ext4`, `tmpfs`, `virtiofs`) or the mount
 inventory fails closed; and what `subset=pid` still exposes is documented below.
 
 ## Exact Root-only launch envelope
@@ -189,20 +189,28 @@ immediately before `execve`; each failure sets a fixed `errno`, prints one
 device filesystems, which was incomplete (v6.8 also registers `binder`, `smackfs`,
 `rpc_pipefs`, `nfsd` and the FUSE family) and left the two root mounts unchecked. The
 exact fstype string printed by `/proc/self/mountinfo` must equal a member; there are no
-prefixes, so `fuse`, `fuseblk` and `fuse.<subtype>` never match. Members need evidence:
+prefixes, so `fuse`, `fuseblk` and `fuse.<subtype>` never match. Members need a cited consumer:
 
-| Member | Evidence | Status |
+| Member | Consumer and evidence | Status |
 | --- | --- | --- |
-| `virtiofs` | Host-backed folders and shared guidance reach the guest by virtiofs. The Cowork gate-1 run recorded raw guest mountinfo lines identifying `virtiofs` (`winter/docs/research/2026-10-11-cowork-gate1-results.md:139`); the guest supervisor fixture requires a mountinfo line whose filesystem is `virtiofs` (`winter/spikes/cowork-vm/guest/README.md:131`); the production backend is libkrun's virtiofs device (`winter/spikes/cowork-hvf/production-prerequisites.md:17`). | measured on the Apple VZ fixture; libkrun guest not yet measured |
-| `ext4` | The Cowork contract names a "live writable ext4 volume" for guest-only data and puts repositories and scratch there (`winter/docs/cowork-execution-contracts.md:138,134`). The hosted native-reader fixture creates its source and guidance directories under `$RUNNER_TEMP` on the hosted runner's root filesystem, which is expected to be ext4. | contract text for the guest; **inferred** for the hosted runner (no mountinfo from any hosted run is recorded) |
+| `tmpfs` | The **hosted native-reader fixture**. Its Root stage requires its protected parent to be a direct child of `/run` (runtime-sdk `scripts/guest-reader-native/bootstrap.py:790`; the workflow creates it with `tempfile.mkdtemp(prefix='winter-reader-native-', dir='/run')`), the producer refuses any reopen path that does not start with `/run/` (`producer.py:303`), and the lease, launch root and fixture are siblings under that parent, with `source_path = fixture/'source'` and `shared_path = fixture/'shared'` (`wrapper.py:369,402-403,441-442`). The `$RUNNER_TEMP` directory in the workflow is only the private download directory. So the source and shared mount lines carry the filesystem of `/run`. On a systemd host that is a tmpfs: systemd mounts `/run` as `tmpfs` with `mode=0755` in the `mount_table` of `src/shared/mount-setup.c` (line 102 at tag v255, entry `{ "tmpfs", "/run", "tmpfs", "mode=0755" TMPFS_LIMITS_RUN, MS_NOSUID\|MS_NODEV\|MS_STRICTATIME, ..., MNT_FATAL\|MNT_IN_CONTAINER }`), and the `ubuntu-24.04-arm` runner is a VM with no job `container:`. | **expected, not measured**: no hosted run recorded any mountinfo (the review notes only say old mountinfo was not retained) |
+| `virtiofs` | The guest's host-backed folders (`/workspace/folders/<id>`) and shared guidance. The Cowork gate-1 run recorded raw guest mountinfo lines identifying `virtiofs` (`winter/docs/research/2026-10-11-cowork-gate1-results.md:139`); the guest supervisor fixture requires a mountinfo line whose filesystem is `virtiofs` (`winter/spikes/cowork-vm/guest/README.md:131`); the production backend is libkrun's virtiofs device (`winter/spikes/cowork-hvf/production-prerequisites.md:17`). | measured on the Apple VZ fixture; libkrun guest not yet measured |
+| `ext4` | The guest's own repositories (`/workspace/repos/<id>`, one of the two source paths this reader accepts). The Cowork contract keeps repositories and scratch as guest-only data (`winter/docs/cowork-execution-contracts.md:134`) on a "live writable ext4 volume" (`:138`, contrasted with mounted folders at `:186`), and the volume tooling validates a real ext4 feature set (`winter/docs/research/2026-10-12-cowork-filesystem-recovery-independent-review.md:5`). It is not needed by the hosted run. | contract text for the production guest; not measured |
 
-`xfs`, `btrfs`, `tmpfs`, `overlay`, `9p`, `nfs*` and every other type are deliberately
-absent: nothing in the repositories evidences them. A member that is wrongly absent costs
-availability, never safety: the launcher exits 77 with `reader mount inventory: Device or
-resource busy` before `execve`. A hosted native run failing that way on its first
-attempt, with source and guidance mounts as the only unexplained rows, would reveal a
-missing member (the runner's `$RUNNER_TEMP` filesystem type is the first thing to check);
-a guest run failing that way would point at the share type the libkrun guest reports.
+**Hosted fixture expectation (to preregister).** The source mount line (`/workspace/folders/source`) and the
+shared-guidance mount line (`/run/winter/shared-instructions`) in the final view's
+`/proc/self/mountinfo` are expected to show fstype exactly `tmpfs`. They are bind clones of
+directories on `/run`, so the mount-root column names the fixture directory while the type
+is the superblock's. Any other value, or a nested mount under either, ends the run at exit
+77 as `reader mount inventory: Device or resource busy` before `execve`.
+
+`xfs`, `btrfs`, `overlay`, `9p`, `nfs*` and every other type are deliberately absent:
+nothing in the repositories evidences them. A member that is wrongly absent costs
+availability, never safety: the launcher exits 77 as above. A hosted native run failing that
+way on its first attempt, with source and guidance mounts as the only unexplained rows,
+would reveal a missing or wrong expectation (check the filesystem type of `/run` on the
+runner first: it is only expected to be `tmpfs`); a guest run failing that way would point at
+the share or volume type the libkrun guest reports.
 
 The in-guest checks run inside the process being constrained: they fail closed on a
 mistaken view but are defense in depth, not a replacement for the Root-side pidfd-bound
