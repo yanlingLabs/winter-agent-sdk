@@ -8,11 +8,11 @@
  * the entropy device (WTF RandomDevice) and glibc's initial-thread stack lookup
  * through the process memory map (nptl pthread_getattr_np).
  *
- * Reference build (compile-only gate: -std=c11 -O2 -Wall -Wextra -Werror
- * -D_FORTIFY_SOURCE=2 -fstack-protector-strong -fPIE -c). The harness links it
- * statically like the other guest helpers, so loader-closure failures cannot mask
- * these measurements; a dynamic build against the pinned closure is equally valid
- * and prints the same grammar.
+ * Reference build: the packet builder compiles and links it DYNAMICALLY with its
+ * NATIVE_FLAGS (-std=gnu11 -O2 -Wall -Wextra -Werror -D_FORTIFY_SOURCE=2
+ * -fstack-protector-strong -fPIE -pie, no -static), against the packet's pinned libc.
+ * That is deliberate: pthread_getattr_np in that exact libc is the dependency under
+ * test. The source gate additionally compiles it to objects with -std=c11 ... -c.
  *
  * STDOUT is exactly ONE line and nothing else; STDERR is never written. Exit
  * status is 0 once the whole line is written, 70 if it could not be written.

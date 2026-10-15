@@ -255,8 +255,10 @@ all-digit entries (`proc_list` is the one field beyond the minimum so a zero cou
 unambiguous), whether `/proc/1/root` equals `/`, and the errno of opening the fixed outside
 canary path (`canary_open`, last; B3 above). It never prints an address, mapping
 text, random byte or path, and its success is not Bun's. It is unwired like the role;
-there is no build list to extend, so the harness builds it (reference: statically, like
-the other guest helpers, with the compile-only flags below).
+there is no build list to extend, so the harness builds it (reference: the packet builder
+compiles and links it dynamically with its `NATIVE_FLAGS`, which include `-pie` and no
+`-static`, against the packet's pinned libc, because `pthread_getattr_np` in that exact
+libc is the dependency under test).
 
 **Unverified assumptions** (none were executed): `subset=pid`/`hidepid=invisible`
 spelling in superblock options and the `/proc` root listing being exactly `1`, `self`,
@@ -281,8 +283,9 @@ namespace would carry `SB_I_NODEV` and make the node unopenable (`EACCES`); the 
 runs in the initial user namespace, so this is not reachable today, and the pre-exec checks
 never open the node, so only the probe's `urandom_open` (or the reader's own open) would
 reveal it. An LSM or a device-cgroup policy on the reader's cgroup could likewise deny
-*opening* 1:9, which the probe's `urandom_open` would report. Static versus dynamic
-probe linking does not change glibc's `/proc/self/maps` dependency but is unmeasured.
+*opening* 1:9, which the probe's `urandom_open` would report. The probe is built
+dynamically against the packet's pinned libc, so the glibc `pthread_getattr_np` it measures
+(and its `/proc/self/maps` dependency) is that libc's; no other libc build is measured.
 
 The design also leans on these kernel facts, none exercised here: since 5.8 every
 `mount("proc")` gets its own superblock, which is why `subset=pid,hidepid=invisible` are
