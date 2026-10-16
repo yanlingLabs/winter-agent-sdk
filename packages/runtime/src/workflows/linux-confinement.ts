@@ -31,7 +31,7 @@ import {
   SECCOMP_RET_KILL_PROCESS,
   buildSeccompProgram,
   decodeConfinementSpec,
-  landlockHandledRights,
+  landlockRulesetAttr,
   linuxArchOf,
   planExec,
   planReadAllow,
@@ -301,9 +301,7 @@ function readableDenials(readDeny: readonly string[]): DenyProbe[] {
 }
 
 function applyLandlock(kernel: Kernel, abi: number, spec: LinuxConfinementSpec, exec: { target: string; interpreter: string | undefined }): void {
-  const handled = landlockHandledRights(abi);
-  const attribute = Buffer.alloc(8);
-  attribute.writeBigUInt64LE(handled, 0);
+  const attribute = landlockRulesetAttr(abi);
   const ruleset = need(kernel.call("landlock_create_ruleset", kernel.address(attribute), attribute.length, 0), "creating the Landlock ruleset");
   try {
     const grant = (path: string, rights: bigint, required: boolean): void => {
@@ -390,8 +388,17 @@ export function confineAndExec(spec: LinuxConfinementSpec, kernel: Kernel = open
   applySeccomp(kernel);
   verifyConfined(kernel, device, denials);
 
+  execConfinedWorker(spec, kernel);
+}
+
+/**
+ * The last stage: nothing but descriptors and the exec remain. Split out so the stage can be driven on
+ * its own. A failure to mark the descriptors close-on-exec is a refusal -- a descriptor the launcher
+ * inherited would otherwise reach the worker.
+ */
+export function execConfinedWorker(spec: LinuxConfinementSpec, kernel: Kernel): never {
   // Marked rather than closed: Bun's own descriptors stay usable until the exec drops them.
-  kernel.call("close_range", 3, 0xffffffff, CLOSE_RANGE_CLOEXEC);
+  need(kernel.call("close_range", 3, 0xffffffff, CLOSE_RANGE_CLOEXEC), "marking inherited descriptors close-on-exec");
   // The one descriptor that survives the exec: this process's own /proc directory. Landlock's rule for it
   // is tied to that directory object, and procfs may drop and rebuild an unreferenced one under memory
   // pressure, which would silently take the worker's access to /proc/self with it. An open descriptor

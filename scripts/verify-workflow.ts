@@ -31,7 +31,7 @@ import { buildRuntime } from "./build-runtime.ts";
 import { WorkflowRuntime, realWorkerSpawner } from "../packages/runtime/src/workflows/runtime.ts";
 import { WORKFLOW_WORKER_ARGV_FLAG, WORKFLOW_WORKER_BRIDGE_FLAG } from "../packages/runtime/src/workflows/subprocess-entry.ts";
 import { WORKFLOW_WORKER_NOT_IMPLEMENTED_EXIT_CODE } from "../packages/runtime/src/workflows/subprocess-entry.ts";
-import { setHostLinuxConfinementLauncher, workflowSandboxAvailable } from "../packages/runtime/src/workflows/sandbox.ts";
+import { setHostLinuxConfinementLauncher, workflowSandboxAvailable, workflowSandboxUnavailableMessage } from "../packages/runtime/src/workflows/sandbox.ts";
 import { fakeWorkflowRunHost } from "../packages/runtime/src/workflows/seam.ts";
 import { fakeStructuredOutputSeam } from "../packages/runtime/src/structured/seam.ts";
 import { createContextAccountant } from "../packages/runtime/src/engine.ts";
@@ -83,6 +83,11 @@ export interface VerifyWorkflowResult {
 }
 
 export async function verifyWorkflow(binPath: string): Promise<VerifyWorkflowResult> {
+  // CI sets this on every runner that must be able to confine: a runner that lost Landlock or seccomp then
+  // FAILS here, instead of quietly running the worker unconfined and printing "NOT confined".
+  if (process.env.WINTER_REQUIRE_LINUX_CONFINEMENT === "1" && !workflowSandboxAvailable()) {
+    return { ok: false, workerUnimplemented: false, status: "unconfined", detail: `confinement is required (WINTER_REQUIRE_LINUX_CONFINEMENT=1) but unavailable: ${workflowSandboxUnavailableMessage()}`, sandboxed: false };
+  }
   const winterHome = mkdtempSync(join(tmpdir(), "winter-verify-wf-home-"));
   const sessionTempDir = mkdtempSync(join(tmpdir(), "winter-verify-wf-temp-"));
   // `sandbox` is true where the host can confine the worker: `sandbox-exec` on macOS, Landlock + seccomp on

@@ -24,7 +24,6 @@ import { WorkflowRegistry } from "./registry.ts";
 import { makeSemaphore, resolveConcurrencyCap, type Semaphore } from "./semaphore.ts";
 import { createBudget, type WorkflowBudget } from "./budget.ts";
 import { buildLinuxWorkerSpawn, buildWorkerSpawn, resolveWorkerCommand, workflowSandboxAvailable, workflowSandboxUnavailableMessage, type WorkerCommand } from "./sandbox.ts";
-import { linuxConfinementProbe } from "./linux-confinement.ts";
 import { currentHostCodeProcessClient, hostCodeProcessBrokerRequired } from "../sandbox/host-code-process.ts";
 import { brokeredWorkflowWorker } from "./host-code-worker.ts";
 import type { SandboxBrand } from "../sandbox/profile.ts";
@@ -156,9 +155,8 @@ export function realWorkerSpawner(opts: { sandbox?: boolean } = {}): WorkerSpawn
     }
     // Linux: refuse here too (not only in `launch`), so a spawner handed to a runtime that skips the
     // launch-time check still cannot start a worker without the confinement.
-    if (sandbox && process.platform === "linux") {
-      const probe = linuxConfinementProbe();
-      if (!probe.available) throw new WorkflowRuntimeError("sandbox-unavailable", workflowSandboxUnavailableMessage());
+    if (sandbox && process.platform === "linux" && !workflowSandboxAvailable()) {
+      throw new WorkflowRuntimeError("sandbox-unavailable", workflowSandboxUnavailableMessage());
     }
     const spawnTarget = sandbox
       ? (process.platform === "linux" ? buildLinuxWorkerSpawn : buildWorkerSpawn)({

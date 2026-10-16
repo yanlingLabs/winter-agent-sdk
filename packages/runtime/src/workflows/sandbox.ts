@@ -25,7 +25,7 @@ import { currentHostChildFloorProfile } from "../sandbox/host-child-floor.ts";
 // see that module's own header for why main.ts cannot be imported at all. Re-exported here so a
 // spawner needs one import, not two.
 import { WORKFLOW_WORKER_ARGV_FLAG, WORKFLOW_WORKER_BRIDGE_FLAG } from "./subprocess-entry.ts";
-import { LINUX_CONFINE_ARGV_FLAG, LINUX_MIN_LANDLOCK_ABI, encodeConfinementSpec } from "./linux-confinement-policy.ts";
+import { LINUX_CONFINE_ARGV_FLAG, LINUX_MIN_LANDLOCK_ABI, LinuxConfinementUnavailableError, encodeConfinementSpec } from "./linux-confinement-policy.ts";
 import { linuxConfinementProbe } from "./linux-confinement.ts";
 
 export { WORKFLOW_WORKER_ARGV_FLAG, WORKFLOW_WORKER_BRIDGE_FLAG };
@@ -154,6 +154,18 @@ export function setHostLinuxConfinementLauncher(command: WorkerCommand | undefin
   };
 }
 
+/**
+ * A host that installs its own worker command (`setHostWorkflowWorkerCommand`) runs a binary whose main
+ * need not route `__linux-confine`, and the default launcher is `process.execPath` -- that host binary.
+ * Rather than guess, the Linux spawn refuses until the host also says which binary is its launcher.
+ */
+export function linuxLauncherProblem(): string | undefined {
+  if (hostWorkerCommand !== undefined && hostLinuxLauncher === undefined) {
+    return "a host workflow worker command is installed without a host confinement launcher (setHostLinuxConfinementLauncher), so there is no binary known to confine it";
+  }
+  return undefined;
+}
+
 export function resolveConfinementLauncher(opts: ResolveWorkerCommandOptions = {}): WorkerCommand {
   if (hostLinuxLauncher !== undefined && opts.compiled === undefined && opts.execPath === undefined) {
     return { file: hostLinuxLauncher.file, args: [...hostLinuxLauncher.args] };
@@ -185,6 +197,10 @@ export interface BuildLinuxWorkerSpawnOptions extends BuildWorkerSpawnOptions {
 
 /** The actual `(file, args)` to spawn on Linux: the launcher, carrying the worker command and the policy. */
 export function buildLinuxWorkerSpawn(opts: BuildLinuxWorkerSpawnOptions): WorkerCommand {
+  if (opts.launcher === undefined) {
+    const problem = linuxLauncherProblem();
+    if (problem !== undefined) throw new LinuxConfinementUnavailableError(problem);
+  }
   const launcher = opts.launcher ?? resolveConfinementLauncher();
   const spec = encodeConfinementSpec({
     version: 1,
@@ -204,7 +220,7 @@ export function buildLinuxWorkerSpawn(opts: BuildLinuxWorkerSpawnOptions): Worke
  * the kernel can apply the whole confinement (Landlock at the required ABI, seccomp, no_new_privs).
  */
 export function workflowSandboxAvailable(): boolean {
-  if (process.platform === "linux") return linuxConfinementProbe().available;
+  if (process.platform === "linux") return linuxConfinementProbe().available && linuxLauncherProblem() === undefined;
   return isSandboxAvailable();
 }
 
@@ -212,7 +228,7 @@ export function workflowSandboxAvailable(): boolean {
 export function workflowSandboxUnavailableMessage(): string {
   if (process.platform === "linux") {
     const probe = linuxConfinementProbe();
-    const why = probe.available ? "the confinement is available" : probe.reason;
+    const why = probe.available ? (linuxLauncherProblem() ?? "the confinement is available") : probe.reason;
     return `workflows are unavailable: Linux confinement is not available (${why}), and a workflow worker is never run unconfined (WS-12 §3)`;
   }
   return "workflows are unavailable: /usr/bin/sandbox-exec was not found, and a workflow worker is never run unsandboxed (WS-12 §3)";

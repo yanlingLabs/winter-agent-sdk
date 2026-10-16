@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createServer as createTcpServer, type AddressInfo } from "node:net";
-import { LINUX_CONFINEMENT_REFUSED_EXIT_CODE, LinuxConfinementUnavailableError, SELF_ONLY_SIGNAL_SYSCALLS, SYSCALL_NUMBERS, deniedSyscallNames, linuxArchOf } from "./linux-confinement-policy.ts";
+import { LINUX_CONFINEMENT_REFUSED_EXIT_CODE, LinuxConfinementUnavailableError, SELF_ONLY_SIGNAL_SYSCALLS, SELF_OR_ZERO_ARG0_SYSCALLS, SELF_OR_ZERO_ARG1_SYSCALLS, SYSCALL_NUMBERS, deniedSyscallNames, linuxArchOf } from "./linux-confinement-policy.ts";
 import { confineAndExec, linuxConfinementProbe, overrideLinuxConfinementProbeForTest, type Kernel, type SyscallResult } from "./linux-confinement.ts";
 import { buildLinuxWorkerSpawn } from "./sandbox.ts";
 import { WorkflowRuntime, WorkflowRuntimeError, realWorkerSpawner } from "./runtime.ts";
@@ -35,7 +35,7 @@ function scratch(prefix: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
 }
 
-const whyThisRun = !linux ? `skipped: Linux only (this is ${process.platform})` : available ? "running" : `skipped: ${probe.available ? "" : probe.reason}`;
+const whyThisRun = !linux ? `skipped: Linux only (this is ${process.platform})` : probe.available ? `running (Landlock ABI ${probe.landlockAbi}, ${probe.arch})` : `skipped: ${probe.reason}`;
 
 describe("the kernel can confine a Workflow worker here", () => {
   // The name carries the reason, so a skipped run says why in the report. Required in CI: there, a
@@ -141,6 +141,65 @@ for (const [name, nr] of Object.entries(P.syscalls)) {
 }
 emit("syscalls", answers);
 
+// --- Effects on ANOTHER process through calls that are not kill() ------------------------------------------
+// Every call below names the parent (the test runner). The ones that would change it are chosen to be
+// harmless if a filter bug let them through (RLIMIT_CORE = 0, nice 19, an unchanged scheduling policy),
+// and the test compares the parent's limits and nice value before and after.
+const raw = (nr, ...args) => {
+  const padded = [0, 0, 0, 0, 0, 0];
+  args.forEach((a, i) => { padded[i] = a; });
+  const r = Number(libc.symbols.syscall(nr, ...padded));
+  return [r, r === -1 ? errno() : 0];
+};
+const ppid = process.ppid;
+const scratchA = Buffer.alloc(64);
+const scratchB = Buffer.alloc(64);
+const ownerBuf = Buffer.alloc(8);
+ownerBuf.writeInt32LE(ppid, 0);
+emit("vectors", {
+  prlimitParentSet: raw(P.nr.prlimit64, ppid, 4, ptr(scratchB), 0),
+  prlimitParentGet: raw(P.nr.prlimit64, ppid, 4, 0, ptr(scratchA)),
+  prlimitSelf: raw(P.nr.prlimit64, 0, 4, 0, ptr(scratchA)),
+  prlimitOwnPid: raw(P.nr.prlimit64, process.pid, 4, 0, ptr(scratchA)),
+  fcntlSetown: raw(P.nr.fcntl, 0, 8, ppid),
+  fcntlSetsig: raw(P.nr.fcntl, 0, 10, 9),
+  fcntlSetownEx: raw(P.nr.fcntl, 0, 15, ptr(scratchA)),
+  fcntlSetlk: raw(P.nr.fcntl, 0, 6, ptr(scratchA)),
+  fcntlGetfl: raw(P.nr.fcntl, 0, 3, 0),
+  fcntlGetfd: raw(P.nr.fcntl, 0, 1, 0),
+  ioctlFiosetown: raw(P.nr.ioctl, 0, 0x8901, ptr(ownerBuf)),
+  ioctlSiocspgrp: raw(P.nr.ioctl, 0, 0x8902, ptr(ownerBuf)),
+  ioctlTiocsti: raw(P.nr.ioctl, 0, 0x5412, ptr(scratchA)),
+  ioctlSetflags: raw(P.nr.ioctl, 0, 0x40086602, ptr(scratchA)),
+  ioctlFionread: raw(P.nr.ioctl, 0, 0x541b, ptr(scratchA)),
+  setpriorityParent: raw(P.nr.setpriority, 0, ppid, 19),
+  setpriorityUser: raw(P.nr.setpriority, 2, 0, 19),
+  ioprioParent: raw(P.nr.ioprio_set, 1, ppid, 0),
+  schedSelf: raw(P.nr.sched_setparam, 0, ptr(scratchB)),
+  ioprioSelf: raw(P.nr.ioprio_set, 1, 0, 0),
+});
+const targeted = {};
+for (const [name, [nr, arg, which]] of Object.entries(P.targeted)) {
+  const args = arg === 0 ? [ppid, 0, 0, 0, 0, 0] : [which, ppid, 0, 0, 0, 0];
+  targeted[name] = raw(nr, ...args);
+}
+emit("targeted", targeted);
+
+const pair = (domain, type) => {
+  const sv = Buffer.alloc(8);
+  const r = raw(P.nr.socketpair, domain, type, 0, ptr(sv));
+  if (r[0] === 0) { fs.closeSync(sv.readInt32LE(0)); fs.closeSync(sv.readInt32LE(4)); }
+  return r;
+};
+emit("socketpairs", {
+  stream: pair(1, 1),
+  seqpacket: pair(1, 5),
+  streamFlags: pair(1, 1 | 0x80000 | 0x800),
+  dgram: pair(1, 2),
+  dgramFlags: pair(1, 2 | 0x80000 | 0x800),
+  inetStream: pair(2, 1),
+});
+
 const cstr = (s) => Buffer.from(s + "\0");
 const run = (path, args) => {
   const strings = [path, ...args].map(cstr);
@@ -198,6 +257,7 @@ describe("a confined worker (real Landlock + seccomp + no_new_privs, observed fr
   let tcp: ReturnType<typeof createTcpServer> | undefined;
   let unixServer: ReturnType<typeof createTcpServer> | undefined;
   let run: ProbeRun | undefined;
+  let parentBefore = "";
   const syscalls: Record<string, number> = {};
 
   beforeAll(async () => {
@@ -224,6 +284,12 @@ describe("a confined worker (real Landlock + seccomp + no_new_privs, observed fr
       const nr = SYSCALL_NUMBERS[arch][name];
       if (nr !== undefined) syscalls[name] = nr;
     }
+    const nr: Record<string, number> = {};
+    const targeted: Record<string, [number, number, number]> = {};
+    for (const name of ["prlimit64", "fcntl", "ioctl", "setpriority", "ioprio_set", "sched_setparam", "socketpair"]) nr[name] = SYSCALL_NUMBERS[arch][name]!;
+    for (const name of SELF_OR_ZERO_ARG0_SYSCALLS) targeted[name] = [SYSCALL_NUMBERS[arch][name]!, 0, 0];
+    for (const [name, which] of Object.entries(SELF_OR_ZERO_ARG1_SYSCALLS)) targeted[name] = [SYSCALL_NUMBERS[arch][name]!, 1, which];
+    parentBefore = parentState();
     const scriptPath = join(work, "probe.mjs");
     writeFileSync(scriptPath, PROBE_SOURCE);
     run = runConfined(
@@ -231,10 +297,17 @@ describe("a confined worker (real Landlock + seccomp + no_new_privs, observed fr
       {
         home,
         cwd: work,
-        env: { PROBE: JSON.stringify({ ...files, sibling, secret, runDir, port: (tcp.address() as AddressInfo).port, socketPath, syscalls }) },
+        env: { PROBE: JSON.stringify({ ...files, sibling, secret, runDir, port: (tcp.address() as AddressInfo).port, socketPath, syscalls, nr, targeted }) },
       },
     );
   }, 180_000);
+
+  /** What a successful attack on the parent through prlimit64 / setpriority would have changed. */
+  function parentState(): string {
+    const stat = readFileSync("/proc/self/stat", "utf8");
+    const after = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return `${readFileSync("/proc/self/limits", "utf8")}\nnice=${after[16]}`;
+  }
 
   afterAll(() => {
     tcp?.close();
@@ -319,6 +392,41 @@ describe("a confined worker (real Landlock + seccomp + no_new_privs, observed fr
   t("threads: a thread created after the confinement is confined too (the filesystem fence is not per-thread)", () => {
     expect(k().worker).toBe("DENIED:EACCES");
     expect(existsSync(files.threadFile)).toBe(false);
+  });
+
+  t("a signal-like effect on the PARENT through prlimit64, fcntl(F_SETOWN/F_SETSIG/F_SETOWN_EX), ioctl(FIOSETOWN/SIOCSPGRP) or the scheduling calls answers EPERM, and the parent is untouched", () => {
+    const v = k().vectors as Record<string, [number, number]>;
+    for (const name of ["prlimitParentSet", "prlimitParentGet", "fcntlSetown", "fcntlSetsig", "fcntlSetownEx", "fcntlSetlk", "ioctlFiosetown", "ioctlSiocspgrp", "ioctlTiocsti", "ioctlSetflags", "setpriorityParent", "setpriorityUser", "ioprioParent"]) {
+      expect({ name, answer: v[name] }).toEqual({ name, answer: [-1, 1] });
+    }
+    // Every process-naming call, aimed at the parent (and the which-selector ones at the parent's id), is refused too.
+    const targeted = k().targeted as Record<string, [number, number]>;
+    expect(Object.keys(targeted).sort()).toEqual([...SELF_OR_ZERO_ARG0_SYSCALLS, ...Object.keys(SELF_OR_ZERO_ARG1_SYSCALLS)].sort());
+    for (const [name, answer] of Object.entries(targeted)) expect({ name, answer }).toEqual({ name, answer: [-1, 1] });
+    // The test runner is the parent: its limits and nice value are exactly what they were, and it is still here.
+    expect(parentState()).toBe(parentBefore);
+    expect(process.kill(process.pid, 0)).toBe(true);
+  });
+
+  t("...while the same calls on the worker itself still work, and the ordinary fcntl/ioctl requests are not caught", () => {
+    const v = k().vectors as Record<string, [number, number]>;
+    expect(v.prlimitSelf).toEqual([0, 0]);
+    expect(v.prlimitOwnPid).toEqual([0, 0]);
+    expect(v.fcntlGetfl![0]).toBeGreaterThanOrEqual(0);
+    expect(v.fcntlGetfd![0]).toBeGreaterThanOrEqual(0);
+    expect(v.ioctlFionread![1]).not.toBe(1); // 0 on a pipe, ENOTTY on a device -- never EPERM
+    expect(v.schedSelf![1]).not.toBe(1);
+    expect(v.ioprioSelf![1]).not.toBe(1);
+  });
+
+  t("socketpair: STREAM and SEQPACKET pairs work (with NONBLOCK|CLOEXEC); a DGRAM pair -- the way to sendto() a syslog or journald socket -- is refused", () => {
+    const pairs = k().socketpairs as Record<string, [number, number]>;
+    expect(pairs.stream).toEqual([0, 0]);
+    expect(pairs.seqpacket).toEqual([0, 0]);
+    expect(pairs.streamFlags).toEqual([0, 0]);
+    expect(pairs.dgram).toEqual([-1, 1]);
+    expect(pairs.dgramFlags).toEqual([-1, 1]);
+    expect(pairs.inetStream).toEqual([-1, 1]);
   });
 
   t("the deny list holds on this kernel and architecture: every denied syscall answers EPERM through the raw syscall, clone3 answers ENOSYS", () => {

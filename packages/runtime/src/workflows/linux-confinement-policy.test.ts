@@ -3,19 +3,25 @@
 // box, where the kernel-facing half cannot run. The kernel itself is exercised in
 // `worker.linux.test.ts`, which only runs on Linux.
 import { describe, test, expect } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   DENIED_SYSCALLS,
+  FCNTL_DENIED_COMMANDS,
+  IOCTL_DENIED_REQUESTS,
   LANDLOCK_FS,
+  LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET,
+  LANDLOCK_SCOPE_SIGNAL,
   LINUX_CONFINE_ARGV_FLAG,
   LINUX_CONFINEMENT_REFUSED_EXIT_CODE,
   LINUX_MIN_LANDLOCK_ABI,
   LinuxConfinementUnavailableError,
   SELF_ONLY_SIGNAL_SYSCALLS,
+  SELF_OR_ZERO_ARG0_SYSCALLS,
+  SELF_OR_ZERO_ARG1_SYSCALLS,
   SYSCALL_NUMBERS,
   buildSeccompProgram,
   canonicalDenyPath,
@@ -23,18 +29,21 @@ import {
   deniedSyscallNames,
   encodeConfinementSpec,
   landlockHandledRights,
+  landlockRulesetAttr,
   parseElfHead,
   planReadAllow,
   type LinuxArch,
   type LinuxConfinementSpec,
 } from "./linux-confinement-policy.ts";
-import { probeKernel, type Kernel, type SyscallResult } from "./linux-confinement.ts";
+import { execConfinedWorker, probeKernel, type Kernel, type SyscallResult } from "./linux-confinement.ts";
 import { WORKFLOW_SANDBOX_REFUSED_EXIT_CODE } from "./runtime.ts";
 import {
   buildLinuxWorkerSpawn,
+  linuxLauncherProblem,
   linuxWorkerReadDeny,
   resolveConfinementLauncher,
   setHostLinuxConfinementLauncher,
+  setHostWorkflowWorkerCommand,
   workflowSandboxAvailable,
   workflowSandboxUnavailableMessage,
 } from "./sandbox.ts";
@@ -266,6 +275,9 @@ function runProgram(program: Buffer, input: { arch: number; nr: number; args?: A
       pc += 1 + (a >= k ? jt : jf);
     } else if (code === 0x45) {
       pc += 1 + ((a & k) !== 0 ? jt : jf);
+    } else if (code === 0x54) {
+      a = (a & k) >>> 0;
+      pc += 1;
     } else if (code === 0x06) {
       return k;
     } else {
@@ -353,6 +365,77 @@ describe.each(["x64", "arm64"] as const)("the seccomp program (%s)", (arch) => {
     expect(decide(numbers.tkill!, [PID, 9])).toBe(RET_EPERM);
   });
 
+  // --- F1: a signal-like effect on ANOTHER process through a call that is not kill ---------------------
+  test("processes named by an argument (prlimit64, sched_*, migrate/move_pages): this process or 0 only -- RLIMIT_CPU on the parent is a SIGKILL", () => {
+    for (const name of SELF_OR_ZERO_ARG0_SYSCALLS) {
+      const nr = numbers[name]!;
+      expect({ name, nr: nr !== undefined }).toEqual({ name, nr: true });
+      for (const self of [0, PID, 0xdead0000_00000000n | BigInt(PID)]) expect({ name, self, result: decide(nr, [self, 0, 0, 0]) }).toEqual({ name, self, result: RET_ALLOW });
+      for (const other of [1, PID + 1, 1234, -1]) expect({ name, other, result: decide(nr, [other, 0, 0, 0]) }).toEqual({ name, other, result: RET_EPERM });
+    }
+  });
+
+  test("setpriority / ioprio_set: only a single process, only this one -- the user and group selectors are refused even for 'who = 0'", () => {
+    for (const [name, which] of Object.entries(SELF_OR_ZERO_ARG1_SYSCALLS)) {
+      const nr = numbers[name]!;
+      expect({ name, result: decide(nr, [which, 0, 0]) }).toEqual({ name, result: RET_ALLOW });
+      expect({ name, result: decide(nr, [which, PID, 0]) }).toEqual({ name, result: RET_ALLOW });
+      expect({ name, result: decide(nr, [which, 1234, 0]) }).toEqual({ name, result: RET_EPERM });
+      for (const selector of [0, 1, 2, 3, 4].filter((v) => v !== which)) {
+        // PRIO_USER (2) / IOPRIO_WHO_USER (3) with who = 0 means every process of the caller's user.
+        expect({ name, selector, result: decide(nr, [selector, 0, 0]) }).toEqual({ name, selector, result: RET_EPERM });
+        expect({ name, selector, result: decide(nr, [selector, PID, 0]) }).toEqual({ name, selector, result: RET_EPERM });
+      }
+    }
+  });
+
+  test("fcntl: the owner / signal / lock / lease commands are denied (the upper register half ignored); the ordinary ones pass", () => {
+    const nr = numbers.fcntl!;
+    for (const [command, value] of Object.entries(FCNTL_DENIED_COMMANDS)) {
+      expect({ command, result: decide(nr, [3, value, 1234]) }).toEqual({ command, result: RET_EPERM });
+      expect({ command, high: true, result: decide(nr, [3, 0xdead0000_00000000n | BigInt(value), 1234]) }).toEqual({ command, high: true, result: RET_EPERM });
+    }
+    // F_DUPFD 0, F_GETFD 1, F_SETFD 2, F_GETFL 3, F_SETFL 4, F_GETLK 5, F_DUPFD_CLOEXEC 1030, F_GETOWN 9, F_GETPIPE_SZ 1032
+    for (const value of [0, 1, 2, 3, 4, 5, 9, 1030, 1032]) expect({ value, result: decide(nr, [3, value, 0]) }).toEqual({ value, result: RET_ALLOW });
+  });
+
+  test("ioctl: ownership (FIOSETOWN, SIOCSPGRP), terminal input injection and the file-attribute setters are denied; FIONREAD, TCGETS, FIOCLEX pass", () => {
+    const nr = numbers.ioctl!;
+    for (const [request, value] of Object.entries(IOCTL_DENIED_REQUESTS)) {
+      expect({ request, result: decide(nr, [3, value, 0]) }).toEqual({ request, result: RET_EPERM });
+      expect({ request, high: true, result: decide(nr, [3, 0xdead0000_00000000n | BigInt(value), 0]) }).toEqual({ request, high: true, result: RET_EPERM });
+    }
+    for (const value of [0x541b, 0x5401, 0x5451, 0x5421, 0x5452, 0x40086601, 0x80086601]) expect({ value, result: decide(nr, [3, value, 0]) }).toEqual({ value, result: RET_ALLOW });
+  });
+
+  // --- F2: a datagram socket can sendto() any bound path or abstract name ---------------------------------
+  test("socketpair: AF_UNIX STREAM and SEQPACKET only (with or without NONBLOCK|CLOEXEC); DGRAM, RAW, other families and nothing else", () => {
+    const nr = numbers.socketpair!;
+    const SOCK_NONBLOCK_CLOEXEC = 0x800 | 0x80000;
+    expect(decide(nr, [1, 1, 0])).toBe(RET_ALLOW);
+    expect(decide(nr, [1, 1 | SOCK_NONBLOCK_CLOEXEC, 0])).toBe(RET_ALLOW);
+    expect(decide(nr, [1, 5, 0])).toBe(RET_ALLOW);
+    expect(decide(nr, [1, 5 | SOCK_NONBLOCK_CLOEXEC, 0])).toBe(RET_ALLOW);
+    expect(decide(nr, [1, 0xdead0000_00000000n | 1n, 0])).toBe(RET_ALLOW); // only the low 32 bits are the type
+    for (const type of [2, 2 | SOCK_NONBLOCK_CLOEXEC, 3, 4, 6, 7, 0]) expect({ type, result: decide(nr, [1, type, 0]) }).toEqual({ type, result: RET_EPERM });
+    for (const domain of [0, 2, 10, 16, 17]) expect({ domain, result: decide(nr, [domain, 1, 0]) }).toEqual({ domain, result: RET_EPERM });
+  });
+
+  // --- F4: families nothing here needs ----------------------------------------------------------------------
+  test("SysV and POSIX IPC, flock and the attribute setters are denied outright", () => {
+    for (const name of [...DENIED_SYSCALLS.ipc!, ...DENIED_SYSCALLS.locks!, ...DENIED_SYSCALLS.attributes!]) {
+      expect({ name, listed: numbers[name] !== undefined }).toEqual({ name, listed: true });
+      expect({ name, result: decide(numbers[name]!) }).toEqual({ name, result: RET_EPERM });
+    }
+  });
+
+  test("the tables carry fcntl and ioctl on this architecture, and (arm64) renameat", () => {
+    expect(numbers.fcntl).toBe(arch === "x64" ? 72 : 25);
+    expect(numbers.ioctl).toBe(arch === "x64" ? 16 : 29);
+    if (arch === "arm64") expect(decide(numbers.renameat!)).toBe(RET_EPERM);
+    expect(numbers.renameat).toBe(arch === "x64" ? 264 : 38);
+  });
+
   test("the ordinary syscalls a JS runtime lives on are not touched, and exec stays allowed (Landlock narrows it)", () => {
     for (const [name, nr] of Object.entries(BASIC_ALLOWED[arch])) expect({ name, result: decide(nr) }).toEqual({ name, result: RET_ALLOW });
   });
@@ -408,6 +491,20 @@ describe("the syscall tables against the kernel headers installed here", () => {
     expect(compared).toBeGreaterThan(Object.keys(table).length * 0.8);
   });
 
+  test.skipIf(process.platform !== "linux" || arch === undefined || installedHeaderNumbers() === undefined)("and the other way: every name this policy handles that the installed header defines IS in the table", () => {
+    const header = installedHeaderNumbers()!;
+    const handled = [
+      ...deniedSyscallNames(),
+      ...SELF_ONLY_SIGNAL_SYSCALLS,
+      ...SELF_OR_ZERO_ARG0_SYSCALLS,
+      ...Object.keys(SELF_OR_ZERO_ARG1_SYSCALLS),
+      "clone", "clone3", "socketpair", "fcntl", "ioctl",
+    ];
+    const absent = handled.filter((name) => header.has(name) && SYSCALL_NUMBERS[arch!][name] === undefined);
+    expect(absent).toEqual([]);
+    expect(handled.filter((name) => header.has(name)).length).toBeGreaterThan(100);
+  });
+
   test("the tables are internally consistent: every call the launcher itself makes exists on both architectures", () => {
     for (const arch of ["x64", "arm64"] as const) {
       for (const name of ["prctl", "capget", "capset", "prlimit64", "close_range", "seccomp", "landlock_create_ruleset", "landlock_add_rule", "landlock_restrict_self", "socket"]) {
@@ -453,6 +550,106 @@ describe("the syscall tables against the kernel headers installed here", () => {
     const all = landlockHandledRights(LINUX_MIN_LANDLOCK_ABI);
     for (const right of [LANDLOCK_FS.WRITE_FILE, LANDLOCK_FS.REMOVE_DIR, LANDLOCK_FS.REMOVE_FILE, LANDLOCK_FS.MAKE_CHAR, LANDLOCK_FS.MAKE_DIR, LANDLOCK_FS.MAKE_REG, LANDLOCK_FS.MAKE_SOCK, LANDLOCK_FS.MAKE_FIFO, LANDLOCK_FS.MAKE_BLOCK, LANDLOCK_FS.MAKE_SYM, LANDLOCK_FS.REFER, LANDLOCK_FS.TRUNCATE, LANDLOCK_FS.EXECUTE]) {
       expect(all & right).toBe(right);
+    }
+  });
+});
+
+describe("landlockRulesetAttr", () => {
+  test("below ABI 6 it is the 8-byte form with every handled right; from ABI 6 it also scopes signals and abstract unix sockets", () => {
+    for (const abi of [3, 4, 5]) {
+      const attr = landlockRulesetAttr(abi);
+      expect(attr.length).toBe(8);
+      expect(attr.readBigUInt64LE(0)).toBe(landlockHandledRights(abi));
+    }
+    for (const abi of [6, 7, 9]) {
+      const attr = landlockRulesetAttr(abi);
+      expect(attr.length).toBe(24);
+      expect(attr.readBigUInt64LE(0)).toBe(landlockHandledRights(abi));
+      expect(attr.readBigUInt64LE(8)).toBe(0n); // no network rights handled
+      expect(attr.readBigUInt64LE(16)).toBe(LANDLOCK_SCOPE_SIGNAL | LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET);
+    }
+    expect(LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET).toBe(1n);
+    expect(LANDLOCK_SCOPE_SIGNAL).toBe(2n);
+  });
+});
+
+// --- The exec stage, against a recording kernel -----------------------------------------------------------------------------------------
+
+describe("execConfinedWorker: the last stage before the worker starts", () => {
+  function recordingKernel(failing?: string): Kernel & { calls: Array<[string, unknown[]]>; execs: Array<{ file: string; argv: readonly string[] }> } {
+    const calls: Array<[string, unknown[]]> = [];
+    const execs: Array<{ file: string; argv: readonly string[] }> = [];
+    return {
+      arch: "x64",
+      calls,
+      execs,
+      call(name: string, ...args: unknown[]): SyscallResult {
+        calls.push([name, args]);
+        return name === failing ? { ret: -1, errno: 22 } : { ret: 0, errno: 0 };
+      },
+      address: () => 0,
+      openPath: () => openSync("/dev/null", "r"),
+      execve(file: string, argv: readonly string[]) {
+        execs.push({ file, argv });
+        return 2;
+      },
+    };
+  }
+  const spec: LinuxConfinementSpec = { version: 1, target: { file: "/opt/winter/bin/winter", args: ["__workflow-worker", "--bridge"] }, readDeny: [], minLandlockAbi: 3 };
+
+  test("every inherited descriptor is marked close-on-exec first, and the worker is exec'd with its own command", () => {
+    const kernel = recordingKernel();
+    expect(() => execConfinedWorker(spec, kernel)).toThrow(/execve errno 2/);
+    expect(kernel.calls[0]).toEqual(["close_range", [3, 0xffffffff, 4]]);
+    expect(kernel.execs).toEqual([{ file: "/opt/winter/bin/winter", argv: ["/opt/winter/bin/winter", "__workflow-worker", "--bridge"] }]);
+  });
+
+  test("when the descriptors cannot be marked, the launch is refused and nothing is exec'd", () => {
+    const kernel = recordingKernel("close_range");
+    expect(() => execConfinedWorker(spec, kernel)).toThrow(LinuxConfinementUnavailableError);
+    expect(() => execConfinedWorker(spec, kernel)).toThrow(/close-on-exec/);
+    expect(kernel.execs).toEqual([]);
+  });
+});
+
+// --- A host worker command needs a host launcher ----------------------------------------------------------------------------------------------
+
+describe("a host that installs its own worker command must also name its launcher", () => {
+  const command = { file: "/opt/host/winter-core", args: ["__runtime-workflow-worker", "--bridge"] };
+
+  test("buildLinuxWorkerSpawn refuses with the typed error rather than launching a host binary that may not route __linux-confine", () => {
+    const restore = setHostWorkflowWorkerCommand(command);
+    try {
+      expect(linuxLauncherProblem()).toContain("without a host confinement launcher");
+      expect(() => buildLinuxWorkerSpawn({ command })).toThrow(LinuxConfinementUnavailableError);
+      // Naming the launcher (here or per call) is what lifts it.
+      const restoreLauncher = setHostLinuxConfinementLauncher({ file: "/opt/host/winter-core", args: ["--launcher"] });
+      try {
+        expect(linuxLauncherProblem()).toBeUndefined();
+        expect(buildLinuxWorkerSpawn({ command }).file).toBe("/opt/host/winter-core");
+      } finally {
+        restoreLauncher();
+      }
+      expect(() => buildLinuxWorkerSpawn({ command })).toThrow(LinuxConfinementUnavailableError);
+      expect(buildLinuxWorkerSpawn({ command, launcher: { file: "/opt/host/winter-core", args: [] } }).file).toBe("/opt/host/winter-core");
+    } finally {
+      restore();
+    }
+    // With no host worker command installed the default launcher applies, as before.
+    expect(linuxLauncherProblem()).toBeUndefined();
+    expect(() => buildLinuxWorkerSpawn({ command })).not.toThrow();
+  });
+
+  test.skipIf(process.platform !== "linux")("on Linux it also makes the Workflow unavailable up front, with the reason", () => {
+    const restoreProbe = overrideLinuxConfinementProbeForTest({ available: true, arch: "x64", landlockAbi: 4 });
+    const restore = setHostWorkflowWorkerCommand(command);
+    try {
+      expect(workflowSandboxAvailable()).toBe(false);
+      expect(workflowSandboxUnavailableMessage()).toContain("without a host confinement launcher");
+    } finally {
+      restore();
+      expect(workflowSandboxAvailable()).toBe(true);
+      restoreProbe();
     }
   });
 });

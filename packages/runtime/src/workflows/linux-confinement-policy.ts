@@ -26,6 +26,19 @@
 // subtree and rights only ever accumulate. So the read allowance is built by walking down from `/`
 // along each denied path and granting every SIBLING along the way (`planReadAllow`). A directory
 // created after the plan was made is therefore unreadable, which is the safe direction.
+//
+// WHAT READ WITHHOLDING IS NOT. It withholds the NAMES the planner can see, enforced on the objects
+// behind them by Landlock:
+//  * A bind mount of a withheld directory at another path, or a hard link to a file inside one, is
+//    the same object under a name the plan never saw; if that name sits in an allowed tree it stays
+//    readable. (The seatbelt's path rule has the same shape.) The run directory holds sockets and
+//    tokens, not user data, and nothing here creates such aliases; a host that does must withhold them too.
+//  * Landlock mediates opening, not looking: stat, readlink and traversal of a withheld tree still work,
+//    so names and metadata remain visible even where contents are not.
+//  * The files of another process that need ptrace-level access (fd/, mem, environ, maps) are ALSO
+//    stopped by Landlock's ptrace hook, which keeps a domain away from processes outside it. That hook
+//    does not cover the files any same-user process may read (cmdline, status, stat): for those the path
+//    withholding of /proc/<other pid> is the only protection, and it is why /proc is never granted whole.
 import { closeSync, lstatSync, openSync, readdirSync, readSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -36,7 +49,8 @@ export const LINUX_CONFINE_ARGV_FLAG = "__linux-confine";
 /**
  * The oldest Landlock ABI the Workflow accepts. ABI 3 is the first that governs every write-class
  * right (ABI 2 added REFER, ABI 3 TRUNCATE); older kernels would leave rename-across-directory and
- * truncate(2) to seccomp alone, and the boundary should not depend on that.
+ * truncate(2) to seccomp alone, and the boundary should not depend on that. ABI 3 arrived in Linux 6.2,
+ * so a guest kernel older than 6.2 refuses the Workflow.
  */
 export const LINUX_MIN_LANDLOCK_ABI = 3;
 
@@ -108,7 +122,9 @@ export function decodeConfinementSpec(text: string | undefined): LinuxConfinemen
 //
 // Taken from the kernel's own tables (arch/x86/entry/syscalls/syscall_64.tbl for x64,
 // include/uapi/asm-generic/unistd.h for arm64) and compared against the installed headers by the
-// tests. A name missing for an architecture does not exist there (arm64 has no fork, mkdir, ...).
+// tests -- in both directions: every number must equal the header's, and every name this policy
+// handles that the header defines must be in the table. A name missing for an architecture does not
+// exist there (arm64 has no fork, mkdir, ...); arm64 does define renameat (__ARCH_WANT_RENAMEAT).
 
 export const SYSCALL_NUMBERS: Readonly<Record<LinuxArch, Readonly<Record<string, number>>>> = {
   x64: {
@@ -131,6 +147,12 @@ export const SYSCALL_NUMBERS: Readonly<Record<LinuxArch, Readonly<Record<string,
     setxattr: 188, lsetxattr: 189, fsetxattr: 190, removexattr: 197, lremovexattr: 198, fremovexattr: 199,
     setxattrat: 463, removexattrat: 466,
     kill: 62, tkill: 200, tgkill: 234, rt_sigqueueinfo: 129, rt_tgsigqueueinfo: 297,
+    fcntl: 72, ioctl: 16, flock: 73,
+    shmget: 29, shmat: 30, shmctl: 31, shmdt: 67, semget: 64, semop: 65, semctl: 66, semtimedop: 220,
+    msgget: 68, msgsnd: 69, msgrcv: 70, msgctl: 71,
+    mq_open: 240, mq_unlink: 241, mq_timedsend: 242, mq_timedreceive: 243, mq_notify: 244, mq_getsetattr: 245,
+    setpriority: 141, sched_setscheduler: 144, sched_setparam: 142, sched_setattr: 314, sched_setaffinity: 203,
+    ioprio_set: 251, migrate_pages: 256, move_pages: 279, lsm_set_self_attr: 460, file_setattr: 469,
     prctl: 157, capget: 125, capset: 126, prlimit64: 302, close_range: 436, seccomp: 317,
     landlock_create_ruleset: 444, landlock_add_rule: 445, landlock_restrict_self: 446,
   },
@@ -147,12 +169,18 @@ export const SYSCALL_NUMBERS: Readonly<Record<LinuxArch, Readonly<Record<string,
     add_key: 217, request_key: 218, keyctl: 219,
     open_by_handle_at: 265, name_to_handle_at: 264, memfd_secret: 447, memfd_create: 279,
     socket: 198, connect: 203, bind: 200, listen: 201, accept: 202, accept4: 242, socketpair: 199,
-    mkdirat: 34, unlinkat: 35, renameat2: 276, linkat: 37, symlinkat: 36, mknodat: 33,
+    mkdirat: 34, unlinkat: 35, renameat: 38, renameat2: 276, linkat: 37, symlinkat: 36, mknodat: 33,
     truncate: 45, ftruncate: 46, fallocate: 47, fchmod: 52, fchmodat: 53, fchmodat2: 452,
     fchown: 55, fchownat: 54, utimensat: 88,
     setxattr: 5, lsetxattr: 6, fsetxattr: 7, removexattr: 14, lremovexattr: 15, fremovexattr: 16,
     setxattrat: 463, removexattrat: 466,
     kill: 129, tkill: 130, tgkill: 131, rt_sigqueueinfo: 138, rt_tgsigqueueinfo: 240,
+    fcntl: 25, ioctl: 29, flock: 32,
+    shmget: 194, shmat: 196, shmctl: 195, shmdt: 197, semget: 190, semop: 193, semctl: 191, semtimedop: 192,
+    msgget: 186, msgsnd: 189, msgrcv: 188, msgctl: 187,
+    mq_open: 180, mq_unlink: 181, mq_timedsend: 182, mq_timedreceive: 183, mq_notify: 184, mq_getsetattr: 185,
+    setpriority: 140, sched_setscheduler: 119, sched_setparam: 118, sched_setattr: 274, sched_setaffinity: 122,
+    ioprio_set: 30, migrate_pages: 238, move_pages: 239, lsm_set_self_attr: 460, file_setattr: 469,
     prctl: 167, capget: 90, capset: 91, prlimit64: 261, close_range: 436, seccomp: 277,
     landlock_create_ruleset: 444, landlock_add_rule: 445, landlock_restrict_self: 446,
   },
@@ -189,10 +217,49 @@ export const DENIED_SYSCALLS: Readonly<Record<string, readonly string[]>> = {
   ],
   // tkill names a bare thread id, which is global; tgkill names the process too and can be checked.
   signals: ["tkill"],
+  // Cross-process rendezvous and rendezvous state that outlives the worker: SysV shared memory,
+  // semaphores and message queues, POSIX message queues (mq_notify also signals). Nothing here needs them.
+  ipc: [
+    "shmget", "shmat", "shmctl", "shmdt", "semget", "semop", "semctl", "semtimedop", "msgget", "msgsnd", "msgrcv", "msgctl",
+    "mq_open", "mq_unlink", "mq_timedsend", "mq_timedreceive", "mq_notify", "mq_getsetattr",
+  ],
+  // flock on a read-only descriptor can hold a lock another process is waiting for.
+  locks: ["flock"],
+  // Setting attributes on files and on the process's own LSM state; file_setattr needs a 6.17 kernel.
+  attributes: ["lsm_set_self_attr", "file_setattr"],
 };
 
 /** Signal-sending calls whose first argument is the target process: allowed only when it is this process. */
 export const SELF_ONLY_SIGNAL_SYSCALLS = ["kill", "tgkill", "rt_sigqueueinfo", "rt_tgsigqueueinfo"] as const;
+
+/**
+ * Calls that act on a process named by an argument: allowed only for this process (0 means the caller).
+ * prlimit64 can set RLIMIT_CPU/FSIZE/NOFILE on a same-uid parent (SIGXCPU then SIGKILL); the scheduling
+ * and NUMA calls change another process's priority, placement or pages.
+ */
+export const SELF_OR_ZERO_ARG0_SYSCALLS = ["prlimit64", "sched_setscheduler", "sched_setparam", "sched_setattr", "sched_setaffinity", "migrate_pages", "move_pages"] as const;
+/**
+ * The same rule where the target is the SECOND argument, after a `which` selector that must name a single
+ * process (PRIO_PROCESS = 0 for setpriority, IOPRIO_WHO_PROCESS = 1 for ioprio_set). The selector is
+ * checked because `who = 0` under PRIO_USER / IOPRIO_WHO_USER means every process of the caller's user.
+ */
+export const SELF_OR_ZERO_ARG1_SYSCALLS: Readonly<Record<string, number>> = { setpriority: 0, ioprio_set: 1 };
+
+/**
+ * fcntl commands that arrange for a signal to reach another process (F_SETOWN/F_SETSIG/F_SETOWN_EX, with
+ * O_ASYNC and a write), and the ones that take locks or leases other processes would wait on.
+ */
+export const FCNTL_DENIED_COMMANDS: Readonly<Record<string, number>> = {
+  F_SETLK: 6, F_SETLKW: 7, F_SETOWN: 8, F_SETSIG: 10, F_SETOWN_EX: 15, F_OFD_SETLK: 37, F_OFD_SETLKW: 38, F_SETLEASE: 1024,
+};
+/**
+ * ioctl requests denied: the ownership ones that do what F_SETOWN does (FIOSETOWN, SIOCSPGRP), terminal
+ * input injection (TIOCSTI), and the file-attribute setters that change a file through a read-only
+ * descriptor (FS_IOC_SETFLAGS, FS_IOC_FSSETXATTR, FS_IOC_ENABLE_VERITY, which makes a file permanently read-only).
+ */
+export const IOCTL_DENIED_REQUESTS: Readonly<Record<string, number>> = {
+  FIOSETOWN: 0x8901, SIOCSPGRP: 0x8902, TIOCSTI: 0x5412, FS_IOC_SETFLAGS: 0x40086602, FS_IOC_FSSETXATTR: 0x401c5820, FS_IOC_ENABLE_VERITY: 0x40806685,
+};
 
 export function deniedSyscallNames(): string[] {
   return Object.values(DENIED_SYSCALLS).flat();
@@ -212,6 +279,7 @@ const BPF_LD_W_ABS = 0x20;
 const BPF_JEQ_K = 0x15;
 const BPF_JGE_K = 0x35;
 const BPF_JSET_K = 0x45;
+const BPF_AND_K = 0x54;
 const BPF_RET_K = 0x06;
 
 const OFFSET_NR = 0;
@@ -222,6 +290,9 @@ const CLONE_THREAD = 0x00010000;
 // CLONE_NEWTIME | CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET
 const CLONE_NAMESPACE_FLAGS = 0x00000080 | 0x00020000 | 0x02000000 | 0x04000000 | 0x08000000 | 0x10000000 | 0x20000000 | 0x40000000;
 const AF_UNIX = 1;
+const SOCK_STREAM = 1;
+const SOCK_SEQPACKET = 5;
+const SOCK_TYPE_MASK = 0xf;
 
 interface Instruction {
   code: number;
@@ -250,6 +321,9 @@ class BpfProgram {
   }
   jset(k: number, ifTrue?: string, ifFalse?: string): void {
     this.instructions.push({ code: BPF_JSET_K, k, ...(ifTrue !== undefined ? { jt: ifTrue } : {}), ...(ifFalse !== undefined ? { jf: ifFalse } : {}) });
+  }
+  and(k: number): void {
+    this.instructions.push({ code: BPF_AND_K, k });
   }
   ret(value: number): void {
     this.instructions.push({ code: BPF_RET_K, k: value });
@@ -301,6 +375,20 @@ export function buildSeccompProgram(arch: LinuxArch, selfPid: number): Buffer {
     const number = nr(name);
     if (number !== undefined) program.jeq(number, "self-only");
   }
+  for (const [names, label] of [
+    [SELF_OR_ZERO_ARG0_SYSCALLS, "arg0-self-or-zero"],
+    [["fcntl"], "fcntl"],
+    [["ioctl"], "ioctl"],
+  ] as const) {
+    for (const name of names) {
+      const number = nr(name);
+      if (number !== undefined) program.jeq(number, label);
+    }
+  }
+  for (const name of Object.keys(SELF_OR_ZERO_ARG1_SYSCALLS)) {
+    const number = nr(name);
+    if (number !== undefined) program.jeq(number, `which-${name}`);
+  }
   for (const name of deniedSyscallNames()) {
     const number = nr(name);
     if (number !== undefined) program.jeq(number, "eperm");
@@ -312,14 +400,45 @@ export function buildSeccompProgram(arch: LinuxArch, selfPid: number): Buffer {
   program.load(offsetOfArg(0));
   program.jset(CLONE_NAMESPACE_FLAGS, "eperm");
   program.jset(CLONE_THREAD, "allow", "eperm");
-  // socketpair: local pairs only.
+  // socketpair: local, connected pairs only. A SOCK_DGRAM socket can sendto() any path or abstract name a
+  // datagram listener (syslog, journald, a notify socket) has bound, so only STREAM and SEQPACKET pass;
+  // the type is masked first because SOCK_NONBLOCK and SOCK_CLOEXEC ride in the same argument.
   program.label("socketpair");
   program.load(offsetOfArg(0));
-  program.jeq(AF_UNIX, "allow", "eperm");
+  program.jeq(AF_UNIX, undefined, "eperm");
+  program.load(offsetOfArg(1));
+  program.and(SOCK_TYPE_MASK);
+  program.jeq(SOCK_STREAM, "allow");
+  program.jeq(SOCK_SEQPACKET, "allow");
+  program.ret(SECCOMP_RET_ERRNO | EPERM);
   // kill-class calls: first argument is the target pid, compared as the 32-bit value it is.
   program.label("self-only");
   program.load(offsetOfArg(0));
   program.jeq(selfPid, "allow", "eperm");
+  // prlimit64, sched_*, migrate_pages, move_pages: the process is argument 0; 0 is the caller.
+  program.label("arg0-self-or-zero");
+  program.load(offsetOfArg(0));
+  program.jeq(0, "allow");
+  program.jeq(selfPid, "allow", "eperm");
+  // setpriority, ioprio_set: argument 0 selects what argument 1 names and must be "one process".
+  for (const [name, which] of Object.entries(SELF_OR_ZERO_ARG1_SYSCALLS)) {
+    program.label(`which-${name}`);
+    program.load(offsetOfArg(0));
+    program.jeq(which, undefined, "eperm");
+    program.load(offsetOfArg(1));
+    program.jeq(0, "allow");
+    program.jeq(selfPid, "allow", "eperm");
+  }
+  // fcntl: argument 1 is the command.
+  program.label("fcntl");
+  program.load(offsetOfArg(1));
+  for (const command of Object.values(FCNTL_DENIED_COMMANDS)) program.jeq(command, "eperm");
+  program.ret(SECCOMP_RET_ALLOW);
+  // ioctl: argument 1 is the request.
+  program.label("ioctl");
+  program.load(offsetOfArg(1));
+  for (const request of Object.values(IOCTL_DENIED_REQUESTS)) program.jeq(request, "eperm");
+  program.ret(SECCOMP_RET_ALLOW);
 
   program.label("eperm");
   program.ret(SECCOMP_RET_ERRNO | EPERM);
@@ -361,6 +480,29 @@ export function landlockHandledRights(abi: number): bigint {
   if (abi >= 2) rights |= LANDLOCK_FS.REFER;
   if (abi >= 3) rights |= LANDLOCK_FS.TRUNCATE;
   return rights;
+}
+
+/** Landlock ABI 6 adds scoping: no signals to, and no abstract-unix-socket connects to, a process outside the domain. */
+export const LANDLOCK_SCOPED_ABI = 6;
+export const LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET = 1n << 0n;
+export const LANDLOCK_SCOPE_SIGNAL = 1n << 1n;
+
+/**
+ * `struct landlock_ruleset_attr` for a kernel of this ABI. From ABI 6 the domain is also SCOPED, as a second
+ * fence under the seccomp signal rules -- opportunistic: it raises nothing the floor requires, and an older
+ * kernel simply gets the 8-byte form (the struct grew by appending, and the kernel accepts a shorter one).
+ */
+export function landlockRulesetAttr(abi: number): Buffer {
+  const handled = landlockHandledRights(abi);
+  if (abi < LANDLOCK_SCOPED_ABI) {
+    const out = Buffer.alloc(8);
+    out.writeBigUInt64LE(handled, 0);
+    return out;
+  }
+  const out = Buffer.alloc(24); // { handled_access_fs, handled_access_net = 0, scoped }
+  out.writeBigUInt64LE(handled, 0);
+  out.writeBigUInt64LE(LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET | LANDLOCK_SCOPE_SIGNAL, 16);
+  return out;
 }
 
 export const LANDLOCK_READ_FILE_RIGHTS = LANDLOCK_FS.READ_FILE;

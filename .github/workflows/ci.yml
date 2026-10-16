@@ -40,6 +40,10 @@ jobs:
         env:
           WINTER_REQUIRE_LINUX_CONFINEMENT: "1"
         run: bun test packages/runtime/src/workflows/linux-confinement-policy.test.ts packages/runtime/src/workflows/worker.linux.test.ts
+      - name: compiled-binary Workflow gate -- the binary is the confinement launcher, on this architecture
+        env:
+          WINTER_REQUIRE_LINUX_CONFINEMENT: "1"
+        run: bun run verify:workflow
 
   # --- P9a-4: the SAME macOS build as release.yml's `build-platform`, minus the tag pin, on EVERY
   # push -- so a broken darwin build fails here, before a `v*` tag ever exists to discover it at
@@ -124,11 +128,14 @@ jobs:
                                                       # `__workflow-worker` argv dispatch, which no other gate
                                                       # exercises -- a dispatch that only exists in the COMPILED
                                                       # entry graph, so a dev-leg run cannot stand in for it.
-                                                      # `sandbox: false` on a host without /usr/bin/sandbox-exec
-                                                      # (this runner) is the script's own documented linux mode:
-                                                      # the SUBJECT there is the argv dispatch and the bridge, and
-                                                      # `launch()` still refuses outright in production when the
-                                                      # sandbox is required and unavailable.
+                                                      # On Linux the worker runs CONFINED (Landlock + seccomp), with
+                                                      # the compiled binary as the confinement launcher too; the
+                                                      # requirement below makes a runner that cannot confine fail
+                                                      # here. A host with neither fence would run it unsandboxed
+                                                      # (`sandbox: false`) and say so, but `launch()` still refuses
+                                                      # outright in production when the sandbox is required.
+        env:
+          WINTER_REQUIRE_LINUX_CONFINEMENT: "1"
 
   pack-smoke:
     # P7a Lane C, Step 3 (WS-02 §9 item 3): proves a consumer can actually INSTALL and IMPORT what
