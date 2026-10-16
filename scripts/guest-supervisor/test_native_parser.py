@@ -10,7 +10,10 @@ class NativeParserTests(unittest.TestCase):
         source=(ROOT/'packages/runtime/src/guest/linux-session-owner.c').read_text()
         # Parser is portable C; later kernel evidence checks require Linux. Compile
         # that exact source prefix rather than a reimplementation of its grammar.
-        prefix=source[:source.index('static int live(')]
+        # Linux authority headers are deliberately excluded from this portable
+        # parser-only slice (the production helper now includes sys/vfs.h).
+        prefix='#include <errno.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n'
+        prefix+=source[source.index('#define LIMIT'):source.index('static int live(')]
         harness=r'''
 #include <assert.h>
 static int document(const char *s,struct parser *p){memset(p,0,sizeof *p);p->s=s;p->n=(int)strlen(s);int result=parse(p,0);space(p);return result==0&&p->pos==p->n;}
