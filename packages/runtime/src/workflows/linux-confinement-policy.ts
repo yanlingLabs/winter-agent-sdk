@@ -17,7 +17,7 @@
 //                                                io_uring (which would bypass seccomp) is denied too
 //   (deny process-fork), exec of self only       seccomp: no fork/vfork, clone only for threads, clone3
 //                                                answers ENOSYS; Landlock EXECUTE only on the worker
-//                                                binary and its ELF interpreter
+//                                                binary and its ELF interpreter; memfd_create refused
 //   (allow signal (target self))                 seccomp: kill/tgkill/rt_*sigqueueinfo only to our own pid
 //   (nothing)                                    NO_NEW_PRIVS, capabilities emptied, ptrace and friends
 //                                                denied, core dumps off
