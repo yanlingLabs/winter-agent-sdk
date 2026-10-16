@@ -90,6 +90,9 @@ jobs:
                                                      # once and passed on re-run. `scripts/release-gates.test.ts`
                                                      # pins this step's position.
       - run: bun test                              # all unit tests (codec, runtime, wrapper, trace, version)
+        env:
+          WINTER_REQUIRE_LINUX_CONFINEMENT: "1"      # a runner that lost Landlock/seccomp fails the Linux Workflow
+                                                     # cases (workflows/worker.linux.test.ts) instead of skipping them
       - run: bun run typecheck                     # whole-repo tsc --noEmit incl. test files (sdk, runtime,
                                                      # conformance/src, scripts) — Task 5 rider; `bun test` only
                                                      # type-strips, so this is the repo's one real tsc gate
