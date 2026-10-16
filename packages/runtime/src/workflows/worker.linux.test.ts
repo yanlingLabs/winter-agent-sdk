@@ -330,6 +330,54 @@ describe("a confined worker (real Landlock + seccomp + no_new_privs, observed fr
   });
 });
 
+// --- Anonymous-file exec ------------------------------------------------------------------------------------------------
+//
+// Landlock's EXECUTE right is path-based; a file made with memfd_create has no path in any mounted
+// filesystem. The macOS profile allows exec of the worker's own binary and nothing else, so this asks
+// the kernel directly whether a copy of another program, written into an anonymous file, can be run.
+
+const MEMFD_PROBE_SOURCE = String.raw`
+import fs from "node:fs";
+import { dlopen, FFIType, ptr, read } from "bun:ffi";
+const P = JSON.parse(process.env.PROBE);
+const emit = (name, value) => process.stdout.write("K " + name + " " + JSON.stringify(value) + "\n");
+const libc = dlopen("libc.so.6", {
+  syscall: { args: [FFIType.i64, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i64_fast },
+  execve: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+  __errno_location: { args: [], returns: FFIType.ptr },
+});
+const errno = () => read.i32(libc.symbols.__errno_location());
+const name = Buffer.from("probe\0");
+const fd = Number(libc.symbols.syscall(P.memfdCreate, ptr(name), 0, 0, 0, 0, 0));
+emit("memfdCreate", fd === -1 ? { ok: false, errno: errno() } : { ok: true });
+if (fd >= 0) {
+  fs.writeSync(fd, fs.readFileSync("/usr/bin/true"));
+  const path = Buffer.from("/proc/self/fd/" + fd + "\0");
+  const argv = new BigUint64Array([BigInt(ptr(path)), 0n]);
+  const env = new BigUint64Array([0n]);
+  const rc = libc.symbols.execve(path, argv, env);
+  emit("memfdExec", [rc, errno()]);
+}
+emit("done", 1);
+`;
+
+describe("an anonymous file cannot be used to run another program", () => {
+  const work = available ? scratch("winter-lc-memfd-") : "";
+  afterAll(() => {
+    if (available) rmSync(work, { recursive: true, force: true });
+  });
+
+  t("either memfd_create is refused, or the exec of its contents is -- the process is never replaced by the copy", () => {
+    const arch = linuxArchOf(process.arch)!;
+    const script = join(work, "memfd-probe.mjs");
+    writeFileSync(script, MEMFD_PROBE_SOURCE);
+    const res = runConfined({ file: process.execPath, args: [script] }, { cwd: work, env: { PROBE: JSON.stringify({ memfdCreate: SYSCALL_NUMBERS[arch].memfd_create }) } });
+    // `done` is printed only if the exec did NOT replace the probe with the copy of `true`.
+    expect({ done: res.k.done, stderr: res.stderr.slice(-500) }).toMatchObject({ done: 1 });
+    if (res.k.memfdCreate.ok) expect(res.k.memfdExec[0]).toBe(-1);
+  }, 120_000);
+});
+
 // --- Refusals: the worker never runs unconfined --------------------------------------------------------------------------
 
 describe("the launcher refuses, and the worker it names never runs", () => {
