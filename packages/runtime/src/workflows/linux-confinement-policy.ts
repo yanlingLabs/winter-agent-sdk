@@ -175,7 +175,10 @@ export const DENIED_SYSCALLS: Readonly<Record<string, readonly string[]>> = {
   // Host-wide state.
   host: ["kexec_load", "kexec_file_load", "init_module", "finit_module", "delete_module", "reboot", "swapon", "swapoff", "acct", "settimeofday", "sethostname", "setdomainname", "adjtimex", "clock_adjtime", "clock_settime", "quotactl", "syslog", "iopl", "ioperm"],
   keyrings: ["add_key", "request_key", "keyctl"],
-  handles: ["open_by_handle_at", "name_to_handle_at", "memfd_secret"],
+  // memfd_create: an anonymous file has no path, so Landlock's path-based EXECUTE cannot see it, and a copy
+  // of another program written into one would run (measured on the CI kernels). Refused so that "exec only
+  // the worker and its loader" holds.
+  handles: ["open_by_handle_at", "name_to_handle_at", "memfd_secret", "memfd_create"],
   // `(deny network*)`. socketpair is allowed for AF_UNIX only (see the program).
   network: ["socket", "connect", "bind", "listen", "accept", "accept4"],
   // `(deny file-write*)`: Landlock covers the data-write rights; these cover the rest.

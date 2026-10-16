@@ -373,8 +373,10 @@ describe("an anonymous file cannot be used to run another program", () => {
     writeFileSync(script, MEMFD_PROBE_SOURCE);
     const res = runConfined({ file: process.execPath, args: [script] }, { cwd: work, env: { PROBE: JSON.stringify({ memfdCreate: SYSCALL_NUMBERS[arch].memfd_create }) } });
     // `done` is printed only if the exec did NOT replace the probe with the copy of `true`.
-    expect({ done: res.k.done, stderr: res.stderr.slice(-500) }).toMatchObject({ done: 1 });
+    expect({ observed: res.k, status: res.status, stderr: res.stderr.slice(-500) }).toMatchObject({ observed: { done: 1 } });
+    // Today the first line of defence is seccomp (no memfd_create at all); if that is ever relaxed the exec itself must still fail.
     if (res.k.memfdCreate.ok) expect(res.k.memfdExec[0]).toBe(-1);
+    else expect(res.k.memfdCreate.errno).toBe(1);
   }, 120_000);
 });
 
