@@ -4,10 +4,12 @@ Covers the pure guided builders, the record Root would send, the fifth descripto
 profile-selection rules. A successful record or descriptor count is DATA: nothing here
 admits a native owner, serves a reader or enables Cowork.
 """
+import contextlib
 import hashlib
 import json
 import os
 import socket
+import stat
 import struct
 import sys
 import tempfile
@@ -35,6 +37,15 @@ EXACT_LIMITS = {'maxFileBytes': 131072, 'maxReadBytes': 262144, 'maxReadOccurren
 # the fixed inputs of GoldenRecordTests. Any byte change here is a v1/fresh contract change.
 GOLDEN_V1 = '{"authority":{"configRevision":2,"grantRevision":3,"incarnationId":"incarnation","leaseEpoch":1,"policyRevision":4,"sessionId":"backend","workspaceId":"workspace"},"freshOnly":true,"logicalSessionId":"logical","ownerToken":"abababababababababababababababababababababababababababababababab","profile":"host-query-v1","protocolVersion":1,"provider":{"scope":{"accountRevision":1,"backendSessionId":"backend","bootId":"00000000-0000-0000-0000-000000000000","grantRevision":3,"homeId":"home","incarnationId":"incarnation","leaseEpoch":1,"modelRevision":1,"sessionId":"logical","taskId":"task","workspaceId":"workspace"},"selection":{"capabilities":{"toolCalling":"native"},"family":"openai","modelKey":"openai/fixture","protocol":"openai-responses","providerId":"openai","providerModelId":"fixture"}},"roots":[{"guestPath":"/workspace/folders/source","id":"source","readOnly":false}],"runtimeConfig":{"allowDangerouslySkipPermissions":false,"allowedTools":[],"cwd":"/workspace/folders/source","executionPosture":"confined-guest","mcpServers":{},"model":"openai/fixture","permissionMode":"default","permissions":{"disableBypassPermissionsMode":true},"persistSession":true,"plugins":[],"sessionId":"backend","settingSources":[],"skills":[],"storeHome":"/workspace/.winter/conversations/logical","strictMcpConfig":true,"tools":["Read","Edit","Write","Bash"],"winterHome":"/run/winter/conversations/logical"},"runtimeUid":20001,"scope":{"currentBootId":"00000000-0000-0000-0000-000000000000","incarnationId":"incarnation","leaseEpoch":1,"sessionId":"backend","storeHome":"/workspace/.winter/conversations/logical","workspaceId":"workspace"},"toolSocketPath":"/run/winter/conversations/logical/.control/tools.sock","toolUid":10001,"workspaceGid":10000}'
 GOLDEN_FRESH_SHA256 = '0f8eb6f1bd58eafd978a2d5b6673e9f52a41425483a0a1a920cafafebed8d048'
+
+
+@contextlib.contextmanager
+def linux_root_constructor():
+    """Lets ToolService.__init__ run unprivileged and off Linux. Nothing native is admitted."""
+    flags = SimpleNamespace(isolated=1, no_site=1)
+    with patch.object(service.sys, 'platform', 'linux'), patch.object(service.os, 'geteuid', return_value=0), \
+            patch.object(service.sys, 'flags', flags), patch.object(service.Path, 'read_text', return_value=BOOT + '\n'):
+        yield
 
 
 def pure_item(policy='ask', guest_path='/workspace/folders/source'):
@@ -191,15 +202,34 @@ class GuidedBuilderTests(unittest.TestCase):
         self.assertTrue(service.item_profile_conflict({'hostQueryGuidedRuntime': {}}, 'freshRuntime'))
         self.assertTrue(service.item_profile_conflict({'hostQueryRuntime': {}, 'hostQueryGuidedRuntime': {}}, 'hostQueryGuidedRuntime'))
 
-    def test_service_constructor_refuses_host_query_with_the_guided_key_before_any_effect(self):
-        config = {'guestBootId': BOOT, 'hostQueryRuntime': {}, 'hostQueryGuidedRuntime': {}, 'conversations': []}
-        flags = SimpleNamespace(isolated=1, no_site=1)
-        with patch.object(service.sys, 'platform', 'linux'), patch.object(service.os, 'geteuid', return_value=0), \
-                patch.object(service.sys, 'flags', flags), patch.object(service.Path, 'read_text', return_value=BOOT + '\n'), \
-                patch.object(service, 'pinned_artifact') as pin:
-            with self.assertRaisesRegex(service.Refusal, 'runtime_profile_conflict'):
-                service.ToolService(config)
-            pin.assert_not_called()
+    def test_service_constructor_refuses_host_query_with_the_guided_key_before_any_artifact_opens(self):
+        for keys in (('hostQueryRuntime', 'hostQueryGuidedRuntime'), ('freshRuntime', 'hostQueryGuidedRuntime'), ('freshRuntime', 'hostQueryRuntime')):
+            config = {'guestBootId': BOOT, 'conversations': [], **{key: {} for key in keys}}
+            with linux_root_constructor(), patch.object(service, 'pinned_artifact') as pin:
+                with self.assertRaisesRegex(service.Refusal, 'runtime_profile_conflict'):
+                    service.ToolService(config)
+                pin.assert_not_called()
+
+    def test_constructor_conflict_closes_injected_ports_and_releases_their_held_descriptors(self):
+        for keys in (('hostQueryRuntime', 'hostQueryGuidedRuntime'), ('freshRuntime', 'hostQueryGuidedRuntime'), ('freshRuntime', 'hostQueryRuntime')):
+            pipes = hq.Pipes()
+            try:
+                held = list(pipes.ports.fds.values())
+                self.assertEqual(pipes.ports.phase, 'new')
+                config = {'guestBootId': BOOT, 'conversations': [{'logicalSessionId': 'logical'}], **{key: {} for key in keys}}
+                with linux_root_constructor(), patch.object(service, 'pinned_artifact') as pin:
+                    with self.assertRaisesRegex(service.Refusal, 'runtime_profile_conflict'):
+                        service.ToolService(config, host_query_ports={'logical': pipes.ports})
+                    pin.assert_not_called()
+                self.assertEqual(pipes.ports.phase, 'closed')
+                self.assertEqual(pipes.ports.fds, {})
+                for fd in held:
+                    with self.assertRaises(OSError):
+                        os.fstat(fd)
+                # Only Root's duplicates are released; the caller's original descriptors remain.
+                self.assertTrue(os.fstat(pipes.input))
+            finally:
+                pipes.close()
 
 
 class GuidedConfiguredRuntimeTests(unittest.TestCase):
@@ -346,12 +376,15 @@ class GuidedConfiguredRuntimeTests(unittest.TestCase):
 
     # ----- the real send path, with an injected (non-native) process, selector and sockets -----
 
-    def injected_start(self, guided=True):
+    def injected_start(self, profile=GUIDED):
+        guided, plain = profile == GUIDED, profile == 'fresh'
         if guided:
             runtime = self.configure()
+        elif plain:
+            runtime = self.configure(self.fixture.config, profile='fresh')
         else:
             v1 = {k: v for k, v in self.config.items() if k not in ('requiredRuntimeContext', 'generation')}
-            runtime = self.configure(v1, profile='host-query-v1')
+            runtime = self.configure(v1, profile=profile)
         self.obj.runtime_artifacts = {'launcher': 10, 'executable': 11, 'ownerLibrary': 12}
         self.obj.runtime_pins = {name: 'test-pin' for name in self.obj.runtime_artifacts}
         self.obj.environment = -1
@@ -391,11 +424,17 @@ class GuidedConfiguredRuntimeTests(unittest.TestCase):
             return SimpleNamespace(fd=fd, fileobj=fd, data=('duplex', route))
         selector = MagicMock()
         selector.get_map.side_effect = [True, True, True, False]
-        selector.select.side_effect = [
-            [(event(stdout_fd, 'child-stdout'), 1), (event(stderr_fd, 'child-stderr'), 1)],
-            [(SimpleNamespace(fileobj=control, data=None), 1), (event(self.pipes.ports.fds['stdout'], 'host-stdout'), 2),
-             (event(self.pipes.ports.fds['stderr'], 'host-stderr'), 2), (event(stdout_fd, 'child-stdout'), 1), (event(stderr_fd, 'child-stderr'), 1)],
-            [(SimpleNamespace(fileobj=control, data=None), 1)]]
+        if plain:
+            # The fresh route has no duplex relay: the loop reads the child's own pipes directly.
+            stdout_event, stderr_event = SimpleNamespace(fileobj=child.stdout, data=None), SimpleNamespace(fileobj=child.stderr, data=None)
+            selector.select.side_effect = [[(stdout_event, 1), (stderr_event, 1)], [(SimpleNamespace(fileobj=control, data=None), 1), (stdout_event, 1), (stderr_event, 1)],
+                                           [(SimpleNamespace(fileobj=control, data=None), 1)]]
+        else:
+            selector.select.side_effect = [
+                [(event(stdout_fd, 'child-stdout'), 1), (event(stderr_fd, 'child-stderr'), 1)],
+                [(SimpleNamespace(fileobj=control, data=None), 1), (event(self.pipes.ports.fds['stdout'], 'host-stdout'), 2),
+                 (event(self.pipes.ports.fds['stderr'], 'host-stderr'), 2), (event(stdout_fd, 'child-stdout'), 1), (event(stderr_fd, 'child-stderr'), 1)],
+                [(SimpleNamespace(fileobj=control, data=None), 1)]]
         pairs = [(control, parent), (bootstrap, guest)] + ([pair] if guided else [])
         # A third socketpair for v1 (or a fourth for guided) exhausts side_effect and fails the test loudly.
         with patch.object(service, 'verify_held_artifact'), patch.object(service.socket, 'socketpair', side_effect=pairs) as pairing, \
@@ -413,7 +452,7 @@ class GuidedConfiguredRuntimeTests(unittest.TestCase):
         return runtime, bootstrap, seen, pairing
 
     def test_guided_start_sends_five_descriptors_with_the_reader_channel_last(self):
-        runtime, bootstrap, seen, pairing = self.injected_start(guided=True)
+        runtime, bootstrap, seen, pairing = self.injected_start(GUIDED)
         self.assertEqual(runtime['state'], 'stopped')
         self.assertTrue(runtime['cleanupConfirmed'])
         buffers, ancillary = bootstrap.sendmsg.call_args.args[:2]
@@ -433,14 +472,14 @@ class GuidedConfiguredRuntimeTests(unittest.TestCase):
         self.assertEqual(sent['runtimeConfig']['requiredRuntimeContext'], sent['readerRegistration']['requiredRuntimeContext'])
 
     def test_guided_reader_channel_ownership_root_keeps_its_end_until_the_run_is_over(self):
-        _, _, seen, _ = self.injected_start(guided=True)
+        _, _, seen, _ = self.injected_start(GUIDED)
         self.assertTrue(seen['root_open_at_send'])
         self.assertTrue(seen['guest_closed_in_loop'], 'Root must drop its copy of the guest end after the transfer')
         self.assertTrue(seen['root_open_in_loop'], 'closing Root end would end the native owner')
         self.assertEqual(seen['final_closed'], (True, True))
 
     def test_v1_start_still_sends_exactly_four_descriptors_and_no_reader_channel(self):
-        runtime, bootstrap, seen, pairing = self.injected_start(guided=False)
+        runtime, bootstrap, seen, pairing = self.injected_start('host-query-v1')
         self.assertEqual(runtime['state'], 'stopped')
         buffers, ancillary = bootstrap.sendmsg.call_args.args[:2]
         rights = ancillary[0][2]
@@ -452,6 +491,24 @@ class GuidedConfiguredRuntimeTests(unittest.TestCase):
         self.assertNotIn('readerRegistration', sent)
         self.assertNotIn('requiredRuntimeContext', sent['runtimeConfig'])
         self.assertEqual(seen, {})
+
+    def test_fresh_start_still_sends_exactly_four_descriptors_and_is_never_treated_as_guided(self):
+        runtime, bootstrap, seen, pairing = self.injected_start('fresh')
+        self.assertEqual(runtime['state'], 'stopped')
+        self.assertTrue(runtime['cleanupConfirmed'])
+        self.assertNotIn('profile', runtime)
+        buffers, ancillary = bootstrap.sendmsg.call_args.args[:2]
+        rights = ancillary[0][2]
+        self.assertEqual(len(rights), 4)
+        self.assertEqual(list(rights), [600, 700, runtime['fds']['storeDirectory'], 11])
+        self.assertEqual(pairing.call_count, 2)
+        sent = json.loads(buffers[0])
+        self.assertNotIn('profile', sent)
+        self.assertNotIn('readerRegistration', sent)
+        self.assertNotIn('requiredRuntimeContext', sent['runtimeConfig'])
+        self.assertEqual(sent['runtimeConfig']['permissionMode'], 'default')
+        self.assertEqual(seen, {})
+        self.assertEqual(self.pipes.ports.phase, 'new')
 
     def test_failed_guided_send_closes_both_reader_ends_and_retains_debt(self):
         runtime = self.configure()
@@ -481,6 +538,79 @@ class GuidedConfiguredRuntimeTests(unittest.TestCase):
         finally:
             for end in pair:
                 end.close()
+
+
+class ConstructorRootMetadataTests(unittest.TestCase):
+    """Drives the real ToolService constructor's per-root effective metadata (the plan read-only clamp)."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp.name).resolve()
+        for name in ('control', 'environment', 'source', 'artifacts', 'store', 'home'):
+            (self.base / name).mkdir()
+        for name in ('launcher', 'fileWorker', 'processWorker', 'executable', 'ownerLibrary'):
+            (self.base / 'artifacts' / name).write_bytes(b'x')
+        self.pipes = hq.Pipes()
+        self.services = []
+
+    def tearDown(self):
+        for built in self.services:
+            built.close()
+        self.pipes.close()
+        self.temp.cleanup()
+
+    def config(self, profile, policy):
+        key = dict(service.RUNTIME_KEYS)[profile]
+        pin = lambda name: {'path': str(self.base / 'artifacts' / name), 'sha256': '0' * 64}
+        entry = {'logicalSessionId': 'logical', 'authority': dict(AUTH), 'runtimeUid': 20001, 'toolUid': 10001, 'workspaceGid': 10000, 'policy': policy,
+                 'roots': [{'id': 'source', 'guestPath': '/workspace/folders/source', 'readOnly': False, 'source': str(self.base / 'source')}]}
+        config = {'guestBootId': BOOT, 'environment': str(self.base / 'environment'), 'controlDirectory': str(self.base / 'control'), 'protectedStoreDirectories': [],
+                  'artifacts': {name: pin(name) for name in ('launcher', 'fileWorker', 'processWorker')}, 'conversations': [entry]}
+        if profile != 'fresh':
+            config[key] = {'artifacts': {name: pin(name) for name in ('launcher', 'executable', 'ownerLibrary')}}
+            entry[key] = {'storeDirectory': str(self.base / 'store'), 'runhomeDirectory': str(self.base / 'home')}
+        return config
+
+    def construct(self, profile, policy):
+        private = self.base / 'control' / 'logical'
+        if private.exists():
+            private.rmdir()
+        ports = {} if profile == 'fresh' else {'logical': self.pipes.ports}
+        control = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=0)
+        with linux_root_constructor(), patch.object(service, 'pinned_artifact', side_effect=lambda value: os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC)), \
+                patch.object(service.Path, 'lstat', return_value=control), patch.object(service.os, 'chown'), \
+                patch.object(service.ToolService, '_configure_runtime', autospec=True) as configure:
+            built = service.ToolService(self.config(profile, policy), host_query_ports=ports)
+        self.services.append(built)
+        return built, configure
+
+    def test_plan_clamps_roots_read_only_for_v1_and_guided_but_not_fresh(self):
+        for profile, clamped in (('host-query-v1', True), (GUIDED, True), ('fresh', False)):
+            built, configure = self.construct(profile, 'plan')
+            self.assertEqual(built.runtime_profile, profile)
+            self.assertIs(built.conversations['logical']['roots']['source']['root']['readOnly'], clamped, msg=profile)
+            if profile == 'fresh':
+                configure.assert_not_called()
+            else:
+                configure.assert_called_once()
+                self.assertEqual(configure.call_args.kwargs, {'profile': profile})
+            built.close()
+            self.services.remove(built)
+
+    def test_non_plan_policies_leave_roots_as_admitted(self):
+        for profile in ('host-query-v1', GUIDED, 'fresh'):
+            built, _ = self.construct(profile, 'ask')
+            self.assertIs(built.conversations['logical']['roots']['source']['root']['readOnly'], False, msg=profile)
+            built.close()
+            self.services.remove(built)
+
+    def test_the_clamped_metadata_is_what_the_guided_and_v1_config_builders_require(self):
+        for profile in ('host-query-v1', GUIDED):
+            built, _ = self.construct(profile, 'plan')
+            conversation = built.conversations['logical']
+            config = service.host_query_config(conversation, ['read'], 'model')
+            self.assertEqual(config['permissionMode'], 'plan')
+            self.assertEqual(service.guided_host_query_config(conversation, ['read'], 'model', REQUIREMENT)['permissionMode'], 'plan')
 
 
 if __name__ == '__main__':

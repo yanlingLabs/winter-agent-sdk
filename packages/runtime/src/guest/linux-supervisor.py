@@ -384,9 +384,11 @@ class ToolService:
         if not sys.flags.isolated or not sys.flags.no_site:raise Refusal('isolated_interpreter_required')
         if config.get('guestBootId')!=Path('/proc/sys/kernel/random/boot_id').read_text().strip():raise Refusal('stale_guest_boot')
         self.lock=threading.RLock();self.stop_event=threading.Event();self.conversations={};self.active={};self.debt=set();self.tickets={};self.retained_children=[];self.tool_connections=threading.BoundedSemaphore(TOOL_CONNECTION_LIMIT);self.admin_connections=threading.BoundedSemaphore(ADMIN_CONNECTION_LIMIT)
-        self.host_query_ports=dict(host_query_ports or {});self.runtime_profile=select_runtime_profile(config)
+        self.host_query_ports=dict(host_query_ports or {})
         self.artifacts={};self.artifact_pins={};self.owned=[];self.listeners=[];self.threads=[];self.runtimes={};self.runtime_artifacts={};self.runtime_pins={};self.guest_boot=config['guestBootId']
         try:
+            # First inside the try: a conflict still refuses before any artifact opens, and close() releases injected ports.
+            self.runtime_profile=select_runtime_profile(config)
             for name in ('launcher','fileWorker','processWorker'):self.artifacts[name]=pinned_artifact(config['artifacts'][name]);self.artifact_pins[name]=config['artifacts'][name]['sha256'];self.owned.append(self.artifacts[name])
             runtime_key=dict(RUNTIME_KEYS)[self.runtime_profile]
             expected_ports={item['logicalSessionId'] for item in config['conversations'] if 'hostQueryRuntime' in item or 'hostQueryGuidedRuntime' in item}

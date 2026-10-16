@@ -59,8 +59,10 @@ be answered. It does not shut the stream down or write to it.
 envelope, claimed natively by the admission factory, never a numbered argument. It must never call
 the v1 or fresh factory; a static test pins that, and that no other file references the entry. The
 entry is deliberately not in the `scripts/guest-host-query` packet or compile lists, which would change
-compile pins. `linux-session-admission.ts` was left untouched for the same reason, so its comment
-that no current entry calls the guided factory is now stale by exactly this one unpackaged file.
+compile pins. The comment in `linux-session-admission.ts` saying that no current entry, producer or
+public SDK export calls the guided factory is now stale by exactly this one unpackaged source file. It is
+left unedited on purpose: that module is a compile input of the v1 host-query entry, so even a comment
+edit would change the v1 compile inputs and their pins.
 
 ## What stays refused
 
@@ -80,18 +82,23 @@ that no current entry calls the guided factory is now stale by exactly this one 
 
 ## Open decisions
 
-The brief for this slice names one open decision, "F2". The repository defines no such label, so both
-candidates are stated here and the reviewer should confirm which one is meant.
+Two decisions (together "F2") gate any activation of the guided profile, and a third item is a separate
+prerequisite for both.
 
-1. **Correlation delivery.** Today `requiredRuntimeContext` is a plain input in Root's trusted
-   config. How a prepared query's `{version: 1, bindingId}` reaches Root before bootstrap creation
-   (the hook-to-Root transport) is undecided and out of scope here; the SDK's preparation/claim
-   lifecycle and its 4096-entry consumed-ID set are source prerequisites, not that transport.
-2. **Generation and replay policy.** Root takes `generation` as an explicit positive integer and
-   enforces no expiry, rotation or replay ledger. Whether Root mints it, ages it out, and how a
-   consumed registration or binding is refused after a restart is the open production policy
+1. **Whether and how the `query.ts` guard is lifted.** The SDK host still refuses every confined
+   required-context query. What evidence a future change must require before lifting that refusal
+   (an actual native owner admission of the five-descriptor record, a served and drained reader, a
+   mounted guidance view), and where the lift sits, is undecided. Nothing in this slice moves it.
+2. **Generation expiry and replay policy.** Root takes `generation` as an explicit positive integer and
+   enforces no expiry, rotation or replay ledger. Whether Root mints it, ages it out, and how a consumed
+   registration or binding is refused after a restart is the open production policy
    (`guided-session-wiring-continuation.md`, item 6). A fixed value would be a placeholder, not a
    policy, which is why the input is explicit.
+
+Separate prerequisite, also undecided: **correlation delivery**. Today `requiredRuntimeContext` is a
+plain input in Root's trusted config. How a prepared query's `{version: 1, bindingId}` reaches Root
+before bootstrap creation (the hook-to-Root transport) is out of scope here; the SDK's preparation and
+claim lifecycle and its 4096-entry consumed-ID set are source prerequisites, not that transport.
 
 ## Tests
 
