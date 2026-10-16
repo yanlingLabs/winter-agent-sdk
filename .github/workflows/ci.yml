@@ -10,7 +10,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -30,6 +30,20 @@ jobs:
         run: sudo -n python3 -I -S scripts/guest-supervisor/verify.py --runtime-client /tmp/winter-supervisor-ci-client
       - name: supervisor saturation, absolute deadlines and descriptor refusal cleanup
         run: python3 -I -S scripts/guest-supervisor/test_protocol.py
+      # The Workflow worker's Linux confinement: unprivileged Landlock + seccomp + no_new_privs, applied
+      # by the launcher role and observed from inside the worker, on both architectures (the syscall
+      # tables differ). A kernel that cannot confine FAILS here (WINTER_REQUIRE_LINUX_CONFINEMENT),
+      # it does not skip. No sudo: the worker is confined as an ordinary user.
+      - name: build the packages the Workflow confinement tests resolve through
+        run: bun run build:packages
+      - name: Workflow worker Linux confinement (real kernel, unprivileged)
+        env:
+          WINTER_REQUIRE_LINUX_CONFINEMENT: "1"
+        run: bun test packages/runtime/src/workflows/linux-confinement-policy.test.ts packages/runtime/src/workflows/worker.linux.test.ts
+      - name: compiled-binary Workflow gate -- the binary is the confinement launcher, on this architecture
+        env:
+          WINTER_REQUIRE_LINUX_CONFINEMENT: "1"
+        run: bun run verify:workflow
 
   # --- P9a-4: the SAME macOS build as release.yml's `build-platform`, minus the tag pin, on EVERY
   # push -- so a broken darwin build fails here, before a `v*` tag ever exists to discover it at
@@ -80,6 +94,9 @@ jobs:
                                                      # once and passed on re-run. `scripts/release-gates.test.ts`
                                                      # pins this step's position.
       - run: bun test                              # all unit tests (codec, runtime, wrapper, trace, version)
+        env:
+          WINTER_REQUIRE_LINUX_CONFINEMENT: "1"      # a runner that lost Landlock/seccomp fails the Linux Workflow
+                                                     # cases (workflows/worker.linux.test.ts) instead of skipping them
       - run: bun run typecheck                     # whole-repo tsc --noEmit incl. test files (sdk, runtime,
                                                      # conformance/src, scripts) — Task 5 rider; `bun test` only
                                                      # type-strips, so this is the repo's one real tsc gate
@@ -111,11 +128,14 @@ jobs:
                                                       # `__workflow-worker` argv dispatch, which no other gate
                                                       # exercises -- a dispatch that only exists in the COMPILED
                                                       # entry graph, so a dev-leg run cannot stand in for it.
-                                                      # `sandbox: false` on a host without /usr/bin/sandbox-exec
-                                                      # (this runner) is the script's own documented linux mode:
-                                                      # the SUBJECT there is the argv dispatch and the bridge, and
-                                                      # `launch()` still refuses outright in production when the
-                                                      # sandbox is required and unavailable.
+                                                      # On Linux the worker runs CONFINED (Landlock + seccomp), with
+                                                      # the compiled binary as the confinement launcher too; the
+                                                      # requirement below makes a runner that cannot confine fail
+                                                      # here. A host with neither fence would run it unsandboxed
+                                                      # (`sandbox: false`) and say so, but `launch()` still refuses
+                                                      # outright in production when the sandbox is required.
+        env:
+          WINTER_REQUIRE_LINUX_CONFINEMENT: "1"
 
   pack-smoke:
     # P7a Lane C, Step 3 (WS-02 §9 item 3): proves a consumer can actually INSTALL and IMPORT what
