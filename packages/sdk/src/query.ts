@@ -1,5 +1,6 @@
 import { RUNTIME_CONTEXT_SUBTYPE, RUNTIME_CONTEXT_VERSION, parseRuntimeContextRequest, parseRuntimeContextSnapshot } from "./runtime-context.ts";
-import { claimGuidedQuery, closeGuidedQuery, assertGuidedQueryCorrelation, type GuidedQueryClaim, type GuidedQueryCorrelation, type GuidedQueryPreparation } from "./guided-query-preparation.ts";
+import { claimGuidedQuery, closeGuidedQuery, assertGuidedQueryCorrelation, assertGuidedQueryClaimActive, type GuidedQueryClaim, type GuidedQueryCorrelation, type GuidedQueryPreparation } from "./guided-query-preparation.ts";
+import { retireGuidedGuestTicket, spendGuidedGuestTicket } from "./guided-guest-attestation.ts";
 import { installGuidedQueryReader } from "./guided-query-reader.ts";
 import { GUIDED_READER_SUBTYPE, parseGuidedInstructionResponse, type GuidedInstructionRequest } from "./guided-reader-protocol.ts";
 import { randomUUID } from "node:crypto";
@@ -782,6 +783,10 @@ function abortedBeforeSpawn(): SpawnedRuntimeProcess {
 interface QueryPreparationLifecycle {
   preparation: GuidedQueryPreparation;
   claim: GuidedQueryClaim;
+  /** True only when a guest ticket was spent for this query: the one door through which a guided query may run as a confined guest. */
+  guest: boolean;
+  /** Guest queries only: refuses before spawn when the lifecycle is closed or the ticket's generation is no longer current. */
+  live(): void;
   callback: NonNullable<Options["onRuntimeContext"]>;
   spawn: NonNullable<Options["spawnClaudeCodeProcess"]>;
   assert(expected: Readonly<GuidedQueryCorrelation>): void;
@@ -793,7 +798,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   const preparation = args.options.guidedQueryPreparation;
   if (preparation === undefined) return queryImplementation(args);
   let closed = false, teardown: (() => void) | undefined;
-  let controller: AbortController | undefined, signal: AbortSignal | undefined;
+  let controller: AbortController | undefined, signal: AbortSignal | undefined, ticket: unknown, spentTicket = false;
   const close = () => {
     if (closed) return;
     closed = true; signal?.removeEventListener("abort", close);
@@ -801,7 +806,11 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   };
   try {
     controller = args.options.abortController; signal = controller?.signal;
-    // No preparation can lift the current unconditional native guest refusal.
+    // A guest ticket is read as an own data field exactly like the posture, so no getter of caller text ever runs.
+    const ticketField = Object.getOwnPropertyDescriptor(args.options, "guidedGuestTicket");
+    ticket = ticketField !== undefined && "value" in ticketField ? ticketField.value : undefined;
+    // The unconditional native guest refusal lifts ONLY for a valid, unspent, current-generation guest ticket bound to
+    // this preparation (guided-guest-attestation.ts); without a ticket nothing below differs from the refusal before it.
     const callback = Object.getOwnPropertyDescriptor(args.options, "onRuntimeContext");
     const spawn = Object.getOwnPropertyDescriptor(args.options, "spawnClaudeCodeProcess");
     const required = Object.getOwnPropertyDescriptor(args.options, "requireRuntimeContext");
@@ -810,8 +819,13 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       || !spawn || !("value" in spawn) || typeof spawn.value !== "function"
       || !required || !("value" in required) || required.value !== true
       || (posture === undefined && Reflect.has(args.options, "executionPosture"))
-      || (posture !== undefined && (!("value" in posture) || (posture.value !== undefined && posture.value !== "local")))) throw new Error("required_context_unavailable");
+      || (posture !== undefined && (!("value" in posture) || (posture.value !== undefined && posture.value !== "local"
+        && !(ticket !== undefined && posture.value === "confined-guest"))))
+      || (ticketField !== undefined && !("value" in ticketField))
+      || (ticket !== undefined && (posture === undefined || !("value" in posture) || posture.value !== "confined-guest"))) throw new Error("required_context_unavailable");
     const pair = Object.freeze({ onRuntimeContext: callback.value, spawnClaudeCodeProcess: spawn.value });
+    // Spent BEFORE the claim and atomically: a second presentation, of any ticket state, never works again.
+    if (ticket !== undefined) { spendGuidedGuestTicket(ticket, preparation, () => { close(); teardown?.(); }); spentTicket = true; }
     const claim = claimGuidedQuery(preparation, pair);
     // Only prepared lifecycle fields are fixed; unrelated option getters retain
     // their original receiver and ordinary callers never take this branch.
@@ -827,8 +841,10 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     if (signal?.aborted) { close(); return queryImplementation(ownedArgs); }
     signal?.addEventListener("abort", close, { once: true });
     const lifecycle: QueryPreparationLifecycle = {
-      preparation, claim, close, callback: pair.onRuntimeContext, spawn: pair.spawnClaudeCodeProcess,
+      preparation, claim, close, callback: pair.onRuntimeContext, spawn: pair.spawnClaudeCodeProcess, guest: ticket !== undefined,
+      // The generation check lives inside assertGuidedQueryCorrelation, so every assert site (and the reader scope) shares it.
       assert(expected) { if (closed) throw new Error("required_context_unavailable"); assertGuidedQueryCorrelation(claim, expected); },
+      live() { if (closed) throw new Error("required_context_unavailable"); assertGuidedQueryClaimActive(claim); },
       attach(proc) { void proc.exited.then(close, close); },
       teardown(action) { teardown = action; },
     };
@@ -841,7 +857,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     gen.throw = (...values) => { close(); if (!started) teardown?.(); return originalThrow(...values); };
     return gen;
   } catch (error) {
-    close(); teardown?.(); throw error;
+    close(); teardown?.(); retireGuidedGuestTicket(ticket, spentTicket); throw error;
   }
 }
 function queryImplementation(args: { prompt: string | AsyncIterable<string>; options: Options }, preparation?: QueryPreparationLifecycle): Query {
@@ -957,7 +973,8 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
   if (preparation === undefined && ((options.requireRuntimeContext !== undefined && typeof options.requireRuntimeContext !== "boolean")
     || (options.requireRuntimeContext === true) !== (typeof options.onRuntimeContext === "function")
     || (options.onRuntimeContext !== undefined && typeof options.onRuntimeContext !== "function"))) throw new Error("required_context_unavailable");
-  if ((preparation !== undefined || options.requireRuntimeContext === true) && options.executionPosture === "confined-guest") throw new Error("required_context_unavailable");
+  // Guided + confined-guest runs only when query() spent a guest ticket for it; non-guided requireRuntimeContext never does.
+  if ((preparation !== undefined || options.requireRuntimeContext === true) && options.executionPosture === "confined-guest" && preparation?.guest !== true) throw new Error("required_context_unavailable");
   const contextBindingId = preparation !== undefined || options.requireRuntimeContext === true ? randomUUID() : undefined;
   const config: RuntimeConfig = {
     ...(contextBindingId !== undefined ? { requiredRuntimeContext: { version: RUNTIME_CONTEXT_VERSION, bindingId: contextBindingId } } : {}),
@@ -1125,6 +1142,8 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
     // Read by `defaultSpawn` only (the runtime's parent is then this process): see `SpawnRuntimeOptions.hostPidEnv`.
     hostPidEnv: envName(brand, "HOST_PID"),
   };
+  // A guest ticket whose generation died after it was spent must not reach the host's spawn hook.
+  if (preparation?.guest === true) preparation.live();
   // An ALREADY-ABORTED signal spawns nothing: a caller that aborted before asking (and may never read
   // the Query) must not be left with a live runtime child. The Query still behaves exactly as if the
   // abort had landed right after a spawn -- reading it throws `AbortError` -- through an inert stand-in
