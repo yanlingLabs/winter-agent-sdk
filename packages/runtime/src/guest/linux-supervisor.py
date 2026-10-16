@@ -11,6 +11,16 @@ TOOL_CONNECTION_LIMIT=24
 ADMIN_CONNECTION_LIMIT=2
 AUTH_KEYS=('workspaceId','sessionId','incarnationId','leaseEpoch','configRevision','grantRevision','policyRevision')
 ID=re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$')
+# Guided host-query profile: closed constants. Root's own trusted config is the only selector.
+GUIDED_PROFILE='host-query-guided-v1'
+GUIDED_READER_LIMITS={'maxFileBytes':128*1024,'maxReadBytes':256*1024,'maxReadOccurrences':256,'maxExpandedBytes':128*1024}
+GUIDED_SHARED_ROOT='/run/winter/shared-instructions'
+GUIDED_SHARED_PATH=GUIDED_SHARED_ROOT+'/WINTER.md'
+GUIDED_SOURCE_ROOT=re.compile(r'^/workspace/(folders|repos)/[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$')
+GUIDED_UUID4=re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
+GUIDED_BOOT_ID=re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+JS_SAFE_INTEGER=2**53-1
+RUNTIME_KEYS=(('fresh','freshRuntime'),('host-query-v1','hostQueryRuntime'),(GUIDED_PROFILE,'hostQueryGuidedRuntime'))
 class Refusal(Exception):pass
 class Uncertain(Exception):pass
 
@@ -324,21 +334,64 @@ def host_query_config(item,tool_classes,model):
     sid=item['logicalSessionId'];bypass=item['policy']=='bypass'
     return {'executionPosture':'confined-guest','sessionId':item['authority']['sessionId'],'model':model,'cwd':roots[0]['guestPath'],'winterHome':f'/run/winter/conversations/{sid}','storeHome':f'/workspace/.winter/conversations/{sid}','persistSession':True,'settingSources':[],'tools':tools,'allowedTools':[],'skills':[],'plugins':[],'strictMcpConfig':True,'mcpServers':{},'permissionMode':modes[item['policy']],'permissions':{'disableBypassPermissionsMode':not bypass},'allowDangerouslySkipPermissions':bypass}
 
+def select_runtime_profile(config):
+    # Only the key Root's own trusted config FD carries selects a profile. Tool and
+    # admin requests never reach this function; a second profile key is a conflict.
+    present=[profile for profile,key in RUNTIME_KEYS if key in config]
+    if len(present)>1:raise Refusal('runtime_profile_conflict')
+    return present[0] if present else 'fresh'
+
+def item_profile_conflict(item,runtime_key):
+    return any(key in item and key!=runtime_key for _,key in RUNTIME_KEYS)
+
+def guided_requirement(value):
+    # Plain Root-config correlation: the SDK's closed {version:1,bindingId}. Delivery
+    # from a prepared query to Root is a separate, undecided transport.
+    if type(value) is not dict or set(value)!={'version','bindingId'} or type(value['version']) is not int or value['version']!=1 or type(value['bindingId']) is not str or not GUIDED_UUID4.fullmatch(value['bindingId']):raise Refusal('guided_context')
+    return {'version':1,'bindingId':value['bindingId']}
+
+def guided_generation(value):
+    # Explicit Root input. The production expiry/replay policy is still undecided.
+    if type(value) is not int or not 1<=value<=JS_SAFE_INTEGER:raise Refusal('guided_generation')
+    return value
+
+def guided_host_query_config(item,tool_classes,model,requirement):
+    config=host_query_config(item,tool_classes,model)
+    config['requiredRuntimeContext']=guided_requirement(requirement)
+    return config
+
+def guided_reader_registration(item,config,boot_id,registration_id,generation):
+    # Closed DATA only: the guest validators bind it, the native owner does not authenticate it.
+    requirement=guided_requirement(config.get('requiredRuntimeContext'));source=config['cwd'];authority=item['authority']
+    if not GUIDED_SOURCE_ROOT.fullmatch(source):raise Refusal('guided_roots')
+    if type(authority['leaseEpoch']) is not int or not 1<=authority['leaseEpoch']<=JS_SAFE_INTEGER or type(boot_id) is not str or not GUIDED_BOOT_ID.fullmatch(boot_id):raise Refusal('guided_scope')
+    if type(registration_id) is not str or not GUIDED_UUID4.fullmatch(registration_id):raise Refusal('guided_registration')
+    owner={'workspaceId':authority['workspaceId'],'logicalSessionId':item['logicalSessionId'],'backendSessionId':authority['sessionId'],'incarnationId':authority['incarnationId'],'leaseEpoch':authority['leaseEpoch'],'bootId':boot_id,'generation':guided_generation(generation)}
+    return {'version':1,'registrationId':registration_id,'owner':owner,'views':{'sourceRoot':source,'sourceCwd':source,'sharedRoot':GUIDED_SHARED_ROOT,'sharedPath':GUIDED_SHARED_PATH},'limits':dict(GUIDED_READER_LIMITS),'requiredRuntimeContext':requirement}
+
+def bootstrap_rights(profile,pidfd,service_pidfd,store_fd,executable_fd,reader_fd=None):
+    # The native owner accepts exactly four descriptors, or five for guided with its reader channel.
+    rights=array.array('i',[pidfd,service_pidfd,store_fd,executable_fd])
+    if profile==GUIDED_PROFILE:
+        if type(reader_fd) is not int or reader_fd<0:raise Refusal('guided_reader_channel')
+        rights.append(reader_fd)
+    elif reader_fd is not None:raise Refusal('runtime_profile_conflict')
+    return rights
+
 class ToolService:
     def __init__(self,config,*,host_query_ports=None):
         if sys.platform!='linux' or os.geteuid()!=0:raise Refusal('protected_linux_root_required')
         if not sys.flags.isolated or not sys.flags.no_site:raise Refusal('isolated_interpreter_required')
         if config.get('guestBootId')!=Path('/proc/sys/kernel/random/boot_id').read_text().strip():raise Refusal('stale_guest_boot')
         self.lock=threading.RLock();self.stop_event=threading.Event();self.conversations={};self.active={};self.debt=set();self.tickets={};self.retained_children=[];self.tool_connections=threading.BoundedSemaphore(TOOL_CONNECTION_LIMIT);self.admin_connections=threading.BoundedSemaphore(ADMIN_CONNECTION_LIMIT)
-        self.host_query_ports=dict(host_query_ports or {});self.runtime_profile='host-query-v1' if 'hostQueryRuntime' in config else 'fresh'
+        self.host_query_ports=dict(host_query_ports or {});self.runtime_profile=select_runtime_profile(config)
         self.artifacts={};self.artifact_pins={};self.owned=[];self.listeners=[];self.threads=[];self.runtimes={};self.runtime_artifacts={};self.runtime_pins={};self.guest_boot=config['guestBootId']
         try:
             for name in ('launcher','fileWorker','processWorker'):self.artifacts[name]=pinned_artifact(config['artifacts'][name]);self.artifact_pins[name]=config['artifacts'][name]['sha256'];self.owned.append(self.artifacts[name])
-            if 'freshRuntime' in config and 'hostQueryRuntime' in config:raise Refusal('runtime_profile_conflict')
-            runtime_key='hostQueryRuntime' if self.runtime_profile=='host-query-v1' else 'freshRuntime'
-            expected_ports={item['logicalSessionId'] for item in config['conversations'] if 'hostQueryRuntime' in item}
+            runtime_key=dict(RUNTIME_KEYS)[self.runtime_profile]
+            expected_ports={item['logicalSessionId'] for item in config['conversations'] if 'hostQueryRuntime' in item or 'hostQueryGuidedRuntime' in item}
             if set(self.host_query_ports)!=expected_ports or any(type(port) is not RuntimeDuplexPorts for port in self.host_query_ports.values()):raise Refusal('host_query_transport')
-            if any(('hostQueryRuntime' in item and runtime_key!='hostQueryRuntime') or ('freshRuntime' in item and runtime_key!='freshRuntime') or ('freshRuntime' in item and 'hostQueryRuntime' in item) for item in config['conversations']):raise Refusal('runtime_profile_conflict')
+            if any(item_profile_conflict(item,runtime_key) for item in config['conversations']):raise Refusal('runtime_profile_conflict')
             if runtime_key in config:
                 if set(config[runtime_key])!={'artifacts'} or set(config[runtime_key]['artifacts'])!={'launcher','executable','ownerLibrary'}:raise Refusal('runtime_artifacts')
                 for name,value in config[runtime_key]['artifacts'].items():
@@ -374,7 +427,7 @@ class ToolService:
                     allowed=(len(parts)>=3 and parts[:2] in (['workspace','folders'],['workspace','repos'])) or parts==['workspace','.winter','memory'] or parts==['workspace','.winter','scratch',sid] or parts==['workspace','outputs',sid]
                     if not allowed:raise Refusal('protected_root')
                     fd=source_directory(root['source'],protected);self.owned.append(fd)
-                    roots[root['id']]={'root':runtime_root_metadata(root,item['policy'],'hostQueryRuntime' in item),'fd':fd}
+                    roots[root['id']]={'root':runtime_root_metadata(root,item['policy'],'hostQueryRuntime' in item or 'hostQueryGuidedRuntime' in item),'fd':fd}
                 views=[v['root']['guestPath'] for v in roots.values()]
                 if len(set(views))!=len(views) or any(a!=b and b.startswith(a+'/') for a in views for b in views):raise Refusal('overlapping_roots')
                 private=self.directory/sid;private.mkdir(mode=0o750);os.chown(private,0,runtime)
@@ -601,12 +654,16 @@ class ToolService:
         # Only immutable root bootstrap can select artifacts, directories, model or
         # public provider metadata. The tool/admin launch request carries only sid.
         allowed={'storeDirectory','runhomeDirectory','provider','model','timeoutMs'}
-        if profile=='host-query-v1':allowed.add('toolClasses')
-        elif profile!='fresh':raise Refusal('runtime_profile_conflict')
+        if profile in ('host-query-v1',GUIDED_PROFILE):allowed.add('toolClasses')
+        if profile==GUIDED_PROFILE:allowed.update(('requiredRuntimeContext','generation'))
+        elif profile not in ('fresh','host-query-v1'):raise Refusal('runtime_profile_conflict')
         if not self.runtime_artifacts or not isinstance(value,dict) or set(value)-allowed or not {'storeDirectory','runhomeDirectory','provider','model'}<=set(value):raise Refusal('runtime_config')
-        port=None;host_config=None
-        if profile=='host-query-v1':
-            host_config=host_query_config(item,value.get('toolClasses'),value['model'])
+        port=None;host_config=None;reader_registration=None
+        if profile in ('host-query-v1',GUIDED_PROFILE):
+            if profile==GUIDED_PROFILE:
+                host_config=guided_host_query_config(item,value.get('toolClasses'),value['model'],value.get('requiredRuntimeContext'))
+                reader_registration=guided_reader_registration(item,host_config,self.guest_boot,str(uuid.uuid4()),value.get('generation'))
+            else:host_config=host_query_config(item,value.get('toolClasses'),value['model'])
             port=getattr(self,'host_query_ports',{}).get(item['logicalSessionId'])
             if type(port) is not RuntimeDuplexPorts:raise Refusal('host_query_transport')
             port.bind(item)
@@ -643,6 +700,7 @@ class ToolService:
         if os.listdir(descriptors['storeDirectory']) or os.listdir(descriptors['runhomeDirectory']):raise Refusal('runtime_fresh_store_required')
         self.runtimes[item['logicalSessionId']]={'state':'configured','cancel':threading.Event(),'fds':descriptors,'provider':json.loads(canonical(provider)),'model':value['model'],'timeout':timeout/1000,'cleanupConfirmed':False,'exitCode':None,'ownerToken':os.urandom(32).hex()}
         if port is not None:self.runtimes[item['logicalSessionId']].update(profile=profile,duplex=port,hostConfig=host_config)
+        if reader_registration is not None:self.runtimes[item['logicalSessionId']].update(readerRegistration=reader_registration)
     def _runtime_record(self,item,runtime):
         sid=item['logicalSessionId'];home=f'/run/winter/conversations/{sid}';store=f'/workspace/.winter/conversations/{sid}'
         # Root-owned fixture preauthorization only. Winter's production Auto uses
@@ -650,6 +708,9 @@ class ToolService:
         tools=['Read','Write','Edit','Bash'];scope={key:item['authority'][key] for key in ('workspaceId','sessionId','incarnationId','leaseEpoch')};scope.update(storeHome=store,currentBootId=self.guest_boot)
         record={'protocolVersion':1,'freshOnly':True,'runtimeUid':item['runtimeUid'],'toolUid':item['toolUid'],'workspaceGid':item['workspaceGid'],'logicalSessionId':sid,'scope':scope,'ownerToken':runtime['ownerToken'],'toolSocketPath':home+'/.control/tools.sock','authority':dict(item['authority']),'roots':[binding['root'] for binding in item['roots'].values()],'provider':runtime['provider'],'runtimeConfig':{'executionPosture':'confined-guest','sessionId':item['authority']['sessionId'],'model':runtime['model'],'cwd':next(iter(item['roots'].values()))['root']['guestPath'],'winterHome':home,'storeHome':store,'persistSession':True,'settingSources':[],'tools':tools,'allowedTools':tools,'skills':[],'plugins':[],'strictMcpConfig':True,'mcpServers':{},'permissionMode':'default'}}
         if runtime.get('profile')=='host-query-v1':record.update(profile='host-query-v1',runtimeConfig=json.loads(canonical(runtime['hostConfig'])))
+        if runtime.get('profile')==GUIDED_PROFILE:
+            record.update(profile=GUIDED_PROFILE,runtimeConfig=json.loads(canonical(runtime['hostConfig'])),readerRegistration=json.loads(canonical(runtime['readerRegistration'])))
+            if record['runtimeConfig'].get('requiredRuntimeContext')!=record['readerRegistration']['requiredRuntimeContext']:raise Refusal('guided_context')
         return record
     def launch_runtime(self,sid):
         with self.lock:
@@ -660,7 +721,7 @@ class ToolService:
             runtime['state']='starting';thread=threading.Thread(target=self._run_runtime,args=(self.conversations[sid],runtime),daemon=True);self.threads.append(thread);thread.start()
     def _run_runtime(self,item,runtime):
         sid=item['logicalSessionId'];child=None;pidfd=None;control=None;parent=None;bootstrap=None;guest=None;view=None;selector=None;confirmed=False;service_pidfd=None
-        out=bytearray();err=bytearray();failure=None;relay=None;port=runtime.get('duplex')
+        out=bytearray();err=bytearray();failure=None;relay=None;port=runtime.get('duplex');reader_root=None;reader_guest=None
         observations={'phase':'artifact-admission','nativeReceiptObserved':False,'nativeExitCode':None,'parentReaped':False,'parentExitCode':None,'toolDrainConfirmed':False,'nativeCleanupConfirmed':False,'ownershipReleased':False}
         try:
             if port is not None:port.claim(item)
@@ -681,8 +742,15 @@ class ToolService:
             with self.lock:runtime['scope']=bootstrap_record['scope']
             record=canonical(bootstrap_record).encode()
             if len(record)>65536:raise Refusal('runtime_bootstrap_limit')
-            rights=array.array('i',[pidfd,service_pidfd,runtime['fds']['storeDirectory'],self.runtime_artifacts['executable']]);bootstrap.settimeout(2)
-            if bootstrap.sendmsg([record],[(socket.SOL_SOCKET,socket.SCM_RIGHTS,rights)])!=len(record):raise Uncertain('runtime_bootstrap_send')
+            guided=runtime.get('profile')==GUIDED_PROFILE
+            # Guided only: Root keeps reader_root open (nothing serves it in this slice) until
+            # the finally below. Closing it would make the native owner check fail.
+            if guided:reader_root,reader_guest=socket.socketpair(socket.AF_UNIX,socket.SOCK_STREAM)
+            rights=bootstrap_rights(runtime.get('profile'),pidfd,service_pidfd,runtime['fds']['storeDirectory'],self.runtime_artifacts['executable'],reader_guest.fileno() if guided else None);bootstrap.settimeout(2)
+            try:sent=bootstrap.sendmsg([record],[(socket.SOL_SOCKET,socket.SCM_RIGHTS,rights)])
+            finally:
+                if reader_guest is not None:reader_guest.close()
+            if sent!=len(record):raise Uncertain('runtime_bootstrap_send')
             with self.lock:runtime.update(state='running',initPidfd=pidfd)
             selector=selectors.DefaultSelector();control.setblocking(False);selector.register(control,selectors.EVENT_READ)
             if port is not None:relay=RuntimeDuplexRelay(port,child,runtime['cancel'])
@@ -781,7 +849,7 @@ class ToolService:
             with self.lock:runtime.pop('initPidfd',None)
             for fd in (pidfd,service_pidfd):
                 if fd is not None:os.close(fd)
-            for channel in (control,parent,bootstrap,guest):
+            for channel in (control,parent,bootstrap,guest,reader_root,reader_guest):
                 if channel is not None:channel.close()
             if confirmed and view is not None:os.rmdir(view)
     def close(self):

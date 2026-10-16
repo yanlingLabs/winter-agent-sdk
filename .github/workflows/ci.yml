@@ -30,6 +30,8 @@ jobs:
         run: sudo -n python3 -I -S scripts/guest-supervisor/verify.py --runtime-client /tmp/winter-supervisor-ci-client
       - name: supervisor saturation, absolute deadlines and descriptor refusal cleanup
         run: python3 -I -S scripts/guest-supervisor/test_protocol.py
+      - name: guided Root bootstrap producer, fifth descriptor and profile selection (source only, nothing admitted)
+        run: python3 -I -S -B scripts/guest-supervisor/test_guided_host_query.py
 
   # --- P9a-4: the SAME macOS build as release.yml's `build-platform`, minus the tag pin, on EVERY
   # push -- so a broken darwin build fails here, before a `v*` tag ever exists to discover it at
