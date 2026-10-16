@@ -255,10 +255,10 @@ export const FCNTL_DENIED_COMMANDS: Readonly<Record<string, number>> = {
 /**
  * ioctl requests denied: the ownership ones that do what F_SETOWN does (FIOSETOWN, SIOCSPGRP), terminal
  * input injection (TIOCSTI), and the file-attribute setters that change a file through a read-only
- * descriptor (FS_IOC_SETFLAGS, FS_IOC_FSSETXATTR, FS_IOC_ENABLE_VERITY, which makes a file permanently read-only).
+ * descriptor (FS_IOC_SETFLAGS, FS_IOC_SETVERSION, FS_IOC_FSSETXATTR, FS_IOC_ENABLE_VERITY, which makes a file permanently read-only).
  */
 export const IOCTL_DENIED_REQUESTS: Readonly<Record<string, number>> = {
-  FIOSETOWN: 0x8901, SIOCSPGRP: 0x8902, TIOCSTI: 0x5412, FS_IOC_SETFLAGS: 0x40086602, FS_IOC_FSSETXATTR: 0x401c5820, FS_IOC_ENABLE_VERITY: 0x40806685,
+  FIOSETOWN: 0x8901, SIOCSPGRP: 0x8902, TIOCSTI: 0x5412, FS_IOC_SETFLAGS: 0x40086602, FS_IOC_SETVERSION: 0x40087602, FS_IOC_FSSETXATTR: 0x401c5820, FS_IOC_ENABLE_VERITY: 0x40806685,
 };
 
 export function deniedSyscallNames(): string[] {

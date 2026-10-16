@@ -171,6 +171,7 @@ emit("vectors", {
   ioctlSiocspgrp: raw(P.nr.ioctl, 0, 0x8902, ptr(ownerBuf)),
   ioctlTiocsti: raw(P.nr.ioctl, 0, 0x5412, ptr(scratchA)),
   ioctlSetflags: raw(P.nr.ioctl, 0, 0x40086602, ptr(scratchA)),
+  ioctlSetversion: raw(P.nr.ioctl, 0, 0x40087602, ptr(scratchA)),
   ioctlFionread: raw(P.nr.ioctl, 0, 0x541b, ptr(scratchA)),
   setpriorityParent: raw(P.nr.setpriority, 0, ppid, 19),
   setpriorityUser: raw(P.nr.setpriority, 2, 0, 19),
@@ -396,7 +397,7 @@ describe("a confined worker (real Landlock + seccomp + no_new_privs, observed fr
 
   t("a signal-like effect on the PARENT through prlimit64, fcntl(F_SETOWN/F_SETSIG/F_SETOWN_EX), ioctl(FIOSETOWN/SIOCSPGRP) or the scheduling calls answers EPERM, and the parent is untouched", () => {
     const v = k().vectors as Record<string, [number, number]>;
-    for (const name of ["prlimitParentSet", "prlimitParentGet", "fcntlSetown", "fcntlSetsig", "fcntlSetownEx", "fcntlSetlk", "ioctlFiosetown", "ioctlSiocspgrp", "ioctlTiocsti", "ioctlSetflags", "setpriorityParent", "setpriorityUser", "ioprioParent"]) {
+    for (const name of ["prlimitParentSet", "prlimitParentGet", "fcntlSetown", "fcntlSetsig", "fcntlSetownEx", "fcntlSetlk", "ioctlFiosetown", "ioctlSiocspgrp", "ioctlTiocsti", "ioctlSetflags", "ioctlSetversion", "setpriorityParent", "setpriorityUser", "ioprioParent"]) {
       expect({ name, answer: v[name] }).toEqual({ name, answer: [-1, 1] });
     }
     // Every process-naming call, aimed at the parent (and the which-selector ones at the parent's id), is refused too.

@@ -401,6 +401,9 @@ describe.each(["x64", "arm64"] as const)("the seccomp program (%s)", (arch) => {
 
   test("ioctl: ownership (FIOSETOWN, SIOCSPGRP), terminal input injection and the file-attribute setters are denied; FIONREAD, TCGETS, FIOCLEX pass", () => {
     const nr = numbers.ioctl!;
+    // _IOW('v', 2, long): the 64-bit request; the table carries no 32-bit compat numbers (a 32-bit task is killed by the arch check).
+    expect(IOCTL_DENIED_REQUESTS.FS_IOC_SETVERSION).toBe(0x40087602);
+    expect(decide(nr, [3, 0x40087602, 0])).toBe(RET_EPERM);
     for (const [request, value] of Object.entries(IOCTL_DENIED_REQUESTS)) {
       expect({ request, result: decide(nr, [3, value, 0]) }).toEqual({ request, result: RET_EPERM });
       expect({ request, high: true, result: decide(nr, [3, 0xdead0000_00000000n | BigInt(value), 0]) }).toEqual({ request, high: true, result: RET_EPERM });
