@@ -10,7 +10,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -30,6 +30,16 @@ jobs:
         run: sudo -n python3 -I -S scripts/guest-supervisor/verify.py --runtime-client /tmp/winter-supervisor-ci-client
       - name: supervisor saturation, absolute deadlines and descriptor refusal cleanup
         run: python3 -I -S scripts/guest-supervisor/test_protocol.py
+      # The Workflow worker's Linux confinement: unprivileged Landlock + seccomp + no_new_privs, applied
+      # by the launcher role and observed from inside the worker, on both architectures (the syscall
+      # tables differ). A kernel that cannot confine FAILS here (WINTER_REQUIRE_LINUX_CONFINEMENT),
+      # it does not skip. No sudo: the worker is confined as an ordinary user.
+      - name: build the packages the Workflow confinement tests resolve through
+        run: bun run build:packages
+      - name: Workflow worker Linux confinement (real kernel, unprivileged)
+        env:
+          WINTER_REQUIRE_LINUX_CONFINEMENT: "1"
+        run: bun test packages/runtime/src/workflows/linux-confinement-policy.test.ts packages/runtime/src/workflows/worker.linux.test.ts
 
   # --- P9a-4: the SAME macOS build as release.yml's `build-platform`, minus the tag pin, on EVERY
   # push -- so a broken darwin build fails here, before a `v*` tag ever exists to discover it at

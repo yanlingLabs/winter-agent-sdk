@@ -23,7 +23,8 @@ import { RunTranscript, capTranscriptField, renderTranscriptValue } from "./tran
 import { WorkflowRegistry } from "./registry.ts";
 import { makeSemaphore, resolveConcurrencyCap, type Semaphore } from "./semaphore.ts";
 import { createBudget, type WorkflowBudget } from "./budget.ts";
-import { buildWorkerSpawn, resolveWorkerCommand, workflowSandboxAvailable, type WorkerCommand } from "./sandbox.ts";
+import { buildLinuxWorkerSpawn, buildWorkerSpawn, resolveWorkerCommand, workflowSandboxAvailable, workflowSandboxUnavailableMessage, type WorkerCommand } from "./sandbox.ts";
+import { linuxConfinementProbe } from "./linux-confinement.ts";
 import { currentHostCodeProcessClient, hostCodeProcessBrokerRequired } from "../sandbox/host-code-process.ts";
 import { brokeredWorkflowWorker } from "./host-code-worker.ts";
 import type { SandboxBrand } from "../sandbox/profile.ts";
@@ -135,7 +136,8 @@ function assertRequiredWorkflowBroker(): void {
 }
 
 /**
- * The production spawner: `sandbox-exec -p <profile> <worker>`, its own process-group leader.
+ * The production spawner: `sandbox-exec -p <profile> <worker>` on macOS, the Linux confinement
+ * launcher (linux-confinement.ts) on Linux; either way its own process-group leader.
  *
  * `sandbox: false` spawns the worker DIRECTLY, with no seatbelt. It exists for exactly one caller --
  * `scripts/verify-workflow.ts` on a host that has no `/usr/bin/sandbox-exec` (the linux CI runner),
@@ -152,8 +154,14 @@ export function realWorkerSpawner(opts: { sandbox?: boolean } = {}): WorkerSpawn
       if(!spawnOpts.hostCodeScope||!spawnOpts.runId||!spawnOpts.cwd)throw new WorkflowRuntimeError("sandbox-unavailable","Workflow requires an authenticated host execution scope");
       return brokeredWorkflowWorker({cwd:spawnOpts.cwd,runId:spawnOpts.runId,scope:spawnOpts.hostCodeScope});
     }
+    // Linux: refuse here too (not only in `launch`), so a spawner handed to a runtime that skips the
+    // launch-time check still cannot start a worker without the confinement.
+    if (sandbox && process.platform === "linux") {
+      const probe = linuxConfinementProbe();
+      if (!probe.available) throw new WorkflowRuntimeError("sandbox-unavailable", workflowSandboxUnavailableMessage());
+    }
     const spawnTarget = sandbox
-      ? buildWorkerSpawn({
+      ? (process.platform === "linux" ? buildLinuxWorkerSpawn : buildWorkerSpawn)({
           command,
           ...(spawnOpts.home !== undefined ? { home: spawnOpts.home } : {}),
           ...(spawnOpts.winterHome !== undefined ? { winterHome: spawnOpts.winterHome } : {}),
@@ -318,7 +326,7 @@ export class WorkflowRuntime {
     // then only because that spawner is, by construction, not forking anything.
     const needsSandbox = this.deps.requireSandbox ?? this.deps.spawnWorker === undefined;
     if (needsSandbox && !workflowSandboxAvailable()) {
-      throw new WorkflowRuntimeError("sandbox-unavailable", "workflows are unavailable: /usr/bin/sandbox-exec was not found, and a workflow worker is never run unsandboxed (WS-12 §3)");
+      throw new WorkflowRuntimeError("sandbox-unavailable", workflowSandboxUnavailableMessage());
     }
 
     const runId = input.runId ?? `wf_${randomBytes(6).toString("hex")}`;
