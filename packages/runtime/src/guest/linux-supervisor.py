@@ -873,12 +873,65 @@ class ToolService:
         self.owned=[]
         return not self.debt
 
-def main():
-    if len(sys.argv)!=3 or sys.argv[1]!='--trusted-config-fd' or not sys.argv[2].isdigit():raise SystemExit(64)
-    fd=int(sys.argv[2]);st=os.fstat(fd)
+# Root's init (Winter N2 slice S5) starts this process with the trusted config on one descriptor and, when a host-query conversation
+# exists, the runtime transport as three FIFOs on three more: the input it reads, then the stdout and stderr it writes. The relay that
+# owns the virtio port is the other end of those FIFOs; this process never sees the port, and a tool never inherits these descriptors
+# (the supervisor keeps its own CLOEXEC duplicates above fd 64 and the originals are closed before the service starts).
+def descriptor_number(text):
+    if not re.fullmatch(r'[0-9]{1,9}',text) or str(int(text))!=text:raise SystemExit(64)
+    return int(text)
+
+def parse_arguments(argv):
+    """argv -> (trusted config fd, None) or (trusted config fd, (input, stdout, stderr)). Anything else is a usage error (64)."""
+    arguments=list(argv[1:])
+    if len(arguments)==2 and arguments[0]=='--trusted-config-fd':return descriptor_number(arguments[1]),None
+    if len(arguments)==4 and arguments[0]=='--trusted-config-fd' and arguments[2]=='--runtime-ports-fds':
+        config_fd=descriptor_number(arguments[1]);parts=arguments[3].split(',')
+        if len(parts)!=3:raise SystemExit(64)
+        ports=tuple(descriptor_number(part) for part in parts)
+        # Distinct from each other and from the config, and never a standard stream.
+        if len({config_fd,*ports})!=4 or min(ports)<3:raise SystemExit(64)
+        return config_fd,ports
+    raise SystemExit(64)
+
+def host_query_conversations(config):
+    conversations=config.get('conversations') if isinstance(config,dict) else None
+    if not isinstance(conversations,list):return []
+    return [item for item in conversations if isinstance(item,dict) and ('hostQueryRuntime' in item or 'hostQueryGuidedRuntime' in item)]
+
+def runtime_ports_from_descriptors(config,descriptors):
+    """The injected transport for the one host-query conversation, or {} when there is no transport or no conversation that wants one.
+
+    The runtime class of the mux carries a single stream, so more than one host-query conversation cannot be served and is refused.
+    The caller still owns (and closes) the three originals: RuntimeDuplexPorts takes its own duplicates and re-checks every FIFO
+    fact (type, owner, link count, access mode, non-blocking, distinct inodes) itself."""
+    if descriptors is None:return {}
+    wanted=host_query_conversations(config)
+    if not wanted:return {}
+    if len(wanted)>1:raise SystemExit(64)
+    (item,)=wanted;sid=item.get('logicalSessionId')
+    return {sid:RuntimeDuplexPorts(sid,item.get('authority'),*descriptors)}
+
+def close_descriptors(descriptors):
+    for fd in descriptors or ():
+        try:os.close(fd)
+        except OSError:pass
+
+def read_trusted_config(fd):
+    st=os.fstat(fd)
     if fd<3 or not stat.S_ISREG(st.st_mode) or st.st_uid!=0 or st.st_mode&0o022 or st.st_size>65536:raise SystemExit(64)
-    with os.fdopen(fd,'rb') as stream:config=json.load(stream)
-    service=ToolService(config)
+    with os.fdopen(fd,'rb') as stream:return json.load(stream)
+
+def main(argv=None):
+    config_fd,descriptors=parse_arguments(sys.argv if argv is None else argv)
+    try:
+        config=read_trusted_config(config_fd)
+        ports=runtime_ports_from_descriptors(config,descriptors)
+    finally:close_descriptors(descriptors)  # exactly once, success or failure
+    try:service=ToolService(config,host_query_ports=ports)
+    except BaseException:
+        for port in ports.values():port.close()
+        raise
     try:
         service.start();print(canonical({'ready':True,'fullGuestExecutionEnabled':False}),flush=True)
         while sys.stdin.buffer.read(1):pass

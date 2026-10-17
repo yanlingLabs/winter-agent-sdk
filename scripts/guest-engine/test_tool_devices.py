@@ -1,7 +1,7 @@
 """Exact tool-device helpers with portable metadata/filesystem/syscall stand-ins.
 No real devices, root, namespace, mount, helper, guest ELF or VM executes.
 """
-import shutil, subprocess, tempfile, unittest
+import re, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -56,6 +56,21 @@ class ToolDeviceTests(unittest.TestCase):
         result = subprocess.run([self.compiler, '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', str(code), '-o', str(binary)], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         return binary
+
+    def test_the_inventory_names_five_character_devices_and_no_virtio_port_block_device_or_kmsg(self):
+        # Winter's guest init presents the host channel as a virtio console port (/dev/vport*) and the volumes as virtio block devices
+        # (/dev/vd*). The only process that may open the port is the relay Root's init starts; nothing a tool compartment mounts may
+        # reach it, a disk, or the kernel log. The source is the inventory: no string literal may name anything beyond these.
+        table = self.source[self.source.index('static const struct tool_device tool_devices[]'):]
+        table = table[:table.index('};')]
+        self.assertEqual(re.findall(r'\{"([^"]+)",(\d+)\}', table), [('/dev/null', '3'), ('/dev/zero', '5'), ('/dev/full', '7'), ('/dev/random', '8'), ('/dev/urandom', '9')])
+        literals = set(re.findall(r'"(/dev[^"]*)"', self.source))
+        self.assertEqual(literals, {'/dev', '/dev/shm', '/dev/null', '/dev/zero', '/dev/full', '/dev/random', '/dev/urandom'})
+        for name in ('linux-tool-compartment.c', 'process-worker.c', 'file-worker.c'):
+            text = (SOURCE.parent / name).read_text()
+            for needle in ('vport', 'hvc', 'virtio', '/dev/vd', '/dev/sd', '/dev/mmcblk', '/dev/nvme', '/dev/kmsg', '/dev/console', '/dev/mem', '/dev/disk', '/dev/mapper', '/dev/loop'):
+                with self.subTest(file=name, needle=needle):
+                    self.assertNotIn(needle, text)
 
     def test_exact_inventory_pins_each_character_identity_and_mounts_only_held_fd(self):
         start = self.source.index('struct tool_device {')

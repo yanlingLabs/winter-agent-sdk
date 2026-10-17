@@ -215,3 +215,42 @@ the native launcher/helper ABI, Root, a protected service, mount, VM or GUI.
 No TypeScript source changed; typechecks were not repeated. Source review,
 composition, fresh immutable build/full-chain audit and separate run admission
 are still required. No push or CI run was performed from this correction lane.
+
+## Transport from Root's init (Winter N2 slice S5, source only)
+
+The line above that says the default CLI has no transport adapter is superseded for one case. Root's init (the guest's PID 1, a
+separate Winter change) starts the supervisor as
+
+    linux-supervisor.py --trusted-config-fd N [--runtime-ports-fds IN,OUT,ERR]
+
+in that order and no other. `IN` is a FIFO it reads, `OUT` and `ERR` are FIFOs it writes; the relay process that alone owns the
+virtio-console port is the far end of all three, so the supervisor never sees the port and the tool compartments never inherit these
+descriptors (the originals are closed before the service is constructed; `RuntimeDuplexPorts` keeps its own CLOEXEC duplicates above fd
+64). Numbers are canonical decimals, at least 3, distinct from each other and from the config descriptor; anything else exits 64.
+
+* **One host-query conversation** (`hostQueryRuntime` or `hostQueryGuidedRuntime`): `RuntimeDuplexPorts(logicalSessionId, authority, IN,
+  OUT, ERR)` is built from the three descriptors and injected as `host_query_ports`. Every existing check is unchanged and still runs: the
+  FIFO type, effective owner, link count, access mode, non-blocking, distinct inodes and the exact scope binding.
+* **No host-query conversation**: the descriptors are closed and the service starts without ports. A config that does ask for a transport
+  but arrives without `--runtime-ports-fds` is still refused by the constructor (`host_query_transport`).
+* **More than one host-query conversation** exits 64: the runtime class of the mux carries one stream with no stream id, so a second
+  conversation could not be served. This is a limit of the current wire contract, not a decision about the supervisor.
+* Closing is done once, in `main`, on every path: success, a refused set, an unreadable config, a service that refuses to construct (its
+  injected ports are closed too, because the constructor only closes them after its own `try` begins).
+
+The trusted-config file admission (regular file, root owned, no group or other write bit, at most 64 KiB, descriptor 3 or above) and the
+live-boot-id check are unchanged; the file check moved into `read_trusted_config`. PID 1 writes the config with the boot id and the
+conversation set in front of its static base (artifact paths and digests, control directory, environment, no protected stores);
+`test_runtime_port_arguments.py` builds that exact layout and drives the real constructor with it (patched only where it needs Root,
+Linux and real files, as the existing constructor tests do).
+
+### `previousBootTermination` stays null
+
+The native owner adapter keeps answering "no evidence" (`previousBootTermination: () => null` in `linux-session-admission.ts`) and PID 1
+provides none, so a cold resume stays refused. Evidence has to be established independently of the guest that is being judged: only the
+host can say that the previous boot ended. A marker on the guest's own disk would be written by that guest, and the one thing the guest
+can observe, a set `needs_recovery` flag in the ext4 superblock, is evidence against an orderly stop. `test_runtime_port_arguments.py`
+pins that the supervisor source has no such path, so adding one has to be a deliberate change. Cold resume is out of scope: the first Mac worker covers boot, disks, the supervisor and a safe stop, while host shares, the provider bridge and cold resume come later.
+
+Not run: no service, native process, Root, mount or VM. The Winter side (PID 1 and the relay) was not run against this supervisor either;
+the first end-to-end exercise of the two together is a later gate.
