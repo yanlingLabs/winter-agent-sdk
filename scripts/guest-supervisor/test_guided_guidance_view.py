@@ -862,7 +862,7 @@ class LinuxNativeTests(unittest.TestCase):
         self.assertEqual(values['leaked_fds'], '0')
         self.assertEqual(values['ls_workspace_winter'], 'WINTER.md')   # one file, never the enclosing .winter
         self.assertEqual(values['ls_run_winter'], 'shared-instructions')
-        self.assertEqual(values['ls_run'], 'winter')
+        self.assertEqual(values['ls_root_run'], 'winter')
         self.assertEqual(values['ls_view'], 'WINTER.md,escape-link,exe')
         self.assertEqual(values['dotdot_file'], 'errno=2')
         self.assertEqual(values['dotdot_etc'], 'errno=2')
