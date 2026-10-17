@@ -1,0 +1,100 @@
+# One-run reviewed workflow for the 12-entry guided owner matrix (docs/guided-owner-matrix-run.md).
+# It fires ONLY on the first creation of the never-used branch below, by a push, and never again:
+# no pull_request, pull_request_target, workflow_dispatch or schedule trigger exists, so no
+# ordinary PR (including the one that adds this file) can run it. The branch is frozen after one run.
+name: Reviewed guided owner matrix (one run)
+on:
+  push:
+    branches:
+      - 'cowork/guided-owner-matrix-run'
+permissions:
+  contents: read
+concurrency:
+  group: guided-owner-matrix-run
+  cancel-in-progress: false
+env:
+  FIXTURE_SHA256: ef1a3e4554551a47e5857ec90618cb968be2e3a1a653817df5bcac5d269f2d39
+  MATRIX_SHA256: 4490ca04cb693fb92131784c04bd301b78c6116f2ba7e73fbafe13a87d187abd
+jobs:
+  reviewed-disposable-owner-matrix:
+    if: github.repository == 'yanlingLabs/winter-agent-sdk' && github.event_name == 'push' && github.ref == 'refs/heads/cowork/guided-owner-matrix-run' && github.event.created == true && github.run_attempt == '1'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Refuse unless the fixture and matrix are the reviewed bytes
+        run: |
+          set -eu
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = aarch64
+          printf '%s  %s\n' "$FIXTURE_SHA256" scripts/guest-supervisor/guided_owner_native_fixture.c "$MATRIX_SHA256" scripts/guest-supervisor/test_guided_owner.py | sha256sum --check --strict --quiet
+          command -v cc
+      - name: Compile the fixture without privilege
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/owner-matrix-build"
+          cc -std=c11 -O2 -Wall -Wextra -Werror scripts/guest-supervisor/guided_owner_native_fixture.c -o "$RUNNER_TEMP/owner-matrix-build/fixture"
+      - name: Run the matrix as root on the disposable runner and write the summary only
+        run: |
+          set -eu
+          mkdir -p out/guided-owner-matrix
+          sudo -n env WINTER_GUIDED_OWNER_NATIVE_ADMISSION=disposable-linux-guided-owner-matrix python3 -I -S -B - "$GITHUB_SHA" "$FIXTURE_SHA256" "$MATRIX_SHA256" out/guided-owner-matrix/result.json <<'PY'
+          import hashlib, json, os, platform, sys, types, unittest
+          head, fixture_pin, matrix_pin, destination = sys.argv[1:5]
+          if os.geteuid() != 0:
+              raise SystemExit('root required')
+          base = 'scripts/guest-supervisor/'
+          def read(name):
+              with open(base + name, 'rb') as handle:
+                  return handle.read(16777217)
+          fixture = read('guided_owner_native_fixture.c')
+          matrix = read('test_guided_owner.py')
+          hashes = {'guided_owner_native_fixture.c': hashlib.sha256(fixture).hexdigest(), 'test_guided_owner.py': hashlib.sha256(matrix).hexdigest()}
+          if hashes['guided_owner_native_fixture.c'] != fixture_pin or hashes['test_guided_owner.py'] != matrix_pin:
+              raise SystemExit('unreviewed matrix bytes refused')
+          module = types.ModuleType('guided_owner_matrix')
+          module.__file__ = os.path.abspath(base + 'test_guided_owner.py')
+          exec(compile(matrix, module.__file__, 'exec'), module.__dict__)
+          class Recorder(unittest.TestResult):
+              def __init__(self):
+                  super().__init__()
+                  self.rows = []
+              def addSuccess(self, test):
+                  self.rows.append((test.id(), 'pass'))
+              def addSkip(self, test, reason):
+                  self.rows.append((test.id(), 'skip'))
+              def addFailure(self, test, err):
+                  self.rows.append((test.id(), 'fail'))
+              def addError(self, test, err):
+                  self.rows.append((test.id(), 'fail'))
+              def addExpectedFailure(self, test, err):
+                  self.rows.append((test.id(), 'fail'))
+              def addUnexpectedSuccess(self, test):
+                  self.rows.append((test.id(), 'fail'))
+          suite = unittest.TestLoader().loadTestsFromTestCase(module.GuidedOwnerNativeTargetTests)
+          recorder = Recorder()
+          suite.run(recorder)
+          kernel = platform.release()
+          major_minor = tuple(int(part) for part in kernel.split('-')[0].split('.')[:2])
+          tests = [{'id': name.split('.')[-1], 'outcome': outcome} for name, outcome in sorted(recorder.rows)]
+          count = lambda outcome: sum(1 for row in tests if row['outcome'] == outcome)
+          skipped = [row['id'] for row in tests if row['outcome'] == 'skip']
+          expected = major_minor >= (6, 9) and len(tests) == 12 and count('pass') == 11 and count('fail') == 0 and skipped == ['test_actual_pidfs_absent_before_69']
+          result = {'schema': 'winter-guided-owner-matrix-result/1', 'headSha': head, 'kernelRelease': kernel, 'machine': platform.machine(), 'fixtureSha256': hashes, 'total': len(tests), 'passed': count('pass'), 'skipped': count('skip'), 'failed': count('fail'), 'matchesExpected11Plus1': expected, 'tests': tests}
+          fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+          with os.fdopen(fd, 'w') as handle:
+              json.dump(result, handle, indent=1, sort_keys=True)
+              handle.write('\n')
+          print('guided owner matrix: total=%d passed=%d skipped=%d failed=%d expected=%s kernel=%s' % (result['total'], result['passed'], result['skipped'], result['failed'], expected, kernel))
+          raise SystemExit(0 if expected else 1)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: guided-owner-matrix-result
+          path: out/guided-owner-matrix/result.json
+          if-no-files-found: warn
+          retention-days: 7
