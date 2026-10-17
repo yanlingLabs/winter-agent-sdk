@@ -184,20 +184,53 @@ def main():
                 else:
                     assert result["code"] == "path_denied" and result["errno"] in (2, 11, 18), result
             # Diagnostic: the same race, tight and bounded, with the worker's exact
-            # openat2 mask, classifying every returned object by identity.
-            worker_text = (ROOT / "packages/runtime/src/guest/file-worker.c").read_text()
-            probe_text = (HERE / "race-probe.c").read_text()
-            how_block = re.search(r"struct open_how how = \{.*?\n    \};", worker_text, re.S).group(0)
-            assert ".resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS," in how_block and ".resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS," in probe_text
-            assert ".flags = (writing ? O_WRONLY | (conditional ? (creating ? O_CREAT | O_EXCL : 0) : O_CREAT) : O_RDONLY) | O_CLOEXEC | O_NONBLOCK," in how_block
-            assert ".flags = O_RDONLY | O_CLOEXEC | O_NONBLOCK," in probe_text
-            host = (fixture).stat()
-            view = tempfile.mkdtemp(prefix="view-", dir=fixture)
-            code, stdout, stderr = command([launcher, probe, fixture, view, 10001, "auto", "probe", "/source", "race", 5000,
-                f"{host.st_dev}:{host.st_ino}"], timeout=60)
+            # openat2 arguments, classifying every returned object by identity.
+            def code_only(text):
+                return re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", text, flags=re.S))
+            def initialiser(text, name):
+                found = re.search(r"struct open_how " + name + r" = \{(.*?)\};", text, re.S)
+                assert found, name
+                return [re.sub(r"\s+", " ", line.strip()) for line in found.group(1).split("\n") if line.strip()]
+            worker_code = code_only((ROOT / "packages/runtime/src/guest/file-worker.c").read_text())
+            probe_code = code_only((HERE / "race-probe.c").read_text())
+            resolve = ".resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS,"
+            assert initialiser(worker_code, "root_how") == initialiser(probe_code, "root_how") == [
+                ".flags = O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, .resolve = RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS"]
+            assert initialiser(worker_code, "how") == [
+                ".flags = (writing ? O_WRONLY | (conditional ? (creating ? O_CREAT | O_EXCL : 0) : O_CREAT) : O_RDONLY) | O_CLOEXEC | O_NONBLOCK,",
+                ".mode = writing && (!conditional || creating) ? 0666 : 0,", resolve]
+            # The probe's three initialisers are the worker's expression evaluated for
+            # read, plain write (O_CREAT, 0666) and conditional write of an existing file.
+            assert initialiser(probe_code, "read_how") == [".flags = O_RDONLY | O_CLOEXEC | O_NONBLOCK,", ".mode = 0,", resolve]
+            assert initialiser(probe_code, "write_how") == [".flags = O_WRONLY | O_CREAT | O_CLOEXEC | O_NONBLOCK,", ".mode = 0666,", resolve]
+            assert initialiser(probe_code, "check_how") == [".flags = O_WRONLY | O_CLOEXEC | O_NONBLOCK,", ".mode = 0,", resolve]
+            # Same syscall shape: dirfd, path, &how, sizeof(how) (and the root open).
+            assert "syscall(SYS_openat2, root, argv[3], &how, sizeof(how))" in worker_code
+            assert "syscall(SYS_openat2, AT_FDCWD, argv[2], &root_how, sizeof(root_how))" in worker_code
+            assert "syscall(SYS_openat2, AT_FDCWD, argv[2], &root_how, sizeof(root_how))" in probe_code
+            assert "syscall(SYS_openat2, dirfd, path, open_how, sizeof(*open_how))" in probe_code
+            assert re.findall(r"run_pass\(\"[a-z-]+\", \d, root, argv\[3\], &(\w+), budget\)", probe_code) == ["read_how", "write_how", "check_how"]
+            host = fixture.stat()
+            def run_probe(suffix):
+                view = tempfile.mkdtemp(prefix="view-", dir=fixture)
+                code, stdout, stderr = command([launcher, probe, fixture, view, 10001, "auto", "probe", "/source", "race", 5000,
+                    f"{host.st_dev}:{host.st_ino}{suffix}"], timeout=60)
+                return code, stdout, stderr
+            code, stdout, stderr = run_probe("")
             print("race-probe " + stdout.decode(errors="replace").strip(), flush=True)
             probe_result = json.loads(stdout)
             assert code == 0 and probe_result["ok"], (code, probe_result, stderr[:500])
+            for name, one in probe_result["passes"].items():
+                # Not vacuous: the race really ran, and every open is accounted for.
+                assert one["objects"]["in-root:seed"] > 1000, (name, one)
+                assert sum(one["errnos"].values()) + one["other"] + sum(one["objects"].values()) == one["opens"], (name, one)
+                assert not any(count for key, count in one["objects"].items() if key.startswith("OUT:") or key == "UNKNOWN"), (name, one)
+            assert sorted(probe_result["passes"]) == ["read", "write", "write-check"], probe_result
+            # Negative self-test: an escaping open must be classified out-of-root and exit 3.
+            code, stdout, stderr = run_probe(":selftest")
+            print("race-probe-selftest exit=%d %s" % (code, stdout.decode(errors="replace").strip()), flush=True)
+            self_result = json.loads(stdout)
+            assert code == 3 and not self_result["ok"] and self_result["passes"]["read"]["objects"]["OUT:readonly/secret"] > 0, (code, self_result)
             race_probe = probe_result
         finally:
             stop.set(); thread.join(timeout=2)
