@@ -54,6 +54,9 @@ def main():
                                (HERE / "compartment.c", launcher)):
             checked([compiler, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-static", source, "-o", target])
             os.chmod(target, 0o555)
+        probe = fixture / "race-probe"
+        checked([compiler, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-static", HERE / "race-probe.c", "-o", probe])
+        os.chmod(probe, 0o555)
         for name in ("source", "readonly"):
             path = fixture / name
             path.mkdir()
@@ -178,6 +181,22 @@ def main():
                     assert result["errno"] == 22, result
                 else:
                     assert result["code"] == "path_denied" and result["errno"] in (2, 11, 18), result
+            # Diagnostic: the same race, tight and bounded, with the worker's exact
+            # openat2 mask, classifying every returned object by identity.
+            worker_text = (ROOT / "packages/runtime/src/guest/file-worker.c").read_text()
+            probe_text = (HERE / "race-probe.c").read_text()
+            how_block = re.search(r"struct open_how how = \{.*?\n    \};", worker_text, re.S).group(0)
+            assert ".resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS," in how_block and ".resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS," in probe_text
+            assert ".flags = (writing ? O_WRONLY | (conditional ? (creating ? O_CREAT | O_EXCL : 0) : O_CREAT) : O_RDONLY) | O_CLOEXEC | O_NONBLOCK," in how_block
+            assert ".flags = O_RDONLY | O_CLOEXEC | O_NONBLOCK," in probe_text
+            host = (fixture).stat()
+            view = tempfile.mkdtemp(prefix="view-", dir=fixture)
+            code, stdout, stderr = command([launcher, probe, fixture, view, 10001, "auto", "probe", "/source", "race", 5000,
+                f"{host.st_dev}:{host.st_ino}"], timeout=60)
+            print("race-probe " + stdout.decode(errors="replace").strip(), flush=True)
+            probe_result = json.loads(stdout)
+            assert code == 0 and probe_result["ok"], (code, probe_result, stderr[:500])
+            race_probe = probe_result
         finally:
             stop.set(); thread.join(timeout=2)
         assert not thread.is_alive() and not failure, failure
@@ -292,7 +311,7 @@ def main():
         checks.append("process worker refuses runtime/root/outside namespace identity")
         print(json.dumps({"linuxCompartmentFiles": True, "realVM": False,
             "linuxCompartmentProcesses": True,
-            "architecture": os.uname().machine, "checks": checks, "raceAttempts": 40, "raceOutcomes": race_outcomes}))
+            "architecture": os.uname().machine, "checks": checks, "raceAttempts": 40, "raceOutcomes": race_outcomes, "raceProbe": race_probe}))
 
 
 if __name__ == "__main__":
