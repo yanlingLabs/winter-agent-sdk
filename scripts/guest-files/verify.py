@@ -160,11 +160,22 @@ def main():
                 failure.append(error)
         thread = threading.Thread(target=swapper)
         thread.start()
+        race_outcomes = {}
         try:
             for _ in range(40):
                 result = execute("read", "race")
+                outcome = "ok" if result["ok"] else f'{result["code"]}/{result["errno"]}'
+                race_outcomes[outcome] = race_outcomes.get(outcome, 0) + 1
                 if result["ok"]:
                     assert result["data"] == b"unchanged-seed", result
+                elif result["code"] == "regular_file_required":
+                    # Fail-closed refusal: the worker fstat()s the opened object and
+                    # leaves before any read, truncate or write (file-worker.c).
+                    # Both swap targets are regular files, so this arrives only when
+                    # the kernel's lock-free path walk yields a different object
+                    # while the entry is being replaced (seen once on ubuntu-24.04-arm).
+                    # No bytes leave the root; the surviving checks below prove it.
+                    assert result["errno"] == 22, result
                 else:
                     assert result["code"] == "path_denied" and result["errno"] in (2, 11, 18), result
         finally:
@@ -281,7 +292,7 @@ def main():
         checks.append("process worker refuses runtime/root/outside namespace identity")
         print(json.dumps({"linuxCompartmentFiles": True, "realVM": False,
             "linuxCompartmentProcesses": True,
-            "architecture": os.uname().machine, "checks": checks, "raceAttempts": 40}))
+            "architecture": os.uname().machine, "checks": checks, "raceAttempts": 40, "raceOutcomes": race_outcomes}))
 
 
 if __name__ == "__main__":
