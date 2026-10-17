@@ -16,6 +16,8 @@
 //    drop the run-directory read-deny with nothing to notice. `buildWorkerSpawn` is still the ONE
 //    place a worker command becomes a spawn, so the value is threaded through exactly one call site.
 import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
+import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 import { buildWorkflowWorkerSeatbeltProfile, type SandboxBrand } from "../sandbox/profile.ts";
 import { isSandboxAvailable } from "../sandbox/spawn.ts";
 import { currentHostChildFloorProfile } from "../sandbox/host-child-floor.ts";
@@ -23,6 +25,8 @@ import { currentHostChildFloorProfile } from "../sandbox/host-child-floor.ts";
 // see that module's own header for why main.ts cannot be imported at all. Re-exported here so a
 // spawner needs one import, not two.
 import { WORKFLOW_WORKER_ARGV_FLAG, WORKFLOW_WORKER_BRIDGE_FLAG } from "./subprocess-entry.ts";
+import { LINUX_CONFINE_ARGV_FLAG, LINUX_MIN_LANDLOCK_ABI, LinuxConfinementUnavailableError, encodeConfinementSpec } from "./linux-confinement-policy.ts";
+import { linuxConfinementProbe } from "./linux-confinement.ts";
 
 export { WORKFLOW_WORKER_ARGV_FLAG, WORKFLOW_WORKER_BRIDGE_FLAG };
 
@@ -128,9 +132,106 @@ export function buildWorkerSpawn(opts: BuildWorkerSpawnOptions): WorkerCommand {
   return { file: SANDBOX_EXEC_PATH, args: ["-p", composed, opts.command.file, ...opts.command.args] };
 }
 
-/** WS-12 §3's own availability rule, reused rather than re-derived. */
+// --- Linux: the launcher role (linux-confinement.ts) instead of sandbox-exec ----------------------
+//
+// `buildWorkerSpawn` above stays the macOS builder, untouched. On Linux the worker is started by
+// the SDK binary in its launcher role, which confines itself and then execs the worker.
+
+let hostLinuxLauncher: WorkerCommand | undefined;
+
+/**
+ * Install the host's launcher command for this realm; returns a restore function. The default
+ * launcher is this binary (`process.execPath`, with the entry script in dev), which is right for the
+ * `winter` runtime. An embedding host whose binary does not route `__linux-confine` to
+ * `linuxConfineMain` must say which binary does. The launcher is trusted code that runs BEFORE the
+ * confinement is applied; the worker command is only ever started by it, after.
+ */
+export function setHostLinuxConfinementLauncher(command: WorkerCommand | undefined): () => void {
+  const previous = hostLinuxLauncher;
+  hostLinuxLauncher = command === undefined ? undefined : { file: command.file, args: [...command.args] };
+  return () => {
+    hostLinuxLauncher = previous;
+  };
+}
+
+/**
+ * A host that installs its own worker command (`setHostWorkflowWorkerCommand`) runs a binary whose main
+ * need not route `__linux-confine`, and the default launcher is `process.execPath` -- that host binary.
+ * Rather than guess, the Linux spawn refuses until the host also says which binary is its launcher.
+ */
+export function linuxLauncherProblem(): string | undefined {
+  if (hostWorkerCommand !== undefined && hostLinuxLauncher === undefined) {
+    return "a host workflow worker command is installed without a host confinement launcher (setHostLinuxConfinementLauncher), so there is no binary known to confine it";
+  }
+  return undefined;
+}
+
+export function resolveConfinementLauncher(opts: ResolveWorkerCommandOptions = {}): WorkerCommand {
+  if (hostLinuxLauncher !== undefined && opts.compiled === undefined && opts.execPath === undefined) {
+    return { file: hostLinuxLauncher.file, args: [...hostLinuxLauncher.args] };
+  }
+  const execPath = opts.execPath ?? process.execPath;
+  const compiled = opts.compiled ?? isCompiledBinary();
+  if (compiled) return { file: execPath, args: [] };
+  return { file: execPath, args: [fileURLToPath(new URL("../main.ts", import.meta.url))] };
+}
+
+/** The run directories the worker must not read: the same two anchors the macOS profile denies. */
+export function linuxWorkerReadDeny(opts: { home?: string; winterHome?: string; brand?: SandboxBrand }): string[] {
+  const brand = opts.brand ?? WINTER_BRAND;
+  // Written as the parent knows them; the launcher resolves symlinks against the real filesystem.
+  const denied: string[] = [];
+  if (opts.home !== undefined) denied.push(join(opts.home, brand.homeDirName, "run"));
+  if (opts.winterHome !== undefined && resolve(opts.winterHome) !== resolve(join(opts.home ?? "", brand.homeDirName))) {
+    denied.push(join(opts.winterHome, "run"));
+  }
+  return denied;
+}
+
+export interface BuildLinuxWorkerSpawnOptions extends BuildWorkerSpawnOptions {
+  /** Overrides the launcher (tests; embedding hosts use `setHostLinuxConfinementLauncher`). */
+  launcher?: WorkerCommand;
+  /** Raises the Landlock ABI floor for this launch; never lowers it. */
+  minLandlockAbi?: number;
+}
+
+/** The actual `(file, args)` to spawn on Linux: the launcher, carrying the worker command and the policy. */
+export function buildLinuxWorkerSpawn(opts: BuildLinuxWorkerSpawnOptions): WorkerCommand {
+  if (opts.launcher === undefined) {
+    const problem = linuxLauncherProblem();
+    if (problem !== undefined) throw new LinuxConfinementUnavailableError(problem);
+  }
+  const launcher = opts.launcher ?? resolveConfinementLauncher();
+  const spec = encodeConfinementSpec({
+    version: 1,
+    target: { file: opts.command.file, args: [...opts.command.args] },
+    readDeny: linuxWorkerReadDeny({
+      ...(opts.home !== undefined ? { home: opts.home } : {}),
+      ...(opts.winterHome !== undefined ? { winterHome: opts.winterHome } : {}),
+      ...(opts.brand !== undefined ? { brand: opts.brand } : {}),
+    }),
+    minLandlockAbi: Math.max(LINUX_MIN_LANDLOCK_ABI, opts.minLandlockAbi ?? 0),
+  });
+  return { file: launcher.file, args: [...launcher.args, LINUX_CONFINE_ARGV_FLAG, spec] };
+}
+
+/**
+ * WS-12 §3's own availability rule, reused rather than re-derived. On Linux the question is whether
+ * the kernel can apply the whole confinement (Landlock at the required ABI, seccomp, no_new_privs).
+ */
 export function workflowSandboxAvailable(): boolean {
+  if (process.platform === "linux") return linuxConfinementProbe().available && linuxLauncherProblem() === undefined;
   return isSandboxAvailable();
+}
+
+/** Why `workflowSandboxAvailable()` is false, as the refusal text a caller shows. */
+export function workflowSandboxUnavailableMessage(): string {
+  if (process.platform === "linux") {
+    const probe = linuxConfinementProbe();
+    const why = probe.available ? (linuxLauncherProblem() ?? "the confinement is available") : probe.reason;
+    return `workflows are unavailable: Linux confinement is not available (${why}), and a workflow worker is never run unconfined (WS-12 §3)`;
+  }
+  return "workflows are unavailable: /usr/bin/sandbox-exec was not found, and a workflow worker is never run unsandboxed (WS-12 §3)";
 }
 
 export { SANDBOX_EXEC_PATH };

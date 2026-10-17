@@ -26,6 +26,9 @@ import { runEmbeddedSession } from "./embedded.ts";
 // and start an engine as an import side effect. subprocess-entry.ts is declaration-only and is the
 // safe home for it.
 import { workflowWorkerMain, WORKFLOW_WORKER_ARGV_FLAG } from "./workflows/subprocess-entry.ts";
+// The Linux Workflow launcher role (workflows/linux-confinement.ts): confines this process, then execs the worker.
+import { LINUX_CONFINE_ARGV_FLAG } from "./workflows/linux-confinement-policy.ts";
+import { linuxConfineMain } from "./workflows/linux-confinement.ts";
 // Review r2 finding 9 (whole-branch): the SIGTERM/SIGINT handler's own process-group sweep -- see
 // installShutdownSignalHandlers's own header below for why this needs its OWN synchronous, frame-free
 // door rather than reusing engine.ts's ordinary teardown sweep.
@@ -261,6 +264,15 @@ function stopOnParentDeath(argv: readonly string[], phase: () => "running" | "id
 if (process.argv.includes("--version")) {
   process.stdout.write(SDK_VERSION + "\n");
   process.exit(0);
+}
+
+// --- The Linux Workflow launcher role -----------------------------------------------------------------
+//
+// Checked BEFORE the `__workflow-worker` dispatch: the worker command travels inside the launcher's
+// spec argument, so this argv never carries the worker flag itself. `linuxConfineMain` replaces this
+// process with the worker on success and returns only the refusal exit code.
+if (process.argv.includes(LINUX_CONFINE_ARGV_FLAG)) {
+  process.exit(linuxConfineMain(process.argv));
 }
 
 // --- Phase 5 Task 3 (R5-5/R5-15): the `__workflow-worker` argv dispatch ---------------------------
