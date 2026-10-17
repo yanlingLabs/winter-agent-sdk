@@ -32,6 +32,10 @@ jobs:
         run: python3 -I -S scripts/guest-supervisor/test_protocol.py
       - name: guided Root bootstrap producer, fifth descriptor and profile selection (source only, nothing admitted)
         run: python3 -I -S -B scripts/guest-supervisor/test_guided_host_query.py
+      - name: Root's init transport (argv, three FIFOs, one conversation, PID 1 shaped config) and the tool-device inventory (source only)
+        run: |
+          python3 -I -S -B scripts/guest-supervisor/test_runtime_port_arguments.py
+          python3 -I -S -B -m unittest discover -s scripts/guest-engine -p test_tool_devices.py
       # The Workflow worker's Linux confinement: unprivileged Landlock + seccomp + no_new_privs, applied
       # by the launcher role and observed from inside the worker, on both architectures (the syscall
       # tables differ). A kernel that cannot confine FAILS here (WINTER_REQUIRE_LINUX_CONFINEMENT),
