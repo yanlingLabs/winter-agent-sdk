@@ -185,6 +185,15 @@ class PortConstructionTests(Fixture):
             self.duplicates.append(regular)
             with self.assertRaisesRegex(service.Refusal, 'runtime_duplex_descriptor'):
                 service.runtime_ports_from_descriptors(config, (regular, self.pipes.output, self.pipes.error))
+        input_path = os.path.join(self.pipes.temp.name, '0')                                   # the input FIFO the fixture made
+        blocking_reader = os.open(input_path, os.O_RDONLY)                                     # a writer exists, so this opens at once, without O_NONBLOCK
+        self.duplicates.append(blocking_reader)
+        with self.assertRaisesRegex(service.Refusal, 'runtime_duplex_descriptor'):
+            service.runtime_ports_from_descriptors(config, (blocking_reader, self.pipes.output, self.pipes.error))
+        os.link(input_path, input_path + '-second-name')                                       # link count 2 on the very FIFO the others accept
+        with self.assertRaisesRegex(service.Refusal, 'runtime_duplex_descriptor'):
+            service.runtime_ports_from_descriptors(config, (self.pipes.input, self.pipes.output, self.pipes.error))
+        os.unlink(input_path + '-second-name')
         blocking = os.dup(self.pipes.input)
         self.duplicates.append(blocking)
         os.set_blocking(blocking, False)                                                       # the dup shares the description: this is the input FIFO again
@@ -336,6 +345,62 @@ class MainTests(Fixture):
         self.assertEqual(FakeToolService.built, [])
         self.assertTrue(all(self.closed(fd) for fd in fds))
 
+    def test_the_guided_host_query_conversation_gets_the_ports_through_main(self):
+        _, config = self.pid1_config([self.conversation(runtime_key='hostQueryGuidedRuntime')], runtime_key='hostQueryGuidedRuntime')
+        fds = self.descriptors()
+        self.run_main(config, argv('--trusted-config-fd', '3', '--runtime-ports-fds', ','.join(map(str, fds))))
+        built = FakeToolService.built[0]
+        try:
+            self.assertEqual(list(built.host_query_ports), ['logical'])
+        finally:
+            for port in built.host_query_ports.values():
+                port.close()
+
+    def closes_of(self, config, fds, expect=None, reader=None):
+        """Every os.close the run makes on one of the original descriptors, in order."""
+        real, seen = os.close, []
+
+        def counting(fd):
+            if fd in fds:
+                seen.append(fd)
+            return real(fd)
+        with patch.object(service.os, 'close', counting):
+            if reader:
+                FakeToolService.built = []
+                with patch.object(service, 'read_trusted_config', side_effect=reader), patch.object(service, 'ToolService', FakeToolService), \
+                        patch.object(service.sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(b''))), patch.object(service.sys, 'stdout', io.StringIO()):
+                    with self.assertRaises(SystemExit):
+                        service.main(argv('--trusted-config-fd', '3', '--runtime-ports-fds', ','.join(map(str, fds))))
+            else:
+                self.run_main(config, argv('--trusted-config-fd', '3', '--runtime-ports-fds', ','.join(map(str, fds))), expect=expect)
+        return seen
+
+    def test_each_original_descriptor_is_closed_exactly_once_on_every_path(self):
+        _, host_query = self.pid1_config([self.conversation(runtime_key='hostQueryRuntime')], runtime_key='hostQueryRuntime')
+        _, tools_only = self.pid1_config([self.conversation()])
+        _, two = self.pid1_config([self.conversation('one', 'hostQueryRuntime'), self.conversation('two', 'hostQueryRuntime')])
+        cases = (('success', host_query, None, None), ('no host-query conversation', tools_only, None, None),
+                 ('refused set', host_query, service.Refusal, 'swap'), ('more than one', two, SystemExit, None), ('unreadable config', None, None, 'reader'))
+        for name, config, expect, special in cases:
+            with self.subTest(path=name):
+                fds = self.descriptors()
+                if special == 'swap':
+                    sent = (fds[1], fds[0], fds[2])
+                    real, seen = os.close, []
+
+                    def counting(fd, real=real, seen=seen, fds=fds):
+                        if fd in fds:
+                            seen.append(fd)
+                        return real(fd)
+                    with patch.object(service.os, 'close', counting):
+                        self.run_main(config, argv('--trusted-config-fd', '3', '--runtime-ports-fds', ','.join(map(str, sent))), expect=expect)
+                    closes = seen
+                else:
+                    closes = self.closes_of(config, fds, expect=expect, reader=SystemExit(64) if special == 'reader' else None)
+                self.assertEqual(sorted(closes), sorted(fds))
+                for port in (FakeToolService.built[0].host_query_ports.values() if FakeToolService.built else ()):
+                    port.close()
+
     def test_closing_a_descriptor_that_is_already_gone_is_not_an_error(self):
         _, config = self.pid1_config([self.conversation()])
         gone = [os.dup(self.pipes.input) for _ in range(3)]
@@ -457,8 +522,27 @@ class NoPreviousBootEvidenceTests(unittest.TestCase):
     answering "no evidence" and a cold resume stays refused. If an honest source is ever added, this pin must change deliberately."""
 
     def test_the_supervisor_source_has_no_previous_boot_evidence_path(self):
+        """Structural: no config key (subscript or .get) named like previous-boot evidence is read by the entry path."""
+        import ast
+        import re
+        tree = ast.parse(SUPERVISOR.read_text())
+        pattern = re.compile('previous|terminat|last_boot', re.I)
+        entry = {'main', 'read_trusted_config', 'runtime_ports_from_descriptors', 'host_query_conversations', 'parse_arguments'}
+        seen = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name in entry:
+                seen.add(node.name)
+                for inner in ast.walk(node):
+                    key = None
+                    if isinstance(inner, ast.Subscript):
+                        key = inner.slice
+                    elif isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute) and inner.func.attr == 'get' and inner.args:
+                        key = inner.args[0]
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                        self.assertIsNone(pattern.search(key.value), (node.name, key.value))
+        self.assertEqual(seen, entry)
         text = SUPERVISOR.read_text()
-        for needle in ('previousBoot', 'previous_boot', 'PreviousBoot', 'terminationEvidence', 'needs_recovery'):
+        for needle in ('needs_recovery', 'previousBootTermination'):
             self.assertNotIn(needle, text)
 
     def test_the_native_owner_adapter_still_answers_no_evidence(self):

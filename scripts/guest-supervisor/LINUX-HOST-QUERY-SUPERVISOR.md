@@ -250,7 +250,7 @@ The native owner adapter keeps answering "no evidence" (`previousBootTermination
 provides none, so a cold resume stays refused. Evidence has to be established independently of the guest that is being judged: only the
 host can say that the previous boot ended. A marker on the guest's own disk would be written by that guest, and the one thing the guest
 can observe, a set `needs_recovery` flag in the ext4 superblock, is evidence against an orderly stop. `test_runtime_port_arguments.py`
-pins that the supervisor source has no such path, so adding one has to be a deliberate change. Decision D10 keeps cold resume out of scope.
+pins that the supervisor source has no such path, so adding one has to be a deliberate change. Cold resume is out of scope: the first Mac worker covers boot, disks, the supervisor and a safe stop, while host shares, the provider bridge and cold resume come later.
 
 Not run: no service, native process, Root, mount or VM. The Winter side (PID 1 and the relay) was not run against this supervisor either;
 the first end-to-end exercise of the two together is a later gate.
