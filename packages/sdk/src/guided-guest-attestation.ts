@@ -175,8 +175,11 @@ function revoke(workspaceKey: unknown): void {
 
 function forget(workspaceKey: unknown): void {
   const key = identity(workspaceKey);
+  const generation = generations.get(key);
   revoke(key);
-  generations.delete(key);
+  // A host teardown callback run by revoke() may have announced a new generation for this key (advance): that one is
+  // not forgotten. Only the generation that was current when forget() began is dropped.
+  if (generation !== undefined && generations.get(key) === generation) generations.delete(key);
 }
 
 /** The one documented export. Claimable once per MODULE INSTANCE: a second copy of the SDK, or a Worker that loads

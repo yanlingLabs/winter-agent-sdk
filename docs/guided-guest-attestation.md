@@ -102,6 +102,16 @@ is no longer current the guard closes the record exactly as `closeGuidedQuery` d
 (context disposers run, the callbacks are released) and the step fails as
 `required_context_unavailable`.
 
+The layers around the host's spawn hook overlap on purpose, and the cover is specific: a
+generation that dies *before* the hook is called is refused by the pre-spawn `live()` (the
+hook never runs); one that dies *inside* the hook, before the hook consumes the correlation,
+is refused by consume's own `live()` and by the guard's `consumed()` check, and if both of
+those were absent the **post-spawn assert** right after the hook returns fails the step and
+tears the child down. So the pair "consume skips its guard" and "`consumed()` accepts a
+stale record" is covered by the pre-spawn `live()` plus the post-spawn assert, not by
+consume's own check. A guard that cannot register the id also leaves nothing in the
+process-wide consumed set: the guard registers first, then the set is written.
+
 ## A revoked guest's other traffic is gated too
 
 Closing the context door is not enough: a stale guest's other frames must not reach the
@@ -228,6 +238,9 @@ minted its ticket.
   and consumed-id cliff tests run a separate process (`fixtures/guided-guest-ticket-capacity.ts`).
 * `guided-guest-attestation-wiring.test.ts` is a TypeScript AST scan over **every**
   `.ts/.tsx/.mts/.cts/.js/.mjs/.cjs` file under `packages/` and `scripts/` (not only `src`).
+  Only a package root's `dist` and `node_modules` are skipped; a directory of either name
+  deeper down (`src/dist`, say) is scanned. The package entry means the source index **and**
+  the built `packages/sdk/dist/index`, by package name or by relative path.
   No file is exempt by name: the exact claimers are listed, so a file named `*.fixture.ts`
   or `*.test.ts` that claims fails. It checks the single package export, an exact importer
   allowlist with exact names, that the SDK entry is never taken whole (no star re-export,
@@ -235,6 +248,12 @@ minted its ticket.
   `then`, no rest destructuring), a run-time-built module specifier only where one exists
   today, no clock or class in the module, and it carries negative controls proving the scan
   catches each wiring shape.
+* **Known limits of an AST tripwire** (not detected, not claimed): `createRequire(import.meta.url)("...")`
+  (a require call through another name), a script that shells out to `bun -e` or `node -e` or
+  spawns another runtime, and `new Function(...)`/`eval` building code from strings. A
+  run-time-built specifier is counted only where the call is literally `import(...)` or
+  `require(...)`. The pin catches accidents and careless wiring, not an adversary in the
+  repository.
 
 ## Integration pins for the later Core wiring
 

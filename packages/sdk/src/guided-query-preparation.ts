@@ -176,8 +176,9 @@ export function consumeGuidedQueryCorrelation(claim: GuidedQueryClaim, args: rea
   try {
     const result = correlation(args);
     if (consumedBindings.has(result.bindingId) || consumedBindings.size >= GUIDED_QUERY_CORRELATION_CAPACITY) return fail();
-    consumedBindings.add(result.bindingId);
+    // The guard registers the id first: if it refuses, nothing was added to the process-wide set.
     current.guard?.consumed(result.bindingId);
+    consumedBindings.add(result.bindingId);
     current.state = "correlated";
     current.correlation = result;
     return result;

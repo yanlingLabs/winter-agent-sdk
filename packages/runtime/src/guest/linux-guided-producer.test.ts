@@ -239,4 +239,5 @@ test("static pin: the host guard still refuses a confined required-context query
   expect(query).toContain('(preparation !== undefined || options.requireRuntimeContext === true) && options.executionPosture === "confined-guest" && preparation?.guest !== true) throw new Error("required_context_unavailable")');
   expect(query).toContain("The unconditional native guest refusal lifts ONLY for a valid, unspent, current-generation guest ticket bound to");
   expect(query).toContain("guest: ticket !== undefined,");
+  expect(query).toContain("spendGuidedGuestTicket(ticket, preparation,");
 });

@@ -3,6 +3,11 @@
 // path that can claim the issuer or mint a ticket is the one documented export, `query()` only SPENDS a ticket, and
 // the exact files that may claim are listed below. This is a tripwire for accidental or careless wiring, not a
 // security boundary: see docs/guided-guest-attestation.md.
+//
+// KNOWN LIMITS of an AST tripwire (none is detected, none is claimed to be): `createRequire(import.meta.url)("...")`
+// (a require call through another name), a script that shells out to `bun -e`/`node -e` or spawns another runtime, and
+// `new Function(...)`/`eval` building code from strings. A run-time-built module specifier IS counted, but only where
+// the call is literally `import(...)` or `require(...)`.
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -45,11 +50,12 @@ const COMPUTED = "<computed>";
 
 const mentionsAttestation = (specifier: string) => /guided-guest-attestation/.test(specifier);
 const mentionsPreparation = (specifier: string) => /guided-query-preparation/.test(specifier);
-/** The package entry, by name or by a relative path that resolves to the SDK's index. */
+/** The package entry, by name or by a relative path that resolves to the SDK's source or built index. */
 function isSdkEntry(specifier: string, path: string): boolean {
   if (specifier === SDK_PACKAGE) return true;
   if (!specifier.startsWith(".")) return false;
-  return /^packages\/sdk\/src(\/index(\.[mc]?[jt]sx?)?)?$/.test(posix.normalize(posix.join(posix.dirname(path), specifier)));
+  // The source index and the BUILT index (packages/sdk/dist/index.js) are both the package entry.
+  return /^packages\/sdk\/(?:src|dist)(\/index(\.[mc]?[jt]sx?)?)?$/.test(posix.normalize(posix.join(posix.dirname(path), specifier)));
 }
 const parsed = new Map<string, { text: string; file: ts.SourceFile }>();
 function parse(path: string, text: string): ts.SourceFile {
@@ -238,11 +244,13 @@ function attestationRules(file: ts.SourceFile): string[] {
 
 function loadProduction(root: string = ROOT): Map<string, string> {
   const files = new Map<string, string>();
-  // Walk by hand: node_modules and dist are never entered (a recursive listing would follow them first).
+  // Walk by hand. Only a PACKAGE ROOT's dist and node_modules are skipped (a recursive listing would follow them first);
+  // a directory of either name anywhere deeper, such as src/dist, is source and is scanned.
+  const skipped = (path: string) => /^(?:packages\/(?:[^/]+|platform\/[^/]+)|scripts)\/(?:dist|node_modules)$/.test(path);
   const visit = (directory: string) => {
     for (const entry of readdirSync(join(root, directory), { withFileTypes: true })) {
       const path = `${directory}/${entry.name}`;
-      if (entry.isDirectory()) { if (entry.name !== "node_modules" && entry.name !== "dist") visit(path); }
+      if (entry.isDirectory()) { if (!skipped(path)) visit(path); }
       else if (entry.isFile() && EXTENSIONS.test(entry.name) && !/\.d\.[mc]?ts$/.test(entry.name)) files.set(path, readFileSync(join(root, path), "utf8"));
     }
   };
@@ -263,10 +271,15 @@ test("every script and source extension at any depth under packages and scripts 
   const root = mkdtempSync(join(tmpdir(), "winter-wiring-scan-"));
   try {
     const write = (path: string) => { mkdirSync(join(root, path, ".."), { recursive: true }); writeFileSync(join(root, path), "export {};\n"); };
-    const scanned = ["packages/a/src/x.ts", "packages/a/src/x.tsx", "packages/a/src/x.mts", "packages/a/src/x.cts", "packages/a/bin/x.js", "packages/a/x.mjs", "packages/a/x.cjs", "scripts/deep/er/x.ts"];
-    const ignored = ["packages/a/node_modules/dep/x.ts", "packages/a/dist/x.js", "packages/a/src/x.d.ts", "packages/a/src/x.json", "packages/a/src/x.md"];
+    const scanned = ["packages/a/src/x.ts", "packages/a/src/x.tsx", "packages/a/src/x.mts", "packages/a/src/x.cts", "packages/a/bin/x.js", "packages/a/x.mjs", "packages/a/x.cjs", "scripts/deep/er/x.ts",
+      "packages/a/src/dist/x.ts", "packages/a/src/deep/dist/x.mjs", "packages/a/src/node_modules/x.ts", "packages/platform/t/bin/x.js"];
+    const ignored = ["packages/a/node_modules/dep/x.ts", "packages/a/dist/x.js", "packages/platform/t/dist/x.js", "packages/platform/t/node_modules/dep/x.js",
+      "scripts/node_modules/dep/x.ts", "packages/a/src/x.d.ts", "packages/a/src/x.json", "packages/a/src/x.md"];
     for (const path of [...scanned, ...ignored]) write(path);
     expect([...loadProduction(root).keys()].sort()).toEqual([...scanned].sort());
+    // End to end: a claim planted under a src/dist directory is found by the scan of what was loaded.
+    writeFileSync(join(root, "packages/a/src/dist/claim.ts"), `import { ${ISSUER} } from "./guided-guest-attestation.ts"; ${ISSUER}();\n`);
+    expect(scan(loadProduction(root)).some(line => /packages\/a\/src\/dist\/claim\.ts: imports the attestation module/.test(line))).toBe(true);
   } finally { rmSync(root, { recursive: true, force: true }); }
   expect([...real.keys()].some(path => /\.mjs$/.test(path))).toBe(true); // The real tree has a script outside .ts.
   expect([...real.keys()].some(path => !/^packages\/[^/]+\/src\//.test(path))).toBe(true); // And files outside src.
@@ -337,6 +350,12 @@ const rules: [string, Map<string, string>, RegExp][] = [
   ["storing the SDK namespace", withFile("packages/runtime/src/zz.ts", `${sdkNamespace}export const alias = sdk;`), /SDK namespace passes or stores the whole module value/],
   ["a star re-export of the SDK entry", withFile("packages/runtime/src/zz.ts", `export * from "${SDK_PACKAGE}";`), /re-exports the whole SDK entry/],
   ["a star re-export of the SDK index by relative path", withFile("packages/runtime/src/zz.ts", `export * from "../../sdk/src/index.ts";`), /re-exports the whole SDK entry/],
+  ["a star re-export of the BUILT SDK index", withFile("packages/runtime/src/zz.ts", `export * from "../../sdk/dist/index.js";`), /re-exports the whole SDK entry/],
+  ["a star re-export of the built SDK directory", withFile("packages/runtime/src/zz.ts", `export * from "../../sdk/dist";`), /re-exports the whole SDK entry/],
+  ["enumerating a namespace import of the BUILT SDK index", withFile("packages/runtime/src/zz.ts", `import * as built from "../../sdk/dist/index.js";\nexport const names = Object.keys(built);`), /SDK namespace passes or stores the whole module value/],
+  ["a computed key on the BUILT SDK index", withFile("packages/runtime/src/zz.mjs", `import * as built from "../../sdk/dist/index.js";\nexport const c = built["claimGuided" + "GuestIssuer"]();`), /SDK namespace reads a computed key/],
+  ["a dynamic import of the BUILT SDK index kept whole", withFile("packages/runtime/src/zz.ts", `export const load = async () => { const built = await import("../../sdk/dist/index.js"); return built; };`), /SDK namespace passes or stores the whole module value/],
+  ["a named import of the claim from the BUILT SDK index", withFile("packages/runtime/src/zz.ts", `import { ${ISSUER} } from "../../sdk/dist/index.js"; ${claim};`), /references claimGuidedGuestIssuer/],
   ["a dynamic import of the SDK entry kept whole", withFile("packages/runtime/src/zz.ts", `export const load = async () => { const sdk = await import("${SDK_PACKAGE}"); return Object.keys(sdk); };`), /SDK namespace passes or stores the whole module value/],
   ["a dynamic import of the SDK entry through then", withFile("packages/runtime/src/zz.ts", `export const load = () => import("${SDK_PACKAGE}").then(sdk => sdk);`), /SDK entry loaded dynamically and reads \.then/],
   ["a bare dynamic import of the SDK entry", withFile("packages/runtime/src/zz.ts", `export const load = () => import("${SDK_PACKAGE}");`), /SDK entry loaded dynamically and uses the whole module value/],

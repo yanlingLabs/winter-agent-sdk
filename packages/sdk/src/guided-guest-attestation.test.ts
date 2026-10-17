@@ -444,6 +444,33 @@ test("advance tears down every running query of that workspace and only that wor
   expect(elsewhere.kills).toEqual([]); elsewhere.active(); elsewhere.control.advance(); elsewhere.closed();
   for (const f of [a, b, elsewhere]) f.control.finish();
 });
+function lateSpendDuring(door: "revoke" | "forget") {
+  const key = workspaceOf(); let late: ReturnType<typeof guest> | undefined, attempted = 0;
+  const running = guest({ workspace: key, onKill: () => {
+    // The host's own teardown runs while the door is still looping and `late` is still minted and unspent.
+    attempted++; refusal(() => query({ prompt: "fixture", options: late!.options }));
+  } });
+  late = guest({ workspace: key });
+  const gen = query({ prompt: "fixture", options: running.options }); void gen; running.active();
+  issuer[door](key);
+  expect(attempted).toBe(1); expect(late.spawns()).toBe(0); expect(late.callbacks()).toBe(0);
+  late.closed(); running.closed(); expectSpent(late.ticket); running.control.finish();
+}
+test("a late ticket not yet killed cannot be spent from inside a host teardown callback during revoke", () => lateSpendDuring("revoke"));
+test("a late ticket not yet killed cannot be spent from inside a host teardown callback during forget", () => lateSpendDuring("forget"));
+test("forget drops only the generation that was current when it began: a reentrant advance from a teardown callback survives", () => {
+  const key = workspaceOf();
+  const running = guest({ workspace: key, onKill: () => issuer.advance(key, "inc-9", 9) });
+  const gen = query({ prompt: "fixture", options: running.options }); void gen; running.active();
+  issuer.forget(key);
+  expect(running.kills).toEqual([undefined]); running.closed(); expectSpent(running.ticket);
+  const b = bare(), ticket = issuer.mint({ workspaceKey: key, incarnationId: "inc-9", leaseEpoch: 9, preparation: b.preparation });
+  expect(reachesHook(b, ticket)).toBe(true); // The announced generation was kept, open and current.
+  refusal(() => issuer.mint({ workspaceKey: key, incarnationId: "inc-1", leaseEpoch: 1, preparation: bare().preparation })); // The forgotten one is gone.
+  issuer.forget(key); // A later forget still frees the new one.
+  refusal(() => issuer.mint({ workspaceKey: key, incarnationId: "inc-9", leaseEpoch: 9, preparation: bare().preparation }));
+  running.control.finish();
+});
 test("a throwing teardown callback never stops the rest of the revocation", () => {
   const key = workspaceOf(); const a = guest({ workspace: key, onKill: () => { throw new Error("host kill exploded"); } }), b = guest({ workspace: key });
   for (const f of [a, b]) { const gen = query({ prompt: "fixture", options: f.options }); void gen; f.active(); }
@@ -629,9 +656,13 @@ test("a guard that throws, reports stale or fails to register is refused and clo
   consumeGuidedQueryCorrelation(claim, input); assertGuidedQueryCorrelation(claim, expected);
   stale.state.current = false; refusal(() => assertGuidedQueryCorrelation(claim, expected));
   stale.state.current = true; refusal(() => assertGuidedQueryCorrelation(claim, expected)); expect(stale.state.released).toBe(1);
-  // A guard that cannot register the consumed id fails the consume and closes the record.
-  const full = guarded(), fullClaim = claimGuidedQuery(full.preparation, full.pair);
-  full.state.consumedFails = true; refusal(() => consumeGuidedQueryCorrelation(fullClaim, args())); refusal(() => claimGuidedQuery(full.preparation, full.pair));
+  // A guard that cannot register the consumed id fails the consume, closes the record, and leaves NOTHING in the process-wide set:
+  // the same id is still consumable by another preparation (the guard registers before the set is written).
+  const full = guarded(), fullClaim = claimGuidedQuery(full.preparation, full.pair), unregistered = args();
+  full.state.consumedFails = true; refusal(() => consumeGuidedQueryCorrelation(fullClaim, unregistered)); refusal(() => claimGuidedQuery(full.preparation, full.pair));
+  const retry = bare(); expect(() => consumeGuidedQueryCorrelation(claimGuidedQuery(retry.preparation, retry.pair), unregistered)).not.toThrow();
+  const replay = bare(); // And now that one HAS consumed it, a replay is refused (the claim itself succeeds).
+  const replayClaim = claimGuidedQuery(replay.preparation, replay.pair); refusal(() => consumeGuidedQueryCorrelation(replayClaim, unregistered));
   // Binding a second guard, or one onto a claimed preparation, is refused.
   const twice = guarded(); refusal(() => bindGuidedGuestGuard(twice.preparation, { current: () => true, consumed: () => {}, release: () => {} }));
 });
