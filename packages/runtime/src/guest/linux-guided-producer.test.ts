@@ -233,8 +233,11 @@ test("static pin: the guided entry is unwired and absent from every compile pack
   for (const path of ["scripts/guest-host-query/compile.ts", "scripts/guest-host-query/provenance.py"]) expect(source(path)).not.toMatch(/guided/i);
 });
 
-test("static pin: the host guard still refuses a confined required-context query", () => {
+test("static pin: the host guard still refuses a confined required-context query unless a spent guest ticket lifts it", () => {
   const query = source("packages/sdk/src/query.ts");
-  expect(query).toContain('(preparation !== undefined || options.requireRuntimeContext === true) && options.executionPosture === "confined-guest") throw new Error("required_context_unavailable")');
-  expect(query).toContain("No preparation can lift the current unconditional native guest refusal.");
+  // The only exception is a guided query whose guest ticket query() spent (guided-guest-attestation.md); nothing else lifts it.
+  expect(query).toContain('(preparation !== undefined || options.requireRuntimeContext === true) && options.executionPosture === "confined-guest" && preparation?.guest !== true) throw new Error("required_context_unavailable")');
+  expect(query).toContain("The unconditional native guest refusal lifts ONLY for a valid, unspent, current-generation guest ticket bound to");
+  expect(query).toContain("guest: ticket !== undefined,");
+  expect(query).toContain("spendGuidedGuestTicket(ticket, preparation,");
 });

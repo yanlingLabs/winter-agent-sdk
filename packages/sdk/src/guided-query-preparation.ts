@@ -13,13 +13,19 @@ export interface GuidedQueryCallbacks {
 }
 export interface GuidedQueryCorrelation { readonly version: 1; readonly bindingId: string; }
 export const GUIDED_QUERY_CONFIG_MAX_BYTES = 64 * 1024;
-/** Unwired prerequisite only: production needs a reviewed owner-generation expiry protocol. */
+/** Fixed capacity of the process-global consumed-binding set. Also bounds the guest-ticket records and workspace
+ * counters (guided-guest-attestation.ts). Ids consumed by a guest-ticket preparation leave the set when their
+ * workspace generation dies; every other id stays for the life of the process: see docs/guided-guest-attestation.md. */
 export const GUIDED_QUERY_CORRELATION_CAPACITY = 4096;
 const consumedBindings = new Set<string>();
 
 type State = "prepared" | "claimed" | "correlated" | "closed";
+/** Internal: a guest-ticket guard (guided-guest-attestation.ts) bound to ONE preparation. `current` must be
+ * synchronous and clock-free; `release` runs once when the record closes. Never exported from the package. */
+export interface GuidedGuestGuard { current(): boolean; consumed(bindingId: string): void; release(): void; }
 interface PreparationRecord {
   state: State;
+  guard?: GuidedGuestGuard;
   onRuntimeContext: RuntimeContextHandler | undefined;
   spawnClaudeCodeProcess: SpawnClaudeCodeProcess | undefined;
   correlation?: Readonly<GuidedQueryCorrelation>;
@@ -53,11 +59,28 @@ function record(value: GuidedQueryPreparation): PreparationRecord {
 }
 function closeRecord(value: PreparationRecord): void {
   value.state = "closed";
+  const guard = value.guard;
+  delete value.guard;
+  if (guard !== undefined) { try { guard.release(); } catch { /* Closing remains terminal. */ } }
   for (const dispose of value.contextDisposers ?? []) { try { dispose(); } catch { /* Closing remains terminal. */ } }
   value.contextDisposers?.clear();
   value.onRuntimeContext = undefined;
   value.spawnClaudeCodeProcess = undefined;
   delete value.correlation;
+}
+/** A guarded preparation (a guest ticket was minted for it) must still be in its current generation at every
+ * step. A stale or throwing guard closes the record exactly like closeGuidedQuery, then refuses. A preparation
+ * with no guard is untouched, so every non-ticket path behaves exactly as before. */
+function live(value: PreparationRecord): void {
+  const guard = value.guard;
+  if (guard === undefined) return;
+  let current = false;
+  try { current = guard.current() === true; } catch { current = false; }
+  if (!current) { closeRecord(value); fail(); }
+}
+/** Internal: a dead workspace generation's correlation ids leave the consumed set (only the guest-ticket module calls this). */
+export function forgetConsumedBindings(bindingIds: Iterable<string>): void {
+  for (const bindingId of bindingIds) consumedBindings.delete(bindingId);
 }
 /** Internal correlation checks only. A preparation/claim never establishes
  * native owner, views or filesystem authority. */
@@ -65,11 +88,26 @@ export function assertGuidedPreparationClaim(preparation: GuidedQueryPreparation
   if (claims.get(claim) !== preparation) return fail();
   assertGuidedQueryCorrelation(claim, expected);
 }
+/** Internal: bind the guest-ticket guard to one still-prepared preparation. One guard per preparation, ever. */
+export function bindGuidedGuestGuard(preparation: GuidedQueryPreparation, guard: GuidedGuestGuard): void {
+  const current = record(preparation);
+  if (current.state !== "prepared" || current.guard !== undefined) return fail();
+  current.guard = guard;
+}
+/** Internal: the claim is still claimed or correlated and a guarded preparation is in its current generation. */
+export function assertGuidedQueryClaimActive(claim: GuidedQueryClaim): void {
+  const preparation = claims.get(claim);
+  if (preparation === undefined) return fail();
+  const current = record(preparation);
+  if (current.state !== "claimed" && current.state !== "correlated") return fail();
+  live(current);
+}
 export function registerGuidedContextDisposer(claim: GuidedQueryClaim, dispose: () => void): () => void {
   const preparation = claims.get(claim);
   if (preparation === undefined || typeof dispose !== "function") return fail();
   const current = record(preparation);
   if (current.state !== "correlated") return fail();
+  live(current);
   (current.contextDisposers ??= new Set()).add(dispose);
   return () => { current.contextDisposers?.delete(dispose); };
 }
@@ -85,6 +123,7 @@ export function claimGuidedQuery(preparation: GuidedQueryPreparation, value: Gui
   const current = record(preparation), pair = callbacks(value);
   if (current.state !== "prepared" || current.onRuntimeContext !== pair.onRuntimeContext
     || current.spawnClaudeCodeProcess !== pair.spawnClaudeCodeProcess) return fail();
+  live(current);
   if (consumedBindings.size >= GUIDED_QUERY_CORRELATION_CAPACITY) {
     closeRecord(current); return fail();
   }
@@ -133,9 +172,12 @@ export function consumeGuidedQueryCorrelation(claim: GuidedQueryClaim, args: rea
   if (preparation === undefined) return fail();
   const current = record(preparation);
   if (current.state !== "claimed") return fail();
+  live(current);
   try {
     const result = correlation(args);
     if (consumedBindings.has(result.bindingId) || consumedBindings.size >= GUIDED_QUERY_CORRELATION_CAPACITY) return fail();
+    // The guard registers the id first: if it refuses, nothing was added to the process-wide set.
+    current.guard?.consumed(result.bindingId);
     consumedBindings.add(result.bindingId);
     current.state = "correlated";
     current.correlation = result;
@@ -152,6 +194,7 @@ export function assertGuidedQueryCorrelation(claim: GuidedQueryClaim, expected: 
   const current = record(preparation);
   if (current.state !== "correlated" || current.correlation?.version !== expected.version
     || current.correlation.bindingId !== expected.bindingId) return fail();
+  live(current);
 }
 /** Future owning query teardown must call this on abort/exit/abandonment. No process is launched here. */
 export function closeGuidedQuery(preparation: GuidedQueryPreparation): void { closeRecord(record(preparation)); }

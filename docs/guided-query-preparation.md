@@ -2,7 +2,8 @@
 
 The preparation codec and opt-in host query lifecycle are source prerequisites
 for a future reviewed native guided-query adapter. They do not enable
-`requireRuntimeContext` in a confined guest. Engine, native profile and producer
+`requireRuntimeContext` in a confined guest; the only door is a one-shot guest ticket
+from the owning host's issuer (`guided-guest-attestation.md`), which no SDK path mints. Engine, native profile and producer
 guards remain unchanged. The codec performs no IO; an ordinary custom-spawn query
 can use existing context callbacks only after exact correlation is consumed.
 
@@ -42,6 +43,9 @@ There is no eviction, TTL or reset. **This is not the production daemon lifecycl
 A reviewed Root-owned generation/domain expiry protocol is a prerequisite before
 guided guest or production daemon activation; these APIs alone are insufficient
 for long-lived production use.
+The guest ticket (`guided-guest-attestation.md`) supplies counter-based generation expiry:
+ids consumed by a preparation that carries a guest ticket leave this set when their workspace
+generation dies. Every other id stays as described.
 
 The decoder accepts the SDK's exact three-argument `--run --config-json` envelope,
 with a 64 KiB config bound before JSON parsing. Config must round-trip byte-exactly
@@ -58,7 +62,9 @@ Root bootstrap creation, then real native owner attestation in the guest entry
 before reader/provider access. Preparation alone is not native proof. The host
 callback and hook must be bound to the same preparation; matching nonce text,
 profile strings and transport shapes cannot establish admission. Unregistered,
-v1 and prepared-but-unattested confined required-context queries still refuse.
+v1 and prepared-but-unattested confined required-context queries still refuse; a guided
+query that presents a valid guest ticket (`guided-guest-attestation.md`) is the one
+exception, and even then `hostCodeProcessBroker` and non-guided queries refuse.
 Source tests use virtual transports and actual SDK/engine in-memory callbacks.
 Failed correlation produces zero model callbacks; valid correlation can exercise
 ordinary context behavior. A separate bounded Bun unit subprocess tests capacity

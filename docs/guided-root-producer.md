@@ -68,7 +68,9 @@ edit would change the v1 compile inputs and their pins.
 
 - **The host guard.** `packages/sdk/src/query.ts` still throws `required_context_unavailable` for a
   prepared or required-context query with `executionPosture: "confined-guest"` (the two checks near
-  lines 805-813 and 960). A source pin test keeps that text in place.
+  lines 815-830 and 982), except for a guided query that presents a one-shot guest ticket minted by the
+  owning host's issuer (`guided-guest-attestation.md`). No SDK path mints a ticket, so nothing lifts it
+  today. A source pin test keeps the gated text in place.
 - **The reader service.** Root serves nothing on the stream. Producing a registration does not
   authenticate it natively (the C patch checks the stream's creator, not the later holder), and Root's
   exclusive per-incarnation handoff, framed reader service and drain evidence are still owed
@@ -88,7 +90,9 @@ prerequisite for both.
 1. **Whether and how the `query.ts` guard is lifted.** The SDK host still refuses every confined
    required-context query. What evidence a future change must require before lifting that refusal
    (an actual native owner admission of the five-descriptor record, a served and drained reader, a
-   mounted guidance view), and where the lift sits, is undecided. Nothing in this slice moves it.
+   mounted guidance view), and where the lift sits, is undecided. Nothing in this slice moves it. The SDK
+   side is now the dormant guest ticket (`guided-guest-attestation.md`); the evidence a host must hold
+   before it mints one is still undecided.
 2. **Generation expiry and replay policy.** Root takes `generation` as an explicit positive integer and
    enforces no expiry, rotation or replay ledger. Whether Root mints it, ages it out, and how a consumed
    registration or binding is refused after a restart is the open production policy

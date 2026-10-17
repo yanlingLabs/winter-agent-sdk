@@ -49,7 +49,8 @@ session and loaded assistant history with a fresh channel. This is in-process
 filesystem resume evidence, not a native/process/VM cold restart or admission.
 
 The current confined Linux/fresh/host-query profiles remain unavailable for this
-opt-in. The SDK refuses it with `executionPosture: "confined-guest"`; runtime wiring
+opt-in. The SDK refuses it with `executionPosture: "confined-guest"` unless a guided
+query presents a guest ticket (`guided-guest-attestation.md`); runtime wiring
 and engine entry also refuse that combination before native admission. Their
 closed profile/config/tool rules and disabled child factory remain unchanged.
 A Cowork guest RPC profile, canonical host revision/authorization, protected native
