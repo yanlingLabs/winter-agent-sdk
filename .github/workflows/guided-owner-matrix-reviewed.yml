@@ -15,6 +15,8 @@ concurrency:
 env:
   FIXTURE_SHA256: ef1a3e4554551a47e5857ec90618cb968be2e3a1a653817df5bcac5d269f2d39
   MATRIX_SHA256: 4490ca04cb693fb92131784c04bd301b78c6116f2ba7e73fbafe13a87d187abd
+  # The fixture #includes this file (the production owner); the matrix recompiles the fixture as root.
+  OWNER_SHA256: c149d451eaa79442dfd41e9375c891ae8c9a06135d2cfc85851bcc8b5ce51fd8
 jobs:
   reviewed-disposable-owner-matrix:
     if: github.repository == 'yanlingLabs/winter-agent-sdk' && github.event_name == 'push' && github.ref == 'refs/heads/cowork/guided-owner-matrix-run' && github.event.created == true && github.run_attempt == '1'
@@ -30,7 +32,7 @@ jobs:
           set -eu
           test "$(uname -s)" = Linux
           test "$(uname -m)" = aarch64
-          printf '%s  %s\n' "$FIXTURE_SHA256" scripts/guest-supervisor/guided_owner_native_fixture.c "$MATRIX_SHA256" scripts/guest-supervisor/test_guided_owner.py | sha256sum --check --strict --quiet
+          printf '%s  %s\n' "$FIXTURE_SHA256" scripts/guest-supervisor/guided_owner_native_fixture.c "$MATRIX_SHA256" scripts/guest-supervisor/test_guided_owner.py "$OWNER_SHA256" packages/runtime/src/guest/linux-session-owner.c | sha256sum --check --strict --quiet
           command -v cc
       - name: Compile the fixture without privilege
         run: |
@@ -41,49 +43,64 @@ jobs:
         run: |
           set -eu
           mkdir -p out/guided-owner-matrix
-          sudo -n env WINTER_GUIDED_OWNER_NATIVE_ADMISSION=disposable-linux-guided-owner-matrix python3 -I -S -B - "$GITHUB_SHA" "$FIXTURE_SHA256" "$MATRIX_SHA256" out/guided-owner-matrix/result.json <<'PY'
-          import hashlib, json, os, platform, sys, types, unittest
-          head, fixture_pin, matrix_pin, destination = sys.argv[1:5]
+          sudo -n env WINTER_GUIDED_OWNER_NATIVE_ADMISSION=disposable-linux-guided-owner-matrix python3 -I -S -B - "$GITHUB_SHA" out/guided-owner-matrix/result.json "scripts/guest-supervisor/guided_owner_native_fixture.c=$FIXTURE_SHA256" "scripts/guest-supervisor/test_guided_owner.py=$MATRIX_SHA256" "packages/runtime/src/guest/linux-session-owner.c=$OWNER_SHA256" <<'PY'
+          import hashlib, json, os, platform, re, sys, types, unittest
+          head, destination, *pins = sys.argv[1:]
           if os.geteuid() != 0:
               raise SystemExit('root required')
-          base = 'scripts/guest-supervisor/'
           def read(name):
-              with open(base + name, 'rb') as handle:
+              with open(name, 'rb') as handle:
                   return handle.read(16777217)
-          fixture = read('guided_owner_native_fixture.c')
-          matrix = read('test_guided_owner.py')
-          hashes = {'guided_owner_native_fixture.c': hashlib.sha256(fixture).hexdigest(), 'test_guided_owner.py': hashlib.sha256(matrix).hexdigest()}
-          if hashes['guided_owner_native_fixture.c'] != fixture_pin or hashes['test_guided_owner.py'] != matrix_pin:
+          hashes = {}
+          matrix = b''
+          for pin in pins:
+              name, digest = pin.split('=')
+              data = read(name)
+              hashes[name] = hashlib.sha256(data).hexdigest()
+              if hashes[name] != digest:
+                  raise SystemExit('unreviewed matrix bytes refused')
+              if name.endswith('test_guided_owner.py'):
+                  matrix = data
+          if len(hashes) != 3 or not matrix:
               raise SystemExit('unreviewed matrix bytes refused')
           module = types.ModuleType('guided_owner_matrix')
-          module.__file__ = os.path.abspath(base + 'test_guided_owner.py')
+          module.__file__ = os.path.abspath('scripts/guest-supervisor/test_guided_owner.py')
           exec(compile(matrix, module.__file__, 'exec'), module.__dict__)
+          def classify(test, err):
+              if test.id().startswith('setUpClass'):
+                  return 'compile-error'
+              text = str(err[1])
+              if 'timed out' in text:
+                  return 'timeout'
+              if re.search(r'ENOSYS|EPERM|EINVAL|EOPNOTSUPP|not supported|SO_PEERPIDFD|pidfd|unshare', text):
+                  return 'missing-kernel-feature'
+              return 'assertion'
           class Recorder(unittest.TestResult):
               def __init__(self):
                   super().__init__()
                   self.rows = []
               def addSuccess(self, test):
-                  self.rows.append((test.id(), 'pass'))
+                  self.rows.append((test.id(), 'pass', None))
               def addSkip(self, test, reason):
-                  self.rows.append((test.id(), 'skip'))
+                  self.rows.append((test.id(), 'skip', None))
               def addFailure(self, test, err):
-                  self.rows.append((test.id(), 'fail'))
+                  self.rows.append((test.id(), 'fail', classify(test, err)))
               def addError(self, test, err):
-                  self.rows.append((test.id(), 'fail'))
+                  self.rows.append((test.id(), 'fail', classify(test, err)))
               def addExpectedFailure(self, test, err):
-                  self.rows.append((test.id(), 'fail'))
+                  self.rows.append((test.id(), 'fail', 'assertion'))
               def addUnexpectedSuccess(self, test):
-                  self.rows.append((test.id(), 'fail'))
+                  self.rows.append((test.id(), 'fail', 'assertion'))
           suite = unittest.TestLoader().loadTestsFromTestCase(module.GuidedOwnerNativeTargetTests)
           recorder = Recorder()
           suite.run(recorder)
           kernel = platform.release()
           major_minor = tuple(int(part) for part in kernel.split('-')[0].split('.')[:2])
-          tests = [{'id': name.split('.')[-1], 'outcome': outcome} for name, outcome in sorted(recorder.rows)]
+          tests = [{'id': name.split('.')[-1], 'outcome': outcome, 'failureClass': cls} for name, outcome, cls in sorted(recorder.rows, key=lambda row: row[0])]
           count = lambda outcome: sum(1 for row in tests if row['outcome'] == outcome)
           skipped = [row['id'] for row in tests if row['outcome'] == 'skip']
           expected = major_minor >= (6, 9) and len(tests) == 12 and count('pass') == 11 and count('fail') == 0 and skipped == ['test_actual_pidfs_absent_before_69']
-          result = {'schema': 'winter-guided-owner-matrix-result/1', 'headSha': head, 'kernelRelease': kernel, 'machine': platform.machine(), 'fixtureSha256': hashes, 'total': len(tests), 'passed': count('pass'), 'skipped': count('skip'), 'failed': count('fail'), 'matchesExpected11Plus1': expected, 'tests': tests}
+          result = {'schema': 'winter-guided-owner-matrix-result/2', 'headSha': head, 'kernelRelease': kernel, 'machine': platform.machine(), 'pinnedSha256': hashes, 'total': len(tests), 'passed': count('pass'), 'skipped': count('skip'), 'failed': count('fail'), 'matchesExpected11Plus1': expected, 'tests': tests}
           fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
           with os.fdopen(fd, 'w') as handle:
               json.dump(result, handle, indent=1, sort_keys=True)

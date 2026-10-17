@@ -10,11 +10,24 @@ authored here and has not run.
 - The CURRENT merged owner code (`packages/runtime/src/guest/linux-session-owner.c`) through the
   existing fixture. It does not depend on the unapplied compartment patch (compartment C) and does
   not test it.
-- Steps: checkout of the pushed commit; a refusal unless the fixture and the matrix match their
-  pinned SHA-256 (in the workflow's `env`); a `cc -Werror` compile as the ordinary runner user; then
-  one `sudo -n env WINTER_GUIDED_OWNER_NATIVE_ADMISSION=... python3` step that re-checks the pinned
-  bytes, runs only the 12 native cases, and writes a small JSON. The opt-in variable exists only on
-  that command line.
+- Steps: checkout of the pushed commit; a refusal unless every pinned file matches its SHA-256 (in
+  the workflow's `env`); a `cc -Werror` compile as the ordinary runner user; then one
+  `sudo -n env WINTER_GUIDED_OWNER_NATIVE_ADMISSION=... python3 -I -S -B -` step that hashes every
+  pinned file itself, runs only the 12 native cases, and writes a small JSON. The opt-in variable
+  exists only on that command line.
+- Pins (SHA-256), covering the matrix and the whole local include closure of the fixture:
+  - `scripts/guest-supervisor/guided_owner_native_fixture.c`: `ef1a3e45...f2d39`
+  - `scripts/guest-supervisor/test_guided_owner.py`: `4490ca04...87abd`
+  - `packages/runtime/src/guest/linux-session-owner.c` (the fixture's only quoted `#include`):
+    `c149d451...51fd8`
+
+  The full values are in the workflow. The gate test computes the include closure statically and
+  fails if a closure member is unpinned or a pin differs from the file.
+- What the pins do and do not cover: the root step hashes each pinned file immediately before it
+  runs the matrix, and the matrix then recompiles the fixture (and the included owner) from disk.
+  The pin is a check at that moment, not a lock on the bytes the compiler later reads; the
+  disposable runner has no other actor that could change them in between. The system `cc`, libc and
+  kernel are not pinned.
 - No secrets, `permissions: contents: read`, pinned action SHAs, and no network except the checkout.
 
 ## What it proves, and what it does not
@@ -37,7 +50,19 @@ older-kernel target would be a separate approval.
 
 The artifact `guided-owner-matrix-result` (7-day retention, nothing else uploaded) holds: `uname -r`
 as `kernelRelease`, the machine, the head SHA, both fixture hashes, the pass/skip/fail counts and
-every test id with its outcome. The public log carries one summary line.
+every test id with its outcome. A failed case also carries a bounded `failureClass`
+(`compile-error`, `missing-kernel-feature`, `assertion` or `timeout`), never runner text. The
+public log carries one summary line.
+
+## Expected kernel
+
+`ubuntu-24.04-arm` runner images are described in `actions/partner-runner-images`. Its
+`Ubuntu2404-Readme.md` (last changed 2026-02-03) lists kernel `6.14.0-1017-azure`, and the x64
+`actions/runner-images` Ubuntu 24.04 readme lists `6.17.0-1022-azure`. Neither is verified for this
+exact runner at run time, so treat a kernel of 6.9 or later as expected, not proven. If the runner
+reports a kernel older than 6.9, the success cases skip, `matchesExpected11Plus1` is false and the
+job fails. That run is then spent: nothing fires again, and a new reviewed workflow with a new
+branch name would be needed.
 
 ## Trigger and owner approval
 
@@ -48,8 +73,10 @@ every test id with its outcome. The public log carries one summary line.
 - Owner approval needed: one push of the reviewed head to that branch, performed by the controller
   only after the owner approves that exact head. Never re-run it; a re-run has `run_attempt` 2 and
   is refused by the gate.
-- The branch is frozen after that one run: never push to it again, never delete and recreate it.
-  Any further run needs a new reviewed workflow with a new branch name.
+- The branch is frozen after that one run: never push to it again.
+- **Never delete and recreate the branch.** Creating it again is another first-creation push and
+  would fire the workflow again. Any further run needs a new reviewed workflow with a new branch
+  name.
 
 `scripts/guided-owner-matrix-gates.test.ts` (part of the ordinary `bun test`) parses the workflow
 and asserts all of the above, including that each gate removal is caught.
