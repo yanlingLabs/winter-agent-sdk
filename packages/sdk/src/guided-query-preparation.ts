@@ -13,16 +13,16 @@ export interface GuidedQueryCallbacks {
 }
 export interface GuidedQueryCorrelation { readonly version: 1; readonly bindingId: string; }
 export const GUIDED_QUERY_CONFIG_MAX_BYTES = 64 * 1024;
-/** Fixed capacity of the process-global consumed-binding set. Also bounds the guest-ticket records
- * (guided-guest-attestation.ts), which expire by canonical counters, never by a clock. This set itself
- * still has no eviction: see docs/guided-guest-attestation.md, open items. */
+/** Fixed capacity of the process-global consumed-binding set. Also bounds the guest-ticket records and workspace
+ * counters (guided-guest-attestation.ts). Ids consumed by a guest-ticket preparation leave the set when their
+ * workspace generation dies; every other id stays for the life of the process: see docs/guided-guest-attestation.md. */
 export const GUIDED_QUERY_CORRELATION_CAPACITY = 4096;
 const consumedBindings = new Set<string>();
 
 type State = "prepared" | "claimed" | "correlated" | "closed";
 /** Internal: a guest-ticket guard (guided-guest-attestation.ts) bound to ONE preparation. `current` must be
  * synchronous and clock-free; `release` runs once when the record closes. Never exported from the package. */
-export interface GuidedGuestGuard { current(): boolean; release(): void; }
+export interface GuidedGuestGuard { current(): boolean; consumed(bindingId: string): void; release(): void; }
 interface PreparationRecord {
   state: State;
   guard?: GuidedGuestGuard;
@@ -77,6 +77,10 @@ function live(value: PreparationRecord): void {
   let current = false;
   try { current = guard.current() === true; } catch { current = false; }
   if (!current) { closeRecord(value); fail(); }
+}
+/** Internal: a dead workspace generation's correlation ids leave the consumed set (only the guest-ticket module calls this). */
+export function forgetConsumedBindings(bindingIds: Iterable<string>): void {
+  for (const bindingId of bindingIds) consumedBindings.delete(bindingId);
 }
 /** Internal correlation checks only. A preparation/claim never establishes
  * native owner, views or filesystem authority. */
@@ -173,6 +177,7 @@ export function consumeGuidedQueryCorrelation(claim: GuidedQueryClaim, args: rea
     const result = correlation(args);
     if (consumedBindings.has(result.bindingId) || consumedBindings.size >= GUIDED_QUERY_CORRELATION_CAPACITY) return fail();
     consumedBindings.add(result.bindingId);
+    current.guard?.consumed(result.bindingId);
     current.state = "correlated";
     current.correlation = result;
     return result;

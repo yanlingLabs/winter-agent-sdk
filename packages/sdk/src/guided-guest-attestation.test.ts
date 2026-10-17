@@ -1,7 +1,8 @@
 // This is the ONLY test file in the repository that calls claimGuidedGuestIssuer() against the real module instance:
 // the issuer is claimable once per module instance and `bun test` shares one registry across files. Other
-// instances (a cache-busted import, a capacity subprocess) are separate realms of the same module.
+// instances (a cache-busted import, a capacity subprocess) are separate module instances.
 import { expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { query } from "./query.ts";
 import type { Options } from "./options.ts";
 import type { SpawnRuntimeOptions, SpawnedRuntimeProcess } from "./transport.ts";
-import { prepareGuidedQuery, claimGuidedQuery, closeGuidedQuery, consumeGuidedQueryCorrelation, assertGuidedQueryCorrelation,
+import { prepareGuidedQuery, claimGuidedQuery, closeGuidedQuery, consumeGuidedQueryCorrelation, assertGuidedQueryCorrelation, bindGuidedGuestGuard,
   type GuidedQueryClaim, type GuidedQueryCorrelation, type GuidedQueryPreparation } from "./guided-query-preparation.ts";
 import { claimGuidedGuestIssuer, type GuidedGuestIssuer, type GuidedGuestTicket } from "./guided-guest-attestation.ts";
 import * as published from "./index.ts";
@@ -112,12 +113,12 @@ const mintFor = (preparation: GuidedQueryPreparation, key = workspaceOf()) => is
 
 // ---- the issuer: one claim, closed surface ------------------------------------------------------------------------
 
-test("the issuer is claimable exactly once per module instance and is a frozen two-method capability", async () => {
-  expect(Object.isFrozen(issuer)).toBe(true); expect(Reflect.ownKeys(issuer).sort()).toEqual(["advance", "mint"]);
+test("the issuer is claimable exactly once per module instance and is a frozen four-method capability", async () => {
+  expect(Object.isFrozen(issuer)).toBe(true); expect(Reflect.ownKeys(issuer).sort()).toEqual(["advance", "forget", "mint", "revoke"]);
   refusal(() => claimGuidedGuestIssuer()); refusal(() => claimGuidedGuestIssuer());
   refusal(() => published.claimGuidedGuestIssuer());
   const instance = await fresh("claim-once");
-  expect(Reflect.ownKeys(instance.claimGuidedGuestIssuer()).sort()).toEqual(["advance", "mint"]);
+  expect(Reflect.ownKeys(instance.claimGuidedGuestIssuer()).sort()).toEqual(["advance", "forget", "mint", "revoke"]);
   refusal(() => instance.claimGuidedGuestIssuer()); refusal(() => instance.claimGuidedGuestIssuer());
   const detached = { ...issuer }; const key = workspaceOf();
   expect(() => detached.mint({ workspaceKey: key, incarnationId: "inc-1", leaseEpoch: 1, preparation: bare().preparation })).not.toThrow();
@@ -359,13 +360,10 @@ test("advance between construction and the first read tears the child down and t
   await expect(gen.next()).rejects.toThrow("required_context_unavailable");
   expect(f.writes).toEqual([]); expect(f.callbacks()).toBe(0); f.control.finish();
 });
-test("advance before a context request: the request is answered as refused and the callback never runs", async () => {
-  const f = guest({ scenario: async function* (config, frames, control) {
-    control.advance(); yield context(config);
-    expect(await nextFrame(frames, isContextAnswer)).toEqual({ type: "control_response", requestId: contextId, ok: false, error: { code: "required_context_unavailable", message: "required_context_unavailable" } });
-    yield result;
-  } });
-  await f.run(); expect(f.callbacks()).toBe(0); expect(f.kills).toEqual([undefined]); f.closed();
+test("advance before a context request: the request is never dispatched, the callback never runs and the query rejects", async () => {
+  const f = guest({ scenario: async function* (config, _frames, control) { control.advance(); yield context(config); yield result; } });
+  await expect(f.run()).rejects.toThrow("required_context_unavailable");
+  expect(f.callbacks()).toBe(0); expect(f.writes.some(isContextAnswer)).toBe(false); expect(f.kills).toEqual([undefined]); f.closed(); f.control.finish();
 });
 test("advance while the callback is awaited: the snapshot is never answered", async () => {
   const f = guest({ callback: async () => { f.control.advance(); await Promise.resolve(); return snapshot; }, scenario: async function* (config, frames) {
@@ -373,7 +371,8 @@ test("advance while the callback is awaited: the snapshot is never answered", as
     const response = await nextFrame(frames, isContextAnswer) as ControlResponseFrame;
     expect(response.ok).toBe(false); expect(response.error?.code).toBe("required_context_unavailable"); expect(response.payload).toBeUndefined(); yield result;
   } });
-  await f.run(); expect(f.callbacks()).toBe(1); expect(f.kills).toEqual([undefined]); f.closed();
+  await expect(f.run()).rejects.toThrow("required_context_unavailable");
+  expect(f.callbacks()).toBe(1); expect(f.kills).toEqual([undefined]); f.closed(); f.control.finish();
 });
 test("advance before a guided read starts, while one is pending, and after its answer arrives", async () => {
   for (const moment of ["before", "pending", "answered"]) {
@@ -398,8 +397,9 @@ test("advance before a guided read starts, while one is pending, and after its a
         expect(response.ok).toBe(false); expect(response.payload).toBeUndefined(); yield result;
       },
     });
-    await f.run(); expect(readStarted).toBe(1); expect(f.writes.filter(isRead)).toHaveLength(moment === "before" ? 0 : 1);
-    await expect(readGuidedQueryInstructions(f.preparation, signal)).rejects.toThrow("required_context_unavailable"); f.closed();
+    await expect(f.run()).rejects.toThrow("required_context_unavailable");
+    expect(readStarted).toBe(1); expect(f.writes.filter(isRead)).toHaveLength(moment === "before" ? 0 : 1);
+    await expect(readGuidedQueryInstructions(f.preparation, signal)).rejects.toThrow("required_context_unavailable"); f.closed(); f.control.finish();
   }
 });
 test("the new generation is installed before any teardown runs: a sibling's step already fails during the loop", () => {
@@ -415,16 +415,19 @@ test("the new generation is installed before any teardown runs: a sibling's step
   first.control.finish(); sibling.control.finish();
 });
 test("a ticket still unspent when its workspace advances cannot be spent from inside the revocation loop", () => {
-  const key = workspaceOf(); let late: ReturnType<typeof guest> | undefined, attempted = false;
-  const running = guest({ workspace: key, onKill: () => {
-    // Host teardown code runs while advance() is still looping: it tries to start the next guest on a not-yet-revoked ticket.
-    attempted = true; refusal(() => query({ prompt: "fixture", options: late!.options }));
-  } });
-  late = guest({ workspace: key });
-  const gen = query({ prompt: "fixture", options: running.options }); void gen; running.active();
-  issuer.advance(key, "inc-2", 2);
-  expect(attempted).toBe(true); expect(late.spawns()).toBe(0); expect(late.callbacks()).toBe(0); late.closed(); expectSpent(late.ticket);
-  running.control.finish();
+  // The epoch alone must decide: once with a new incarnation id, once with the same one at a higher epoch.
+  for (const incarnation of ["inc-2", "inc-1"]) {
+    const key = workspaceOf(); let late: ReturnType<typeof guest> | undefined, attempted = false;
+    const running = guest({ workspace: key, onKill: () => {
+      // Host teardown code runs while advance() is still looping: it tries to start the next guest on a not-yet-revoked ticket.
+      attempted = true; refusal(() => query({ prompt: "fixture", options: late!.options }));
+    } });
+    late = guest({ workspace: key });
+    const gen = query({ prompt: "fixture", options: running.options }); void gen; running.active();
+    issuer.advance(key, incarnation, 2);
+    expect(attempted).toBe(true); expect(late.spawns()).toBe(0); expect(late.callbacks()).toBe(0); late.closed(); expectSpent(late.ticket);
+    running.control.finish();
+  }
 });
 test("a preparation with a minted ticket still runs as an ordinary local query without it, and dies with its generation", async () => {
   const f = guest();
@@ -459,6 +462,185 @@ test("an aborted-before-start guest query is refused and spends the ticket", () 
 });
 
 // ---- bounded state, in a fresh process -----------------------------------------------------------------------------
+
+// ---- a revoked guest's traffic is gated, not only its context steps -----------------------------------------------
+
+const assistantFrame = { type: "data", message: { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "late words" }] } } } as unknown as WinterFrame;
+const isAnswer = (id: string) => (frame: WinterFrame) => frame.type === "control_response" && frame.requestId === id;
+const permissionFrame = (id: string): WinterFrame => ({ type: "control_request", requestId: id, subtype: "permission", payload: {
+  toolName: "Bash", input: { command: "ls" }, toolUseID: "call-1", agentID: "agent-1", requestId: id, policyVersion: 0 } });
+const hookFrame = (id: string): WinterFrame => ({ type: "control_request", requestId: id, subtype: "hook", payload: {
+  event: "PreToolUse", matchedMatcher: "Bash", sessionId: "s1", agentID: "agent-1", toolUseID: "call-1", toolName: "Bash", input: { command: "ls" },
+  policyVersion: "3", requestId: id, hookId: "PreToolUse:sdk:0:0" } });
+const mcpFrame = (id: string): WinterFrame => ({ type: "control_request", requestId: id, subtype: "sdk_mcp_call", payload: { server: "fixture", tool: "echo", arguments: { x: 1 } } });
+/** Host callbacks that count their runs, plus an optional action when each runs (to revoke from inside a callback). */
+function hostCallbacks(during: () => void = () => {}) {
+  const runs = { permission: 0, hook: 0, mcp: 0 };
+  const options = {
+    canUseTool: async () => { runs.permission++; during(); return { behavior: "allow" as const }; },
+    hooks: { PreToolUse: [{ hooks: [async () => { runs.hook++; during(); return {}; }] }] },
+    mcpServers: { fixture: { type: "sdk" as const, name: "fixture", instance: {
+      listTools: () => [{ name: "echo", inputSchema: { type: "object" } }],
+      callTool: async () => { runs.mcp++; during(); return { content: [{ type: "text", text: "echo" }] }; },
+    } as never } },
+  };
+  return { runs, options };
+}
+/** Iterates a query to its end and reports what reached the consumer and how it ended. */
+async function observe(options: Options) {
+  const seen: string[] = []; let outcome = "completed";
+  try { for await (const message of query({ prompt: "fixture", options })) seen.push(message.type); }
+  catch (error) { outcome = (error as Error).message; }
+  return { seen, outcome };
+}
+test("after a revocation no frame reaches the consumer and no host callback runs for a permission, hook or MCP request", async () => {
+  const callbacks = hostCallbacks();
+  const f = guest({ scenario: async function* (config, frames, control) {
+    // Positive controls first: each request is valid and its callback runs while the generation is current.
+    yield permissionFrame("perm-1"); expect(((await nextFrame(frames, isAnswer("perm-1"))) as ControlResponseFrame).ok).toBe(true);
+    yield hookFrame("hook-1"); expect(((await nextFrame(frames, isAnswer("hook-1"))) as ControlResponseFrame).ok).toBe(true);
+    yield mcpFrame("mcp-1"); expect(((await nextFrame(frames, isAnswer("mcp-1"))) as ControlResponseFrame).ok).toBe(true);
+    control.advance();
+    yield permissionFrame("perm-2"); yield hookFrame("hook-2"); yield mcpFrame("mcp-2"); yield context(config); yield assistantFrame; yield result;
+  } });
+  const { seen, outcome } = await observe({ ...f.options, ...callbacks.options });
+  expect(outcome).toBe("required_context_unavailable"); expect(seen).toEqual([]);
+  expect(callbacks.runs).toEqual({ permission: 1, hook: 1, mcp: 1 });
+  for (const id of ["perm-2", "hook-2", "mcp-2", contextId]) expect(f.writes.some(isAnswer(id))).toBe(false);
+  expect(f.callbacks()).toBe(0); expect(f.kills).toEqual([undefined]); f.closed(); f.control.finish();
+});
+test("a result after a revocation rejects instead of completing", async () => {
+  const f = guest({ scenario: async function* (config, frames, control) {
+    yield context(config); await nextFrame(frames, isContextAnswer); control.advance(); yield assistantFrame; yield result;
+  } });
+  const { seen, outcome } = await observe(f.options);
+  expect(outcome).toBe("required_context_unavailable"); expect(seen).toEqual([]); f.control.finish();
+});
+test("an answer a host callback owes when the generation dies mid-request is refused, never delivered", async () => {
+  for (const kind of ["permission", "hook", "mcp"] as const) {
+    let revoke = () => {};
+    const callbacks = hostCallbacks(() => revoke());
+    const frame = { permission: permissionFrame, hook: hookFrame, mcp: mcpFrame }[kind];
+    const f = guest({ scenario: async function* (_config, frames) {
+      yield frame("late-1");
+      const response = await nextFrame(frames, isAnswer("late-1")) as ControlResponseFrame;
+      expect(response).toEqual({ type: "control_response", requestId: "late-1", ok: false, error: { code: "required_context_unavailable", message: "required_context_unavailable" } });
+      yield result;
+    } });
+    revoke = () => f.control.advance();
+    const { seen, outcome } = await observe({ ...f.options, ...callbacks.options });
+    expect(callbacks.runs[kind]).toBe(1); expect(outcome).toBe("required_context_unavailable"); expect(seen).toEqual([]); f.control.finish();
+  }
+});
+test("a registered handler that was running when the generation died is refused whether it returns or throws", async () => {
+  for (const how of ["returns", "throws"]) {
+    const f = guest({ scenario: async function* (_config, frames) {
+      yield { type: "control_request", requestId: "probe-1", subtype: "probe", payload: {} } as WinterFrame;
+      expect(await nextFrame(frames, isAnswer("probe-1"))).toEqual({ type: "control_response", requestId: "probe-1", ok: false, error: { code: "required_context_unavailable", message: "required_context_unavailable" } });
+      yield result;
+    } });
+    const gen = query({ prompt: "fixture", options: f.options });
+    gen.__internal!.registerControlRequestHandler("probe", async () => { f.control.advance(); if (how === "throws") throw new Error("private handler failure"); return { ok: true, payload: "leaked" }; });
+    const outcome = await (async () => { try { for await (const _ of gen) {} return "completed"; } catch (error) { return (error as Error).message; } })();
+    expect(outcome).toBe("required_context_unavailable"); f.control.finish();
+  }
+});
+test("a result delivered before the revocation does not make a revoked query a clean completion", async () => {
+  const f = guest(), seen: string[] = [];
+  await expect((async () => {
+    for await (const message of query({ prompt: "fixture", options: f.options })) { seen.push(message.type); if (message.type === "result") f.control.advance(); }
+  })()).rejects.toThrow("required_context_unavailable");
+  expect(seen).toEqual(["result"]); f.control.finish();
+});
+test("an observed process exit is not a revocation: a finished guest's last frames still arrive", async () => {
+  const f = guest({ scenario: async function* (config, frames, control) {
+    yield context(config); await nextFrame(frames, isContextAnswer);
+    control.finish(); await Promise.resolve(); await Promise.resolve(); // The exit is observed (the preparation closes) before the last frames are read.
+    yield assistantFrame; yield result;
+  } });
+  expect(await observe(f.options)).toEqual({ seen: ["assistant", "result"], outcome: "completed" });
+});
+
+// ---- revoke(), forget() and the consumed-binding set --------------------------------------------------------------
+
+test("revoke tears down the workspace now without moving a counter, refuses mints, and only a higher epoch reopens it", async () => {
+  const key = workspaceOf(), running = guest({ workspace: key }), unspent = guest({ workspace: key });
+  const gen = query({ prompt: "fixture", options: running.options }); void gen; running.active();
+  issuer.revoke(key);
+  expect(running.kills).toEqual([undefined]); expect(running.ends()).toBe(1); running.closed(); unspent.closed(); expectSpent(running.ticket); expectSpent(unspent.ticket);
+  const again = { workspaceKey: key, incarnationId: "inc-1", leaseEpoch: 1 };
+  refusal(() => issuer.mint({ ...again, preparation: bare().preparation }));
+  issuer.revoke(key); // Idempotent.
+  issuer.advance(key, "inc-1", 1); // The same pair again does not reopen a revoked workspace.
+  refusal(() => issuer.mint({ ...again, preparation: bare().preparation }));
+  refusal(() => issuer.advance(key, "inc-1", 0));
+  issuer.advance(key, "inc-2", 2);
+  expect(() => issuer.mint({ workspaceKey: key, incarnationId: "inc-2", leaseEpoch: 2, preparation: bare().preparation })).not.toThrow();
+  issuer.revoke("never-announced"); // Nothing to revoke.
+  for (const bad of ["", "bad id", 3, null, undefined]) refusal(() => issuer.revoke(bad as string));
+  running.control.finish();
+  // A revoked query ends in the consumer with the refusal, even though its last frames are well formed.
+  const g = guest({ scenario: async function* (config, frames) { yield context(config); await nextFrame(frames, isContextAnswer); issuer.revoke(g.workspace); yield result; } });
+  expect(await observe(g.options)).toEqual({ seen: [], outcome: "required_context_unavailable" }); g.control.finish();
+});
+test("forget revokes and frees the counter slot; the key can start a new history and no old ticket revives", () => {
+  const key = workspaceOf(), a = guest({ workspace: key });
+  const gen = query({ prompt: "fixture", options: a.options }); void gen; a.active();
+  issuer.forget(key);
+  expect(a.kills).toEqual([undefined]); a.closed(); expectSpent(a.ticket);
+  refusal(() => issuer.mint({ workspaceKey: key, incarnationId: "inc-1", leaseEpoch: 1, preparation: bare().preparation })); // No generation any more.
+  issuer.advance(key, "inc-7", 1); // A new history may start lower: the slot was freed.
+  const b = bare(), ticket = issuer.mint({ workspaceKey: key, incarnationId: "inc-7", leaseEpoch: 1, preparation: b.preparation });
+  expect(reachesHook(b, ticket)).toBe(true); expectSpent(a.ticket);
+  issuer.forget("never-announced"); issuer.forget(key); issuer.forget(key);
+  for (const bad of ["", "bad id", 3, null, undefined]) refusal(() => issuer.forget(bad as string));
+  a.control.finish();
+});
+test("correlation ids consumed under a generation leave the process-wide set when it dies; every other id stays", () => {
+  const argsFor = (bindingId: string) => ["--run", "--config-json", JSON.stringify({ requiredRuntimeContext: { version: 1, bindingId } })];
+  const consume = (base: ReturnType<typeof bare>, bindingId: string) => consumeGuidedQueryCorrelation(claimGuidedQuery(base.preparation, base.pair), argsFor(bindingId));
+  const unguardedId = randomUUID(); const unguarded = bare(); consume(unguarded, unguardedId); closeGuidedQuery(unguarded.preparation);
+  for (const ending of ["advance", "revoke", "forget"] as const) {
+    const key = workspaceOf(), bindingId = randomUUID(), guarded = bare();
+    mintFor(guarded.preparation, key); consume(guarded, bindingId); closeGuidedQuery(guarded.preparation);
+    refusal(() => consume(bare(), bindingId)); // Still a replay while its generation lives.
+    if (ending === "advance") issuer.advance(key, "inc-2", 2); else if (ending === "revoke") issuer.revoke(key); else issuer.forget(key);
+    expect(() => consume(bare(), bindingId)).not.toThrow(); // The generation died, so the id left the set.
+  }
+  refusal(() => consume(bare(), unguardedId)); // An id consumed with no ticket is never evicted.
+});
+test("a guard that throws, reports stale or fails to register is refused and closes the preparation for good", () => {
+  const args = () => ["--run", "--config-json", JSON.stringify({ requiredRuntimeContext: { version: 1, bindingId: randomUUID() } })];
+  const guarded = () => {
+    const base = bare(), state = { throws: false, current: true, consumedFails: false, released: 0 };
+    bindGuidedGuestGuard(base.preparation, {
+      current: () => { if (state.throws) throw new Error("guard exploded"); return state.current; },
+      consumed: () => { if (state.consumedFails) throw new Error("registry full"); },
+      release: () => { state.released++; },
+    });
+    return { ...base, state };
+  };
+  // A throwing guard is stale, and a guard that later recovers cannot revive the closed record.
+  const thrower = guarded(); thrower.state.throws = true; refusal(() => claimGuidedQuery(thrower.preparation, thrower.pair));
+  thrower.state.throws = false; refusal(() => claimGuidedQuery(thrower.preparation, thrower.pair)); expect(thrower.state.released).toBe(1);
+  // A guard that goes stale after the claim fails the next step, closes the record, and cannot be flipped back.
+  const stale = guarded(), claim = claimGuidedQuery(stale.preparation, stale.pair);
+  const input = args(), expected = JSON.parse(input[2]!).requiredRuntimeContext as GuidedQueryCorrelation;
+  consumeGuidedQueryCorrelation(claim, input); assertGuidedQueryCorrelation(claim, expected);
+  stale.state.current = false; refusal(() => assertGuidedQueryCorrelation(claim, expected));
+  stale.state.current = true; refusal(() => assertGuidedQueryCorrelation(claim, expected)); expect(stale.state.released).toBe(1);
+  // A guard that cannot register the consumed id fails the consume and closes the record.
+  const full = guarded(), fullClaim = claimGuidedQuery(full.preparation, full.pair);
+  full.state.consumedFails = true; refusal(() => consumeGuidedQueryCorrelation(fullClaim, args())); refusal(() => claimGuidedQuery(full.preparation, full.pair));
+  // Binding a second guard, or one onto a claimed preparation, is refused.
+  const twice = guarded(); refusal(() => bindGuidedGuestGuard(twice.preparation, { current: () => true, consumed: () => {}, release: () => {} }));
+});
+test("an own accessor named guidedGuestTicket is refused even for a local query, and never read", () => {
+  let reads = 0;
+  const f = guest(), options: Options = { ...f.options, executionPosture: "local" }; delete options.guidedGuestTicket;
+  Object.defineProperty(options, "guidedGuestTicket", { get() { reads++; return f.ticket; }, enumerable: true });
+  refusal(() => query({ prompt: "fixture", options })); expect(reads).toBe(0); expect(f.spawns()).toBe(0); f.closed();
+});
 
 test("ticket records and workspace counters are bounded at the correlation capacity", async () => {
   const home = mkdtempSync(join(tmpdir(), "winter-guest-ticket-capacity-"));

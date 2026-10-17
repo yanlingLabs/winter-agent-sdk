@@ -787,6 +787,8 @@ interface QueryPreparationLifecycle {
   guest: boolean;
   /** Guest queries only: refuses before spawn when the lifecycle is closed or the ticket's generation is no longer current. */
   live(): void;
+  /** True once the guest ticket was revoked (the workspace generation died, or revoke/forget). A normal end is not a revocation. */
+  revoked(): boolean;
   callback: NonNullable<Options["onRuntimeContext"]>;
   spawn: NonNullable<Options["spawnClaudeCodeProcess"]>;
   assert(expected: Readonly<GuidedQueryCorrelation>): void;
@@ -799,6 +801,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   if (preparation === undefined) return queryImplementation(args);
   let closed = false, teardown: (() => void) | undefined;
   let controller: AbortController | undefined, signal: AbortSignal | undefined, ticket: unknown, spentTicket = false;
+  let revocation: { revoked(): boolean } | undefined;
   const close = () => {
     if (closed) return;
     closed = true; signal?.removeEventListener("abort", close);
@@ -810,7 +813,8 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     const ticketField = Object.getOwnPropertyDescriptor(args.options, "guidedGuestTicket");
     ticket = ticketField !== undefined && "value" in ticketField ? ticketField.value : undefined;
     // The unconditional native guest refusal lifts ONLY for a valid, unspent, current-generation guest ticket bound to
-    // this preparation (guided-guest-attestation.ts); without a ticket nothing below differs from the refusal before it.
+    // this preparation (guided-guest-attestation.ts). With no own property named guidedGuestTicket nothing below differs
+    // from the refusal before it.
     const callback = Object.getOwnPropertyDescriptor(args.options, "onRuntimeContext");
     const spawn = Object.getOwnPropertyDescriptor(args.options, "spawnClaudeCodeProcess");
     const required = Object.getOwnPropertyDescriptor(args.options, "requireRuntimeContext");
@@ -825,7 +829,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       || (ticket !== undefined && (posture === undefined || !("value" in posture) || posture.value !== "confined-guest"))) throw new Error("required_context_unavailable");
     const pair = Object.freeze({ onRuntimeContext: callback.value, spawnClaudeCodeProcess: spawn.value });
     // Spent BEFORE the claim and atomically: a second presentation, of any ticket state, never works again.
-    if (ticket !== undefined) { spendGuidedGuestTicket(ticket, preparation, () => { close(); teardown?.(); }); spentTicket = true; }
+    if (ticket !== undefined) { revocation = spendGuidedGuestTicket(ticket, preparation, () => { close(); teardown?.(); }); spentTicket = true; }
     const claim = claimGuidedQuery(preparation, pair);
     // Only prepared lifecycle fields are fixed; unrelated option getters retain
     // their original receiver and ordinary callers never take this branch.
@@ -845,6 +849,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       // The generation check lives inside assertGuidedQueryCorrelation, so every assert site (and the reader scope) shares it.
       assert(expected) { if (closed) throw new Error("required_context_unavailable"); assertGuidedQueryCorrelation(claim, expected); },
       live() { if (closed) throw new Error("required_context_unavailable"); assertGuidedQueryClaimActive(claim); },
+      revoked: () => revocation?.revoked() === true,
       attach(proc) { void proc.exited.then(close, close); },
       teardown(action) { teardown = action; },
     };
@@ -1247,6 +1252,7 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
   // already sent the matching control response out of band") — `respondPermission` is currently
   // the only producer, but nothing here assumes that.
   const respondedOutOfBand = new Set<string>();
+  const revoked = (): boolean => preparation?.revoked() === true;
   function writeControlResponse(frame: ControlResponseFrame): void {
     if (respondedOutOfBand.delete(frame.requestId)) return; // already answered out of band -- suppress the duplicate
     proc.stdin.write(encodeFrame(frame));
@@ -1307,6 +1313,9 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
     // from this side") — this function is invoked fire-and-forget (`void handleIncomingControlRequest(...)`
     // in the read loop below), so an uncaught throw here would be an unhandled rejection.
     try {
+      // Revoked guest ticket: no handler (permission, hook, MCP, reader, ...) runs, and nothing already running answers.
+      const refuse = () => writeControlResponse({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "required_context_unavailable", message: "required_context_unavailable" } });
+      if (revoked()) { refuse(); return; }
       const handler = controlRequestHandlers.get(cf.subtype);
       if (!handler) {
         writeControlResponse({
@@ -1326,6 +1335,7 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
         // answer now would only be a stale response it has to discard (claude's orphan handling) -- except
         // for a subtype whose answer tells the runtime the host work has STOPPED (`ANSWERED_AFTER_CANCEL`).
         if (cancel.signal.aborted && !ANSWERED_AFTER_CANCEL.has(cf.subtype)) return;
+        if (revoked()) { refuse(); return; }
         if (result.ok) {
           writeControlResponse({
             type: "control_response",
@@ -1338,6 +1348,7 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
         }
       } catch (err) {
         if (cancel.signal.aborted && !ANSWERED_AFTER_CANCEL.has(cf.subtype)) return;
+        if (revoked()) { refuse(); return; }
         // A throwing handler fails closed — ok:false, never a dropped request or a wrapper crash.
         const message = err instanceof Error ? err.message : String(err);
         writeControlResponse({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "handler_threw", message } });
@@ -1606,6 +1617,9 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
         }
 
         for (const frame of frames) {
+          // A revoked guest ticket ends the query at the next frame, whatever its type: no assistant or result frame
+          // reaches the consumer and no control request is dispatched after the workspace generation died.
+          if (revoked()) throw new Error("required_context_unavailable");
           if (!sawInit) {
             // STRICT, deliberately, for every frame type -- a control_request included. The runtime is the
             // only writer and holds every runtime->host request until its handshake is written (the
@@ -1710,6 +1724,8 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
       // takes priority over `aborted` (review Finding 6) — a turn that genuinely completed must
       // complete cleanly (or via ResultError) even if a cancellation happened to land in the same
       // tick; only the ABSENCE of a terminal result falls through to the abort/death distinction.
+      // A terminal result seen before the revocation does not make the query a clean completion.
+      if (revoked()) throw new Error("required_context_unavailable");
       if (terminalError) throw new ResultError(terminalError); // …then throw (error-result-then-throw, report §9)
       if (sawTerminal) return;
       if (aborted) throw new AbortError("query aborted: runtime process killed");

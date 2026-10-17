@@ -43,8 +43,9 @@ There is no eviction, TTL or reset. **This is not the production daemon lifecycl
 A reviewed Root-owned generation/domain expiry protocol is a prerequisite before
 guided guest or production daemon activation; these APIs alone are insufficient
 for long-lived production use.
-The guest ticket (`guided-guest-attestation.md`) supplies counter-based generation expiry
-for its own records only; this consumed-binding set stays as described.
+The guest ticket (`guided-guest-attestation.md`) supplies counter-based generation expiry:
+ids consumed by a preparation that carries a guest ticket leave this set when their workspace
+generation dies. Every other id stays as described.
 
 The decoder accepts the SDK's exact three-argument `--run --config-json` envelope,
 with a 64 KiB config bound before JSON parsing. Config must round-trip byte-exactly
