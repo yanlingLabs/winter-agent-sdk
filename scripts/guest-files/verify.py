@@ -172,12 +172,14 @@ def main():
                 if result["ok"]:
                     assert result["data"] == b"unchanged-seed", result
                 elif result["code"] == "regular_file_required":
-                    # Fail-closed refusal: the worker fstat()s the opened object and
-                    # leaves before any read, truncate or write (file-worker.c).
-                    # Both swap targets are regular files, so this arrives only when
-                    # the kernel's lock-free path walk yields a different object
-                    # while the entry is being replaced (seen once on ubuntu-24.04-arm).
-                    # No bytes leave the root; the surviving checks below prove it.
+                    # The kernel's lock-free walk, racing the rename-over of `race`, can
+                    # finish at the symlink's parent: the `source` root directory itself
+                    # (race-probe.c saw exactly this, "in-root:source-dir", and nothing
+                    # else, on x64 and arm64). That is the opened ROOT, an in-root
+                    # directory: the worker's fstat refuses it as not a regular file
+                    # before any read, truncate or write, so nothing leaves the root.
+                    # The probe below fails the job if any out-of-root or unknown
+                    # object is ever returned, so this tolerance cannot hide an escape.
                     assert result["errno"] == 22, result
                 else:
                     assert result["code"] == "path_denied" and result["errno"] in (2, 11, 18), result
