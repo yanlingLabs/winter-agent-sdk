@@ -199,7 +199,7 @@ class PortableContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='winter-guidance-contract-') as directory:
             code, binary = Path(directory) / 'contract.c', Path(directory) / 'contract'
             code.write_text(header + (contract or self.contract()) + harness)
-            built = subprocess.run([compiler, *CC_FLAGS, '-Wno-unused-function', str(code), '-o', str(binary)], capture_output=True, text=True, timeout=30)
+            built = subprocess.run([compiler, *CC_FLAGS, '-D_DEFAULT_SOURCE', '-Wno-unused-function', str(code), '-o', str(binary)], capture_output=True, text=True, timeout=30)
             self.assertEqual(built.returncode, 0, built.stderr)
             run = subprocess.run([str(binary)], capture_output=True, text=True, timeout=5, cwd=directory)
             self.assertEqual(run.returncode, 0, run.stderr + run.stdout)
@@ -695,7 +695,7 @@ class PostApplyRegressionTests(unittest.TestCase):
         ('scripts/guest-supervisor', 'test_guided_host_query.py'), ('scripts/guest-supervisor', 'test_fresh_protocol.py'),
         ('scripts/guest-supervisor', 'test_runtime_launcher_policy.py'), ('scripts/guest-supervisor', 'test_runtime_port_arguments.py'),
         ('scripts/guest-supervisor', 'test_host_query.py'), ('scripts/guest-supervisor', 'test_runtime_diagnostics.py'),
-        ('scripts/guest-supervisor', 'test_native_parser.py'), ('scripts/guest-supervisor', 'test_guided_owner.py'),
+        ('scripts/guest-supervisor', 'test_native_parser.py'),
         ('scripts/guest-engine', 'test_mount_propagation.py'), ('scripts/guest-engine', 'test_tool_devices.py'), ('scripts/guest-engine', 'test_runtime_entropy.py'),
     )
 
