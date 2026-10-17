@@ -54,6 +54,9 @@ def main():
                                (HERE / "compartment.c", launcher)):
             checked([compiler, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-static", source, "-o", target])
             os.chmod(target, 0o555)
+        probe = fixture / "race-probe"
+        checked([compiler, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-static", HERE / "race-probe.c", "-o", probe])
+        os.chmod(probe, 0o555)
         for name in ("source", "readonly"):
             path = fixture / name
             path.mkdir()
@@ -160,13 +163,75 @@ def main():
                 failure.append(error)
         thread = threading.Thread(target=swapper)
         thread.start()
+        race_outcomes = {}
         try:
             for _ in range(40):
                 result = execute("read", "race")
+                outcome = "ok" if result["ok"] else f'{result["code"]}/{result["errno"]}'
+                race_outcomes[outcome] = race_outcomes.get(outcome, 0) + 1
                 if result["ok"]:
                     assert result["data"] == b"unchanged-seed", result
+                elif result["code"] == "regular_file_required":
+                    # The kernel's lock-free walk, racing the rename-over of `race`, can
+                    # finish at the symlink's parent: the `source` root directory itself
+                    # (race-probe.c saw exactly this, "in-root:source-dir", and nothing
+                    # else, on x64 and arm64). That is the opened ROOT, an in-root
+                    # directory: the worker's fstat refuses it as not a regular file
+                    # before any read, truncate or write, so nothing leaves the root.
+                    # The probe below fails the job if any out-of-root or unknown
+                    # object is ever returned, so this tolerance cannot hide an escape.
+                    assert result["errno"] == 22, result
                 else:
                     assert result["code"] == "path_denied" and result["errno"] in (2, 11, 18), result
+            # Diagnostic: the same race, tight and bounded, with the worker's exact
+            # openat2 arguments, classifying every returned object by identity.
+            def code_only(text):
+                return re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", text, flags=re.S))
+            def initialiser(text, name):
+                found = re.search(r"struct open_how " + name + r" = \{(.*?)\};", text, re.S)
+                assert found, name
+                return [re.sub(r"\s+", " ", line.strip()) for line in found.group(1).split("\n") if line.strip()]
+            worker_code = code_only((ROOT / "packages/runtime/src/guest/file-worker.c").read_text())
+            probe_code = code_only((HERE / "race-probe.c").read_text())
+            resolve = ".resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS,"
+            assert initialiser(worker_code, "root_how") == initialiser(probe_code, "root_how") == [
+                ".flags = O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, .resolve = RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS"]
+            assert initialiser(worker_code, "how") == [
+                ".flags = (writing ? O_WRONLY | (conditional ? (creating ? O_CREAT | O_EXCL : 0) : O_CREAT) : O_RDONLY) | O_CLOEXEC | O_NONBLOCK,",
+                ".mode = writing && (!conditional || creating) ? 0666 : 0,", resolve]
+            # The probe's three initialisers are the worker's expression evaluated for
+            # read, plain write (O_CREAT, 0666) and conditional write of an existing file.
+            assert initialiser(probe_code, "read_how") == [".flags = O_RDONLY | O_CLOEXEC | O_NONBLOCK,", ".mode = 0,", resolve]
+            assert initialiser(probe_code, "write_how") == [".flags = O_WRONLY | O_CREAT | O_CLOEXEC | O_NONBLOCK,", ".mode = 0666,", resolve]
+            assert initialiser(probe_code, "check_how") == [".flags = O_WRONLY | O_CLOEXEC | O_NONBLOCK,", ".mode = 0,", resolve]
+            # Same syscall shape: dirfd, path, &how, sizeof(how) (and the root open).
+            assert "syscall(SYS_openat2, root, argv[3], &how, sizeof(how))" in worker_code
+            assert "syscall(SYS_openat2, AT_FDCWD, argv[2], &root_how, sizeof(root_how))" in worker_code
+            assert "syscall(SYS_openat2, AT_FDCWD, argv[2], &root_how, sizeof(root_how))" in probe_code
+            assert "syscall(SYS_openat2, dirfd, path, open_how, sizeof(*open_how))" in probe_code
+            assert re.findall(r"run_pass\(\"[a-z-]+\", \d, root, argv\[3\], &(\w+), budget\)", probe_code) == ["read_how", "write_how", "check_how"]
+            host = fixture.stat()
+            def run_probe(suffix):
+                view = tempfile.mkdtemp(prefix="view-", dir=fixture)
+                code, stdout, stderr = command([launcher, probe, fixture, view, 10001, "auto", "probe", "/source", "race", 5000,
+                    f"{host.st_dev}:{host.st_ino}{suffix}"], timeout=60)
+                return code, stdout, stderr
+            code, stdout, stderr = run_probe("")
+            print("race-probe " + stdout.decode(errors="replace").strip(), flush=True)
+            probe_result = json.loads(stdout)
+            assert code == 0 and probe_result["ok"], (code, probe_result, stderr[:500])
+            for name, one in probe_result["passes"].items():
+                # Not vacuous: the race really ran, and every open is accounted for.
+                assert one["objects"]["in-root:seed"] > 1000, (name, one)
+                assert sum(one["errnos"].values()) + one["other"] + sum(one["objects"].values()) == one["opens"], (name, one)
+                assert not any(count for key, count in one["objects"].items() if key.startswith("OUT:") or key == "UNKNOWN"), (name, one)
+            assert sorted(probe_result["passes"]) == ["read", "write", "write-check"], probe_result
+            # Negative self-test: an escaping open must be classified out-of-root and exit 3.
+            code, stdout, stderr = run_probe(":selftest")
+            print("race-probe-selftest exit=%d %s" % (code, stdout.decode(errors="replace").strip()), flush=True)
+            self_result = json.loads(stdout)
+            assert code == 3 and not self_result["ok"] and self_result["passes"]["read"]["objects"]["OUT:readonly/secret"] > 0, (code, self_result)
+            race_probe = probe_result
         finally:
             stop.set(); thread.join(timeout=2)
         assert not thread.is_alive() and not failure, failure
@@ -281,7 +346,7 @@ def main():
         checks.append("process worker refuses runtime/root/outside namespace identity")
         print(json.dumps({"linuxCompartmentFiles": True, "realVM": False,
             "linuxCompartmentProcesses": True,
-            "architecture": os.uname().machine, "checks": checks, "raceAttempts": 40}))
+            "architecture": os.uname().machine, "checks": checks, "raceAttempts": 40, "raceOutcomes": race_outcomes, "raceProbe": race_probe}))
 
 
 if __name__ == "__main__":
