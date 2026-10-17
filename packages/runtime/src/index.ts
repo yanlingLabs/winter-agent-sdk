@@ -61,6 +61,12 @@ export { onCompaction } from "./tools/registry.ts";
 export { buildWorkflowWorkerSeatbeltProfile } from "./sandbox/profile.ts";
 export type { SandboxBrand } from "./sandbox/profile.ts";
 export { WORKFLOW_SANDBOX_REFUSED_EXIT_CODE } from "./workflows/runtime.ts";
+// The Linux counterpart: a host whose own binary should be the confinement launcher routes
+// `LINUX_CONFINE_ARGV_FLAG` to `linuxConfineMain` (which execs the worker once confined, or returns the
+// refusal exit code) and names itself with `setHostLinuxConfinementLauncher`.
+export { linuxConfineMain } from "./workflows/linux-confinement.ts";
+export { LINUX_CONFINE_ARGV_FLAG, LinuxConfinementUnavailableError } from "./workflows/linux-confinement-policy.ts";
+export { setHostLinuxConfinementLauncher } from "./workflows/sandbox.ts";
 
 export { createInMemoryChannel } from "./protocol/channel.ts";
 export type { Duplex, FrameSource, FrameSink } from "./protocol/channel.ts";

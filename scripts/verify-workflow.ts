@@ -31,7 +31,7 @@ import { buildRuntime } from "./build-runtime.ts";
 import { WorkflowRuntime, realWorkerSpawner } from "../packages/runtime/src/workflows/runtime.ts";
 import { WORKFLOW_WORKER_ARGV_FLAG, WORKFLOW_WORKER_BRIDGE_FLAG } from "../packages/runtime/src/workflows/subprocess-entry.ts";
 import { WORKFLOW_WORKER_NOT_IMPLEMENTED_EXIT_CODE } from "../packages/runtime/src/workflows/subprocess-entry.ts";
-import { workflowSandboxAvailable } from "../packages/runtime/src/workflows/sandbox.ts";
+import { setHostLinuxConfinementLauncher, workflowSandboxAvailable, workflowSandboxUnavailableMessage } from "../packages/runtime/src/workflows/sandbox.ts";
 import { fakeWorkflowRunHost } from "../packages/runtime/src/workflows/seam.ts";
 import { fakeStructuredOutputSeam } from "../packages/runtime/src/structured/seam.ts";
 import { createContextAccountant } from "../packages/runtime/src/engine.ts";
@@ -78,16 +78,27 @@ export interface VerifyWorkflowResult {
   workerUnimplemented: boolean;
   status: string;
   detail: string;
+  /** Whether the worker ran under the host's confinement (sandbox-exec on macOS, the Linux launcher on Linux). */
+  sandboxed: boolean;
 }
 
 export async function verifyWorkflow(binPath: string): Promise<VerifyWorkflowResult> {
+  // CI sets this on every runner that must be able to confine: a runner that lost Landlock or seccomp then
+  // FAILS here, instead of quietly running the worker unconfined and printing "NOT confined".
+  if (process.env.WINTER_REQUIRE_LINUX_CONFINEMENT === "1" && !workflowSandboxAvailable()) {
+    return { ok: false, workerUnimplemented: false, status: "unconfined", detail: `confinement is required (WINTER_REQUIRE_LINUX_CONFINEMENT=1) but unavailable: ${workflowSandboxUnavailableMessage()}`, sandboxed: false };
+  }
   const winterHome = mkdtempSync(join(tmpdir(), "winter-verify-wf-home-"));
   const sessionTempDir = mkdtempSync(join(tmpdir(), "winter-verify-wf-temp-"));
-  // On a host without `sandbox-exec` (the linux CI runner) the worker is spawned unsandboxed and the
-  // run says so -- this gate's subject is the COMPILED dispatch, and refusing to run it at all on
-  // linux would leave the compiled leg unverified there. The seatbelt itself has its own darwin-gated
-  // proof (`workflows/worker.darwin.test.ts`), which is where that claim belongs.
+  // `sandbox` is true where the host can confine the worker: `sandbox-exec` on macOS, Landlock + seccomp on
+  // a Linux kernel that has them. Only a host with neither runs the worker unsandboxed, and the run says
+  // so -- this gate's subject is the COMPILED dispatch, and refusing to run it at all there would leave
+  // the compiled leg unverified. Each fence has its own proof (`workflows/worker.darwin.test.ts`,
+  // `workflows/worker.linux.test.ts`), which is where those claims belong.
   const sandbox = workflowSandboxAvailable();
+  // On Linux the compiled binary is ALSO the confinement launcher -- the shape a guest runs -- so this
+  // leg proves `bun build --compile` carries the launcher role (bun:ffi, libc, the exec) and not only the worker.
+  const restoreLauncher = sandbox && process.platform === "linux" ? setHostLinuxConfinementLauncher({ file: binPath, args: [] }) : undefined;
   const runtime = new WorkflowRuntime({
     session: {
       winterHome,
@@ -125,9 +136,11 @@ export async function verifyWorkflow(binPath: string): Promise<VerifyWorkflowRes
       workerUnimplemented: detail.includes(`code ${WORKFLOW_WORKER_NOT_IMPLEMENTED_EXIT_CODE}`),
       status: view.status,
       detail,
+      sandboxed: sandbox,
     };
   } finally {
     runtime.killWorkerForTest(launched.runId);
+    restoreLauncher?.();
     rmSync(winterHome, { recursive: true, force: true });
     rmSync(sessionTempDir, { recursive: true, force: true });
   }
@@ -157,7 +170,7 @@ if (import.meta.main) {
     console.log(`verify:workflow -- running one real workflow through ${binPath} ${WORKFLOW_WORKER_ARGV_FLAG} ...`);
     const result = await verifyWorkflow(binPath);
     if (result.ok) {
-      console.log(`verify:workflow OK -- the compiled binary ran the workflow end to end and returned ${result.detail}`);
+      console.log(`verify:workflow OK -- the compiled binary ran the workflow end to end and returned ${result.detail} (worker ${result.sandboxed ? "confined" : "NOT confined: this host has no confinement"})`);
     } else if (result.workerUnimplemented) {
       // The RED half, reported as itself. This is the exact message a spine-only build produces, and
       // the reason exit code 78 is distinct from a generic 1.
