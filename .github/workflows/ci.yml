@@ -20,6 +20,9 @@ jobs:
         run: uname -m && getconf PAGESIZE
       - name: guided owner fixture compiles under this gcc (compile only, never executed; flags equal guided-owner-matrix-reviewed.yml)
         run: cc -std=c11 -O2 -Wall -Wextra -Werror scripts/guest-supervisor/guided_owner_native_fixture.c -o "$RUNNER_TEMP/guided-owner-fixture-compile-only"
+      - name: TEMP diagnostic (removed before merge) portable owner tests under gcc
+        run: cc --version | head -1; python3 -I -S -B scripts/guest-supervisor/test_guided_owner.py -v GuidedOwnerSourceTests 2>&1 | head -80 || true
+        continue-on-error: true
       - run: sudo -n python3 scripts/guest-files/verify.py
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "1.4.2" }
