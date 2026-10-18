@@ -975,6 +975,43 @@ class HighDescriptorTests(unittest.TestCase):
                 with contextlib.suppress(OSError):
                     os.close(fd)
 
+    def test_an_idle_poll_waits_for_its_timeout_instead_of_spinning(self):
+        read, write = os.pipe()
+        try:
+            started = time.monotonic()
+            self.assertEqual(service.poll_readable([read], 0.05), [])
+            self.assertGreaterEqual(time.monotonic() - started, 0.04, 'the timeout is seconds, converted to milliseconds, not truncated to a zero-wait poll')
+            started = time.monotonic()
+            service.poll_readable([read], 0)
+            self.assertLess(time.monotonic() - started, 0.04)
+        finally:
+            os.close(read)
+            os.close(write)
+
+    def test_the_serve_loop_idles_in_a_nonzero_wait(self):
+        reg = registration()
+        pair = GuestEnd(reg)
+        waits = []
+        real = service.poll_readable
+
+        def spy(fds, timeout):
+            started = time.monotonic()
+            result = real(fds, timeout)
+            waits.append((timeout, time.monotonic() - started))
+            return result
+        running = service.GuidedReaderService(registration=reg, stream=pair.service_end, owner_pidfd=None, halt=threading.Event(), launch=FakeLaunch(reg))
+        try:
+            with patch.object(service, 'poll_readable', spy):
+                running.start()
+                time.sleep(.5)
+            serve = [item for item in waits if item[0] > 0]
+            self.assertTrue(serve and all(item[0] == .05 for item in serve))
+            self.assertLess(len(waits), 40, 'an idle service must not spin (a zero wait would make thousands of calls)')
+            self.assertTrue(any(elapsed >= .04 for _, elapsed in serve))
+        finally:
+            running.stop()
+            pair.close()
+
     def test_the_service_serves_and_watches_the_owner_on_descriptors_above_1024(self):
         reg = registration()
         pair = GuestEnd(reg)
