@@ -120,8 +120,23 @@ was authored here.
 - The owner hash check in `scripts/guest-supervisor/test_guided_reader_service.py`.
 - The v1 packet `ownerLibrary` hashes.
 - Winter's `expectedArtifact` for the owner library.
+- The matrix count. The fixture patch adds 4 cases: 12 -> 16 total, 11 -> 15 pass,
+  1 skip. This moves the reviewed workflow root runner's
+  `len(tests) == 12 and count('pass') == 11` and its skip list, and the gate test's
+  12-case / "11 pass + 1 skip" expectations. The successor workflow (Option A)
+  carries its own count expectations (16 / 15 / 1) rather than editing the spent one.
+- The constants hard-coded in `scripts/guest-supervisor/test_guided_owner_holder.py`
+  (`TRACKED_OWNER_SHA256`, `PATCHED_OWNER_SHA256`, `FIXTURE_SHA256`, `MATRIX_SHA256`),
+  and this document's own hash table (the tracked hashes become the applied hashes).
 
 None of these were changed.
+
+## Low-severity note
+
+`winter_owner_open` now sets and verifies `FD_CLOEXEC` on the caller-owned bootstrap
+socket before the later checks, so a failed open can still leave that socket
+close-on-exec. This is harmless: the flag only blocks inheritance across `exec`, the
+caller still owns and closes the descriptor, and native never closes it by number.
 
 ## Mutation check
 
