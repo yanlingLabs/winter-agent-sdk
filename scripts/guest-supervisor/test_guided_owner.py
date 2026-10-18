@@ -53,7 +53,9 @@ class GuidedOwnerSourceTests(unittest.TestCase):
 struct validation { int guided,fd[5]; };
 static int envelope(const char *json,int used){
     struct parser p={.s=json,.n=(int)strlen(json)};struct validation value={0},*o=&value;
-    if(parse(&p,0)!=0)return 0;space(&p);if(p.pos!=p.n||p.t[0].type!='{')return 0;
+    if(parse(&p,0)!=0)return 0;
+    space(&p);
+    if(p.pos!=p.n||p.t[0].type!='{')return 0;
 ENVELOPE
     return 1;
 fail:return 0;
