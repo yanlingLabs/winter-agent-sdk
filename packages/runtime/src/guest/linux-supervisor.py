@@ -395,6 +395,418 @@ def bootstrap_rights(profile,pidfd,service_pidfd,store_fd,executable_fd,reader_f
     elif reader_fd is not None:raise Refusal('runtime_profile_conflict')
     return rights
 
+# ---- Guided reader service: Root's end of the fifth descriptor --------------------------------------------------------
+# The TS side (linux-guided-reader-protocol.ts, linux-guided-reader-channel.ts) is the source of truth for every frame.
+# Frames are a 4-byte big-endian length and a compact literal-UTF-8 JSON body that JSON.stringify(JSON.parse(body)) reproduces
+# byte for byte. A frame is DATA: nothing here admits an owner, a source path or a provider.
+GUIDED_READER_REQUEST_BYTES=4096
+GUIDED_READER_BODY_BYTES=1024*1024+4096
+GUIDED_READER_OUTSTANDING=16
+GUIDED_READER_CONSUMED=4096
+GUIDED_READER_FRAME_BYTES=320*1024
+GUIDED_READER_INPUT_BYTES=16*1024
+GUIDED_READER_STDERR_BYTES=16*1024
+GUIDED_READER_SUPERVISE_SECONDS=4.5
+GUIDED_READER_REAP_SECONDS=2
+GUIDED_READER_SEND_SECONDS=5
+GUIDED_OWNER_KEYS=('workspaceId','logicalSessionId','backendSessionId','incarnationId','leaseEpoch','bootId','generation')
+GUIDED_TERMINAL_FLAGS=('namespaceInitReaped','monitorReaped','stdoutEof','stderrEof','captureDrained')
+GUIDED_OWNER_ID=re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$')
+READER_VIEWS_ROOT='/run/winter/instruction-reader-views'
+READER_DEPENDENCY_LIMIT=32
+
+def wire_json(value):return json.dumps(value,separators=(',',':'),ensure_ascii=False,allow_nan=False)
+def _wire_constant(name):raise ValueError(name)
+def _wire_int(text):
+    value=int(text)
+    # A number JavaScript cannot round-trip exactly is refused; so is anything whose JSON.stringify spelling could differ from ours.
+    if abs(value)>JS_SAFE_INTEGER+1:raise ValueError(text)
+    return value
+def _wire_float(text):
+    value=float(text)
+    # Non-integral decimals in the range where Python repr and JavaScript's shortest form are both plain notation; everything else is refused.
+    if text!=repr(value) or 'e' in text.lower() or value==int(value) or not 1e-4<=abs(value)<1e16:raise ValueError(text)
+    return value
+def _wire_parse(body):
+    try:
+        text=bytes(body).decode('utf-8');return text,json.loads(text,parse_constant=_wire_constant,parse_int=_wire_int,parse_float=_wire_float)
+    except (ValueError,RecursionError):raise Refusal('guided_reader_frame')
+def _wire_text(value):
+    try:return wire_json(value)
+    except (ValueError,RecursionError):raise Refusal('guided_reader_frame')
+def reader_wire_frame(value):
+    try:body=wire_json(value).encode()
+    except (ValueError,RecursionError):raise Refusal('guided_reader_frame')
+    if not 1<=len(body)<=GUIDED_READER_BODY_BYTES:raise Refusal('guided_reader_frame')
+    return struct.pack('!I',len(body))+body
+def _reader_uuid(value):return type(value) is str and GUIDED_UUID4.fullmatch(value) is not None
+def _same(left,right):return type(left) is type(right) and left==right
+def _closed(value,names):
+    if type(value) is not dict or set(value)!=set(names):raise Refusal('guided_reader_frame')
+    return value
+def reader_request(body,registration):
+    """One guest frame body -> ('start', readId, contextRequestId) or ('cancel', readId, None). Anything else refuses.
+
+    Acceptance means the bytes are EXACTLY what linuxGuidedReaderStart/linuxGuidedReaderCancel plus the channel's encoder
+    produce for this registration, so key order, whitespace, escapes, duplicate keys and number spellings cannot differ."""
+    text,value=_wire_parse(body)
+    if type(value) is not dict:raise Refusal('guided_reader_frame')
+    kind=value.get('kind');read=value.get('readId');registration_id=registration['registrationId'];owner=value.get('owner')
+    # The owner object keeps whatever key order the guest's parsed registration had (Root's record is key-sorted); its VALUES must be Root's own.
+    if type(owner) is not dict or set(owner)!=set(GUIDED_OWNER_KEYS) or any(not _same(owner[key],registration['owner'][key]) for key in GUIDED_OWNER_KEYS):raise Refusal('guided_reader_frame')
+    if kind=='reader_start':
+        context=value.get('contextRequestId');binding=registration['requiredRuntimeContext']['bindingId']
+        if not _reader_uuid(read) or not _reader_uuid(context) or read==context or not _same(value.get('bindingId'),binding):raise Refusal('guided_reader_frame')
+        expected={'version':1,'kind':'reader_start','registrationId':registration_id,'owner':owner,'readId':read,'contextRequestId':context,'bindingId':binding}
+    elif kind=='reader_cancel':
+        context=None
+        if not _reader_uuid(read):raise Refusal('guided_reader_frame')
+        expected={'version':1,'kind':'reader_cancel','registrationId':registration_id,'readId':read,'owner':owner}
+    else:raise Refusal('guided_reader_frame')
+    if _wire_text(expected)!=text:raise Refusal('guided_reader_frame')
+    return ('start' if kind=='reader_start' else 'cancel'),read,context
+class ReaderFrameDecoder:
+    """Incremental 4-byte-length framing for the guest's requests. A size outside 1..4096 refuses; nothing is buffered beyond one frame."""
+    def __init__(self):self.buffer=bytearray()
+    def feed(self,data):
+        self.buffer.extend(data);frames=[]
+        while True:
+            if len(self.buffer)>=4:
+                size=struct.unpack('!I',bytes(self.buffer[:4]))[0]
+                if not 1<=size<=GUIDED_READER_REQUEST_BYTES:raise Refusal('guided_reader_frame')
+                if len(self.buffer)>=4+size:frames.append(bytes(self.buffer[4:4+size]));del self.buffer[:4+size];continue
+            return frames
+def _reader_owner(value):
+    owner=_closed(value,GUIDED_OWNER_KEYS)
+    for key in ('workspaceId','logicalSessionId','backendSessionId','incarnationId'):
+        if type(owner[key]) is not str or not GUIDED_OWNER_ID.fullmatch(owner[key]):raise Refusal('guided_reader_frame')
+    if type(owner['bootId']) is not str or not GUIDED_BOOT_ID.fullmatch(owner['bootId']):raise Refusal('guided_reader_frame')
+    for key in ('leaseEpoch','generation'):
+        if type(owner[key]) is not int or not 1<=owner[key]<=JS_SAFE_INTEGER:raise Refusal('guided_reader_frame')
+    return owner
+def check_reader_value(data,registration,read_id):
+    """Python mirror of parseLinuxGuidedReaderMessage: what Root sends must be what the guest's validator accepts."""
+    if not _reader_uuid(read_id) or type(data) is not dict:raise Refusal('guided_reader_frame')
+    common=('version','kind','registrationId','readId','owner')
+    kind=data.get('kind')
+    _closed(data,common+('frame',) if kind=='reader_result' else common+('outcome','namespaceInitReaped','monitorReaped','namespaceWaitStatus','monitorWaitStatus','stdoutEof','stderrEof','captureDrained'))
+    owner=_reader_owner(data['owner'])
+    if not _same(data['version'],1) or not _same(data['registrationId'],registration['registrationId']) or not _same(data['readId'],read_id) or any(not _same(owner[key],registration['owner'][key]) for key in GUIDED_OWNER_KEYS):raise Refusal('guided_reader_frame')
+    if kind=='reader_result':
+        frame=data['frame']
+        try:size=len(frame.encode()) if type(frame) is str else None
+        except UnicodeEncodeError:size=None
+        if size is None or size>GUIDED_READER_FRAME_BYTES or not frame.endswith('\n') or '\n' in frame[:-1]:raise Refusal('guided_reader_frame')
+        _,inner=_wire_parse(frame.encode())
+        echo=_closed(inner,('version','readId','owner','views','limits','snapshot'))
+        inner_keys=tuple(key for key in GUIDED_OWNER_KEYS if key!='workspaceId');inner_owner=_closed(echo['owner'],inner_keys)
+        views=_closed(echo['views'],tuple(registration['views']));limits=_closed(echo['limits'],tuple(GUIDED_READER_LIMITS))
+        if not _same(echo['version'],1) or not _same(echo['readId'],read_id) or any(not _same(inner_owner[key],registration['owner'][key]) for key in inner_keys) \
+                or any(not _same(views[key],expected) for key,expected in registration['views'].items()) or any(not _same(limits[key],expected) for key,expected in GUIDED_READER_LIMITS.items()) \
+                or _wire_text(inner)+'\n'!=frame:raise Refusal('guided_reader_frame')
+        _closed(echo['snapshot'],('blocks','digest','droppedImports','files','provenance','skippedLinks','text','tiers'))
+    elif kind=='reader_terminal':
+        if type(data['outcome']) is not str or data['outcome'] not in ('ok','unavailable','cancelled') or any(data[key] is not True for key in GUIDED_TERMINAL_FLAGS) \
+                or any(type(data[key]) is not int or not 0<=data[key]<=65535 for key in ('namespaceWaitStatus','monitorWaitStatus')):raise Refusal('guided_reader_frame')
+    else:raise Refusal('guided_reader_frame')
+    return data
+def check_reader_message(frame,registration,read_id):
+    """Python mirror of decodeLinuxGuidedReaderFrame over a whole length-prefixed frame."""
+    if type(frame) not in (bytes,bytearray) or not 5<=len(frame)<=GUIDED_READER_BODY_BYTES+4 or struct.unpack('!I',bytes(frame[:4]))[0]!=len(frame)-4:raise Refusal('guided_reader_frame')
+    text,data=_wire_parse(frame[4:])
+    if _wire_text(data)!=text:raise Refusal('guided_reader_frame')
+    return check_reader_value(data,registration,read_id)
+def reader_result_message(registration,read_id,frame):
+    return {'version':1,'kind':'reader_result','registrationId':registration['registrationId'],'readId':read_id,'owner':registration['owner'],'frame':frame}
+def reader_terminal_message(registration,read_id,outcome,namespace_status,monitor_status):
+    return {'version':1,'kind':'reader_terminal','registrationId':registration['registrationId'],'readId':read_id,'owner':registration['owner'],'outcome':outcome,
+            'namespaceInitReaped':True,'monitorReaped':True,'namespaceWaitStatus':namespace_status,'monitorWaitStatus':monitor_status,'stdoutEof':True,'stderrEof':True,'captureDrained':True}
+def reader_invocation(registration,read_id):
+    """The one stdin request of the isolated reader (RuntimeSDK's InstructionReaderInvocation): the registration minus workspaceId, canonical compact JSON."""
+    owner=registration['owner']
+    body=wire_json({'version':1,'readId':read_id,'owner':{key:owner[key] for key in ('logicalSessionId','backendSessionId','generation','bootId','incarnationId','leaseEpoch')},
+                    'views':dict(registration['views']),'limits':dict(registration['limits'])}).encode()
+    if len(body)>GUIDED_READER_INPUT_BYTES:raise Refusal('guided_reader_input')
+    return body
+def reader_argv(launcher,executable,view,receipt,uid,gid,source,source_path,source_cwd,guidance,dependencies):
+    """The exact Root-only launch envelope of linux-instruction-reader-compartment.c (argc == 12 + 2 * dependencies)."""
+    return [str(launcher),'instruction-reader-v1',str(executable),view,str(receipt),str(uid),str(gid),str(source),source_path,source_cwd,str(guidance),str(len(dependencies)),*[value for fd,path in dependencies for value in (str(fd),path)]]
+def reader_dependency_path(value):
+    if type(value) is not str or not 2<=len(value)<=1024 or not value.startswith(('/lib/','/lib64/','/usr/lib/')) or any(not 33<=ord(char)<=126 for char in value):return False
+    return not any(part in ('','.','..') for part in value[1:].split('/'))
+def reader_control_message(control,expect_init):
+    """One packet from the launcher's SEQPACKET receipt socket: ('init', pidfd), ('receipt', waitStatus) or ('eof', None).
+
+    Every delivered descriptor is owned before the packet is judged, as receive_init_pidfd does."""
+    owned=[]
+    try:
+        data,ancillary,flags,_=control.recvmsg(16,socket.CMSG_SPACE(16*array.array('i').itemsize),getattr(socket,'MSG_CMSG_CLOEXEC',0))
+        for level,kind,payload in ancillary:
+            if (level,kind)==(socket.SOL_SOCKET,socket.SCM_RIGHTS):
+                owned.extend(array.array('i',payload[:len(payload)-len(payload)%array.array('i').itemsize]))
+        for fd in owned:os.set_inheritable(fd,False)
+        if flags&~getattr(socket,'MSG_CMSG_CLOEXEC',0):raise Uncertain('guided_reader_receipt')
+        if not data:
+            if owned or ancillary:raise Uncertain('guided_reader_receipt')
+            return 'eof',None
+        if expect_init:
+            if data!=b'I' or len(ancillary)!=1 or ancillary[0][:2]!=(socket.SOL_SOCKET,socket.SCM_RIGHTS) or len(ancillary[0][2])!=array.array('i').itemsize or len(owned)!=1:raise Uncertain('guided_reader_receipt')
+            return 'init',owned.pop()
+        if owned or ancillary or len(data)!=5 or data[:1]!=b'R':raise Uncertain('guided_reader_receipt')
+        return 'receipt',struct.unpack('=I',data[1:])[0]
+    finally:
+        for fd in owned:os.close(fd)
+def reader_pidfd_check(fd):
+    if os.readlink(f'/proc/self/fd/{fd}')!='anon_inode:[pidfd]':raise Uncertain('guided_reader_receipt')
+def reader_kill_init(fd):
+    try:signal.pidfd_send_signal(fd,signal.SIGKILL)
+    except ProcessLookupError:pass
+def reader_raw_status(code):return code<<8 if code>=0 else -code
+
+class ReaderLauncher:
+    """Runs ONE isolated instruction reader through its existing launcher and returns the evidence, never raising for a launch that
+    started. Root's creating thread must stay alive until the reader is reaped (PDEATHSIG tracks the thread), so the caller is the
+    service's one worker thread. Nothing here chooses a path: every descriptor and mount field comes from Root's trusted config."""
+    def __init__(self,*,artifacts,pins,dependencies,uid,gid,source,source_path,source_cwd,guidance,views_root=None,retained=None,spawn=None,clock=time.monotonic,kill_init=None,pidfd_check=None,root_uid=0):
+        self.root_uid=root_uid;self.artifacts=dict(artifacts);self.pins=dict(pins);self.dependencies=list(dependencies);self.uid=uid;self.gid=gid;self.source=source;self.source_path=source_path;self.source_cwd=source_cwd
+        self.guidance=guidance;self.views_root=views_root or READER_VIEWS_ROOT;self.retained=retained if retained is not None else [];self.spawn=spawn or subprocess.Popen;self.clock=clock
+        self.kill_init=kill_init or reader_kill_init;self.pidfd_check=pidfd_check or reader_pidfd_check
+    def _vacuous(self):
+        # Nothing was launched: there is no namespace init, monitor or pipe to reap, and the receipt says so with zero statuses.
+        return {'launched':False,'outcome':'unavailable','frame':None,'namespaceInitReaped':True,'monitorReaped':True,'namespaceWaitStatus':0,'monitorWaitStatus':0,'stdoutEof':True,'stderrEof':True,'captureDrained':True}
+    def _view(self,read_id):
+        path=f'{self.views_root}/{read_id}';os.mkdir(path,0o700);os.chmod(path,0o700);st=os.lstat(path)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid!=self.root_uid or st.st_mode&0o777!=0o700 or os.listdir(path):os.rmdir(path);raise Refusal('guided_reader_view')
+        return path
+    def run(self,read_id,request,cancel):
+        result=self._vacuous()
+        if type(request) is not bytes or not 1<=len(request)<=GUIDED_READER_INPUT_BYTES:return result
+        view=None;control=remote=child=selector=pidfd=None
+        try:
+            for name in ('launcher','executable'):verify_held_artifact(self.artifacts[name],self.pins[name])
+            for fd,_,pin in self.dependencies:verify_held_artifact(fd,pin)
+            view=self._view(read_id);control,remote=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET)
+            argv=reader_argv(self.artifacts['launcher'],self.artifacts['executable'],view,remote.fileno(),self.uid,self.gid,self.source,self.source_path,self.source_cwd,self.guidance,[(fd,path) for fd,path,_ in self.dependencies])
+            fds=[self.artifacts['launcher'],self.artifacts['executable'],remote.fileno(),self.source,self.guidance,*[fd for fd,_,_ in self.dependencies]]
+        except (Refusal,OSError):
+            if control is not None:control.close()
+            if remote is not None:remote.close()
+            if view is not None:
+                try:os.rmdir(view)
+                except OSError:pass
+            return result
+        out=bytearray();err=bytearray();eof={'out':False,'err':False};status=None;overrun=False;timed_out=False;killed=False;fallback=False;code=None
+        try:
+            try:
+                child=self.spawn(argv,executable=f"/proc/self/fd/{self.artifacts['launcher']}",stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=fds,close_fds=True,env={'LANG':'C','LC_ALL':'C'},start_new_session=True,bufsize=0)
+            finally:remote.close()
+            # From here a process may exist: every flag below is False until it is actually observed.
+            result.update(launched=True,namespaceInitReaped=False,monitorReaped=False,namespaceWaitStatus=None,monitorWaitStatus=None,stdoutEof=False,stderrEof=False,captureDrained=False)
+            try:
+                child.stdin.write(request)
+            except OSError:pass
+            finally:
+                try:child.stdin.close()
+                except OSError:pass
+            selector=selectors.DefaultSelector();control.setblocking(False);selector.register(control,selectors.EVENT_READ)
+            for stream in (child.stdout,child.stderr):os.set_blocking(stream.fileno(),False);selector.register(stream,selectors.EVENT_READ)
+            start=self.clock();hard=start+GUIDED_READER_SUPERVISE_SECONDS+GUIDED_READER_REAP_SECONDS
+            while selector.get_map():
+                now=self.clock()
+                if now>hard:raise Uncertain('guided_reader_cleanup_unconfirmed')
+                if now-start>GUIDED_READER_SUPERVISE_SECONDS:timed_out=True
+                want=cancel.is_set() or timed_out or overrun
+                if want and not killed and pidfd is not None:
+                    # A Root packet is the launcher's own cancellation signal; the pidfd kill is the backstop. Both are idempotent.
+                    try:control.send(b'C')
+                    except OSError:pass
+                    self.kill_init(pidfd);killed=True
+                elif want and pidfd is None and not fallback and timed_out:
+                    # Before the launcher's 'I' receipt nothing can name the namespace init: the monitor itself is the last resort.
+                    try:child.kill()
+                    except OSError:pass
+                    fallback=True
+                for event,_ in selector.select(.05):
+                    stream=event.fileobj
+                    if stream is control:
+                        try:kind,value=reader_control_message(control,pidfd is None and status is None)
+                        except BlockingIOError:continue
+                        if kind=='eof':selector.unregister(control)
+                        elif kind=='init':
+                            pidfd=value;self.pidfd_check(pidfd)
+                        elif pidfd is None or status is not None:raise Uncertain('guided_reader_receipt')
+                        else:status=value
+                    else:
+                        try:data=os.read(stream.fileno(),16384)
+                        except BlockingIOError:continue
+                        name,target,limit=('out',out,GUIDED_READER_FRAME_BYTES) if stream is child.stdout else ('err',err,GUIDED_READER_STDERR_BYTES)
+                        if not data:selector.unregister(stream);eof[name]=True;continue
+                        room=limit+1-len(target)
+                        if room>0:target.extend(data[:room])
+                        if len(target)>limit:overrun=True
+            try:code=child.wait(timeout=max(.1,hard-self.clock()))
+            except subprocess.TimeoutExpired:raise Uncertain('guided_reader_cleanup_unconfirmed')
+            result.update(namespaceInitReaped=status is not None,namespaceWaitStatus=status,monitorReaped=True,monitorWaitStatus=reader_raw_status(code),stdoutEof=eof['out'],stderrEof=eof['err'],captureDrained=eof['out'] and eof['err'])
+            if pidfd is None and status is None and code==64:
+                # Exit 64 is the launcher's refusal of its own envelope, which happens strictly before the namespace fork: no init ever existed.
+                result.update(namespaceInitReaped=True,namespaceWaitStatus=0)
+            if cancel.is_set():result['outcome']='cancelled'
+            elif overrun or timed_out or status != 0 or code != 0:result['outcome']='unavailable'
+            else:
+                try:result.update(outcome='ok',frame=bytes(out).decode('utf-8'))
+                except UnicodeDecodeError:result['outcome']='unavailable'
+        except (Refusal,Uncertain,OSError,ValueError):
+            # Whatever was not observed stays False: the service turns that into retained debt and sends no receipt.
+            result['outcome']='unavailable'
+        finally:
+            if selector is not None:selector.close()
+            if child is not None and not result['monitorReaped']:
+                try:child.kill()
+                except OSError:pass
+                self.retained.append(child)
+            if child is not None:
+                for stream in (child.stdin,child.stdout,child.stderr):
+                    try:
+                        if stream is not None:stream.close()
+                    except OSError:pass
+            for end in (control,remote):
+                if end is not None:end.close()
+            if pidfd is not None:os.close(pidfd)
+            if view is not None and (child is None or result['monitorReaped']):
+                try:os.rmdir(view)
+                except OSError:pass
+        return result
+
+class GuidedReaderService:
+    """Root's service on its end of the guided runtime's fifth descriptor, for ONE incarnation.
+
+    Handoff: Root made the stream for this run alone, sent the other end exactly once in the bootstrap envelope and then handed THIS end
+    to the one service instance built for the run. `start` claims it exactly once; a second claim, or any claim after the service
+    stopped, refuses. The service is also bound to the run's registration (owner, views, limits, binding) and to the runtime's
+    namespace-init pidfd: the runtime exiting, a revocation or a shutdown ends service. Root never half-closes or shuts the stream down
+    while serving, because the native owner reads that as the owner being lost.
+
+    Serving: a bounded, serial reader queue. At most 16 reads are outstanding, replays and unknown requests are protocol violations that
+    stop the service (the guest's own channel fails closed on the same events), and a receipt is sent only from real evidence: the
+    namespace init reaped, the monitor reaped, both pipes at EOF and the capture drained. Missing evidence is retained debt, never a receipt."""
+    def __init__(self,*,registration,stream,owner_pidfd,halt,launch,clock=time.monotonic):
+        self.registration=registration;self.stream=stream;self.owner_pidfd=owner_pidfd;self.halt=halt;self.launch=launch;self.clock=clock
+        self.cv=threading.Condition();self.send_lock=threading.Lock();self.state='new';self.failure=None;self.threads=[];self.queue=[];self.reads={};self.consumed=set();self.uncertain=[]
+        self.counts={'started':0,'ok':0,'unavailable':0,'cancelled':0,'ignoredCancels':0}
+    @property
+    def debt(self):return bool(self.uncertain)
+    def start(self):
+        with self.cv:
+            if self.state!='new':raise Refusal('guided_reader_claimed')
+            self.state='serving'
+        self.stream.settimeout(GUIDED_READER_SEND_SECONDS)
+        self.threads=[threading.Thread(target=self._serve,daemon=True),threading.Thread(target=self._work,daemon=True)]
+        for thread in self.threads:thread.start()
+    def observations(self):
+        with self.cv:return {'state':self.state,'failure':self.failure,'consumed':len(self.consumed),'outstanding':len(self.reads),'uncertainReads':len(self.uncertain),**self.counts}
+    def _owner_gone(self):
+        if self.owner_pidfd is None:return False
+        try:return bool(select.select([self.owner_pidfd],[],[],0)[0])
+        except (OSError,ValueError):return True
+    def _fail(self,code):
+        with self.cv:
+            if self.state in ('failed','closed'):return
+            self.state='failed';self.failure=code
+            for read in self.reads.values():read['cancel'].set()
+            for read in self.queue:self.reads.pop(read['readId'],None)
+            del self.queue[:];self.cv.notify_all()
+    def _serve(self):
+        decoder=ReaderFrameDecoder()
+        try:
+            while True:
+                with self.cv:
+                    if self.state!='serving':return
+                if self.halt.is_set() or self._owner_gone():self._fail('owner_ended');return
+                try:ready=select.select([self.stream],[],[],.05)[0]
+                except (OSError,ValueError):self._fail('stream_lost');return
+                if not ready:continue
+                try:data=self.stream.recv(65536)
+                except (BlockingIOError,socket.timeout):continue
+                except OSError:self._fail('stream_lost');return
+                if not data:self._fail('stream_closed');return
+                for body in decoder.feed(data):self._handle(body)
+        except Refusal as error:self._fail(str(error))
+    def _handle(self,body):
+        kind,read_id,context=reader_request(body,self.registration)
+        terminal=None
+        with self.cv:
+            if self.state!='serving':return
+            if kind=='start':
+                if read_id in self.consumed or len(self.consumed)>=GUIDED_READER_CONSUMED or len(self.reads)>=GUIDED_READER_OUTSTANDING:raise Refusal('guided_reader_bound')
+                read={'readId':read_id,'contextRequestId':context,'state':'queued','cancel':threading.Event()}
+                self.consumed.add(read_id);self.reads[read_id]=read;self.queue.append(read);self.counts['started']+=1;self.cv.notify_all()
+            else:
+                read=self.reads.get(read_id)
+                if read is None:
+                    # A cancel that crossed its own terminal receipt is benign; one for a read never started is not.
+                    if read_id not in self.consumed:raise Refusal('guided_reader_unknown')
+                    self.counts['ignoredCancels']+=1
+                elif read['state']=='queued':
+                    self.queue.remove(read);read['state']='done';terminal=read
+                else:read['cancel'].set()
+        if terminal is not None:self._terminal(terminal,'cancelled',0,0)
+    def _send(self,message):
+        frame=reader_wire_frame(message);check_reader_message(frame,self.registration,message['readId'])
+        try:
+            with self.send_lock:self.stream.sendall(frame)
+        except (OSError,socket.timeout):self._fail('stream_lost');raise Refusal('guided_reader_send')
+    def _terminal(self,read,outcome,namespace_status,monitor_status):
+        try:self._send(reader_terminal_message(self.registration,read['readId'],outcome,namespace_status,monitor_status))
+        except Refusal:return
+        with self.cv:
+            self.reads.pop(read['readId'],None);read['state']='done'
+            if outcome in self.counts:self.counts[outcome]+=1
+    def _work(self):
+        while True:
+            with self.cv:
+                while not self.queue and self.state=='serving':self.cv.wait(.1)
+                if self.state!='serving':return
+                read=self.queue.pop(0);read['state']='running'
+            self._run_one(read)
+    def _run_one(self,read):
+        if self.halt.is_set() or self._owner_gone():
+            # Revoked or ended before launch: nothing was started, so no process evidence exists or is owed.
+            self._fail('owner_ended');return
+        try:result=self.launch(read['readId'],reader_invocation(self.registration,read['readId']),read['cancel'])
+        except BaseException:
+            self._debt(read);self._fail('launch_failed');return
+        complete=type(result) is dict and all(result.get(key) is True for key in GUIDED_TERMINAL_FLAGS) and all(type(result.get(key)) is int and 0<=result[key]<=65535 for key in ('namespaceWaitStatus','monitorWaitStatus'))
+        if not complete:
+            self._debt(read);self._fail('reader_evidence_missing');return
+        outcome=result.get('outcome');frame=result.get('frame')
+        if read['cancel'].is_set():outcome='cancelled'
+        if outcome=='ok':
+            message=reader_result_message(self.registration,read['readId'],frame)
+            try:check_reader_message(reader_wire_frame(message),self.registration,read['readId'])
+            except Refusal:outcome='unavailable'
+            else:
+                try:self._send(message)
+                except Refusal:return
+        elif outcome not in ('unavailable','cancelled'):outcome='unavailable'
+        self._terminal(read,outcome,result['namespaceWaitStatus'],result['monitorWaitStatus'])
+    def _debt(self,read):
+        with self.cv:
+            read['state']='uncertain'
+            if read['readId'] not in self.uncertain:self.uncertain.append(read['readId'])
+    def stop(self):
+        """End service and wait for the worker. True only when no read is left unaccounted for. Idempotent; never closes the stream."""
+        with self.cv:
+            fresh=self.state=='new'
+            if fresh:self.state='closed'
+        if fresh:return True
+        self._fail('stopped')
+        deadline=self.clock()+GUIDED_READER_SUPERVISE_SECONDS+GUIDED_READER_REAP_SECONDS+1
+        for thread in self.threads:thread.join(max(0,deadline-self.clock()))
+        with self.cv:
+            if any(thread.is_alive() for thread in self.threads) and 'worker' not in self.uncertain:self.uncertain.append('worker')
+            self.state='closed'
+        return not self.debt
+
 class ToolService:
     def __init__(self,config,*,host_query_ports=None):
         if sys.platform!='linux' or os.geteuid()!=0:raise Refusal('protected_linux_root_required')
@@ -402,7 +814,7 @@ class ToolService:
         if config.get('guestBootId')!=Path('/proc/sys/kernel/random/boot_id').read_text().strip():raise Refusal('stale_guest_boot')
         self.lock=threading.RLock();self.stop_event=threading.Event();self.conversations={};self.active={};self.debt=set();self.tickets={};self.retained_children=[];self.tool_connections=threading.BoundedSemaphore(TOOL_CONNECTION_LIMIT);self.admin_connections=threading.BoundedSemaphore(ADMIN_CONNECTION_LIMIT)
         self.host_query_ports=dict(host_query_ports or {})
-        self.artifacts={};self.artifact_pins={};self.owned=[];self.listeners=[];self.threads=[];self.runtimes={};self.runtime_artifacts={};self.runtime_pins={};self.guest_boot=config['guestBootId']
+        self.reader=None;self.artifacts={};self.artifact_pins={};self.owned=[];self.listeners=[];self.threads=[];self.runtimes={};self.runtime_artifacts={};self.runtime_pins={};self.guest_boot=config['guestBootId']
         try:
             # First inside the try: a conflict still refuses before any artifact opens, and close() releases injected ports.
             self.runtime_profile=select_runtime_profile(config)
@@ -412,7 +824,7 @@ class ToolService:
             if set(self.host_query_ports)!=expected_ports or any(type(port) is not RuntimeDuplexPorts for port in self.host_query_ports.values()):raise Refusal('host_query_transport')
             if any(item_profile_conflict(item,runtime_key) for item in config['conversations']):raise Refusal('runtime_profile_conflict')
             if runtime_key in config:
-                if set(config[runtime_key])!={'artifacts'} or set(config[runtime_key]['artifacts'])!={'launcher','executable','ownerLibrary'}:raise Refusal('runtime_artifacts')
+                if set(config[runtime_key])!=({'artifacts','reader'} if self.runtime_profile==GUIDED_PROFILE else {'artifacts'}) or set(config[runtime_key]['artifacts'])!={'launcher','executable','ownerLibrary'}:raise Refusal('runtime_artifacts')
                 for name,value in config[runtime_key]['artifacts'].items():
                     self.runtime_artifacts[name]=pinned_artifact(value);self.runtime_pins[name]=value['sha256'];self.owned.append(self.runtime_artifacts[name])
             self.environment=os.open(config['environment'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);self.owned.append(self.environment)
@@ -456,7 +868,11 @@ class ToolService:
             if self.runtime_profile==GUIDED_PROFILE:
                 root_sources=[Path(root['source']).resolve(strict=True) for entry in config['conversations'] for root in entry['roots']]
                 for entry in config['conversations']:
-                    if 'guidanceDirectory' in entry.get(runtime_key,{}):fd=guidance_directory(entry[runtime_key]['guidanceDirectory'],protected,root_sources);self.owned.append(fd);self.conversations[entry['logicalSessionId']]['guidance']=fd
+                    if runtime_key in entry:
+                        # The reader service must refuse to serve a view that is not mounted: a guided conversation without its guidance directory is not admitted.
+                        if 'guidanceDirectory' not in entry[runtime_key]:raise Refusal('guided_guidance_required')
+                        fd=guidance_directory(entry[runtime_key]['guidanceDirectory'],protected,root_sources);self.owned.append(fd);self.conversations[entry['logicalSessionId']]['guidance']=fd
+                if any(runtime_key in entry for entry in config['conversations']):self.reader=self._open_reader(config[runtime_key]['reader'],config['conversations'])
         except BaseException:
             self.close();raise
     def _listener(self,path,uid,handler,*,admin=False):
@@ -682,6 +1098,7 @@ class ToolService:
         if profile==GUIDED_PROFILE:allowed.update(('requiredRuntimeContext','generation','guidanceDirectory'))
         elif profile not in ('fresh','host-query-v1'):raise Refusal('runtime_profile_conflict')
         if not self.runtime_artifacts or not isinstance(value,dict) or set(value)-allowed or not {'storeDirectory','runhomeDirectory','provider','model'}<=set(value):raise Refusal('runtime_config')
+        if profile==GUIDED_PROFILE and 'guidanceDirectory' not in value:raise Refusal('guided_guidance_required')
         port=None;host_config=None;reader_registration=None
         if profile in ('host-query-v1',GUIDED_PROFILE):
             if profile==GUIDED_PROFILE:
@@ -736,6 +1153,46 @@ class ToolService:
             record.update(profile=GUIDED_PROFILE,runtimeConfig=json.loads(canonical(runtime['hostConfig'])),readerRegistration=json.loads(canonical(runtime['readerRegistration'])))
             if record['runtimeConfig'].get('requiredRuntimeContext')!=record['readerRegistration']['requiredRuntimeContext']:raise Refusal('guided_context')
         return record
+    def _open_reader(self,value,conversations):
+        # Guided only. Root's trusted config alone names the isolated reader's launcher, loader, dependency closure and identity.
+        if type(value) is not dict or set(value)!={'artifacts','dependencies','uid'} or type(value['artifacts']) is not dict or set(value['artifacts'])!={'launcher','executable'}:raise Refusal('guided_reader_config')
+        uid=value['uid'];dependencies=value['dependencies'];reserved={0}
+        for entry in conversations:reserved.update((entry['runtimeUid'],entry['toolUid'],entry['workspaceGid']))
+        if type(uid) is not int or not 1000<=uid<=65535 or uid in reserved:raise Refusal('guided_reader_identity')
+        if type(dependencies) is not list or len(dependencies)>READER_DEPENDENCY_LIMIT or any(type(value['artifacts'][name]) is not dict for name in ('launcher','executable')):raise Refusal('guided_reader_config')
+        paths=[]
+        for dependency in dependencies:
+            if type(dependency) is not dict or set(dependency)!={'path','sha256','guestPath'} or not reader_dependency_path(dependency['guestPath']):raise Refusal('guided_reader_config')
+            guest=dependency['guestPath']
+            if any(guest==other or guest.startswith(other+'/') or other.startswith(guest+'/') for other in paths):raise Refusal('guided_reader_config')
+            paths.append(guest)
+        self._reader_views_root()
+        reader={'artifacts':{},'pins':{},'dependencies':[],'uid':uid}
+        for name in ('launcher','executable'):
+            fd=pinned_artifact(value['artifacts'][name]);self.owned.append(fd);reader['artifacts'][name]=fd;reader['pins'][name]=value['artifacts'][name]['sha256']
+        for dependency in dependencies:
+            fd=pinned_artifact({'path':dependency['path'],'sha256':dependency['sha256']});self.owned.append(fd);reader['dependencies'].append((fd,dependency['guestPath'],dependency['sha256']))
+        return reader
+    def _reader_views_root(self):
+        # Each read's final view directory is made under this parent. The launcher re-checks every ancestor (Root-owned, not group/other writable).
+        os.makedirs(READER_VIEWS_ROOT,mode=0o755,exist_ok=True);current=Path(READER_VIEWS_ROOT)
+        for each in (current,*current.parents):
+            if each==Path('/'):continue
+            st=each.lstat()
+            if not stat.S_ISDIR(st.st_mode) or st.st_uid!=0 or st.st_mode&0o022:raise Refusal('guided_reader_views')
+    def _guided_reader_service(self,item,runtime,stream,pidfd):
+        # One service per run; v1 and fresh runs never reach this. The source descriptor is the root the registration names, and the guidance
+        # descriptor is the one the constructor already opened and checked for the tool view, so both views name the same directories.
+        reader=getattr(self,'reader',None);registration=runtime['readerRegistration'];views=registration['views']
+        source=next((binding['fd'] for binding in item['roots'].values() if binding['root']['guestPath']==views['sourceRoot']),None);guidance=item.get('guidance')
+        if reader is None or source is None or guidance is None:raise Refusal('guided_reader_service')
+        # One service per incarnation: the registration (and the stream made for this run) is bound to exactly one instance, ever.
+        if runtime.get('readerService') is not None:raise Refusal('guided_reader_claimed')
+        launcher=ReaderLauncher(artifacts=reader['artifacts'],pins=reader['pins'],dependencies=reader['dependencies'],uid=reader['uid'],gid=item['workspaceGid'],source=source,
+                                source_path=views['sourceRoot'],source_cwd=views['sourceCwd'],guidance=guidance,retained=self.retained_children)
+        built=GuidedReaderService(registration=registration,stream=stream,owner_pidfd=pidfd,halt=runtime['cancel'],launch=launcher.run)
+        runtime['readerService']=built
+        return built
     def launch_runtime(self,sid):
         with self.lock:
             if sid not in self.runtimes or self.stop_event.is_set() or self.conversations[sid]['revoked'] or sid in self.debt:raise Refusal('runtime_admission')
@@ -745,7 +1202,7 @@ class ToolService:
             runtime['state']='starting';thread=threading.Thread(target=self._run_runtime,args=(self.conversations[sid],runtime),daemon=True);self.threads.append(thread);thread.start()
     def _run_runtime(self,item,runtime):
         sid=item['logicalSessionId'];child=None;pidfd=None;control=None;parent=None;bootstrap=None;guest=None;view=None;selector=None;confirmed=False;service_pidfd=None
-        out=bytearray();err=bytearray();failure=None;relay=None;port=runtime.get('duplex');reader_root=None;reader_guest=None
+        out=bytearray();err=bytearray();failure=None;relay=None;port=runtime.get('duplex');reader_root=None;reader_guest=None;reader_service=None
         observations={'phase':'artifact-admission','nativeReceiptObserved':False,'nativeExitCode':None,'parentReaped':False,'parentExitCode':None,'toolDrainConfirmed':False,'nativeCleanupConfirmed':False,'ownershipReleased':False}
         try:
             if port is not None:port.claim(item)
@@ -767,15 +1224,17 @@ class ToolService:
             record=canonical(bootstrap_record).encode()
             if len(record)>65536:raise Refusal('runtime_bootstrap_limit')
             guided=runtime.get('profile')==GUIDED_PROFILE
-            # Guided only: Root keeps reader_root open (nothing serves it in this slice) until
-            # the finally below. Closing it would make the native owner check fail.
+            # Guided only: Root keeps reader_root open until the finally below, and the one reader service built for this run
+            # serves it. Closing or shutting it down early would make the native owner check fail.
             if guided:reader_root,reader_guest=socket.socketpair(socket.AF_UNIX,socket.SOCK_STREAM)
             rights=bootstrap_rights(runtime.get('profile'),pidfd,service_pidfd,runtime['fds']['storeDirectory'],self.runtime_artifacts['executable'],reader_guest.fileno() if guided else None);bootstrap.settimeout(2)
+            if guided:reader_service=self._guided_reader_service(item,runtime,reader_root,pidfd)
             try:sent=bootstrap.sendmsg([record],[(socket.SOL_SOCKET,socket.SCM_RIGHTS,rights)])
             finally:
                 if reader_guest is not None:reader_guest.close()
             if sent!=len(record):raise Uncertain('runtime_bootstrap_send')
             with self.lock:runtime.update(state='running',initPidfd=pidfd)
+            if reader_service is not None:reader_service.start()
             selector=selectors.DefaultSelector();control.setblocking(False);selector.register(control,selectors.EVENT_READ)
             if port is not None:relay=RuntimeDuplexRelay(port,child,runtime['cancel'])
             else:
@@ -817,6 +1276,10 @@ class ToolService:
             native=os.waitstatus_to_exitcode(terminal);native=native if native>=0 else 128-native
             observations['nativeExitCode']=native
             if code!=native:raise Uncertain('runtime_parent_reap_unconfirmed')
+            # The reader service ends with the runtime. Any reader whose reap, EOF or drain is unproven is retained debt, so tenancy is not released.
+            if reader_service is not None:
+                reader_service.stop();observations['reader']=reader_service.observations()
+                if reader_service.debt:raise Uncertain('guided_reader_debt')
             # Namespace-init wait + launcher reaping precede tool revocation/drain.
             # Runtime JSON/EOF/success and kill delivery cannot acknowledge tenancy.
             self.revoke(sid);deadline=time.monotonic()+3
@@ -840,6 +1303,9 @@ class ToolService:
             self.revoke(sid)
         finally:
             if selector is not None:selector.close()
+            if reader_service is not None:
+                # Before any descriptor below is closed: the service polls the runtime pidfd and writes the reader stream.
+                reader_service.stop();observations['reader']=reader_service.observations()
             if child is not None and not confirmed:
                 try:
                     if pidfd is not None:signal.pidfd_send_signal(pidfd,signal.SIGKILL)

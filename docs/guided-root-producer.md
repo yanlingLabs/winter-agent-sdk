@@ -48,8 +48,8 @@ The native owner receives a fifth descriptor for guided only. `_run_runtime` cre
 same envelope as the four v1 descriptors (`bootstrap_rights` is the one place the count is decided),
 and closes Root's copy of the guest end after the send. Root keeps its own end open until the run
 ends: the native owner polls the stream for `POLLRDHUP` on every check, so closing it would lose the
-owner. **Nothing serves that end in this slice**, so a read request from a guided runtime would never
-be answered. It does not shut the stream down or write to it.
+owner. Root's end is served by the reader service (`guided-reader-service.md`), which never shuts the stream
+down while serving; before that slice nothing served it.
 
 ## The guided entry
 
@@ -71,14 +71,14 @@ edit would change the v1 compile inputs and their pins.
   lines 815-830 and 982), except for a guided query that presents a one-shot guest ticket minted by the
   owning host's issuer (`guided-guest-attestation.md`). No SDK path mints a ticket, so nothing lifts it
   today. A source pin test keeps the gated text in place.
-- **The reader service.** Root serves nothing on the stream. Producing a registration does not
-  authenticate it natively (the C patch checks the stream's creator, not the later holder), and Root's
-  exclusive per-incarnation handoff, framed reader service and drain evidence are still owed
-  (`guided-session-wiring-continuation.md`, items 3 and 7).
+- **Native authentication of the reader stream.** Root now serves the stream (`guided-reader-service.md`:
+  exclusive per-incarnation handoff, the framed service, reap/drain/debt evidence), but producing a registration
+  still does not authenticate it natively (the C patch checks the stream's creator, not the later holder), and no
+  native owner has admitted the five-descriptor record (`guided-session-wiring-continuation.md`, item 7).
 - **The guidance view.** The owner-approved compartment C patch is applied
   (`guided-guidance-view-matrix.md`): for a guided conversation with a `guidanceDirectory`, the tool
   launcher mounts `/run/winter/shared-instructions` read-only and the `/workspace/.winter/WINTER.md`
-  alias. Without that Root key nothing is mounted. The reader service, a native admission and any
+  alias. The key is **required** for a guided conversation since the reader service. A native admission and any
   hosted or live run are still owed; `sharedPath` remains a validated string for the SDK.
 - **The engine.** Without a native admission the guest engine fails closed: a test runs the guided
   config through `runEmbeddedSession` with no and forged admissions and sees exit 1, no store

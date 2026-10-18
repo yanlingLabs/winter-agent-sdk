@@ -40,6 +40,12 @@ jobs:
         run: python3 -I -S -B scripts/guest-supervisor/test_guided_guidance_view.py
       - name: guided guidance view and WINTER.md alias -- the tracked tool launcher in real private mount and PID namespaces
         run: sudo -n env WINTER_REQUIRE_NATIVE_GUIDANCE=1 python3 -I -S -B scripts/guest-supervisor/test_guided_guidance_view.py LinuxNativeTests
+      - name: guided reader service -- Root's fifth-descriptor service (frames, exclusive handoff, bounds, injected-process launcher) and the Python-versus-TypeScript differential (source only, nothing admitted)
+        env:
+          WINTER_REQUIRE_READER_DIFFERENTIAL: "1"
+        run: python3 -I -S -B scripts/guest-supervisor/test_guided_reader_service.py
+      - name: guided reader service -- the unchanged reader launcher, launched by Root's ReaderLauncher in real private mount, PID, IPC, UTS and network namespaces with a static stand-in loader
+        run: sudo -n env WINTER_REQUIRE_NATIVE_READER=1 python3 -I -S -B scripts/guest-supervisor/test_guided_reader_service.py LinuxNativeTests
       - name: Root's init transport (argv, three FIFOs, one conversation, PID 1 shaped config) and the tool-device inventory (source only)
         run: |
           python3 -I -S -B scripts/guest-supervisor/test_runtime_port_arguments.py

@@ -232,6 +232,22 @@ class GuidedBuilderTests(unittest.TestCase):
                 pipes.close()
 
 
+class FakeReaderService:
+    """Stands in for the one per-run reader service so the send path is observed without a thread. Records when it started and stopped."""
+    def __init__(self, stream, debt=False):
+        self.stream, self.events, self.debt = stream, [], debt
+
+    def start(self):
+        self.events.append(('start', self.stream.fileno() != -1))
+
+    def stop(self):
+        self.events.append(('stop', self.stream.fileno() != -1))
+        return True
+
+    def observations(self):
+        return {'state': 'closed'}
+
+
 class GuidedConfiguredRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.fixture = fresh.FreshProtocolTests()
@@ -245,7 +261,7 @@ class GuidedConfiguredRuntimeTests(unittest.TestCase):
         self.fixture.item['roots']['source']['fd'] = -9
         self.fixture.item.update(policy='ask', authority=dict(AUTH))
         self.fixture.provider['scope']['grantRevision'] = AUTH['grantRevision']
-        self.config = {**self.fixture.config, 'toolClasses': ['read', 'write', 'execute'], 'requiredRuntimeContext': dict(REQUIREMENT), 'generation': 1}
+        self.config = {**self.fixture.config, 'toolClasses': ['read', 'write', 'execute'], 'requiredRuntimeContext': dict(REQUIREMENT), 'generation': 1, 'guidanceDirectory': '/guidance'}
 
     def tearDown(self):
         self.pipes.close()
@@ -304,10 +320,10 @@ class GuidedConfiguredRuntimeTests(unittest.TestCase):
 
     def test_v1_and_fresh_profiles_refuse_every_guided_key(self):
         # Each base is otherwise valid for its profile, so the guided key alone is what must be refused.
-        v1 = {k: v for k, v in self.config.items() if k not in ('requiredRuntimeContext', 'generation')}
+        v1 = {k: v for k, v in self.config.items() if k not in ('requiredRuntimeContext', 'generation', 'guidanceDirectory')}
         for profile, base in (('host-query-v1', v1), ('fresh', self.fixture.config)):
-            self.assertEqual(set(base) & {'requiredRuntimeContext', 'generation', 'readerRegistration', 'profile'}, set())
-            for key, value in (('requiredRuntimeContext', dict(REQUIREMENT)), ('generation', 1), ('readerRegistration', {}), ('profile', GUIDED)):
+            self.assertEqual(set(base) & {'requiredRuntimeContext', 'generation', 'guidanceDirectory', 'readerRegistration', 'profile'}, set())
+            for key, value in (('requiredRuntimeContext', dict(REQUIREMENT)), ('generation', 1), ('guidanceDirectory', '/guidance'), ('readerRegistration', {}), ('profile', GUIDED)):
                 with self.assertRaisesRegex(service.Refusal, 'runtime_config', msg=f'{profile} {key}'):
                     self.obj._configure_runtime(self.fixture.item, {**base, key: value}, profile=profile)
             self.assertEqual(self.obj.owned, [])
@@ -376,14 +392,14 @@ class GuidedConfiguredRuntimeTests(unittest.TestCase):
 
     # ----- the real send path, with an injected (non-native) process, selector and sockets -----
 
-    def injected_start(self, profile=GUIDED):
+    def injected_start(self, profile=GUIDED, reader_debt=False):
         guided, plain = profile == GUIDED, profile == 'fresh'
         if guided:
             runtime = self.configure()
         elif plain:
             runtime = self.configure(self.fixture.config, profile='fresh')
         else:
-            v1 = {k: v for k, v in self.config.items() if k not in ('requiredRuntimeContext', 'generation')}
+            v1 = {k: v for k, v in self.config.items() if k not in ('requiredRuntimeContext', 'generation', 'guidanceDirectory')}
             runtime = self.configure(v1, profile=profile)
         self.obj.runtime_artifacts = {'launcher': 10, 'executable': 11, 'ownerLibrary': 12}
         self.obj.runtime_pins = {name: 'test-pin' for name in self.obj.runtime_artifacts}
@@ -442,8 +458,16 @@ class GuidedConfiguredRuntimeTests(unittest.TestCase):
                 patch.object(service.os, 'pidfd_open', return_value=700, create=True), patch.object(service.selectors, 'DefaultSelector', return_value=selector), \
                 patch.object(service.os, 'read', side_effect=read), patch.object(service.os, 'close', side_effect=lambda fd: None if fd in (600, 700) else original_close(fd)), \
                 patch.object(service.signal, 'pidfd_send_signal', create=True):
+            made = []
+            def make_service(item, runtime, stream, pidfd):
+                made.append(FakeReaderService(stream, reader_debt))
+                seen['service_args'] = (item['logicalSessionId'], stream is pair[0], pidfd)
+                return made[0]
             try:
-                self.obj._run_runtime(self.fixture.item, runtime)
+                with patch.object(self.obj, '_guided_reader_service', side_effect=make_service, create=True) as built:
+                    self.obj._run_runtime(self.fixture.item, runtime)
+                    seen['service_built'] = built.call_count
+                    seen['service_events'] = made[0].events if made else None
             finally:
                 if pair is not None:
                     seen['final_closed'] = (pair[0].fileno() == -1, pair[1].fileno() == -1)
@@ -474,9 +498,22 @@ class GuidedConfiguredRuntimeTests(unittest.TestCase):
     def test_guided_reader_channel_ownership_root_keeps_its_end_until_the_run_is_over(self):
         _, _, seen, _ = self.injected_start(GUIDED)
         self.assertTrue(seen['root_open_at_send'])
+        self.assertEqual(seen['service_built'], 1)
+        self.assertEqual(seen['service_args'], ('logical', True, 600), 'the service gets Root\'s end of the stream and the runtime pidfd')
+        self.assertEqual(seen['service_events'], [('start', True), ('stop', True), ('stop', True)], 'it starts after the send; both stops (after reaping, then the idempotent one in finally) happen while the stream is still open')
         self.assertTrue(seen['guest_closed_in_loop'], 'Root must drop its copy of the guest end after the transfer')
         self.assertTrue(seen['root_open_in_loop'], 'closing Root end would end the native owner')
         self.assertEqual(seen['final_closed'], (True, True))
+
+    def test_reader_debt_retains_the_conversation_and_the_store_and_blocks_confirmation(self):
+        runtime, _, seen, _ = self.injected_start(GUIDED, reader_debt=True)
+        self.assertEqual(runtime['state'], 'retained')
+        self.assertNotEqual(runtime.get('cleanupConfirmed'), True)
+        self.assertIn('logical', self.obj.debt)
+        diagnostic = json.loads((self.obj.directory / 'logical' / 'runtime-diagnostic.json').read_text())
+        self.assertEqual(diagnostic['failure']['code'], 'guided_reader_debt')
+        self.assertEqual(diagnostic['observations']['reader'], {'state': 'closed'})
+        self.assertFalse(self.obj.close(), 'a conversation with unproven reader reap, EOF or drain is never released')
 
     def test_v1_start_still_sends_exactly_four_descriptors_and_no_reader_channel(self):
         runtime, bootstrap, seen, pairing = self.injected_start('host-query-v1')
@@ -490,7 +527,7 @@ class GuidedConfiguredRuntimeTests(unittest.TestCase):
         self.assertEqual(sent['profile'], 'host-query-v1')
         self.assertNotIn('readerRegistration', sent)
         self.assertNotIn('requiredRuntimeContext', sent['runtimeConfig'])
-        self.assertEqual(seen, {})
+        self.assertEqual(seen, {'service_built': 0, 'service_events': None}, 'v1 and fresh runs never build a reader service')
 
     def test_fresh_start_still_sends_exactly_four_descriptors_and_is_never_treated_as_guided(self):
         runtime, bootstrap, seen, pairing = self.injected_start('fresh')
@@ -507,7 +544,7 @@ class GuidedConfiguredRuntimeTests(unittest.TestCase):
         self.assertNotIn('readerRegistration', sent)
         self.assertNotIn('requiredRuntimeContext', sent['runtimeConfig'])
         self.assertEqual(sent['runtimeConfig']['permissionMode'], 'default')
-        self.assertEqual(seen, {})
+        self.assertEqual(seen, {'service_built': 0, 'service_events': None}, 'v1 and fresh runs never build a reader service')
         self.assertEqual(self.pipes.ports.phase, 'new')
 
     def test_failed_guided_send_closes_both_reader_ends_and_retains_debt(self):
@@ -546,7 +583,7 @@ class ConstructorRootMetadataTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.base = Path(self.temp.name).resolve()
-        for name in ('control', 'environment', 'source', 'artifacts', 'store', 'home'):
+        for name in ('control', 'environment', 'source', 'artifacts', 'store', 'home', 'guidance'):
             (self.base / name).mkdir()
         for name in ('launcher', 'fileWorker', 'processWorker', 'executable', 'ownerLibrary'):
             (self.base / 'artifacts' / name).write_bytes(b'x')
@@ -569,6 +606,10 @@ class ConstructorRootMetadataTests(unittest.TestCase):
         if profile != 'fresh':
             config[key] = {'artifacts': {name: pin(name) for name in ('launcher', 'executable', 'ownerLibrary')}}
             entry[key] = {'storeDirectory': str(self.base / 'store'), 'runhomeDirectory': str(self.base / 'home')}
+            if profile == GUIDED:
+                # A guided conversation needs its guidance directory and the isolated reader's launcher, loader and identity.
+                config[key]['reader'] = {'artifacts': {'launcher': pin('launcher'), 'executable': pin('executable')}, 'dependencies': [], 'uid': 30001}
+                entry[key]['guidanceDirectory'] = str(self.base / 'guidance')
         return config
 
     def construct(self, profile, policy):
@@ -578,7 +619,7 @@ class ConstructorRootMetadataTests(unittest.TestCase):
         ports = {} if profile == 'fresh' else {'logical': self.pipes.ports}
         control = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=0)
         with linux_root_constructor(), patch.object(service, 'pinned_artifact', side_effect=lambda value: os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC)), \
-                patch.object(service.Path, 'lstat', return_value=control), patch.object(service.os, 'chown'), \
+                patch.object(service.Path, 'lstat', return_value=control), patch.object(service.os, 'chown'), patch.object(service, 'READER_VIEWS_ROOT', str(self.base / 'views')), \
                 patch.object(service.ToolService, '_configure_runtime', autospec=True) as configure:
             built = service.ToolService(self.config(profile, policy), host_query_ports=ports)
         self.services.append(built)
