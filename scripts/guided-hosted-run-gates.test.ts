@@ -53,6 +53,9 @@ const GUARD: Array<[string, string]> = [
 const PIN_REFUSAL: Array<[string, string]> = [
   ["the strict shell", "set -euo pipefail"],
   ["the run id refusal", `test "$PACKET_RUN_ID" != "0"`],
+  ["the runtime head refusal", `test "$RUNTIME_SDK_HEAD" != "${ZERO40}"`],
+  ["the pin file digest refusal", `test "$PACKET_PIN_SHA256" != "${ZERO64}"`],
+  ["the verifier digest refusal", `test "$VERIFIER_SHA256" != "${ZERO64}"`],
   ["the archive pin refusal", `test "$PACKET_ARCHIVE_SHA256" != "${ZERO64}"`],
   ["the inventory pin refusal", `test "$PACKET_INVENTORY_SHA256" != "${ZERO64}"`],
   ["the runner pin refusal", `test "$RUNNER_SHA256" != "${ZERO64}"`],
@@ -63,14 +66,16 @@ const VERIFY: Array<[string, string]> = [
   ["the exact two-file packet directory", `test "$(ls -A packet-download | LC_ALL=C sort | tr '\\n' ' ')" = "guided-packet.tar.gz packet-inventory.json "`],
   ["the strict packet digest check", `printf '%s  %s\\n' "$PACKET_ARCHIVE_SHA256" packet-download/guided-packet.tar.gz "$PACKET_INVENTORY_SHA256" packet-download/packet-inventory.json | sha256sum --check --strict -`],
   ["the strict runner digest check", `printf '%s  %s\\n' "$RUNNER_SHA256" ${RUNNER_PATH} | sha256sum --check --strict -`],
+  ["the verifier and pin digest check", `printf '%s  %s\\n' "$VERIFIER_SHA256" origins/runtime/scripts/guest-guided-intake/verify_packet.py "$PACKET_PIN_SHA256" "origins/runtime/scripts/guest-guided-intake/compile-\${PACKET_RUN_ID}.pin.json" | sha256sum --check --strict -`],
+  ["the packet verification", `python3 -I -B origins/runtime/scripts/guest-guided-intake/verify_packet.py packet-download/guided-packet.tar.gz packet-download/packet-inventory.json --pin "origins/runtime/scripts/guest-guided-intake/compile-\${PACKET_RUN_ID}.pin.json" > "$RUNNER_TEMP/packet-verification.json"`],
   ["the platform check", "test \"$(uname -s)\" = Linux"],
   ["the architecture check", "test \"$(uname -m)\" = aarch64"],
   ["the output directory", 'mkdir -m 755 "$RUNNER_TEMP/guided-hosted-out"'],
 ];
-const SUDO_LINE = `sudo -n env ${OPT_IN}=${OPT_IN_VALUE} python3 -I -S -B - "$RUNNER_SHA256" ${RUNNER_PATH} packet-download "$RUNNER_TEMP/guided-hosted-out" <<'PY'`;
+const SUDO_LINE = `sudo -n env ${OPT_IN}=${OPT_IN_VALUE} python3 -I -S -B - "$RUNNER_SHA256" ${RUNNER_PATH} packet-download "$RUNNER_TEMP/guided-hosted-out" origins/runtime/scripts/guest-guided-intake/verify_packet.py "$VERIFIER_SHA256" "origins/runtime/scripts/guest-guided-intake/compile-\${PACKET_RUN_ID}.pin.json" "$PACKET_PIN_SHA256" <<'PY'`;
 /** What runs as root, byte for byte (the launcher hashes the runner, then executes exactly the bytes it hashed). */
 const ROOT_PY = `import hashlib, os, stat, sys
-digest, source, packet, out = sys.argv[1:5]
+digest, source, packet, out, *extra = sys.argv[1:]
 if os.geteuid() != 0:
     raise SystemExit('root required')
 fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
@@ -83,7 +88,7 @@ finally:
     os.close(fd)
 if len(data) != before.st_size or hashlib.sha256(data).hexdigest() != digest:
     raise SystemExit('unreviewed runner refused')
-sys.argv = [source, packet, out]
+sys.argv = [source, packet, out, *extra]
 exec(compile(data, source, 'exec'), {'__name__': '__main__', '__file__': source})
 `;
 
@@ -154,7 +159,10 @@ export function violations(text: string, ctx: Context = loadContext()): string[]
 
   // 5. The first two steps: the pushed-commit checkout with full history, then the arming guard.
   const checkouts = steps.filter((s) => s.uses?.startsWith("actions/checkout@"));
-  if (checkouts.length !== 1) bad("exactly one checkout");
+  if (checkouts.length !== 2) bad("exactly two checkouts");
+  const runtimeCheckout = checkouts[1];
+  if (JSON.stringify(runtimeCheckout?.with ?? {}) !== JSON.stringify({ repository: RUNTIME_REPOSITORY, ref: "${{ env.RUNTIME_SDK_HEAD }}", path: "origins/runtime", "persist-credentials": false })) bad("the second checkout must be the runtime repository at RUNTIME_SDK_HEAD, credential-free");
+  if (runtimeCheckout && steps.indexOf(runtimeCheckout) !== 3) bad("the runtime checkout must follow the pin refusal");
   const first = steps[0];
   if (first !== checkouts[0] || first?.with?.ref !== "${{ github.sha }}" || first?.with?.["fetch-depth"] !== 0 || first?.with?.["persist-credentials"] !== false) bad("the first step must be the pushed-commit checkout with full history, credential-free");
   if (JSON.stringify(Object.keys(first?.with ?? {}).sort()) !== JSON.stringify(["fetch-depth", "persist-credentials", "ref"])) bad("checkout has extra with: keys");
@@ -167,16 +175,16 @@ export function violations(text: string, ctx: Context = loadContext()): string[]
 
   // 6. The env block: unarmed or armed with plain hex, never a branch name; the digests match the files they name.
   const env = (doc.env ?? {}) as Record<string, unknown>;
-  if (JSON.stringify(Object.keys(env).sort()) !== JSON.stringify(["HOSTED_HEAD", "PACKET_ARCHIVE_SHA256", "PACKET_INVENTORY_SHA256", "PACKET_RUN_ID", "RUNNER_SHA256"])) bad("env keys must be exactly the reviewed pins");
+  if (JSON.stringify(Object.keys(env).sort()) !== JSON.stringify(["HOSTED_HEAD", "PACKET_ARCHIVE_SHA256", "PACKET_INVENTORY_SHA256", "PACKET_PIN_SHA256", "PACKET_RUN_ID", "RUNNER_SHA256", "RUNTIME_SDK_HEAD", "VERIFIER_SHA256"])) bad("env keys must be exactly the reviewed pins");
   if (typeof env.HOSTED_HEAD !== "string" || !/^[0-9a-f]{40}$/.test(env.HOSTED_HEAD)) bad("HOSTED_HEAD must be a 40-hex commit (all zeros while unarmed)");
-  for (const key of ["PACKET_ARCHIVE_SHA256", "PACKET_INVENTORY_SHA256", "RUNNER_SHA256"]) if (typeof env[key] !== "string" || !/^[0-9a-f]{64}$/.test(env[key] as string)) bad(`${key} must be 64-hex (all zeros while unset)`);
+  if (typeof env.RUNTIME_SDK_HEAD !== "string" || !/^[0-9a-f]{40}$/.test(env.RUNTIME_SDK_HEAD)) bad("RUNTIME_SDK_HEAD must be a 40-hex commit (all zeros while unset)");
+  for (const key of ["PACKET_ARCHIVE_SHA256", "PACKET_INVENTORY_SHA256", "RUNNER_SHA256", "PACKET_PIN_SHA256", "VERIFIER_SHA256"]) if (typeof env[key] !== "string" || !/^[0-9a-f]{64}$/.test(env[key] as string)) bad(`${key} must be 64-hex (all zeros while unset)`);
   if (typeof env.PACKET_RUN_ID !== "string" || !/^(0|[1-9][0-9]{8,12})$/.test(env.PACKET_RUN_ID)) bad("PACKET_RUN_ID must be a plain run id (0 while unset)");
   if (env.PACKET_RUN_ID === "39165162201") bad("the first guided packet (placeholder roles) must never be bound");
-  if (env.RUNNER_SHA256 !== ZERO64) {
-    if (!ctx.runnerExists) bad("RUNNER_SHA256 is set but the runner file does not exist");
-    else if (ctx.runnerSha256 !== env.RUNNER_SHA256) bad("RUNNER_SHA256 does not match the runner file");
-  }
-  if (env.HOSTED_HEAD !== ZERO40 && (env.PACKET_RUN_ID === "0" || env.PACKET_ARCHIVE_SHA256 === ZERO64 || env.PACKET_INVENTORY_SHA256 === ZERO64 || env.RUNNER_SHA256 === ZERO64)) bad("armed with an unset pin");
+  // The runner is committed, so its pin is always the real hash of the file; it is never a placeholder.
+  if (!ctx.runnerExists) bad("RUNNER_SHA256 is set but the runner file does not exist");
+  else if (ctx.runnerSha256 !== env.RUNNER_SHA256) bad("RUNNER_SHA256 does not match the runner file");
+  if (env.HOSTED_HEAD !== ZERO40 && (env.PACKET_RUN_ID === "0" || env.RUNTIME_SDK_HEAD === ZERO40 || [env.PACKET_ARCHIVE_SHA256, env.PACKET_INVENTORY_SHA256, env.PACKET_PIN_SHA256, env.VERIFIER_SHA256].some((v) => v === ZERO64))) bad("armed with an unset pin");
 
   // 7. The download: the first network step, before anything privileged, and only the one named artifact of the one named run.
   const downloads = steps.filter((s) => s.uses?.startsWith("actions/download-artifact@"));
@@ -187,7 +195,7 @@ export function violations(text: string, ctx: Context = loadContext()): string[]
   const downloadAt = download ? steps.indexOf(download) : -1;
   const verifyAt = steps.findIndex((s) => (s.run ?? "").includes("sha256sum --check --strict"));
   const sudoAt = steps.findIndex((s) => /\bsudo\b/.test(logicalLines(s.run ?? "").join("\n")));
-  if (!(downloadAt === 3 && verifyAt === 4 && sudoAt === 5)) bad("order must be checkout, guard, pin refusal, download, verify, sudo");
+  if (!(downloadAt === 4 && verifyAt === 5 && sudoAt === 6)) bad("order must be checkout, guard, pin refusal, runtime checkout, download, verify, sudo");
 
   // 8. Verification before anything privileged: the exact lines.
   const verifyLines = logicalLines(steps[verifyAt]?.run ?? "");
@@ -305,7 +313,11 @@ const MUTATIONS: Array<[string, (text: string) => string, string, Partial<Contex
   // checkout and arming guard
   ["checkout fetches submodules", sub("          fetch-depth: 0\n", "          fetch-depth: 0\n          submodules: recursive\n"), "checkout has extra with: keys"],
   ["checkout loses full history", sub("          fetch-depth: 0\n", ""), "the first step must be the pushed-commit checkout with full history, credential-free"],
-  ["second checkout", sub("      - name: Refuse while", "      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5\n      - name: Refuse while"), "exactly one checkout"],
+  ["third checkout", sub("      - name: Refuse while", "      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5\n      - name: Refuse while"), "exactly two checkouts"],
+  ["runtime checkout: wrong repository", sub("repository: yanlingLabs/winter-runtime-sdk\n          ref: ${{ env.RUNTIME_SDK_HEAD }}", "repository: someone/else\n          ref: ${{ env.RUNTIME_SDK_HEAD }}"), "the second checkout must be the runtime repository at RUNTIME_SDK_HEAD, credential-free"],
+  ["runtime checkout moves after the download", (t) => t.replace(/(      - uses: actions\/checkout@[0-9a-f]{40}\n        with:\n          repository: [\s\S]*?persist-credentials: false\n)([\s\S]*?path: packet-download\n)/, "$2$1"), "the runtime checkout must follow the pin refusal"],
+  ["runtime checkout: a branch ref", sub("ref: ${{ env.RUNTIME_SDK_HEAD }}", "ref: main"), "the second checkout must be the runtime repository at RUNTIME_SDK_HEAD, credential-free"],
+  ["runtime checkout: keeps credentials", sub("          path: origins/runtime\n          persist-credentials: false", "          path: origins/runtime\n          persist-credentials: true"), "the second checkout must be the runtime repository at RUNTIME_SDK_HEAD, credential-free"],
   ["guard: unarmed refusal removed", sub(/ *test "\$HOSTED_HEAD" != "0+"\n/, ""), "arming guard lacks the unarmed refusal"],
   ["guard: ancestor check removed", sub(/ *git merge-base --is-ancestor[^\n]*\n/, ""), "arming guard lacks the ancestor check"],
   ["guard: ancestor check made advisory", sub('"$GITHUB_SHA"\n          test "$(git diff --name-only', '"$GITHUB_SHA" || true\n          test "$(git diff --name-only'), "arming guard lacks the ancestor check"],
@@ -331,27 +343,38 @@ const MUTATIONS: Array<[string, (text: string) => string, string, Partial<Contex
   ["env: run id becomes a name", sub("PACKET_RUN_ID: '0'", "PACKET_RUN_ID: 'latest'"), "PACKET_RUN_ID must be a plain run id (0 while unset)"],
   ["env: the first (placeholder-role) packet is bound", sub("PACKET_RUN_ID: '0'", "PACKET_RUN_ID: '39165162201'"), "the first guided packet (placeholder roles) must never be bound"],
   ["pin refusal: run id removed", sub(/ *test "\$PACKET_RUN_ID" != "0"\n/, ""), "pin refusal lacks the run id refusal"],
-  ["env: runner pin set to a hash the file does not have", sub(/RUNNER_SHA256: '0+'/, `RUNNER_SHA256: '${"1".repeat(64)}'`), "RUNNER_SHA256 is set but the runner file does not exist"],
-  ["env: runner pin differs from the runner file", sub(/RUNNER_SHA256: '0+'/, `RUNNER_SHA256: '${"3".repeat(64)}'`), "RUNNER_SHA256 does not match the runner file", { runnerExists: true, runnerSha256: "4".repeat(64) }],
+  ["env: runner pin is not the runner file's hash", sub(/RUNNER_SHA256: '[0-9a-f]{64}'/, `RUNNER_SHA256: '${"1".repeat(64)}'`), "RUNNER_SHA256 does not match the runner file"],
+  ["env: runner file missing", sub(/RUNNER_SHA256: '[0-9a-f]{64}'/, `RUNNER_SHA256: '${"1".repeat(64)}'`), "RUNNER_SHA256 is set but the runner file does not exist", { runnerExists: false, runnerSha256: "" }],
+  ["env: runtime head becomes a branch name", sub(`RUNTIME_SDK_HEAD: '${ZERO40}'`, "RUNTIME_SDK_HEAD: 'main'"), "RUNTIME_SDK_HEAD must be a 40-hex commit (all zeros while unset)"],
+  ["env: verifier pin becomes short", sub(/VERIFIER_SHA256: '0+'/, "VERIFIER_SHA256: 'abc'"), "VERIFIER_SHA256 must be 64-hex (all zeros while unset)"],
+  ["pin refusal: runtime head removed", sub(/ *test "\$RUNTIME_SDK_HEAD" != "0+"\n/, ""), "pin refusal lacks the runtime head refusal"],
+  ["pin refusal: pin digest removed", sub(/ *test "\$PACKET_PIN_SHA256" != "0+"\n/, ""), "pin refusal lacks the pin file digest refusal"],
+  ["pin refusal: verifier digest removed", sub(/ *test "\$VERIFIER_SHA256" != "0+"\n/, ""), "pin refusal lacks the verifier digest refusal"],
   ["env: armed with an unset pin", sub(`HOSTED_HEAD: '${ZERO40}'`, `HOSTED_HEAD: '${"2".repeat(40)}'`), "armed with an unset pin"],
   // download
-  ["download: wrong repository", sub(`repository: ${RUNTIME_REPOSITORY}`, "repository: someone/else"), "the download must name exactly the packet artifact of PACKET_RUN_ID in the runtime repository"],
+  ["download: wrong repository", sub(`repository: ${RUNTIME_REPOSITORY}\n          github-token`, "repository: someone/else\n          github-token"), "the download must name exactly the packet artifact of PACKET_RUN_ID in the runtime repository"],
   ["download: a different artifact name", sub("name: guided-packet-compile-${{ env.PACKET_RUN_ID }}", "name: other"), "the download must name exactly the packet artifact of PACKET_RUN_ID in the runtime repository"],
   ["download: a second artifact via pattern", sub("          path: packet-download\n", "          path: packet-download\n          pattern: '*'\n"), "the download must name exactly the packet artifact of PACKET_RUN_ID in the runtime repository"],
   ["download: no run id", sub("          run-id: ${{ env.PACKET_RUN_ID }}\n", ""), "the download must name exactly the packet artifact of PACKET_RUN_ID in the runtime repository"],
   ["download: second download", sub("      - name: Verify the packet", "      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093\n      - name: Verify the packet"), "exactly one download"],
-  ["download moves after verify", (t) => t.replace(/(      - name: Download[\s\S]*?path: packet-download\n)([\s\S]*?)(      - name: Run the guided)/, "$2$1$3"), "order must be checkout, guard, pin refusal, download, verify, sudo"],
+  ["download moves after verify", (t) => t.replace(/(      - name: Download[\s\S]*?path: packet-download\n)([\s\S]*?)(      - name: Run the guided)/, "$2$1$3"), "order must be checkout, guard, pin refusal, runtime checkout, download, verify, sudo"],
   // verification
   ["verify: strict packet check removed", sub(/ *printf '%s  %s\\n' "\$PACKET_ARCHIVE_SHA256"[^\n]*\n/, ""), "verify step lacks the strict packet digest check"],
   ["verify: packet check not strict", sub(/(PACKET_ARCHIVE_SHA256[^\n]*)--strict/, "$1"), "verify step lacks the strict packet digest check"],
   ["verify: runner check removed", sub(/ *printf '%s  %s\\n' "\$RUNNER_SHA256"[^\n]*\n/, ""), "verify step lacks the strict runner digest check"],
   ["verify: two-file directory check removed", sub(/ *test "\$\(ls -A packet-download[^\n]*\n/, ""), "verify step lacks the exact two-file packet directory"],
+  ["verify: verifier and pin digest check removed", sub(/ *printf '%s  %s\\n' "\$VERIFIER_SHA256"[^\n]*\n/, ""), "verify step lacks the verifier and pin digest check"],
+  ["verify: packet verification removed", sub(/ *python3 -I -B origins\/runtime\/scripts\/guest-guided-intake\/verify_packet.py[^\n]*\n/, ""), "verify step lacks the packet verification"],
+  ["verify: packet verification made advisory", sub('> "$RUNNER_TEMP/packet-verification.json"', '> "$RUNNER_TEMP/packet-verification.json" || true'), "verify step lacks the packet verification"],
+  ["verify: verifier run against a different pin", sub('--pin "origins/runtime/scripts/guest-guided-intake/compile-\${PACKET_RUN_ID}.pin.json" >', '--pin other.json >'), "verify step lacks the packet verification"],
   ["verify: architecture check removed", sub(/ *test "\$\(uname -m\)" = aarch64\n/, ""), "verify step lacks the architecture check"],
   ["verify: an extra command", sub('mkdir -m 755 "$RUNNER_TEMP/guided-hosted-out"\n', 'mkdir -m 755 "$RUNNER_TEMP/guided-hosted-out"\n          chmod 777 "$RUNNER_TEMP/guided-hosted-out"\n'), "verify step is not exactly the reviewed script"],
   // the privileged step
   ["sudo: opt-in in the verify step", sub('test "$(uname -s)" = Linux', `test "$(uname -s)" = Linux; export ${OPT_IN}=x`), "opt-in variable must appear exactly once in the workflow"],
   ["sudo: opt-in in workflow env", sub("env:\n  HOSTED_HEAD", `env:\n  ${OPT_IN}: x\n  HOSTED_HEAD`), "opt-in variable must appear exactly once in the workflow"],
   ["sudo: opt-in loses sudo -n env", sub(`sudo -n env ${OPT_IN}=`, `${OPT_IN}=`), "the sudo line must be exactly the reviewed command"],
+  ["sudo: verifier arguments dropped", sub(' origins/runtime/scripts/guest-guided-intake/verify_packet.py "$VERIFIER_SHA256" "origins/runtime/scripts/guest-guided-intake/compile-${PACKET_RUN_ID}.pin.json" "$PACKET_PIN_SHA256" <<\'PY\'', " <<'PY'"), "the sudo line must be exactly the reviewed command"],
+  ["sudo: the launcher drops the extra arguments", sub("sys.argv = [source, packet, out, *extra]", "sys.argv = [source, packet, out]"), "the root launcher must be exactly the reviewed text"],
   ["sudo: interpreter loses -I", sub("python3 -I -S -B - ", "python3 -S -B - "), "the sudo line must be exactly the reviewed command"],
   ["sudo: a different runner path", sub(`${RUNNER_PATH} packet-download`, "scripts/other.py packet-download"), "the sudo line must be exactly the reviewed command"],
   ["sudo: an extra sudo command", sub('mkdir -m 755 "$RUNNER_TEMP/guided-hosted-out"\n', 'mkdir -m 755 "$RUNNER_TEMP/guided-hosted-out"\n          sudo -n true\n'), "exactly one sudo command"],
@@ -398,7 +421,7 @@ describe("every gate removal is caught by its own named violation", () => {
     expect(violations(WORKFLOW, { ...loadContext(), others: { "x.yml": `on: { push: { branches: ['${TRIGGER_BRANCH}'] } }` } })).toContain("x.yml names the trigger branch");
   });
   test("a runner pin that differs from the runner file is caught", () => {
-    const armed = WORKFLOW.replace(/RUNNER_SHA256: '0+'/, `RUNNER_SHA256: '${"3".repeat(64)}'`);
+    const armed = WORKFLOW.replace(/RUNNER_SHA256: '[0-9a-f]{64}'/, `RUNNER_SHA256: '${"3".repeat(64)}'`);
     expect(violations(armed, { ...loadContext(), runnerExists: true, runnerSha256: "4".repeat(64) })).toContain("RUNNER_SHA256 does not match the runner file");
     expect(violations(armed, { ...loadContext(), runnerExists: true, runnerSha256: "3".repeat(64) })).not.toContain("RUNNER_SHA256 does not match the runner file");
   });
@@ -476,7 +499,7 @@ describe("arming guard behaviour (runs the workflow's own guard script against t
 // throwaway directory: the hash gate must run exactly the hashed bytes and refuse everything else before executing any.
 describe("root launcher behaviour (the workflow's own launcher, minus the uid line)", () => {
   const doc = yaml.parse(WORKFLOW) as Doc;
-  const sudoRun = (Object.values(doc.jobs ?? {})[0]?.steps ?? [])[5]?.run ?? "";
+  const sudoRun = (Object.values(doc.jobs ?? {})[0]?.steps ?? [])[6]?.run ?? "";
   const launcher = sudoRun.slice(sudoRun.indexOf("<<'PY'\n") + 7, sudoRun.lastIndexOf("\nPY") + 1).replace("if os.geteuid() != 0:\n    raise SystemExit('root required')\n", "");
   const runner = "import sys, os\nopen(os.path.join(sys.argv[2], 'ran'), 'w').write('|'.join(sys.argv[1:]))\n";
   function launch(prepare: (dir: string) => { digest: string; source: string }): { status: number; ran: string | null; out: string } {

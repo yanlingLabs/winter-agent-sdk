@@ -69,7 +69,7 @@ success, and on failure only the bounded result and diagnostics records; 7 days 
 | Prerequisite | State |
 | --- | --- |
 | Packet roles `hostClient` and `providerWorker` | **BLOCKED: placeholder.** The compile-only adapters in runtime-sdk `scripts/guest-guided-build/entries/` refuse if started, and that builder's README says the hosted-run slice must not bind to them. The run needs a packet whose real host client and provider runner exist: replace the adapters (a runtime-sdk change), then a second owner-approved guided compile run on a new branch, then bind this workflow to that run id and digest. Compiling them on the hosted runner instead would put Bun download, compilation and root execution in one run and break the packet's provenance chain. |
-| The root runner `scripts/guest-hosted-guided/run.py` | **Not written; blocked behind the roles above.** The workflow names it by SHA-256; `RUNNER_SHA256` stays zero until it exists. |
+| The root runner `scripts/guest-hosted-guided/run.py` | **Written, but its Root-side platform is not.** Verification, sibling loading, the query chain through the adapter, teardown and the result record are implemented and tested with fake role processes. `exit64_case` and `open_session` (the supervisor config, the native owner, the mounts, the reader launcher) refuse with `platform_incomplete`, so as committed it cannot spend the run. `RUNNER_SHA256` is the real hash of the committed file; the gate test fails if they differ. |
 | F2 ticket minting on the host side | Issuer exists (`claimGuidedGuestIssuer`, `guided-guest-attestation.md`); no host code claims it yet. The real host client claims it. |
 | SDK host guard | Already lifted for a guided query that presents a valid one-shot ticket (`guided-guest-attestation.md`); nothing here changes it. |
 | Trusted config | PID 1's `wg_build_trusted_config` writes neither `reader` nor `guidanceDirectory`. The supervisor takes its trusted config on a descriptor handed by the process that starts it (`linux-supervisor.py`, the argv grammar near its end), so a hosted runner can supply the guided block directly, as the supervisor's own tests do; this is not a blocker for the run. It stays owed before any activation. |
@@ -78,9 +78,54 @@ success, and on failure only the bounded result and diagnostics records; 7 days 
 | The stub allows exactly two begins | A third begin is refused by the stub but still counted in `receivedBegins`; the oracle reads those counters, so a request that reached the stub after revocation fails the case even though the stub refused it. |
 | Bun FD adapter, holder authentication of the guest stream | Unproven by design; this run is their first real exercise. |
 
+## The runner, in order
+
+`run.py` is executed by the root launcher as the exact bytes it hashed, with the packet directory, the output directory,
+runtime-sdk's `verify_packet.py` and its SHA-256, and the run-2 pin file and its SHA-256. It then:
+
+1. checks admission (root and the one opt-in variable);
+2. **verifies the packet first, before anything else**: it hashes the verifier and the pin, then runs the verifier as the
+   packet's own unprivileged owner (it refuses root) and refuses unless it exits 0, `allChecksHold` is true, every check
+   is true, the report lists no placeholder role and the pin marks none. CI cannot catch a well-formed wrong hash in a
+   pin; this check can. The workflow's unprivileged verify step runs the same verifier before `sudo`, so a bad packet
+   normally never reaches root at all;
+3. loads `oracle.py` and `roles_adapter.py` only by the SHA-256 embedded in `run.py`;
+4. stages the archive into a fresh root-owned tree (files 0400; roles, natives, libraries and the Bun base 0555; links
+   recreated; any escaping name or link refused);
+5. runs the independent exit-64 case, then the query chain through the adapter, then tears down both roles and the
+   session, and writes one bounded `result.json` (`O_EXCL`) holding the stage reached, a bounded failure class and the
+   oracle's verdict. Role text never enters the record.
+
+Failure classes of the runner itself: `admission`, `arguments`, `packet_verify`, `sibling_pin`, `platform_incomplete`,
+`stage_packet`, `exit64_case`, `session`, `provider_start`, `dispatch1`, `shared_edit`, `dispatch2`, `ticket_reuse`,
+`revocation`, `teardown`, `verdict`, `result_write`.
+
+**What is NOT written (owed, and why the run cannot be armed):** the platform's `exit64_case` and `open_session`.
+They need the supervisor's guided config (including the `reader` block and `guidanceDirectory`), the native owner's
+five-descriptor admission, the mounts and the reader launcher's receipt socket, none of which can be exercised off Linux
+and none of which should be written against the final role hashes before the real roles exist. Until they are, the
+default `RealPlatform` refuses, and a test pins that it does.
+
 ## Assumptions about the two real roles (to reconcile with the runtime-sdk lane)
 
+Every call into the two roles is in ONE module, `scripts/guest-hosted-guided/roles_adapter.py`; its `ASSUMPTIONS` tuple
+(A1 to A7, below) is the list. Reconciling with the real interfaces changes that file, the `ADAPTER_SHA256` embedded in
+`run.py`, and therefore `RUNNER_SHA256`; a test fails if any of the three disagree. The transport assumed for both roles
+is line-delimited JSON on stdin/stdout, one request and one reply per line, replies at most 64 KiB, 60 s per call.
+
 Nothing below is in a merged contract; each line is what this slice assumed and what its oracle needs.
+
+The adapter's assumptions, verbatim from `roles_adapter.ASSUMPTIONS`:
+
+* A1 providerWorker takes the Root-supplied script bytes with their independent SHA-256 as {"op":"script","sha256","b64"} and replies {"ok":true}
+* A2 providerWorker answers {"op":"receipt"} with {"ok":true,"receipt":{receivedFrames,receivedBegins,acceptedBegins,completed}} from the stub itself
+* A3 hostClient answers {"op":"dispatch","n":1|2} with {"ok":true,"text":...} or {"ok":false,"errorClass":...}
+* A4 hostClient answers {"op":"present_spent"} with {"ok":false,"errorClass":...} when the spent ticket is refused, {"ok":true} when it is not
+* A5 hostClient answers {"op":"premint"} with {"ok":true} after minting one more unspent ticket, and {"op":"revoke"} with {"ok":true}
+* A6 hostClient answers {"op":"present_premint"} like present_spent; after revoke it must refuse as required_context_unavailable
+* A7 a role exits when its stdin closes; a role that does not is killed by the platform that spawned it
+
+And the earlier statement of what the oracle needs:
 
 1. `providerWorker` is the stub provider runner: it holds the Root-supplied script (bytes plus independent SHA-256) and
    serves `begin`/`next`/`cancel` over the native peer/pidfd transport, exactly two serial invocations.
