@@ -1,0 +1,127 @@
+name: guided-hosted-run-reviewed
+# ONE-RUN hosted guided query on a throwaway GitHub-hosted runner (docs/guided-hosted-run.md). It is authored and
+# NEVER triggered by its author: the owner approves the single run, then the branch below is created once, from the
+# exact reviewed commit, and frozen. There is no pull_request, pull_request_target, workflow_dispatch, schedule or
+# workflow_run trigger, so no ordinary PR can run it.
+# UNARMED: HOSTED_HEAD, RUNTIME_SDK_HEAD, PACKET_RUN_ID (0), PACKET_PIN_SHA256, VERIFIER_SHA256, PACKET_ARCHIVE_SHA256 and
+# PACKET_INVENTORY_SHA256 are all unset (RUNNER_SHA256 names the committed runner and must equal its hash).
+# The packet is the SECOND guided compile run (made after the real hostClient/providerWorker replace the placeholders);
+# the first packet's run 39165162201 must never be bound here. The first two
+# steps refuse while any is unset, so this file can sit on main without being able to run anything. The three digests
+# are set in an ordinary reviewed commit; the owner-approved ARMING commit then changes exactly one line, HOSTED_HEAD.
+# The sudo step is the only privileged step: Root-created peers, pidfds, and mount/PID/IPC/UTS/network namespaces need
+# real root, exactly as the owner-matrix run did. It runs only the runner file whose SHA-256 is RUNNER_SHA256.
+on:
+  push:
+    branches: [cowork/guided-hosted-run]
+permissions:
+  contents: read
+  actions: read
+env:
+  HOSTED_HEAD: '0000000000000000000000000000000000000000'
+  PACKET_RUN_ID: '0'
+  RUNTIME_SDK_HEAD: '0000000000000000000000000000000000000000'
+  PACKET_PIN_SHA256: '0000000000000000000000000000000000000000000000000000000000000000'
+  VERIFIER_SHA256: '0000000000000000000000000000000000000000000000000000000000000000'
+  PACKET_ARCHIVE_SHA256: '0000000000000000000000000000000000000000000000000000000000000000'
+  PACKET_INVENTORY_SHA256: '0000000000000000000000000000000000000000000000000000000000000000'
+  RUNNER_SHA256: '96674b3918abc4fc001524dbd6ca42f564da06fd5cd0c3fc8f14ee47379284c6'
+concurrency:
+  group: guided-hosted-run
+  cancel-in-progress: false
+jobs:
+  guided-hosted-run:
+    if: github.repository == 'yanlingLabs/winter-agent-sdk' && github.event_name == 'push' && github.ref == 'refs/heads/cowork/guided-hosted-run' && github.event.created == true && github.run_attempt == '1'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Refuse any arming commit that is not the one reviewed line, then check out the reviewed head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$HOSTED_HEAD" != "0000000000000000000000000000000000000000"
+          git merge-base --is-ancestor "$HOSTED_HEAD" "$GITHUB_SHA"
+          test "$(git diff --name-only "$HOSTED_HEAD" "$GITHUB_SHA")" = ".github/workflows/guided-hosted-run-reviewed.yml"
+          test "$(git diff --numstat "$HOSTED_HEAD" "$GITHUB_SHA")" = "$(printf '1\t1\t%s' .github/workflows/guided-hosted-run-reviewed.yml)"
+          armed_diff=$(git diff -U0 --no-color "$HOSTED_HEAD" "$GITHUB_SHA" | grep -E '^[-+][^-+]' || true)
+          test "$armed_diff" = "$(printf '%s\n%s' "-  HOSTED_HEAD: '0000000000000000000000000000000000000000'" "+  HOSTED_HEAD: '$HOSTED_HEAD'")"
+          git checkout --detach --quiet "$HOSTED_HEAD"
+      - name: Refuse while any packet or runner pin is unset
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$PACKET_RUN_ID" != "0"
+          test "$RUNTIME_SDK_HEAD" != "0000000000000000000000000000000000000000"
+          test "$PACKET_PIN_SHA256" != "0000000000000000000000000000000000000000000000000000000000000000"
+          test "$VERIFIER_SHA256" != "0000000000000000000000000000000000000000000000000000000000000000"
+          test "$PACKET_ARCHIVE_SHA256" != "0000000000000000000000000000000000000000000000000000000000000000"
+          test "$PACKET_INVENTORY_SHA256" != "0000000000000000000000000000000000000000000000000000000000000000"
+          test "$RUNNER_SHA256" != "0000000000000000000000000000000000000000000000000000000000000000"
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: yanlingLabs/winter-runtime-sdk
+          ref: ${{ env.RUNTIME_SDK_HEAD }}
+          path: origins/runtime
+          persist-credentials: false
+      - name: Download the pinned guided packet (the first network step; nothing privileged has run)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: guided-packet-compile-${{ env.PACKET_RUN_ID }}
+          run-id: ${{ env.PACKET_RUN_ID }}
+          repository: yanlingLabs/winter-runtime-sdk
+          github-token: ${{ github.token }}
+          path: packet-download
+      - name: Verify the packet bytes against the pins before anything privileged
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(ls -A packet-download | LC_ALL=C sort | tr '\n' ' ')" = "guided-packet.tar.gz packet-inventory.json "
+          printf '%s  %s\n' "$PACKET_ARCHIVE_SHA256" packet-download/guided-packet.tar.gz "$PACKET_INVENTORY_SHA256" packet-download/packet-inventory.json | sha256sum --check --strict -
+          printf '%s  %s\n' "$RUNNER_SHA256" scripts/guest-hosted-guided/run.py | sha256sum --check --strict -
+          printf '%s  %s\n' "$VERIFIER_SHA256" origins/runtime/scripts/guest-guided-intake/verify_packet.py "$PACKET_PIN_SHA256" "origins/runtime/scripts/guest-guided-intake/compile-${PACKET_RUN_ID}.pin.json" | sha256sum --check --strict -
+          python3 -I -B origins/runtime/scripts/guest-guided-intake/verify_packet.py packet-download/guided-packet.tar.gz packet-download/packet-inventory.json --pin "origins/runtime/scripts/guest-guided-intake/compile-${PACKET_RUN_ID}.pin.json" > "$RUNNER_TEMP/packet-verification.json"
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = aarch64
+          mkdir -m 755 "$RUNNER_TEMP/guided-hosted-out"
+      - name: Run the guided hosted fixture as root on the disposable runner and write the bounded result only
+        run: |
+          sudo -n env WINTER_GUIDED_HOSTED_ADMISSION=disposable-linux-guided-hosted-run python3 -I -S -B - "$RUNNER_SHA256" scripts/guest-hosted-guided/run.py packet-download "$RUNNER_TEMP/guided-hosted-out" origins/runtime/scripts/guest-guided-intake/verify_packet.py "$VERIFIER_SHA256" "origins/runtime/scripts/guest-guided-intake/compile-${PACKET_RUN_ID}.pin.json" "$PACKET_PIN_SHA256" <<'PY'
+          import hashlib, os, stat, sys
+          digest, source, packet, out, *extra = sys.argv[1:]
+          if os.geteuid() != 0:
+              raise SystemExit('root required')
+          fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+          try:
+              before = os.fstat(fd)
+              if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > 16777216:
+                  raise SystemExit('runner identity refused')
+              data = os.pread(fd, 16777217, 0)
+          finally:
+              os.close(fd)
+          if len(data) != before.st_size or hashlib.sha256(data).hexdigest() != digest:
+              raise SystemExit('unreviewed runner refused')
+          sys.argv = [source, packet, out, *extra]
+          exec(compile(data, source, 'exec'), {'__name__': '__main__', '__file__': source})
+          PY
+      - name: Retain the bounded result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: guided-hosted-result-${{ github.run_id }}
+          path: ${{ runner.temp }}/guided-hosted-out/result.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain only bounded failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: guided-hosted-diagnostics-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/guided-hosted-out/result.json
+            ${{ runner.temp }}/guided-hosted-out/diagnostics/*.json
+          if-no-files-found: ignore
+          retention-days: 7
