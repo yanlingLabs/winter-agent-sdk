@@ -167,6 +167,10 @@ const RESULT_KEYS = ["schema", "headSha", "kernelRelease", "machine", "pinnedSha
 const EXPECTED_LINE =
   "expected = major_minor >= (6, 9) and len(tests) == 12 and count('pass') == 11 and count('fail') == 0 and skipped == ['test_actual_pidfs_absent_before_69']";
 const IMPORT_LINE = "import hashlib, json, os, platform, re, sys, types, unittest";
+const COMPARE_LINE = "if hashes[name] != digest:";
+const COUNT_LINE = "if len(hashes) != 3 or not matrix:";
+const ROW_LINE = "tests = [{'id': name.split('.')[-1], 'outcome': outcome, 'failureClass': cls} for name, outcome, cls in sorted(recorder.rows, key=lambda row: row[0])]";
+const REFUSAL_LINE = "raise SystemExit('unreviewed matrix bytes refused')";
 const EXEC_LINE = "exec(compile(matrix, module.__file__, 'exec'), module.__dict__)";
 
 /** Exact checks on what runs as root. The python is small enough to pin by its shape, not by substring. */
@@ -179,6 +183,12 @@ function bad_python(py: string, bad: (message: string) => void): void {
   if ((py.match(/(?<![\w.])open\(/g) ?? []).length !== 1 || !py.includes("with open(name, 'rb') as handle:")) bad("root python may open() only the pinned files for reading");
   if ((py.match(/\bcompile\(/g) ?? []).length !== 1) bad("root python compile() count");
   if (lines[lines.length - 2]?.trim() !== "raise SystemExit(0 if expected else 1)" || (py.match(/SystemExit\(0/g) ?? []).length !== 1) bad("exit line must be exactly raise SystemExit(0 if expected else 1)");
+  const at = (text: string) => lines.findIndex((l) => l.trim() === text);
+  const compareAt = at(COMPARE_LINE);
+  if (compareAt < 0 || lines[compareAt + 1]?.trim() !== REFUSAL_LINE) bad("per-pin comparison must be exactly the digest check that refuses");
+  const countAt = at(COUNT_LINE);
+  if (countAt < 0 || lines[countAt + 1]?.trim() !== REFUSAL_LINE) bad("pin count must be exactly 3 with the matrix present");
+  if (at(ROW_LINE) < 0) bad("test rows must have exactly the keys id, outcome, failureClass");
   if (!lines.some((l) => l.trim() === EXPECTED_LINE)) bad("expected must have every conjunct exactly");
   const result = /result = \{([^\n]*)\}\n/.exec(py);
   const keys = result ? [...(result[1] as string).matchAll(/'(\w+)':/g)].map((m) => m[1]) : [];
@@ -209,9 +219,48 @@ function others(): Record<string, string> {
   return result;
 }
 
+const CC_FLAGS = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror"];
+
+/** The flags between `cc` and the fixture source in one command line, or null. */
+function ccFlags(command: string): string[] | null {
+  const m = /(?:^|\s)cc\s+((?:-\S+\s+)*)scripts\/guest-supervisor\/guided_owner_native_fixture\.c(?:\s|$)/.exec(command);
+  return m ? (m[1] as string).trim().split(/\s+/) : null;
+}
+
+/** Problems with the ordinary-CI compile-only step, given ci.yml text, the workflow text and the matrix source. */
+export function ciCompileViolations(ciText: string, workflowText: string, matrixSource: string): string[] {
+  const problems: string[] = [];
+  const bad = (message: string) => problems.push(message);
+  const ci = Bun.YAML.parse(ciText) as { jobs?: Record<string, { strategy?: { matrix?: { os?: string[] } }; steps?: Step[] }> };
+  const job = ci.jobs?.["guest-file-boundary"];
+  const os = job?.strategy?.matrix?.os ?? [];
+  if (!os.includes("ubuntu-24.04") || !os.includes("ubuntu-24.04-arm")) bad("ci compile must run on ubuntu-24.04 and ubuntu-24.04-arm");
+  const steps = job?.steps ?? [];
+  const compile = steps.filter((s) => ccFlags(s.run ?? "") !== null);
+  if (compile.length !== 1) return [...problems, "ci needs exactly one fixture compile step"];
+  const run = compile[0]?.run ?? "";
+  const flags = ccFlags(run);
+  const workflow = (Bun.YAML.parse(workflowText) as Doc).jobs ?? {};
+  const workflowSteps = Object.values(workflow)[0]?.steps ?? [];
+  const workflowFlags = workflowSteps.map((s) => ccFlags(s.run ?? "")).find((f) => f !== null) ?? null;
+  if (JSON.stringify(flags) !== JSON.stringify(CC_FLAGS)) bad("ci compile flags are not the exact set");
+  if (JSON.stringify(flags) !== JSON.stringify(workflowFlags)) bad("ci compile flags must equal the workflow's flags");
+  const pyFlags = /\[compiler, ((?:'-[^']+', )+)str\(FIXTURE\)/.exec(matrixSource);
+  if (JSON.stringify(pyFlags ? [...(pyFlags[1] as string).matchAll(/'([^']+)'/g)].map((m) => m[1]) : null) !== JSON.stringify(CC_FLAGS)) bad("the matrix's own root compile flags must equal the ci flags");
+  if (!/^cc [^\n;&|]* -o "\$RUNNER_TEMP\/[\w-]+"$/.test(run.trim())) bad("ci compile must be a single cc command with no chaining");
+  if (/sudo|\.\/|bash|sh -c|exec/.test(run.replace("$RUNNER_TEMP/", ""))) bad("ci compile must never execute the output");
+  if (steps.some((s) => (s.run ?? "").includes("guided-owner-fixture-compile-only") && ccFlags(s.run ?? "") === null)) bad("nothing may use the compiled output");
+  return problems;
+}
+
 describe("guided owner matrix workflow gates", () => {
   test("the committed workflow satisfies every gate", () => {
     expect(violations(WORKFLOW, others())).toEqual([]);
+  });
+
+  test("ordinary CI compiles the fixture (compile only) with the workflow's exact flags on both arches", () => {
+    const ci = readFileSync(join(WORKFLOWS_DIR, "ci.yml"), "utf8");
+    expect(ciCompileViolations(ci, WORKFLOW, readFileSync(join(ROOT, MATRIX_PATH), "utf8"))).toEqual([]);
   });
 
   test("the trigger is the exact first-creation push of one new branch, and nothing else", () => {
@@ -294,6 +343,12 @@ const MUTATIONS: Array<[string, (text: string) => string]> = [
   ["upload only on success", (t) => t.replace("if: always()", "if: success()")],
   ["failure classes widened", (t) => t.replace("return 'timeout'", "return str(err[1])")],
   ["failure class not recorded", (t) => t.replace(", 'failureClass': cls", "")],
+  ["comparison disabled", (t) => t.replace("if hashes[name] != digest:", "if False:")],
+  ["comparison inverted", (t) => t.replace("if hashes[name] != digest:", "if hashes[name] == digest:")],
+  ["pin count relaxed", (t) => t.replace("if len(hashes) != 3 or not matrix:", "if len(hashes) != 2 or not matrix:")],
+  ["pin count check drops the matrix", (t) => t.replace("if len(hashes) != 3 or not matrix:", "if len(hashes) != 3:")],
+  ["test row gains a message key", (t) => t.replace("'failureClass': cls} for", "'failureClass': cls, 'msg': str(cls)} for")],
+  ["test row drops the outcome", (t) => t.replace("'outcome': outcome, 'failureClass'", "'failureClass'")],
   ["fixture pin drifts", (t) => t.replace(/FIXTURE_SHA256: [0-9a-f]{64}/, `FIXTURE_SHA256: ${"0".repeat(64)}`)],
   ["matrix pin drifts", (t) => t.replace(/MATRIX_SHA256: [0-9a-f]{64}/, `MATRIX_SHA256: ${"0".repeat(64)}`)],
   ["hash check removed", (t) => t.replace(/ *printf '%s {2}%s\\n'[^\n]*\n/, "")],
@@ -310,6 +365,12 @@ const MUTATIONS: Array<[string, (text: string) => string]> = [
 ];
 
 const EXPECT: Record<string, string> = {
+  "comparison disabled": "per-pin comparison must be exactly the digest check that refuses",
+  "comparison inverted": "per-pin comparison must be exactly the digest check that refuses",
+  "pin count relaxed": "pin count must be exactly 3 with the matrix present",
+  "pin count check drops the matrix": "pin count must be exactly 3 with the matrix present",
+  "test row gains a message key": "test rows must have exactly the keys id, outcome, failureClass",
+  "test row drops the outcome": "test rows must have exactly the keys id, outcome, failureClass",
   "add pull_request trigger": "on: must be exactly {push}, got pull_request,push",
   "add pull_request_target trigger": "on: must be exactly {push}, got pull_request_target,push",
   "add workflow_dispatch trigger": "on: must be exactly {push}, got workflow_dispatch,push",
@@ -379,6 +440,38 @@ const EXPECT: Record<string, string> = {
   "two jobs": "exactly one job",
   "no timeout": "bounded timeout required",
 };
+
+const CI_MUTATIONS: Array<[string, (ci: string) => string, string]> = [
+  ["ci drops the compile step", (t) => t.replace(/ +- name: guided owner fixture compiles[^\n]*\n +run: cc [^\n]*\n/, ""), "ci needs exactly one fixture compile step"],
+  ["ci flags drop -Werror", (t) => t.replace("-Wextra -Werror scripts/guest-supervisor/guided", "-Wextra scripts/guest-supervisor/guided"), "ci compile flags are not the exact set"],
+  ["ci flags gain a suppression", (t) => t.replace("-Wextra -Werror scripts/guest-supervisor/guided", "-Wextra -Werror -Wno-misleading-indentation scripts/guest-supervisor/guided"), "ci compile flags are not the exact set"],
+  ["ci loses the arm leg", (t) => t.replace("os: [ubuntu-24.04, ubuntu-24.04-arm]", "os: [ubuntu-24.04]"), "ci compile must run on ubuntu-24.04 and ubuntu-24.04-arm"],
+  ["ci loses the x64 leg", (t) => t.replace("os: [ubuntu-24.04, ubuntu-24.04-arm]", "os: [ubuntu-24.04-arm]"), "ci compile must run on ubuntu-24.04 and ubuntu-24.04-arm"],
+  ["ci executes the output", (t) => t.replace('-o "$RUNNER_TEMP/guided-owner-fixture-compile-only"', '-o "$RUNNER_TEMP/guided-owner-fixture-compile-only" && "$RUNNER_TEMP/guided-owner-fixture-compile-only"'), "ci compile must be a single cc command with no chaining"],
+  ["ci runs the output in a later step", (t) => t.replace("      - run: sudo -n python3 scripts/guest-files/verify.py", '      - run: "$RUNNER_TEMP/guided-owner-fixture-compile-only"\n      - run: sudo -n python3 scripts/guest-files/verify.py'), "nothing may use the compiled output"],
+];
+
+describe("ci compile-only step gates", () => {
+  const ci = readFileSync(join(WORKFLOWS_DIR, "ci.yml"), "utf8");
+  const matrix = readFileSync(join(ROOT, MATRIX_PATH), "utf8");
+  for (const [name, mutate, expected] of CI_MUTATIONS) {
+    test(`mutation: ${name}`, () => {
+      const mutated = mutate(ci);
+      expect(mutated).not.toBe(ci);
+      expect(ciCompileViolations(mutated, WORKFLOW, matrix)).toContain(expected);
+    });
+  }
+  test("mutation: the workflow's flags drift from ci's", () => {
+    const mutated = WORKFLOW.replace("-Wextra -Werror scripts/guest-supervisor/guided", "-Wextra scripts/guest-supervisor/guided");
+    expect(mutated).not.toBe(WORKFLOW);
+    expect(ciCompileViolations(ci, mutated, matrix)).toContain("ci compile flags must equal the workflow's flags");
+  });
+  test("mutation: the matrix's own compile flags drift from ci's", () => {
+    const mutated = matrix.replace("'-Wextra', '-Werror', str(FIXTURE)", "'-Wextra', str(FIXTURE)");
+    expect(mutated).not.toBe(matrix);
+    expect(ciCompileViolations(ci, WORKFLOW, mutated)).toContain("the matrix's own root compile flags must equal the ci flags");
+  });
+});
 
 describe("every gate removal is caught", () => {
   for (const [name, mutate] of MUTATIONS) {
