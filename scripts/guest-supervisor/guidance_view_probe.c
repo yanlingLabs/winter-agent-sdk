@@ -57,6 +57,7 @@ int main(void) {
     list("ls_run_winter", "/run/winter");
     list("ls_workspace_winter", "/workspace/.winter");
     list("ls_view", VIEW);
+    list("ls_nested", VIEW "/nested");
     attempt("dotdot_file", VIEW "/../WINTER.md", O_RDONLY);
     attempt("dotdot_etc", VIEW "/../../../../../../../etc/hostname", O_RDONLY);
     attempt("symlink_out", VIEW "/escape-link", O_RDONLY);

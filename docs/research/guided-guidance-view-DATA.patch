@@ -121,13 +121,13 @@
 +    if(!guidance_type_allowed((unsigned long)fs.f_type))_exit(64);
 +}
 +/* The tool-readable alias is ONE regular file, never the enclosing .winter directory:
-+ * O_NOFOLLOW refuses a symlink, nlink must be 1 (no hardlink route), the file must be on the
++ * O_NOFOLLOW refuses a symlink, O_NONBLOCK|O_NOCTTY keep a FIFO or tty from hanging or adopting the session, nlink must be 1 (no hardlink route), the file must be on the
 + * same superblock as the directory (an over-mount refuses) and on an allowlisted filesystem.
 + * ENOENT is a valid absence: the directory mounts without an alias. */
 +static int guidance_alias_clone(int guidance) {
 +    struct stat directory,st;struct statfs fs;
 +    require(fstat(guidance,&directory),"guidance identity");
-+    int file=openat(guidance,GUIDANCE_FILE,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
++    int file=openat(guidance,GUIDANCE_FILE,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_NOCTTY|O_CLOEXEC);
 +    if(file<0) { if(errno==ENOENT)return -1; require(-1,"guidance file"); }
 +    require(fstat(file,&st),"guidance file identity");
 +    if(!S_ISREG(st.st_mode)||st.st_nlink!=1||st.st_dev!=directory.st_dev)_exit(64);

@@ -301,7 +301,7 @@ class PatchedCSourceTests(unittest.TestCase):
 
     def test_alias_is_one_regular_unlinked_same_superblock_data_file(self):
         body = self.body('int guidance_alias_clone')
-        for needle in ('openat(guidance,GUIDANCE_FILE,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC)', 'S_ISREG(st.st_mode)', 'st.st_nlink!=1', 'st.st_dev!=directory.st_dev', 'fstatfs(file,&fs)', 'guidance_type_allowed((unsigned long)fs.f_type)'):
+        for needle in ('openat(guidance,GUIDANCE_FILE,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_NOCTTY|O_CLOEXEC)', 'S_ISREG(st.st_mode)', 'st.st_nlink!=1', 'st.st_dev!=directory.st_dev', 'fstatfs(file,&fs)', 'guidance_type_allowed((unsigned long)fs.f_type)'):
             self.assertIn(needle, body)
         self.assertIn('if(errno==ENOENT)return -1;', body)
 
@@ -720,11 +720,33 @@ class PostApplyRegressionTests(unittest.TestCase):
                 self.assertNotIn('NO TESTS RAN', run.stderr)
 
 
+def gate_outcome(ok, required):
+    """What a native precondition does: 'run' when met, else 'fail' where CI requires native evidence, else 'skip'."""
+    if ok:
+        return 'run'
+    return 'fail' if required else 'skip'
+
+
+REQUIRE_NATIVE = os.environ.get('WINTER_REQUIRE_NATIVE_GUIDANCE') == '1'
+
+
+class NativeGateTests(unittest.TestCase):
+    def test_a_missing_native_precondition_fails_where_ci_requires_it_and_skips_elsewhere(self):
+        self.assertEqual(gate_outcome(True, True), 'run')
+        self.assertEqual(gate_outcome(True, False), 'run')
+        self.assertEqual(gate_outcome(False, True), 'fail')
+        self.assertEqual(gate_outcome(False, False), 'skip')
+
+    def test_ci_sets_the_requirement_on_the_sudo_step_only(self):
+        ci = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.assertIn('sudo -n env WINTER_REQUIRE_NATIVE_GUIDANCE=1 python3 -I -S -B scripts/guest-supervisor/test_guided_guidance_view.py LinuxNativeTests', ci)
+        self.assertEqual(ci.count('WINTER_REQUIRE_NATIVE_GUIDANCE'), 1)
+
+
 def native_available():
     return sys.platform == 'linux' and os.geteuid() == 0 and shutil.which('cc') is not None
 
 
-@unittest.skipUnless(native_available(), 'needs Linux, root and a C compiler (CI runs this with sudo; never on macOS)')
 class LinuxNativeTests(unittest.TestCase):
     """The PATCHED tool launcher in real private mount and PID namespaces, observed from inside the view."""
 
@@ -733,6 +755,12 @@ class LinuxNativeTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        outcome = gate_outcome(native_available(), REQUIRE_NATIVE)
+        if outcome == 'fail':
+            raise AssertionError('native guidance evidence is required here but this host is not Linux root with a C compiler')
+        if outcome == 'skip':
+            raise unittest.SkipTest('needs Linux, root and a C compiler (CI runs this with sudo; never on macOS)')
+        cls.mounts = []
         cls.temp = tempfile.TemporaryDirectory(prefix='winter-guidance-native-')
         base = Path(cls.temp.name)
         base.chmod(0o755)
@@ -759,9 +787,18 @@ class LinuxNativeTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        for mount in reversed(cls.mounts):
+            subprocess.run(['umount', '-l', str(mount)], capture_output=True)
         cls.temp.cleanup()
 
-    def fixture(self, name, with_alias=True, alias_mode='file'):
+    def require_data_fs(self):
+        outcome = gate_outcome(self.data_fs, REQUIRE_NATIVE)
+        if outcome == 'fail':
+            self.fail('the temporary directory is not on an allowlisted data filesystem, and CI requires native evidence')
+        if outcome == 'skip':
+            self.skipTest('the temporary directory is not on an allowlisted data filesystem')
+
+    def fixture(self, name, with_alias=True, alias_mode='file', nested=False):
         base = Path(tempfile.mkdtemp(prefix=name + '-', dir=self.base))
         base.chmod(0o755)
         guidance = base / 'guidance'
@@ -777,6 +814,17 @@ class LinuxNativeTests(unittest.TestCase):
             file.symlink_to('elsewhere')
         elif alias_mode == 'directory':
             file.mkdir()
+        elif alias_mode == 'fifo':
+            os.mkfifo(file, 0o666)
+        elif alias_mode == 'chardev':
+            os.mknod(file, 0o666 | stat.S_IFCHR, os.makedev(1, 3))
+        if nested:
+            (guidance / 'nested').mkdir()
+            mounted = subprocess.run(['mount', '-t', 'tmpfs', 'tmpfs', str(guidance / 'nested')], capture_output=True, text=True)
+            if mounted.returncode:
+                raise AssertionError('cannot mount the nested tmpfs: ' + mounted.stderr)
+            self.mounts.append(guidance / 'nested')
+            (guidance / 'nested' / 'nested-secret').write_text('nested')
         shutil.copyfile(self.base / 'probe-exe', guidance / 'exe')
         (guidance / 'exe').chmod(0o755)
         (guidance / 'escape-link').symlink_to('/outside-sentinel')
@@ -786,7 +834,7 @@ class LinuxNativeTests(unittest.TestCase):
         source.chmod(0o755)
         return base, guidance, source
 
-    def launch(self, source, guidance=None, trailer=None, kind='process'):
+    def launch(self, source, guidance=None, trailer=None, kind='process', timeout=60):
         """Run the patched launcher once. `guidance` is a path opened and passed as the trailer's descriptor."""
         view = Path(tempfile.mkdtemp(prefix='view-', dir=self.base))
         control_root, control_launcher = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
@@ -812,7 +860,7 @@ class LinuxNativeTests(unittest.TestCase):
             child = subprocess.Popen(arguments, executable=str(self.launcher), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      pass_fds=pass_fds, close_fds=True, env={'LANG': 'C', 'LC_ALL': 'C'}, start_new_session=True)
             control_launcher.close()
-            out, err = child.communicate(timeout=60)
+            out, err = child.communicate(timeout=timeout)
             return child.returncode, out.decode(errors='replace'), err.decode(errors='replace')
         finally:
             for fd in held:
@@ -846,9 +894,8 @@ class LinuxNativeTests(unittest.TestCase):
         return match[0]
 
     def test_the_view_and_alias_are_mounted_sealed_and_readable(self):
-        if not self.data_fs:
-            self.skipTest('the CI temporary directory is not on an allowlisted data filesystem; the refusal tests cover that case')
-        base, guidance, source, code, out, err = self.launch_guided('positive')
+        self.require_data_fs()
+        base, guidance, source, code, out, err = self.launch_guided('positive', nested=True)
         self.assertEqual(code, 0, out + err)
         values, mounts = self.observations(out)
         self.assertEqual(values['alias_read'], 'ok ' + self.SENTINEL)
@@ -863,7 +910,9 @@ class LinuxNativeTests(unittest.TestCase):
         self.assertEqual(values['ls_workspace_winter'], 'WINTER.md')   # one file, never the enclosing .winter
         self.assertEqual(values['ls_run_winter'], 'shared-instructions')
         self.assertEqual(values['ls_root_run'], 'winter')
-        self.assertEqual(values['ls_view'], 'WINTER.md,escape-link,exe')
+        self.assertEqual(values['ls_view'], 'WINTER.md,escape-link,exe,nested')
+        self.assertEqual(values['ls_nested'], '', 'a tmpfs mounted under the guidance directory must NOT be carried into the view')
+        self.assertEqual((guidance / 'nested' / 'nested-secret').read_text(), 'nested')   # it IS mounted on the host side
         self.assertEqual(values['dotdot_file'], 'errno=2')
         self.assertEqual(values['dotdot_etc'], 'errno=2')
         self.assertEqual(values['symlink_out'], 'errno=2')
@@ -876,7 +925,7 @@ class LinuxNativeTests(unittest.TestCase):
             self.assertEqual(row[row.index('-') + 1] in ('ext4', 'tmpfs', 'virtiofs'), True, row)
         self.assertFalse([row for row in mounts if '/run/winter/shared-instructions/' in row.split()[4]], 'no mount nested under the view')
         self.assertFalse([row for row in mounts if row.split()[4] == '/workspace/.winter'], 'the enclosing .winter is never a mount')
-        self.assertEqual(sorted(path.name for path in guidance.iterdir()), ['WINTER.md', 'escape-link', 'exe'])
+        self.assertEqual(sorted(path.name for path in guidance.iterdir()), ['WINTER.md', 'escape-link', 'exe', 'nested'])
         self.assertEqual((guidance / 'WINTER.md').read_text(), self.SENTINEL + '\n')
 
     def test_without_a_trailer_the_view_is_exactly_what_v1_and_fresh_get(self):
@@ -890,8 +939,7 @@ class LinuxNativeTests(unittest.TestCase):
         self.assertEqual(mounts, [])
 
     def test_a_missing_winter_md_mounts_the_directory_without_an_alias(self):
-        if not self.data_fs:
-            self.skipTest('the CI temporary directory is not on an allowlisted data filesystem')
+        self.require_data_fs()
         base, guidance, source, code, out, err = self.launch_guided('absent', with_alias=False, alias_mode='none')
         self.assertEqual(code, 0, out + err)
         values, mounts = self.observations(out)
@@ -901,8 +949,7 @@ class LinuxNativeTests(unittest.TestCase):
         self.assertFalse([row for row in mounts if 'WINTER.md' in row.split()[3] or row.split()[4].endswith('WINTER.md')])
 
     def test_a_symlink_a_hardlink_or_a_directory_named_winter_md_refuses_before_any_mount(self):
-        if not self.data_fs:
-            self.skipTest('the CI temporary directory is not on an allowlisted data filesystem')
+        self.require_data_fs()
         base, guidance, source = self.fixture('symlink', alias_mode='symlink')
         code, out, err = self.launch(source, guidance=str(guidance))
         self.assertEqual(code, 77, out + err)
@@ -916,6 +963,14 @@ class LinuxNativeTests(unittest.TestCase):
         code, out, err = self.launch(source, guidance=str(guidance))
         self.assertEqual(code, 64, out + err)
         self.assertEqual(out, '')
+
+    def test_a_fifo_or_a_character_device_named_winter_md_is_refused_without_hanging(self):
+        self.require_data_fs()
+        for mode in ('fifo', 'chardev'):
+            base, guidance, source = self.fixture(mode, alias_mode=mode)
+            code, out, err = self.launch(source, guidance=str(guidance), timeout=20)   # a blocking open would time out here
+            self.assertEqual(code, 64, (mode, out, err))
+            self.assertEqual(out, '')
 
     def test_pseudo_filesystems_are_refused_as_guidance(self):
         base, _, source = self.fixture('pseudo')

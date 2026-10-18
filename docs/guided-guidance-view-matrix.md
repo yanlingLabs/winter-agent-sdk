@@ -9,7 +9,7 @@ envelope change in `docs/guided-owner-c-matrix.md` (agent-sdk #25).
 
 The accepted-for-review delta is `docs/research/guided-guidance-view-DATA.patch`.
 
-`DATA patch SHA256: 51411187adc7e4675e64a1948bf2f2ebaab444510a0655a1eb8261ccf6dedd65`
+`DATA patch SHA256: 1dbdd4282d9213990b611fd88cc2be5e879928d38f208cdba67f95ac7224b063`
 
 Pre-patch bytes (main `439b2f4d`): `linux-tool-compartment.c`
 `799cd0b4c2ed713e1409fe87a037bb66575ee3a088fbbc1ea238581182fa33b7`, `linux-supervisor.py`
@@ -74,10 +74,11 @@ any machine with `cc` and Python.
 | --- | --- | --- |
 | Read-only, nosuid, nodev, noexec directory | `clone_descriptor(guidance,1,0)`; in-view `statvfs` flag check after chroot | `test_directory_is_cloned_non_recursively_and_sealed_readonly_noexec`, `test_attachment_precedes_the_readonly_skeleton_and_the_seal_check_follows_chroot`; native: EROFS on every write, flags `15`, exec of a file in the view fails EACCES, mountinfo options |
 | Same flags for the alias file | `clone_descriptor(file,1,0)`; seal check on the alias | same two tests; native mountinfo row for the alias |
-| No nested mount reaches the view | clone without the recursive flag | `..._non_recursively...` (source); native: no mountinfo row under the view |
+| No nested mount reaches the view | clone without the recursive flag | `..._non_recursively...` (source); native: a tmpfs is mounted under the guidance directory on the host side and must be ABSENT from the view (`ls_nested` is empty), plus no mountinfo row under the view |
 | Alias is a file, never the enclosing `.winter` | fixed constant `GUIDANCE_ALIAS`; `guidance_file_point` creates a FILE mountpoint | `test_guest_paths_are_constants_never_argv` (the only `.winter` literal), native `ls /workspace/.winter` is exactly `WINTER.md` and no row mounts `/workspace/.winter` |
 | Source roots are never widened to `.winter` | Root refuses a guidance directory that contains or sits inside any protected store, run home or admitted root; the C launcher refuses the guidance descriptor equal (number or inode) to any root, worker, control or environment descriptor | `test_guidance_that_would_widen_to_the_enclosing_winter_store_is_refused`, `test_guidance_inside_or_above_a_writable_root_is_refused`, `test_guidance_equal_to_a_root_is_refused_in_both_roles`, `test_the_same_inode_under_another_spelling_is_refused`, `test_guidance_equal_to_another_conversations_writable_root_is_refused`, `test_guidance_must_differ_from_every_other_descriptor_by_number_and_inode`, `test_every_other_held_descriptor_is_compared`; native `test_the_source_root_cannot_be_presented_as_guidance` |
 | No descriptor leak | the Python side refuses without leaking; the C side closes the guidance and file descriptors and all trees are close-on-exec; `close_range(3, ~0)` precedes the exec | `test_a_dedicated_directory_is_admitted_as_a_held_directory_descriptor`, `test_files_missing_paths_and_malformed_values_are_refused`, `test_constructor_failure_releases_the_guidance_descriptor`, `test_no_descriptor_survives_to_exec`; native `leaked_fds 0` inside the tool |
+| FIFO or character device named `WINTER.md` | `O_NONBLOCK\|O_NOCTTY` open, then the `S_ISREG` refusal | `test_alias_is_one_regular_unlinked_same_superblock_data_file` (source, includes `O_NOCTTY`); native `test_a_fifo_or_a_character_device_named_winter_md_is_refused_without_hanging` (exit 64, no hang). The absence of a controlling terminal is structural (`O_NOCTTY`), not observed: the launcher has exited by the time it could be read |
 | No symlink route out | `openat(..., O_NOFOLLOW)` for `WINTER.md`; the view is chrooted so an in-directory symlink resolves only inside the tool's own view | `test_alias_is_one_regular_unlinked_same_superblock_data_file`; native symlink `WINTER.md` refuses (77), `symlink_out` resolves to ENOENT |
 | No hardlink route | alias file must have `st_nlink == 1` | same source test; native hardlinked `WINTER.md` refuses (64) |
 | No `..` route | constants only; `guidance_file_point` and `point` refuse `..`; chroot clamps | `..._constants_never_argv`, `..._mountpoint_is_a_file_with_tolerant_parents...`; native `dotdot_file` and `dotdot_etc` are ENOENT |
@@ -85,7 +86,7 @@ any machine with `cc` and Python.
 | Pseudo-filesystem refusal consistent with the reader | statfs magic must be ext4, tmpfs or the guest host-share type: the reader's `ext4`/`tmpfs`/`virtiofs` allowlist | `test_only_ext4_tmpfs_and_virtiofs_are_data_filesystems` (32 refused magics), `test_every_data_filesystem_equals_the_instruction_reader_allowlist`; native `test_pseudo_filesystems_are_refused_as_guidance` (`/proc`, `/sys`, a regular file) |
 | Malformed trailer refused | `guidance_parse` accepts only `--guidance <canonical decimal fd 3..65535>` after the triples | `test_trailer_parse_accepts_only_the_exact_two_argument_shape`; native `test_a_malformed_trailer_is_refused` |
 | v1 and fresh argument shapes unchanged | Root appends nothing without a guidance descriptor; the C length check only gains the two-argument option | `test_v1_and_fresh_arguments_are_byte_identical_to_main` (6 policies x 2 kinds, against the tracked pre-patch module), `test_a_literal_golden_for_the_v1_shape`, `test_guided_adds_exactly_the_trailer_and_the_descriptor`, `test_v1_and_fresh_constructor_results_are_unchanged`, `test_patch_removes_exactly_two_existing_lines_so_every_other_byte_is_unchanged`, `test_existing_code_between_the_patched_lines_is_unchanged`; native `test_without_a_trailer_the_view_is_exactly_what_v1_and_fresh_get` |
-| Existing suites still pass once applied | none | `PostApplyRegressionTests` runs the 11 existing guest-supervisor and guest-engine suites unchanged against the patched copy (this found one real conflict, fixed: `test_tool_devices` forbids the substring `virtio` anywhere in the tool launcher) |
+| Existing suites still pass once applied | none | `PostApplyRegressionTests` runs 10 existing guest-supervisor and guest-engine suites unchanged against the patched copy (this found one real conflict, fixed: `test_tool_devices` forbids the substring `virtio` anywhere in the tool launcher). `test_guided_owner.py` is excluded for now: its extracted `validation.c` does not compile under gcc `-Wall -Wextra -Werror` (misleading indentation, from `envelope` with `goto fail` rewritten as `return 0`). That is a pre-existing problem in the owner-envelope test code, not caused by this patch; its fix belongs to #32, which pins that file, and the exclusion is pending #32 |
 | No guest network, NIC or vsock egress | the patch adds no socket, netlink, ioctl, vsock or namespace call; the launcher still unshares `CLONE_NEWNET`; the seccomp filter and the shared header are untouched | `test_the_patch_adds_no_network_nic_or_vsock_surface` |
 | Header, reader, runtime launcher, owner and admission untouched | patch file list | `test_patch_touches_exactly_the_tool_launcher_and_the_root_service`, `test_shared_header_reader_runtime_and_admission_sources_never_change`, `test_patched_header_is_byte_identical_to_the_tracked_header` |
 | Tracked sources not changed by this lane | n/a | `test_tracked_sources_are_unapplied_or_exactly_the_patched_bytes` |
@@ -137,8 +138,8 @@ serve the reader, run the guided path, change the host guard, build a packet or 
 ## Evidence
 
 Run on macOS (Darwin, appleclang, Python 3.14): `python3 -I -S -B
-scripts/guest-supervisor/test_guided_guidance_view.py`: 50 tests ran, 43 passed, 7 skipped (the 7 native Linux-root tests).
-The native class is skipped off Linux/root. It runs in ordinary PR CI (`ci.yml`, job
+scripts/guest-supervisor/test_guided_guidance_view.py`: 45 tests ran, 44 passed, 1 skipped (the native Linux-root class, 8 tests, skipped as a unit off Linux).
+The native class is skipped off Linux/root; in the CI sudo step `WINTER_REQUIRE_NATIVE_GUIDANCE=1` makes a missing precondition (including a temporary directory on a non-allowlisted filesystem) FAIL instead of skip (`NativeGateTests`). It runs in ordinary PR CI (`ci.yml`, job
 `guest-file-boundary`, two steps) on both architectures. No Linux, root, namespace, VM or
 Docker run occurred locally. Mutation results (guards killed / total, survivors with reasons) are
 in the pull request description; the runner is not committed.
