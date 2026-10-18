@@ -35,6 +35,9 @@ GUEST = 'packages/runtime/src/guest'
 OVERRIDE = os.environ.get('WINTER_GUIDANCE_VIEW_SOURCES')
 PATCH = ROOT / 'docs/research/guided-guidance-view-DATA.patch'
 MATRIX = ROOT / 'docs/guided-guidance-view-matrix.md'
+# The Root reader service (agent-sdk Track A S2) later changed linux-supervisor.py again. Its delta is recorded as a patch from the bytes
+# this file's APPLIED_TARGETS pin to the tracked bytes, so the chain tracked -> (reverse reader service) -> applied -> (reverse view) -> main still holds.
+SERVICE_PATCH = ROOT / 'docs/research/guided-reader-service-supervisor.patch'
 PROBE = Path(__file__).with_name('guidance_view_probe.c')
 TOOL, SUPERVISOR = GUEST + '/linux-tool-compartment.c', GUEST + '/linux-supervisor.py'
 
@@ -48,6 +51,8 @@ APPLIED_TARGETS = {
     TOOL: '621f2ceb579c5b3832d4887f1d02dc8342a90e914bc44a3a6b204ce235b6d449',
     SUPERVISOR: '51259b0ff1651dfd05663b3796fe6a187120884fbf68f75977d05af454aa4359',
 }
+# The tracked Root service once the reader service is applied on top of the view patch.
+TRACKED_SUPERVISOR = 'a26dacd86b805ca47b3e4805d06af2b178eee82003ebe6c38f2aeeb85e48035d'
 FROZEN = {
     GUEST + '/linux-compartment.h': '92fef7c0708a23b1e930c5b2560dae6bef27294dfd682346e69d35c0484b967d',
     GUEST + '/linux-runtime-compartment.c': 'fcb90dba8cf9552b9c10cde4012603ac9471b03f31a09bc408667257f65842fa',
@@ -88,17 +93,37 @@ def patched_text(name):
     return (patched_tree() / name).read_text()
 
 
+_applied = {}
+
+
+def tracked_applied_text(name):
+    """The bytes the view patch was applied to produce: the tracked file, with the reader service delta reversed for the Root service."""
+    if not _applied:
+        directory = Path(tempfile.mkdtemp(prefix='winter-guidance-view-applied-text-'))
+        try:
+            for target in MAIN_TARGETS:
+                (directory / target).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / target, directory / target)
+            reverse = subprocess.run(['patch', '-p1', '-R', '-s', '-d', str(directory), '-i', str(SERVICE_PATCH)], capture_output=True, text=True, timeout=30)
+            assert reverse.returncode == 0, reverse.stderr
+            for target in MAIN_TARGETS:
+                _applied[target] = (directory / target).read_text()
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+    return _applied[name]
+
+
 _main = {}
 
 
 def tracked_main_text(name):
-    """The pre-patch bytes: the whole patch reversed on a scratch copy of the TRACKED (applied) targets."""
+    """The pre-patch bytes: the whole view patch reversed on a scratch copy of the APPLIED targets (the tracked ones minus the reader service delta)."""
     if not _main:
         directory = Path(tempfile.mkdtemp(prefix='winter-guidance-view-main-'))
         try:
             for target in MAIN_TARGETS:
                 (directory / target).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(ROOT / target, directory / target)
+                (directory / target).write_text(tracked_applied_text(target))
             reverse = subprocess.run(['patch', '-p1', '-R', '-s', '-d', str(directory), '-i', str(PATCH)], capture_output=True, text=True, timeout=30)
             assert reverse.returncode == 0, reverse.stderr
             for target in MAIN_TARGETS:
@@ -168,8 +193,9 @@ class PatchIntegrityTests(unittest.TestCase):
     def test_tracked_sources_equal_main_plus_this_exact_patch(self):
         if OVERRIDE:
             self.skipTest('mutation run')
+        self.assertEqual(sha(ROOT / SUPERVISOR), TRACKED_SUPERVISOR)
         for name in MAIN_TARGETS:
-            self.assertEqual(sha(ROOT / name), APPLIED_TARGETS[name], name)
+            self.assertEqual(hashlib.sha256(tracked_applied_text(name).encode()).hexdigest(), APPLIED_TARGETS[name], name)
             main = tracked_main_text(name)
             self.assertEqual(hashlib.sha256(main.encode()).hexdigest(), MAIN_TARGETS[name], name)
         # Forward patch on the recovered main bytes reproduces the tracked bytes exactly.
@@ -181,7 +207,7 @@ class PatchIntegrityTests(unittest.TestCase):
             applied = subprocess.run(['patch', '-p1', '-s', '-d', str(directory), '-i', str(PATCH)], capture_output=True, text=True, timeout=30)
             self.assertEqual(applied.returncode, 0, applied.stderr)
             for name in MAIN_TARGETS:
-                self.assertEqual((directory / name).read_bytes(), (ROOT / name).read_bytes(), name)
+                self.assertEqual((directory / name).read_text(), tracked_applied_text(name), name)
         finally:
             shutil.rmtree(directory, ignore_errors=True)
 
@@ -200,7 +226,8 @@ class PatchIntegrityTests(unittest.TestCase):
         # The tracked sources are what runs: every line they hold that main does not is scanned too.
         for name in MAIN_TARGETS:
             main_lines = set(tracked_main_text(name).splitlines())
-            added += '\n' + '\n'.join(line for line in source_path(name).read_text().splitlines() if line not in main_lines)
+            applied = source_path(name).read_text() if OVERRIDE and name == TOOL else tracked_applied_text(name)
+            added += '\n' + '\n'.join(line for line in applied.splitlines() if line not in main_lines)
         for token in ('socket(', 'socketpair', 'AF_INET', 'AF_INET6', 'AF_VSOCK', 'vsock', 'AF_NETLINK', 'NETLINK', 'SIOC', 'ioctl', 'connect(', 'bind(', 'listen(', 'accept(', 'sendto', 'sendmsg', 'recvmsg', 'CLONE_NEWNET', 'setns', 'unshare'):
             self.assertNotIn(token, added, token)
         patched = patched_text(TOOL)
@@ -573,7 +600,7 @@ class ConfigureAndConstructTests(unittest.TestCase):
         self.main = main_service()
         self.temp = tempfile.TemporaryDirectory()
         self.base = Path(self.temp.name).resolve()
-        for name in ('control', 'environment', 'source', 'artifacts', 'store', 'home', 'guidance', 'store2', 'home2'):
+        for name in ('control', 'environment', 'source', 'artifacts', 'store', 'home', 'guidance', 'guidance2', 'store2', 'home2'):
             (self.base / name).mkdir()
         for name in ('launcher', 'fileWorker', 'processWorker', 'executable', 'ownerLibrary'):
             (self.base / 'artifacts' / name).write_bytes(b'x')
@@ -611,8 +638,10 @@ class ConfigureAndConstructTests(unittest.TestCase):
         if profile != 'fresh':
             config[key] = {'artifacts': {name: pin(name) for name in ('launcher', 'executable', 'ownerLibrary')}}
             for each in config['conversations'][1:]:
-                each[key] = {'storeDirectory': str(self.base / 'store2'), 'runhomeDirectory': str(self.base / 'home2')}
+                each[key] = {'storeDirectory': str(self.base / 'store2'), 'runhomeDirectory': str(self.base / 'home2'), 'guidanceDirectory': str(self.base / 'guidance2')}
             entry[key] = {'storeDirectory': str(self.base / 'store'), 'runhomeDirectory': str(self.base / 'home')}
+            if profile == 'host-query-guided-v1':
+                config[key]['reader'] = {'artifacts': {'launcher': pin('launcher'), 'executable': pin('executable')}, 'dependencies': [], 'uid': 30001}
             if guidance is not None:
                 entry[key]['guidanceDirectory'] = guidance
         return config
@@ -648,7 +677,7 @@ class ConfigureAndConstructTests(unittest.TestCase):
             ports['logical2'] = self.make_ports(module, 'logical2', 'backend2')
         control = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=0)
         with self.linux_root(module), patch.object(module, 'pinned_artifact', side_effect=lambda value: os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC)), \
-                patch.object(module.Path, 'lstat', return_value=control), patch.object(module.os, 'chown'), \
+                patch.object(module.Path, 'lstat', return_value=control), patch.object(module.os, 'chown'), patch.object(module, 'READER_VIEWS_ROOT', str(self.base / 'views'), create=True), \
                 patch.object(module.ToolService, '_configure_runtime', autospec=True) as configure:
             built = module.ToolService(self.config(module, profile, guidance, extra_root, second), host_query_ports=ports)
         self.built.append(built)
@@ -661,9 +690,11 @@ class ConfigureAndConstructTests(unittest.TestCase):
         self.assertIn(fd, built.owned)
         self.assertEqual(configure.call_args.kwargs, {'profile': 'host-query-guided-v1'})
 
-    def test_guided_without_a_guidance_directory_has_no_guidance_key_and_unchanged_roots(self):
-        built, _ = self.construct(self.service, 'host-query-guided-v1')
-        self.assertNotIn('guidance', built.conversations['logical'])
+    def test_guided_without_a_guidance_directory_is_refused_since_the_reader_service(self):
+        # The view patch left the directory optional; the reader service must not serve a view that is not mounted, so it is required now.
+        with self.assertRaisesRegex(self.service.Refusal, 'guided_guidance_required'):
+            self.construct(self.service, 'host-query-guided-v1')
+        self.assertEqual(len([name for name in os.listdir(self.base / 'control') if name != 'logical']), 0)
 
     def test_the_constructor_refuses_a_guidance_directory_overlapping_a_root_a_store_or_the_winter_parent(self):
         (self.base / 'source' / 'g').mkdir()
@@ -682,7 +713,7 @@ class ConfigureAndConstructTests(unittest.TestCase):
             self.construct(self.service, 'host-query-guided-v1', str(self.base / 'source2'), second=str(self.base / 'source2'))
         built, _ = self.construct(self.service, 'host-query-guided-v1', str(self.base / 'guidance'), second=str(self.base / 'source2'))
         self.assertIn('guidance', built.conversations['logical'])
-        self.assertNotIn('guidance', built.conversations['logical2'])
+        self.assertIn('guidance', built.conversations['logical2'])   # every guided conversation with a runtime holds its own directory now
 
     def test_constructor_failure_releases_the_guidance_descriptor(self):
         def holders(path):
@@ -720,7 +751,7 @@ class ConfigureAndConstructTests(unittest.TestCase):
     def test_the_guidance_key_is_added_to_the_guided_allow_list_only(self):
         source = patched_text(SUPERVISOR)
         self.assertIn("if profile==GUIDED_PROFILE:allowed.update(('requiredRuntimeContext','generation','guidanceDirectory'))", source)
-        self.assertEqual(source.count('guidanceDirectory'), 3)
+        self.assertEqual(source.count('guidanceDirectory'), 4)   # the allow list, the early refusal, the post-pass refusal and the post-pass walk
         self.assertIn("if profile in ('host-query-v1',GUIDED_PROFILE):allowed.add('toolClasses')", source)
 
 

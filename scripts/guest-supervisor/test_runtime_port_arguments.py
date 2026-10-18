@@ -111,6 +111,8 @@ class Fixture(unittest.TestCase):
                 'roots': [{'id': 'source', 'guestPath': '/workspace/folders/source', 'readOnly': False, 'source': '/source'}]}
         if runtime_key:
             item[runtime_key] = {'storeDirectory': '/store', 'runhomeDirectory': '/home'}
+            if runtime_key == 'hostQueryGuidedRuntime':
+                item[runtime_key]['guidanceDirectory'] = '/guidance'
         return item
 
     @staticmethod
@@ -122,6 +124,9 @@ class Fixture(unittest.TestCase):
                 'controlDirectory': '/run/winter/control', 'environment': '/opt/winter/environment/base', 'protectedStoreDirectories': []}
         if runtime_key:
             base[runtime_key] = {'artifacts': {name: {'path': '/opt/winter/runtime/' + name, 'sha256': digest} for name in ('launcher', 'executable', 'ownerLibrary')}}
+            if runtime_key == 'hostQueryGuidedRuntime':
+                # The guided profile also names the isolated reader (launcher, loader, dependency closure, identity); the other profiles carry no such key.
+                base[runtime_key]['reader'] = {'artifacts': {name: {'path': '/opt/winter/runtime/reader-' + name, 'sha256': digest} for name in ('launcher', 'executable')}, 'dependencies': [], 'uid': 30001}
         members = json.dumps(base, sort_keys=True, separators=(',', ':'))[1:-1]
         text = '{"guestBootId":"%s","conversations":%s,%s}' % (boot_id, json.dumps(conversations, separators=(',', ':')), members)
         return text, json.loads(text)
@@ -459,9 +464,9 @@ class Pid1ShapedConfigAdmissionTests(Fixture):
 
     def construct(self, text, ports):
         base = Path(self.temp.name).resolve()
-        for name in ('control', 'environment', 'source', 'store', 'home', 'artifacts'):
+        for name in ('control', 'environment', 'source', 'store', 'home', 'artifacts', 'guidance'):
             (base / name).mkdir(exist_ok=True)
-        for name in ('linux-tool-compartment', 'file-worker', 'process-worker', 'launcher', 'executable', 'ownerLibrary'):
+        for name in ('linux-tool-compartment', 'file-worker', 'process-worker', 'launcher', 'executable', 'ownerLibrary', 'reader-launcher', 'reader-executable'):
             (base / 'artifacts' / name).write_bytes(b'x')
         private = base / 'control' / 'logical'
         if private.exists():
@@ -469,10 +474,10 @@ class Pid1ShapedConfigAdmissionTests(Fixture):
         config = json.loads(text.replace('/run/winter/control', str(base / 'control')).replace('/opt/winter/environment/base', str(base / 'environment'))
                             .replace('/opt/winter/helpers/', str(base / 'artifacts') + '/').replace('/opt/winter/runtime/', str(base / 'artifacts') + '/')
                             .replace('"/source"', json.dumps(str(base / 'source'))).replace('"/store"', json.dumps(str(base / 'store')))
-                            .replace('"/home"', json.dumps(str(base / 'home'))))
+                            .replace('"/home"', json.dumps(str(base / 'home'))).replace('"/guidance"', json.dumps(str(base / 'guidance'))))
         control = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=0)
         with guided.linux_root_constructor(), patch.object(service, 'pinned_artifact', side_effect=lambda value: os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC)), \
-                patch.object(service.Path, 'lstat', return_value=control), patch.object(service.os, 'chown'), \
+                patch.object(service.Path, 'lstat', return_value=control), patch.object(service.os, 'chown'), patch.object(service, 'READER_VIEWS_ROOT', str(base / 'views')), \
                 patch.object(service.ToolService, '_configure_runtime', autospec=True):
             built = service.ToolService(config, host_query_ports=ports)
         self.services.append(built)

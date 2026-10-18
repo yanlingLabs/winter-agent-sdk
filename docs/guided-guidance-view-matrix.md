@@ -117,7 +117,7 @@ serve the reader, run the guided path, change the host guard, build a packet or 
 2. **Tool compartment only.** The runtime launcher gets no view. The SDK reads guidance through
    the isolated reader and the reader service (S2), not from its own mount namespace. If the
    runtime also must read the directory, that is a second patch to a different launcher.
-3. **`guidanceDirectory` is optional.** A guided conversation without it keeps today's behaviour
+3. **`guidanceDirectory` is optional** (*made required by the reader service, `guided-reader-service.md`*). A guided conversation without it keeps today's behaviour
    (nothing mounted). Making it mandatory would change `test_guided_host_query.py` fixtures and is
    better done together with the reader service, which must refuse to serve a view that is not
    mounted. Recommended: require it in S2.

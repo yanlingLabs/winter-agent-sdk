@@ -54,7 +54,7 @@ def stable(obj,item):
 const PRODUCE = `
 records=[]
 for policy in ('auto','ask','plan','accept-edits','dont-ask','bypass'):
- obj,item=make(policy,'host-query-guided-v1',{'requiredRuntimeContext':args['requirement'],'generation':args['generation']})
+ obj,item=make(policy,'host-query-guided-v1',{'requiredRuntimeContext':args['requirement'],'generation':args['generation'],'guidanceDirectory':'/guidance'})
  records.append({'policy':policy,'record':obj._runtime_record(item,obj.runtimes['logical'])})
 rights={'guided':len(module.bootstrap_rights('host-query-guided-v1',10,11,12,13,14)),'v1':len(module.bootstrap_rights('host-query-v1',10,11,12,13)),'fresh':len(module.bootstrap_rights('fresh',10,11,12,13))}
 print(json.dumps({'records':records,'rights':rights}))
@@ -80,7 +80,7 @@ for profile in ('fresh','host-query-v1','host-query-guided-v1'):
    bare()._configure_runtime({'logicalSessionId':'logical','authority':{},'roots':{}},{'storeDirectory':'/x','runhomeDirectory':'/y','provider':{},'model':'m',key:{}},profile=profile)
   attempt(profile+':'+key,call)
 for profile in ('fresh','host-query-v1'):
- for key in ('requiredRuntimeContext','generation'):
+ for key in ('requiredRuntimeContext','generation','guidanceDirectory'):
   def call(profile=profile,key=key):
    bare()._configure_runtime({'logicalSessionId':'logical','authority':{},'roots':{}},{'storeDirectory':'/x','runhomeDirectory':'/y','provider':{},'model':'m',key:{}},profile=profile)
   attempt('guided-key:'+profile+':'+key,call)

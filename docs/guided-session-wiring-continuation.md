@@ -105,6 +105,8 @@ and `/tmp/winter-linux-guided-owner-DATA.patch`.
 3. Implement Root's exclusive channel/registration delivery and framed reader
    service, binding actual runtime pidfd/incarnation, immutable views and native
    reap/drain evidence. Creator identity alone cannot establish eventual holder.
+   *Source done in `guided-reader-service.md` (exclusive per-incarnation handoff, framed service,
+   isolated reader launch, reap/drain/debt evidence); native admission and holder authentication remain owed.*
 4. Finish host SDK scoped reader plumbing: current SDK query has no host-to-runtime
    instruction-read handle and its confined preparation refusal remains intact.
    The Root host adapter must use exact preparation/correlation and canonical Core
