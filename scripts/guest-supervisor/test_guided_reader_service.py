@@ -723,6 +723,8 @@ class ServiceProtocolTests(ServiceFixture):
     def test_sixteen_outstanding_are_served_and_the_seventeenth_stops_the_service(self):
         for index in range(17):
             self.launch.gates[UUIDS[2 * index]] = threading.Event()
+        hold = threading.Event()
+        self.launch.script[UUIDS[0]] = lambda cancel: (hold.wait(10), evidence('cancelled'))[1]
         self.start()
         for index in range(16):
             self.begin(index)
@@ -734,7 +736,8 @@ class ServiceProtocolTests(ServiceFixture):
         # The running read was told to cancel; the queued ones were dropped and never launched.
         self.assertTrue(self.wait_until(lambda: self.launch.calls[0][2].is_set()))
         self.assertEqual(len(self.launch.calls), 1)
-        self.assertEqual(self.service.observations()['outstanding'], 1)
+        self.assertEqual(self.service.observations()['outstanding'], 1, 'the 15 queued reads were dropped; only the one still running remains')
+        hold.set()
 
     def test_a_replayed_read_id_is_a_violation(self):
         self.start()
