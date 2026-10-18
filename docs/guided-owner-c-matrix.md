@@ -42,6 +42,15 @@ A second test checks source ownership invariants: bootstrap authentication only
 at open, reader authentication on later checks, pidfs/service/runtime comparison,
 single CLOEXEC transfer, no numeric close of a caller-owned duplicate, terminal
 shutdown and stream half-close refusal. Static assertions are source evidence.
+
+Proposed, NOT applied: `docs/guided-owner-holder.md` records a DATA patch pair
+(owner `6f44da8c...`, fixture `efa9fa9f...`) that adds a per-check CLOEXEC re-proof
+of every retained descriptor and the bootstrap socket, an own-process census guard
+on the single CLOEXEC reader transfer, and four native cases (`holder-census`,
+`holder-clear-cloexec`, `holder-stray-dup`, `holder-bootstrap-cloexec`). The pinned
+hashes in this document and the tracked owner, fixture and matrix are unchanged;
+real-kernel proof of the new cases is an owner decision (a successor one-run
+reviewed workflow), not something this matrix run covers.
 A third source test checks the fixture's pre-effect opt-in guard, baseline and
 shutdown oracles without compiling or executing the target fixture.
 A fourth checks that every case normally forks a fresh Root supervisor before

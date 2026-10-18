@@ -104,7 +104,7 @@ touch.
 4. **A violation stops the service, not the runtime.** Root keeps its end open so the native owner stays valid;
    the guest's channel fails closed on the same events. The alternative is closing the stream, which kills the
    runtime.
-5. **Holder authentication of the guest end is creator-only.** Whether the native owner's descriptor is close-on-exec was not checked here; that owner-side check is owed later. **Creator identity alone does not authenticate the eventual holder** of the guest end. Root binds the stream to
+5. **Holder authentication of the guest end is creator-only.** The owner-side close-on-exec proof is now specified as a proposed, not applied, DATA patch in `docs/guided-owner-holder.md` (it also states why a current-holder claim is impossible without a privileged or kernel-side view). **Creator identity alone does not authenticate the eventual holder** of the guest end. Root binds the stream to
    the runtime's namespace-init pidfd and sends the end exactly once, but does not inspect `/proc/<pid>/fd` for the
    socket inode. That check, and a native proof, remain owed.
 6. **Cancellation is the init pidfd's SIGKILL, and Root sends the launcher no packet.** The launcher's source
