@@ -246,11 +246,11 @@ class ExtractedFunctionTests(unittest.TestCase):
         code = Path(cls.directory.name) / 'holder.c'
         code.write_text(HEADER + pieces + MAIN)
         cls.binary = Path(cls.directory.name) / 'holder'
-        built = subprocess.run([compiler, '-std=c11', '-D_DARWIN_C_SOURCE', '-O1', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function', str(code), '-o', str(cls.binary)], capture_output=True, text=True, timeout=60)
+        built = subprocess.run([compiler, '-std=c11', '-D_DARWIN_C_SOURCE', '-O1', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function', '-Wno-misleading-indentation', str(code), '-o', str(cls.binary)], capture_output=True, text=True, timeout=60)
         if built.returncode:
             raise AssertionError('the extracted holder functions do not compile: ' + built.stderr)
         cls.blind = Path(cls.directory.name) / 'holder-blind'
-        built = subprocess.run([compiler, '-std=c11', '-D_DARWIN_C_SOURCE', '-O1', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function', '-DWINTER_FD_DIRECTORY="/nonexistent-winter-fd-table"', str(code), '-o', str(cls.blind)], capture_output=True, text=True, timeout=60)
+        built = subprocess.run([compiler, '-std=c11', '-D_DARWIN_C_SOURCE', '-O1', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function', '-Wno-misleading-indentation', '-DWINTER_FD_DIRECTORY="/nonexistent-winter-fd-table"', str(code), '-o', str(cls.blind)], capture_output=True, text=True, timeout=60)
         if built.returncode:
             raise AssertionError('the blind-table harness does not compile: ' + built.stderr)
 
