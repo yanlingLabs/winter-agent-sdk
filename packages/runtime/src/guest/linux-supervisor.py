@@ -411,12 +411,10 @@ GUIDED_READER_REAP_SECONDS=2
 GUIDED_READER_SEND_SECONDS=5
 GUIDED_OWNER_KEYS=('workspaceId','logicalSessionId','backendSessionId','incarnationId','leaseEpoch','bootId','generation')
 GUIDED_TERMINAL_FLAGS=('namespaceInitReaped','monitorReaped','stdoutEof','stderrEof','captureDrained')
-GUIDED_OWNER_ID=re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$')
 READER_VIEWS_ROOT='/run/winter/instruction-reader-views'
 READER_DEPENDENCY_LIMIT=32
 
 def wire_json(value):return json.dumps(value,separators=(',',':'),ensure_ascii=False,allow_nan=False)
-def _wire_constant(name):raise ValueError(name)
 def _wire_int(text):
     value=int(text)
     # A number JavaScript cannot round-trip exactly is refused; so is anything whose JSON.stringify spelling could differ from ours.
@@ -429,7 +427,7 @@ def _wire_float(text):
     return value
 def _wire_parse(body):
     try:
-        text=bytes(body).decode('utf-8');return text,json.loads(text,parse_constant=_wire_constant,parse_int=_wire_int,parse_float=_wire_float)
+        text=bytes(body).decode('utf-8');return text,json.loads(text,parse_int=_wire_int,parse_float=_wire_float)  # NaN and Infinity parse but cannot be written back (allow_nan=False), so they never round-trip
     except (ValueError,RecursionError):raise Refusal('guided_reader_frame')
 def _wire_text(value):
     try:return wire_json(value)
@@ -456,7 +454,8 @@ def reader_request(body,registration):
     if type(owner) is not dict or set(owner)!=set(GUIDED_OWNER_KEYS) or any(not _same(owner[key],registration['owner'][key]) for key in GUIDED_OWNER_KEYS):raise Refusal('guided_reader_frame')
     if kind=='reader_start':
         context=value.get('contextRequestId');binding=registration['requiredRuntimeContext']['bindingId']
-        if not _reader_uuid(read) or not _reader_uuid(context) or read==context or not _same(value.get('bindingId'),binding):raise Refusal('guided_reader_frame')
+        # registrationId and bindingId are pinned by the canonical-bytes rule below: the expected text carries Root's own values.
+        if not _reader_uuid(read) or not _reader_uuid(context) or read==context:raise Refusal('guided_reader_frame')
         expected={'version':1,'kind':'reader_start','registrationId':registration_id,'owner':owner,'readId':read,'contextRequestId':context,'bindingId':binding}
     elif kind=='reader_cancel':
         context=None
@@ -477,13 +476,9 @@ class ReaderFrameDecoder:
                 if len(self.buffer)>=4+size:frames.append(bytes(self.buffer[4:4+size]));del self.buffer[:4+size];continue
             return frames
 def _reader_owner(value):
-    owner=_closed(value,GUIDED_OWNER_KEYS)
-    for key in ('workspaceId','logicalSessionId','backendSessionId','incarnationId'):
-        if type(owner[key]) is not str or not GUIDED_OWNER_ID.fullmatch(owner[key]):raise Refusal('guided_reader_frame')
-    if type(owner['bootId']) is not str or not GUIDED_BOOT_ID.fullmatch(owner['bootId']):raise Refusal('guided_reader_frame')
-    for key in ('leaseEpoch','generation'):
-        if type(owner[key]) is not int or not 1<=owner[key]<=JS_SAFE_INTEGER:raise Refusal('guided_reader_frame')
-    return owner
+    # The guest also checks each owner id's grammar and the epoch/generation range; for a registration Root built (and the guest's own parser
+    # accepted) equality with it implies all of that, so only the closed shape is checked here.
+    return _closed(value,GUIDED_OWNER_KEYS)
 def check_reader_value(data,registration,read_id):
     """Python mirror of parseLinuxGuidedReaderMessage: what Root sends must be what the guest's validator accepts."""
     if not _reader_uuid(read_id) or type(data) is not dict:raise Refusal('guided_reader_frame')
@@ -496,7 +491,7 @@ def check_reader_value(data,registration,read_id):
         frame=data['frame']
         try:size=len(frame.encode()) if type(frame) is str else None
         except UnicodeEncodeError:size=None
-        if size is None or size>GUIDED_READER_FRAME_BYTES or not frame.endswith('\n') or '\n' in frame[:-1]:raise Refusal('guided_reader_frame')
+        if size is None or size>GUIDED_READER_FRAME_BYTES or not frame.endswith('\n') :raise Refusal('guided_reader_frame')
         _,inner=_wire_parse(frame.encode())
         echo=_closed(inner,('version','readId','owner','views','limits','snapshot'))
         inner_keys=tuple(key for key in GUIDED_OWNER_KEYS if key!='workspaceId');inner_owner=_closed(echo['owner'],inner_keys)

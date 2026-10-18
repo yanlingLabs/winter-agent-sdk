@@ -731,9 +731,10 @@ class ServiceProtocolTests(ServiceFixture):
         self.begin(16)
         self.assertTrue(self.wait_until(lambda: self.service.observations()['state'] == 'failed'))
         self.assertEqual(self.service.observations()['failure'], 'guided_reader_bound')
-        # The running read was told to cancel; the queued ones were never launched.
+        # The running read was told to cancel; the queued ones were dropped and never launched.
         self.assertTrue(self.wait_until(lambda: self.launch.calls[0][2].is_set()))
         self.assertEqual(len(self.launch.calls), 1)
+        self.assertEqual(self.service.observations()['outstanding'], 1)
 
     def test_a_replayed_read_id_is_a_violation(self):
         self.start()
@@ -881,6 +882,23 @@ class ServiceProtocolTests(ServiceFixture):
         self.assertTrue(self.wait_until(lambda: self.launch.calls[0][2].is_set()))
         self.assertEqual(self.wait_until(lambda: self.service.observations()['state'] == 'failed'), True)
         self.assertTrue(self.service.stop())
+
+    def test_a_read_taken_from_the_queue_after_a_halt_is_not_launched(self):
+        # The window between taking a read and launching it: the worker re-checks the halt itself, whatever the serving thread has noticed.
+        self.halt.set()
+        read = {'readId': UUIDS[0], 'contextRequestId': UUIDS[1], 'state': 'running', 'cancel': threading.Event()}
+        self.service.state = 'serving'
+        self.service._run_one(read)
+        self.assertEqual(self.launch.calls, [])
+        self.assertEqual(self.service.observations()['failure'], 'owner_ended')
+
+    def test_the_service_refuses_to_send_what_the_guest_would_refuse(self):
+        self.start()
+        good = service.reader_terminal_message(self.reg, UUIDS[0], 'ok', 0, 0)
+        for bad in (dict(good, namespaceWaitStatus=70000), dict(good, readId=UUIDS[1], owner=dict(good['owner'], generation=99)), dict(good, outcome='weird'), dict(good, namespaceInitReaped=False)):
+            with self.assertRaises(service.Refusal):
+                self.service._send(bad)
+        self.assertIsNone(self.guest.nothing_within(), 'nothing may have been written')
 
     def test_a_halted_service_launches_nothing_new(self):
         self.halt.set()
