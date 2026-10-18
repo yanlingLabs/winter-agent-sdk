@@ -79,12 +79,14 @@ success, and on failure only the bounded result and diagnostics records; 7 days 
 
 ## Cross-repository download
 
-The packet artifact lives in the runtime-sdk repository; this workflow runs in agent-sdk. `actions/download-artifact`
-needs a token for the other repository, and the only token here is the run's own `github.token`. Whether that token can
-read a public artifact of another repository is **REVIEW NEEDED**: the PR records a read-only probe of exactly this
-call in ordinary pull-request CI. If it fails, the run belongs in runtime-sdk (as the earlier reader-only hosted
-workflow was), checking out this repository's Root at a pinned head; that is the recommended fallback, since the
-download is then same-repository and needs no cross-repository trust.
+The packet artifact lives in the runtime-sdk repository; this workflow runs in agent-sdk, with only its own
+`github.token` (`contents: read`, `actions: read`). A throwaway probe in ordinary pull-request CI ran exactly this call
+(`actions/download-artifact` with `repository`, `run-id` and `github-token: ${{ github.token }}`) against a small public
+runtime-sdk artifact, and it succeeded (PR #36, commit `a9ec2efd`, since removed). Limits of that evidence: it was a
+`pull_request` run, not a `push` run, and an artifact still inside its retention window; the packet is about 195 MB.
+Download is the first network step and runs before anything privileged, so a failure there spends the run before any
+`sudo`, but it would still spend the approved push. The fallback, if it is ever refused, is to host the run in
+runtime-sdk (as the earlier reader-only hosted workflow was), checking out this repository's Root at a pinned head.
 
 ## Failure classes
 
