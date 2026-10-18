@@ -1,6 +1,6 @@
 --- a/packages/runtime/src/guest/linux-supervisor.py
 +++ b/packages/runtime/src/guest/linux-supervisor.py
-@@ -394,7 +394,414 @@
+@@ -394,7 +394,413 @@
          rights.append(reader_fd)
      elif reader_fd is not None:raise Refusal('runtime_profile_conflict')
      return rights
@@ -141,7 +141,7 @@
 +    return not any(part in ('','.','..') for part in value[1:].split('/'))
 +def reader_control_message(control,expect_init):
 +    """One packet from the launcher's SEQPACKET receipt socket: ('init', pidfd), ('receipt', waitStatus) or ('eof', None).
- 
++
 +    Every delivered descriptor is owned before the packet is judged, as receive_init_pidfd does."""
 +    owned=[]
 +    try:
@@ -222,9 +222,8 @@
 +                if now-start>GUIDED_READER_SUPERVISE_SECONDS:timed_out=True
 +                want=cancel.is_set() or timed_out or overrun
 +                if want and not killed and pidfd is not None:
-+                    # A Root packet is the launcher's own cancellation signal; the pidfd kill is the backstop. Both are idempotent.
-+                    try:control.send(b'C')
-+                    except OSError:pass
++                    # The pidfd kill is the cancellation. Root sends the launcher NO packet: the monitor never reads one, and closing a unix socket that
++                    # holds an unread packet resets the peer, which can hide the monitor's own 'R' receipt behind ECONNRESET.
 +                    self.kill_init(pidfd);killed=True
 +                elif want and pidfd is None and not fallback and timed_out:
 +                    # Before the launcher's 'I' receipt nothing can name the namespace init: the monitor itself is the last resort.
@@ -281,7 +280,7 @@
 +                try:os.rmdir(view)
 +                except OSError:pass
 +        return result
-+
+ 
 +class GuidedReaderService:
 +    """Root's service on its end of the guided runtime's fifth descriptor, for ONE incarnation.
 +
@@ -415,7 +414,7 @@
  class ToolService:
      def __init__(self,config,*,host_query_ports=None):
          if sys.platform!='linux' or os.geteuid()!=0:raise Refusal('protected_linux_root_required')
-@@ -402,7 +809,7 @@
+@@ -402,7 +808,7 @@
          if config.get('guestBootId')!=Path('/proc/sys/kernel/random/boot_id').read_text().strip():raise Refusal('stale_guest_boot')
          self.lock=threading.RLock();self.stop_event=threading.Event();self.conversations={};self.active={};self.debt=set();self.tickets={};self.retained_children=[];self.tool_connections=threading.BoundedSemaphore(TOOL_CONNECTION_LIMIT);self.admin_connections=threading.BoundedSemaphore(ADMIN_CONNECTION_LIMIT)
          self.host_query_ports=dict(host_query_ports or {})
@@ -424,7 +423,7 @@
          try:
              # First inside the try: a conflict still refuses before any artifact opens, and close() releases injected ports.
              self.runtime_profile=select_runtime_profile(config)
-@@ -412,7 +819,7 @@
+@@ -412,7 +818,7 @@
              if set(self.host_query_ports)!=expected_ports or any(type(port) is not RuntimeDuplexPorts for port in self.host_query_ports.values()):raise Refusal('host_query_transport')
              if any(item_profile_conflict(item,runtime_key) for item in config['conversations']):raise Refusal('runtime_profile_conflict')
              if runtime_key in config:
@@ -433,7 +432,7 @@
                  for name,value in config[runtime_key]['artifacts'].items():
                      self.runtime_artifacts[name]=pinned_artifact(value);self.runtime_pins[name]=value['sha256'];self.owned.append(self.runtime_artifacts[name])
              self.environment=os.open(config['environment'],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);self.owned.append(self.environment)
-@@ -456,7 +863,11 @@
+@@ -456,7 +862,11 @@
              if self.runtime_profile==GUIDED_PROFILE:
                  root_sources=[Path(root['source']).resolve(strict=True) for entry in config['conversations'] for root in entry['roots']]
                  for entry in config['conversations']:
@@ -446,7 +445,7 @@
          except BaseException:
              self.close();raise
      def _listener(self,path,uid,handler,*,admin=False):
-@@ -682,6 +1093,7 @@
+@@ -682,6 +1092,7 @@
          if profile==GUIDED_PROFILE:allowed.update(('requiredRuntimeContext','generation','guidanceDirectory'))
          elif profile not in ('fresh','host-query-v1'):raise Refusal('runtime_profile_conflict')
          if not self.runtime_artifacts or not isinstance(value,dict) or set(value)-allowed or not {'storeDirectory','runhomeDirectory','provider','model'}<=set(value):raise Refusal('runtime_config')
@@ -454,7 +453,7 @@
          port=None;host_config=None;reader_registration=None
          if profile in ('host-query-v1',GUIDED_PROFILE):
              if profile==GUIDED_PROFILE:
-@@ -736,6 +1148,46 @@
+@@ -736,6 +1147,46 @@
              record.update(profile=GUIDED_PROFILE,runtimeConfig=json.loads(canonical(runtime['hostConfig'])),readerRegistration=json.loads(canonical(runtime['readerRegistration'])))
              if record['runtimeConfig'].get('requiredRuntimeContext')!=record['readerRegistration']['requiredRuntimeContext']:raise Refusal('guided_context')
          return record
@@ -501,7 +500,7 @@
      def launch_runtime(self,sid):
          with self.lock:
              if sid not in self.runtimes or self.stop_event.is_set() or self.conversations[sid]['revoked'] or sid in self.debt:raise Refusal('runtime_admission')
-@@ -745,7 +1197,7 @@
+@@ -745,7 +1196,7 @@
              runtime['state']='starting';thread=threading.Thread(target=self._run_runtime,args=(self.conversations[sid],runtime),daemon=True);self.threads.append(thread);thread.start()
      def _run_runtime(self,item,runtime):
          sid=item['logicalSessionId'];child=None;pidfd=None;control=None;parent=None;bootstrap=None;guest=None;view=None;selector=None;confirmed=False;service_pidfd=None
@@ -510,7 +509,7 @@
          observations={'phase':'artifact-admission','nativeReceiptObserved':False,'nativeExitCode':None,'parentReaped':False,'parentExitCode':None,'toolDrainConfirmed':False,'nativeCleanupConfirmed':False,'ownershipReleased':False}
          try:
              if port is not None:port.claim(item)
-@@ -767,15 +1219,17 @@
+@@ -767,15 +1218,17 @@
              record=canonical(bootstrap_record).encode()
              if len(record)>65536:raise Refusal('runtime_bootstrap_limit')
              guided=runtime.get('profile')==GUIDED_PROFILE
@@ -530,7 +529,7 @@
              selector=selectors.DefaultSelector();control.setblocking(False);selector.register(control,selectors.EVENT_READ)
              if port is not None:relay=RuntimeDuplexRelay(port,child,runtime['cancel'])
              else:
-@@ -817,6 +1271,10 @@
+@@ -817,6 +1270,10 @@
              native=os.waitstatus_to_exitcode(terminal);native=native if native>=0 else 128-native
              observations['nativeExitCode']=native
              if code!=native:raise Uncertain('runtime_parent_reap_unconfirmed')
@@ -541,7 +540,7 @@
              # Namespace-init wait + launcher reaping precede tool revocation/drain.
              # Runtime JSON/EOF/success and kill delivery cannot acknowledge tenancy.
              self.revoke(sid);deadline=time.monotonic()+3
-@@ -840,6 +1298,9 @@
+@@ -840,6 +1297,9 @@
              self.revoke(sid)
          finally:
              if selector is not None:selector.close()

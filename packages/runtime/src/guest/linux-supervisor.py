@@ -612,9 +612,8 @@ class ReaderLauncher:
                 if now-start>GUIDED_READER_SUPERVISE_SECONDS:timed_out=True
                 want=cancel.is_set() or timed_out or overrun
                 if want and not killed and pidfd is not None:
-                    # A Root packet is the launcher's own cancellation signal; the pidfd kill is the backstop. Both are idempotent.
-                    try:control.send(b'C')
-                    except OSError:pass
+                    # The pidfd kill is the cancellation. Root sends the launcher NO packet: the monitor never reads one, and closing a unix socket that
+                    # holds an unread packet resets the peer, which can hide the monitor's own 'R' receipt behind ECONNRESET.
                     self.kill_init(pidfd);killed=True
                 elif want and pidfd is None and not fallback and timed_out:
                     # Before the launcher's 'I' receipt nothing can name the namespace init: the monitor itself is the last resort.

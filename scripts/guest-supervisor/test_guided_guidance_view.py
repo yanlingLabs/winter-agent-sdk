@@ -52,7 +52,7 @@ APPLIED_TARGETS = {
     SUPERVISOR: '51259b0ff1651dfd05663b3796fe6a187120884fbf68f75977d05af454aa4359',
 }
 # The tracked Root service once the reader service is applied on top of the view patch.
-TRACKED_SUPERVISOR = '9901123c4ddda63d96ef1dad19084ca7c7f63efafde44c90214dbc1f0c8c6fa5'
+TRACKED_SUPERVISOR = '0542bc4128544535cee21f693c695820dcfca6de8a893aa4cab5a5ded2588e66'
 FROZEN = {
     GUEST + '/linux-compartment.h': '92fef7c0708a23b1e930c5b2560dae6bef27294dfd682346e69d35c0484b967d',
     GUEST + '/linux-runtime-compartment.c': 'fcb90dba8cf9552b9c10cde4012603ac9471b03f31a09bc408667257f65842fa',

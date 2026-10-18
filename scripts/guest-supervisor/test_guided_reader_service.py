@@ -1374,13 +1374,19 @@ class ReaderLauncherTests(LauncherFixture):
         self.assertEqual(result['outcome'], 'cancelled')
         self.assertTrue(all(result[key] is True for key in service.GUIDED_TERMINAL_FLAGS))
 
-    def test_cancel_sends_the_launcher_a_control_packet_and_kills_the_init(self):
+    def test_cancel_kills_the_init_through_the_pidfd_and_sends_the_launcher_no_packet(self):
         got = []
 
         def script(control, child):
             self.send_init(control)
-            control.settimeout(5)
-            got.append(control.recv(16))
+            deadline = time.monotonic() + 5
+            while not self.killed_init and time.monotonic() < deadline:
+                time.sleep(.01)
+            control.settimeout(.3)
+            try:
+                got.append(control.recv(16))
+            except (BlockingIOError, socket.timeout):
+                got.append(None)
             self.send_receipt(control, 9)
             self.hangup(control)
             child.finish_output()
@@ -1388,7 +1394,8 @@ class ReaderLauncherTests(LauncherFixture):
         self.child.exit_code = 137
         self.cancel.set()
         result = self.go()
-        self.assertEqual(got, [b'C'])
+        self.assertEqual(got, [None], 'an unread packet in the monitor would reset Root\'s end when the monitor closes it, hiding the receipt')
+        self.assertEqual(len(self.killed_init), 1)
         self.assertEqual(result['outcome'], 'cancelled')
 
     def test_cancel_before_the_receipt_that_never_comes_ends_in_debt_not_a_receipt(self):
@@ -1650,7 +1657,8 @@ class LinuxNativeTests(unittest.TestCase):
             raise AssertionError('native reader evidence is required here but this host is not Linux root with a C compiler')
         if outcome == 'skip':
             raise unittest.SkipTest('needs Linux, root and a C compiler (CI runs this with sudo; never on macOS)')
-        cls.temp = tempfile.TemporaryDirectory(prefix='winter-reader-service-', dir='/run' if os.path.isdir('/run') else None)
+        # The default temporary directory: /run is usually mounted noexec, and the loader is exec'd from a clone of its own mount.
+        cls.temp = tempfile.TemporaryDirectory(prefix='winter-reader-service-')
         base = Path(cls.temp.name)
         base.chmod(0o755)
         cls.base = base
@@ -1672,6 +1680,9 @@ class LinuxNativeTests(unittest.TestCase):
         cls.filesystem = mount
         views = Path(service.READER_VIEWS_ROOT)
         views.mkdir(parents=True, exist_ok=True)
+        for made in (views, views.parent):
+            if made.stat().st_mode & 0o022:
+                made.chmod(made.stat().st_mode & ~0o022)
         for parent in (views, *views.parents):
             if parent != Path('/') and (parent.stat().st_uid != 0 or parent.stat().st_mode & 0o022):
                 raise AssertionError('the launcher requires every ancestor of the view to be Root-owned and not group/other writable: ' + str(parent))
