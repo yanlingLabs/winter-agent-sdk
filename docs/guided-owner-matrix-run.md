@@ -8,7 +8,7 @@ authored here and has not run.
 ## What runs
 
 - The CURRENT merged owner code (`packages/runtime/src/guest/linux-session-owner.c`) through the
-  existing fixture. It does not depend on the unapplied compartment patch (compartment C) and does
+  existing fixture. It does not depend on the (now applied) compartment C guidance patch and does
   not test it.
 - Steps: checkout of the pushed commit; a refusal unless every pinned file matches its SHA-256 (in
   the workflow's `env`); a `cc -Werror` compile as the ordinary runner user; then one

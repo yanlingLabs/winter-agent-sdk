@@ -75,8 +75,11 @@ edit would change the v1 compile inputs and their pins.
   authenticate it natively (the C patch checks the stream's creator, not the later holder), and Root's
   exclusive per-incarnation handoff, framed reader service and drain evidence are still owed
   (`guided-session-wiring-continuation.md`, items 3 and 7).
-- **The guidance view.** `/run/winter/shared-instructions` is not mounted or populated; `sharedPath`
-  is only a validated string.
+- **The guidance view.** The owner-approved compartment C patch is applied
+  (`guided-guidance-view-matrix.md`): for a guided conversation with a `guidanceDirectory`, the tool
+  launcher mounts `/run/winter/shared-instructions` read-only and the `/workspace/.winter/WINTER.md`
+  alias. Without that Root key nothing is mounted. The reader service, a native admission and any
+  hosted or live run are still owed; `sharedPath` remains a validated string for the SDK.
 - **The engine.** Without a native admission the guest engine fails closed: a test runs the guided
   config through `runEmbeddedSession` with no and forged admissions and sees exit 1, no store
   acquisition and no output, so no provider is reached.

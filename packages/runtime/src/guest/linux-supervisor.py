@@ -369,6 +369,23 @@ def guided_reader_registration(item,config,boot_id,registration_id,generation):
     owner={'workspaceId':authority['workspaceId'],'logicalSessionId':item['logicalSessionId'],'backendSessionId':authority['sessionId'],'incarnationId':authority['incarnationId'],'leaseEpoch':authority['leaseEpoch'],'bootId':boot_id,'generation':guided_generation(generation)}
     return {'version':1,'registrationId':registration_id,'owner':owner,'views':{'sourceRoot':source,'sourceCwd':source,'sharedRoot':GUIDED_SHARED_ROOT,'sharedPath':GUIDED_SHARED_PATH},'limits':dict(GUIDED_READER_LIMITS),'requiredRuntimeContext':requirement}
 
+def guidance_directory(source,protected,root_sources):
+    # Guided only. Root's dedicated canonical guidance directory: the same no-symlink, identity-checked
+    # walk as every source root, refused when it equals, contains or sits inside ANY protected store/run
+    # home/config path (so it can never widen to the enclosing .winter) or ANY admitted tool root (a
+    # writable root would let a tool edit guidance), by path in either direction and by inode.
+    if type(source) is not str or not 1<=len(source)<=4096 or '\0' in source:raise Refusal('guided_guidance')
+    fd=source_directory(source,protected)
+    try:
+        spelling=Path(source);held=os.fstat(fd)
+        for root in root_sources:
+            if spelling==root or spelling in root.parents or root in spelling.parents:raise Refusal('guided_guidance_overlap')
+            other=root.stat()
+            if (other.st_dev,other.st_ino)==(held.st_dev,held.st_ino):raise Refusal('guided_guidance_overlap')
+        result=fd;fd=None;return result
+    finally:
+        if fd is not None:os.close(fd)
+
 def bootstrap_rights(profile,pidfd,service_pidfd,store_fd,executable_fd,reader_fd=None):
     # The native owner accepts exactly four descriptors, or five for guided with its reader channel.
     rights=array.array('i',[pidfd,service_pidfd,store_fd,executable_fd])
@@ -436,6 +453,10 @@ class ToolService:
                 self.conversations[sid]={'logicalSessionId':sid,'authority':scope,'runtimeUid':runtime,'toolUid':tool,'workspaceGid':group,'policy':item['policy'],'roots':roots,'socket':private/'tools.sock','revoked':False}
                 self.tickets[sid]={}
                 if runtime_key in item:self._configure_runtime(self.conversations[sid],item[runtime_key],profile=self.runtime_profile)
+            if self.runtime_profile==GUIDED_PROFILE:
+                root_sources=[Path(root['source']).resolve(strict=True) for entry in config['conversations'] for root in entry['roots']]
+                for entry in config['conversations']:
+                    if 'guidanceDirectory' in entry.get(runtime_key,{}):fd=guidance_directory(entry[runtime_key]['guidanceDirectory'],protected,root_sources);self.owned.append(fd);self.conversations[entry['logicalSessionId']]['guidance']=fd
         except BaseException:
             self.close();raise
     def _listener(self,path,uid,handler,*,admin=False):
@@ -585,6 +606,7 @@ class ToolService:
             arguments=[str(self.artifacts['launcher']),str(worker),view,str(parent.fileno()),str(self.environment),str(item['toolUid']),str(item['workspaceGid']),native_mount_policy(item['policy']),kind,operation,root['root']['guestPath'],relative,str(limit),extra,str(len(item['roots']))]
             descriptors=[self.artifacts['launcher'],worker,parent.fileno(),self.environment]
             for binding in item['roots'].values():arguments.extend((str(binding['fd']),binding['root']['guestPath'],'1' if binding['root']['readOnly'] else '0'));descriptors.append(binding['fd'])
+            if item.get('guidance') is not None:arguments.extend(('--guidance',str(item['guidance'])));descriptors.append(item['guidance'])
             child=subprocess.Popen(arguments,executable=f"/proc/self/fd/{self.artifacts['launcher']}",stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=descriptors,close_fds=True,env={'LANG':'C','LC_ALL':'C'},start_new_session=True,bufsize=0)
             parent.close();control.settimeout(2)
             pidfd=receive_init_pidfd(control)
@@ -657,7 +679,7 @@ class ToolService:
         # public provider metadata. The tool/admin launch request carries only sid.
         allowed={'storeDirectory','runhomeDirectory','provider','model','timeoutMs'}
         if profile in ('host-query-v1',GUIDED_PROFILE):allowed.add('toolClasses')
-        if profile==GUIDED_PROFILE:allowed.update(('requiredRuntimeContext','generation'))
+        if profile==GUIDED_PROFILE:allowed.update(('requiredRuntimeContext','generation','guidanceDirectory'))
         elif profile not in ('fresh','host-query-v1'):raise Refusal('runtime_profile_conflict')
         if not self.runtime_artifacts or not isinstance(value,dict) or set(value)-allowed or not {'storeDirectory','runhomeDirectory','provider','model'}<=set(value):raise Refusal('runtime_config')
         port=None;host_config=None;reader_registration=None

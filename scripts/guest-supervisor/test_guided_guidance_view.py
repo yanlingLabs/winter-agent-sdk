@@ -1,8 +1,11 @@
-"""Compartment C guidance view and WINTER.md alias: tests of the UNAPPLIED DATA patch.
+"""Compartment C guidance view and WINTER.md alias: tests of the APPLIED guidance view.
 
-The patch (docs/research/guided-guidance-view-DATA.patch) is applied here only to a scratch
-copy of the tracked sources. The tracked native and Root sources stay byte-identical to main until
-the owner approves applying the exact patch hash recorded in docs/guided-guidance-view-matrix.md.
+The owner-approved DATA patch (docs/research/guided-guidance-view-DATA.patch, kept as the record of
+what was approved) is APPLIED: the tracked tool launcher and Root service ARE the pre-patch bytes
+plus that exact patch, and these tests exercise the tracked sources directly. The pre-patch bytes
+are recovered by reversing the patch on a scratch copy, pinned, and the forward patch must
+reproduce the tracked bytes. WINTER_GUIDANCE_VIEW_SOURCES (mutation runs only) points the two patch
+targets at a directory of mutated copies; the byte pins then skip.
 
 Portable tests run anywhere with `cc`: they extract the patch's pure contract, execute its Root
 (Python) admission and argument assembly against temporary directories, and pin source structure.
@@ -29,17 +32,21 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 GUEST = 'packages/runtime/src/guest'
-OVERRIDE = os.environ.get('WINTER_GUIDANCE_VIEW_PATCH')
-PATCH = Path(OVERRIDE) if OVERRIDE else ROOT / 'docs/research/guided-guidance-view-DATA.patch'
+OVERRIDE = os.environ.get('WINTER_GUIDANCE_VIEW_SOURCES')
+PATCH = ROOT / 'docs/research/guided-guidance-view-DATA.patch'
 MATRIX = ROOT / 'docs/guided-guidance-view-matrix.md'
 PROBE = Path(__file__).with_name('guidance_view_probe.c')
 TOOL, SUPERVISOR = GUEST + '/linux-tool-compartment.c', GUEST + '/linux-supervisor.py'
 
-# SHA-256 of the tracked sources on main (439b2f4d). The two patch targets may be in either state
-# (unapplied = MAIN, applied = the patched bytes); everything else must never change in this lane.
+# SHA-256 of the two patch targets before the patch (main 439b2f4d) and after it (APPLIED, tracked).
+# Everything else must never change in this lane.
 MAIN_TARGETS = {
     TOOL: '799cd0b4c2ed713e1409fe87a037bb66575ee3a088fbbc1ea238581182fa33b7',
     SUPERVISOR: '2c5be1e8b2cf30956ae14f3ca02224db52aeb4387c2eac22ceceb49a875ceaa8',
+}
+APPLIED_TARGETS = {
+    TOOL: '621f2ceb579c5b3832d4887f1d02dc8342a90e914bc44a3a6b204ce235b6d449',
+    SUPERVISOR: '51259b0ff1651dfd05663b3796fe6a187120884fbf68f75977d05af454aa4359',
 }
 FROZEN = {
     GUEST + '/linux-compartment.h': '92fef7c0708a23b1e930c5b2560dae6bef27294dfd682346e69d35c0484b967d',
@@ -61,19 +68,18 @@ def sha(path):
 _patched = {}
 
 
+def source_path(name):
+    """The tracked file, or the mutated copy during a mutation run."""
+    return Path(OVERRIDE) / name if OVERRIDE and name in MAIN_TARGETS else ROOT / name
+
+
 def patched_tree():
-    """Scratch copy of the tracked tool launcher, Root service and shared header with the patch applied."""
+    """Scratch copy of the tracked tool launcher, Root service and shared header (the applied sources)."""
     if 'root' not in _patched:
-        directory = Path(tempfile.mkdtemp(prefix='winter-guidance-view-patched-'))
+        directory = Path(tempfile.mkdtemp(prefix='winter-guidance-view-applied-'))
         for name in (TOOL, SUPERVISOR, GUEST + '/linux-compartment.h'):
             (directory / name).parent.mkdir(parents=True, exist_ok=True)
-            if name in MAIN_TARGETS:
-                (directory / name).write_text(tracked_main_text(name))
-            else:
-                shutil.copyfile(ROOT / name, directory / name)
-        applied = subprocess.run(['patch', '-p1', '-s', '-d', str(directory), '-i', str(PATCH)], capture_output=True, text=True, timeout=30)
-        if applied.returncode:
-            raise AssertionError('DATA patch does not apply to the tracked sources: ' + applied.stdout + applied.stderr)
+            shutil.copyfile(source_path(name), directory / name)
         _patched['root'] = directory
     return _patched['root']
 
@@ -82,19 +88,24 @@ def patched_text(name):
     return (patched_tree() / name).read_text()
 
 
+_main = {}
+
+
 def tracked_main_text(name):
-    """The pre-patch bytes: the tracked file when unapplied, else the patch reversed on a scratch copy."""
-    if sha(ROOT / name) == MAIN_TARGETS[name]:
-        return (ROOT / name).read_text()
-    directory = Path(tempfile.mkdtemp(prefix='winter-guidance-view-main-'))
-    try:
-        (directory / name).parent.mkdir(parents=True)
-        shutil.copyfile(ROOT / name, directory / name)
-        reverse = subprocess.run(['patch', '-p1', '-R', '-s', '-d', str(directory), '-i', str(PATCH)], capture_output=True, text=True, timeout=30)
-        assert reverse.returncode == 0, reverse.stderr
-        return (directory / name).read_text()
-    finally:
-        shutil.rmtree(directory, ignore_errors=True)
+    """The pre-patch bytes: the whole patch reversed on a scratch copy of the TRACKED (applied) targets."""
+    if not _main:
+        directory = Path(tempfile.mkdtemp(prefix='winter-guidance-view-main-'))
+        try:
+            for target in MAIN_TARGETS:
+                (directory / target).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / target, directory / target)
+            reverse = subprocess.run(['patch', '-p1', '-R', '-s', '-d', str(directory), '-i', str(PATCH)], capture_output=True, text=True, timeout=30)
+            assert reverse.returncode == 0, reverse.stderr
+            for target in MAIN_TARGETS:
+                _main[target] = (directory / target).read_text()
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+    return _main[name]
 
 
 def load_supervisor(path, name):
@@ -138,7 +149,7 @@ def removed_lines(patch_text):
 class PatchIntegrityTests(unittest.TestCase):
     def test_patch_hash_is_recorded_in_the_matrix(self):
         if OVERRIDE:
-            self.skipTest('mutation runs substitute the patch; the recorded hash belongs to the real one')
+            self.skipTest('mutation runs substitute the sources; the recorded hashes belong to the real ones')
         recorded = re.search(r'`DATA patch SHA256: ([0-9a-f]{64})`', MATRIX.read_text())
         self.assertIsNotNone(recorded)
         self.assertEqual(sha(PATCH), recorded.group(1))
@@ -154,10 +165,25 @@ class PatchIntegrityTests(unittest.TestCase):
         self.assertEqual(sum('argc!=15+3*roots' in line for line in removed), 1)
         self.assertEqual(sum("allowed.update(('requiredRuntimeContext','generation'))" in line for line in removed), 1)
 
-    def test_tracked_sources_are_unapplied_or_exactly_the_patched_bytes(self):
-        for name, main in MAIN_TARGETS.items():
-            actual = sha(ROOT / name)
-            self.assertIn(actual, (main, hashlib.sha256((patched_tree() / name).read_bytes()).hexdigest()), name)
+    def test_tracked_sources_equal_main_plus_this_exact_patch(self):
+        if OVERRIDE:
+            self.skipTest('mutation run')
+        for name in MAIN_TARGETS:
+            self.assertEqual(sha(ROOT / name), APPLIED_TARGETS[name], name)
+            main = tracked_main_text(name)
+            self.assertEqual(hashlib.sha256(main.encode()).hexdigest(), MAIN_TARGETS[name], name)
+        # Forward patch on the recovered main bytes reproduces the tracked bytes exactly.
+        directory = Path(tempfile.mkdtemp(prefix='winter-guidance-view-forward-'))
+        try:
+            for name in MAIN_TARGETS:
+                (directory / name).parent.mkdir(parents=True, exist_ok=True)
+                (directory / name).write_text(tracked_main_text(name))
+            applied = subprocess.run(['patch', '-p1', '-s', '-d', str(directory), '-i', str(PATCH)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(applied.returncode, 0, applied.stderr)
+            for name in MAIN_TARGETS:
+                self.assertEqual((directory / name).read_bytes(), (ROOT / name).read_bytes(), name)
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
 
     def test_shared_header_reader_runtime_and_admission_sources_never_change(self):
         for name, digest in FROZEN.items():
@@ -171,6 +197,10 @@ class PatchIntegrityTests(unittest.TestCase):
 
     def test_the_patch_adds_no_network_nic_or_vsock_surface(self):
         added = '\n'.join(added_lines(PATCH.read_text()))
+        # The tracked sources are what runs: every line they hold that main does not is scanned too.
+        for name in MAIN_TARGETS:
+            main_lines = set(tracked_main_text(name).splitlines())
+            added += '\n' + '\n'.join(line for line in source_path(name).read_text().splitlines() if line not in main_lines)
         for token in ('socket(', 'socketpair', 'AF_INET', 'AF_INET6', 'AF_VSOCK', 'vsock', 'AF_NETLINK', 'NETLINK', 'SIOC', 'ioctl', 'connect(', 'bind(', 'listen(', 'accept(', 'sendto', 'sendmsg', 'recvmsg', 'CLONE_NEWNET', 'setns', 'unshare'):
             self.assertNotIn(token, added, token)
         patched = patched_text(TOOL)
@@ -287,6 +317,12 @@ class PatchedCSourceTests(unittest.TestCase):
     def body(self, name):
         start = self.source.index('static ' + name)
         return self.source[start:self.source.index('\n}\n', start) + 3]
+
+    def test_the_directory_and_the_alias_each_check_their_filesystem_type_in_code(self):
+        for name in ('void guidance_directory', 'int guidance_alias_clone'):
+            body = code_only(self.body(name))
+            self.assertIn('fstatfs(', body, name)
+            self.assertIn('if(!guidance_type_allowed((unsigned long)fs.f_type))_exit(64);', body, name)
 
     def test_directory_is_cloned_non_recursively_and_sealed_readonly_noexec(self):
         self.assertNotIn('AT_RECURSIVE', self.source)
@@ -689,13 +725,14 @@ class ConfigureAndConstructTests(unittest.TestCase):
 
 
 class PostApplyRegressionTests(unittest.TestCase):
-    """The existing source suites, unchanged, against a scratch tree with the patch applied."""
+    """The existing source suites, unchanged, against a scratch tree holding the applied sources."""
 
     SUITES = (
         ('scripts/guest-supervisor', 'test_guided_host_query.py'), ('scripts/guest-supervisor', 'test_fresh_protocol.py'),
         ('scripts/guest-supervisor', 'test_runtime_launcher_policy.py'), ('scripts/guest-supervisor', 'test_runtime_port_arguments.py'),
         ('scripts/guest-supervisor', 'test_host_query.py'), ('scripts/guest-supervisor', 'test_runtime_diagnostics.py'),
         ('scripts/guest-supervisor', 'test_native_parser.py'),
+        ('scripts/guest-supervisor', 'test_guided_owner.py'),
         ('scripts/guest-engine', 'test_mount_propagation.py'), ('scripts/guest-engine', 'test_tool_devices.py'), ('scripts/guest-engine', 'test_runtime_entropy.py'),
     )
 

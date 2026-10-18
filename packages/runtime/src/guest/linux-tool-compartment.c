@@ -8,6 +8,50 @@
 #include <sys/socket.h>
 #include <linux/mount.h>
 #include <sys/sysmacros.h>
+#include <sys/statvfs.h>
+#include <sys/vfs.h>
+
+/* BEGIN PORTABLE GUIDANCE CONTRACT -- pure argument and predicate logic, no mount effects.
+ * Guided sessions only. Root appends exactly two trailing arguments, `--guidance <fd>`,
+ * after the root triples; every other argument shape is byte-identical to before. The
+ * guest paths below are fixed constants and are never taken from argv. */
+#define GUIDANCE_ROOT "/run/winter/shared-instructions"
+#define GUIDANCE_FILE "WINTER.md"
+#define GUIDANCE_ALIAS "/workspace/.winter/WINTER.md"
+#define GUIDANCE_FLAG "--guidance"
+#define GUIDANCE_EXT4_MAGIC 0xEF53UL
+#define GUIDANCE_TMPFS_MAGIC 0x01021994UL
+#define GUIDANCE_VIRTIOFS_MAGIC 0x6a656a63UL
+/* 0 = no guidance trailer, 1 = trailer parsed into *fd, -1 = malformed. */
+static int guidance_parse(int argc,char **argv,int base,int *fd) {
+    if(argc==base)return 0;
+    if(argc!=base+2||strcmp(argv[base],GUIDANCE_FLAG))return -1;
+    const char *text=argv[base+1];long value=0;
+    if(!text||text[0]<'1'||text[0]>'9')return -1;
+    for(const char *p=text;*p;p++) {
+        if(*p<'0'||*p>'9')return -1;
+        value=value*10+(*p-'0');if(value>65535)return -1;
+    }
+    if(value<3)return -1;
+    *fd=(int)value;return 1;
+}
+/* Same data-filesystem allowlist as the instruction reader (ext4, tmpfs and the guest host-share type), by
+ * statfs magic instead of the mountinfo name. Every pseudo or network filesystem is refused. */
+static int guidance_type_allowed(unsigned long type) {
+    return type==GUIDANCE_EXT4_MAGIC||type==GUIDANCE_TMPFS_MAGIC||type==GUIDANCE_VIRTIOFS_MAGIC;
+}
+/* The guidance descriptor must differ from every other held descriptor by number and by
+ * (st_dev, st_ino), so a source root can never be re-presented as guidance or the reverse. */
+static int guidance_distinct(int guidance,const int *others,int count) {
+    struct stat a;
+    if(fstat(guidance,&a))return 0;
+    for(int i=0;i<count;i++) {
+        struct stat b;
+        if(others[i]==guidance||fstat(others[i],&b)||(a.st_dev==b.st_dev&&a.st_ino==b.st_ino))return 0;
+    }
+    return 1;
+}
+/* END PORTABLE GUIDANCE CONTRACT */
 
 static int descriptor(const char *text) {
     char *end;long number=strtol(text,&end,10);
@@ -41,6 +85,47 @@ static int clone_descriptor(int fd,int readonly,int executable) {
 static void attach_descriptor(int tree,const char *target) {
     require((int)syscall(SYS_move_mount,tree,"",AT_FDCWD,target,MOVE_MOUNT_F_EMPTY_PATH),"attach admitted mount");
     close(tree);
+}
+/* Guided only. The guidance directory is cloned WITHOUT the recursive-clone flag, so no
+ * mount nested under it reaches the view. Read-only, nosuid, nodev and noexec come from
+ * clone_descriptor(guidance,1,0) below. The directory must live on an allowlisted data
+ * filesystem. */
+static void guidance_directory(int fd,const int *others,int count) {
+    struct stat st;struct statfs fs;
+    require(fstat(fd,&st),"guidance identity");
+    if(!S_ISDIR(st.st_mode)||!guidance_distinct(fd,others,count))_exit(64);
+    require(fstatfs(fd,&fs),"guidance filesystem");
+    if(!guidance_type_allowed((unsigned long)fs.f_type))_exit(64);
+}
+/* The tool-readable alias is ONE regular file, never the enclosing .winter directory:
+ * O_NOFOLLOW refuses a symlink, O_NONBLOCK|O_NOCTTY keep a FIFO or tty from hanging or adopting the session, nlink must be 1 (no hardlink route), the file must be on the
+ * same superblock as the directory (an over-mount refuses) and on an allowlisted filesystem.
+ * ENOENT is a valid absence: the directory mounts without an alias. */
+static int guidance_alias_clone(int guidance) {
+    struct stat directory,st;struct statfs fs;
+    require(fstat(guidance,&directory),"guidance identity");
+    int file=openat(guidance,GUIDANCE_FILE,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_NOCTTY|O_CLOEXEC);
+    if(file<0) { if(errno==ENOENT)return -1; require(-1,"guidance file"); }
+    require(fstat(file,&st),"guidance file identity");
+    if(!S_ISREG(st.st_mode)||st.st_nlink!=1||st.st_dev!=directory.st_dev)_exit(64);
+    require(fstatfs(file,&fs),"guidance file filesystem");
+    if(!guidance_type_allowed((unsigned long)fs.f_type))_exit(64);
+    int tree=clone_descriptor(file,1,0);close(file);return tree;
+}
+/* Mountpoint FILE for the alias. Parents are created tolerantly because a Root-admitted
+ * /workspace/.winter/memory mount may already have made /workspace/.winter. */
+static void guidance_file_point(const char *root,const char *guest,char *out,size_t size) {
+    if(guest[0]!='/'||!guest[1]||strstr(guest,".."))_exit(64);
+    path(out,size,root,guest+1);
+    char parent[4096];strcpy(parent,out);
+    for(char *p=parent+strlen(root)+1;*p;p++)if(*p=='/'){*p=0;if(mkdir(parent,0755)&&errno!=EEXIST)require(-1,"guidance skeleton");*p='/';}
+    require(close(open(out,O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0444)),"guidance alias mountpoint");
+}
+/* In-view proof, after chroot: the kernel reports the sealed mount flags for a guest path. */
+static void guidance_sealed(const char *guest) {
+    struct statvfs v;unsigned long need=ST_RDONLY|ST_NOSUID|ST_NODEV|ST_NOEXEC;
+    require(statvfs(guest,&v),"guidance mount flags");
+    if((v.f_flag&need)!=need)_exit(77);
 }
 /* Fixed process-tool inventory only. Never bind the guest's whole /dev tree or
  * reopen a device pathname after checking its descriptor's kernel identity. */
@@ -97,7 +182,8 @@ int main(int argc,char **argv) {
     struct stat view_identity;
     if(lstat(argv[2],&view_identity) || !S_ISDIR(view_identity.st_mode) || view_identity.st_uid!=0 || (view_identity.st_mode&0777)!=0700)_exit(64);
     int uid=number(argv[5],1000,65535),gid=number(argv[6],1000,65535),roots=number(argv[14],1,16);
-    if(argc!=15+3*roots || (strcmp(argv[7],"auto")&&strcmp(argv[7],"plan")))_exit(64);
+    int guidance=-1,guided=guidance_parse(argc,argv,15+3*roots,&guidance);
+    if(guided<0 || (strcmp(argv[7],"auto")&&strcmp(argv[7],"plan")))_exit(64);
     int process=!strcmp(argv[8],"process");if(!process&&strcmp(argv[8],"file"))_exit(64);
     pinned_file(worker);directory_fd(environment);
     for(int i=0;i<roots;i++){directory_fd(descriptor(argv[15+3*i]));number(argv[17+3*i],0,1);}
@@ -112,6 +198,13 @@ int main(int argc,char **argv) {
     const char *environment_parts[]={"bin","lib","lib64","usr"};
     for(int i=0;i<roots;i++)root_trees[i]=clone_descriptor(descriptor(argv[15+3*i]),number(argv[17+3*i],0,1)||!strcmp(argv[7],"plan"),0);
     int worker_tree=clone_descriptor(worker,1,1);
+    int guidance_tree=-1,alias_tree=-1;
+    if(guided) {
+        int held[3+16],held_count=0;held[held_count++]=worker;held[held_count++]=control;held[held_count++]=environment;
+        for(int i=0;i<roots;i++)held[held_count++]=descriptor(argv[15+3*i]);
+        guidance_directory(guidance,held,held_count);
+        guidance_tree=clone_descriptor(guidance,1,0);alias_tree=guidance_alias_clone(guidance);close(guidance);
+    }
     int device_trees[TOOL_DEVICE_COUNT];
     if(process)for(size_t i=0;i<TOOL_DEVICE_COUNT;i++)device_trees[i]=tool_device_mount(&tool_devices[i]);
     if(process)for(int i=0;i<4;i++){
@@ -143,6 +236,10 @@ int main(int argc,char **argv) {
         point(root,argv[16+3*i],target,sizeof target);
         attach_descriptor(root_trees[i],target);
     }
+    if(guided) {
+        point(root,GUIDANCE_ROOT,target,sizeof target);attach_descriptor(guidance_tree,target);
+        if(alias_tree>=0) { guidance_file_point(root,GUIDANCE_ALIAS,target,sizeof target);attach_descriptor(alias_tree,target); }
+    }
     if(process){
         for(int i=0;i<4;i++){
             if(environment_trees[i]<0)continue;
@@ -155,6 +252,7 @@ int main(int argc,char **argv) {
     path(target,sizeof target,root,"file-worker");require(close(open(target,O_WRONLY|O_CREAT|O_EXCL,0555)),"helper point");attach_descriptor(worker_tree,target);
     require(mount(NULL,root,NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NODEV,NULL),"protected skeleton");
     require(chdir(root),"view cwd");require(chroot("."),"view root");require(chdir(argv[10]),"admitted source cwd");
+    if(guided) { guidance_sealed(GUIDANCE_ROOT);if(alias_tree>=0)guidance_sealed(GUIDANCE_ALIAS); }
     require(prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0),"no new privileges");
     for(int cap=0;cap<=CAP_LAST_CAP;cap++)require(prctl(PR_CAPBSET_DROP,cap,0,0,0),"drop bounding capabilities");
     gid_t group=(gid_t)gid;require(setgroups(1,&group),"workspace group");

@@ -1,5 +1,5 @@
-/* Linux-only observer for test_guided_guidance_view.py. The test launches the PATCHED tool
- * launcher (built from the DATA patch in a scratch copy) with this program as the immutable
+/* Linux-only observer for test_guided_guidance_view.py. The test launches the tracked tool
+ * launcher (built from the applied sources in a scratch copy) with this program as the immutable
  * helper, so it runs INSIDE the finished tool view, after chroot, as the unprivileged tool uid.
  * It only reads, probes and prints `key value` lines. It opens no socket and uses no network. */
 #define _GNU_SOURCE
