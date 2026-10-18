@@ -52,6 +52,7 @@ const GUARD: Array<[string, string]> = [
 /** The unset-pin refusal, line for line. */
 const PIN_REFUSAL: Array<[string, string]> = [
   ["the strict shell", "set -euo pipefail"],
+  ["the run id refusal", `test "$PACKET_RUN_ID" != "0"`],
   ["the archive pin refusal", `test "$PACKET_ARCHIVE_SHA256" != "${ZERO64}"`],
   ["the inventory pin refusal", `test "$PACKET_INVENTORY_SHA256" != "${ZERO64}"`],
   ["the runner pin refusal", `test "$RUNNER_SHA256" != "${ZERO64}"`],
@@ -169,12 +170,13 @@ export function violations(text: string, ctx: Context = loadContext()): string[]
   if (JSON.stringify(Object.keys(env).sort()) !== JSON.stringify(["HOSTED_HEAD", "PACKET_ARCHIVE_SHA256", "PACKET_INVENTORY_SHA256", "PACKET_RUN_ID", "RUNNER_SHA256"])) bad("env keys must be exactly the reviewed pins");
   if (typeof env.HOSTED_HEAD !== "string" || !/^[0-9a-f]{40}$/.test(env.HOSTED_HEAD)) bad("HOSTED_HEAD must be a 40-hex commit (all zeros while unarmed)");
   for (const key of ["PACKET_ARCHIVE_SHA256", "PACKET_INVENTORY_SHA256", "RUNNER_SHA256"]) if (typeof env[key] !== "string" || !/^[0-9a-f]{64}$/.test(env[key] as string)) bad(`${key} must be 64-hex (all zeros while unset)`);
-  if (typeof env.PACKET_RUN_ID !== "string" || !/^[1-9][0-9]{8,12}$/.test(env.PACKET_RUN_ID)) bad("PACKET_RUN_ID must be a plain run id");
+  if (typeof env.PACKET_RUN_ID !== "string" || !/^(0|[1-9][0-9]{8,12})$/.test(env.PACKET_RUN_ID)) bad("PACKET_RUN_ID must be a plain run id (0 while unset)");
+  if (env.PACKET_RUN_ID === "39165162201") bad("the first guided packet (placeholder roles) must never be bound");
   if (env.RUNNER_SHA256 !== ZERO64) {
     if (!ctx.runnerExists) bad("RUNNER_SHA256 is set but the runner file does not exist");
     else if (ctx.runnerSha256 !== env.RUNNER_SHA256) bad("RUNNER_SHA256 does not match the runner file");
   }
-  if (env.HOSTED_HEAD !== ZERO40 && (env.PACKET_ARCHIVE_SHA256 === ZERO64 || env.PACKET_INVENTORY_SHA256 === ZERO64 || env.RUNNER_SHA256 === ZERO64)) bad("armed with an unset pin");
+  if (env.HOSTED_HEAD !== ZERO40 && (env.PACKET_RUN_ID === "0" || env.PACKET_ARCHIVE_SHA256 === ZERO64 || env.PACKET_INVENTORY_SHA256 === ZERO64 || env.RUNNER_SHA256 === ZERO64)) bad("armed with an unset pin");
 
   // 7. The download: the first network step, before anything privileged, and only the one named artifact of the one named run.
   const downloads = steps.filter((s) => s.uses?.startsWith("actions/download-artifact@"));
@@ -237,9 +239,10 @@ describe("guided hosted run workflow gates", () => {
     for (const [name, text] of Object.entries(loadContext().others)) expect([name, text.includes(TRIGGER_BRANCH)]).toEqual([name, false]);
   });
 
-  test("the committed state is unarmed: all four pins are zero, so the first steps refuse", () => {
+  test("the committed state is unarmed: the head and the run id are unset, so the first steps refuse", () => {
     const env = (yaml.parse(WORKFLOW) as Doc).env as Record<string, string>;
     expect(env.HOSTED_HEAD).toBe(ZERO40);
+    expect(env.PACKET_RUN_ID).toBe("0");
     // The digests are set in an ordinary reviewed commit; until then they are zero and the refusal step stops the run.
     for (const key of ["PACKET_ARCHIVE_SHA256", "PACKET_INVENTORY_SHA256", "RUNNER_SHA256"]) expect([key, /^[0-9a-f]{64}$/.test(env[key] as string)]).toEqual([key, true]);
   });
@@ -325,7 +328,9 @@ const MUTATIONS: Array<[string, (text: string) => string, string, Partial<Contex
   ["env: a pin key added", sub("  RUNNER_SHA256:", "  EXTRA: 'x'\n  RUNNER_SHA256:"), "env keys must be exactly the reviewed pins"],
   ["env: HOSTED_HEAD becomes a branch name", sub(`HOSTED_HEAD: '${ZERO40}'`, "HOSTED_HEAD: 'main'"), "HOSTED_HEAD must be a 40-hex commit (all zeros while unarmed)"],
   ["env: archive pin becomes short", sub(/PACKET_ARCHIVE_SHA256: '0+'/, "PACKET_ARCHIVE_SHA256: 'abc'"), "PACKET_ARCHIVE_SHA256 must be 64-hex (all zeros while unset)"],
-  ["env: run id becomes a name", sub("PACKET_RUN_ID: '39165162201'", "PACKET_RUN_ID: 'latest'"), "PACKET_RUN_ID must be a plain run id"],
+  ["env: run id becomes a name", sub("PACKET_RUN_ID: '0'", "PACKET_RUN_ID: 'latest'"), "PACKET_RUN_ID must be a plain run id (0 while unset)"],
+  ["env: the first (placeholder-role) packet is bound", sub("PACKET_RUN_ID: '0'", "PACKET_RUN_ID: '39165162201'"), "the first guided packet (placeholder roles) must never be bound"],
+  ["pin refusal: run id removed", sub(/ *test "\$PACKET_RUN_ID" != "0"\n/, ""), "pin refusal lacks the run id refusal"],
   ["env: runner pin set to a hash the file does not have", sub(/RUNNER_SHA256: '0+'/, `RUNNER_SHA256: '${"1".repeat(64)}'`), "RUNNER_SHA256 is set but the runner file does not exist"],
   ["env: runner pin differs from the runner file", sub(/RUNNER_SHA256: '0+'/, `RUNNER_SHA256: '${"3".repeat(64)}'`), "RUNNER_SHA256 does not match the runner file", { runnerExists: true, runnerSha256: "4".repeat(64) }],
   ["env: armed with an unset pin", sub(`HOSTED_HEAD: '${ZERO40}'`, `HOSTED_HEAD: '${"2".repeat(40)}'`), "armed with an unset pin"],

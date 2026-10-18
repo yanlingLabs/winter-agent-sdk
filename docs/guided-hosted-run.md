@@ -41,8 +41,9 @@ site it saw, and the doc must not claim more. A separate run is not needed.
   true`, the exact ref, this repository and `run_attempt == '1'`. No `pull_request`, `pull_request_target`,
   `workflow_dispatch`, `schedule` or `workflow_run` trigger exists, so no ordinary PR (including the one that adds this
   file) can run it. A re-run has `run_attempt` 2 and is refused.
-* Unarmed: `HOSTED_HEAD`, `PACKET_ARCHIVE_SHA256`, `PACKET_INVENTORY_SHA256` and `RUNNER_SHA256` are all zeros. Step 2
-  refuses a zero `HOSTED_HEAD`; step 3 refuses any zero digest. The three digests are set in an ordinary reviewed commit
+* Unarmed: `HOSTED_HEAD`, `PACKET_ARCHIVE_SHA256`, `PACKET_INVENTORY_SHA256` and `RUNNER_SHA256` are all zeros and
+  `PACKET_RUN_ID` is `0`. Step 2 refuses a zero `HOSTED_HEAD`; step 3 refuses a run id of `0` and any zero digest. The gate
+  test also refuses binding the first packet's run id (39165162201): its `providerWorker` and `hostClient` are placeholders. The three digests are set in an ordinary reviewed commit
   (the packet digests from the verified compile artifact, the runner digest from the reviewed runner file; the gate test
   fails if the runner digest does not match the file). The owner-approved ARMING commit then changes exactly one line,
   `HOSTED_HEAD`, to the reviewed commit: the guard demands that commit be an ancestor of the pushed one, that the whole
@@ -76,6 +77,28 @@ success, and on failure only the bounded result and diagnostics records; 7 days 
 | How the guest reaches the stub | Not the provider bridge: the stub implements `GuestProviderPort` over the native peer/pidfd transport, as the host-query fixture's scripted provider does. No NIC, vsock or listener. |
 | The stub allows exactly two begins | A third begin is refused by the stub but still counted in `receivedBegins`; the oracle reads those counters, so a request that reached the stub after revocation fails the case even though the stub refused it. |
 | Bun FD adapter, holder authentication of the guest stream | Unproven by design; this run is their first real exercise. |
+
+## Assumptions about the two real roles (to reconcile with the runtime-sdk lane)
+
+Nothing below is in a merged contract; each line is what this slice assumed and what its oracle needs.
+
+1. `providerWorker` is the stub provider runner: it holds the Root-supplied script (bytes plus independent SHA-256) and
+   serves `begin`/`next`/`cancel` over the native peer/pidfd transport, exactly two serial invocations.
+2. Its stub receipt counters (`receivedFrames`, `receivedBegins`, `acceptedBegins`, `completed`) are readable by the
+   Root-side runner at five points (after dispatch 1, after dispatch 2, after the reuse attempt, immediately before and
+   immediately after revocation), from the provider process, not relayed by the host client.
+3. `hostClient` runs the SDK `query` with a guided preparation and a ticket minted by the issuer it claims, and exposes:
+   the answer text of each dispatch; the error class of a refused presentation (`required_context_unavailable`); a way to
+   attempt a second presentation of a spent ticket; a way to pre-mint a second, unspent ticket and present it after a
+   revoke; and a revoke command. It never reports provider-call counts as evidence.
+4. Exit status: each role exits 0 on success and non-zero on any refusal; argv/stdin/stdout framing is whatever the
+   runtime-sdk contract states, and the runner pins it by the role's SHA-256 in the new packet.
+5. The shared guidance file is edited by Root between the dispatches, not by a guest process.
+
+NEEDS FROM OTHER LANE (runtime-sdk): the counter read-out of assumption 2 (for example a `receipt` request on the
+provider worker's control channel), the pre-minted-ticket and revoke commands of assumption 3, and the final role hashes
+from the second compile run. If the real roles cannot offer them, the cases `ticket_reuse` and `revocation` cannot be
+counted by the stub and the run must not claim them.
 
 ## Cross-repository download
 

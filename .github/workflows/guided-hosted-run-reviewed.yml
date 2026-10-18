@@ -3,8 +3,10 @@ name: guided-hosted-run-reviewed
 # NEVER triggered by its author: the owner approves the single run, then the branch below is created once, from the
 # exact reviewed commit, and frozen. There is no pull_request, pull_request_target, workflow_dispatch, schedule or
 # workflow_run trigger, so no ordinary PR can run it.
-# UNARMED: HOSTED_HEAD, PACKET_ARCHIVE_SHA256, PACKET_INVENTORY_SHA256 and RUNNER_SHA256 are all zeros. The first two
-# steps refuse while any is zero, so this file can sit on main without being able to run anything. The three digests
+# UNARMED: HOSTED_HEAD, PACKET_RUN_ID (0), PACKET_ARCHIVE_SHA256, PACKET_INVENTORY_SHA256 and RUNNER_SHA256 are all unset.
+# The packet is the SECOND guided compile run (made after the real hostClient/providerWorker replace the placeholders);
+# the first packet's run 39165162201 must never be bound here. The first two
+# steps refuse while any is unset, so this file can sit on main without being able to run anything. The three digests
 # are set in an ordinary reviewed commit; the owner-approved ARMING commit then changes exactly one line, HOSTED_HEAD.
 # The sudo step is the only privileged step: Root-created peers, pidfds, and mount/PID/IPC/UTS/network namespaces need
 # real root, exactly as the owner-matrix run did. It runs only the runner file whose SHA-256 is RUNNER_SHA256.
@@ -16,7 +18,7 @@ permissions:
   actions: read
 env:
   HOSTED_HEAD: '0000000000000000000000000000000000000000'
-  PACKET_RUN_ID: '39165162201'
+  PACKET_RUN_ID: '0'
   PACKET_ARCHIVE_SHA256: '0000000000000000000000000000000000000000000000000000000000000000'
   PACKET_INVENTORY_SHA256: '0000000000000000000000000000000000000000000000000000000000000000'
   RUNNER_SHA256: '0000000000000000000000000000000000000000000000000000000000000000'
@@ -49,6 +51,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$PACKET_RUN_ID" != "0"
           test "$PACKET_ARCHIVE_SHA256" != "0000000000000000000000000000000000000000000000000000000000000000"
           test "$PACKET_INVENTORY_SHA256" != "0000000000000000000000000000000000000000000000000000000000000000"
           test "$RUNNER_SHA256" != "0000000000000000000000000000000000000000000000000000000000000000"
