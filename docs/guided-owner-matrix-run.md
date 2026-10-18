@@ -17,7 +17,7 @@ authored here and has not run.
   exists only on that command line.
 - Pins (SHA-256), covering the matrix and the whole local include closure of the fixture:
   - `scripts/guest-supervisor/guided_owner_native_fixture.c`: `ef1a3e45...f2d39`
-  - `scripts/guest-supervisor/test_guided_owner.py`: `4490ca04...87abd`
+  - `scripts/guest-supervisor/test_guided_owner.py`: `b9ea9804...bedbf`
   - `packages/runtime/src/guest/linux-session-owner.c` (the fixture's only quoted `#include`):
     `c149d451...51fd8`
 
@@ -39,6 +39,20 @@ stream half-close, each against the unchanged production owner.
 It does not prove: the compartment C view or alias, the Root reader service, the compiled guided
 packet, a hosted guided run, or the older-kernel refusal (below). It is a single sample on one
 runner image.
+
+## Compile risk, checked in ordinary CI
+
+The one run must not be spent on a compiler refusal. Ordinary CI (`guest-file-boundary`, on
+`ubuntu-24.04` and `ubuntu-24.04-arm`, gcc 13.3) therefore compiles the fixture with the exact flags
+the workflow uses (`cc -std=c11 -O2 -Wall -Wextra -Werror`), compile only and never executed, and
+runs `test_guided_owner.py` unprivileged (the 12 native cases skip there). The gate test requires
+those flags to equal the workflow's and the matrix's own root compile flags.
+
+gcc 13.3 did refuse the portable harness inside `test_guided_owner.py`
+(`-Werror=misleading-indentation` on one line of the extracted-validation harness, a different
+compile from the native fixture). That line was split with no behaviour change, which is why the
+matrix pin differs from the earlier draft. The native fixture and the production owner compiled
+cleanly under the same flags.
 
 ## Expected result: 11 pass + 1 skip
 
