@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 env:
   FIXTURE_SHA256: ef1a3e4554551a47e5857ec90618cb968be2e3a1a653817df5bcac5d269f2d39
-  MATRIX_SHA256: 4490ca04cb693fb92131784c04bd301b78c6116f2ba7e73fbafe13a87d187abd
+  MATRIX_SHA256: b9ea9804d57806f3ecfa765d65c2eb92c93ce1171b08cef72c3c81e8e5bbedbf
   # The fixture #includes this file (the production owner); the matrix recompiles the fixture as root.
   OWNER_SHA256: c149d451eaa79442dfd41e9375c891ae8c9a06135d2cfc85851bcc8b5ce51fd8
 jobs:

@@ -26,7 +26,7 @@ const ALLOWED_ACTIONS = new Set(["actions/checkout", "actions/upload-artifact"])
 // Branches that already fired (or are armed for) another reviewed workflow: never reusable here.
 const USED_BRANCHES = ["cowork/linux-host-query-fixture", "cowork/linux-host-query-utilities"];
 
-type Step = { name?: string; uses?: string; run?: string; if?: string; env?: Record<string, unknown>; with?: Record<string, unknown> };
+type Step = { name?: string; "continue-on-error"?: boolean; uses?: string; run?: string; if?: string; env?: Record<string, unknown>; with?: Record<string, unknown> };
 type Doc = {
   on?: Record<string, unknown>;
   permissions?: Record<string, unknown>;
@@ -249,6 +249,9 @@ export function ciCompileViolations(ciText: string, workflowText: string, matrix
   if (JSON.stringify(pyFlags ? [...(pyFlags[1] as string).matchAll(/'([^']+)'/g)].map((m) => m[1]) : null) !== JSON.stringify(CC_FLAGS)) bad("the matrix's own root compile flags must equal the ci flags");
   if (!/^cc [^\n;&|]* -o "\$RUNNER_TEMP\/[\w-]+"$/.test(run.trim())) bad("ci compile must be a single cc command with no chaining");
   if (/sudo|\.\/|bash|sh -c|exec/.test(run.replace("$RUNNER_TEMP/", ""))) bad("ci compile must never execute the output");
+  if (ciText.includes(OPT_IN)) bad("ordinary ci must never carry the native admission variable");
+  const portable = steps.filter((s) => (s.run ?? "").includes("test_guided_owner.py"));
+  if (portable.length !== 1 || portable[0]?.run?.trim() !== "python3 -I -S -B scripts/guest-supervisor/test_guided_owner.py" || portable[0]?.["continue-on-error"] !== undefined) bad("ci must run the portable owner tests exactly, unprivileged, without continue-on-error");
   if (steps.some((s) => (s.run ?? "").includes("guided-owner-fixture-compile-only") && ccFlags(s.run ?? "") === null)) bad("nothing may use the compiled output");
   return problems;
 }
@@ -449,6 +452,9 @@ const CI_MUTATIONS: Array<[string, (ci: string) => string, string]> = [
   ["ci loses the x64 leg", (t) => t.replace("os: [ubuntu-24.04, ubuntu-24.04-arm]", "os: [ubuntu-24.04-arm]"), "ci compile must run on ubuntu-24.04 and ubuntu-24.04-arm"],
   ["ci executes the output", (t) => t.replace('-o "$RUNNER_TEMP/guided-owner-fixture-compile-only"', '-o "$RUNNER_TEMP/guided-owner-fixture-compile-only" && "$RUNNER_TEMP/guided-owner-fixture-compile-only"'), "ci compile must be a single cc command with no chaining"],
   ["ci runs the output in a later step", (t) => t.replace("      - run: sudo -n python3 scripts/guest-files/verify.py", '      - run: "$RUNNER_TEMP/guided-owner-fixture-compile-only"\n      - run: sudo -n python3 scripts/guest-files/verify.py'), "nothing may use the compiled output"],
+  ["ci carries the admission variable", (t) => t.replace('run: python3 -I -S -B scripts/guest-supervisor/test_guided_owner.py', 'env:\n          WINTER_GUIDED_OWNER_NATIVE_ADMISSION: x\n        run: python3 -I -S -B scripts/guest-supervisor/test_guided_owner.py'), "ordinary ci must never carry the native admission variable"],
+  ["ci portable tests dropped", (t) => t.replace(/ +- name: guided owner portable[^\n]*\n +run: [^\n]*\n/, ""), "ci must run the portable owner tests exactly, unprivileged, without continue-on-error"],
+  ["ci portable tests made non-fatal", (t) => t.replace("      - name: guided owner portable source tests under this gcc (native cases skip, no root and no admission)\n", "      - name: guided owner portable source tests under this gcc (native cases skip, no root and no admission)\n        continue-on-error: true\n"), "ci must run the portable owner tests exactly, unprivileged, without continue-on-error"],
 ];
 
 describe("ci compile-only step gates", () => {
