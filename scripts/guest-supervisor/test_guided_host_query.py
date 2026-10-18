@@ -351,6 +351,14 @@ class GuidedConfiguredRuntimeTests(unittest.TestCase):
             self.assertEqual(self.pipes.ports.phase, 'new')
         self.assertEqual(self.obj.runtimes, {})
 
+    def test_a_guided_conversation_without_its_guidance_directory_is_refused_before_anything_opens(self):
+        without = {key: value for key, value in self.config.items() if key != 'guidanceDirectory'}
+        with self.assertRaisesRegex(service.Refusal, 'guided_guidance_required'):
+            self.obj._configure_runtime(self.fixture.item, without, profile=GUIDED)
+        self.assertEqual(self.obj.owned, [])
+        self.assertEqual(self.pipes.ports.phase, 'new')
+        self.assertEqual(self.obj.runtimes, {})
+
     def test_missing_transport_refuses_like_v1(self):
         self.obj.host_query_ports = {'logical': {'inputFd': self.pipes.input, 'profile': GUIDED}}
         with self.assertRaisesRegex(service.Refusal, 'host_query_transport'):

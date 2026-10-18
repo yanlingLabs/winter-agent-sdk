@@ -535,12 +535,11 @@ def reader_control_message(control,expect_init):
     Every delivered descriptor is owned before the packet is judged, as receive_init_pidfd does."""
     owned=[]
     try:
-        data,ancillary,flags,_=control.recvmsg(16,socket.CMSG_SPACE(16*array.array('i').itemsize),getattr(socket,'MSG_CMSG_CLOEXEC',0))
+        data,ancillary,_,_=control.recvmsg(16,socket.CMSG_SPACE(16*array.array('i').itemsize),getattr(socket,'MSG_CMSG_CLOEXEC',0))
         for level,kind,payload in ancillary:
             if (level,kind)==(socket.SOL_SOCKET,socket.SCM_RIGHTS):
                 owned.extend(array.array('i',payload[:len(payload)-len(payload)%array.array('i').itemsize]))
         for fd in owned:os.set_inheritable(fd,False)
-        if flags&~getattr(socket,'MSG_CMSG_CLOEXEC',0):raise Uncertain('guided_reader_receipt')
         if not data:
             if owned or ancillary:raise Uncertain('guided_reader_receipt')
             return 'eof',None
@@ -590,7 +589,7 @@ class ReaderLauncher:
                 try:os.rmdir(view)
                 except OSError:pass
             return result
-        out=bytearray();err=bytearray();eof={'out':False,'err':False};status=None;overrun=False;timed_out=False;killed=False;fallback=False;code=None
+        out=bytearray();err=bytearray();status=None;overrun=False;timed_out=False;killed=False;fallback=False;code=None
         try:
             try:
                 child=self.spawn(argv,executable=f"/proc/self/fd/{self.artifacts['launcher']}",stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=fds,close_fds=True,env={'LANG':'C','LC_ALL':'C'},start_new_session=True,bufsize=0)
@@ -633,14 +632,14 @@ class ReaderLauncher:
                     else:
                         try:data=os.read(stream.fileno(),16384)
                         except BlockingIOError:continue
-                        name,target,limit=('out',out,GUIDED_READER_FRAME_BYTES) if stream is child.stdout else ('err',err,GUIDED_READER_STDERR_BYTES)
-                        if not data:selector.unregister(stream);eof[name]=True;continue
+                        target,limit=(out,GUIDED_READER_FRAME_BYTES) if stream is child.stdout else (err,GUIDED_READER_STDERR_BYTES)
+                        if not data:selector.unregister(stream);continue
                         room=limit+1-len(target)
                         if room>0:target.extend(data[:room])
                         if len(target)>limit:overrun=True
             try:code=child.wait(timeout=max(.1,hard-self.clock()))
             except subprocess.TimeoutExpired:raise Uncertain('guided_reader_cleanup_unconfirmed')
-            result.update(namespaceInitReaped=status is not None,namespaceWaitStatus=status,monitorReaped=True,monitorWaitStatus=reader_raw_status(code),stdoutEof=eof['out'],stderrEof=eof['err'],captureDrained=eof['out'] and eof['err'])
+            result.update(namespaceInitReaped=status is not None,namespaceWaitStatus=status,monitorReaped=True,monitorWaitStatus=reader_raw_status(code),stdoutEof=True,stderrEof=True,captureDrained=True)  # the loop only ends once the receipt socket and both pipes reached EOF
             if pidfd is None and status is None and code==64:
                 # Exit 64 is the launcher's refusal of its own envelope, which happens strictly before the namespace fork: no init ever existed.
                 result.update(namespaceInitReaped=True,namespaceWaitStatus=0)

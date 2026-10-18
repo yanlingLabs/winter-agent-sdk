@@ -105,9 +105,12 @@ touch.
 5. **Creator identity alone does not authenticate the eventual holder** of the guest end. Root binds the stream to
    the runtime's namespace-init pidfd and sends the end exactly once, but does not inspect `/proc/<pid>/fd` for the
    socket inode. That check, and a native proof, remain owed.
-6. **Cancel before the launcher's `I` receipt** waits for the pidfd rather than killing the monitor, so the init is
-   reaped by its monitor and the evidence is complete; only past Root's 4.5 s supervision does it fall back to
-   killing the monitor, which leaves the init unproven (debt).
+6. **Cancellation is the init pidfd's SIGKILL, and Root sends the launcher no packet.** The launcher's source
+   treats any Root packet as cancellation, but its monitor never reads one, and closing a unix socket that holds an
+   unread packet resets the peer: the first CI run on real `SOCK_SEQPACKET` lost the monitor's `R` receipt behind an
+   `ECONNRESET` exactly that way. A cancel before the launcher's `I` receipt waits for the pidfd rather than killing the
+   monitor, so the init is reaped by its monitor and the evidence is complete; only past Root's 4.5 s supervision does it
+   fall back to killing the monitor, which leaves the init unproven (debt).
 7. **Exit 64 means "no init existed".** It is derived from the launcher source (every `_exit(64)` precedes the
    namespace fork), not observed.
 8. **Number strictness** in the mirror (above) and its Python-only reach: a reader that emitted an exponent float

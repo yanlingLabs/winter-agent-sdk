@@ -134,6 +134,12 @@ class CodecTests(unittest.TestCase):
         self.assertLessEqual(len(body), service.GUIDED_READER_INPUT_BYTES)
         self.assertNotIn(b'\n', body)
 
+    def test_the_stdin_request_is_capped_at_16_kib(self):
+        reg = registration()
+        reg['views'] = dict(reg['views'], sourceRoot='/workspace/folders/' + 'x' * 6000, sourceCwd='/workspace/folders/' + 'y' * 6000, sharedPath='/' + 'z' * 6000)
+        with self.assertRaisesRegex(service.Refusal, 'guided_reader_input'):
+            service.reader_invocation(reg, UUIDS[0])
+
     def test_argv_is_the_exact_launch_envelope(self):
         argv = service.reader_argv(9, 10, '/run/winter/instruction-reader-views/v', 11, 20002, 10000, 12, '/workspace/folders/s', '/workspace/folders/s', 13, [(14, '/lib/a'), (15, '/usr/lib/b')])
         self.assertEqual(argv, ['9', 'instruction-reader-v1', '10', '/run/winter/instruction-reader-views/v', '11', '20002', '10000', '12', '/workspace/folders/s', '/workspace/folders/s',
@@ -1535,6 +1541,57 @@ class ReaderLauncherTests(LauncherFixture):
         result = self.go()
         self.assertFalse(result['stderrEof'])
         self.assertFalse(result['captureDrained'])
+
+    def test_a_wrong_marker_is_refused_even_with_a_descriptor_attached(self):
+        def script(control, child):
+            control.sendmsg([b'X'], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, __import__('array').array('i', [self.pidfd_write]))])
+            time.sleep(.3)
+        self.script = script
+        result = self.go()
+        self.assertFalse(all(result[key] is True for key in service.GUIDED_TERMINAL_FLAGS))
+        self.assertFalse(self.pidfd_seen.is_set(), 'a packet that is not the init receipt must never be treated as one')
+
+    def test_every_delivered_descriptor_is_owned_and_close_on_exec_before_the_packet_is_judged(self):
+        import array
+        seen = []
+        for marker, expected in ((b'I', 'init'), (b'X', 'refused')):
+            fd = os.dup(self.pidfd_read)
+            os.set_inheritable(fd, True)
+            fake = MagicMock()
+            fake.recvmsg.return_value = (marker, [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [fd]).tobytes())], 0, None)
+            if expected == 'init':
+                kind, value = service.reader_control_message(fake, True)
+                self.assertEqual(kind, 'init')
+                self.assertFalse(os.get_inheritable(value))
+                os.close(value)
+            else:
+                with self.assertRaises(service.Uncertain):
+                    service.reader_control_message(fake, True)
+                with self.assertRaises(OSError):
+                    os.fstat(fd)   # a refused packet's descriptor is closed, not leaked
+        fd = os.dup(self.pidfd_read)
+        os.set_inheritable(fd, True)
+        fake = MagicMock()
+        fake.recvmsg.return_value = (b'R\x00\x00\x00\x00', [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [fd]).tobytes())], 0, None)
+        with self.assertRaises(service.Uncertain):
+            service.reader_control_message(fake, False)
+        with self.assertRaises(OSError):
+            os.fstat(fd)
+
+    def test_the_view_directory_must_be_exactly_a_fresh_empty_0700_directory_of_roots_identity(self):
+        real = os.lstat
+        for name, changed in (('wrong mode', lambda st: os.stat_result((stat.S_IFDIR | 0o755,) + tuple(st)[1:])), ('wrong owner', lambda st: os.stat_result(tuple(st)[:4] + (st.st_uid + 1,) + tuple(st)[5:])),
+                              ('not a directory', lambda st: os.stat_result((stat.S_IFREG | 0o700,) + tuple(st)[1:]))):
+            with self.subTest(name):
+                with patch.object(service.os, 'lstat', side_effect=lambda path, changed=changed: changed(real(path))):
+                    with self.assertRaisesRegex(service.Refusal, 'guided_reader_view'):
+                        self.launcher._view(UUIDS[5])
+                self.assertFalse((self.views / UUIDS[5]).exists(), 'a refused view is removed')
+        with patch.object(service.os, 'listdir', return_value=['planted']):
+            with self.assertRaisesRegex(service.Refusal, 'guided_reader_view'):
+                self.launcher._view(UUIDS[6])
+        self.assertFalse((self.views / UUIDS[6]).exists())
+        self.assertEqual(self.launcher._view(UUIDS[7]), f'{self.views}/{UUIDS[7]}')
 
     def test_the_pidfd_must_be_a_pidfd(self):
         def refuse(fd):
