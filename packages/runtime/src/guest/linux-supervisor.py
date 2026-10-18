@@ -555,6 +555,15 @@ def reader_pidfd_check(fd):
 def reader_kill_init(fd):
     try:signal.pidfd_send_signal(fd,signal.SIGKILL)
     except ProcessLookupError:pass
+def poll_readable(fds,timeout):
+    """Descriptors that are readable, hung up or in error. select.poll, not select.select: the latter raises ValueError for any descriptor numbered 1024 or more."""
+    poller=select.poll()
+    for fd in fds:poller.register(fd,select.POLLIN)
+    ready=[]
+    for fd,event in poller.poll(int(timeout*1000)):
+        if event&select.POLLNVAL:raise OSError(errno.EBADF,'invalid descriptor')
+        ready.append(fd)
+    return ready
 def reader_raw_status(code):return code<<8 if code>=0 else -code
 
 class ReaderLauncher:
@@ -591,8 +600,14 @@ class ReaderLauncher:
             return result
         out=bytearray();err=bytearray();status=None;overrun=False;timed_out=False;killed=False;fallback=False;code=None
         try:
+            executable=f"/proc/self/fd/{self.artifacts['launcher']}"
             try:
-                child=self.spawn(argv,executable=f"/proc/self/fd/{self.artifacts['launcher']}",stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=fds,close_fds=True,env={'LANG':'C','LC_ALL':'C'},start_new_session=True,bufsize=0)
+                child=self.spawn(argv,executable=executable,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=fds,close_fds=True,env={'LANG':'C','LC_ALL':'C'},start_new_session=True,bufsize=0)
+            except OSError as error:
+                # Only a failed exec of the launcher itself (CPython names the executable in it) proves no process exists. Any other OSError may come after
+                # the exec succeeded, with a live monitor and no handle: that is unaccounted for, never the vacuous receipt.
+                if error.filename!=executable:result.update(launched=True,namespaceInitReaped=False,monitorReaped=False,namespaceWaitStatus=None,monitorWaitStatus=None,stdoutEof=False,stderrEof=False,captureDrained=False)
+                raise
             finally:remote.close()
             # From here a process may exist: every flag below is False until it is actually observed.
             result.update(launched=True,namespaceInitReaped=False,monitorReaped=False,namespaceWaitStatus=None,monitorWaitStatus=None,stdoutEof=False,stderrEof=False,captureDrained=False)
@@ -665,7 +680,7 @@ class ReaderLauncher:
             for end in (control,remote):
                 if end is not None:end.close()
             if pidfd is not None:os.close(pidfd)
-            if view is not None and (child is None or result['monitorReaped']):
+            if view is not None and (not result['launched'] or result['monitorReaped']):
                 try:os.rmdir(view)
                 except OSError:pass
         return result
@@ -699,7 +714,7 @@ class GuidedReaderService:
         with self.cv:return {'state':self.state,'failure':self.failure,'consumed':len(self.consumed),'outstanding':len(self.reads),'uncertainReads':len(self.uncertain),**self.counts}
     def _owner_gone(self):
         if self.owner_pidfd is None:return False
-        try:return bool(select.select([self.owner_pidfd],[],[],0)[0])
+        try:return bool(poll_readable([self.owner_pidfd],0))
         except (OSError,ValueError):return True
     def _fail(self,code):
         with self.cv:
@@ -715,7 +730,7 @@ class GuidedReaderService:
                 with self.cv:
                     if self.state!='serving':return
                 if self.halt.is_set() or self._owner_gone():self._fail('owner_ended');return
-                try:ready=select.select([self.stream],[],[],.05)[0]
+                try:ready=poll_readable([self.stream.fileno()],.05)
                 except (OSError,ValueError):self._fail('stream_lost');return
                 if not ready:continue
                 try:data=self.stream.recv(65536)

@@ -1,0 +1,14 @@
+{
+  "note": "Cross-repo pin. RuntimeSDK (yanlingLabs/winter-runtime-sdk) owns the isolated reader's stdin request: the InstructionReaderInvocation interface and invocation() validation in instruction-reader.ts, and the framing/canonical-JSON rule in instruction-reader-transport.ts. Root only emits it. If either file changes upstream, re-review reader_invocation and update this pin.",
+  "repository": "yanlingLabs/winter-runtime-sdk",
+  "commit": "29eede4b3e085044f5ed6bc6cf99e8f6c4daf6a1",
+  "files": {
+    "src/guest/instruction-reader.ts": "f9e240172b43b27979ec4cccde60bcac06dd34db8be0c62da2556cc7b643f27a",
+    "src/guest/instruction-reader-transport.ts": "7330cfd8a65f68210a269e35a2531f2f94c6e2647cf37f8b4e5b2e2eb36e7ef8"
+  },
+  "requestKeys": ["version", "readId", "owner", "views", "limits"],
+  "ownerKeys": ["logicalSessionId", "backendSessionId", "generation", "bootId", "incarnationId", "leaseEpoch"],
+  "viewsKeys": ["sourceRoot", "sourceCwd", "sharedRoot", "sharedPath"],
+  "limitsKeys": ["maxFileBytes", "maxReadBytes", "maxReadOccurrences", "maxExpandedBytes"],
+  "inputBytes": 16384
+}

@@ -125,7 +125,7 @@ class CodecTests(unittest.TestCase):
         body = service.reader_invocation(reg, UUIDS[0])
         value = json.loads(body)
         self.assertEqual(sorted(value), ['limits', 'owner', 'readId', 'version', 'views'])
-        # Key set copied from RuntimeSDK src/guest/instruction-reader.ts InstructionReaderInvocation (runtime-sdk wrapper branch 9a8dda2).
+        # Key set of RuntimeSDK's InstructionReaderInvocation; the cross-repo pin is runtime-sdk-reader-request.pin.json.
         self.assertEqual(sorted(value['owner']), sorted(['logicalSessionId', 'backendSessionId', 'generation', 'bootId', 'incarnationId', 'leaseEpoch']))
         self.assertNotIn('workspaceId', value['owner'])
         self.assertEqual(value['views'], reg['views'])
@@ -958,6 +958,84 @@ class ServiceProtocolTests(ServiceFixture):
         self.assertFalse(fixture.debt)
 
 
+class HighDescriptorTests(unittest.TestCase):
+    """select.select raises ValueError for descriptors numbered 1024 or more; a busy Root must still serve."""
+
+    def test_poll_readable_handles_descriptors_above_1024(self):
+        read, write = os.pipe()
+        high_read = os.dup2(read, 1500)
+        try:
+            self.assertEqual(service.poll_readable([high_read], 0), [])
+            os.write(write, b'x')
+            self.assertEqual(service.poll_readable([high_read], 0), [1500])
+            with self.assertRaises(OSError):
+                service.poll_readable([1999], 0)
+        finally:
+            for fd in (read, write, high_read):
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+
+    def test_the_service_serves_and_watches_the_owner_on_descriptors_above_1024(self):
+        reg = registration()
+        pair = GuestEnd(reg)
+        stream = socket.socket(fileno=os.dup2(pair.service_end.fileno(), 1600))
+        pair.service_end.close()
+        owner_read, owner_write = os.pipe()
+        high_owner = os.dup2(owner_read, 1700)
+        launch = FakeLaunch(reg)
+        running = service.GuidedReaderService(registration=reg, stream=stream, owner_pidfd=high_owner, halt=threading.Event(), launch=launch)
+        try:
+            self.assertGreaterEqual(stream.fileno(), 1024)
+            running.start()
+            pair.send(start_message(reg, UUIDS[0], UUIDS[1]))
+            self.assertEqual((pair.frame()['kind'], pair.frame()['kind']), ('reader_result', 'reader_terminal'))
+            self.assertEqual(running.observations()['state'], 'serving')
+            os.close(owner_write)
+            deadline = time.monotonic() + 5
+            while running.observations()['failure'] is None and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertEqual(running.observations()['failure'], 'owner_ended')
+        finally:
+            running.stop()
+            for fd in (owner_read, high_owner):
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+            stream.close()
+            pair.close()
+
+
+class RuntimeSdkPinTests(unittest.TestCase):
+    """RuntimeSDK owns the reader's stdin request; Root only emits it. The pin records what was reviewed."""
+
+    PIN = json.loads(Path(__file__).with_name('runtime-sdk-reader-request.pin.json').read_text())
+
+    def test_the_pin_is_well_formed(self):
+        self.assertEqual(self.PIN['repository'], 'yanlingLabs/winter-runtime-sdk')
+        self.assertRegex(self.PIN['commit'], r'^[0-9a-f]{40}$')
+        self.assertEqual(sorted(self.PIN['files']), ['src/guest/instruction-reader-transport.ts', 'src/guest/instruction-reader.ts'])
+        for digest in self.PIN['files'].values():
+            self.assertRegex(digest, r'^[0-9a-f]{64}$')
+        self.assertEqual(self.PIN['inputBytes'], service.GUIDED_READER_INPUT_BYTES)
+
+    def test_the_key_set_root_emits_is_the_pinned_one(self):
+        reg = registration()
+        value = json.loads(service.reader_invocation(reg, UUIDS[0]))
+        self.assertEqual(list(value), self.PIN['requestKeys'])
+        self.assertEqual(sorted(value['owner']), sorted(self.PIN['ownerKeys']))
+        self.assertEqual(sorted(value['views']), sorted(self.PIN['viewsKeys']))
+        self.assertEqual(sorted(value['limits']), sorted(self.PIN['limitsKeys']))
+        self.assertEqual(value['limits'], service.GUIDED_READER_LIMITS)
+
+    def test_a_local_runtime_sdk_checkout_still_matches_the_pin_when_one_is_given(self):
+        checkout = os.environ.get('WINTER_RUNTIME_SDK_CHECKOUT')
+        if not checkout:
+            self.skipTest('set WINTER_RUNTIME_SDK_CHECKOUT to a runtime-sdk clone to verify the pinned blobs')
+        for name, digest in self.PIN['files'].items():
+            shown = subprocess.run(['git', '-C', checkout, 'show', f"{self.PIN['commit']}:{name}"], capture_output=True)
+            self.assertEqual(shown.returncode, 0, shown.stderr)
+            self.assertEqual(hashlib.sha256(shown.stdout).hexdigest(), digest, name)
+
+
 class ServiceBoundaryTests(unittest.TestCase):
     def test_no_service_exists_for_v1_or_fresh_runs(self):
         source = (GUEST / 'linux-supervisor.py').read_text()
@@ -1290,12 +1368,46 @@ class ReaderLauncherTests(LauncherFixture):
 
     def test_a_spawn_failure_means_no_process_and_a_vacuous_receipt(self):
         def spawn(argv, **options):
-            raise OSError('exec failed')
+            raise OSError(2, 'No such file or directory', options['executable'])   # CPython names the executable when its exec failed
         self.launcher.spawn = spawn
         result = self.go()
         self.assertFalse(result['launched'])
         self.assertEqual(result['outcome'], 'unavailable')
         self.assertEqual(list(self.views.iterdir()), [])
+
+    def test_a_spawn_error_after_the_exec_succeeded_is_debt_not_a_vacuous_receipt(self):
+        for error in (OSError(24, 'Too many open files'), OSError(12, 'Cannot allocate memory', '/some/pipe'), OSError(2, 'No such file or directory', '/not/the/launcher')):
+            with self.subTest(error=str(error)):
+                self.tearDown()
+                self.setUp()
+
+                def spawn(argv, error=error, **options):
+                    # A fake exec has succeeded (a live monitor would exist); the parent then fails while setting up its own objects.
+                    raise error
+                self.launcher.spawn = spawn
+                result = self.go()
+                self.assertTrue(result['launched'], 'a monitor may exist, so the launch is not "nothing happened"')
+                self.assertFalse(any(result[key] is True for key in ('namespaceInitReaped', 'monitorReaped', 'stdoutEof', 'stderrEof', 'captureDrained')))
+                self.assertEqual(result['outcome'], 'unavailable')
+                self.assertEqual(len(list(self.views.iterdir())), 1, 'the view of a possibly live monitor is kept')
+
+    def test_that_debt_reaches_the_service_which_sends_no_receipt(self):
+        def spawn(argv, **options):
+            raise OSError(24, 'Too many open files')
+        self.launcher.spawn = spawn
+        pair = GuestEnd(self.reg)
+        running = service.GuidedReaderService(registration=self.reg, stream=pair.service_end, owner_pidfd=None, halt=threading.Event(), launch=self.launcher.run)
+        running.start()
+        try:
+            pair.send(start_message(self.reg, UUIDS[0], UUIDS[1]))
+            deadline = time.monotonic() + 5
+            while not running.debt and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue(running.debt)
+            self.assertIsNone(pair.nothing_within())
+            self.assertFalse(running.stop())
+        finally:
+            pair.close()
 
     def test_stdout_overrun_kills_the_init_and_is_unavailable_with_complete_evidence(self):
         def script(control, child):
