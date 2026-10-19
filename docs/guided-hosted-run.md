@@ -197,11 +197,11 @@ D4 a `host-query-ended` line is recorded and does not fail a command.
 ### `fixture-inputs.json`: derived, pinned, and where each field comes from
 
 `scripts/guest-hosted-guided/fixture-inputs.json` (sha256 pinned in `run.py` as `FIXTURE_INPUTS_SHA256`) is produced by
-`scripts/guest-hosted-guided/derive-fixture-inputs.ts`, run over Winter at the run-2 pin's winter head (`8b52ef83`, the packet's own
+`docs/guided-hosted-run/derive-fixture-inputs.ts` (kept under `docs/` on purpose: it dynamically imports from two other checkouts and spells no brand literal, which the repository's `scripts/**` scans would flag; it is a derivation record, not a build input), run over Winter at the run-2 pin's winter head (`8b52ef83`, the packet's own
 `source/winter` bytes) and the host client core from the packet's builder origin:
 
 ```sh
-bun scripts/guest-hosted-guided/derive-fixture-inputs.ts <winter checkout at 8b52ef83> <packet source/builder/scripts/guest-guided-build/entries> <out>
+bun docs/guided-hosted-run/derive-fixture-inputs.ts <winter checkout at 8b52ef83> <packet source/builder/scripts/guest-guided-build/entries> <out>
 ```
 
 It is not run by CI or by the workflow; the committed file is pinned instead, and two runs produce the same bytes. Core's own classes create

@@ -33,7 +33,7 @@ BINDING = '5f6e7d8c-0000-4000-a000-00000000000b'
 ARTIFACTS = ('runtimeEntry', 'providerWorker', 'hostClient', 'instructionReader', 'toolLauncher', 'runtimeLauncher', 'fileWorker', 'processWorker', 'ownerLibrary', 'instructionReaderLauncher')
 LIBS = ('environment/lib/aarch64-linux-gnu/libc.so.6', 'environment/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1', 'environment/usr/lib/aarch64-linux-gnu/libm.so.6')
 HASH = lambda data: hashlib.sha256(data).hexdigest()
-# The REAL derived inputs (derive-fixture-inputs.ts over Winter Core at the run-2 pin's winter head), not a stand-in.
+# The REAL derived inputs (docs/guided-hosted-run/derive-fixture-inputs.ts over Winter Core at the run-2 pin's winter head), not a stand-in.
 INPUTS = json.loads(Path(HERE, 'fixture-inputs.json').read_bytes())
 
 

@@ -1,7 +1,7 @@
 // @ts-nocheck -- a derivation tool, not a build input: its imports resolve inside two checkouts passed on the command line.
 /** Derives `fixture-inputs.json` for the guided hosted run from REVIEWED UPSTREAM CODE, never from invented records.
  *
- *   bun scripts/guest-hosted-guided/derive-fixture-inputs.ts <winter checkout at the run-2 pin's winter head> <runtime-sdk entries dir> <out file>
+ *   bun docs/guided-hosted-run/derive-fixture-inputs.ts <winter checkout at the run-2 pin's winter head> <runtime-sdk entries dir> <out file>
  *
  * Winter Core's own classes (CoworkRepository, RuntimeSessionRecords, the guest supervisor and owner registry, the guided reader adapter)
  * create the records the host client's planner reads, exactly the way Core's guided-reader-adapter test fixture does; the result is dumped

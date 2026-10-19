@@ -42,7 +42,7 @@ OPT_IN_VALUE = 'disposable-linux-guided-hosted-run'
 # SHA-256 of the two siblings this file may load. Changing either sibling changes these and therefore this file's hash.
 ORACLE_SHA256 = '295075e74776a4b40a7e5d4f11912d52f47bb8f03e112e6f48d687de6fa3323e'
 ADAPTER_SHA256 = '02593e1c8973ce773224566a34ebbe66efda8edf832231b0385ca5c87d2f7e7b'
-SESSION_SHA256 = 'e6f8ccc9c2c8d268cee99ef55fb6e779ee57e2ed003f219f8039cf279a2606a0'
+SESSION_SHA256 = '68d202eaa53677e695b9ac5f18d142aa4abeb59b65a2193ba945e66a85d1ab1e'
 # The Core-dependent inputs (the host fixture records, the provider script's marker lines, the two prompts, the guidance
 # texts) are DATA this lane cannot invent; they live in a closed JSON file next to this one, pinned here. Zero = not supplied.
 FIXTURE_INPUTS_SHA256 = 'bfcdc1bffc6ea84548884602d57d23493999d0f8ed5bbe5e4a304b0bc5f74fce'

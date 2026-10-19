@@ -11,7 +11,7 @@ The pattern is `scripts/guest-host-query/verify.py` (the v1 hosted Root runner):
 provider are the same. It adds only what the runtime-sdk entry contract (C-P*, C-H*) asks of Root: stdin pipes for both roles, no network
 interface for either, metadata files built here, and the lifecycle record.
 
-Its Core-dependent DATA is `fixture-inputs.json` (derived by derive-fixture-inputs.ts from Winter Core at the run-2 pin's winter head and pinned
+Its Core-dependent DATA is `fixture-inputs.json` (derived by docs/guided-hosted-run/derive-fixture-inputs.ts from Winter Core at the run-2 pin's winter head and pinned
 by hash in run.py): the host fixture records, the stub's marker lines, the prompts and the guidance texts. The one value only the kernel knows,
 the boot id, is bound at open (`bind_boot`).
 Never started by its author; nothing here has run as root on Linux.
@@ -47,7 +47,7 @@ GUIDED_PROFILE = 'host-query-guided-v1'
 INPUT_KEYS = ('version', 'prompts', 'guidance', 'steps', 'hostFixture')
 FIXTURE_KEYS = ('registration', 'capture', 'runtimeRow', 'workspace', 'binding', 'policy', 'sources', 'grants', 'bootId')
 WORKSPACE, INCARNATION = 'workspace', 'incarnation'
-# The boot id is the kernel's, so it is the ONE value fixture-inputs.json cannot carry: derive-fixture-inputs.ts writes this placeholder
+# The boot id is the kernel's, so it is the ONE value fixture-inputs.json cannot carry: docs/guided-hosted-run/derive-fixture-inputs.ts writes this placeholder
 # in exactly three places and `bind_boot` replaces exactly those three with the run's /proc boot id.
 BOOT_PLACEHOLDER = '00000000-0000-4000-8000-000000000000'
 BOOT_PATHS = (('bootId',), ('capture', 'bootId'), ('registration', 'bootId'))
