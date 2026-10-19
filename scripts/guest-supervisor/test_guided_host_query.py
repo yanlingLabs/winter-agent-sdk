@@ -657,7 +657,7 @@ class ConstructorRootMetadataTests(unittest.TestCase):
 
     def test_host_query_roots_must_be_served_from_their_own_guest_path(self):
         for profile in ('host-query-v1', GUIDED):
-            for source in ('/workspace/folders/other', '/workspace/repos/source', '/workspace/folders', '/workspace', '/', '/workspace/folders/source/', '/workspace/.winter/store', '/source', str(self.base / 'source')):
+            for source in ('/workspace/Folders/source', '/workspace/FOLDERS/SOURCE', '/workspace/folders/other', '/workspace/repos/source', '/workspace/folders', '/workspace', '/', '/workspace/folders/source/', '/workspace/.winter/store', '/source', str(self.base / 'source')):
                 with self.subTest(profile=profile, source=source), self.assertRaisesRegex(service.Refusal, 'admitted_root'):
                     self.construct(profile, 'ask', source)
             built, _ = self.construct(profile, 'ask')

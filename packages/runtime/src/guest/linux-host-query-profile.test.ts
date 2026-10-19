@@ -47,6 +47,15 @@ test("interrupt admits exactly no payload, {} and the host SDK's { scope: \"turn
   expect(() => checkLinuxHostQueryFrame({ ...interrupt({ scope: "turn" }), subtype: "set_model" }, () => false)).toThrow();
 });
 
+test("only end_input and interrupt are control subtypes: every other subtype is refused even with an empty payload or none", () => {
+  for (const subtype of ["set_model", "set_permission_mode", "set_max_thinking_tokens", "initialize", "delegate", "resume", "mcp_status", "rewind_files", "get_context_usage", "", "Interrupt", "END_INPUT", "interrupt ", "end_input\n"]) {
+    for (const extra of [{ payload: {} }, {}] as const) {
+      expect(() => checkLinuxHostQueryFrame({ type: "control_request", requestId: "x", subtype, ...extra }, () => false), `${JSON.stringify(subtype)} ${JSON.stringify(extra)}`).toThrow("Linux host-query profile unavailable");
+    }
+  }
+  expect(() => checkLinuxHostQueryFrame({ type: "control_request", requestId: "x", subtype: undefined, payload: {} }, () => false)).toThrow();
+});
+
 test("host frames cannot mutate settings, delegate, resume or attach alternate inputs", () => {
   for (const value of [{ type: "user", text: "go" }, { type: "control_request", requestId: "e", subtype: "end_input" }, { type: "control_request", requestId: "i", subtype: "interrupt", payload: {} }]) expect(checkLinuxHostQueryFrame(value, () => false)).toBe("accept");
   for (const value of [null, [], { type: "user", text: " /compact" }, { type: "user", text: "go", images: [] }, { type: "user", text: "go", config: {} }, { type: "user", text: "x".repeat(LINUX_SESSION_FRAME_BYTES) },
