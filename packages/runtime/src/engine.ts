@@ -3,7 +3,7 @@ import { parseRuntimeContextConfig, RUNTIME_CONTEXT_VERSION, RUNTIME_CONTEXT_SUB
 import { assertLinuxSession, assertRunningLinuxSession, checkLinuxSessionFrame, linuxSessionProfile, linuxSessionBindings, linuxGuidedSessionChannel, FRESH_LINUX_TOOLS, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
 import { LINUX_GUIDED_HOST_QUERY_PROFILE } from "./guest/linux-guided-host-query-profile.ts";
 import { dispatchGuidedParentControl } from "./guest/guided-parent-input.ts";
-import { LINUX_HOST_QUERY_PROFILE } from "./guest/linux-host-query-profile.ts";
+import { hostMessageRequestKind, LINUX_HOST_MESSAGE_SUBTYPES, LINUX_HOST_QUERY_PROFILE } from "./guest/linux-host-query-profile.ts";
 import { sourceReadRestrictionGeneration } from "./sandbox/source-read.ts";
 import { randomUUID } from "node:crypto";
 import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
@@ -3035,9 +3035,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const bridge = createRpcBridge(output, {
     holdUntilOpen: true,
     ...(opts.linuxSessionAdmission !== undefined && linuxSessionProfile(opts.linuxSessionAdmission) === LINUX_HOST_QUERY_PROFILE
-      ? { allowedSubtypes: ["permission"] } : {}),
+      ? { allowedSubtypes: ["permission", ...LINUX_HOST_MESSAGE_SUBTYPES] } : {}),
     ...(opts.linuxSessionAdmission !== undefined && linuxSessionProfile(opts.linuxSessionAdmission) === LINUX_GUIDED_HOST_QUERY_PROFILE
-      ? { allowedSubtypes: ["permission", RUNTIME_CONTEXT_SUBTYPE] } : {}),
+      ? { allowedSubtypes: ["permission", RUNTIME_CONTEXT_SUBTYPE, ...LINUX_HOST_MESSAGE_SUBTYPES] } : {}),
   });
   if (config.hostCodeProcessBroker !== undefined) {
     if (typeof config.hostCodeProcessBroker.generationId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(config.hostCodeProcessBroker.generationId)) throw new Error("invalid host Code broker generation");
@@ -6589,7 +6589,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
               const channel = linuxGuidedSessionChannel(opts.linuxSessionAdmission, config, output);
               if (dispatchGuidedParentControl(channel, frame, () => { channel.close(); hardStop(); })) continue;
             }
-            if (checkLinuxSessionFrame(opts.linuxSessionAdmission, config, frame, id => bridge.ownsRequest(id, "permission")) === "drop") continue;
+            if (checkLinuxSessionFrame(opts.linuxSessionAdmission, config, frame, id => bridge.ownsRequest(id, "permission"), hostMessageRequestKind(bridge)) === "drop") continue;
           } catch (error) {
             // A malformed confined input cancels pending approvals/in-flight work; it is not
             // merely a logical end_input followed by continued execution.

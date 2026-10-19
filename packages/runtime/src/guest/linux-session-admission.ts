@@ -1,5 +1,5 @@
 /** Fresh-store Linux supervisor admission. Kernel-validated owner capability, not config/env authority. */
-import { assertLinuxHostQueryConfig, assertLinuxHostQueryRoots, checkLinuxHostQueryFrame, LINUX_HOST_QUERY_PROFILE } from "./linux-host-query-profile.ts";
+import { assertLinuxHostQueryConfig, assertLinuxHostQueryRoots, checkLinuxHostQueryFrame, LINUX_HOST_QUERY_PROFILE, type OwnsHostRequest } from "./linux-host-query-profile.ts";
 import { assertLinuxGuidedHostQueryConfig, assertLinuxGuidedHostQueryRoots, LINUX_GUIDED_HOST_QUERY_PROFILE } from "./linux-guided-host-query-profile.ts";
 import { parseLinuxGuidedReaderRegistration, type LinuxGuidedReaderRegistration } from "./linux-guided-reader-protocol.ts";
 import type { LinuxGuidedReaderChannel } from "./linux-guided-reader-channel.ts";
@@ -150,10 +150,10 @@ function admitLinuxSession(bootstrapFd: number, ownerLibraryFd: number, profile:
   } catch (error) { closeOwner(); throw error; }
 }
 /** Rechecks native liveness before selecting the closed input surface. */
-export function checkLinuxSessionFrame(value: LinuxSessionAdmission, config: RuntimeConfig, frame: unknown, ownsPermission: (id: string) => boolean): "accept" | "drop" {
+export function checkLinuxSessionFrame(value: LinuxSessionAdmission, config: RuntimeConfig, frame: unknown, ownsPermission: (id: string) => boolean, ownsHostRequest?: OwnsHostRequest): "accept" | "drop" {
   const state = stateOf(value); validateConfig(config, state.record);
-  if (state.record.profile === LINUX_HOST_QUERY_PROFILE) return checkLinuxHostQueryFrame(frame, ownsPermission);
-  if (state.record.profile === LINUX_GUIDED_HOST_QUERY_PROFILE) return checkLinuxHostQueryFrame(frame, ownsPermission);
+  if (state.record.profile === LINUX_HOST_QUERY_PROFILE) return checkLinuxHostQueryFrame(frame, ownsPermission, ownsHostRequest);
+  if (state.record.profile === LINUX_GUIDED_HOST_QUERY_PROFILE) return checkLinuxHostQueryFrame(frame, ownsPermission, ownsHostRequest);
   assertFreshLinuxUserFrame(frame); return "accept";
 }
 /** One output/channel binding for this actual admitted parent incarnation. */
