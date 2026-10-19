@@ -60,7 +60,13 @@ class Driver {
     if (!answer.ok) throw Object.assign(new Error(answer.error!.code), { code: answer.error!.code });
     return answer.payload;
   }
-  hold(inputId: string, holdToken: string, text: string) { return this.call("hold", "host_input_hold", { inputId, holdToken, epoch: this.epoch, text, clientName: "peer" }); }
+  /** Every hold ANSWER the guest gave, in order: the model of the host must see them, not discard them. */
+  holdAnswers: Array<{ held: boolean; again?: true; state?: string }> = [];
+  async hold(inputId: string, holdToken: string, text: string) {
+    const answer = await this.call("hold", "host_input_hold", { inputId, holdToken, epoch: this.epoch, text, clientName: "peer" });
+    this.holdAnswers.push(answer);
+    return answer;
+  }
   commit(inputId: string, holdToken: string) { return this.call("commit", "host_input_commit", { inputId, holdToken }); }
   discard(inputId: string, holdToken: string) { return this.call("discard", "host_input_discard", { inputId, holdToken }); }
   forget(inputId: string, holdToken: string) { return this.call("forget", "host_input_forget", { inputId, holdToken }); }
@@ -83,6 +89,7 @@ async function drainOnce(ledger: Ledger, driver: Driver): Promise<void> {
   const offer = ledger.offer();
   if (offer === undefined) return;
   let token = holdTokenOf(offer.receiptId, driver.epoch.incarnationId, driver.epoch.leaseEpoch, offer.offerCount);
+  // {held:false, state} (the input is already committed or in the transcript) is NOT a stop: 4.5 goes on to ack and commit, and the commit answers `already`.
   try { await driver.hold(offer.receiptId, token, offer.text); } catch { return; }
   try { ledger.ack(offer.receiptId, token); } catch (error) {
     if (error instanceof TypedRefusal) { await driver.discard(offer.receiptId, token).catch(() => undefined); return; }
@@ -147,6 +154,7 @@ test("row 1a: the hold fails before it reaches the guest: nothing held, nothing 
   await drainOnce(w.ledger, d);
   await settled(w.home, "m1");
   expect(w.ledger.get("m1")).toMatchObject({ state: "delivered", commitConfirmed: true });
+  expect(d.holdAnswers).toEqual([{ held: true }]);
   expect(delivered(w.home, "m1")).toBe(1);
 });
 
@@ -162,6 +170,7 @@ test("row 1b: the guest dies after holding, before the host hears: the hold is `
   expect(modelSaw(d.guest, "row one b message")).toBe(false);
   await drainOnce(w.ledger, d);
   expect(w.ledger.get("m1").ackedHoldToken).not.toBe(firstToken);                    // the token was replaced by the re-hold
+  expect(d.holdAnswers).toEqual([{ held: true, again: true }]);   // the first answer was lost
   await settled(w.home, "m1");
   expect(delivered(w.home, "m1")).toBe(1);
 });
@@ -452,3 +461,26 @@ test("row 16: host_input_forget is lost: the tombstone stays, harmless; delivery
   expect(journalRecords(w.home)).toEqual([]);
   expect(await d.commit("m1", w.ledger.get("m1").ackedHoldToken!)).toEqual({ outcome: "already" });   // the transcript is the last word
 });
+
+test("row 17: the hold is answered {held:false} (the input is already committed or in the transcript): the host still acks, the commit answers `already` under the NEW token, the ledger confirms; exactly one", async () => {
+  for (const mode of ["tombstone", "forgotten"] as const) {
+    const w = world(`row17-${mode}`);
+    w.ledger.add("m1", `row seventeen ${mode}`);
+    const d = w.start();
+    await drainOnce(w.ledger, d);
+    await settled(w.home, "m1");
+    if (mode === "forgotten") {
+      await d.forget("m1", w.ledger.get("m1").ackedHoldToken!);
+      expect(journalRecords(w.home)).toEqual([]);
+    }
+    // The host's record is rewound (a restored ledger): it owes the delivery again, with offerCount 2, so a NEW hold token.
+    Object.assign(w.ledger.get("m1"), { state: "accepted", commitConfirmed: undefined, outcome: undefined, ackedHoldToken: undefined });
+    const firstToken = holdTokenOf("m1", "inc-1", 1, 1);
+    await drainOnce(w.ledger, d);
+    expect(d.holdAnswers).toEqual([{ held: true }, { held: false, state: "in_transcript" }]);
+    expect(w.ledger.get("m1")).toMatchObject({ state: "delivered", commitConfirmed: true, outcome: "already" });
+    expect(w.ledger.get("m1").ackedHoldToken).not.toBe(firstToken);
+    expect(delivered(w.home, "m1")).toBe(1);
+    expect(d.guest.texts().join("").split(`row seventeen ${mode}`).length - 1).toBeLessThanOrEqual(1);
+  }
+}, 30_000);

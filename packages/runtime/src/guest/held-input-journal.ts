@@ -128,7 +128,7 @@ function parseRecords(raw: string): HeldInputRecord[] {
 function validHold(request: HeldInputHold): void {
   if (!isRecord(request) || typeof request.inputId !== "string" || !HELD_INPUT_ID.test(request.inputId)) throw new HeldInputError("invalid", "inputId");
   if (typeof request.holdToken !== "string" || !HELD_INPUT_TOKEN.test(request.holdToken)) throw new HeldInputError("invalid", "holdToken");
-  if (typeof request.text !== "string" || request.text.length === 0 || Buffer.byteLength(request.text) > HELD_INPUT_MAX_TEXT_BYTES) throw new HeldInputError("invalid", "text");
+  if (typeof request.text !== "string" || request.text.length === 0 || request.text.trimStart().startsWith("/") || Buffer.byteLength(request.text) > HELD_INPUT_MAX_TEXT_BYTES) throw new HeldInputError("invalid", "text");
   if (typeof request.clientName !== "string" || request.clientName.length > HELD_INPUT_MAX_CLIENT_NAME) throw new HeldInputError("invalid", "clientName");
 }
 function validTokenPair(inputId: unknown, holdToken: unknown): void {
@@ -187,8 +187,10 @@ export function openHeldInputJournal(path: string, io: HeldInputIo = realHeldInp
       validTokenPair(inputId, holdToken);
       const existing = find(inputId);
       if (existing === undefined) throw new HeldInputError("unknown_input", "no record for this input");
-      if (existing.holdToken !== holdToken) throw new HeldInputError("superseded", "another hold token is recorded");
+      // A committed or in-transcript record answers `already` whatever the token: a re-hold answered {held:false} was acked, and its commit
+      // must not stall the drain behind `superseded`. Only a still-`held` record has a token to be superseded.
       if (existing.state !== "held") return { kind: "already" };
+      if (existing.holdToken !== holdToken) throw new HeldInputError("superseded", "another hold token is recorded");
       const next: HeldInputRecord = { ...existing, state: "committed" };
       persist(replace(next));
       return { kind: "committed", record: { ...next } };

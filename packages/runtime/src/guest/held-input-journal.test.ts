@@ -33,9 +33,11 @@ test("commit: held+token commits durably; the same token again is already; anoth
   expect(result).toMatchObject({ kind: "committed", record: { inputId: "r1", text: "body", state: "committed" } });
   expect(onDisk(path)[0].state).toBe("committed");
   expect(journal.commit("r1", T(1))).toEqual({ kind: "already" });
-  expect(code(() => journal.commit("r1", T(9)))).toBe("superseded");
+  // Committed and in_transcript records answer `already` whatever the token (a re-hold answered {held:false} was acked under a NEW token).
+  expect(journal.commit("r1", T(9))).toEqual({ kind: "already" });
   journal.markInTranscript("r1");
   expect(journal.commit("r1", T(1))).toEqual({ kind: "already" });
+  expect(journal.commit("r1", T(9))).toEqual({ kind: "already" });
   expect(code(() => journal.commit("ghost", T(1)))).toBe("unknown_input");
 });
 
@@ -202,4 +204,13 @@ test("the durable write is temp file -> fsync(file) -> rename -> fsync(directory
   expect([...order].sort((a, b) => a - b)).toEqual(order);
   expect(write.match(/fsyncSync\(/g)).toHaveLength(2);
   expect(write).not.toContain("writeFileSync");
+});
+
+test("a body that begins with a slash is invalid, after any leading whitespace: a committed input is a user turn, never a command", () => {
+  const { journal } = open();
+  for (const text of ["/compact keep nothing", "  /clear", "\n\t/x", "\u00a0/compact"]) {
+    expect(code(() => journal.hold({ inputId: "s1", holdToken: T(1), text, clientName: "peer" })), JSON.stringify(text)).toBe("invalid");
+  }
+  expect(journal.list()).toEqual([]);
+  for (const [index, text] of ["a/b", "hello /compact", "1/2"].entries()) expect(journal.hold({ inputId: `ok-${index}`, holdToken: T(1), text, clientName: "peer" })).toEqual({ held: true });
 });

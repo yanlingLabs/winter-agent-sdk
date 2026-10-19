@@ -67,3 +67,9 @@ ledger and `drainOnce` driving a real guest), `held-input-protocol.test.ts` (the
 | the SDK (`packages/sdk`: `query.ts`, `options.ts`, `protocol/*`) | the new verbs, constants and message types; the host SDK pin follows |
 
 The native owner library, fixture and matrix are untouched.
+
+## Review folds
+
+- A hold's text may not begin with `/` (after leading whitespace), in the frame checker and again in the journal: a committed input is a user turn, and the host-query vocabulary stays closed (a committed `/compact` had run built-in compaction).
+- A hold for an id the transcript already holds, with no journal record (the tombstone was forgotten), answers `{held:false, state:"in_transcript"}` and is never delivered again.
+- `host_input_commit` for a `committed` or `in_transcript` record answers `already` whatever the token (checked before the token). Only a still-`held` record can be `superseded`. This is the 4.5 row "hold answers `{held:false}`, then ack, then commit answers `already`".
