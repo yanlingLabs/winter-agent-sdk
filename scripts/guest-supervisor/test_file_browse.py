@@ -1379,6 +1379,7 @@ class SourceTests(unittest.TestCase):
         if compiler is None:
             self.skipTest('needs a C compiler')
         harness = r'''
+#define _GNU_SOURCE
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
