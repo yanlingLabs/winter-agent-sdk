@@ -37,7 +37,7 @@ site it saw, and the doc must not claim more. A separate run is not needed.
 
 ## The trigger, the arming and the owner approval
 
-* Trigger: ONLY a `push` that creates the never-used branch `cowork/guided-hosted-run`, with `github.event.created ==
+* Trigger: ONLY a `push` that creates the never-used branch `cowork/guided-hosted-run-2` (the first name, `cowork/guided-hosted-run`, was spent by the red run and is ruleset-protected), with `github.event.created ==
   true`, the exact ref, this repository and `run_attempt == '1'`. No `pull_request`, `pull_request_target`,
   `workflow_dispatch`, `schedule` or `workflow_run` trigger exists, so no ordinary PR (including the one that adds this
   file) can run it. A re-run has `run_attempt` 2 and is refused.
@@ -48,7 +48,7 @@ site it saw, and the doc must not claim more. A separate run is not needed.
   fails if the runner digest does not match the file). The owner-approved ARMING commit then changes exactly one line,
   `HOSTED_HEAD`, to the reviewed commit: the guard demands that commit be an ancestor of the pushed one, that the whole
   diff be that one file, `--numstat` `1 1`, and the exact one-line diff.
-* Owner approval needed: one push of the armed head to `cowork/guided-hosted-run`, by the controller only after the owner
+* Owner approval needed: one push of the armed head to `cowork/guided-hosted-run-2`, by the controller only after the owner
   approves that exact head. The branch is frozen after that one run: never push to it again, and **never delete and
   recreate it**, because creating it again is another first-creation push and would fire the workflow again.
 
