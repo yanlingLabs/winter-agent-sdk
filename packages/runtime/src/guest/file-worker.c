@@ -100,9 +100,24 @@ static void browse_identity(const char *name, const struct stat *st) {
 #else
 #error unsupported Linux browse architecture
 #endif
+/* The path-based xattr and attribute syscalls of 6.13 to 6.17 (setxattrat, removexattrat, file_setattr): kernel headers older than that do not name
+ * them, and the numbers are the same on both architectures, so the seal names them itself rather than depending on the build's headers. */
+#ifndef __NR_setxattrat
+#define __NR_setxattrat 463
+#endif
+#ifndef __NR_removexattrat
+#define __NR_removexattrat 466
+#endif
+#ifndef __NR_file_setattr
+#define __NR_file_setattr 469
+#endif
 #define BROWSE_DENY(n) BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,__NR_##n,0,1), BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM)
 #define BROWSE_STDOUT_ONLY(n) BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,__NR_##n,0,3), BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,args[0])), \
     BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,STDOUT_FILENO,1,0), BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM), BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,nr))
+/* fcntl may not duplicate a descriptor (F_DUPFD, F_DUPFD_CLOEXEC); every other command is allowed. */
+#define BROWSE_NO_FCNTL_DUP() BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,__NR_fcntl,0,5), BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,args[1])), \
+    BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,F_DUPFD,2,0), BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,F_DUPFD_CLOEXEC,1,0), BPF_JUMP(BPF_JMP|BPF_JA,1,0,0), \
+    BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM), BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,nr))
 /* A second filter, stacked on the launcher's shared one once the file is open: no further open, no exec, no write except the one
  * response line on stdout, and no syscall that changes a file or its metadata. Read, pread, fstat, close and exit stay allowed. */
 static int browse_seal(void) {
@@ -128,6 +143,11 @@ static int browse_seal(void) {
 #endif
         /* Descriptor and memory reach that an open file must not buy: no pulling another process's descriptor or naming it by pidfd, no
          * anonymous executable memory or fault-handling stall, no kernel keyring, no remote madvise. */
+        /* write/writev are allowed only on stdout, so nothing may put another descriptor there (dup, dup3, fcntl duplication; dup2 below on x86_64), and
+         * nothing may send through a descriptor with a different call (the three send calls) or queue I/O out of band (io_uring). */
+        BROWSE_DENY(dup), BROWSE_DENY(dup3), BROWSE_NO_FCNTL_DUP(), BROWSE_DENY(sendto), BROWSE_DENY(sendmsg), BROWSE_DENY(sendmmsg),
+        BROWSE_DENY(io_uring_setup), BROWSE_DENY(io_uring_enter), BROWSE_DENY(io_uring_register),
+        BROWSE_DENY(setxattrat), BROWSE_DENY(removexattrat), BROWSE_DENY(file_setattr),
         BROWSE_DENY(pidfd_getfd), BROWSE_DENY(pidfd_open), BROWSE_DENY(memfd_create), BROWSE_DENY(userfaultfd),
         BROWSE_DENY(keyctl), BROWSE_DENY(add_key), BROWSE_DENY(request_key),
 #ifdef __NR_process_madvise
@@ -137,7 +157,7 @@ static int browse_seal(void) {
         BROWSE_DENY(renameat),
 #endif
 #if defined(__x86_64__)
-        BROWSE_DENY(open), BROWSE_DENY(creat), BROWSE_DENY(rename), BROWSE_DENY(unlink), BROWSE_DENY(mkdir), BROWSE_DENY(rmdir), BROWSE_DENY(link),
+        BROWSE_DENY(dup2), BROWSE_DENY(open), BROWSE_DENY(creat), BROWSE_DENY(rename), BROWSE_DENY(unlink), BROWSE_DENY(mkdir), BROWSE_DENY(rmdir), BROWSE_DENY(link),
         BROWSE_DENY(symlink), BROWSE_DENY(chmod), BROWSE_DENY(chown), BROWSE_DENY(lchown), BROWSE_DENY(mknod), BROWSE_DENY(utimes), BROWSE_DENY(utime),
         BROWSE_DENY(futimesat),
 #endif
@@ -150,7 +170,7 @@ static int browse_seal(void) {
 /* TEST BUILDS ONLY (the image compiles this file without the define): after the seal, try each thing it must stop and report errno. */
 static int browse_seal_probe(int file) {
     char *none[] = { NULL };
-    int results[15];
+    int results[22];
     errno = 0; results[0] = execve("/", none, none) < 0 ? errno : 0;
     errno = 0; results[1] = openat(AT_FDCWD, "/", O_RDONLY | O_CLOEXEC) < 0 ? errno : 0;
     errno = 0; results[2] = write(STDERR_FILENO, "x", 1) < 0 ? errno : 0;
@@ -168,8 +188,16 @@ static int browse_seal_probe(int file) {
     errno = 0; results[12] = (int)syscall(SYS_request_key, NULL, NULL, NULL, 0) < 0 ? errno : 0;
     errno = 0; results[13] = (int)syscall(SYS_process_madvise, -1, NULL, 0, 0, 0) < 0 ? errno : 0;
     errno = 0; results[14] = (int)syscall(SYS_userfaultfd, 0) < 0 ? errno : 0;
-    printf("{\"version\":1,\"ok\":true,\"probe\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]}\n", results[0], results[1], results[2], results[3], results[4], results[5], results[6],
-           results[7], results[8], results[9], results[10], results[11], results[12], results[13], results[14]);
+    /* Nothing may reach stdout's slot or send around the write rule: duplication, send calls, and the path-based attribute calls newer headers name. */
+    errno = 0; results[15] = dup(STDOUT_FILENO) < 0 ? errno : 0;
+    errno = 0; results[16] = (int)syscall(SYS_dup3, STDOUT_FILENO, 99, 0) < 0 ? errno : 0;
+    errno = 0; results[17] = fcntl(STDOUT_FILENO, F_DUPFD, 50) < 0 ? errno : 0;
+    errno = 0; results[18] = (int)syscall(SYS_sendto, -1, "x", 1, 0, NULL, 0) < 0 ? errno : 0;
+    errno = 0; results[19] = (int)syscall(463, -1, NULL, NULL, 0, NULL, 0) < 0 ? errno : 0;
+    errno = 0; results[20] = (int)syscall(466, -1, NULL, 0, NULL) < 0 ? errno : 0;
+    errno = 0; results[21] = (int)syscall(469, -1, NULL, NULL, 0, 0) < 0 ? errno : 0;
+    printf("{\"version\":1,\"ok\":true,\"probe\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]}\n", results[0], results[1], results[2], results[3], results[4], results[5], results[6],
+           results[7], results[8], results[9], results[10], results[11], results[12], results[13], results[14], results[15], results[16], results[17], results[18], results[19], results[20], results[21]);
     return 0;
 }
 #endif

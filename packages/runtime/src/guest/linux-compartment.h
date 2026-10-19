@@ -33,6 +33,10 @@ static inline void guest_bind(const char *source, const char *target, int ro, in
     require(mount(source,target,NULL,MS_BIND,NULL),"bind");
     require(mount(NULL,target,NULL,MS_REMOUNT|MS_BIND|MS_NOSUID|MS_NODEV|(ro?MS_RDONLY:0)|(executable?0:MS_NOEXEC),NULL),"bind flags");
 }
+/* open_tree_attr (6.15) is a mount-tree syscall like open_tree; older kernel headers do not name it, but its number is the same on both architectures. */
+#ifndef __NR_open_tree_attr
+#define __NR_open_tree_attr 467
+#endif
 #define DENY(n) BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,__NR_##n,0,1), BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM)
 static inline void install_filter(int process) {
 #if defined(__aarch64__)
@@ -53,7 +57,7 @@ static inline void install_filter(int process) {
 #endif
         DENY(mount),DENY(umount2),DENY(chroot),DENY(pivot_root),DENY(setns),DENY(unshare),
 #ifdef __NR_open_tree
-        DENY(open_tree),DENY(move_mount),DENY(mount_setattr),
+        DENY(open_tree),DENY(open_tree_attr),DENY(move_mount),DENY(mount_setattr),
 #endif
         DENY(ptrace),DENY(process_vm_readv),DENY(process_vm_writev),
         /* Local IPC is needed by build tools; Internet sockets remain outside this

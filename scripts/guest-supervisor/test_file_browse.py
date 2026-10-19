@@ -785,7 +785,12 @@ class ServiceFixture(unittest.TestCase):
 
     def send(self, *values):
         for value in values:
-            os.write(self.host_write, value if isinstance(value, bytes) else line(value))
+            try:
+                os.write(self.host_write, value if isinstance(value, bytes) else line(value))
+            except BrokenPipeError:
+                # The service ends the channel at the first line it cannot echo and closes its end; a later line of the same send has no reader,
+                # which is the behaviour under test, not a failure of the test.
+                return
 
     def lines(self, count, timeout=5):
         deadline = time.monotonic() + timeout
@@ -1304,7 +1309,8 @@ class SourceTests(unittest.TestCase):
 
     def test_the_patch_adds_no_network_surface(self):
         added = '\n'.join(entry[1:] for entry in BROWSE_PATCH.read_text().splitlines() if entry.startswith('+') and not entry.startswith('+++'))
-        added += '\n' + WORKER.read_text()
+        # The seal NAMES sendto in order to deny it and its probe calls it to prove the denial; neither is network surface.
+        added += '\n' + WORKER.read_text().replace('BROWSE_DENY(sendto)', '').replace('SYS_sendto', '')
         for token in ('AF_INET', 'AF_INET6', 'AF_VSOCK', 'AF_NETLINK', 'AF_PACKET', 'vsock', 'virtio', 'ioctl(', 'bind(', 'listen(', 'accept(', 'sendto', 'recvfrom', 'setns(', 'unshare(',
                       'CLONE_NEW', 'SOCK_RAW', 'SOCK_DGRAM', 'getaddrinfo', 'urllib', 'http', 'ssl', 'create_connection', 'socket.socket(', 'provider'):
             self.assertNotIn(token, added, token)
@@ -1330,7 +1336,9 @@ class SourceTests(unittest.TestCase):
     def test_the_shared_filter_denies_handle_syscalls(self):
         header = code_only(HEADER.read_text())
         self.assertIn('DENY(open_by_handle_at),DENY(name_to_handle_at)', header)
-        self.assertEqual(sha(HEADER), '92fef7c0708a23b1e930c5b2560dae6bef27294dfd682346e69d35c0484b967d')
+        self.assertIn('DENY(open_tree),DENY(open_tree_attr),DENY(move_mount),DENY(mount_setattr)', header)
+        self.assertIn('#define __NR_open_tree_attr 467', header)
+        self.assertEqual(sha(HEADER), 'e666d010aab902c84ae86d3eea1fca6baaf75a7d94f55d936e020b30584a7e6b')
 
     def test_the_worker_browse_walk(self):
         source = code_only(WORKER.read_text())
@@ -1361,8 +1369,13 @@ class SourceTests(unittest.TestCase):
         for name in ('execve', 'execveat', 'openat', 'openat2', 'pwrite64', 'pwritev', 'pwritev2', 'truncate', 'ftruncate', 'fallocate', 'renameat', 'renameat2', 'unlinkat', 'mkdirat',
                      'mknodat', 'linkat', 'symlinkat', 'fchmod', 'fchmodat', 'fchown', 'fchownat', 'setxattr', 'lsetxattr', 'fsetxattr', 'removexattr', 'lremovexattr', 'fremovexattr',
                      'utimensat', 'sendfile', 'copy_file_range', 'splice', 'tee', 'vmsplice', 'socket', 'socketpair', 'connect', 'open_by_handle_at', 'name_to_handle_at',
-                     'pidfd_getfd', 'pidfd_open', 'memfd_create', 'userfaultfd', 'keyctl', 'add_key', 'request_key', 'process_madvise'):
+                     'pidfd_getfd', 'pidfd_open', 'memfd_create', 'userfaultfd', 'keyctl', 'add_key', 'request_key', 'process_madvise',
+                     'setxattrat', 'removexattrat', 'file_setattr', 'dup', 'dup3', 'sendto', 'sendmsg', 'sendmmsg', 'io_uring_setup', 'io_uring_enter', 'io_uring_register'):
             self.assertIn('BROWSE_DENY(%s)' % name, seal, name)
+        self.assertIn('BROWSE_DENY(dup2)', seal)
+        self.assertIn('BROWSE_NO_FCNTL_DUP()', seal)
+        for number in ('463', '466', '469'):
+            self.assertIn('#define __NR_%s %s' % ({'463': 'setxattrat', '466': 'removexattrat', '469': 'file_setattr'}[number], number), WORKER.read_text())
         self.assertIn('BROWSE_STDOUT_ONLY(write), BROWSE_STDOUT_ONLY(writev)', seal)
         self.assertIn('SECCOMP_RET_KILL_PROCESS', seal)
         self.assertTrue(seal.rstrip().endswith('}'))
@@ -1672,7 +1685,7 @@ class LinuxNativeTests(unittest.TestCase):
     def test_the_seal(self):
         root = self.root()
         value = self.result(root, 'stat', 'seed.txt', worker=self.seal_probe)
-        self.assertEqual(value['probe'], [1] * 15)
+        self.assertEqual(value['probe'], [1] * 22)
         self.assertEqual((root / 'seed.txt').read_bytes(), b'0123456789')
         # Mutant: the probe build without the seal must observe the kernel, not the filter.
         unsealed = self.build_dir / 'unsealed-src'
@@ -1683,7 +1696,7 @@ class LinuxNativeTests(unittest.TestCase):
         self.assertNotEqual(value['probe'][1], 1)  # openat of "/" succeeds in the view without the seal
         self.assertNotEqual(value['probe'][2], 1)  # stderr is writable without the seal
         self.assertNotEqual(value['probe'][3], 1)  # pwrite reaches the kernel (EBADF on the read-only descriptor)
-        for index in range(7, 14):  # pidfd_getfd, pidfd_open, memfd_create, keyctl, add_key, request_key, process_madvise; userfaultfd (14) may say EPERM on its own
+        for index in (*range(7, 14), *range(15, 22)):  # pidfd_getfd, pidfd_open, memfd_create, keyctl, add_key, request_key, process_madvise; userfaultfd (14) may say EPERM on its own
             self.assertNotEqual(value['probe'][index], 1, index)
         self.assertEqual((root / 'seed.txt').read_bytes(), b'0123456789')
 
@@ -1788,7 +1801,7 @@ class LinuxNativeTests(unittest.TestCase):
             mutant = self.mutant_build(WORKER, name, old, new, ['-DWINTER_BROWSE_SEAL_PROBE'] if name == 'the seal' else [])
             if name == 'the seal':
                 value = self.result(root, 'stat', 'seed.txt', worker=mutant)
-                if value.get('probe') == [1] * 15:
+                if value.get('probe') == [1] * 22:
                     survivors.append(name)
                 continue
             if self.worker_outcomes(mutant, root, share) == expected:
