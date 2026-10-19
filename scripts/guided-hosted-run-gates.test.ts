@@ -119,7 +119,7 @@ sys.argv = [source, packet, out, *extra]
 exec(compile(data, source, 'exec'), {'__name__': '__main__', '__file__': source})
 `;
 
-type Step = { name?: string; id?: string; "continue-on-error"?: boolean; uses?: string; run?: string; if?: string; shell?: string; env?: Record<string, unknown>; with?: Record<string, unknown> };
+type Step = { name?: string; id?: string; "timeout-minutes"?: number; "continue-on-error"?: boolean; uses?: string; run?: string; if?: string; shell?: string; env?: Record<string, unknown>; with?: Record<string, unknown> };
 type Doc = {
   on?: Record<string, unknown>;
   permissions?: Record<string, unknown>;
