@@ -184,7 +184,10 @@ int main(int argc,char **argv) {
     int uid=number(argv[5],1000,65535),gid=number(argv[6],1000,65535),roots=number(argv[14],1,16);
     int guidance=-1,guided=guidance_parse(argc,argv,15+3*roots,&guidance);
     if(guided<0 || (strcmp(argv[7],"auto")&&strcmp(argv[7],"plan")))_exit(64);
-    int process=!strcmp(argv[8],"process");if(!process&&strcmp(argv[8],"file"))_exit(64);
+    int process=!strcmp(argv[8],"process"),browse=!strcmp(argv[8],"browse");if(!process&&!browse&&strcmp(argv[8],"file"))_exit(64);
+    /* Browse (the guest file channel, read only): exactly one root, shown at the requested path, never guided, stat or
+     * browse-read only. The supervisor launches it as the per-workspace browse uid; the mount is read-only whatever the policy. */
+    if(browse&&(roots!=1||guided||strcmp(argv[10],argv[16])||(strcmp(argv[9],"stat")&&strcmp(argv[9],"browse-read"))))_exit(64);
     pinned_file(worker);directory_fd(environment);
     for(int i=0;i<roots;i++){directory_fd(descriptor(argv[15+3*i]));number(argv[17+3*i],0,1);}
     int supervisor_pidfd=(int)syscall(SYS_pidfd_open,getppid(),0);require(supervisor_pidfd,"supervisor pidfd");
@@ -196,7 +199,10 @@ int main(int argc,char **argv) {
      * Detached mount objects can then cross into the child's private namespace. */
     int root_trees[16],environment_trees[4]={-1,-1,-1,-1};
     const char *environment_parts[]={"bin","lib","lib64","usr"};
-    for(int i=0;i<roots;i++)root_trees[i]=clone_descriptor(descriptor(argv[15+3*i]),number(argv[17+3*i],0,1)||!strcmp(argv[7],"plan"),0);
+    for(int i=0;i<roots;i++)root_trees[i]=clone_descriptor(descriptor(argv[15+3*i]),number(argv[17+3*i],0,1)||!strcmp(argv[7],"plan")||browse,0);
+    /* The browse worker re-proves, inside the view, that the root it opens is the admitted descriptor's filesystem. */
+    char root_device[32]="";
+    if(browse){struct stat admitted;require(fstat(descriptor(argv[15]),&admitted),"browse root identity");snprintf(root_device,sizeof root_device,"%ju",(uintmax_t)admitted.st_dev);}
     int worker_tree=clone_descriptor(worker,1,1);
     int guidance_tree=-1,alias_tree=-1;
     if(guided) {
@@ -264,5 +270,6 @@ int main(int argc,char **argv) {
     require(syscall(SYS_close_range,3U,~0U,0U),"close private inherited descriptors");install_filter(process);umask(0002);
     char *args[]={"/file-worker",argv[9],argv[10],argv[11],argv[5],argv[12],strcmp(argv[13],"-")?argv[13]:NULL,NULL};
     char *shell[]={"/file-worker",argv[10],argv[11],argv[5],argv[9],argv[12],NULL};char *env[]={"LANG=C","LC_ALL=C",NULL};
-    execve(args[0],process?shell:args,env);require(-1,"immutable helper exec");return 77;
+    char *browse_args[]={"/file-worker",argv[9],argv[10],argv[11],argv[5],argv[12],argv[13],root_device,NULL};
+    execve(args[0],process?shell:browse?browse_args:args,env);require(-1,"immutable helper exec");return 77;
 }
