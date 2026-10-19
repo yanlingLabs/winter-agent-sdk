@@ -41,9 +41,9 @@ site it saw, and the doc must not claim more. A separate run is not needed.
   true`, the exact ref, this repository and `run_attempt == '1'`. No `pull_request`, `pull_request_target`,
   `workflow_dispatch`, `schedule` or `workflow_run` trigger exists, so no ordinary PR (including the one that adds this
   file) can run it. A re-run has `run_attempt` 2 and is refused.
-* Unarmed: `HOSTED_HEAD`, `PACKET_ARCHIVE_SHA256`, `PACKET_INVENTORY_SHA256` and `RUNNER_SHA256` are all zeros and
-  `PACKET_RUN_ID` is `0`. Step 2 refuses a zero `HOSTED_HEAD`; step 3 refuses a run id of `0` and any zero digest. The gate
-  test also refuses binding the first packet's run id (39165162201): its `providerWorker` and `hostClient` are placeholders. The three digests are set in an ordinary reviewed commit
+* Unarmed: only `HOSTED_HEAD` is zero. Step 2 refuses a zero `HOSTED_HEAD`; step 3 would refuse a run id of `0` and any zero
+  digest. The packet is bound (next section) and the gate test fails on any drift of those values. It also refuses binding the first
+  packet's run id (39165162201): its `providerWorker` and `hostClient` are placeholders. The three digests are set in an ordinary reviewed commit
   (the packet digests from the verified compile artifact, the runner digest from the reviewed runner file; the gate test
   fails if the runner digest does not match the file). The owner-approved ARMING commit then changes exactly one line,
   `HOSTED_HEAD`, to the reviewed commit: the guard demands that commit be an ancestor of the pushed one, that the whole
@@ -68,7 +68,7 @@ success, and on failure only the bounded result and diagnostics records; 7 days 
 
 | Prerequisite | State |
 | --- | --- |
-| Packet roles `hostClient` and `providerWorker` | **Real sources exist in runtime-sdk draft PR 20; no packet carries them yet.** Run 39165162201 carries placeholders (they refuse if started), so this workflow binds a SECOND compile run, made after PR 20 merges: `PACKET_RUN_ID` is `0` and refused until then. |
+| Packet roles `hostClient` and `providerWorker` | **Real, in compile run 2** (runtime-sdk intake #23, merged at `04f82b13`): run 39227365159, artifact 12174387240 (`guided-packet-compile-39227365159`, 195,477,535 bytes, zip sha256 `a4d731f6...0296`, expires 2026-10-26). The workflow is bound to it (below); run 1's placeholder packet (39165162201) is refused by the gate test. |
 | The root runner `run.py`, `session.py`, `roles_adapter.py` | **Written, never run as root on Linux.** Packet verification, metafile preflight, staging, the exit-64 case, the session (driving the existing Root entry points), the query chain, teardown and the result record are implemented and unit-tested with fakes. `RUNNER_SHA256` is the real hash of `run.py`, which embeds the hashes of its three siblings; the gate test fails on any disagreement. It cannot start a run without `fixture-inputs.json` (below). |
 | F2 ticket minting on the host side | Issuer exists (`claimGuidedGuestIssuer`, `guided-guest-attestation.md`); no host code claims it yet. The real host client claims it. |
 | SDK host guard | Already lifted for a guided query that presents a valid one-shot ticket (`guided-guest-attestation.md`); nothing here changes it. |
@@ -77,6 +77,25 @@ success, and on failure only the bounded result and diagnostics records; 7 days 
 | How the guest reaches the stub | Not the provider bridge: the stub implements `GuestProviderPort` over the native peer/pidfd transport, as the host-query fixture's scripted provider does. No NIC, vsock or listener. |
 | The stub allows exactly two begins | A third begin is refused by the stub but still counted in `receivedBegins`; the oracle reads those counters, so a request that reached the stub after revocation fails the case even though the stub refused it. |
 | Bun FD adapter, holder authentication of the guest stream | Unproven by design; this run is their first real exercise. |
+
+## The run-2 binding
+
+| Pin | Value |
+| --- | --- |
+| compile run / artifact | 39227365159 / 12174387240, `guided-packet-compile-39227365159` |
+| `guided-packet.tar.gz` | `1bea0da978ac7ef731bb3b1dc89158f0efd29deeb551ec6df1b7fdc8279b98d1` |
+| `packet-inventory.json` | `18f5fa5b84b041a6982cf07ae3a203f42d095418b5d1991004d49301d80dce62` |
+| runtime-sdk head (verifier and pin) | `04f82b13a2af965a487d16b15ccfee8afc99fc09` |
+| `verify_packet.py` / `compile-39227365159.pin.json` there | `2ac6b1af...01f3` / `220acd96...77a2` |
+| roles (in the pin, not constants here) | providerWorker `4331d732...`, hostClient `37a2cf65...`, runtimeEntry `ce3f5c38...`, instructionReader `4d0702b2...`, ownerLibrary `4fe5304a...` |
+| origins | runtime `ce730190`, agent-sdk `9c980c32`, Winter Core `8b52ef83`, builder `2cb3ecf0` |
+
+The verification step, the runner and the root step all call `verify_packet.py <tar.gz> <inventory.json> --pin origins/runtime/scripts/guest-guided-intake/compile-39227365159.pin.json`:
+with two pins side by side the verifier's default lookup exits 2, and CI cannot catch a well-formed wrong hash, so this call is the guard. A named
+gate test pins the `--pin` argument and the absence of any `|| true`. The same packet was downloaded and checked locally with these exact calls:
+the real verifier reported all 19 checks true and no placeholder; the runner's staging, metafile preflight (every SDK module exactly once) and tree
+preparation passed against it; the workspace `linux-supervisor.py` equals the packet's captured copy (one member, `source/sdk/...`); the six
+libraries satisfy the launcher's dependency grammar with no overlap. That check is an optional test (`WINTER_GUIDED_REAL_PACKET`, off in CI).
 
 ## The runner, in order
 
@@ -132,6 +151,16 @@ nothing but `lo`, or the role is killed and the session refuses), because the ho
 entry never calls; stderr of both roles is discarded (the contract says it is never written). The oracle now compares the
 provider's `requests` (every native arrival, readable or not) and the other receipt counters, at five barriers plus the final
 summary, so a third begin that the stub refused (begins 3, accepted 2, refused 1) or an unreadable arrival after revocation still fails.
+
+### Reconciled against the real entries (runtime-sdk `04f82b13`)
+
+The adapter matches the merged `host-client-core.ts` and `provider-worker-core.ts`: the command words, the reply kinds and fields
+(`host-dispatch` n/ok/answer/ended, `host-presented` which/refused/errorClass/processStarted, `host-premint` minted, `host-result` passed,
+`provider-receipt` tag + counters, `provider-summary`), the ordering rules (reuse after dispatch 1, one premint before the revoke,
+present-premint only after both, dispatch refused after the revoke) and the exit rules. Differences found, none blocking: the real host
+client adds `version: 1` to every line and `minted: true` to `host-premint` (ignored); a presentation the SDK wrongly accepted is reported
+`refused:false, processStarted:true` and the run cannot pass (the oracle fails it as `reuse_not_refused`/`revocation_not_refused`);
+`host-result.passed` also needs `contextCalls >= 2` and no result after the revoke, which the host client judges itself.
 
 ### Remaining differences (unsettled, listed in `roles_adapter.REMAINING_DIFFERENCES`)
 

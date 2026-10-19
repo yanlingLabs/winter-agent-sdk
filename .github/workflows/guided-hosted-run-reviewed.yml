@@ -3,8 +3,9 @@ name: guided-hosted-run-reviewed
 # NEVER triggered by its author: the owner approves the single run, then the branch below is created once, from the
 # exact reviewed commit, and frozen. There is no pull_request, pull_request_target, workflow_dispatch, schedule or
 # workflow_run trigger, so no ordinary PR can run it.
-# UNARMED: HOSTED_HEAD, RUNTIME_SDK_HEAD, PACKET_RUN_ID (0), PACKET_PIN_SHA256, VERIFIER_SHA256, PACKET_ARCHIVE_SHA256 and
-# PACKET_INVENTORY_SHA256 are all unset (RUNNER_SHA256 names the committed runner and must equal its hash).
+# UNARMED: HOSTED_HEAD is all zeros, so the first step refuses. The packet is the SECOND guided compile run (39227365159, the
+# real hostClient and providerWorker); its archive, inventory, pin file and verifier are bound below (runtime-sdk 04f82b13) and
+# RUNNER_SHA256 names the committed runner. The runner still needs FIXTURE_INPUTS_SHA256 (run.py) before it can start a session.
 # The packet is the SECOND guided compile run (made after the real hostClient/providerWorker replace the placeholders);
 # the first packet's run 39165162201 must never be bound here. The first two
 # steps refuse while any is unset, so this file can sit on main without being able to run anything. The three digests
@@ -19,12 +20,12 @@ permissions:
   actions: read
 env:
   HOSTED_HEAD: '0000000000000000000000000000000000000000'
-  PACKET_RUN_ID: '0'
-  RUNTIME_SDK_HEAD: '0000000000000000000000000000000000000000'
-  PACKET_PIN_SHA256: '0000000000000000000000000000000000000000000000000000000000000000'
-  VERIFIER_SHA256: '0000000000000000000000000000000000000000000000000000000000000000'
-  PACKET_ARCHIVE_SHA256: '0000000000000000000000000000000000000000000000000000000000000000'
-  PACKET_INVENTORY_SHA256: '0000000000000000000000000000000000000000000000000000000000000000'
+  PACKET_RUN_ID: '39227365159'
+  RUNTIME_SDK_HEAD: '04f82b13a2af965a487d16b15ccfee8afc99fc09'
+  PACKET_PIN_SHA256: '220acd961ab11c0a02d3e8ea797e5b10c24e3ab595573e893b05d7a7418e77a2'
+  VERIFIER_SHA256: '2ac6b1af5875690ab84fcd87c09dbb1ab67a3c703a0aee84845c29da962301f3'
+  PACKET_ARCHIVE_SHA256: '1bea0da978ac7ef731bb3b1dc89158f0efd29deeb551ec6df1b7fdc8279b98d1'
+  PACKET_INVENTORY_SHA256: '18f5fa5b84b041a6982cf07ae3a203f42d095418b5d1991004d49301d80dce62'
   RUNNER_SHA256: '706ef574af03839a4545b640d2ef41f3419b75c0d9f735323172cf908b4a8132'
 concurrency:
   group: guided-hosted-run

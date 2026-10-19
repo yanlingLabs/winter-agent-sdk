@@ -26,6 +26,16 @@ const OPT_IN_VALUE = "disposable-linux-guided-hosted-run";
 const RUNNER_PATH = "scripts/guest-hosted-guided/run.py";
 const ZERO40 = "0".repeat(40);
 const ZERO64 = "0".repeat(64);
+// The run-2 binding the workflow must carry (runtime-sdk intake #23, merged at 04f82b13; compile run 39227365159, artifact 12174387240,
+// zip sha256 a4d731f6...0296, expires 2026-10-26). A drift in any of them is caught here, not by the packet verifier at run time.
+const EXPECTED_BINDING: Record<string, string> = {
+  PACKET_RUN_ID: "39227365159",
+  RUNTIME_SDK_HEAD: "04f82b13a2af965a487d16b15ccfee8afc99fc09",
+  PACKET_PIN_SHA256: "220acd961ab11c0a02d3e8ea797e5b10c24e3ab595573e893b05d7a7418e77a2",
+  VERIFIER_SHA256: "2ac6b1af5875690ab84fcd87c09dbb1ab67a3c703a0aee84845c29da962301f3",
+  PACKET_ARCHIVE_SHA256: "1bea0da978ac7ef731bb3b1dc89158f0efd29deeb551ec6df1b7fdc8279b98d1",
+  PACKET_INVENTORY_SHA256: "18f5fa5b84b041a6982cf07ae3a203f42d095418b5d1991004d49301d80dce62",
+};
 const ACTIONS: Record<string, string> = {
   "actions/checkout": "34e114876b0b11c390a56381ad16ebd13914f8d5",
   "actions/upload-artifact": "ea165f8d65b6e75b540449e92b4886f43607fa02",
@@ -181,6 +191,7 @@ export function violations(text: string, ctx: Context = loadContext()): string[]
   for (const key of ["PACKET_ARCHIVE_SHA256", "PACKET_INVENTORY_SHA256", "RUNNER_SHA256", "PACKET_PIN_SHA256", "VERIFIER_SHA256"]) if (typeof env[key] !== "string" || !/^[0-9a-f]{64}$/.test(env[key] as string)) bad(`${key} must be 64-hex (all zeros while unset)`);
   if (typeof env.PACKET_RUN_ID !== "string" || !/^(0|[1-9][0-9]{8,12})$/.test(env.PACKET_RUN_ID)) bad("PACKET_RUN_ID must be a plain run id (0 while unset)");
   if (env.PACKET_RUN_ID === "39165162201") bad("the first guided packet (placeholder roles) must never be bound");
+  for (const [key, want] of Object.entries(EXPECTED_BINDING)) if (env[key] !== want) bad(`${key} is not the reviewed run-2 value`);
   // The runner is committed, so its pin is always the real hash of the file; it is never a placeholder.
   if (!ctx.runnerExists) bad("RUNNER_SHA256 is set but the runner file does not exist");
   else if (ctx.runnerSha256 !== env.RUNNER_SHA256) bad("RUNNER_SHA256 does not match the runner file");
@@ -243,14 +254,29 @@ describe("guided hosted run workflow gates", () => {
     expect(USED_BRANCHES).not.toContain(TRIGGER_BRANCH);
   });
 
+  test("the workflow runs runtime-sdk's verifier with an explicit --pin and refuses on any non-zero exit (two pins now exist, so the default lookup exits 2)", () => {
+    const steps = (yaml.parse(WORKFLOW) as Doc).jobs?.["guided-hosted-run"]?.steps ?? [];
+    const verify = logicalLines(steps[5]?.run ?? "");
+    const call = verify.filter((l) => l.includes("verify_packet.py") && l.startsWith("python3"));
+    expect(call).toHaveLength(1);
+    expect(call[0]).toContain('--pin "origins/runtime/scripts/guest-guided-intake/compile-${PACKET_RUN_ID}.pin.json"');
+    expect(call[0]).toContain("packet-download/guided-packet.tar.gz packet-download/packet-inventory.json");
+    expect(call[0]).not.toMatch(/\|\||;|&&/);
+    expect(verify[0]).toBe("set -euo pipefail");
+    // the root step carries the same pin file, and the runner passes --pin itself
+    expect(steps[6]?.run).toContain('"origins/runtime/scripts/guest-guided-intake/compile-${PACKET_RUN_ID}.pin.json" "$PACKET_PIN_SHA256"');
+    expect(readFileSync(join(ROOT, "scripts/guest-hosted-guided/run.py"), "utf8")).toContain("'--pin', pin");
+    expect(`compile-${EXPECTED_BINDING.PACKET_RUN_ID}.pin.json`).toBe("compile-39227365159.pin.json");
+  });
+
   test("the trigger branch is absent from every other workflow", () => {
     for (const [name, text] of Object.entries(loadContext().others)) expect([name, text.includes(TRIGGER_BRANCH)]).toEqual([name, false]);
   });
 
-  test("the committed state is unarmed: the head and the run id are unset, so the first steps refuse", () => {
+  test("the committed state is unarmed: only the head is unset, so the first step refuses; the packet is bound to run 39227365159", () => {
     const env = (yaml.parse(WORKFLOW) as Doc).env as Record<string, string>;
     expect(env.HOSTED_HEAD).toBe(ZERO40);
-    expect(env.PACKET_RUN_ID).toBe("0");
+    for (const [key, want] of Object.entries(EXPECTED_BINDING)) expect([key, env[key]]).toEqual([key, want]);
     // The digests are set in an ordinary reviewed commit; until then they are zero and the refusal step stops the run.
     for (const key of ["PACKET_ARCHIVE_SHA256", "PACKET_INVENTORY_SHA256", "RUNNER_SHA256"]) expect([key, /^[0-9a-f]{64}$/.test(env[key] as string)]).toEqual([key, true]);
   });
@@ -339,18 +365,24 @@ const MUTATIONS: Array<[string, (text: string) => string, string, Partial<Contex
   ["pin refusal: made advisory", sub('test "$RUNNER_SHA256" != "' + ZERO64 + '"', 'test "$RUNNER_SHA256" != "' + ZERO64 + '" || true'), "pin refusal lacks the runner pin refusal"],
   ["env: a pin key added", sub("  RUNNER_SHA256:", "  EXTRA: 'x'\n  RUNNER_SHA256:"), "env keys must be exactly the reviewed pins"],
   ["env: HOSTED_HEAD becomes a branch name", sub(`HOSTED_HEAD: '${ZERO40}'`, "HOSTED_HEAD: 'main'"), "HOSTED_HEAD must be a 40-hex commit (all zeros while unarmed)"],
-  ["env: archive pin becomes short", sub(/PACKET_ARCHIVE_SHA256: '0+'/, "PACKET_ARCHIVE_SHA256: 'abc'"), "PACKET_ARCHIVE_SHA256 must be 64-hex (all zeros while unset)"],
-  ["env: run id becomes a name", sub("PACKET_RUN_ID: '0'", "PACKET_RUN_ID: 'latest'"), "PACKET_RUN_ID must be a plain run id (0 while unset)"],
-  ["env: the first (placeholder-role) packet is bound", sub("PACKET_RUN_ID: '0'", "PACKET_RUN_ID: '39165162201'"), "the first guided packet (placeholder roles) must never be bound"],
+  ["env: archive pin becomes short", sub(/PACKET_ARCHIVE_SHA256: '[0-9a-f]{64}'/, "PACKET_ARCHIVE_SHA256: 'abc'"), "PACKET_ARCHIVE_SHA256 must be 64-hex (all zeros while unset)"],
+  ["env: run id becomes a name", sub("PACKET_RUN_ID: '39227365159'", "PACKET_RUN_ID: 'latest'"), "PACKET_RUN_ID must be a plain run id (0 while unset)"],
+  ["env: archive digest drifts", sub(/PACKET_ARCHIVE_SHA256: '[0-9a-f]{64}'/, `PACKET_ARCHIVE_SHA256: '${"5".repeat(64)}'`), "PACKET_ARCHIVE_SHA256 is not the reviewed run-2 value"],
+  ["env: inventory digest drifts", sub(/PACKET_INVENTORY_SHA256: '[0-9a-f]{64}'/, `PACKET_INVENTORY_SHA256: '${"5".repeat(64)}'`), "PACKET_INVENTORY_SHA256 is not the reviewed run-2 value"],
+  ["env: pin digest drifts", sub(/PACKET_PIN_SHA256: '[0-9a-f]{64}'/, `PACKET_PIN_SHA256: '${"5".repeat(64)}'`), "PACKET_PIN_SHA256 is not the reviewed run-2 value"],
+  ["env: verifier digest drifts", sub(/VERIFIER_SHA256: '[0-9a-f]{64}'/, `VERIFIER_SHA256: '${"5".repeat(64)}'`), "VERIFIER_SHA256 is not the reviewed run-2 value"],
+  ["env: runtime head drifts", sub(/RUNTIME_SDK_HEAD: '[0-9a-f]{40}'/, `RUNTIME_SDK_HEAD: '${"5".repeat(40)}'`), "RUNTIME_SDK_HEAD is not the reviewed run-2 value"],
+  ["env: run id drifts", sub("PACKET_RUN_ID: '39227365159'", "PACKET_RUN_ID: '39227365160'"), "PACKET_RUN_ID is not the reviewed run-2 value"],
+  ["env: the first (placeholder-role) packet is bound", sub("PACKET_RUN_ID: '39227365159'", "PACKET_RUN_ID: '39165162201'"), "the first guided packet (placeholder roles) must never be bound"],
   ["pin refusal: run id removed", sub(/ *test "\$PACKET_RUN_ID" != "0"\n/, ""), "pin refusal lacks the run id refusal"],
   ["env: runner pin is not the runner file's hash", sub(/RUNNER_SHA256: '[0-9a-f]{64}'/, `RUNNER_SHA256: '${"1".repeat(64)}'`), "RUNNER_SHA256 does not match the runner file"],
   ["env: runner file missing", sub(/RUNNER_SHA256: '[0-9a-f]{64}'/, `RUNNER_SHA256: '${"1".repeat(64)}'`), "RUNNER_SHA256 is set but the runner file does not exist", { runnerExists: false, runnerSha256: "" }],
-  ["env: runtime head becomes a branch name", sub(`RUNTIME_SDK_HEAD: '${ZERO40}'`, "RUNTIME_SDK_HEAD: 'main'"), "RUNTIME_SDK_HEAD must be a 40-hex commit (all zeros while unset)"],
-  ["env: verifier pin becomes short", sub(/VERIFIER_SHA256: '0+'/, "VERIFIER_SHA256: 'abc'"), "VERIFIER_SHA256 must be 64-hex (all zeros while unset)"],
+  ["env: runtime head becomes a branch name", sub(/RUNTIME_SDK_HEAD: '[0-9a-f]{40}'/, "RUNTIME_SDK_HEAD: 'main'"), "RUNTIME_SDK_HEAD must be a 40-hex commit (all zeros while unset)"],
+  ["env: verifier pin becomes short", sub(/VERIFIER_SHA256: '[0-9a-f]{64}'/, "VERIFIER_SHA256: 'abc'"), "VERIFIER_SHA256 must be 64-hex (all zeros while unset)"],
   ["pin refusal: runtime head removed", sub(/ *test "\$RUNTIME_SDK_HEAD" != "0+"\n/, ""), "pin refusal lacks the runtime head refusal"],
   ["pin refusal: pin digest removed", sub(/ *test "\$PACKET_PIN_SHA256" != "0+"\n/, ""), "pin refusal lacks the pin file digest refusal"],
   ["pin refusal: verifier digest removed", sub(/ *test "\$VERIFIER_SHA256" != "0+"\n/, ""), "pin refusal lacks the verifier digest refusal"],
-  ["env: armed with an unset pin", sub(`HOSTED_HEAD: '${ZERO40}'`, `HOSTED_HEAD: '${"2".repeat(40)}'`), "armed with an unset pin"],
+  ["env: armed with an unset pin", (t) => t.replace(`HOSTED_HEAD: '${ZERO40}'`, `HOSTED_HEAD: '${"2".repeat(40)}'`).replace(/VERIFIER_SHA256: '[0-9a-f]{64}'/, `VERIFIER_SHA256: '${ZERO64}'`), "armed with an unset pin"],
   // download
   ["download: wrong repository", sub(`repository: ${RUNTIME_REPOSITORY}\n          github-token`, "repository: someone/else\n          github-token"), "the download must name exactly the packet artifact of PACKET_RUN_ID in the runtime repository"],
   ["download: a different artifact name", sub("name: guided-packet-compile-${{ env.PACKET_RUN_ID }}", "name: other"), "the download must name exactly the packet artifact of PACKET_RUN_ID in the runtime repository"],

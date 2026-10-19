@@ -13,7 +13,9 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import types
 import warnings
+from unittest import mock
 
 warnings.simplefilter('ignore', ResourceWarning)
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -579,6 +581,44 @@ class Adapter(unittest.TestCase):
             source = open(os.path.join(HERE, name)).read()
             for operation in ('provider-receipt', 'host-dispatch', 'host-presented', 'present-premint', 'provider-summary', 'errorClass', 'processStarted'):
                 self.assertNotIn(operation, source, name + ' ' + operation)
+
+
+REAL_PACKET = os.environ.get('WINTER_GUIDED_REAL_PACKET')  # a directory holding the downloaded run-2 guided-packet.tar.gz and packet-inventory.json
+REAL_RUNTIME = os.environ.get('WINTER_GUIDED_REAL_RUNTIME')  # runtime-sdk files: verify_packet.py and the run-2 pin, side by side
+
+
+@unittest.skipUnless(REAL_PACKET and REAL_RUNTIME, 'set WINTER_GUIDED_REAL_PACKET and WINTER_GUIDED_REAL_RUNTIME to check the real run-2 packet')
+class RealPacket(unittest.TestCase):
+    """Optional, off in CI (the artifact is 195 MB): the runner's own packet code against the REAL run-2 artifact."""
+
+    def setUp(self):
+        self.pin = os.path.join(REAL_RUNTIME, 'compile-39227365159.pin.json')
+        self.verifier = os.path.join(REAL_RUNTIME, 'verify_packet.py')
+        self.pin_data = json.load(open(self.pin))
+
+    def test_the_real_verifier_accepts_the_real_packet_with_an_explicit_pin(self):
+        digest = lambda p: hashlib.sha256(open(p, 'rb').read()).hexdigest()
+        real_stat = os.stat
+
+        def stat_nonzero_gid(path, *args, **kw):
+            info = real_stat(path, *args, **kw)
+            if os.fspath(path) == REAL_PACKET and info.st_gid == 0:  # macOS gives files the wheel group; the Linux runner user's gid is nonzero
+                return types.SimpleNamespace(st_uid=info.st_uid, st_gid=20)
+            return info
+        with mock.patch.object(run.os, 'stat', stat_nonzero_gid):
+            data = run.verify_packet(REAL_PACKET, self.verifier, digest(self.verifier), self.pin, digest(self.pin))
+        self.assertEqual(data['artifacts']['roles']['hostClient']['sha256'], self.pin_data['artifacts']['roles']['hostClient']['sha256'])
+
+    def test_staging_the_real_packet_passes_the_metafile_preflight_and_the_tree_preparation(self):
+        parent = tempfile.mkdtemp(prefix='real-', dir='/tmp')
+        self.addCleanup(session.remove_tree, parent)
+        staged = run.RealPlatform(parent=parent).stage_packet(REAL_PACKET, self.pin_data)
+        run.check_host_metafile(os.path.join(staged.root, 'artifacts', 'hostClient.metafile.json'))
+        hashes = session.role_hashes(self.pin_data)
+        root = os.path.join(parent, 'run')
+        os.mkdir(root, 0o711)
+        layout = session.prepare_tree(root, staged, {'guidance': {'old': 'o', 'edited': 'e'}}, hashes, chown=lambda *a: None)
+        self.assertEqual(len(os.listdir(layout['bin'])), 10)
 
 
 if __name__ == '__main__':
