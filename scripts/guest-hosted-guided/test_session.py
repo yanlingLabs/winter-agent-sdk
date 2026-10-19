@@ -133,6 +133,12 @@ class Builders(unittest.TestCase):
         with self.assertRaises(session.SessionError):
             session.bind_boot(leaked, BOOT)
 
+    def test_the_home_id_is_one_value_in_the_fixture_and_in_the_provider_scope(self):
+        self.assertEqual(INPUTS['hostFixture']['capture']['homeId'], session.HOME_ID)
+        self.assertEqual(session.provider_route(BOOT)['scope']['homeId'], session.HOME_ID)
+        with self.assertRaises(session.SessionError):
+            session.validate_inputs(self.mutated('hostFixture', 'capture', 'homeId', 'fixture-home'))
+
     def test_provider_metadata_is_the_exact_C_P3_shape(self):
         route = session.provider_route(BOOT)
         meta = json.loads(session.provider_metadata(INPUTS, route))
@@ -367,18 +373,27 @@ class Exit64(unittest.TestCase):
         patcher = mock.patch.object(session, 'SEQPACKET', socket.SOCK_DGRAM)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.staged = types.SimpleNamespace(root='/staged')
+        self.base = real_root()
+        self.addCleanup(session.remove_tree, self.base)
+        self.staged = make_staged(self.base)
+        self.launcher = Path(self.staged.root) / 'artifacts' / 'instructionReaderLauncher'
+        self.calls = []
 
-    def case(self, returncode, send=None):
-        def run(argv, pass_fds, **kw):
-            self.assertEqual(argv, ['/staged/artifacts/instructionReaderLauncher'])
+    def case(self, returncode, send=None, **kw):
+        def run(argv, pass_fds, **options):
+            self.calls.append((argv, options))
+            # The program that runs is a root-owned private copy of the pinned bytes, in a directory that exists only for this call.
+            self.assertNotEqual(argv[0], str(self.launcher))
+            self.assertEqual(Path(argv[0]).read_bytes(), self.launcher.read_bytes())
+            self.assertEqual(oct(stat.S_IMODE(os.stat(argv[0]).st_mode)), '0o500')
+            self.assertEqual(oct(stat.S_IMODE(os.stat(os.path.dirname(argv[0])).st_mode)), '0o700')
             self.assertEqual(len(pass_fds), 1)
             if send:
                 peer = socket.socket(fileno=os.dup(pass_fds[0]))
                 send(peer)
                 peer.close()
             return types.SimpleNamespace(returncode=returncode)
-        return session.exit64_case(self.staged, run=run)
+        return session.exit64_case(self.staged, run=run, parent=str(self.base), **kw)
 
     def test_a_clean_exit_64_with_nothing_on_the_receipt_socket(self):
         self.assertEqual(self.case(64), {'site': 'argv_parse', 'exitStatus': 64, 'initReceipt': False, 'pidfdReceived': False})
@@ -402,6 +417,50 @@ class Exit64(unittest.TestCase):
         self.assertEqual(session.EXIT64_SITE, 'argv_parse')
         source = open(os.path.join(HERE, 'oracle.py')).read()
         self.assertIn("'argv_parse'", source)
+        self.assertIn('CONSTANT on purpose', session.exit64_case.__doc__)
+
+    def test_a_launcher_that_does_not_match_the_pin_is_never_run(self):
+        self.launcher.chmod(0o644)
+        self.launcher.write_bytes(b'swapped after the packet was verified')
+        with self.assertRaises(session.SessionError):
+            self.case(64)
+        self.assertEqual(self.calls, [])
+        self.assertEqual([p for p in os.listdir(self.base) if p.startswith('winter-guided-exit64-')], [])
+
+    def test_a_symlinked_or_hard_linked_launcher_is_never_run(self):
+        self.launcher.unlink()
+        target = Path(self.base) / 'elsewhere'
+        target.write_bytes(b'bytes of instructionReaderLauncher')
+        os.symlink(target, self.launcher)
+        with self.assertRaises((session.SessionError, OSError)):
+            self.case(64)
+        self.launcher.unlink()
+        os.link(target, self.launcher)
+        with self.assertRaises(session.SessionError):
+            self.case(64)
+        self.assertEqual(self.calls, [])
+
+    def test_a_placeholder_pin_never_runs_it(self):
+        self.staged.pin['artifacts']['roles']['hostClient']['placeholder'] = True
+        with self.assertRaises(session.SessionError):
+            self.case(64)
+        self.assertEqual(self.calls, [])
+
+    def test_the_launcher_runs_in_its_own_network_namespace_before_it_executes(self):
+        unshared = []
+        self.case(64, unshare=lambda: unshared.append(True))
+        preexec = self.calls[0][1]['preexec_fn']
+        self.assertEqual(unshared, [])
+        preexec()
+        self.assertEqual(unshared, [True])
+        self.assertIn('os.CLONE_NEWNET', open(os.path.join(HERE, 'session.py')).read().split('def exit64_case')[1].split('def require_root_linux')[0])
+
+    def test_the_private_copy_is_removed_even_when_the_run_raises(self):
+        def boom(argv, pass_fds, **options):
+            raise OSError('exec')
+        with self.assertRaises(OSError):
+            session.exit64_case(self.staged, run=boom, parent=str(self.base))
+        self.assertEqual([p for p in os.listdir(self.base) if p.startswith('winter-guided-exit64-')], [])
 
 
 class FakeProcess:
@@ -593,6 +652,20 @@ class Sequence(unittest.TestCase):
         self.services[-1].runtimes[session.LOGICAL]['state'] = 'stopped'
         self.assertIs(sess.settle(True), True)
         self.assertEqual(sess.lifecycle_record, 'written')
+
+    def test_only_a_broken_pipe_means_the_reader_is_gone_any_other_write_error_fails_the_settle(self):
+        import errno
+        for error in (OSError(errno.EIO, 'io'), OSError(errno.EBADF, 'bad fd'), OSError(errno.ENOSPC, 'full')):
+            sess = self.open()
+            self.services[-1].runtimes[session.LOGICAL]['state'] = 'stopped'
+            lifecycle, real = sess.lifecycle, os.write
+            def write(fd, data, lifecycle=lifecycle, error=error):
+                if fd == lifecycle:
+                    raise error
+                return real(fd, data)
+            with mock.patch.object(session.os, 'write', write):
+                self.assertIs(sess.settle(True), False, error)
+            self.assertNotEqual(sess.lifecycle_record, 'reader_gone')
 
     def test_a_host_that_already_exited_is_not_a_failed_settle_but_is_recorded(self):
         sess = self.open()

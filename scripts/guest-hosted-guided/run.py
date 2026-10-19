@@ -24,6 +24,7 @@ settled and the fd 7 lifecycle record written. A result that does not arrive is 
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import platform as host_platform
@@ -33,6 +34,7 @@ import subprocess
 import sys
 import re
 import tarfile
+import tempfile
 import types
 from collections import namedtuple
 
@@ -42,7 +44,7 @@ OPT_IN_VALUE = 'disposable-linux-guided-hosted-run'
 # SHA-256 of the two siblings this file may load. Changing either sibling changes these and therefore this file's hash.
 ORACLE_SHA256 = '295075e74776a4b40a7e5d4f11912d52f47bb8f03e112e6f48d687de6fa3323e'
 ADAPTER_SHA256 = '02593e1c8973ce773224566a34ebbe66efda8edf832231b0385ca5c87d2f7e7b'
-SESSION_SHA256 = '68d202eaa53677e695b9ac5f18d142aa4abeb59b65a2193ba945e66a85d1ab1e'
+SESSION_SHA256 = '876282e37efbdd6c759093646888d1e2dbc70de09a6c400c77568e7bbd8c495d'
 # The Core-dependent inputs (the host fixture records, the provider script's marker lines, the two prompts, the guidance
 # texts) are DATA this lane cannot invent; they live in a closed JSON file next to this one, pinned here. Zero = not supplied.
 FIXTURE_INPUTS_SHA256 = 'bfcdc1bffc6ea84548884602d57d23493999d0f8ed5bbe5e4a304b0bc5f74fce'
@@ -96,13 +98,21 @@ def check_host_metafile(path):
 
 
 def read_pinned(path, expected_sha256, limit=MAX_SMALL):
-    """Bounded no-follow read of a regular single-link file whose SHA-256 must equal `expected_sha256`."""
+    """Bounded no-follow read of a regular single-link file whose SHA-256 must equal `expected_sha256`. Returns the bytes that were hashed:
+    callers use THESE bytes, never the path again."""
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
     try:
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > limit:
             raise ValueError('identity')
-        data = os.pread(fd, limit + 1, 0)
+        chunks, total = [], 0
+        while total <= before.st_size:
+            chunk = os.pread(fd, min(1 << 24, before.st_size + 1 - total), total)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        data = b''.join(chunks)
     finally:
         os.close(fd)
     if len(data) != before.st_size or hashlib.sha256(data).hexdigest() != expected_sha256:
@@ -110,10 +120,25 @@ def read_pinned(path, expected_sha256, limit=MAX_SMALL):
     return data
 
 
-def verify_packet(packet_dir, verifier, verifier_sha256, pin, pin_sha256):
+def private_copy(directory, name, data):
+    """A root-owned, read-only copy of bytes that were hashed, for a program that wants a path. The directory is root's and 0755 so the dropped
+    owner can read but never replace it."""
+    path = os.path.join(directory, name)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        view = memoryview(data)
+        while view:
+            view = view[os.write(fd, view):]
+        os.fchmod(fd, 0o444)
+    finally:
+        os.close(fd)
+    return path
+
+
+def verify_packet(packet_dir, verifier, verifier_sha256, pin, pin_sha256, work_parent=None):
     """Run runtime-sdk's verifier as the packet's own unprivileged owner. Returns the parsed pin, or raises packet_verify."""
     try:
-        read_pinned(verifier, verifier_sha256)
+        verifier_bytes = read_pinned(verifier, verifier_sha256)
         pin_bytes = read_pinned(pin, pin_sha256)
         pin_data = json.loads(pin_bytes)
         info = os.stat(packet_dir)
@@ -124,9 +149,15 @@ def verify_packet(packet_dir, verifier, verifier_sha256, pin, pin_sha256):
         # As root the verifier runs as the packet's own owner with no supplementary groups (it refuses root); the drop is
         # not applied when this file is exercised unprivileged by its tests, where there is nothing to drop.
         drop = {'user': info.st_uid, 'group': info.st_gid, 'extra_groups': []} if os.geteuid() == 0 else {}
-        result = subprocess.run(
-            [sys.executable, '-I', '-B', verifier, archive, inventory, '--pin', pin], **drop,
-            env={'PATH': '/usr/bin:/bin', 'LANG': 'C'}, cwd='/', stdin=subprocess.DEVNULL, capture_output=True, timeout=VERIFY_TIMEOUT, check=False)
+        # The verifier and the pin it reads run from root-owned copies of the bytes just hashed, not from the checkout paths the unprivileged
+        # runner user could still rewrite between the hash and the exec.
+        with tempfile.TemporaryDirectory(prefix='winter-guided-verify-', dir=work_parent) as work:
+            os.chmod(work, 0o755)
+            verifier_copy = private_copy(work, os.path.basename(verifier), verifier_bytes)
+            pin_copy = private_copy(work, os.path.basename(pin), pin_bytes)
+            result = subprocess.run(
+                [sys.executable, '-I', '-B', verifier_copy, archive, inventory, '--pin', pin_copy], **drop,
+                env={'PATH': '/usr/bin:/bin', 'LANG': 'C'}, cwd='/', stdin=subprocess.DEVNULL, capture_output=True, timeout=VERIFY_TIMEOUT, check=False)
         if result.returncode != 0 or len(result.stdout) > MAX_SMALL:
             raise ValueError('verifier')
         report = json.loads(result.stdout)
@@ -184,26 +215,48 @@ class RealPlatform(Platform):
     def bind(self, session_module, directory):
         self.session_module, self.directory = session_module, directory
 
+    ARCHIVE_LIMIT = 512 * 1024 * 1024
+
     def stage_packet(self, packet_dir, pin):
         """Extract the verified archive into a fresh root-owned tree: files 0400, role/native/library/Bun-base files 0555,
-        links recreated. Modes in the archive are not build evidence (the archiver forces 0400/0777)."""
-        import tempfile
+        links recreated. Modes in the archive are not build evidence (the archiver forces 0400/0777). The archive and the inventory are read
+        ONCE, through `read_pinned` against the sha256 the verified pin records, and everything below uses those bytes, never the path again."""
+        archive_bytes = read_pinned(os.path.join(packet_dir, 'guided-packet.tar.gz'), pin['archive']['sha256'], self.ARCHIVE_LIMIT)
+        inventory_bytes = read_pinned(os.path.join(packet_dir, 'packet-inventory.json'), pin['inventory']['sha256'])
+        try:
+            inventory = json.loads(inventory_bytes)['files']
+        except (ValueError, KeyError, TypeError):
+            raise ValueError('inventory') from None
         root = tempfile.mkdtemp(prefix='winter-guided-hosted-', dir=self.parent)
         os.chmod(root, 0o700)
+        real_root = os.path.realpath(root)
+        inside = lambda path: path == real_root or path.startswith(real_root + os.sep)
         base = pin['bun']['stageBase']['path']
-        with open(os.path.join(packet_dir, 'guided-packet.tar.gz'), 'rb') as raw:
+        links = []
+        with io.BytesIO(archive_bytes) as raw:
             archive = tarfile.open(fileobj=raw, mode='r|gz')
             for member in archive:
                 name = member.name
                 if name.startswith('/') or '\\' in name or posixpath.normpath(name) != name or '..' in name.split('/'):
                     raise ValueError('path')
                 target = os.path.join(root, name)
+                # No member may be written through a link: every ancestor directory of the target must be a real directory.
+                walked = root
+                for part in posixpath.dirname(name).split('/') if posixpath.dirname(name) else []:
+                    walked = os.path.join(walked, part)
+                    if os.path.islink(walked):
+                        raise ValueError('link ancestor')
                 os.makedirs(os.path.dirname(target), mode=0o755, exist_ok=True)
                 if member.issym():
                     resolved = posixpath.normpath(posixpath.join(posixpath.dirname(name), member.linkname))
                     if member.linkname.startswith('/') or resolved == '..' or resolved.startswith('../'):
                         raise ValueError('link')
+                    # Resolve for real, against the tree as extracted so far: a chain such as `a -> .` then `b -> a/..` is lexically inside and
+                    # really outside. The same check runs again for every link once the tree is complete.
+                    if not inside(os.path.realpath(os.path.join(os.path.dirname(target), member.linkname))):
+                        raise ValueError('link escape')
                     os.symlink(member.linkname, target)
+                    links.append(target)
                 elif member.isreg():
                     executable = (name.startswith(self.EXECUTABLE_PREFIXES) and not name.endswith('.metafile.json')) or name == base
                     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -221,11 +274,9 @@ class RealPlatform(Platform):
                         os.close(fd)
                 else:
                     raise ValueError('type')
-        try:
-            with open(os.path.join(packet_dir, 'packet-inventory.json'), 'rb') as raw_inventory:
-                inventory = json.loads(raw_inventory.read(MAX_SMALL + 1))['files']
-        except (OSError, ValueError, KeyError):
-            raise ValueError('inventory') from None
+        for link in links:
+            if not inside(os.path.realpath(link)):
+                raise ValueError('link escape')
         return Staged(root, pin, inventory)
 
     def exit64_case(self, staged):

@@ -46,7 +46,7 @@ SUPERVISOR_SUFFIX = 'packages/runtime/src/guest/linux-supervisor.py'
 GUIDED_PROFILE = 'host-query-guided-v1'
 INPUT_KEYS = ('version', 'prompts', 'guidance', 'steps', 'hostFixture')
 FIXTURE_KEYS = ('registration', 'capture', 'runtimeRow', 'workspace', 'binding', 'policy', 'sources', 'grants', 'bootId')
-WORKSPACE, INCARNATION = 'workspace', 'incarnation'
+WORKSPACE, INCARNATION, HOME_ID = 'workspace', 'incarnation', 'home-fixture'
 # The boot id is the kernel's, so it is the ONE value fixture-inputs.json cannot carry: docs/guided-hosted-run/derive-fixture-inputs.ts writes this placeholder
 # in exactly three places and `bind_boot` replaces exactly those three with the run's /proc boot id.
 BOOT_PLACEHOLDER = '00000000-0000-4000-8000-000000000000'
@@ -99,7 +99,7 @@ def validate_inputs(inputs):
     capture, registration = fixture['capture'], fixture['registration']
     if type(capture) is not dict or type(registration) is not dict or type(capture.get('source')) is not dict:
         raise SessionError('inputs')
-    expected = {'workspaceId': WORKSPACE, 'sessionId': LOGICAL, 'backendSessionId': BACKEND, 'trustedQuerySessionId': BACKEND, 'incarnationId': INCARNATION,
+    expected = {'homeId': HOME_ID, 'workspaceId': WORKSPACE, 'sessionId': LOGICAL, 'backendSessionId': BACKEND, 'trustedQuerySessionId': BACKEND, 'incarnationId': INCARNATION,
                 'leaseEpoch': 1, 'backendGeneration': 1, 'cwd': SOURCE_GUEST}
     if any(capture.get(key) != value or type(capture.get(key)) is not type(value) for key, value in expected.items()) or capture['source'].get('root') != SOURCE_GUEST:
         raise SessionError('inputs')
@@ -147,7 +147,7 @@ def authority():
 
 
 def provider_route(boot):
-    scope = {'homeId': 'fixture-home', 'workspaceId': 'workspace', 'sessionId': LOGICAL, 'backendSessionId': BACKEND, 'taskId': 'task', 'incarnationId': 'incarnation',
+    scope = {'homeId': HOME_ID, 'workspaceId': 'workspace', 'sessionId': LOGICAL, 'backendSessionId': BACKEND, 'taskId': 'task', 'incarnationId': 'incarnation',
              'bootId': boot, 'leaseEpoch': 1, 'grantRevision': 1, 'accountRevision': 1, 'modelRevision': 1}
     return {'scope': scope, 'selection': dict(SELECTION)}
 
@@ -321,15 +321,25 @@ def spawn_role(binary, args, descriptors, uid, *, popen=subprocess.Popen, unshar
     return process
 
 
-def exit64_case(staged, *, run=subprocess.run, timeout=20):
+def exit64_case(staged, *, run=subprocess.run, timeout=20, unshare=None, parent=None):
     """The reader launcher, given an envelope with the wrong argument count, must exit 64 at its FIRST refusal (argv parse) with no init
-    receipt and no pidfd on its receipt socket. This names the ONE `_exit(64)` site it exercises; it does not prove the claim for every
+    receipt and no pidfd on its receipt socket.
+
+    The launcher that runs is a root-owned private copy made by `copy_exact`, which re-hashes it against the run-2 pin first (the staged tree is
+    not trusted at exec time), and it runs in a fresh network namespace so it can never touch the host's. `EXIT64_SITE` is a CONSTANT on purpose:
+    the launcher reports no site, only an exit status, so the site name labels the one refusal this argument-count envelope provokes (argv parse);
+    what is observed is the status, the absence of an init receipt and the absence of a pidfd. It does not prove the claim for every `_exit(64)`
     site (docs/guided-reader-service.md item 7)."""
-    launcher = Path(staged.root) / 'artifacts' / 'instructionReaderLauncher'
-    control, remote = socket.socketpair(socket.AF_UNIX, SEQPACKET)
+    expected = role_hashes(staged.pin)['instructionReaderLauncher']
+    work = tempfile.mkdtemp(prefix='winter-guided-exit64-', dir=parent)
+    os.chmod(work, 0o700)
+    control = remote = None
     try:
+        launcher = Path(work) / 'instructionReaderLauncher'
+        copy_exact(Path(staged.root) / 'artifacts' / 'instructionReaderLauncher', launcher, expected, 0o500)
+        control, remote = socket.socketpair(socket.AF_UNIX, SEQPACKET)
         result = run([str(launcher)], pass_fds=(remote.fileno(),), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout,
-                     env={'LANG': 'C', 'LC_ALL': 'C'}, cwd='/', check=False)
+                     env={'LANG': 'C', 'LC_ALL': 'C'}, cwd='/', check=False, preexec_fn=unshare or (lambda: os.unshare(os.CLONE_NEWNET)))
         remote.close()
         control.setblocking(False)
         init_receipt = pidfd = False
@@ -341,11 +351,13 @@ def exit64_case(staged, *, run=subprocess.run, timeout=20):
             pass  # nothing arrived: an empty or reset receipt socket is no init receipt and no pidfd
         return {'site': EXIT64_SITE, 'exitStatus': result.returncode & 0xFF if result.returncode >= 0 else 255, 'initReceipt': init_receipt, 'pidfdReceived': pidfd}
     finally:
-        control.close()
-        try:
-            remote.close()
-        except OSError:
-            pass
+        for end in (control, remote):
+            try:
+                if end is not None:
+                    end.close()
+            except OSError:
+                pass
+        remove_tree(work)
 
 
 def require_root_linux():

@@ -5,7 +5,7 @@ name: guided-hosted-run-reviewed
 # workflow_run trigger, so no ordinary PR can run it.
 # UNARMED: HOSTED_HEAD is all zeros, so the first step refuses. The packet is the SECOND guided compile run (39227365159, the
 # real hostClient and providerWorker); its archive, inventory, pin file and verifier are bound below (runtime-sdk 04f82b13) and
-# RUNNER_SHA256 names the committed runner. The runner still needs FIXTURE_INPUTS_SHA256 (run.py) before it can start a session.
+# RUNNER_SHA256 names the committed runner, which pins its siblings and its fixture inputs by hash.
 # The packet is the SECOND guided compile run (made after the real hostClient/providerWorker replace the placeholders);
 # the first packet's run 39165162201 must never be bound here. The first two
 # steps refuse while any is unset, so this file can sit on main without being able to run anything. The three digests
@@ -24,9 +24,11 @@ env:
   RUNTIME_SDK_HEAD: '04f82b13a2af965a487d16b15ccfee8afc99fc09'
   PACKET_PIN_SHA256: '220acd961ab11c0a02d3e8ea797e5b10c24e3ab595573e893b05d7a7418e77a2'
   VERIFIER_SHA256: '2ac6b1af5875690ab84fcd87c09dbb1ab67a3c703a0aee84845c29da962301f3'
+  PACKET_ARTIFACT_ID: '12174387240'
+  PACKET_ZIP_SHA256: 'a4d731f6fbe7d03858522a85f28654d797ee82ff868e139edfd9f777de690296'
   PACKET_ARCHIVE_SHA256: '1bea0da978ac7ef731bb3b1dc89158f0efd29deeb551ec6df1b7fdc8279b98d1'
   PACKET_INVENTORY_SHA256: '18f5fa5b84b041a6982cf07ae3a203f42d095418b5d1991004d49301d80dce62'
-  RUNNER_SHA256: 'e6d3377f8256ead269e2807457aa2069d81f0590cb4ace209ebcbb953b399eef'
+  RUNNER_SHA256: '8e51cd73ad63e88a19c0ebac00b38da7b3941fc4a5a10d03dbce038e3f6895cc'
 concurrency:
   group: guided-hosted-run
   cancel-in-progress: false
@@ -57,6 +59,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$PACKET_RUN_ID" != "0"
+          test "$PACKET_ARTIFACT_ID" != "0"
+          test "$PACKET_ZIP_SHA256" != "0000000000000000000000000000000000000000000000000000000000000000"
           test "$RUNTIME_SDK_HEAD" != "0000000000000000000000000000000000000000"
           test "$PACKET_PIN_SHA256" != "0000000000000000000000000000000000000000000000000000000000000000"
           test "$VERIFIER_SHA256" != "0000000000000000000000000000000000000000000000000000000000000000"
@@ -69,6 +73,21 @@ jobs:
           ref: ${{ env.RUNTIME_SDK_HEAD }}
           path: origins/runtime
           persist-credentials: false
+      - name: Check the packet artifact's id, name, run and zip digest at the API before downloading it
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I -B - <<'PY'
+          import json, os, urllib.request
+          want = {'id': int(os.environ['PACKET_ARTIFACT_ID']), 'name': 'guided-packet-compile-' + os.environ['PACKET_RUN_ID'], 'digest': 'sha256:' + os.environ['PACKET_ZIP_SHA256']}
+          request = urllib.request.Request('https://api.github.com/repos/yanlingLabs/winter-runtime-sdk/actions/artifacts/' + os.environ['PACKET_ARTIFACT_ID'], headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'})
+          with urllib.request.urlopen(request, timeout=30) as response:
+              data = json.loads(response.read(1 << 20))
+          if any(data.get(key) != value for key, value in want.items()) or data.get('expired') is not False or str((data.get('workflow_run') or {}).get('id')) != os.environ['PACKET_RUN_ID']:
+              raise SystemExit('the packet artifact is not the pinned one')
+          PY
       - name: Download the pinned guided packet (the first network step; nothing privileged has run)
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
@@ -85,13 +104,14 @@ jobs:
           printf '%s  %s\n' "$PACKET_ARCHIVE_SHA256" packet-download/guided-packet.tar.gz "$PACKET_INVENTORY_SHA256" packet-download/packet-inventory.json | sha256sum --check --strict -
           printf '%s  %s\n' "$RUNNER_SHA256" scripts/guest-hosted-guided/run.py | sha256sum --check --strict -
           printf '%s  %s\n' "$VERIFIER_SHA256" origins/runtime/scripts/guest-guided-intake/verify_packet.py "$PACKET_PIN_SHA256" "origins/runtime/scripts/guest-guided-intake/compile-${PACKET_RUN_ID}.pin.json" | sha256sum --check --strict -
-          python3 -I -B origins/runtime/scripts/guest-guided-intake/verify_packet.py packet-download/guided-packet.tar.gz packet-download/packet-inventory.json --pin "origins/runtime/scripts/guest-guided-intake/compile-${PACKET_RUN_ID}.pin.json" > "$RUNNER_TEMP/packet-verification.json"
+          /usr/bin/python3 -I -B origins/runtime/scripts/guest-guided-intake/verify_packet.py packet-download/guided-packet.tar.gz packet-download/packet-inventory.json --pin "origins/runtime/scripts/guest-guided-intake/compile-${PACKET_RUN_ID}.pin.json" > "$RUNNER_TEMP/packet-verification.json"
           test "$(uname -s)" = Linux
           test "$(uname -m)" = aarch64
           mkdir -m 755 "$RUNNER_TEMP/guided-hosted-out"
       - name: Run the guided hosted fixture as root on the disposable runner and write the bounded result only
+        timeout-minutes: 15
         run: |
-          sudo -n env WINTER_GUIDED_HOSTED_ADMISSION=disposable-linux-guided-hosted-run python3 -I -S -B - "$RUNNER_SHA256" scripts/guest-hosted-guided/run.py packet-download "$RUNNER_TEMP/guided-hosted-out" origins/runtime/scripts/guest-guided-intake/verify_packet.py "$VERIFIER_SHA256" "origins/runtime/scripts/guest-guided-intake/compile-${PACKET_RUN_ID}.pin.json" "$PACKET_PIN_SHA256" <<'PY'
+          sudo -n env -i WINTER_GUIDED_HOSTED_ADMISSION=disposable-linux-guided-hosted-run /usr/bin/python3 -I -S -B - "$RUNNER_SHA256" scripts/guest-hosted-guided/run.py packet-download "$RUNNER_TEMP/guided-hosted-out" origins/runtime/scripts/guest-guided-intake/verify_packet.py "$VERIFIER_SHA256" "origins/runtime/scripts/guest-guided-intake/compile-${PACKET_RUN_ID}.pin.json" "$PACKET_PIN_SHA256" <<'PY'
           import hashlib, os, stat, sys
           digest, source, packet, out, *extra = sys.argv[1:]
           if os.geteuid() != 0:
@@ -121,8 +141,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: guided-hosted-diagnostics-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/guided-hosted-out/result.json
-            ${{ runner.temp }}/guided-hosted-out/diagnostics/*.json
+          path: ${{ runner.temp }}/guided-hosted-out/result.json
           if-no-files-found: ignore
           retention-days: 7

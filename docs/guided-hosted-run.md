@@ -54,15 +54,33 @@ site it saw, and the doc must not claim more. A separate run is not needed.
 
 ## Safety shape
 
-`permissions: contents: read` plus `actions: read` (the cross-run download needs it); no secrets; every action pinned to
-a full SHA (`checkout`, `download-artifact`, `upload-artifact`); `github.token` appears once, as the download's own input.
-The download is the first network step and runs before anything privileged. The verification step then re-checks the
-packet archive, the inventory and the runner file against their pins with `sha256sum --check --strict`. The one `sudo`
-step is justified because the run needs Root-created peers, pidfds and private mount/PID/IPC/UTS/network namespaces, as
-the owner-matrix run did; it is gated the same way: a single `sudo -n env WINTER_GUIDED_HOSTED_ADMISSION=... python3 -I
--S -B -` whose launcher hashes the runner file (no symlink, link count 1, bounded size) and executes exactly the bytes it
-hashed. The gate test runs that launcher for real, minus its uid line, against throwaway files. Uploads: the result JSON on
-success, and on failure only the bounded result and diagnostics records; 7 days each.
+`permissions: contents: read` plus `actions: read` (the cross-run download and the artifact check need it); no secrets; every action pinned to
+a full SHA (`checkout`, `download-artifact`, `upload-artifact`); both checkouts are credential-free (`persist-credentials: false`);
+`github.token` appears exactly twice: the artifact check's `GH_TOKEN` and the download's own input.
+
+**Why `actions: read` is workflow-wide.** GitHub scopes `permissions` to a workflow or a job, never to a step. A second job that did only the
+download would have to re-upload the 195 MB packet and hand it back through another artifact (a second transfer, a second thing to pin), to keep
+a read-only token away from a root step that cannot see it anyway: the root step is `sudo -n env -i ...`, so it starts with an EMPTY environment (no
+runtime token, no `GH_TOKEN`), both checkouts are credential-free, and the token is only ever a step-level `env`/input of the two network steps.
+Splitting the job was therefore judged not worth its own risk; it is possible, and the choice is the reviewer's.
+
+**Closed key sets.** The gate allows exactly these keys: workflow `name, on, permissions, env, concurrency, jobs`; job `if, runs-on, timeout-minutes,
+steps`; and per step an exact set (the artifact check alone has `env`; the sudo step alone has `timeout-minutes`; only the diagnostics upload has
+an `if`, and it is `failure()`). So `defaults.run.shell`, `services`, `container`, `strategy`, `needs`, `outputs`, `environment`, `continue-on-error`,
+`working-directory`, `id`, an `if: always()` on the verify or sudo step, and `cancel-in-progress: true` are each refused by name; every shell is `bash`.
+
+**The artifact is bound by id and digest.** `PACKET_ARTIFACT_ID` (12174387240) and `PACKET_ZIP_SHA256` (`a4d731f6...0296`) are env pins. The step before the
+download asks the API for that artifact id and refuses unless its name is `guided-packet-compile-<run id>`, its workflow run is the pinned run, its
+digest is `sha256:<PACKET_ZIP_SHA256>` and it has not expired. The download still names the artifact by name inside that run (names are unique per
+run); the archive and inventory inside it are pinned by their own digests and verified again below.
+
+The download is the first network step after that check and runs before anything privileged. The verification step then re-checks the packet
+archive, the inventory and the runner file against their pins with `sha256sum --check --strict`. The one `sudo` step is justified because the run
+needs Root-created peers, pidfds and private mount/PID/IPC/UTS/network namespaces, as the owner-matrix run did; it is gated the same way: a single
+`sudo -n env -i WINTER_GUIDED_HOSTED_ADMISSION=... /usr/bin/python3 -I -S -B -` (an explicit interpreter, an empty environment) whose launcher hashes the
+runner file (no symlink, link count 1, bounded size) and executes exactly the bytes it hashed. It has its own `timeout-minutes` (15, below the job's 20)
+so the failure-only diagnostics upload still runs when it is killed. The gate test runs that launcher for real, minus its uid line, against throwaway
+files. Uploads: the result JSON on success, and on failure only the bounded result record; 7 days each.
 
 ## Prerequisites, audited (exists, this slice builds, or blocked)
 
@@ -107,13 +125,18 @@ runtime-sdk's `verify_packet.py` and its SHA-256, and the run-2 pin file and its
    packet's own unprivileged owner (it refuses root) with `--pin` passed EXPLICITLY (with two pins side by side the verifier's
    default lookup exits 2), and refuses unless it exits 0, `allChecksHold` is true, every check is true, the report lists no
    placeholder role and the pin marks none. CI cannot catch a well-formed wrong hash in a pin; this check can. The workflow's
-   unprivileged verify step runs the same verifier before `sudo`;
+   unprivileged verify step runs the same verifier before `sudo`. The verifier and the pin it reads run from root-owned 0444 copies of the bytes
+   that were just hashed (in a private 0755 directory, removed afterwards), not from the checkout paths the unprivileged runner user could rewrite
+   between the hash and the exec;
 3. loads `oracle.py`, `roles_adapter.py` and `session.py`, and reads `fixture-inputs.json`, only by the SHA-256 embedded in `run.py`
    (the gate test checks each embedded hash against the committed file, that no other sibling is named, that `run.py` executes code in
    exactly one place, `load_sibling`, after `read_pinned`, and runs exactly one subprocess, the hashed verifier with an explicit `--pin`; it
    checks the same for `session.py`'s one `exec`, which runs the supervisor only after its bytes matched the verified packet);
-4. stages the archive into a fresh root-owned tree (files 0400; roles, natives, libraries and the Bun base 0555; links
-   recreated; any escaping name or link refused);
+4. stages the archive into a fresh root-owned tree (files 0400; roles, natives, libraries and the Bun base 0555). The archive and the inventory are read
+   ONCE through `read_pinned` against the sha256 the verified pin records (no symlink, link count 1, bounded) and extracted from those bytes, never the
+   path again. Links are resolved for real against the tree as extracted (`realpath`, not a lexical test): a chain such as `a -> .` then `b -> a/..`
+   is refused, no member is ever written through a link (every ancestor must be a real directory), and every link is checked again once the tree is
+   complete;
 5. **preflight, executing nothing**: every SDK module appears exactly once in the hostClient metafile (two copies of
    `guided-query-reader.ts` would make the reader lookup refuse everything and waste the run);
 6. runs the independent exit-64 case, opens the session, runs the query chain, finishes (in the pinned order below), settles and tears
@@ -137,7 +160,7 @@ The pattern is `scripts/guest-host-query/verify.py`, the v1 hosted Root runner (
 | Owner hand-off to the provider | the v1 harness's `I` + `SCM_RIGHTS` on the admission socket, with the runtime's `initPidfd` |
 | Registration and `requiredRuntimeContext` handed to the host client | `service._runtime_record(...)` and `service.runtimes[sid]['readerRegistration']` (the same private accessors the v1 runner uses) |
 | Settle and teardown | `service.runtimes[sid]` state, `exitCode`, `cleanupConfirmed`, `service.active`, `service.debt`, `service.close()`, `service.revoke(sid)` |
-| Exit-64 observation | the packet's own `instructionReaderLauncher`, run with a wrong argument count (the `argv_parse` site), a receipt socket inherited |
+| Exit-64 observation | the packet's own `instructionReaderLauncher`, run with a wrong argument count (the `argv_parse` site), a receipt socket inherited. It runs from a root-owned private copy made by `copy_exact` (re-hashed against the pin; the staged tree is not trusted at exec time), in a fresh network namespace. The site name is a CONSTANT on purpose: the launcher reports no site, only an exit status, so the name labels the one refusal this envelope provokes; what is observed is the status, no init receipt and no pidfd |
 | The Root supervisor itself | its bytes must equal the copy captured in the verified packet, exactly one such member, or the session refuses |
 | The native owner | the `ownerLibrary` hash comes from the run-2 pin, never a constant: the #37 holder patch will change it |
 

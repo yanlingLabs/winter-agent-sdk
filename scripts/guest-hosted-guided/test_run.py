@@ -124,7 +124,12 @@ class Base(unittest.TestCase):
         open(os.path.join(self.packet, 'guided-packet.tar.gz'), 'wb').write(b'x')
         open(os.path.join(self.packet, 'packet-inventory.json'), 'wb').write(b'{}')
         self.write_verifier(GOOD_REPORT)
-        self.write_pin(GOOD_PIN)
+        self.write_pin(self.pin_with_hashes())
+
+    def pin_with_hashes(self):
+        """GOOD_PIN plus the sha256 of the archive and the inventory now in the packet directory, as a real pin records them."""
+        digest = lambda name: hashlib.sha256(open(os.path.join(self.packet, name), 'rb').read()).hexdigest()
+        return {**GOOD_PIN, 'archive': {'sha256': digest('guided-packet.tar.gz')}, 'inventory': {'sha256': digest('packet-inventory.json')}}
 
     def tarball(self, members):
         path = os.path.join(self.packet, 'guided-packet.tar.gz')
@@ -139,6 +144,7 @@ class Base(unittest.TestCase):
                     info.type = tarfile.SYMTYPE
                     info.linkname = payload
                     tar.addfile(info)
+        self.write_pin(self.pin_with_hashes())
 
     def write_verifier(self, report, code=0, body=None):
         text = body if body is not None else f"import json,sys\nopen(sys.argv[1],'rb').close()\nprint(json.dumps({report!r}))\nsys.exit({code})\n"
@@ -262,6 +268,29 @@ class PacketVerification(Base):
     def test_pin_bytes_must_match_their_pin(self):
         self.refused(argv=self.argv(psha='0' * 64))
 
+    def test_a_hard_linked_or_oversize_input_is_refused_by_the_identity_check(self):
+        # the st_nlink and size identity checks of read_pinned, each on its own
+        data = b'abc'
+        path = os.path.join(self.dir, 'one')
+        open(path, 'wb').write(data)
+        self.assertEqual(run.read_pinned(path, hashlib.sha256(data).hexdigest()), data)
+        os.link(path, path + '.two')
+        with self.assertRaises(ValueError):
+            run.read_pinned(path, hashlib.sha256(data).hexdigest())
+        os.unlink(path + '.two')
+        with self.assertRaises(ValueError):
+            run.read_pinned(path, hashlib.sha256(data).hexdigest(), limit=2)
+        self.assertEqual(run.read_pinned(path, hashlib.sha256(data).hexdigest(), limit=3), data)
+        os.mkdir(path + '.dir')
+        with self.assertRaises((ValueError, OSError)):
+            run.read_pinned(path + '.dir', hashlib.sha256(data).hexdigest())
+        with self.assertRaises(ValueError):
+            run.read_pinned(path, '0' * 64)
+
+    def test_a_hard_linked_verifier_is_refused(self):
+        os.link(self.verifier, self.verifier + '.alias')
+        self.refused()
+
     def test_a_symlinked_verifier_or_pin_is_refused(self):
         link = os.path.join(self.dir, 'link.py')
         os.symlink(self.verifier, link)
@@ -271,6 +300,49 @@ class PacketVerification(Base):
         os.remove(os.path.join(self.packet, 'guided-packet.tar.gz'))
         status, result, _ = self.go()
         self.assertEqual((status, result['failureClass']), (78, 'packet_verify'))
+
+    def probing_verifier(self):
+        record = os.path.join(self.dir, 'probe.json')
+        body = ("import json,os,sys,stat\n"
+                "me = os.path.abspath(sys.argv[0]); pin = sys.argv[sys.argv.index('--pin') + 1]\n"
+                "info = {'me': me, 'pin': pin, 'meMode': stat.S_IMODE(os.stat(me).st_mode), 'pinMode': stat.S_IMODE(os.stat(pin).st_mode), 'meBytes': open(me).read(), 'pinBytes': open(pin).read(), 'dirMode': stat.S_IMODE(os.stat(os.path.dirname(me)).st_mode)}\n"
+                f"open({record!r}, 'w').write(json.dumps(info))\n"
+                f"print(json.dumps({GOOD_REPORT!r}))\n")
+        self.write_verifier(None, body=body)
+        return record
+
+    def test_the_verifier_and_the_pin_run_from_root_owned_copies_of_the_hashed_bytes(self):
+        record = self.probing_verifier()
+        status, result, _ = self.go()
+        self.assertEqual(status, 0)
+        seen = json.load(open(record))
+        for key, original in (('me', self.verifier), ('pin', self.pin)):
+            self.assertNotEqual(seen[key], original)
+            self.assertIn('winter-guided-verify-', seen[key])
+            self.assertEqual(os.path.basename(seen[key]), os.path.basename(original))
+        self.assertEqual((seen['meMode'], seen['pinMode'], seen['dirMode']), (0o444, 0o444, 0o755))
+        self.assertEqual(seen['meBytes'], open(self.verifier).read())
+        self.assertEqual(seen['pinBytes'], open(self.pin).read())
+        self.assertFalse(os.path.exists(os.path.dirname(seen['me'])))  # the copies are removed afterwards
+
+    def test_a_verifier_or_pin_rewritten_after_hashing_is_not_what_runs(self):
+        record = self.probing_verifier()
+        real = run.read_pinned
+        original = open(self.verifier).read()
+        pin_text = open(self.pin).read()
+        def swap(path, digest, limit=run.MAX_SMALL):
+            data = real(path, digest, limit)
+            if path == self.verifier:
+                open(path, 'w').write("raise SystemExit(0)  # replaced after the hash\n")
+            if path == self.pin:
+                open(path, 'w').write('{"replaced": true}')
+            return data
+        with mock.patch.object(run, 'read_pinned', swap):
+            status, result, _ = self.go()
+        self.assertEqual(status, 0)
+        seen = json.load(open(record))
+        self.assertEqual(seen['meBytes'], original)
+        self.assertEqual(seen['pinBytes'], pin_text)
 
     def test_the_verifier_is_dropped_to_the_packet_owner_when_root(self):
         source = open(os.path.join(HERE, 'run.py')).read()
@@ -484,6 +556,7 @@ class Platform(Base):
                     info.type = tarfile.SYMTYPE
                     info.linkname = payload
                     tar.addfile(info)
+        self.write_pin(self.pin_with_hashes())
 
     def inputs_directory(self, data=None):
         """A directory holding fixture-inputs.json: the committed bytes, or `data`."""
@@ -581,18 +654,129 @@ class Platform(Base):
     def test_stage_packet_assigns_modes_recreates_links_and_returns_the_inventory(self):
         self.tarball([('artifacts/runtimeEntry', 'file', b'elf'), ('artifacts/runtimeEntry.metafile.json', 'file', b'{}'), ('receipt.json', 'file', b'{}'),
                       ('environment/libc.so', 'file', b'lib'), ('bun/bun', 'file', b'bun'), ('alias', 'link', 'receipt.json')])
-        staged = run.RealPlatform(parent=self.dir).stage_packet(self.packet, GOOD_PIN)
+        staged = run.RealPlatform(parent=self.dir).stage_packet(self.packet, self.pin_with_hashes())
         mode = lambda n: oct(os.lstat(os.path.join(staged.root, n)).st_mode & 0o777)
         self.assertEqual((mode('artifacts/runtimeEntry'), mode('artifacts/runtimeEntry.metafile.json'), mode('receipt.json'), mode('environment/libc.so'), mode('bun/bun')), ('0o555', '0o400', '0o400', '0o555', '0o555'))
         self.assertEqual(os.readlink(os.path.join(staged.root, 'alias')), 'receipt.json')
         self.assertEqual(oct(os.stat(staged.root).st_mode & 0o777), '0o700')
-        self.assertEqual((staged.pin, staged.inventory), (GOOD_PIN, {'x': {'sha256': 'a' * 64}}))
+        self.assertEqual((staged.pin, staged.inventory), (self.pin_with_hashes(), {'x': {'sha256': 'a' * 64}}))
 
     def test_stage_packet_refuses_escapes_and_special_members(self):
         for members in ([('../x', 'file', b'')], [('/abs', 'file', b'')], [('a', 'link', '../../etc/passwd')], [('a', 'link', '/etc/passwd')], [('a\\b', 'file', b'')]):
             self.tarball(members)
             with self.assertRaises(ValueError):
-                run.RealPlatform(parent=self.dir).stage_packet(self.packet, GOOD_PIN)
+                run.RealPlatform(parent=self.dir).stage_packet(self.packet, self.pin_with_hashes())
+
+    def test_stage_packet_reads_the_archive_and_the_inventory_through_the_pin_hashes(self):
+        self.tarball([('receipt.json', 'file', b'{}')])
+        pin = self.pin_with_hashes()
+        for name, key in (('guided-packet.tar.gz', 'archive'), ('packet-inventory.json', 'inventory')):
+            wrong = {**pin, key: {'sha256': '0' * 64}}
+            with self.assertRaises(ValueError, msg=name + ' digest'):
+                run.RealPlatform(parent=self.dir).stage_packet(self.packet, wrong)
+        # a file rewritten after the pin was recorded is refused, not staged
+        path = os.path.join(self.packet, 'packet-inventory.json')
+        open(path, 'a').write(' ')
+        with self.assertRaises(ValueError):
+            run.RealPlatform(parent=self.dir).stage_packet(self.packet, pin)
+        self.tarball([('receipt.json', 'file', b'{}')])
+        pin = self.pin_with_hashes()
+        archive = os.path.join(self.packet, 'guided-packet.tar.gz')
+        os.link(archive, archive + '.again')
+        with self.assertRaises(ValueError, msg='a hard-linked archive'):
+            run.RealPlatform(parent=self.dir).stage_packet(self.packet, pin)
+        os.unlink(archive + '.again')
+        os.rename(archive, archive + '.real')
+        os.symlink(archive + '.real', archive)
+        with self.assertRaises(OSError, msg='a symlinked archive'):
+            run.RealPlatform(parent=self.dir).stage_packet(self.packet, pin)
+
+    def test_the_staged_bytes_are_the_bytes_that_were_hashed_even_if_the_file_changes_after(self):
+        self.tarball([('receipt.json', 'file', b'{}')])
+        pin = self.pin_with_hashes()
+        platform = run.RealPlatform(parent=self.dir)
+        real = run.read_pinned
+        def swap_after_hashing(path, digest, limit=run.MAX_SMALL):
+            data = real(path, digest, limit)
+            if path.endswith('guided-packet.tar.gz'):
+                open(path, 'wb').write(b'not the archive any more')
+            return data
+        with mock.patch.object(run, 'read_pinned', swap_after_hashing):
+            staged = platform.stage_packet(self.packet, pin)
+        self.assertEqual(open(os.path.join(staged.root, 'receipt.json'), 'rb').read(), b'{}')
+
+    def staged_members(self, members):
+        self.tarball(members)
+        return run.RealPlatform(parent=self.dir).stage_packet(self.packet, self.pin_with_hashes())
+
+    def test_a_link_chain_that_is_lexically_inside_and_really_outside_is_refused(self):
+        # `a -> .` then `b -> a/..`: each name passes the lexical test, and b really resolves to the parent of the staging root.
+        with self.assertRaises(ValueError):
+            self.staged_members([('a', 'link', '.'), ('b', 'link', 'a/..')])
+        with self.assertRaises(ValueError):
+            self.staged_members([('d/a', 'link', '.'), ('d/b', 'link', 'a/../..'), ('e', 'file', b'')])
+        with self.assertRaises(ValueError):
+            self.staged_members([('a', 'link', '.'), ('b', 'link', 'a/a/a/../../../..')])
+
+    def staging_dirs(self):
+        return sorted(name for name in os.listdir(self.dir) if name.startswith('winter-guided-hosted-'))
+
+    def test_a_bad_link_is_refused_where_it_is_met_and_nothing_after_it_is_extracted(self):
+        with self.assertRaises(ValueError):
+            self.staged_members([('a', 'link', '.'), ('b', 'link', 'a/..'), ('after.txt', 'file', b'x')])
+        root = os.path.join(self.dir, self.staging_dirs()[-1])
+        self.assertEqual(sorted(os.listdir(root)), ['a'])
+
+    def test_a_link_that_only_becomes_an_escape_when_a_later_link_arrives_is_refused_at_the_end(self):
+        # f -> g/.. is inside while g does not exist; g -> . then makes it the parent of the staging root. Each link passes when it is met.
+        with self.assertRaises(ValueError):
+            self.staged_members([('f', 'link', 'g/..'), ('g', 'link', '.')])
+
+    def test_a_path_that_merely_starts_with_the_staging_root_name_is_outside(self):
+        root_name = os.path.join(self.dir, 'stage-root')
+        sibling = root_name + 'evil'
+        os.mkdir(sibling)
+        self.tarball([('a', 'link', '.'), ('b', 'link', 'a/../stage-rootevil')])
+        with mock.patch.object(run.tempfile, 'mkdtemp', lambda prefix, dir: (os.mkdir(root_name), root_name)[1]):
+            with self.assertRaises(ValueError):
+                run.RealPlatform(parent=self.dir).stage_packet(self.packet, self.pin_with_hashes())
+
+    def test_an_oversize_archive_is_refused(self):
+        self.tarball([('receipt.json', 'file', b'x' * 5000)])
+        platform = run.RealPlatform(parent=self.dir)
+        self.assertGreater(os.path.getsize(os.path.join(self.packet, 'guided-packet.tar.gz')), 100)
+        with mock.patch.object(run.RealPlatform, 'ARCHIVE_LIMIT', 100):
+            with self.assertRaises(ValueError):
+                platform.stage_packet(self.packet, self.pin_with_hashes())
+        self.assertEqual(platform.stage_packet(self.packet, self.pin_with_hashes()).pin['archive']['sha256'], self.pin_with_hashes()['archive']['sha256'])
+
+    def test_a_private_copy_never_replaces_an_existing_file(self):
+        directory = os.path.join(self.dir, 'copies')
+        os.mkdir(directory)
+        run.private_copy(directory, 'x.py', b'one')
+        with self.assertRaises(FileExistsError):
+            run.private_copy(directory, 'x.py', b'two')
+        self.assertEqual(open(os.path.join(directory, 'x.py'), 'rb').read(), b'one')
+
+    def test_a_link_to_a_link_that_stays_inside_is_allowed_and_a_link_through_a_link_to_outside_is_not(self):
+        staged = self.staged_members([('real.txt', 'file', b'x'), ('one', 'link', 'real.txt'), ('two', 'link', 'one'), ('sub/three', 'link', '../two')])
+        self.assertEqual(os.path.realpath(os.path.join(staged.root, 'sub/three')), os.path.realpath(os.path.join(staged.root, 'real.txt')))
+        with self.assertRaises(ValueError):
+            self.staged_members([('up', 'link', 'sub/..'), ('sub/x', 'file', b''), ('out', 'link', 'up/..')])
+
+    def test_no_member_is_ever_written_through_a_link(self):
+        outside = os.path.join(self.dir, 'outside')
+        os.mkdir(outside)
+        with self.assertRaises(ValueError):
+            self.staged_members([('d', 'link', '.'), ('d/file', 'file', b'x')])
+        with self.assertRaises(ValueError):
+            self.staged_members([('lnk', 'link', 'sub'), ('lnk/file', 'file', b'x')])
+        self.assertEqual(os.listdir(outside), [])
+
+    def test_a_link_that_is_outside_only_once_the_tree_is_complete_is_refused_at_the_end(self):
+        # a dangling forward link whose target later becomes a link to the parent
+        with self.assertRaises(ValueError):
+            self.staged_members([('f', 'link', 'g/h'), ('g', 'link', '..')])
 
 
 class Adapter(unittest.TestCase):
