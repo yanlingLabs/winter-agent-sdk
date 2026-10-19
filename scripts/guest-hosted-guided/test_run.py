@@ -4,6 +4,7 @@ the network or a real packet: the root checks are exercised through the runner's
 import contextlib
 import hashlib
 import io
+import re
 import json
 import os
 import shutil
@@ -20,6 +21,7 @@ sys.path.insert(0, HERE)
 import oracle  # noqa: E402
 import roles_adapter  # noqa: E402
 import run  # noqa: E402
+import session  # noqa: E402
 
 FAKE = os.path.join(HERE, 'fake_role.py')
 ENV = {run.OPT_IN: run.OPT_IN_VALUE}
@@ -31,13 +33,15 @@ def sha(data):
 
 GOOD_REPORT = {'kind': 'winter-guided-packet-verification', 'allChecksHold': True, 'checks': {'one': True, 'two': True}, 'placeholders': [], 'outputsExecuted': False}
 GOOD_PIN = {'artifacts': {'roles': {'hostClient': {'sha256': 'a' * 64}, 'providerWorker': {'sha256': 'b' * 64}}}, 'bun': {'stageBase': {'path': 'bun/bun'}}}
+GOOD_METAFILE = {'inputs': {'x/packages/sdk/src/query.ts': {}, 'x/packages/sdk/src/guided-query-reader.ts': {}, 'x/other/thing.ts': {}}}
 
 
 class FakeSession:
-    def __init__(self, state, modes, timeout=5.0):
+    def __init__(self, state, modes, settle=True, exits=None):
         self.state, self.modes, self.processes = state, modes, []
         self.shared = 'old guidance'
         self.closed = False
+        self.settle_result, self.exit_result = settle, exits
 
     def spawn(self, role):
         name = 'provider' if role == 'providerWorker' else 'host'
@@ -45,14 +49,26 @@ class FakeSession:
         self.processes.append(process)
         return process
 
-    def provider_script(self):
-        return b'{"version":1}'
-
     def shared_sha256(self):
         return sha(self.shared)
 
     def edit_shared(self):
         self.shared = 'edited guidance'
+
+    def settle(self):
+        return self.settle_result
+
+    def reap(self):
+        if self.exit_result is not None:
+            return self.exit_result
+        result = {}
+        for label, process in zip(('provider', 'host'), self.processes):
+            try:
+                result[label] = process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                result[label] = process.wait()
+        return result
 
     def close(self):
         self.closed = True
@@ -62,14 +78,22 @@ class FakeSession:
 
 
 class FakePlatform(run.Platform):
-    def __init__(self, state, modes=None, exit64=None):
+    def __init__(self, state, modes=None, exit64=None, metafile=GOOD_METAFILE, settle=True, exits=None):
         self.state, self.modes, self.calls = state, modes or {}, []
         self.exit64 = exit64 or {'site': 'argv_parse', 'exitStatus': 64, 'initReceipt': False, 'pidfdReceived': False}
         self.session = None
+        self.metafile, self.settle, self.exits = metafile, settle, exits
+
+    def bind(self, session_module, directory):
+        self.calls.append('bind')
 
     def stage_packet(self, packet_dir, pin):
         self.calls.append('stage')
-        return 'staged'
+        root = os.path.join(self.state, 'staged')
+        os.makedirs(os.path.join(root, 'artifacts'), exist_ok=True)
+        if self.metafile is not None:
+            open(os.path.join(root, 'artifacts', 'hostClient.metafile.json'), 'w').write(json.dumps(self.metafile))
+        return run.Staged(root, pin, {})
 
     def exit64_case(self, staged):
         self.calls.append('exit64')
@@ -77,7 +101,7 @@ class FakePlatform(run.Platform):
 
     def open_session(self, staged):
         self.calls.append('session')
-        self.session = FakeSession(self.state, self.modes)
+        self.session = FakeSession(self.state, self.modes, self.settle, self.exits)
         return self.session
 
 
@@ -97,6 +121,7 @@ class Base(unittest.TestCase):
 
     def tarball(self, members):
         path = os.path.join(self.packet, 'guided-packet.tar.gz')
+        open(os.path.join(self.packet, 'packet-inventory.json'), 'w').write(json.dumps({'files': {}}))
         with tarfile.open(path, 'w:gz') as tar:
             for name, kind, payload in members:
                 info = tarfile.TarInfo(name)
@@ -141,9 +166,10 @@ class HappyPath(Base):
         self.assertTrue(result['passed'])
         self.assertEqual(result['schema'], 'winter-guided-hosted-run/1')
         self.assertTrue(result['verdict']['passed'])
-        self.assertEqual(platform.calls, ['stage', 'exit64', 'session'])
+        self.assertEqual(platform.calls, ['bind', 'stage', 'exit64', 'session'])
         self.assertTrue(platform.session.closed)
-        self.assertEqual(sorted(result), ['failureClass', 'kernelRelease', 'machine', 'passed', 'schema', 'stage', 'verdict'])
+        self.assertEqual(sorted(result), ['exits', 'failureClass', 'hostPassed', 'kernelRelease', 'machine', 'passed', 'schema', 'settled', 'stage', 'verdict'])
+        self.assertEqual((result['hostPassed'], result['settled'], result['exits']), (True, True, {'host': 0, 'provider': 0}))
 
     def test_relative_paths_are_resolved_before_the_verifier_runs_elsewhere(self):
         cwd = os.getcwd()
@@ -164,6 +190,7 @@ class HappyPath(Base):
     def test_the_embedded_sibling_pins_match_the_files(self):
         self.assertEqual(run.ORACLE_SHA256, sha(open(os.path.join(HERE, 'oracle.py'), 'rb').read()))
         self.assertEqual(run.ADAPTER_SHA256, sha(open(os.path.join(HERE, 'roles_adapter.py'), 'rb').read()))
+        self.assertEqual(run.SESSION_SHA256, sha(open(os.path.join(HERE, 'session.py'), 'rb').read()))
 
 
 class Admission(Base):
@@ -266,6 +293,11 @@ class QueryChain(Base):
         self.assertEqual(result['failureClass'], 'verdict')
         self.assertEqual(result['verdict']['cases']['revocation']['failureClass'], 'revocation_provider_request')
 
+    def test_a_request_after_the_last_barrier_is_seen_in_the_provider_summary(self):
+        status, result, _ = self.chain(provider='summary_late')
+        self.assertEqual((status, result['failureClass']), (1, 'verdict'))
+        self.assertEqual(result['verdict']['cases']['revocation']['failureClass'], 'revocation_provider_request')
+
     def test_a_spent_ticket_accepted_fails_the_reuse_case(self):
         status, result, _ = self.chain(host='reuse_accepted')
         self.assertEqual(status, 1)
@@ -283,7 +315,9 @@ class QueryChain(Base):
 
     def test_both_role_channels_are_closed_at_the_end(self):
         status, result, platform = self.chain()
-        self.assertTrue(all(process.stdin.closed for process in platform.session.processes))
+        host, provider = platform.session.processes[1], platform.session.processes[0]
+        self.assertTrue(host.stdin.closed)
+        self.assertIsNotNone(provider.poll() if provider.wait(timeout=5) is not None else None)
 
     def test_a_wrong_revocation_class_fails(self):
         status, result, _ = self.chain(host='revoke_wrong_class')
@@ -308,37 +342,122 @@ class QueryChain(Base):
         self.assertTrue(platform.session.closed)
         self.assertIsNone(result['verdict'])
 
-    def test_the_provider_refusing_its_script_is_provider_start(self):
-        status, result, _ = self.chain(provider='script_refused')
-        self.assertEqual((status, result['failureClass']), (78, 'provider_start'))
+    def test_a_command_the_host_refuses_is_a_stage_class(self):
+        status, result, _ = self.chain(host='command_refused')
+        self.assertEqual((status, result['failureClass']), (78, 'dispatch1'))
 
     def test_a_role_that_exits_or_speaks_garbage_is_a_bounded_class(self):
-        for mode in ('exit', 'garbage', 'huge'):
+        for mode in ('exit', 'garbage', 'huge', 'bad_kind'):
             status, result, platform = self.chain(host=mode)
             self.assertEqual((status, result['failureClass']), (78, 'dispatch1'), mode)
             os.remove(os.path.join(self.out, 'result.json'))
-            open(os.path.join(self.state, 'counters.json'), 'w').close() if False else None
+            shutil.rmtree(self.state)
+            os.mkdir(self.state)
 
     def test_no_role_text_reaches_the_result(self):
         status, result, _ = self.chain(host='garbage')
         self.assertNotIn('not json', json.dumps(result))
 
+    def test_the_host_client_not_passing_fails_even_when_every_case_passes(self):
+        status, result, _ = self.chain(host='not_passed')
+        self.assertEqual((status, result['failureClass'], result['hostPassed']), (1, 'host_result', False))
+        self.assertTrue(result['verdict']['passed'])
+        self.assertFalse(result['passed'])
+
+    def test_a_runtime_that_did_not_settle_fails_the_run(self):
+        status, result, _ = self.go(platform=FakePlatform(self.state, settle=False))
+        self.assertEqual((status, result['failureClass'], result['settled']), (78, 'teardown', False))
+
+    def test_a_nonzero_role_exit_fails_the_run(self):
+        for exits in ({'host': 1, 'provider': 0}, {'host': 0, 'provider': 3}, {'host': 0}):
+            status, result, _ = self.go(platform=FakePlatform(self.state, exits=exits))
+            self.assertEqual((status, result['failureClass']), (78, 'teardown'), exits)
+            os.remove(os.path.join(self.out, 'result.json'))
+            shutil.rmtree(self.state)
+            os.mkdir(self.state)
+
+    def test_a_provider_summary_whose_counters_disagree_is_a_teardown_failure(self):
+        status, result, _ = self.chain(provider='summary_disagree')
+        self.assertEqual((status, result['failureClass']), (78, 'teardown'))
+
+    def test_the_provider_exiting_nonzero_on_stop_fails_the_run(self):
+        status, result, _ = self.chain(provider='summary_exit')
+        self.assertEqual((status, result['failureClass']), (78, 'teardown'))
+
+    def test_a_receipt_with_the_wrong_tag_or_disagreeing_counters_is_a_stage_class(self):
+        for mode in ('wrong_tag', 'agree_false'):
+            status, result, _ = self.chain(provider=mode)
+            self.assertEqual((status, result['failureClass']), (78, 'dispatch1'), mode)
+            os.remove(os.path.join(self.out, 'result.json'))
+            shutil.rmtree(self.state)
+            os.mkdir(self.state)
+
+    def test_tolerated_noise_does_not_change_the_verdict(self):
+        status, result, _ = self.chain(host='noise', provider='noise')
+        self.assertEqual(status, 0)
+
+
+class Metafile(Base):
+    def go_meta(self, metafile):
+        return self.go(platform=FakePlatform(self.state, metafile=metafile))
+
+    def test_a_duplicate_sdk_module_is_refused_before_anything_starts(self):
+        platform = FakePlatform(self.state, metafile={'inputs': {'a/packages/sdk/src/guided-query-reader.ts': {}, 'b/winter-agent-sdk/src/guided-query-reader.ts': {}}})
+        status, result, _ = self.go(platform=platform)
+        self.assertEqual((status, result['failureClass']), (78, 'metafile'))
+        self.assertEqual(platform.calls, ['bind', 'stage'])
+
+    def test_any_duplicated_sdk_module_is_refused(self):
+        status, result, _ = self.go_meta({'inputs': {'a/packages/sdk/src/guided-query-reader.ts': {}, 'a/packages/sdk/src/query.ts': {}, 'b/winter-agent-sdk/dist/query.js': {}}})
+        self.assertEqual((status, result['failureClass']), (78, 'metafile'))
+
+    def test_a_missing_reader_module_or_missing_metafile_is_refused(self):
+        for meta in ({'inputs': {'a/packages/sdk/src/query.ts': {}}}, {'inputs': {}}, {'nothing': 1}, None):
+            status, result, _ = self.go_meta(meta)
+            self.assertEqual((status, result['failureClass']), (78, 'metafile'), meta)
+            os.remove(os.path.join(self.out, 'result.json'))
+            shutil.rmtree(self.state)
+            os.mkdir(self.state)
+
+    def test_one_copy_of_each_module_passes(self):
+        status, result, _ = self.go_meta(GOOD_METAFILE)
+        self.assertEqual(status, 0)
+
 
 class Platform(Base):
-    def test_the_real_platform_refuses_what_is_not_written_and_does_not_start_roles(self):
-        self.tarball([('receipt.json', 'file', b'{}')])
-        status, result, _ = self.go(platform=run.RealPlatform(parent=self.dir))
+    def tarball(self, members):
+        path = os.path.join(self.packet, 'guided-packet.tar.gz')
+        open(os.path.join(self.packet, 'packet-inventory.json'), 'w').write(json.dumps({'files': {'x': {'sha256': 'a' * 64}}}))
+        with tarfile.open(path, 'w:gz') as tar:
+            for name, kind, payload in members:
+                info = tarfile.TarInfo(name)
+                if kind == 'file':
+                    info.size = len(payload)
+                    tar.addfile(info, io.BytesIO(payload))
+                else:
+                    info.type = tarfile.SYMTYPE
+                    info.linkname = payload
+                    tar.addfile(info)
+
+    def test_the_real_platform_refuses_the_session_without_fixture_inputs_and_starts_nothing(self):
+        class Platform64(run.RealPlatform):
+            def exit64_case(self, staged):
+                return {'site': 'argv_parse', 'exitStatus': 64, 'initReceipt': False, 'pidfdReceived': False}
+        self.tarball([('artifacts/hostClient.metafile.json', 'file', json.dumps(GOOD_METAFILE).encode())])
+        status, result, _ = self.go(platform=Platform64(parent=self.dir))
         self.assertEqual((status, result['failureClass']), (78, 'platform_incomplete'))
         self.assertIsNone(result['verdict'])
+        self.assertEqual(run.FIXTURE_INPUTS_SHA256, '0' * 64)
 
-    def test_stage_packet_assigns_modes_and_recreates_links(self):
+    def test_stage_packet_assigns_modes_recreates_links_and_returns_the_inventory(self):
         self.tarball([('artifacts/runtimeEntry', 'file', b'elf'), ('artifacts/runtimeEntry.metafile.json', 'file', b'{}'), ('receipt.json', 'file', b'{}'),
                       ('environment/libc.so', 'file', b'lib'), ('bun/bun', 'file', b'bun'), ('alias', 'link', 'receipt.json')])
-        root = run.RealPlatform(parent=self.dir).stage_packet(self.packet, GOOD_PIN)
-        mode = lambda n: oct(os.lstat(os.path.join(root, n)).st_mode & 0o777)
+        staged = run.RealPlatform(parent=self.dir).stage_packet(self.packet, GOOD_PIN)
+        mode = lambda n: oct(os.lstat(os.path.join(staged.root, n)).st_mode & 0o777)
         self.assertEqual((mode('artifacts/runtimeEntry'), mode('artifacts/runtimeEntry.metafile.json'), mode('receipt.json'), mode('environment/libc.so'), mode('bun/bun')), ('0o555', '0o400', '0o400', '0o555', '0o555'))
-        self.assertEqual(os.readlink(os.path.join(root, 'alias')), 'receipt.json')
-        self.assertEqual(oct(os.stat(root).st_mode & 0o777), '0o700')
+        self.assertEqual(os.readlink(os.path.join(staged.root, 'alias')), 'receipt.json')
+        self.assertEqual(oct(os.stat(staged.root).st_mode & 0o777), '0o700')
+        self.assertEqual((staged.pin, staged.inventory), (GOOD_PIN, {'x': {'sha256': 'a' * 64}}))
 
     def test_stage_packet_refuses_escapes_and_special_members(self):
         for members in ([('../x', 'file', b'')], [('/abs', 'file', b'')], [('a', 'link', '../../etc/passwd')], [('a', 'link', '/etc/passwd')], [('a\\b', 'file', b'')]):
@@ -357,39 +476,110 @@ class Adapter(unittest.TestCase):
 
     def test_counters_come_only_from_the_provider_receipt(self):
         roles = self.roles()
-        roles.start_provider(b'{}')
-        self.assertEqual(roles.stub_receipt(), {'receivedFrames': 0, 'receivedBegins': 0, 'acceptedBegins': 0, 'completed': 0})
+        roles.await_provider_ready()
+        self.assertEqual(roles.stub_receipt('first'), {key: 0 for key in roles_adapter.COUNTERS})
         self.assertEqual(roles.dispatch(1), 'first deterministic answer')
-        self.assertEqual(roles.stub_receipt()['receivedBegins'], 1)
+        self.assertEqual(roles.stub_receipt('second')['receivedBegins'], 1)
+
+    def test_the_provider_summary_is_the_final_figure(self):
+        roles = self.roles()
+        roles.await_provider_ready()
+        roles.dispatch(1)
+        self.assertEqual(roles.stop()['acceptedBegins'], 1)
+
+    def test_host_commands_and_results(self):
+        roles = self.roles()
+        roles.await_provider_ready()
+        roles.dispatch(1)
+        roles.dispatch(2)
+        self.assertEqual(roles.present_spent(), 'required_context_unavailable')
+        roles.premint()
+        roles.revoke()
+        self.assertEqual(roles.present_premint(), 'required_context_unavailable')
+        roles.finish_send()
+        self.assertIs(roles.finish_result(), True)
+
+    def test_an_accepted_presentation_is_the_empty_class(self):
+        roles = self.roles(host='reuse_accepted')
+        self.assertEqual(roles.present_spent(), '')
 
     def test_timeout_garbage_and_oversize_are_bounded_kinds(self):
-        for mode, kind in (('silent', 'timeout'), ('garbage', 'protocol'), ('huge', 'protocol'), ('nonewline', 'protocol'), ('ok_int', 'protocol'), ('exit', 'closed')):
+        for mode, kind in (('silent', 'timeout'), ('garbage', 'protocol'), ('huge', 'protocol'), ('nonewline', 'protocol'), ('exit', 'closed')):
             roles = self.roles(host=mode)
             with self.assertRaises(roles_adapter.AdapterError) as raised:
                 roles.dispatch(1)
             self.assertEqual(raised.exception.kind, kind, mode)
 
-    def test_error_classes_are_bounded_text(self):
-        for value in ('Bad Class', '', 'x' * 65, 5):
+    def test_dispatch_replies_are_checked_for_number_size_and_type(self):
+        for mode in ('wrong_n', 'long_answer'):
+            roles = self.roles(host=mode)
+            with self.assertRaises(roles_adapter.AdapterError) as raised:
+                roles.dispatch(1)
+            self.assertEqual(raised.exception.kind, 'protocol', mode)
+
+    def test_the_host_result_must_carry_a_real_boolean(self):
+        roles = self.roles(host='passed_string')
+        roles.finish_send()
+        with self.assertRaises(roles_adapter.AdapterError) as raised:
+            roles.finish_result()
+        self.assertEqual(raised.exception.kind, 'protocol')
+
+    def test_unbounded_tolerated_noise_is_a_protocol_error(self):
+        roles = self.roles(host='spam')
+        with self.assertRaises(roles_adapter.AdapterError) as raised:
+            roles.dispatch(1)
+        self.assertEqual(raised.exception.kind, 'protocol')
+
+    def test_provider_garbage_silence_and_a_missing_ready_line(self):
+        for mode, kind in (('silent', 'timeout'), ('garbage', 'protocol')):
+            roles = self.roles(provider=mode)
+            roles.await_provider_ready()
+            with self.assertRaises(roles_adapter.AdapterError) as raised:
+                roles.stub_receipt('tag')
+            self.assertEqual(raised.exception.kind, kind, mode)
+        roles = self.roles(provider='not_ready')
+        with self.assertRaises(roles_adapter.AdapterError) as raised:
+            roles.await_provider_ready()
+        self.assertEqual(raised.exception.kind, 'timeout')
+
+    def test_tags_and_commands_are_closed_text(self):
+        roles = self.roles()
+        for tag in ('', 'Upper', 'a b', 'x' * 33, '-lead', 'a;b'):
             with self.assertRaises(roles_adapter.AdapterError):
-                roles_adapter._refusal({'ok': False, 'errorClass': value})
-        self.assertEqual(roles_adapter._refusal({'ok': False, 'errorClass': 'required_context_unavailable'}), 'required_context_unavailable')
-        self.assertEqual(roles_adapter._refusal({'ok': True}), '')
+                roles.stub_receipt(tag)
+        with self.assertRaises(roles_adapter.AdapterError):
+            roles.host.send('dispatch 1; rm')
 
-    def test_receipt_shape_is_closed_to_integers(self):
-        for receipt in (None, [], {'receivedFrames': 1}, {'receivedFrames': True, 'receivedBegins': 1, 'acceptedBegins': 1, 'completed': 1}, {'receivedFrames': '1', 'receivedBegins': 1, 'acceptedBegins': 1, 'completed': 1}):
+    def test_presentation_shapes_are_checked(self):
+        good = {'kind': 'host-presented', 'which': 'spent', 'refused': True, 'errorClass': 'required_context_unavailable', 'processStarted': False}
+        self.assertEqual(roles_adapter._presented(good, 'spent'), 'required_context_unavailable')
+        for change in ({'which': 'premint'}, {'errorClass': 'none'}, {'errorClass': 'weird'}, {'processStarted': True}, {'refused': 1}):
             with self.assertRaises(roles_adapter.AdapterError):
-                roles_adapter._counters(receipt)
+                roles_adapter._presented({**good, **change}, 'spent')
+        with self.assertRaises(roles_adapter.AdapterError):
+            roles_adapter._presented({**good, 'refused': False}, 'spent')
 
-    def test_every_assumption_is_listed_once_and_numbered(self):
-        names = [a.split()[0] for a in roles_adapter.ASSUMPTIONS]
-        self.assertEqual(names, ['A%d' % n for n in range(1, len(names) + 1)])
+    def test_counters_need_agreement_and_plain_integers(self):
+        base = {'kind': 'provider-receipt', 'countersAgree': True, **{key: 0 for key in roles_adapter.COUNTERS}}
+        self.assertEqual(roles_adapter.counters(base), {key: 0 for key in roles_adapter.COUNTERS})
+        for bad in ({'countersAgree': False}, {'countersAgree': 1}, {'requests': True}, {'requests': -1}, {'requests': '1'}, {'completed': 1 << 40}):
+            with self.assertRaises(roles_adapter.AdapterError):
+                roles_adapter.counters({**base, **bad})
+        with self.assertRaises(roles_adapter.AdapterError):
+            roles_adapter.counters(None)
 
-    def test_the_adapter_is_the_only_module_that_names_a_role_operation(self):
-        source = open(os.path.join(HERE, 'run.py')).read()
-        for operation in ('"op"', "'op'", 'receivedFrames', 'errorClass', 'b64', 'sha256":'):
-            self.assertNotIn(operation, source, operation)
+    def test_every_contract_line_is_numbered_by_its_id(self):
+        ids = [line.split()[0] for line in roles_adapter.CONTRACT]
+        self.assertTrue(all(re.fullmatch(r'C-[PH]\d+', i) for i in ids))
+        self.assertEqual(len(set(ids)), len(ids))
+        self.assertEqual([line.split()[0] for line in roles_adapter.REMAINING_DIFFERENCES], ['D%d' % n for n in range(1, len(roles_adapter.REMAINING_DIFFERENCES) + 1)])
+
+    def test_the_adapter_is_the_only_module_that_names_a_role_wire_word(self):
+        for name in ('run.py', 'session.py'):
+            source = open(os.path.join(HERE, name)).read()
+            for operation in ('provider-receipt', 'host-dispatch', 'host-presented', 'present-premint', 'provider-summary', 'errorClass', 'processStarted'):
+                self.assertNotIn(operation, source, name + ' ' + operation)
 
 
 if __name__ == '__main__':
-    unittest.main()
+    unittest.main(warnings='ignore')

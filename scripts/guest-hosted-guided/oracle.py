@@ -35,9 +35,11 @@ FAILURE_CLASSES = (
 # shared_inode (L510), guest_path (L162), descriptor_identity (L117-129), view_path (L139-145).
 EXIT64_SITES = ('receipt_socket_peer', 'argv_parse', 'shared_inode', 'guest_path', 'descriptor_identity', 'view_path')
 EXPECTED_ANSWERS = ('first deterministic answer', 'second deterministic answer')
-COUNTERS = ('receivedFrames', 'receivedBegins', 'acceptedBegins', 'completed')
+# The provider worker's own receipt fields (runtime-sdk C-P11). `requests` counts EVERY native arrival, readable or not, so it
+# is the figure for the zero-requests-after-revocation claim; `receivedBegins` 3 with `acceptedBegins` 2 is a refused third begin.
+COUNTERS = ('requests', 'unreadable', 'unframed', 'refused', 'receivedFrames', 'receivedBegins', 'acceptedBegins', 'completed')
 REFUSAL_CLASS = 'required_context_unavailable'
-_SNAPSHOTS = ('afterDispatch1', 'afterDispatch2', 'afterReuse', 'beforeRevocation', 'afterRevocation')
+_SNAPSHOTS = ('afterDispatch1', 'afterDispatch2', 'afterReuse', 'beforeRevocation', 'afterRevocation', 'final')
 _TOP = {'exit64', 'stub', 'host', 'sharedFile'}
 
 
@@ -99,7 +101,7 @@ def _reader(exit64):
 
 
 def _dispatch(snapshot, count, text, expected):
-    if snapshot['receivedBegins'] != snapshot['acceptedBegins']:
+    if snapshot['receivedBegins'] != snapshot['acceptedBegins'] or snapshot['refused'] or snapshot['unreadable'] or snapshot['unframed']:
         return _case(False, 'dispatch_refused')
     if snapshot['acceptedBegins'] != count or snapshot['completed'] != count or snapshot['receivedBegins'] != count:
         return _case(False, 'dispatch_count')
@@ -133,7 +135,8 @@ def evaluate(evidence):
         'dispatch2': lambda: _dispatch(stub['afterDispatch2'], 2, host['dispatch2Text'], EXPECTED_ANSWERS[1]),
         # Reuse runs while the generation is still LIVE, so a refusal can only be because the ticket is spent. The ticket
         # revocation later presents is a fresh, unspent one minted before the revoke, so only the revoke can refuse it.
-        # Both verdicts compare the STUB's own counters; nothing the host client says about its own calls is read.
+        # Both verdicts compare the STUB's own counters (the last one against the provider's final summary, so a request that
+        # arrives after the barrier is still seen); nothing the host client says about its own calls is read.
         'ticket_reuse': lambda: (
             _case(False, 'reuse_not_refused') if host['reuseError'] != REFUSAL_CLASS
             else _case(False, 'reuse_provider_request') if not _unchanged(stub['afterDispatch2'], stub['afterReuse'])
@@ -141,7 +144,7 @@ def evaluate(evidence):
         ),
         'revocation': lambda: (
             _case(False, 'revocation_not_refused') if host['revocationError'] != REFUSAL_CLASS
-            else _case(False, 'revocation_provider_request') if not (_unchanged(stub['afterReuse'], stub['beforeRevocation']) and _unchanged(stub['beforeRevocation'], stub['afterRevocation']))
+            else _case(False, 'revocation_provider_request') if not (_unchanged(stub['afterReuse'], stub['beforeRevocation']) and _unchanged(stub['beforeRevocation'], stub['afterRevocation']) and _unchanged(stub['afterRevocation'], stub['final']))
             else _case(True)
         ),
     }

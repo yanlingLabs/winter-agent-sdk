@@ -28,18 +28,25 @@ import posixpath
 import stat
 import subprocess
 import sys
+import re
 import tarfile
 import types
+from collections import namedtuple
 
 SCHEMA = 'winter-guided-hosted-run/1'
 OPT_IN = 'WINTER_GUIDED_HOSTED_ADMISSION'
 OPT_IN_VALUE = 'disposable-linux-guided-hosted-run'
 # SHA-256 of the two siblings this file may load. Changing either sibling changes these and therefore this file's hash.
-ORACLE_SHA256 = '3ffbaf06f7e890c4f3af2420630511c61365fb7633d359987c5a4976d21dbc8b'
-ADAPTER_SHA256 = '308cec86af9ff3914619c3a65934403bd5af1e91f0b3480c36caef354f53aab0'
+ORACLE_SHA256 = '295075e74776a4b40a7e5d4f11912d52f47bb8f03e112e6f48d687de6fa3323e'
+ADAPTER_SHA256 = '777afafbfcc3b326e6c7f839af8fe57d06440ac21bda47f4598a82cd529d5bbe'
+SESSION_SHA256 = '61ccfb2e0635074cd47f8292bf65a0856d9286fdc67cb0e8f4726bf70ef4d772'
+# The Core-dependent inputs (the host fixture records, the provider script's marker lines, the two prompts, the guidance
+# texts) are DATA this lane cannot invent; they live in a closed JSON file next to this one, pinned here. Zero = not supplied.
+FIXTURE_INPUTS_SHA256 = '0' * 64
 CLASSES = (
-    'admission', 'arguments', 'packet_verify', 'sibling_pin', 'platform_incomplete', 'stage_packet', 'exit64_case', 'session',
-    'provider_start', 'dispatch1', 'shared_edit', 'dispatch2', 'ticket_reuse', 'revocation', 'teardown', 'verdict', 'result_write',
+    'admission', 'arguments', 'packet_verify', 'metafile', 'sibling_pin', 'platform_incomplete', 'stage_packet', 'exit64_case', 'session',
+    'provider_start', 'dispatch1', 'shared_edit', 'dispatch2', 'ticket_reuse', 'revocation', 'host_result', 'teardown', 'verdict',
+    'result_write',
 )
 MAX_SMALL = 16 * 1024 * 1024
 VERIFY_TIMEOUT = 600
@@ -54,6 +61,35 @@ class RunnerError(Exception):
 
 class PlatformIncomplete(Exception):
     pass
+
+
+# What `stage_packet` returns: the staged root-owned tree, the verified pin, and the packet inventory (hash per member).
+Staged = namedtuple('Staged', 'root pin inventory')
+MODULE_TAIL = re.compile(r'(?:packages/sdk/src|winter-agent-sdk/(?:src|dist))/(.+?)(?:\.d)?\.(?:ts|js|mjs)$')
+
+
+def check_host_metafile(path):
+    """Preflight, executes nothing: every SDK module appears exactly once among the hostClient bundle's inputs. Two copies of
+    `guided-query-reader.ts` would make the reader lookup refuse everything and waste the run (it would fail closed)."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        try:
+            before = os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_SMALL:
+                raise ValueError('identity')
+            data = os.pread(fd, MAX_SMALL + 1, 0)
+        finally:
+            os.close(fd)
+        inputs = json.loads(data)['inputs']
+        tails = {}
+        for key in inputs:
+            match = MODULE_TAIL.search(key)
+            if match:
+                tails[match.group(1)] = tails.get(match.group(1), 0) + 1
+        if not tails or tails.get('guided-query-reader') != 1 or any(count != 1 for count in tails.values()):
+            raise ValueError('duplicate')
+    except (OSError, ValueError, KeyError, TypeError):
+        raise RunnerError('metafile') from None
 
 
 def read_pinned(path, expected_sha256, limit=MAX_SMALL):
@@ -117,6 +153,9 @@ def load_sibling(directory, name, expected_sha256, module_name):
 class Platform:
     """Root-side primitives. Everything here needs the supervisor, the native owner or the reader launcher."""
 
+    def bind(self, session_module, directory):
+        """Hands the pinned `session.py` module to the platform before any primitive is used."""
+
     def stage_packet(self, packet_dir, pin):
         raise PlatformIncomplete('stage_packet')
 
@@ -125,7 +164,7 @@ class Platform:
         raise PlatformIncomplete('exit64_case')
 
     def open_session(self, staged):
-        """Return a session with spawn(role) -> process, provider_script() -> bytes, shared_sha256(), edit_shared(), close()."""
+        """Return a started session: spawn(role) -> process, shared_sha256(), edit_shared(), settle(), reap(), close()."""
         raise PlatformIncomplete('open_session')
 
 
@@ -134,6 +173,11 @@ class RealPlatform(Platform):
 
     def __init__(self, parent='/run'):
         self.parent = parent
+        self.session_module = None
+        self.directory = None
+
+    def bind(self, session_module, directory):
+        self.session_module, self.directory = session_module, directory
 
     def stage_packet(self, packet_dir, pin):
         """Extract the verified archive into a fresh root-owned tree: files 0400, role/native/library/Bun-base files 0555,
@@ -172,7 +216,23 @@ class RealPlatform(Platform):
                         os.close(fd)
                 else:
                     raise ValueError('type')
-        return root
+        try:
+            with open(os.path.join(packet_dir, 'packet-inventory.json'), 'rb') as raw_inventory:
+                inventory = json.loads(raw_inventory.read(MAX_SMALL + 1))['files']
+        except (OSError, ValueError, KeyError):
+            raise ValueError('inventory') from None
+        return Staged(root, pin, inventory)
+
+    def exit64_case(self, staged):
+        if self.session_module is None:
+            raise PlatformIncomplete('exit64_case')
+        return self.session_module.exit64_case(staged)
+
+    def open_session(self, staged):
+        if self.session_module is None or FIXTURE_INPUTS_SHA256 == '0' * 64:
+            raise PlatformIncomplete('fixture_inputs')
+        inputs = json.loads(read_pinned(os.path.join(self.directory, 'fixture-inputs.json'), FIXTURE_INPUTS_SHA256))
+        return self.session_module.GuidedSession.open(staged, inputs, self.directory)
 
 
 def write_result(out_dir, record):
@@ -192,7 +252,8 @@ def write_result(out_dir, record):
 
 def run(argv, platform, env, directory, euid=os.geteuid):
     """Returns (record, exit_status). Never raises: every failure becomes a bounded class in the record."""
-    record = {'schema': SCHEMA, 'kernelRelease': host_platform.release(), 'machine': host_platform.machine(), 'stage': 'start', 'failureClass': None, 'passed': False, 'verdict': None}
+    record = {'schema': SCHEMA, 'kernelRelease': host_platform.release(), 'machine': host_platform.machine(), 'stage': 'start', 'failureClass': None,
+              'passed': False, 'hostPassed': None, 'settled': None, 'exits': None, 'verdict': None}
     session = roles = None
     try:
         record['stage'] = 'admission'
@@ -207,9 +268,13 @@ def run(argv, platform, env, directory, euid=os.geteuid):
         record['stage'] = 'sibling_pin'
         oracle = load_sibling(directory, 'oracle.py', ORACLE_SHA256, 'guided_hosted_oracle')
         adapter = load_sibling(directory, 'roles_adapter.py', ADAPTER_SHA256, 'guided_hosted_roles')
+        session_module = load_sibling(directory, 'session.py', SESSION_SHA256, 'guided_hosted_session')
+        platform.bind(session_module, directory)
         try:
             record['stage'] = 'stage_packet'
             staged = platform.stage_packet(packet_dir, pin_data)
+            record['stage'] = 'metafile'
+            check_host_metafile(os.path.join(staged.root, 'artifacts', 'hostClient.metafile.json'))
             record['stage'] = 'exit64_case'
             exit64 = platform.exit64_case(staged)
             record['stage'] = 'session'
@@ -222,33 +287,48 @@ def run(argv, platform, env, directory, euid=os.geteuid):
         record['stage'] = 'provider_start'
         try:
             roles = adapter.GuidedRoles(session.spawn('providerWorker'), session.spawn('hostClient'))
-            roles.start_provider(session.provider_script())
+            roles.await_provider_ready()
             record['stage'] = 'dispatch1'
             host['dispatch1Text'] = roles.dispatch(1)
-            stub['afterDispatch1'] = roles.stub_receipt()
+            stub['afterDispatch1'] = roles.stub_receipt('after-dispatch1')
             record['stage'] = 'shared_edit'
             shared = {'beforeSha256': session.shared_sha256()}
             session.edit_shared()
             shared['afterSha256'] = session.shared_sha256()
             record['stage'] = 'dispatch2'
             host['dispatch2Text'] = roles.dispatch(2)
-            stub['afterDispatch2'] = roles.stub_receipt()
+            stub['afterDispatch2'] = roles.stub_receipt('after-dispatch2')
             record['stage'] = 'ticket_reuse'
             host['reuseError'] = roles.present_spent()
-            stub['afterReuse'] = roles.stub_receipt()
+            stub['afterReuse'] = roles.stub_receipt('after-reuse')
             record['stage'] = 'revocation'
             roles.premint()
-            stub['beforeRevocation'] = roles.stub_receipt()
+            stub['beforeRevocation'] = roles.stub_receipt('before-revoke')
             roles.revoke()
             host['revocationError'] = roles.present_premint()
-            stub['afterRevocation'] = roles.stub_receipt()
+            stub['afterRevocation'] = roles.stub_receipt('after-present')
+            record['stage'] = 'host_result'
+            roles.finish_send()
+            record['settled'] = session.settle() is True
+            record['hostPassed'] = roles.finish_result() is True
+            record['stage'] = 'teardown'
+            final = roles.stop()
+            if final is None:
+                raise RunnerError('teardown')
+            stub['final'] = final
+            record['exits'] = session.reap()
         except adapter.AdapterError:
             raise RunnerError(record['stage']) from None
         record['stage'] = 'verdict'
         verdict = oracle.evaluate({'exit64': exit64, 'stub': stub, 'host': host, 'sharedFile': shared})
         record['verdict'] = verdict
-        record['passed'] = verdict['passed'] is True
-        record['failureClass'] = None if record['passed'] else 'verdict'
+        if verdict['passed'] is not True:
+            record['failureClass'] = 'verdict'
+        elif record['hostPassed'] is not True:
+            record['failureClass'] = 'host_result'
+        elif record['settled'] is not True or record['exits'] != {'host': 0, 'provider': 0}:
+            record['failureClass'] = 'teardown'
+        record['passed'] = record['failureClass'] is None
     except RunnerError as error:
         record['failureClass'] = error.failure_class
     except Exception:  # noqa: BLE001 -- the record keeps the stage and a bounded class, never the exception text
@@ -262,7 +342,7 @@ def run(argv, platform, env, directory, euid=os.geteuid):
                 if record['failureClass'] is None:
                     record['failureClass'] = 'teardown'
                     record['passed'] = False
-    return record, (0 if record['passed'] else (1 if record['failureClass'] == 'verdict' else 78))
+    return record, (0 if record['passed'] else (1 if record['failureClass'] in ('verdict', 'host_result') else 78))
 
 
 def main(argv, platform=None, env=None, directory=None, euid=os.geteuid):

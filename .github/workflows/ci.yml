@@ -26,6 +26,7 @@ jobs:
         run: |
           python3 -I -S -B scripts/guest-hosted-guided/test_oracle.py
           python3 -I -S -B scripts/guest-hosted-guided/test_run.py
+          python3 -I -S -B scripts/guest-hosted-guided/test_session.py
       - run: sudo -n python3 scripts/guest-files/verify.py
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "1.4.2" }

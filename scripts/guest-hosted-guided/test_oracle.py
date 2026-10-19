@@ -9,8 +9,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import oracle  # noqa: E402
 
 
-def snap(frames, begins, accepted, completed):
-    return {'receivedFrames': frames, 'receivedBegins': begins, 'acceptedBegins': accepted, 'completed': completed}
+def snap(frames, begins, accepted, completed, requests=None, refused=0, unreadable=0, unframed=0):
+    return {'requests': frames if requests is None else requests, 'unreadable': unreadable, 'unframed': unframed, 'refused': refused,
+            'receivedFrames': frames, 'receivedBegins': begins, 'acceptedBegins': accepted, 'completed': completed}
 
 
 def good():
@@ -22,6 +23,7 @@ def good():
             'afterReuse': snap(6, 2, 2, 2),
             'beforeRevocation': snap(6, 2, 2, 2),
             'afterRevocation': snap(6, 2, 2, 2),
+            'final': snap(6, 2, 2, 2),
         },
         'host': {'dispatch1Text': 'first deterministic answer', 'dispatch2Text': 'second deterministic answer',
                  'revocationError': 'required_context_unavailable', 'reuseError': 'required_context_unavailable'},
@@ -81,6 +83,7 @@ class Dispatches(unittest.TestCase):
         evidence['stub']['afterReuse'] = snap(4, 1, 1, 1)
         evidence['stub']['beforeRevocation'] = snap(4, 1, 1, 1)
         evidence['stub']['afterRevocation'] = snap(4, 1, 1, 1)
+        evidence['stub']['final'] = snap(4, 1, 1, 1)
         self.assertEqual(failing(evidence)['dispatch2'], 'dispatch_count')
 
     def test_a_failure_stops_the_chain_but_not_the_exit64_case(self):
@@ -99,6 +102,7 @@ class Revocation(unittest.TestCase):
     def test_one_frame_after_revocation_fails_even_if_the_host_says_zero(self):
         evidence = good()
         evidence['stub']['afterRevocation'] = snap(7, 2, 2, 2)
+        evidence['stub']['final'] = snap(7, 2, 2, 2)
         evidence['host']['hostClaimedProviderCalls'] = 0
         # an extra host key is not evidence: the shape is closed, so the claim cannot even be offered
         self.assertEqual(set(failing(evidence).values()), {'evidence_shape'})
@@ -108,12 +112,14 @@ class Revocation(unittest.TestCase):
     def test_a_third_begin_after_revocation_fails(self):
         evidence = good()
         evidence['stub']['afterRevocation'] = snap(7, 3, 2, 2)
+        evidence['stub']['final'] = snap(7, 3, 2, 2)
         self.assertEqual(failing(evidence), {'revocation': 'revocation_provider_request'})
 
     def test_a_frame_between_reuse_and_revocation_fails(self):
         evidence = good()
         evidence['stub']['beforeRevocation'] = snap(7, 2, 2, 2)
         evidence['stub']['afterRevocation'] = snap(7, 2, 2, 2)
+        evidence['stub']['final'] = snap(7, 2, 2, 2)
         self.assertEqual(failing(evidence), {'revocation': 'revocation_provider_request'})
 
     def test_revocation_must_be_refused_as_required_context_unavailable(self):
@@ -135,6 +141,34 @@ class TicketReuse(unittest.TestCase):
         evidence['stub']['afterReuse'] = snap(7, 3, 2, 2)
         evidence['stub']['beforeRevocation'] = snap(7, 3, 2, 2)
         evidence['stub']['afterRevocation'] = snap(7, 3, 2, 2)
+        evidence['stub']['final'] = snap(7, 3, 2, 2)
+        self.assertEqual(failing(evidence)['ticket_reuse'], 'reuse_provider_request')
+
+
+class Final(unittest.TestCase):
+    def test_a_request_after_the_barrier_is_seen_in_the_final_summary(self):
+        evidence = good()
+        evidence['stub']['final'] = snap(7, 2, 2, 2)
+        self.assertEqual(failing(evidence), {'revocation': 'revocation_provider_request'})
+
+    def test_an_unreadable_arrival_counts_as_a_request_even_with_equal_frames(self):
+        evidence = good()
+        evidence['stub']['afterRevocation'] = snap(6, 2, 2, 2, requests=7, unreadable=1)
+        evidence['stub']['final'] = snap(6, 2, 2, 2, requests=7, unreadable=1)
+        self.assertEqual(failing(evidence), {'revocation': 'revocation_provider_request'})
+
+    def test_a_refused_or_unreadable_arrival_in_a_dispatch_is_a_refusal(self):
+        for kw in ({'refused': 1}, {'unreadable': 1}, {'unframed': 1}):
+            evidence = good()
+            evidence['stub']['afterDispatch1'] = snap(3, 1, 1, 1, **kw)
+            for name, shape in (('afterDispatch2', (6, 2, 2, 2)), ('afterReuse', (6, 2, 2, 2)), ('beforeRevocation', (6, 2, 2, 2)), ('afterRevocation', (6, 2, 2, 2)), ('final', (6, 2, 2, 2))):
+                evidence['stub'][name] = snap(*shape, **kw)
+            self.assertEqual(failing(evidence)['dispatch1'], 'dispatch_refused', kw)
+
+    def test_a_refused_third_begin_shows_as_begins_three_accepted_two(self):
+        evidence = good()
+        for name in ('afterReuse', 'beforeRevocation', 'afterRevocation', 'final'):
+            evidence['stub'][name] = snap(6, 3, 2, 2, refused=1, requests=7)
         self.assertEqual(failing(evidence)['ticket_reuse'], 'reuse_provider_request')
 
 
@@ -210,8 +244,8 @@ class Evidence(unittest.TestCase):
             lambda e: e['stub'].update(afterDispatch1=snap(3, 2, 1, 1)), lambda e: e['stub'].update(afterDispatch1=snap(3, 1, 1, 0)),
             lambda e: e['host'].update(dispatch1Text='x'), lambda e: e['sharedFile'].update(afterSha256=e['sharedFile']['beforeSha256']),
             lambda e: e['host'].update(reuseError='x'), lambda e: e['host'].update(revocationError='x'),
-            lambda e: e['stub'].update(afterReuse=snap(7, 3, 2, 2), beforeRevocation=snap(7, 3, 2, 2), afterRevocation=snap(7, 3, 2, 2)),
-            lambda e: e['stub'].update(afterRevocation=snap(7, 2, 2, 2)), lambda e: e.update(x=1),
+            lambda e: e['stub'].update(afterReuse=snap(7, 3, 2, 2), beforeRevocation=snap(7, 3, 2, 2), afterRevocation=snap(7, 3, 2, 2), final=snap(7, 3, 2, 2)),
+            lambda e: e['stub'].update(afterRevocation=snap(7, 2, 2, 2), final=snap(7, 2, 2, 2)), lambda e: e.update(x=1),
             lambda e: e['stub'].update(afterReuse=snap(1, 1, 1, 1)),
         ):
             evidence = good()

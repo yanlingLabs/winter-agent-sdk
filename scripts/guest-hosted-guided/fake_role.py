@@ -1,98 +1,145 @@
-"""A fake role process for the runner's tests: speaks the assumed line-JSON contract (roles_adapter.ASSUMPTIONS).
-usage: fake_role.py <provider|host> <state-dir> [mode]. The provider and the host share counters through the state dir,
-as the real stub's counters would be moved by the real engine's requests; the host never reports counters itself."""
-import base64
-import hashlib
+"""A fake role process for the runner's tests: speaks the runtime-sdk entry contract (roles_adapter.CONTRACT).
+usage: fake_role.py <provider|host> <state-dir> [mode]. The provider and the host share counters through the state dir, as
+the real stub's counters would be moved by the real engine's requests; the host never reports counters itself."""
 import json
 import os
+import signal
 import sys
 import time
 
 role, state, mode = sys.argv[1], sys.argv[2], (sys.argv[3] if len(sys.argv) > 3 else '')
 path = os.path.join(state, 'counters.json')
 flags = os.path.join(state, 'flags.json')
+ZERO = {'requests': 0, 'unreadable': 0, 'unframed': 0, 'refused': 0, 'receivedFrames': 0, 'receivedBegins': 0, 'acceptedBegins': 0, 'completed': 0}
 
 
 def load(p, default):
     try:
         return json.load(open(p))
     except OSError:
-        return default
+        return dict(default)
 
 
-def bump(frames=3, begins=1):
-    c = load(path, {'receivedFrames': 0, 'receivedBegins': 0, 'acceptedBegins': 0, 'completed': 0})
-    c['receivedFrames'] += frames
-    c['receivedBegins'] += begins
-    c['acceptedBegins'] += begins
-    c['completed'] += begins
+def save(c):
     json.dump(c, open(path, 'w'))
 
 
-def reply(value):
+def bump(frames=3, begins=1, refused=0):
+    c = load(path, ZERO)
+    c['requests'] += frames
+    c['receivedFrames'] += frames
+    c['receivedBegins'] += begins
+    c['acceptedBegins'] += begins - refused
+    c['completed'] += begins - refused
+    c['refused'] += refused
+    save(c)
+
+
+def out(value):
     sys.stdout.write(json.dumps(value) + '\n')
     sys.stdout.flush()
 
 
+def raw(text):
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+
 answers = {1: 'first deterministic answer', 2: 'second deterministic answer'}
-for raw in sys.stdin:
-    request = json.loads(raw)
-    op = request['op']
-    f = load(flags, {})
-    if mode == 'silent':
-        time.sleep(30)
-    if mode == 'garbage':
-        sys.stdout.write('not json\n')
-        sys.stdout.flush()
-        continue
-    if mode == 'huge':
-        sys.stdout.write('x' * 200000 + '\n')
-        sys.stdout.flush()
-        continue
-    if mode == 'nonewline':
-        sys.stdout.write('x' * 200000)
-        sys.stdout.flush()
-        time.sleep(30)
-    if mode == 'ok_int':
-        sys.stdout.write('{"ok": 1, "text": "first deterministic answer"}\n')
-        sys.stdout.flush()
-        continue
-    if mode == 'exit':
-        sys.exit(3)
-    if role == 'provider':
-        if op == 'script':
-            data = base64.b64decode(request['b64'])
-            ok = hashlib.sha256(data).hexdigest() == request['sha256'] and mode != 'script_refused'
-            reply({'ok': ok})
-        elif op == 'receipt':
-            c = load(path, {'receivedFrames': 0, 'receivedBegins': 0, 'acceptedBegins': 0, 'completed': 0})
-            reply({'ok': True, 'receipt': {**c, 'closed': False}})
-    else:
-        if op == 'dispatch':
-            if mode == 'dispatch1_refused' and request['n'] == 1:
-                reply({'ok': False, 'errorClass': 'internal'})
+
+if role == 'provider':
+    def terminate(signum, frame):
+        if mode == 'summary_late':
+            bump(frames=1, begins=0)
+        c = load(path, ZERO)
+        out({'kind': 'provider-summary', **c, 'answered': c['completed'], 'portClosed': False, 'scriptSha256': 'a' * 64, 'turnSha256': [], 'countersAgree': mode != 'summary_disagree'})
+        sys.exit(0 if mode != 'summary_exit' else 3)
+    signal.signal(signal.SIGTERM, terminate)
+    if mode != 'not_ready':
+        out({'kind': 'provider-ready'})
+    for line in sys.stdin:
+        if mode == 'silent':
+            time.sleep(30)
+        if mode == 'garbage':
+            raw('not json\n')
+            continue
+        if mode == 'huge':
+            raw('x' * 20000 + '\n')
+            continue
+        if mode == 'nonewline':
+            raw('x' * 20000)
+            time.sleep(30)
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == 'receipt':
+            out({'kind': 'provider-request', 'n': 1, 'readable': True}) if mode == 'noise' else None
+            c = load(path, ZERO)
+            tag = parts[1] if mode != 'wrong_tag' else 'other-tag'
+            out({'kind': 'provider-receipt', 'tag': tag, **c, 'answered': c['completed'], 'portClosed': False, 'outcomes': [], 'countersAgree': mode != 'agree_false', 'controlRefused': 0})
+        else:
+            out({'kind': 'provider-control-refused', 'code': 'line'})
+    time.sleep(0)
+else:
+    revoked = False
+    if mode == 'noise':
+        out({'kind': 'host-spawn'})
+    if mode == 'spam':
+        for _ in range(5000):
+            out({'kind': 'host-spawn'})
+    for line in sys.stdin:
+        if mode == 'silent':
+            time.sleep(30)
+        if mode == 'garbage':
+            raw('not json\n')
+            continue
+        if mode == 'huge':
+            raw('x' * 20000 + '\n')
+            continue
+        if mode == 'nonewline':
+            raw('x' * 20000)
+            time.sleep(30)
+        if mode == 'exit':
+            sys.exit(3)
+        if mode == 'bad_kind':
+            out({'kind': 'something-else'})
+            continue
+        if mode == 'command_refused':
+            out({'kind': 'host-command-refused', 'code': 'order'})
+            continue
+        words = line.split()
+        command = ' '.join(words)
+        flag = load(flags, {})
+        if words[:1] == ['dispatch']:
+            n = int(words[1])
+            if mode == 'dispatch1_refused' and n == 1:
+                out({'kind': 'host-dispatch', 'n': 1, 'ok': False, 'answer': ''})
                 continue
             bump()
-            text = answers[request['n']] if not (mode == 'wrong_answer' and request['n'] == 1) else 'something else'
-            reply({'ok': True, 'text': text})
-        elif op == 'present_spent':
+            text = 'something else' if (mode == 'wrong_answer' and n == 1) else ('x' * 600 if mode == 'long_answer' else answers[n])
+            out({'kind': 'host-dispatch', 'n': 3 - n if mode == 'wrong_n' else n, 'ok': True, 'answer': text})
+        elif command == 'reuse':
             if mode == 'reuse_accepted':
                 bump()
-                reply({'ok': True})
+                out({'kind': 'host-presented', 'which': 'spent', 'refused': False, 'errorClass': 'none', 'processStarted': True})
             elif mode == 'reuse_leaks':
                 bump(frames=1, begins=0)
-                reply({'ok': False, 'errorClass': 'required_context_unavailable'})
+                out({'kind': 'host-presented', 'which': 'spent', 'refused': True, 'errorClass': 'required_context_unavailable', 'processStarted': False})
             else:
-                reply({'ok': False, 'errorClass': 'required_context_unavailable'})
-        elif op == 'premint':
-            reply({'ok': True})
-        elif op == 'revoke':
+                out({'kind': 'host-presented', 'which': 'spent', 'refused': True, 'errorClass': 'required_context_unavailable', 'processStarted': False})
+        elif command == 'premint':
+            out({'kind': 'host-premint'})
+        elif command == 'revoke':
             json.dump({'revoked': True}, open(flags, 'w'))
-            reply({'ok': True})
-        elif op == 'present_premint':
-            if not f.get('revoked'):
-                reply({'ok': True})
+            out({'kind': 'host-revoked'})
+        elif command == 'present-premint':
+            if not flag.get('revoked'):
+                out({'kind': 'host-presented', 'which': 'premint', 'refused': False, 'errorClass': 'none', 'processStarted': True})
                 continue
             if mode == 'revoke_leaks':
                 bump(frames=1, begins=0)
-            reply({'ok': False, 'errorClass': 'required_context_unavailable' if mode != 'revoke_wrong_class' else 'internal'})
+            out({'kind': 'host-presented', 'which': 'premint', 'refused': True, 'errorClass': 'other' if mode == 'revoke_wrong_class' else 'required_context_unavailable', 'processStarted': False})
+        elif command == 'finish':
+            passed = mode != 'not_passed'
+            out({'kind': 'host-result', 'passed': 'yes' if mode == 'passed_string' else passed})
+            sys.exit(0 if passed else 1)
+        else:
+            out({'kind': 'host-command-refused', 'code': 'unknown'})

@@ -1,31 +1,44 @@
 """The ONE module that talks to the two guided roles, `providerWorker` and `hostClient`. Source only.
 
-Everything the hosted runner assumes about those roles is in this file and nowhere else, so reconciling with the real
-roles' contracts (runtime-sdk, second compile run) is a change to this file plus the pins that name its bytes. The
-assumptions are listed in ASSUMPTIONS and mirrored in docs/guided-hosted-run.md. None of them is a merged contract.
+It speaks the contract the runtime-sdk entries lane states (draft runtime-sdk PR 20, `scripts/guest-guided-build/README.md`,
+"Entry contracts" C-P1..C-P11 and C-H1..C-H12). Everything the hosted runner relies on about those roles is here and nowhere
+else, so reconciling with the final contract is a change to this file plus the pins that name its bytes. CONTRACT lists the ids
+used; REMAINING_DIFFERENCES lists what is still not settled. None of it is a merged contract until PR 20 merges.
 
-A role is a process with line-delimited JSON on stdin and stdout: one request object per line, one reply object per line,
-replies at most MAX_LINE bytes, each answered within TIMEOUT seconds. The adapter never reads a role's stderr and never
-trusts a role's own count of provider requests: the only counters it reports are the PROVIDER worker's receipt.
+Wire shape: Root writes one text command per line to each role's stdin; each role writes JSON lines on stdout, at most MAX_LINE
+bytes, each `{"kind": ...}`. The provider also writes unsolicited `provider-ready`, `provider-request` and `provider-outcome` lines,
+which are tolerated and counted but never trusted as evidence. The ONLY counters the adapter reports are the provider's own
+receipt fields (C-P11) and its final summary (C-P9); the host client never reports provider-call counts and nothing it says about
+them is read.
 """
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
+import re
 import selectors
 
-MAX_LINE = 65536
+MAX_LINE = 4096
 TIMEOUT = 60.0
-COUNTERS = ('receivedFrames', 'receivedBegins', 'acceptedBegins', 'completed')
-ASSUMPTIONS = (
-    'A1 providerWorker takes the Root-supplied script bytes with their independent SHA-256 as {"op":"script","sha256","b64"} and replies {"ok":true}',
-    'A2 providerWorker answers {"op":"receipt"} with {"ok":true,"receipt":{receivedFrames,receivedBegins,acceptedBegins,completed}} from the stub itself',
-    'A3 hostClient answers {"op":"dispatch","n":1|2} with {"ok":true,"text":...} or {"ok":false,"errorClass":...}',
-    'A4 hostClient answers {"op":"present_spent"} with {"ok":false,"errorClass":...} when the spent ticket is refused, {"ok":true} when it is not',
-    'A5 hostClient answers {"op":"premint"} with {"ok":true} after minting one more unspent ticket, and {"op":"revoke"} with {"ok":true}',
-    'A6 hostClient answers {"op":"present_premint"} like present_spent; after revoke it must refuse as required_context_unavailable',
-    'A7 a role exits when its stdin closes; a role that does not is killed by the platform that spawned it',
+MAX_NOISE = 4096
+TAG = re.compile(r'^[a-z0-9][a-z0-9-]{0,31}$')
+COUNTERS = ('requests', 'unreadable', 'unframed', 'refused', 'receivedFrames', 'receivedBegins', 'acceptedBegins', 'completed')
+CLASSES = frozenset(('required_context_unavailable', 'other', 'none'))
+CONTRACT = (
+    'C-P11 Root writes `receipt <tag>` to the provider stdin; it answers one `provider-receipt` line with the same tag and the counters',
+    'C-P9 on SIGTERM the provider writes one `provider-summary` line and exits 0 even if it refused requests',
+    'C-P8 provider stdout carries only provider-ready, provider-request, provider-outcome, provider-summary, provider-receipt, provider-control-refused, provider-refused',
+    'C-H9 the host client takes the stdin lines `dispatch 1`, `dispatch 2`, `premint`, `reuse`, `revoke`, `present-premint`, `finish`; every command gets exactly one reply line',
+    'C-H4 host stdout carries only host-spawn, host-query-ended, host-dispatch, host-premint, host-presented, host-revoked, host-command-refused, host-result, host-refused',
+    'C-H10 `host-presented` has which (spent|premint), refused, errorClass (required_context_unavailable|other|none) and processStarted; refused means the first step threw AND no runtime process was created',
+    'C-H12 the host client exits 0 only when host-result.passed is true; the last stdout line is host-result or host-refused',
+    'C-P10 the provider exits 0 on a normal stop even if it refused requests',
+)
+REMAINING_DIFFERENCES = (
+    'D1 the order of `finish`, the lifecycle record on fd 7 and the `host-result` line is not stated; the runner sends finish, settles the runtime, writes the lifecycle record, then reads host-result, which works for either order',
+    'D2 whether `host-spawn` is printed at startup or at the first dispatch is not stated; it is tolerated anywhere before a reply',
+    'D3 the exact run-time errorClass for a presentation that threw for another reason is `other`; the oracle treats anything but required_context_unavailable as not refused-as-required',
+    'D4 the provider-request/provider-outcome lines are tolerated noise (bounded); they are never counted as evidence',
+    'D5 a host-query-ended line is recorded and does not fail a command, but host-result.passed must still be true',
 )
 
 
@@ -38,30 +51,25 @@ class AdapterError(Exception):
 
 
 class Channel:
-    """Line-delimited JSON over a spawned process's stdin/stdout, bounded in size and time."""
+    """Text commands out, bounded JSON lines in, with a per-reply deadline."""
 
     def __init__(self, process, timeout=TIMEOUT):
         self.process = process
         self.timeout = timeout
         self.buffer = b''
+        self.noise = 0
 
-    def call(self, request):
-        line = json.dumps(request, sort_keys=True, separators=(',', ':')).encode() + b'\n'
+    def send(self, line):
+        if not re.fullmatch(r'[a-z0-9 -]{1,64}', line):
+            raise AdapterError('protocol')
         try:
-            self.process.stdin.write(line)
+            self.process.stdin.write(line.encode() + b'\n')
             self.process.stdin.flush()
         except (OSError, ValueError):
             raise AdapterError('closed') from None
-        reply = self._read_line()
-        try:
-            value = json.loads(reply)
-        except ValueError:
-            raise AdapterError('protocol') from None
-        if type(value) is not dict or type(value.get('ok')) is not bool:
-            raise AdapterError('protocol')
-        return value
 
-    def _read_line(self):
+    def read(self):
+        """One JSON object from one line, at most MAX_LINE bytes, with a string `kind`."""
         selector = selectors.DefaultSelector()
         selector.register(self.process.stdout, selectors.EVENT_READ)
         try:
@@ -79,70 +87,123 @@ class Channel:
         line, _, self.buffer = self.buffer.partition(b'\n')
         if len(line) > MAX_LINE:
             raise AdapterError('protocol')
-        return line
+        try:
+            value = json.loads(line)
+        except ValueError:
+            raise AdapterError('protocol') from None
+        if type(value) is not dict or type(value.get('kind')) is not str:
+            raise AdapterError('protocol')
+        return value
+
+    def expect(self, kind, tolerated):
+        """Read until a line of `kind`; lines of the tolerated kinds are skipped (bounded), anything else is a protocol error."""
+        while True:
+            value = self.read()
+            if value['kind'] == kind:
+                return value
+            if value['kind'] in tolerated:
+                self.noise += 1
+                if self.noise > MAX_NOISE:
+                    raise AdapterError('protocol')
+                continue
+            if value['kind'] == 'host-command-refused':
+                raise AdapterError('refused')
+            raise AdapterError('protocol')
 
 
-def _counters(receipt):
-    if type(receipt) is not dict or any(type(receipt.get(key)) is not int for key in COUNTERS):
+def _int(value):
+    return type(value) is int and 0 <= value <= 1 << 31
+
+
+def counters(record):
+    """The provider's own counters from a receipt or a summary; countersAgree must be true and every field a plain integer."""
+    if type(record) is not dict or record.get('countersAgree') is not True or any(not _int(record.get(key)) for key in COUNTERS):
         raise AdapterError('protocol')
-    return {key: receipt[key] for key in COUNTERS}
+    return {key: record[key] for key in COUNTERS}
 
 
-def _refusal(reply):
-    """'' when the role accepted, otherwise its bounded error class (letters, digits, underscore; at most 64)."""
-    if reply['ok']:
-        return ''
-    value = reply.get('errorClass')
-    if type(value) is not str or not value or len(value) > 64 or not all(c.islower() or c.isdigit() or c == '_' for c in value):
+def _presented(reply, which):
+    if reply.get('which') != which or type(reply.get('refused')) is not bool or reply.get('errorClass') not in CLASSES or type(reply.get('processStarted')) is not bool:
         raise AdapterError('protocol')
-    return value
+    if reply['refused']:
+        if reply['processStarted'] or reply['errorClass'] == 'none':
+            raise AdapterError('protocol')
+        return reply['errorClass']
+    if reply['errorClass'] != 'none':
+        raise AdapterError('protocol')
+    return ''
 
 
 class GuidedRoles:
     """The production adapter. `provider` and `host` are the two spawned processes (anything with binary stdin/stdout)."""
 
+    HOST_TOLERATED = ('host-spawn', 'host-query-ended')
+    PROVIDER_TOLERATED = ('provider-request', 'provider-outcome', 'provider-control-refused')
+
     def __init__(self, provider, host, timeout=TIMEOUT):
+        self.provider_process = provider
+        self.host_process = host
         self.provider = Channel(provider, timeout)
         self.host = Channel(host, timeout)
+        self.query_ended = []
 
-    def start_provider(self, script_bytes):
-        digest = hashlib.sha256(script_bytes).hexdigest()
-        reply = self.provider.call({'op': 'script', 'sha256': digest, 'b64': base64.b64encode(script_bytes).decode()})
-        if not reply['ok']:
-            raise AdapterError('refused')
+    def _host(self, command, kind):
+        self.host.send(command)
+        return self.host.expect(kind, self.HOST_TOLERATED)
 
-    def stub_receipt(self):
-        reply = self.provider.call({'op': 'receipt'})
-        if not reply['ok']:
-            raise AdapterError('refused')
-        return _counters(reply.get('receipt'))
+    def await_provider_ready(self):
+        self.provider.expect('provider-ready', ())
+
+    def stub_receipt(self, tag):
+        if not TAG.fullmatch(tag):
+            raise AdapterError('protocol')
+        self.provider.send('receipt ' + tag)
+        reply = self.provider.expect('provider-receipt', self.PROVIDER_TOLERATED)
+        if reply.get('tag') != tag:
+            raise AdapterError('protocol')
+        return counters(reply)
 
     def dispatch(self, n):
-        reply = self.host.call({'op': 'dispatch', 'n': n})
+        reply = self._host('dispatch %d' % n, 'host-dispatch')
+        answer = reply.get('answer')
+        if reply.get('n') != n or type(reply.get('ok')) is not bool or type(answer) is not str or len(answer.encode()) > 512:
+            raise AdapterError('protocol')
         if not reply['ok']:
             raise AdapterError('refused')
-        text = reply.get('text')
-        if type(text) is not str or len(text) > 4096:
-            raise AdapterError('protocol')
-        return text
-
-    def present_spent(self):
-        return _refusal(self.host.call({'op': 'present_spent'}))
+        return answer
 
     def premint(self):
-        if not self.host.call({'op': 'premint'})['ok']:
-            raise AdapterError('refused')
+        self._host('premint', 'host-premint')
+
+    def present_spent(self):
+        return _presented(self._host('reuse', 'host-presented'), 'spent')
 
     def revoke(self):
-        if not self.host.call({'op': 'revoke'})['ok']:
-            raise AdapterError('refused')
+        self._host('revoke', 'host-revoked')
 
     def present_premint(self):
-        return _refusal(self.host.call({'op': 'present_premint'}))
+        return _presented(self._host('present-premint', 'host-presented'), 'premint')
+
+    def finish_send(self):
+        self.host.send('finish')
+
+    def finish_result(self):
+        """True only if the host client's own `host-result.passed` is true."""
+        reply = self.host.expect('host-result', self.HOST_TOLERATED)
+        if type(reply.get('passed')) is not bool:
+            raise AdapterError('protocol')
+        return reply['passed']
 
     def stop(self):
-        for channel in (self.host, self.provider):
-            try:
-                channel.process.stdin.close()
-            except (OSError, ValueError):
-                pass
+        """Stop the provider (SIGTERM) and return its final summary counters, or None. The host's stdin is closed."""
+        summary = None
+        try:
+            self.provider_process.terminate()
+            summary = counters(self.provider.expect('provider-summary', self.PROVIDER_TOLERATED + ('provider-receipt',)))
+        except (AdapterError, OSError):
+            summary = None
+        try:
+            self.host_process.stdin.close()
+        except (OSError, ValueError):
+            pass
+        return summary
