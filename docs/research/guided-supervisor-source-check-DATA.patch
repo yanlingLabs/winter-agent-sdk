@@ -1,0 +1,24 @@
+--- a/packages/runtime/src/guest/linux-supervisor.py
++++ b/packages/runtime/src/guest/linux-supervisor.py
+@@ -309,6 +309,11 @@
+         if name in self.line_bytes:self._lines(name,data)
+         self.buffers[name].extend(data)
+         return (name,data) if name!='input' else None
++
++def host_query_source_is_view(source,guest):
++    # A host-query root is served from exactly the path it is shown at (the host sends source == guestPath), so the source is inside the
++    # admitted views by construction. Tests that need a real directory behind a virtual guest path replace this one predicate.
++    return type(source) is str and source==guest
+ 
+ def native_mount_policy(policy):
+     # Native launchers select the mount view, not the SDK approval mode.
+@@ -868,6 +873,9 @@
+                     parts=guest[1:].split('/')
+                     allowed=(len(parts)>=3 and parts[:2] in (['workspace','folders'],['workspace','repos'])) or parts==['workspace','.winter','memory'] or parts==['workspace','.winter','scratch',sid] or parts==['workspace','outputs',sid]
+                     if not allowed:raise Refusal('protected_root')
++                    # Host-query roots are served at the path they are admitted from: the source is exactly the guest view, so it is inside the admitted
++                    # views by construction and can never name a different (protected or foreign) directory.
++                    if ('hostQueryRuntime' in item or 'hostQueryGuidedRuntime' in item) and not host_query_source_is_view(root['source'],guest):raise Refusal('admitted_root')
+                     fd=source_directory(root['source'],protected);self.owned.append(fd)
+                     roots[root['id']]={'root':runtime_root_metadata(root,item['policy'],'hostQueryRuntime' in item or 'hostQueryGuidedRuntime' in item),'fd':fd}
+                 views=[v['root']['guestPath'] for v in roots.values()]

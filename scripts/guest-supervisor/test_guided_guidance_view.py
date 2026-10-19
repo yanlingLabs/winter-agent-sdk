@@ -40,6 +40,8 @@ MATRIX = ROOT / 'docs/guided-guidance-view-matrix.md'
 SERVICE_PATCH = ROOT / 'docs/research/guided-reader-service-supervisor.patch'
 # The host-query runtime-mode collapse (agent-sdk wave 4) changed linux-supervisor.py a third time; its delta sits on top of the reader service.
 POLICY_PATCH = ROOT / 'docs/research/guided-supervisor-policy-mode-DATA.patch'
+# Host-query roots are admitted only from their own guest path (agent-sdk wave 4); a fourth delta, on top of the policy-mode one.
+SOURCE_PATCH = ROOT / 'docs/research/guided-supervisor-source-check-DATA.patch'
 PROBE = Path(__file__).with_name('guidance_view_probe.c')
 TOOL, SUPERVISOR = GUEST + '/linux-tool-compartment.c', GUEST + '/linux-supervisor.py'
 
@@ -55,7 +57,8 @@ APPLIED_TARGETS = {
 }
 # The tracked Root service once the reader service is applied on top of the view patch.
 PRE_POLICY_SUPERVISOR = 'a26dacd86b805ca47b3e4805d06af2b178eee82003ebe6c38f2aeeb85e48035d'
-TRACKED_SUPERVISOR = 'f1e124fe21dac2d3a7c94a4e7923ac2ff92e9afd9600a0dd24d7f01c8fa9e8ab'
+PRE_SOURCE_SUPERVISOR = 'f1e124fe21dac2d3a7c94a4e7923ac2ff92e9afd9600a0dd24d7f01c8fa9e8ab'
+TRACKED_SUPERVISOR = '26d1ac8937d9c2e98bf050433a309ca9e7bc74b0668d960a42dce81c7b30c5bb'
 FROZEN = {
     GUEST + '/linux-compartment.h': '92fef7c0708a23b1e930c5b2560dae6bef27294dfd682346e69d35c0484b967d',
     GUEST + '/linux-runtime-compartment.c': 'fcb90dba8cf9552b9c10cde4012603ac9471b03f31a09bc408667257f65842fa',
@@ -107,9 +110,11 @@ def tracked_applied_text(name):
             for target in MAIN_TARGETS:
                 (directory / target).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / target, directory / target)
-            for undo in (POLICY_PATCH, SERVICE_PATCH):
+            for undo in (SOURCE_PATCH, POLICY_PATCH, SERVICE_PATCH):
                 reverse = subprocess.run(['patch', '-p1', '-R', '-s', '-d', str(directory), '-i', str(undo)], capture_output=True, text=True, timeout=30)
                 assert reverse.returncode == 0, reverse.stderr
+                if undo == SOURCE_PATCH:
+                    assert hashlib.sha256((directory / SUPERVISOR).read_bytes()).hexdigest() == PRE_SOURCE_SUPERVISOR
                 if undo == POLICY_PATCH:
                     assert hashlib.sha256((directory / SUPERVISOR).read_bytes()).hexdigest() == PRE_POLICY_SUPERVISOR
             for target in MAIN_TARGETS:
@@ -684,6 +689,7 @@ class ConfigureAndConstructTests(unittest.TestCase):
         control = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=0)
         with self.linux_root(module), patch.object(module, 'pinned_artifact', side_effect=lambda value: os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC)), \
                 patch.object(module.Path, 'lstat', return_value=control), patch.object(module.os, 'chown'), patch.object(module, 'READER_VIEWS_ROOT', str(self.base / 'views'), create=True), \
+                patch.object(module, 'host_query_source_is_view', return_value=True, create=True), \
                 patch.object(module.ToolService, '_configure_runtime', autospec=True) as configure:
             built = module.ToolService(self.config(module, profile, guidance, extra_root, second), host_query_ports=ports)
         self.built.append(built)

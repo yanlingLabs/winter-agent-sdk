@@ -39,7 +39,7 @@ first-slice restrictions: nested cwd and the full shared guidance/memory/scratch
 layout are not yet admitted by this profile. Root metadata corroborates intent; the native supervisor must enforce
 read-only mounts and current source authority independently.
 
-The engine permits text, end_input/interrupt, and correlated *pending permission*
+The engine permits text, end_input/interrupt (an interrupt carries no payload, `{}` or exactly the host SDK's `{ scope: "turn" }`; the engine ignores the payload, so all three act alike), and correlated *pending permission*
 responses only. Attachments, slash commands, settings/config changes, delegation
 and resume controls are refused. Foreign/duplicate/late replies are dropped.
 Permission replies cannot install updatedPermissions. The engine derives a

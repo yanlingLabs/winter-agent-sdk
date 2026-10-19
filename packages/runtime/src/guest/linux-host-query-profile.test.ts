@@ -31,6 +31,22 @@ test("closed host-query config admits only default and plan with the fixed bypas
   expect(() => assertLinuxHostQueryConfig({ ...config(), tools: [], contextWindowTokens: 8192 })).not.toThrow();
 });
 
+test("interrupt admits exactly no payload, {} and the host SDK's { scope: \"turn\" }; every other payload is refused", () => {
+  const interrupt = (payload?: unknown) => ({ type: "control_request", requestId: "i", subtype: "interrupt", ...(payload === undefined ? {} : { payload }) });
+  for (const payload of [undefined, {}, { scope: "turn" }]) expect(checkLinuxHostQueryFrame(interrupt(payload), () => false)).toBe("accept");
+  for (const payload of [{ scope: "session" }, { scope: "Turn" }, { scope: "" }, { scope: "turn ", x: 1 }, { scope: null }, { scope: ["turn"] }, { scope: 1 }, { scope: undefined, extra: true },
+    { scope: "turn", extra: 1 }, { extra: "turn" }, { turn: true }, { __proto__: { scope: "turn" }, x: 1 }, null, [], [{ scope: "turn" }], "turn", 1, true]) {
+    expect(() => checkLinuxHostQueryFrame(interrupt(payload), () => false), JSON.stringify(payload)).toThrow("Linux host-query profile unavailable");
+  }
+  // end_input never takes the turn scope; it keeps the empty payload only.
+  expect(checkLinuxHostQueryFrame({ type: "control_request", requestId: "e", subtype: "end_input", payload: {} }, () => false)).toBe("accept");
+  expect(() => checkLinuxHostQueryFrame({ type: "control_request", requestId: "e", subtype: "end_input", payload: { scope: "turn" } }, () => false)).toThrow();
+  // The turn-scoped frame is the same frame shape otherwise: extra keys, bad ids and other subtypes still refuse.
+  expect(() => checkLinuxHostQueryFrame({ ...interrupt({ scope: "turn" }), extra: 1 }, () => false)).toThrow();
+  expect(() => checkLinuxHostQueryFrame({ ...interrupt({ scope: "turn" }), requestId: "bad id" }, () => false)).toThrow();
+  expect(() => checkLinuxHostQueryFrame({ ...interrupt({ scope: "turn" }), subtype: "set_model" }, () => false)).toThrow();
+});
+
 test("host frames cannot mutate settings, delegate, resume or attach alternate inputs", () => {
   for (const value of [{ type: "user", text: "go" }, { type: "control_request", requestId: "e", subtype: "end_input" }, { type: "control_request", requestId: "i", subtype: "interrupt", payload: {} }]) expect(checkLinuxHostQueryFrame(value, () => false)).toBe("accept");
   for (const value of [null, [], { type: "user", text: " /compact" }, { type: "user", text: "go", images: [] }, { type: "user", text: "go", config: {} }, { type: "user", text: "x".repeat(LINUX_SESSION_FRAME_BYTES) },
@@ -93,6 +109,14 @@ test("host-query record binds cwd to roots and plan requires read-only metadata,
   expect(() => assertLinuxHostQueryRoots(plan, [root])).toThrow();
   expect(() => assertLinuxHostQueryRoots(plan, [{ ...root, readOnly: true }])).not.toThrow();
   for (const roots of [[], [root, root], [{ ...root, guestPath: "/workspace/.winter" }], [{ ...root, guestPath: "/workspace/source/../other" }], [{ ...root, guestPath: "/workspace/other" }], Array(17).fill(root)]) expect(() => assertLinuxHostQueryRoots(config(), roots)).toThrow();
+});
+
+test("a root carries no host source: any `source` key, equal to the guest path or not, is refused (the supervisor admits only source === guestPath for host-query roots)", () => {
+  const root = { id: "source", guestPath: "/workspace/source", readOnly: false };
+  for (const source of [root.guestPath, "/workspace/other", "/workspace/source/", "/tmp/x", "/workspace/.winter/store", "", 1, null, undefined]) {
+    expect(() => assertLinuxHostQueryRoots(config(), [{ ...root, source } as never]), String(source)).toThrow("Linux host-query profile unavailable");
+  }
+  expect(() => assertLinuxHostQueryRoots(config(), [root])).not.toThrow();
 });
 
 test("fresh profile bounded input preserves ordinary EOF and still cancels malformed input", async () => {
