@@ -1,11 +1,11 @@
-"""Holder hygiene for the guided owner: a DATA patch, proven portably. Nothing here is applied or admitted.
+"""Holder hygiene for the guided owner: the APPLIED DATA patches, proven portably.
 
-`docs/research/2026-10-18-guided-owner-holder-DATA.patch` changes `linux-session-owner.c` (a v1 compile input,
-pinned by the reviewed owner-matrix workflow). It is NOT applied: the tracked file stays at its pinned bytes and
-this suite applies the patch to a scratch copy, extracts the new functions and runs them with `cc` on any host
-(`/dev/fd` stands in for `/proc/self/fd`). The Linux-only compile checks run in CI where real headers exist and fail,
-not skip, there (WINTER_REQUIRE_OWNER_HOLDER_COMPILE=1). WINTER_OWNER_HOLDER_SOURCES points at a directory holding a
-mutated patched owner for mutation runs.
+`docs/research/2026-10-18-guided-owner-holder-DATA.patch` and `...-fixture-DATA.patch` were applied byte-exactly (zero fuzz)
+to `linux-session-owner.c`, `guided_owner_native_fixture.c` and `test_guided_owner.py`. The patches stay as the record:
+this suite proves that reversing them gives the previously pinned bytes and applying them again gives the current bytes. It
+extracts the new owner functions and runs them with `cc` on any host (`/dev/fd` stands in for `/proc/self/fd`). The
+Linux-only compile checks run in CI where real headers exist and fail, not skip, there (WINTER_REQUIRE_OWNER_HOLDER_COMPILE=1).
+WINTER_OWNER_HOLDER_SOURCES points at a directory holding a mutated owner for mutation runs.
 """
 import hashlib
 import os
@@ -29,10 +29,16 @@ FIXTURE_PATCH = ROOT / 'docs/research/2026-10-18-guided-owner-holder-fixture-DAT
 DOC = ROOT / 'docs/guided-owner-holder.md'
 OVERRIDE = os.environ.get('WINTER_OWNER_HOLDER_SOURCES')
 REQUIRE_COMPILE = os.environ.get('WINTER_REQUIRE_OWNER_HOLDER_COMPILE') == '1'
-TRACKED_OWNER_SHA256 = 'c149d451eaa79442dfd41e9375c891ae8c9a06135d2cfc85851bcc8b5ce51fd8'
-PATCHED_OWNER_SHA256 = '95457d8f6ff256257b3b211e0201c64a4ed0b575aac6a9f933b3178b823b0d76'
-FIXTURE_SHA256 = 'ef1a3e4554551a47e5857ec90618cb968be2e3a1a653817df5bcac5d269f2d39'
-MATRIX_SHA256 = 'b9ea9804d57806f3ecfa765d65c2eb92c93ce1171b08cef72c3c81e8e5bbedbf'
+# The bytes pinned before the patches were applied (the first owner-matrix run, 39133771464, ran these).
+PRE_OWNER_SHA256 = 'c149d451eaa79442dfd41e9375c891ae8c9a06135d2cfc85851bcc8b5ce51fd8'
+PRE_FIXTURE_SHA256 = 'ef1a3e4554551a47e5857ec90618cb968be2e3a1a653817df5bcac5d269f2d39'
+PRE_MATRIX_SHA256 = 'b9ea9804d57806f3ecfa765d65c2eb92c93ce1171b08cef72c3c81e8e5bbedbf'
+# The tracked bytes now.
+OWNER_SHA256 = '95457d8f6ff256257b3b211e0201c64a4ed0b575aac6a9f933b3178b823b0d76'
+FIXTURE_SHA256 = 'a0c4929d88ae9dc66fc2201a2ff65c047e4c9ea0e85807d181080835539587d1'
+MATRIX_SHA256 = '8f93e9f8327e7da20241f52bdd2a2fdb556134456b64f037ab9a046811406cb4'
+FIXTURE = 'scripts/guest-supervisor/guided_owner_native_fixture.c'
+MATRIX = 'scripts/guest-supervisor/test_guided_owner.py'
 
 
 def sha(path):
@@ -43,17 +49,12 @@ _scratch = {}
 
 
 def scratch():
-    """A scratch tree: the tracked owner, fixture and matrix with the DATA patches applied (or the mutated owner)."""
+    """A scratch copy of the tracked owner, fixture and matrix (or the mutated owner)."""
     if 'root' not in _scratch:
         directory = Path(tempfile.mkdtemp(prefix='winter-owner-holder-'))
-        for name in (OWNER, 'scripts/guest-supervisor/guided_owner_native_fixture.c', 'scripts/guest-supervisor/test_guided_owner.py'):
+        for name in (OWNER, FIXTURE, MATRIX):
             (directory / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, directory / name)
-        applied = subprocess.run(['patch', '-p1', '-s', '-d', str(directory), '-i', str(PATCH)], capture_output=True, text=True, timeout=30)
-        assert applied.returncode == 0, applied.stderr
-        if FIXTURE_PATCH.exists():
-            applied = subprocess.run(['patch', '-p1', '-s', '-d', str(directory), '-i', str(FIXTURE_PATCH)], capture_output=True, text=True, timeout=30)
-            assert applied.returncode == 0, applied.stderr
         if OVERRIDE:
             shutil.copyfile(Path(OVERRIDE) / 'linux-session-owner.c', directory / OWNER)
         _scratch['root'] = directory
@@ -69,15 +70,36 @@ class PatchIntegrityTests(unittest.TestCase):
         if OVERRIDE:
             self.skipTest('mutation run: the recorded hashes belong to the real patched bytes')
 
-    def test_the_tracked_owner_fixture_and_matrix_are_untouched(self):
-        self.assertEqual(sha(ROOT / OWNER), TRACKED_OWNER_SHA256)
-        self.assertEqual(sha(ROOT / 'scripts/guest-supervisor/guided_owner_native_fixture.c'), FIXTURE_SHA256)
-        self.assertEqual(sha(ROOT / 'scripts/guest-supervisor/test_guided_owner.py'), MATRIX_SHA256)
+    def test_the_tracked_owner_fixture_and_matrix_are_the_patched_bytes(self):
+        self.assertEqual(sha(ROOT / OWNER), OWNER_SHA256)
+        self.assertEqual(sha(ROOT / FIXTURE), FIXTURE_SHA256)
+        self.assertEqual(sha(ROOT / MATRIX), MATRIX_SHA256)
 
-    def test_the_patch_touches_exactly_the_owner_and_applies_to_the_pinned_bytes(self):
+    def test_reversing_then_reapplying_both_patches_is_byte_exact_with_zero_fuzz(self):
+        directory = Path(tempfile.mkdtemp(prefix='winter-owner-holder-reverse-'))
+        try:
+            for name in (OWNER, FIXTURE, MATRIX):
+                (directory / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / name, directory / name)
+
+            def run(flag, patch):
+                done = subprocess.run(['patch', '-p1', '-F0', '--no-backup-if-mismatch', flag, '-d', str(directory), '-i', str(patch)], capture_output=True, text=True, timeout=30)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertNotIn('fuzz', done.stdout.lower())
+                self.assertNotIn('offset', done.stdout.lower())
+            run('-R', PATCH)
+            run('-R', FIXTURE_PATCH)
+            self.assertEqual((sha(directory / OWNER), sha(directory / FIXTURE), sha(directory / MATRIX)), (PRE_OWNER_SHA256, PRE_FIXTURE_SHA256, PRE_MATRIX_SHA256))
+            run('-N', PATCH)
+            run('-N', FIXTURE_PATCH)
+            self.assertEqual((sha(directory / OWNER), sha(directory / FIXTURE), sha(directory / MATRIX)), (OWNER_SHA256, FIXTURE_SHA256, MATRIX_SHA256))
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+
+    def test_the_patch_touches_exactly_the_owner(self):
         self.assertEqual(re.findall(r'^--- a/(.+)$', PATCH.read_text(), re.M), [OWNER])
         self.assertEqual(re.findall(r'^\+\+\+ b/(.+)$', PATCH.read_text(), re.M), [OWNER])
-        self.assertEqual(hashlib.sha256(patched().encode()).hexdigest(), PATCHED_OWNER_SHA256)
+        self.assertEqual(hashlib.sha256(patched().encode()).hexdigest(), OWNER_SHA256)
 
     def test_the_patch_removes_only_what_it_replaces(self):
         removed = [line[1:] for line in PATCH.read_text().splitlines() if line.startswith('-') and not line.startswith('---')]
@@ -92,7 +114,7 @@ class PatchIntegrityTests(unittest.TestCase):
 
     def test_the_hashes_are_recorded_in_the_doc(self):
         text = DOC.read_text()
-        for digest in (sha(PATCH), sha(FIXTURE_PATCH), PATCHED_OWNER_SHA256, TRACKED_OWNER_SHA256):
+        for digest in (sha(PATCH), sha(FIXTURE_PATCH), OWNER_SHA256, FIXTURE_SHA256, MATRIX_SHA256, PRE_OWNER_SHA256, PRE_FIXTURE_SHA256, PRE_MATRIX_SHA256):
             self.assertIn(digest, text)
 
 
@@ -280,7 +302,7 @@ class ExtractedFunctionTests(unittest.TestCase):
 
 
 class FixtureProposalTests(unittest.TestCase):
-    """The proposed real-kernel cases (DATA only: never compiled here, never run). They are pinned to the matrix by name."""
+    """The real-kernel cases the patches added (never executed here). They are pinned to the matrix by name."""
 
     def test_the_proposed_cases_exist_in_the_patched_fixture_and_matrix(self):
         root = scratch()

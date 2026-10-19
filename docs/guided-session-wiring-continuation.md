@@ -92,10 +92,11 @@ and `/tmp/winter-linux-guided-owner-DATA.patch`.
   is removed. M2's persistent stream/no normal half-close is implemented and tested
   through inert socket effects. Root has the corrected hash for final delta review.
 - Holder authentication stays creator-only. The owner-side CLOEXEC re-proof, the
-  single-transfer census guard and the exact limits of any holder claim are specified
-  as a proposed, not applied, DATA patch in `docs/guided-owner-holder.md`.
-- Root's latest checkpoint instruction explicitly forbids applying C now. The
-  tracked `linux-session-owner.c` is unchanged.
+  single-transfer census guard and the exact limits of any holder claim are applied
+  (owner `95457d8f...`) and documented in `docs/guided-owner-holder.md`; the four new
+  native cases await the successor owner-matrix run (`docs/guided-owner-matrix-run-2.md`).
+- The earlier checkpoint instruction that forbade applying C is superseded by the
+  owner's decision to apply the holder patches.
 
 ## Unfinished work after restart
 

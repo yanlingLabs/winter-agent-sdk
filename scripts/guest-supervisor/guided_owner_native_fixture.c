@@ -66,6 +66,29 @@ static void child(int bootstrap,int control,int *inherited,int inherited_count,c
         if(replacement!=duplicate){assert(dup2(replacement,duplicate)==duplicate);close(replacement);}
         winter_owner_close(owner);assert(fcntl(duplicate,F_GETFD)>=0);close(duplicate);owner=0;
     }
+    else if(!strncmp(name,"holder-",7)){
+        /* Holder hygiene of the retained reader descriptor (needs the owner holder DATA patch). The fixture includes the
+         * owner source, so it may read the owner's own slots; it changes only descriptor flags and makes plain dups. */
+        struct owner *held=get(owner);assert(held&&held->guided&&held->fd[4]>=3);
+        if(!strcmp(name,"holder-census")){
+            assert(census(held->fd[4])==1&&(fcntl(held->fd[4],F_GETFD)&FD_CLOEXEC));
+            int copy=winter_owner_claim_reader(owner);assert(copy>=3&&copy!=held->fd[4]&&(fcntl(copy,F_GETFD)&FD_CLOEXEC));
+            assert(census(held->fd[4])==2);close(copy);assert(census(held->fd[4])==1);assert(!winter_owner_check(owner));
+        }else if(!strcmp(name,"holder-clear-cloexec")){
+            assert(fcntl(held->fd[4],F_SETFD,0)==0);assert(winter_owner_claim_reader(owner)==-1);
+            assert(winter_owner_check(owner)==-1);assert(!strcmp(winter_owner_error(),"owner_lost"));
+            assert(fcntl(held->fd[4],F_SETFD,FD_CLOEXEC)==0);assert(!winter_owner_check(owner));
+            /* A claim the owner check refused did not reach the transfer, so it is not spent. */
+            int copy=winter_owner_claim_reader(owner);assert(copy>=3&&(fcntl(copy,F_GETFD)&FD_CLOEXEC));close(copy);
+        }else if(!strcmp(name,"holder-stray-dup")){
+            int stray=dup(held->fd[4]);assert(stray>=3);assert(census(held->fd[4])==2);
+            assert(winter_owner_claim_reader(owner)==-1);assert(census(held->fd[4])==2);   /* nothing leaked */
+            close(stray);assert(census(held->fd[4])==1);assert(winter_owner_claim_reader(owner)==-1);   /* spent */
+        }else if(!strcmp(name,"holder-bootstrap-cloexec")){
+            assert(fcntl(bootstrap,F_GETFD)&FD_CLOEXEC);assert(held->socket==bootstrap);
+            assert(fcntl(bootstrap,F_SETFD,0)==0);assert(winter_owner_check(owner)==-1);assert(!strcmp(winter_owner_error(),"owner_lost"));
+        }
+    }
     if(owner)winter_owner_close(owner);
     close(control);_exit(0);
 }
@@ -110,7 +133,7 @@ int main(int argc,char **argv){
             run(argv[1],argv[2],count,2,registration,count==4&&!registration);
     }else{
         int rejected=!strncmp(argv[1],"alias",5)||!strcmp(argv[1],"non-socket")||!strcmp(argv[1],"pidfs-absent");
-        assert(rejected||!strcmp(argv[1],"claim-twice")||!strcmp(argv[1],"reader-shutdown")||!strcmp(argv[1],"bootstrap-close")||!strcmp(argv[1],"half-close"));
+        assert(rejected||!strncmp(argv[1],"holder-",7)||!strcmp(argv[1],"claim-twice")||!strcmp(argv[1],"reader-shutdown")||!strcmp(argv[1],"bootstrap-close")||!strcmp(argv[1],"half-close"));
         if(!strcmp(argv[1],"pidfs-absent"))run("ordinary-baseline",argv[2],4,0,0,1);
         run(argv[1],argv[2],5,1,1,!rejected);
     }

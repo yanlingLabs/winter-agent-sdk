@@ -1,8 +1,10 @@
 #define _GNU_SOURCE
 /* Native fresh-runtime bootstrap. No public path/config/proof arguments and no tenancy release.
  * The immutable root service sends evidence over an inherited AF_UNIX socket. */
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -75,6 +77,24 @@ static int live(int fd){struct pollfd p={fd,POLLIN,0};return poll(&p,1,0)==0;}
 static int pidfd_pid(int fd){char path[64],line[256];snprintf(path,sizeof path,"/proc/self/fdinfo/%d",fd);FILE *f=fopen(path,"re");if(!f)return -1;int pid=-1;while(fgets(line,sizeof line,f))if(sscanf(line,"Pid:\t%d",&pid)==1)break;fclose(f);return pid;}
 static int pidfd_type(int fd){char path[64],target[128];snprintf(path,sizeof path,"/proc/self/fd/%d",fd);ssize_t n=readlink(path,target,sizeof target-1);if(n<0)return 0;target[n]=0;return !strcmp(target,"anon_inode:[pidfd]");}
 static int immutable(int fd){struct stat s;return !fstat(fd,&s)&&S_ISREG(s.st_mode)&&s.st_uid==0&&s.st_nlink==1&&!(s.st_mode&0222)&&(fcntl(fd,F_GETFL)&O_ACCMODE)==O_RDONLY;}
+static int cloexec(int fd){int flags=fcntl(fd,F_GETFD);return flags>=0&&(flags&FD_CLOEXEC);}
+#ifndef WINTER_FD_DIRECTORY
+#define WINTER_FD_DIRECTORY "/proc/self/fd"
+#endif
+/* Holder census of THIS process only: how many of its descriptors (the one asked about included, the
+ * enumerating directory handle excluded) name the same socket object, i.e. the same st_dev/st_ino.
+ * -1 when fd is not a socket or the table cannot be read. It sees no other process. */
+static int census(int fd){
+    struct stat want,s;if(fstat(fd,&want)||!S_ISSOCK(want.st_mode))return -1;
+    DIR *d=opendir(WINTER_FD_DIRECTORY);if(!d)return -1;
+    int skip=dirfd(d),count=0;struct dirent *e;
+    while((e=readdir(d))){
+        if(*e->d_name<'0'||*e->d_name>'9')continue;
+        char *end;long n=strtol(e->d_name,&end,10);if(*end||n>INT_MAX||(int)n==skip)continue;
+        if(!fstat((int)n,&s)&&s.st_dev==want.st_dev&&s.st_ino==want.st_ino)count++;
+    }
+    closedir(d);return count;
+}
 static int identity(int a,int b){struct stat x,y;return !fstat(a,&x)&&!fstat(b,&y)&&x.st_dev==y.st_dev&&x.st_ino==y.st_ino;}
 static int boot(char out[64]){FILE *f=fopen("/proc/sys/kernel/random/boot_id","re");if(!f)return -1;int ok=fgets(out,64,f)!=NULL;fclose(f);if(!ok)return -1;out[strcspn(out,"\r\n")]=0;return strlen(out)==36?0:-1;}
 /* Guided-only feature requirement: pidfs identity, never namespace-visible PID text.
@@ -106,13 +126,19 @@ static int guided_peer(int socketfd,int type,int service,int runtime){
 }
 struct owner { int fd[5],count,socket,guided,reader_claimed; uid_t uid; char record[LIMIT+1],store[512],boot[64],identity[256]; uint64_t serial; struct owner *next; };
 static struct owner *owners;static uint64_t serial;static const char *error="none";
+/* Every descriptor native still holds, and the bootstrap socket it took over, must be close-on-exec NOW,
+ * not only when it arrived: nothing here may leak across an exec. */
+static int retained_cloexec(const struct owner *o){
+    for(int i=0;i<o->count;i++)if(o->fd[i]>=0&&!cloexec(o->fd[i]))return 0;
+    return o->socket<0||cloexec(o->socket);
+}
 static struct owner *get(uint64_t h){for(struct owner *o=owners;o;o=o->next)if(o->serial==h)return o;error="owner_closed";return NULL;}
 const char *winter_owner_error(void){return error;}
 int winter_owner_check(uint64_t h){
     struct owner *o=get(h);if(!o)return -1;
     char resolved[4096],current[64];struct stat s;
     int pathfd=open(o->store,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);int exe=open("/proc/self/exe",O_RDONLY|O_CLOEXEC);
-    int ok=(!o->guided||(o->fd[4]>=3&&guided_peer(o->fd[4],SOCK_STREAM,o->fd[1],o->fd[0])))&&getuid()==o->uid&&geteuid()==o->uid&&getpid()==1&&live(o->fd[0])&&live(o->fd[1])&&pidfd_pid(o->fd[0])==getpid()&&pathfd>=0&&exe>=0&&identity(pathfd,o->fd[2])&&identity(exe,o->fd[3])&&immutable(o->fd[3])&&!fstat(o->fd[2],&s)&&S_ISDIR(s.st_mode)&&s.st_uid==o->uid&&(s.st_mode&0777)==0700&&realpath(o->store,resolved)&&!strcmp(resolved,o->store)&&!boot(current)&&!strcmp(current,o->boot);
+    int ok=retained_cloexec(o)&&(!o->guided||(o->fd[4]>=3&&guided_peer(o->fd[4],SOCK_STREAM,o->fd[1],o->fd[0])))&&getuid()==o->uid&&geteuid()==o->uid&&getpid()==1&&live(o->fd[0])&&live(o->fd[1])&&pidfd_pid(o->fd[0])==getpid()&&pathfd>=0&&exe>=0&&identity(pathfd,o->fd[2])&&identity(exe,o->fd[3])&&immutable(o->fd[3])&&!fstat(o->fd[2],&s)&&S_ISDIR(s.st_mode)&&s.st_uid==o->uid&&(s.st_mode&0777)==0700&&realpath(o->store,resolved)&&!strcmp(resolved,o->store)&&!boot(current)&&!strcmp(current,o->boot);
     if(pathfd>=0)close(pathfd);
     if(exe>=0)close(exe);
     if(!ok){error="owner_lost";return -1;}return 0;
@@ -150,9 +176,11 @@ uint64_t winter_owner_open(int socketfd){
     snprintf(expected,sizeof expected,"/workspace/.winter/conversations/%s",logical);if(strcmp(expected,o->store))goto fail;
     for(int i=0;i<o->count;i++)if(!(fcntl(o->fd[i],F_GETFD)&FD_CLOEXEC))goto fail;
     if(!pidfd_type(o->fd[0])||!pidfd_type(o->fd[1])||!immutable(o->fd[3])||(fcntl(o->fd[2],F_GETFL)&O_ACCMODE)!=O_RDONLY)goto fail;
+    /* The bootstrap socket arrives inheritable: make it close-on-exec BEFORE any check relies on it, and prove it. */
+    if(fcntl(socketfd,F_SETFD,FD_CLOEXEC)<0||!cloexec(socketfd))goto fail;
     o->socket=socketfd;o->uid=getuid();o->serial=++serial;if(!o->serial)o->serial=++serial;o->next=owners;owners=o;
     if(winter_owner_check(o->serial)){owners=o->next;goto fail;}
-    o->socket=socketfd;fcntl(socketfd,F_SETFD,FD_CLOEXEC);error="none";return o->serial;
+    error="none";return o->serial;
 fail:
     for(int i=0;i<o->count;i++){if(o->fd[i]>=0)close(o->fd[i]);}
     free(o);return 0;
@@ -167,12 +195,23 @@ const char *winter_owner_process_identity(uint64_t h,int pid){
     snprintf(o->identity,sizeof o->identity,"{\"bootId\":\"%s\",\"startTicks\":\"%llu\"}",o->boot,ticks);return o->identity;
 }
 void winter_owner_close(uint64_t h){struct owner **link=&owners;while(*link&&(*link)->serial!=h)link=&(*link)->next;if(!*link)return;struct owner *o=*link;*link=o->next;if(o->guided&&o->fd[4]>=0)shutdown(o->fd[4],SHUT_RDWR);for(int i=0;i<o->count;i++)if(o->fd[i]>=0)close(o->fd[i]);if(o->socket>=0)close(o->socket);memset(o,0,sizeof *o);free(o);}
+/* The one reader transfer. The original must be close-on-exec and the ONLY descriptor of this process
+ * naming the stream; the dup is made close-on-exec atomically, then proven close-on-exec, the same
+ * socket and a new number, and the process must now hold exactly two. The single close() below is of
+ * the dup native made itself and has not returned yet: it is not caller-owned. */
+static int transfer_reader(int original){
+    if(original<3||!cloexec(original)||census(original)!=1)return -1;
+    int copy=fcntl(original,F_DUPFD_CLOEXEC,3);if(copy<0)return -1;
+    if(copy==original||!cloexec(copy)||!identity(copy,original)||census(original)!=2){close(copy);return -1;}
+    return copy;
+}
 /* ONE transfer: the caller owns the returned CLOEXEC dup immediately. Native
- * retains only its original; it never closes a transferred dup by number. */
+ * retains only its original; it never closes a transferred dup by number. A refused
+ * transfer still spends the claim (fail closed, no retry). */
 int winter_owner_claim_reader(uint64_t h){
     struct owner *o=get(h);if(!o||!o->guided||o->reader_claimed||winter_owner_check(h))return -1;
     o->reader_claimed=1;
-    return fcntl(o->fd[4],F_DUPFD_CLOEXEC,3);
+    return transfer_reader(o->fd[4]);
 }
 /* Terminal owner loss: this shuts down every dup, not a normal read completion.
  * Persistent framed responses never half-close the shared channel. */

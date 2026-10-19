@@ -111,7 +111,9 @@ int main(void){
         self.assertIn('SO_PEERPIDFD', peer)
         self.assertIn('pidfs(peerfd)&&identity(peerfd,service)&&!identity(peerfd,runtime)', peer)
         self.assertIn('o->reader_claimed', claim)
-        self.assertLess(claim.index('o->reader_claimed=1'), claim.index('F_DUPFD_CLOEXEC'))
+        transfer = function(source, 'transfer_reader')
+        self.assertIn('F_DUPFD_CLOEXEC', transfer)
+        self.assertLess(claim.index('o->reader_claimed=1'), claim.index('transfer_reader('))
         self.assertNotIn('close(', claim)
         self.assertIn('o->fd[4]=-1;shutdown(fd,SHUT_RDWR);close(fd)', shutdown)
         self.assertIn('shutdown(o->fd[4],SHUT_RDWR)', closed)
@@ -231,6 +233,10 @@ class GuidedOwnerNativeTargetTests(unittest.TestCase):
     def test_claim_twice_and_no_numeric_double_close(self): self.case('claim-twice')
     def test_reader_shutdown_loses_owner(self): self.case('reader-shutdown')
     def test_closed_bootstrap_peer_preserves_owner(self): self.case('bootstrap-close')
+    def test_holder_census_is_one_then_two_then_one(self): self.case('holder-census')
+    def test_holder_cleared_cloexec_loses_owner_and_spends_the_claim(self): self.case('holder-clear-cloexec')
+    def test_holder_stray_dup_refuses_the_claim_without_a_leak(self): self.case('holder-stray-dup')
+    def test_holder_bootstrap_socket_is_cloexec_and_rechecked(self): self.case('holder-bootstrap-cloexec')
     def test_stream_half_close_loses_owner(self): self.case('half-close')
 
 
