@@ -126,6 +126,13 @@ static int browse_seal(void) {
 #ifdef __NR_fchmodat2
         BROWSE_DENY(fchmodat2),
 #endif
+        /* Descriptor and memory reach that an open file must not buy: no pulling another process's descriptor or naming it by pidfd, no
+         * anonymous executable memory or fault-handling stall, no kernel keyring, no remote madvise. */
+        BROWSE_DENY(pidfd_getfd), BROWSE_DENY(pidfd_open), BROWSE_DENY(memfd_create), BROWSE_DENY(userfaultfd),
+        BROWSE_DENY(keyctl), BROWSE_DENY(add_key), BROWSE_DENY(request_key),
+#ifdef __NR_process_madvise
+        BROWSE_DENY(process_madvise),
+#endif
 #ifdef __NR_renameat
         BROWSE_DENY(renameat),
 #endif
@@ -143,7 +150,7 @@ static int browse_seal(void) {
 /* TEST BUILDS ONLY (the image compiles this file without the define): after the seal, try each thing it must stop and report errno. */
 static int browse_seal_probe(int file) {
     char *none[] = { NULL };
-    int results[7];
+    int results[15];
     errno = 0; results[0] = execve("/", none, none) < 0 ? errno : 0;
     errno = 0; results[1] = openat(AT_FDCWD, "/", O_RDONLY | O_CLOEXEC) < 0 ? errno : 0;
     errno = 0; results[2] = write(STDERR_FILENO, "x", 1) < 0 ? errno : 0;
@@ -151,7 +158,18 @@ static int browse_seal_probe(int file) {
     errno = 0; results[4] = ftruncate(file, 0) < 0 ? errno : 0;
     errno = 0; results[5] = fchmod(file, 0600) < 0 ? errno : 0;
     errno = 0; results[6] = (int)syscall(SYS_name_to_handle_at, AT_FDCWD, ".", NULL, NULL, 0) < 0 ? errno : 0;
-    printf("{\"version\":1,\"ok\":true,\"probe\":[%d,%d,%d,%d,%d,%d,%d]}\n", results[0], results[1], results[2], results[3], results[4], results[5], results[6]);
+    /* The descriptor and memory reach the seal also closes. Arguments are invalid on purpose, so the kernel answers EBADF, EFAULT or EINVAL
+     * and only the filter answers EPERM (userfaultfd may answer EPERM from its own sysctl, so it is not told apart from the filter here). */
+    errno = 0; results[7] = (int)syscall(SYS_pidfd_getfd, -1, 0, 0) < 0 ? errno : 0;
+    errno = 0; results[8] = (int)syscall(SYS_pidfd_open, 0, 0) < 0 ? errno : 0;
+    errno = 0; results[9] = (int)syscall(SYS_memfd_create, NULL, 0) < 0 ? errno : 0;
+    errno = 0; results[10] = (int)syscall(SYS_keyctl, -1, 0, 0, 0, 0) < 0 ? errno : 0;
+    errno = 0; results[11] = (int)syscall(SYS_add_key, NULL, NULL, NULL, 0, 0) < 0 ? errno : 0;
+    errno = 0; results[12] = (int)syscall(SYS_request_key, NULL, NULL, NULL, 0) < 0 ? errno : 0;
+    errno = 0; results[13] = (int)syscall(SYS_process_madvise, -1, NULL, 0, 0, 0) < 0 ? errno : 0;
+    errno = 0; results[14] = (int)syscall(SYS_userfaultfd, 0) < 0 ? errno : 0;
+    printf("{\"version\":1,\"ok\":true,\"probe\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]}\n", results[0], results[1], results[2], results[3], results[4], results[5], results[6],
+           results[7], results[8], results[9], results[10], results[11], results[12], results[13], results[14]);
     return 0;
 }
 #endif

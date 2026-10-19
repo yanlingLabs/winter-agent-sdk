@@ -52,7 +52,7 @@ How the pieces connect:
    - The root-device check: `fstatfs` reports ext4, and `st_dev` equals the admitted descriptor's device, which the launcher reports from the held descriptor.
    - `openat2(root, relative)` with `O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_NOCTTY` and `RESOLVE_BENEATH|NO_SYMLINKS|NO_MAGICLINKS|NO_XDEV`.
    - `fstat`: the object must be `S_ISREG`, have `nlink == 1` and sit on the root's device.
-   - The **seal**, a second seccomp filter stacked on the shared one. From here on there is no open, no exec, no file or metadata change and no socket, and `write`/`writev` are allowed only on stdout.
+   - The **seal**, a second seccomp filter stacked on the shared one. From here on there is no open, no exec, no file or metadata change and no socket, and `write`/`writev` are allowed only on stdout. It also denies `pidfd_getfd`, `pidfd_open`, `memfd_create`, `userfaultfd`, the `keyctl` family (`keyctl`, `add_key`, `request_key`) and `process_madvise`, so an open file buys no descriptor from another process, no anonymous memory file and no kernel keyring. It is a denylist on top of the shared filter, not an allowlist.
    - `pread` of `min(maxBytes, size - offset)`, then `fstat` again.
    - It prints the raw identity before and after (`dev, ino, size, mtime ns, ctime ns, mode, nlink, uid`) and the bytes. It never prints a path.
 6. **Answer.** Root turns the worker's result into one canonical line.
@@ -62,6 +62,8 @@ How the pieces connect:
      2. A mismatch with the caller's `expectedGeneration` is `stale_file`.
      3. A changed generation after the read is `stale_file`.
    - The bytes are discarded on every refusal.
+
+**Kernel dependency (ext4 fine-grained ctime).** The generation includes `ctime_ns`. It detects two changes made close together only when ext4 gives each its own ctime, which needs the multigrain (fine-grained) timestamps of kernel 6.13 or newer. On an older kernel the ctime is coarse (one timer tick), so a second change inside the same tick can leave the generation unchanged. The guest image's kernel must therefore be 6.13 or newer for this claim. The `open_by_handle_at` mutant test needs kernel 6.10 or newer and asserts it.
 
 Error codes are only the channel's six:
 

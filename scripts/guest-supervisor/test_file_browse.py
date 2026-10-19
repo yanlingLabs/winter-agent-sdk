@@ -1360,7 +1360,8 @@ class SourceTests(unittest.TestCase):
         seal = source[source.index('static int browse_seal(void)'):source.index('#ifdef WINTER_BROWSE_SEAL_PROBE')]
         for name in ('execve', 'execveat', 'openat', 'openat2', 'pwrite64', 'pwritev', 'pwritev2', 'truncate', 'ftruncate', 'fallocate', 'renameat', 'renameat2', 'unlinkat', 'mkdirat',
                      'mknodat', 'linkat', 'symlinkat', 'fchmod', 'fchmodat', 'fchown', 'fchownat', 'setxattr', 'lsetxattr', 'fsetxattr', 'removexattr', 'lremovexattr', 'fremovexattr',
-                     'utimensat', 'sendfile', 'copy_file_range', 'splice', 'tee', 'vmsplice', 'socket', 'socketpair', 'connect', 'open_by_handle_at', 'name_to_handle_at'):
+                     'utimensat', 'sendfile', 'copy_file_range', 'splice', 'tee', 'vmsplice', 'socket', 'socketpair', 'connect', 'open_by_handle_at', 'name_to_handle_at',
+                     'pidfd_getfd', 'pidfd_open', 'memfd_create', 'userfaultfd', 'keyctl', 'add_key', 'request_key', 'process_madvise'):
             self.assertIn('BROWSE_DENY(%s)' % name, seal, name)
         self.assertIn('BROWSE_STDOUT_ONLY(write), BROWSE_STDOUT_ONLY(writev)', seal)
         self.assertIn('SECCOMP_RET_KILL_PROCESS', seal)
@@ -1653,7 +1654,7 @@ class LinuxNativeTests(unittest.TestCase):
         self.assertEqual(value['entries'], ['file-worker', 'workspace'])
 
     def test_the_handle_syscall_denies_are_load_bearing(self):
-        """Mutant: the shared header without its two handle DENY entries. name_to_handle_at must then reach the kernel; open_by_handle_at may
+        """Needs kernel 6.10 or newer for open_by_handle_at to answer EBADF before its capability check (both CI kernels are newer). Mutant: the shared header without its two handle DENY entries. name_to_handle_at must then reach the kernel; open_by_handle_at may
         still answer EPERM from the kernel's own capability check (the browser has none), which the report names when it happens."""
         root = self.root()
         header = self.build_dir / 'mutant-header.h'
@@ -1662,6 +1663,8 @@ class LinuxNativeTests(unittest.TestCase):
         header.write_text(text.replace('DENY(open_by_handle_at),DENY(name_to_handle_at),', ''))
         mutant = self.build(TOOL, 'launcher-without-handle-denies', header=header)
         value = self.probe_run(root, launcher=mutant)
+        release = tuple(int(part) for part in re.match(r'(\d+)\.(\d+)', os.uname().release).groups())
+        self.assertGreaterEqual(release, (6, 10), 'the open_by_handle_at mutant assertion needs kernel 6.10 or newer: %s' % os.uname().release)
         self.assertNotEqual(value['nameToHandle'], 1, 'the mutant launcher still denies name_to_handle_at: the probe does not observe the filter')
         # With a bad mount descriptor the kernel answers EBADF before any capability check (both CI kernels); only the filter answers EPERM.
         self.assertNotEqual(value['openByHandle'], 1, 'the mutant launcher still denies open_by_handle_at: the probe does not observe the filter')
@@ -1669,7 +1672,7 @@ class LinuxNativeTests(unittest.TestCase):
     def test_the_seal(self):
         root = self.root()
         value = self.result(root, 'stat', 'seed.txt', worker=self.seal_probe)
-        self.assertEqual(value['probe'], [1, 1, 1, 1, 1, 1, 1])
+        self.assertEqual(value['probe'], [1] * 15)
         self.assertEqual((root / 'seed.txt').read_bytes(), b'0123456789')
         # Mutant: the probe build without the seal must observe the kernel, not the filter.
         unsealed = self.build_dir / 'unsealed-src'
@@ -1680,6 +1683,8 @@ class LinuxNativeTests(unittest.TestCase):
         self.assertNotEqual(value['probe'][1], 1)  # openat of "/" succeeds in the view without the seal
         self.assertNotEqual(value['probe'][2], 1)  # stderr is writable without the seal
         self.assertNotEqual(value['probe'][3], 1)  # pwrite reaches the kernel (EBADF on the read-only descriptor)
+        for index in range(7, 14):  # pidfd_getfd, pidfd_open, memfd_create, keyctl, add_key, request_key, process_madvise; userfaultfd (14) may say EPERM on its own
+            self.assertNotEqual(value['probe'][index], 1, index)
         self.assertEqual((root / 'seed.txt').read_bytes(), b'0123456789')
 
     def test_browse_stays_read_only_whatever_the_policy_argument(self):
@@ -1783,7 +1788,7 @@ class LinuxNativeTests(unittest.TestCase):
             mutant = self.mutant_build(WORKER, name, old, new, ['-DWINTER_BROWSE_SEAL_PROBE'] if name == 'the seal' else [])
             if name == 'the seal':
                 value = self.result(root, 'stat', 'seed.txt', worker=mutant)
-                if value.get('probe') == [1, 1, 1, 1, 1, 1, 1]:
+                if value.get('probe') == [1] * 15:
                     survivors.append(name)
                 continue
             if self.worker_outcomes(mutant, root, share) == expected:
