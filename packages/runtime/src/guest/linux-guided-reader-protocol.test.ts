@@ -76,6 +76,9 @@ test("guided policy preserves v1 permission clamps and never widens sources or a
     expect(() => assertLinuxGuidedHostQueryConfig({ ...own, allowDangerouslySkipPermissions: true }, registration)).toThrow();
     expect(() => assertLinuxGuidedHostQueryConfig({ ...own, permissions: { disableBypassPermissionsMode: false } }, registration)).toThrow();
     if (permissionMode === "plan") expect(() => assertLinuxGuidedHostQueryRoots(own, roots, registration)).toThrow();
+    // Cold resume is inherited from the host-query profile: this conversation's own session only.
+    expect(() => assertLinuxGuidedHostQueryConfig({ ...own, resume: "backend" }, registration)).not.toThrow();
+    for (const change of [{ resume: "foreign" }, { continue: true }, { forkSession: true }, { resumeSessionAt: "x" }, { resumeDropsTurn: true }]) expect(() => assertLinuxGuidedHostQueryConfig({ ...own, ...change } as RuntimeConfig, registration)).toThrow();
   }
   for (const permissionMode of ["acceptEdits", "dontAsk", "bypassPermissions"] as const) {
     const bypass = permissionMode === "bypassPermissions";
@@ -87,7 +90,7 @@ test("guided policy preserves v1 permission clamps and never widens sources or a
     expect(() => assertLinuxGuidedHostQueryRoots(config, [{ ...roots[0]!, source } as never], registration), source).toThrow();
   }
   for (const change of [{ sessionId: "foreign" }, { cwd: registration.views.sourceRoot }, { storeHome: "/workspace/.winter/conversations/foreign" },
-    { agentId: "child" }, { resume: "backend" }, { forkSession: true }, { settingSources: ["user"] }, { hooks: {} }, { allowedTools: ["Bash"] },
+    { agentId: "child" }, { resume: "foreign" }, { forkSession: true }, { settingSources: ["user"] }, { hooks: {} }, { allowedTools: ["Bash"] },
     { requiredRuntimeContext: { version: 1, bindingId: uuid(8) } }]) expect(() => assertLinuxGuidedHostQueryConfig({ ...config, ...change } as RuntimeConfig, registration)).toThrow();
   expect(() => assertLinuxGuidedHostQueryRoots(config, [{ id: "foreign", guestPath: "/workspace/folders/other", readOnly: false }], registration)).toThrow();
 });
