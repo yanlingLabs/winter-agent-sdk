@@ -21,7 +21,8 @@ The root constructor still requires Linux, Root, isolated Python and the current
 kernel boot. The default CLI has no transport adapter and cannot activate this
 route from JSON alone; missing/JSON/stale/closed adapters refuse.
 
-`host_query_config` derives the SDK config from root-owned conversation policy,
+Host-query (and guided) roots are admitted only when their `source` is exactly their `guestPath` (`host_query_source_is_view`); the guest
+TS root records carry no `source` and refuse one. `host_query_config` derives the SDK config from root-owned conversation policy,
 source roots and captured tool classes. Plan maps to SDK plan and every other policy
 (auto, ask, accept-edits, dont-ask, bypass) maps to SDK default, so the host matrix behind `canUseTool` stays the policy
 authority. The received policy is recorded unchanged. The four tools are the ceiling, `allowedTools` is empty, and the clamp

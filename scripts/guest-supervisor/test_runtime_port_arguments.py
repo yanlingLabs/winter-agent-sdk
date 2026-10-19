@@ -473,11 +473,13 @@ class Pid1ShapedConfigAdmissionTests(Fixture):
             private.rmdir()
         config = json.loads(text.replace('/run/winter/control', str(base / 'control')).replace('/opt/winter/environment/base', str(base / 'environment'))
                             .replace('/opt/winter/helpers/', str(base / 'artifacts') + '/').replace('/opt/winter/runtime/', str(base / 'artifacts') + '/')
-                            .replace('"/source"', json.dumps(str(base / 'source'))).replace('"/store"', json.dumps(str(base / 'store')))
+                            .replace('"/source"', json.dumps('/workspace/folders/source')).replace('"/store"', json.dumps(str(base / 'store')))
                             .replace('"/home"', json.dumps(str(base / 'home'))).replace('"/guidance"', json.dumps(str(base / 'guidance'))))
         control = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=0)
         with guided.linux_root_constructor(), patch.object(service, 'pinned_artifact', side_effect=lambda value: os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC)), \
                 patch.object(service.Path, 'lstat', return_value=control), patch.object(service.os, 'chown'), patch.object(service, 'READER_VIEWS_ROOT', str(base / 'views')), \
+                patch.object(service, 'source_directory', side_effect=lambda source, protected, real=service.source_directory: os.open(str(base / 'source'), os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC) if source == '/workspace/folders/source' else real(source, protected)), \
+                patch.object(service.Path, 'resolve', autospec=True, side_effect=lambda path, strict=False, real=service.Path.resolve: real(base / 'source' if str(path) == '/workspace/folders/source' else path, strict=strict)), \
                 patch.object(service.ToolService, '_configure_runtime', autospec=True):
             built = service.ToolService(config, host_query_ports=ports)
         self.services.append(built)

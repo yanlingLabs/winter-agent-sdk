@@ -604,11 +604,11 @@ class ConstructorRootMetadataTests(unittest.TestCase):
         self.pipes.close()
         self.temp.cleanup()
 
-    def config(self, profile, policy):
+    def config(self, profile, policy, source='/workspace/folders/source'):
         key = dict(service.RUNTIME_KEYS)[profile]
         pin = lambda name: {'path': str(self.base / 'artifacts' / name), 'sha256': '0' * 64}
         entry = {'logicalSessionId': 'logical', 'authority': dict(AUTH), 'runtimeUid': 20001, 'toolUid': 10001, 'workspaceGid': 10000, 'policy': policy,
-                 'roots': [{'id': 'source', 'guestPath': '/workspace/folders/source', 'readOnly': False, 'source': str(self.base / 'source')}]}
+                 'roots': [{'id': 'source', 'guestPath': '/workspace/folders/source', 'readOnly': False, 'source': source}]}
         config = {'guestBootId': BOOT, 'environment': str(self.base / 'environment'), 'controlDirectory': str(self.base / 'control'), 'protectedStoreDirectories': [],
                   'artifacts': {name: pin(name) for name in ('launcher', 'fileWorker', 'processWorker')}, 'conversations': [entry]}
         if profile != 'fresh':
@@ -620,7 +620,7 @@ class ConstructorRootMetadataTests(unittest.TestCase):
                 entry[key]['guidanceDirectory'] = str(self.base / 'guidance')
         return config
 
-    def construct(self, profile, policy):
+    def construct(self, profile, policy, source='/workspace/folders/source'):
         private = self.base / 'control' / 'logical'
         if private.exists():
             private.rmdir()
@@ -628,8 +628,10 @@ class ConstructorRootMetadataTests(unittest.TestCase):
         control = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=0)
         with linux_root_constructor(), patch.object(service, 'pinned_artifact', side_effect=lambda value: os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC)), \
                 patch.object(service.Path, 'lstat', return_value=control), patch.object(service.os, 'chown'), patch.object(service, 'READER_VIEWS_ROOT', str(self.base / 'views')), \
+                patch.object(service, 'source_directory', side_effect=lambda source, protected, real=service.source_directory: os.open(str(self.base / 'source'), os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC) if source == '/workspace/folders/source' else real(source, protected)), \
+                patch.object(service.Path, 'resolve', autospec=True, side_effect=lambda path, strict=False, real=service.Path.resolve: real(self.base / 'source' if str(path) == '/workspace/folders/source' else path, strict=strict)), \
                 patch.object(service.ToolService, '_configure_runtime', autospec=True) as configure:
-            built = service.ToolService(self.config(profile, policy), host_query_ports=ports)
+            built = service.ToolService(self.config(profile, policy, source), host_query_ports=ports)
         self.services.append(built)
         return built, configure
 
@@ -652,6 +654,20 @@ class ConstructorRootMetadataTests(unittest.TestCase):
             self.assertIs(built.conversations['logical']['roots']['source']['root']['readOnly'], False, msg=profile)
             built.close()
             self.services.remove(built)
+
+    def test_host_query_roots_must_be_served_from_their_own_guest_path(self):
+        for profile in ('host-query-v1', GUIDED):
+            for source in ('/workspace/Folders/source', '/workspace/FOLDERS/SOURCE', '/workspace/folders/other', '/workspace/repos/source', '/workspace/folders', '/workspace', '/', '/workspace/folders/source/', '/workspace/.winter/store', '/source', str(self.base / 'source')):
+                with self.subTest(profile=profile, source=source), self.assertRaisesRegex(service.Refusal, 'admitted_root'):
+                    self.construct(profile, 'ask', source)
+            built, _ = self.construct(profile, 'ask')
+            self.assertEqual(built.conversations['logical']['roots']['source']['root']['guestPath'], '/workspace/folders/source')
+            built.close()
+            self.services.remove(built)
+
+    def test_the_fresh_profile_keeps_a_distinct_source_directory(self):
+        built, _ = self.construct('fresh', 'ask', str(self.base / 'source'))
+        self.assertEqual(built.conversations['logical']['roots']['source']['root']['guestPath'], '/workspace/folders/source')
 
     def test_the_clamped_metadata_is_what_the_guided_and_v1_config_builders_require(self):
         for profile in ('host-query-v1', GUIDED):

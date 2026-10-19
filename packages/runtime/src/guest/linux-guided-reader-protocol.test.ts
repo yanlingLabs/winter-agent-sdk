@@ -83,6 +83,9 @@ test("guided policy preserves v1 permission clamps and never widens sources or a
       expect(() => assertLinuxGuidedHostQueryConfig({ ...config, permissionMode, ...pair }, registration), permissionMode).toThrow();
     }
   }
+  for (const source of [registration.views.sourceRoot, "/workspace/folders/other", "/workspace/.winter/store"]) {
+    expect(() => assertLinuxGuidedHostQueryRoots(config, [{ ...roots[0]!, source } as never], registration), source).toThrow();
+  }
   for (const change of [{ sessionId: "foreign" }, { cwd: registration.views.sourceRoot }, { storeHome: "/workspace/.winter/conversations/foreign" },
     { agentId: "child" }, { resume: "backend" }, { forkSession: true }, { settingSources: ["user"] }, { hooks: {} }, { allowedTools: ["Bash"] },
     { requiredRuntimeContext: { version: 1, bindingId: uuid(8) } }]) expect(() => assertLinuxGuidedHostQueryConfig({ ...config, ...change } as RuntimeConfig, registration)).toThrow();

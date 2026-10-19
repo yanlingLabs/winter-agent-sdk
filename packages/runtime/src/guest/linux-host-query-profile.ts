@@ -31,6 +31,14 @@ export function assertLinuxHostQueryRoots(config: RuntimeConfig, roots: readonly
   }
   if (!roots.some(root => root.guestPath === config.cwd)) refuse();
 }
+/** end_input carries nothing; interrupt carries nothing or exactly the host SDK's `{ scope: "turn" }`. The engine ignores the payload, so both forms act alike. */
+function interruptPayload(subtype: unknown, payload: unknown): boolean {
+  if (payload === undefined) return true;
+  if (!object(payload)) return false;
+  const keys = Object.keys(payload);
+  if (keys.length === 0) return true;
+  return subtype === "interrupt" && keys.length === 1 && keys[0] === "scope" && payload.scope === "turn";
+}
 const requestId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 /** Only pending permission answers can settle runtime RPCs. Stale/foreign answers are harmless drops. */
 export function checkLinuxHostQueryFrame(frame: unknown, ownsPermission: (requestId: string) => boolean): "accept" | "drop" {
@@ -41,7 +49,7 @@ export function checkLinuxHostQueryFrame(frame: unknown, ownsPermission: (reques
   }
   if (!requestId(frame.requestId)) refuse();
   if (frame.type === "control_request") {
-    if (!closed(frame, ["type", "requestId", "subtype", "payload"]) || !["end_input", "interrupt"].includes(String(frame.subtype)) || (frame.payload !== undefined && (!object(frame.payload) || Object.keys(frame.payload).length !== 0))) refuse();
+    if (!closed(frame, ["type", "requestId", "subtype", "payload"]) || !["end_input", "interrupt"].includes(String(frame.subtype)) || !interruptPayload(frame.subtype, frame.payload)) refuse();
     return "accept";
   }
   if (frame.type !== "control_response" || !closed(frame, ["type", "requestId", "ok", "payload", "error"]) || typeof frame.ok !== "boolean") refuse();
