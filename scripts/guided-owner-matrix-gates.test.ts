@@ -642,7 +642,7 @@ describe("arming guard behaviour (runs the workflow's own guard script against t
     return r.stdout.trim();
   }
   /** Builds the reviewed commit B (unarmed workflow), then a pushed commit P produced by `arm`; returns the guard's exit status. */
-  function run(arm: (dir: string, reviewed: string) => string | void, options: { armedOverride?: string; guard?: string } = {}): number {
+  function run(arm: (dir: string, reviewed: string) => string | void, options: { armedOverride?: string | undefined; guard?: string | undefined } = {}): number {
     const dir = mkdtempSync(join(tmpdir(), "owner-arming-guard-"));
     try {
       git(dir, "init", "-q", "-b", "main");
