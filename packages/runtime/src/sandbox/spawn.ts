@@ -25,6 +25,7 @@ import { trackProcessGroup } from "../process-groups.ts";
 import { buildMandatoryFloorProfile, hasMandatoryFloor, type HostExecutionFloor, type HostCodeProcessScope, type HostCodeProcessHandle } from "@yanlinglabs/winter-agent-sdk";
 import { currentHostCodeProcessClient, hostCodeProcessBrokerRequired, requireBoundHandle } from "./host-code-process.ts";
 import { currentHostChildFloorProfile, prepareHostChildLaunch } from "./host-child-floor.ts";
+import { newSandboxViolationTag, startViolationMonitor, tagSeatbeltDenials, VIOLATION_STREAM_MARGIN_SECONDS, type SandboxViolationReport, type ViolationMonitor } from "./violations.ts";
 
 // ---------------------------------------------------------------------------------------------
 // §3: sandbox availability (darwin + /usr/bin/sandbox-exec present)
@@ -287,6 +288,16 @@ export interface RunCommandOptions {
   brand?: SandboxBrand;
   /** Fix round 15: see `SeatbeltProfileInput.allowGitConfigWrites`'s own header. Omitted = `false`. */
   allowGitConfigWrites?: boolean;
+  /**
+   * Report this run's Seatbelt denials if it FAILS (`sandbox/violations.ts`): only a `"sandboxed"`
+   * posture on the local path, only the SDK's own profile (never a host floor composed onto it --
+   * `dangerouslyDisableSandbox` cannot lift a floor, so its denials are no reason to retry). The
+   * profile is tagged and the command spawned only once a `log stream` for the tag is confirmed live;
+   * a success kills the stream without waiting, a failure (not an interrupt) drains it briefly and the
+   * result carries `sandboxViolations`. Omitted = untagged, no stream, byte-identical to before; the
+   * foreground Bash path is the one caller that asks.
+   */
+  reportViolations?: boolean;
 }
 
 export interface RunCommandResult {
@@ -296,10 +307,12 @@ export interface RunCommandResult {
   streamKilled: boolean;
   posture: Exclude<SandboxPosture, "unavailable">;
   sandboxOverrideRequested: boolean;
-  /** The generated SBPL profile text, only present when posture === "sandboxed" (debug/test aid). */
+  /** The generated SBPL profile text, only present when posture === "sandboxed" (debug/test aid). Never carries the per-run violation tag. */
   profile?: string;
   /** Set when the child never actually launched (Node's "error" event) -- distinct from a signal-killed exit (exitCode null, this unset). */
   spawnError?: string;
+  /** Present when `reportViolations` was honoured and the run failed with denials of its own (`formatSandboxViolations` renders it). */
+  sandboxViolations?: SandboxViolationReport;
 }
 
 // `async` is deliberate, not decorative: resolveNetworkPosture (below) throws SYNCHRONOUSLY on a
@@ -326,6 +339,10 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
   let spawnFile: string;
   let spawnArgs: string[];
   let profile: string | undefined;
+  // What sandbox-exec actually loads: `profile`, plus the per-run violation tag when one was asked
+  // for (`reportViolations`). `profile` itself stays untagged -- it is what the result reports.
+  let spawnProfile: string | undefined;
+  let violationTag: string | undefined;
 
   if (posture === "sandboxed") {
     // §3: never silently degrade to an unsandboxed spawn -- a typed error, before any process
@@ -360,8 +377,18 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
       ...(opts.brand !== undefined ? { brand: opts.brand } : {}),
       ...(opts.allowGitConfigWrites !== undefined ? { allowGitConfigWrites: opts.allowGitConfigWrites } : {}),
     });
+    spawnProfile = profile;
+    if (opts.reportViolations === true) {
+      const tag = newSandboxViolationTag();
+      const tagged = tagSeatbeltDenials(profile, tag);
+      // An untaggable profile (never produced by buildSeatbeltProfile) runs untagged, and reports nothing.
+      if (tagged !== undefined) {
+        spawnProfile = tagged;
+        violationTag = tag;
+      }
+    }
     spawnFile = REAL_SANDBOX_EXEC_PATH;
-    spawnArgs = ["-p", profile, "/bin/bash", "-c", opts.command];
+    spawnArgs = ["-p", spawnProfile, "/bin/bash", "-c", opts.command];
   } else {
     // config-disabled / override-requested / excluded: no seatbelt wrapper at all (§4.1 table).
     spawnFile = "/bin/bash";
@@ -373,23 +400,39 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
     const profiles = [hostFloor, opts.mandatoryFloor && hasMandatoryFloor(opts.mandatoryFloor) ? buildMandatoryFloorProfile(opts.mandatoryFloor) : undefined].filter((value): value is string => value !== undefined);
     const floor = profiles[0]! + profiles.slice(1).map(value => `\n${value.split("\n").slice(2).join("\n")}`).join("");
     profile = profile === undefined ? floor : `${profile}\n${floor.split("\n").slice(2).join("\n")}`;
+    spawnProfile = spawnProfile === undefined ? floor : `${spawnProfile}\n${floor.split("\n").slice(2).join("\n")}`;
     spawnFile = REAL_SANDBOX_EXEC_PATH;
-    spawnArgs = ["-p", profile, "/bin/bash", "-c", opts.command];
+    spawnArgs = ["-p", spawnProfile, "/bin/bash", "-c", opts.command];
   }
 
   const maxStreamedBytes = opts.maxStreamedBytes ?? DEFAULT_MAX_STREAMED_BYTES;
 
   const hostOutput = opts.hostOwnedOutput;
-  return new Promise<RunCommandResult>((resolve) => {
-    const child = spawn(spawnFile, spawnArgs, {
-      cwd: opts.cwd,
-      stdio: ["ignore", hostOutput?.stdoutFd ?? "pipe", hostOutput?.stderrFd ?? "pipe"],
-      // Process-group kill (WS-12 §5.2, carried): `detached: true` makes this child its own group
-      // leader (setsid), so a negative-pid signal below reaps sandbox-exec + bash + any forked or
-      // backgrounded grandchildren -- closing every pipe fd so stream collection unblocks promptly.
-      detached: true,
-      env: opts.env,
+  // The violations stream must be SUBSCRIBED before the command starts, or a fast failure's denials
+  // are gone before anyone listens. A stream that cannot confirm in time leaves the run unreported.
+  let violationMonitor: ViolationMonitor | undefined;
+  if (violationTag !== undefined) {
+    violationMonitor = await startViolationMonitor(violationTag, {
+      lifetimeSeconds: Math.ceil(opts.timeoutMs / 1000) + VIOLATION_STREAM_MARGIN_SECONDS,
+      ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     });
+  }
+  return new Promise<RunCommandResult>((resolve) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(spawnFile, spawnArgs, {
+        cwd: opts.cwd,
+        stdio: ["ignore", hostOutput?.stdoutFd ?? "pipe", hostOutput?.stderrFd ?? "pipe"],
+        // Process-group kill (WS-12 §5.2, carried): `detached: true` makes this child its own group
+        // leader (setsid), so a negative-pid signal below reaps sandbox-exec + bash + any forked or
+        // backgrounded grandchildren -- closing every pipe fd so stream collection unblocks promptly.
+        detached: true,
+        env: opts.env,
+      });
+    } catch (error) {
+      violationMonitor?.stop(); // never leave a stream behind a command that did not start
+      throw error;
+    }
     // WS-24: the group is live from here until its leader closes -- mirrored to an embedded session's
     // host, which reaps it if the Worker dies without running the kill doors below (process-groups.ts).
     // Recorded BEFORE `onSpawned`, so no caller can learn the pid ahead of the ledger.
@@ -449,7 +492,7 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
       releaseGroup();
       clearTimeout(timer);
       opts.signal?.removeEventListener("abort", onAbort);
-      resolve({
+      const result: RunCommandResult = {
         exitCode,
         timedOut,
         aborted,
@@ -458,7 +501,17 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
         sandboxOverrideRequested,
         ...(profile !== undefined ? { profile } : {}),
         ...(spawnError !== undefined ? { spawnError } : {}),
-      });
+      };
+      const monitor = violationMonitor;
+      violationMonitor = undefined;
+      if (monitor === undefined) return resolve(result);
+      // A success, an interrupt (nobody reads its result) or a launch failure: the stream goes now,
+      // without waiting. A real failure waits a bounded moment for its trailing denials.
+      if ((exitCode === 0 && !timedOut) || aborted || spawnError !== undefined) {
+        monitor.stop();
+        return resolve(result);
+      }
+      void monitor.drain().then((report) => resolve(report.lines.length > 0 ? { ...result, sandboxViolations: report } : result));
     };
 
     child.on("close", (code) => {

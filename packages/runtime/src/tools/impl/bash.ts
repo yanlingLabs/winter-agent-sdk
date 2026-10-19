@@ -39,6 +39,7 @@ import {
   type RunCommandResult,
 } from "../../sandbox/spawn.ts";
 import { SandboxConfigError, canonicalizePath, resolveNetworkPosture, type SandboxBrand } from "../../sandbox/profile.ts";
+import { formatSandboxViolations } from "../../sandbox/violations.ts";
 import { startTracking, updateTask, removeTask, emitTaskNotification, getTask, listRunningTasks, toBackgroundTasksChangedEntry, killedTaskSummary, resolveBackgroundOutcome, killOrphanedSpawn } from "./background-task-runtime.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -352,6 +353,12 @@ function formatForegroundResult(parts: {
   posture: string;
   sandboxOverrideRequested: boolean;
   streamKilled: boolean;
+  /**
+   * The failed run's own `<sandbox_violations>` block (`sandbox/violations.ts`), or absent/empty for
+   * none. Placed after the (already capped) output so no excerpt can cut it, and before the
+   * `[exit N]` / `[sandbox: ...]` tail, which stays the last two lines.
+   */
+  sandboxViolations?: string;
 }): string {
   const lines: string[] = [];
   lines.push(parts.stdout.text.length > 0 ? parts.stdout.text : "(no stdout)");
@@ -361,6 +368,7 @@ function formatForegroundResult(parts: {
     lines.push(parts.stderr.text);
     if (parts.stderr.persistedPath) lines.push(`[stderr truncated; full output: ${parts.stderr.persistedPath}]`);
   }
+  if (parts.sandboxViolations) lines.push(parts.sandboxViolations);
   if (parts.streamKilled) lines.push("[streamed output exceeded 5GB, killed]");
   if (parts.aborted) lines.push("[aborted]");
   else if (parts.timedOut) lines.push(`[timed out after ${parts.timeoutMs}ms, killed]`);
@@ -431,6 +439,8 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
       matchCommand: input.command,
       pwdCapturePath: pwdFile,
       timeoutMs,
+      // macOS Seatbelt only: watch this run's denials so a FAILED run can show them (see below).
+      reportViolations: true,
       onSpawned: ({ pid, stopOwnedProcess }) => {
         foregroundPid = pid;
         foregroundStopOwnedProcess = stopOwnedProcess;
@@ -500,6 +510,14 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
   const stdoutCapped = capOutput(ctx, "stdout", stdout, success);
   const stderrCapped = capOutput(ctx, "stderr", stderr, success);
 
+  // THE SANDBOX VIOLATIONS BLOCK (claude's `<sandbox_violations>`): a sandboxed run that failed --
+  // a non-zero exit, a signal, a timeout; not an interrupt, whose result nobody reads -- gets the
+  // Seatbelt denials it hit, so a failure the sandbox caused (a LaunchServices error from `open`, a
+  // refused connection, an EPERM) is visible to the model as the sandbox's doing. `runCommand`
+  // collected them from the run's own `log stream` (`sandbox/spawn.ts`, `sandbox/violations.ts`);
+  // only a macOS Seatbelt run that failed with non-baseline denials carries any.
+  const sandboxViolations = !success && !result.aborted && result.sandboxViolations !== undefined ? formatSandboxViolations(result.sandboxViolations) : "";
+
   return {
     output: formatForegroundResult({
       stdout: stdoutCapped,
@@ -511,6 +529,7 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
       posture: result.posture,
       sandboxOverrideRequested: result.sandboxOverrideRequested,
       streamKilled: result.streamKilled,
+      ...(sandboxViolations !== "" ? { sandboxViolations } : {}),
     }),
   };
 }

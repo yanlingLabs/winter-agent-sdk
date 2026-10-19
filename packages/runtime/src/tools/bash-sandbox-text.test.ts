@@ -15,7 +15,7 @@ import { runEngine, type Provider, type ProviderRequest } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { stubExecutor } from "../provider/mock.ts";
 import { isSandboxAvailable } from "../sandbox/spawn.ts";
-import { BASH_DESCRIPTION, BASH_SANDBOX_HEADING, bashDescriptionFor, bashSandboxSection } from "./descriptors/bash.ts";
+import { BASH_DESCRIPTION, BASH_SANDBOX_HEADING, SANDBOX_DENIAL_COUNTERWEIGHT, SANDBOX_VIOLATIONS_EVIDENCE, bashDescriptionFor, bashSandboxSection } from "./descriptors/bash.ts";
 
 // claude's own strings, spelled out here rather than imported: a test that read them from the module
 // under test could not notice the module drifting from claude.
@@ -38,20 +38,62 @@ const CLAUDE_OVERRIDE_BULLETS = [
   " - For temporary files, always use the `$TMPDIR` environment variable. TMPDIR is automatically set to the correct sandbox-writable directory in sandbox mode. Do NOT use `/tmp` directly - use `$TMPDIR` instead.",
 ];
 
+// Winter's OWN evidence item, not claude's (the descriptor's header says why): Winter's Bash result
+// carries a `<sandbox_violations>` block for a failed sandboxed command (sandbox/violations.ts), and
+// claude's only sentences naming that block are tied to its filtering proxy and its `allowed_domains`
+// parameter, neither of which Winter has. It closes claude's evidence list, after "Unix socket ...".
+const WINTER_VIOLATIONS_EVIDENCE = "  - A `<sandbox_violations>` block in the output, listing what the sandbox denied while the command ran";
+// claude 2.1.293's counterweight to the retry advice, carried with ONE phrase adapted: claude's "is the
+// boundary above at work" points at a filesystem sentence this section does not render, so it reads
+// "is the sandbox at work". It follows the "When you see evidence ..." list, as in claude.
+const CLAUDE_COUNTERWEIGHT_ADAPTED =
+  " - A sandbox denial on a credential, a file or a host that the task does not involve is the sandbox at work: tell the user rather than retrying with `dangerouslyDisableSandbox: true`.";
+const EXPECTED_OVERRIDE_BULLETS = [
+  ...CLAUDE_OVERRIDE_BULLETS.slice(0, 8),
+  WINTER_VIOLATIONS_EVIDENCE,
+  ...CLAUDE_OVERRIDE_BULLETS.slice(8, 12),
+  CLAUDE_COUNTERWEIGHT_ADAPTED,
+  ...CLAUDE_OVERRIDE_BULLETS.slice(12),
+];
+
 describe("the Bash sandbox section (pure)", () => {
   test("a network-denied sandbox: claude's heading, intro, an empty host allowlist, and claude's override guidance -- in that order", () => {
     const section = bashSandboxSection({ networkAllowed: false });
     expect(section).toBe(
-      [BASH_SANDBOX_HEADING, CLAUDE_INTRO, "", "The sandbox has the following restrictions:", 'Network: {"allowedHosts":[]}', "", ...CLAUDE_OVERRIDE_BULLETS].join("\n"),
+      [BASH_SANDBOX_HEADING, CLAUDE_INTRO, "", "The sandbox has the following restrictions:", 'Network: {"allowedHosts":[]}', "", ...EXPECTED_OVERRIDE_BULLETS].join("\n"),
     );
     expect(BASH_SANDBOX_HEADING).toBe("## Bash command sandbox");
   });
 
-  test("nothing claude says that is FALSE for Winter: no `/sandbox` command, no filtering proxy, no <sandbox_violations> block", () => {
+  test("nothing claude says that is FALSE for Winter: no `/sandbox` command, no filtering proxy, no `allowed_domains`, no 'do not retry `open`'", () => {
     const section = bashSandboxSection({ networkAllowed: false });
     expect(section).not.toContain("/sandbox");
     expect(section).not.toContain("filtering proxy");
-    expect(section).not.toContain("sandbox_violations");
+    expect(section).not.toContain("allowed_domains");
+    expect(section).not.toContain("Opening an app, file or URL with `open`");
+  });
+
+  test("the <sandbox_violations> block is named once, as the last item of claude's evidence list -- Winter's wording", () => {
+    const section = bashSandboxSection({ networkAllowed: false });
+    expect(`  - ${SANDBOX_VIOLATIONS_EVIDENCE}`).toBe(WINTER_VIOLATIONS_EVIDENCE);
+    expect(section.split("<sandbox_violations>")).toHaveLength(2);
+    const lines = section.split("\n");
+    const at = lines.indexOf(WINTER_VIOLATIONS_EVIDENCE);
+    expect(lines[at - 1]).toBe("  - Unix socket connection errors");
+    expect(lines[at + 1]).toBe(" - When you see evidence of sandbox-caused failure:");
+    // The policy variant has no evidence list, so it gains nothing.
+    expect(bashSandboxSection({ networkAllowed: false, unsandboxedAllowed: false })).not.toContain("sandbox_violations");
+  });
+
+  test("claude's counterweight follows the retry advice (one phrase adapted), in the override variant only", () => {
+    const section = bashSandboxSection({ networkAllowed: false });
+    expect(` - ${SANDBOX_DENIAL_COUNTERWEIGHT}`).toBe(CLAUDE_COUNTERWEIGHT_ADAPTED);
+    const lines = section.split("\n");
+    const at = lines.indexOf(CLAUDE_COUNTERWEIGHT_ADAPTED);
+    expect(lines[at - 1]).toBe("  - This goes through the permission gate");
+    expect(lines[at + 1]).toStartWith(" - Treat each command you execute with `dangerouslyDisableSandbox: true` individually.");
+    expect(section).not.toContain("the boundary above");
+    expect(bashSandboxSection({ networkAllowed: false, unsandboxedAllowed: false })).not.toContain("A sandbox denial on a credential");
   });
 
   test("a sandbox whose network is open states no network restriction", () => {
