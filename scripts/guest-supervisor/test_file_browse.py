@@ -1496,7 +1496,8 @@ class LinuxNativeTests(unittest.TestCase):
         (root / 'dir').chmod(0o2775)
         self.write(root / 'dir' / 'inner.txt', b'inner')
         self.write(root / 'private.txt', b'private', mode=0o600)
-        self.write(root / 'other-group.txt', b'other', gid=self.OTHER)
+        self.write(root / 'other-group.txt', b'other', mode=0o660, gid=self.OTHER)
+        self.write(root / 'world.txt', b'world', mode=0o604, gid=self.OTHER)
         self.write(root / 'linked.txt', b'linked')
         os.link(root / 'linked.txt', root / 'linked-alias.txt')
         (root / 'link.txt').symlink_to('seed.txt')
@@ -1573,6 +1574,8 @@ class LinuxNativeTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(self.result(root, 'read', 'seed.txt')['dataBase64']), b'0123456789')
         self.refused(root, 'private.txt', 'path_denied')
         self.refused(root, 'other-group.txt', 'path_denied')
+        # Permission bits, not privilege: a world-readable file is readable, as for any unprivileged process.
+        self.assertEqual(base64.b64decode(self.result(root, 'read', 'world.txt')['dataBase64']), b'world')
 
     def test_walk_refusals(self):
         root = self.root()
@@ -1656,7 +1659,8 @@ class LinuxNativeTests(unittest.TestCase):
         mutant = self.build(TOOL, 'launcher-without-handle-denies', header=header)
         value = self.probe_run(root, launcher=mutant)
         self.assertNotEqual(value['nameToHandle'], 1, 'the mutant launcher still denies name_to_handle_at: the probe does not observe the filter')
-        print('\nopen_by_handle_at under the mutant: errno %d (1 means indistinguishable from the kernel capability check on this kernel)' % value['openByHandle'], file=sys.stderr)
+        # With a bad mount descriptor the kernel answers EBADF before any capability check (both CI kernels); only the filter answers EPERM.
+        self.assertNotEqual(value['openByHandle'], 1, 'the mutant launcher still denies open_by_handle_at: the probe does not observe the filter')
 
     def test_the_seal(self):
         root = self.root()
@@ -1694,7 +1698,7 @@ class LinuxNativeTests(unittest.TestCase):
         ('beneath', '.resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV', '.resolve = RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV'),
         ('no mount crossing', '.resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV', '.resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS'),
         ('non-blocking open', '.flags = O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_NOCTTY | O_CLOEXEC,', '.flags = O_RDONLY | O_NOFOLLOW | O_NOCTTY | O_CLOEXEC,'),
-        ('regular file only', '    if (!S_ISREG(mode)) return "not_regular";\n', ''),
+        ('regular file only', '    if (!S_ISREG(mode)) return "not_regular";', '    if (!S_ISREG(mode) && 0) return "not_regular";'),
         ('one link only', '    if (links != 1) return "linked";\n', ''),
         ('ext4 root', '(unsigned long)fs.f_type != BROWSE_EXT4_MAGIC || ', ''),
         ('root on the admitted device', ' || (unsigned long long)root_st.st_dev != root_device', ''),
@@ -1788,7 +1792,10 @@ class LinuxNativeTests(unittest.TestCase):
         environment = os.open(self.environment, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         retained = []
-        launcher = service.BrowseLauncher(artifacts=artifacts, pins=pins, environment=environment, directory=self.views, uid=self.BROWSE, retained=retained)
+        views = self.base / 'service-views'
+        views.mkdir(mode=0o700)
+        views.chmod(0o700)
+        launcher = service.BrowseLauncher(artifacts=artifacts, pins=pins, environment=environment, directory=views, uid=self.BROWSE, retained=retained)
         held = conversations()
         held['logical']['roots'][LOCATION]['fd'] = root_fd
         held['logical']['workspaceGid'] = self.GID
@@ -1829,7 +1836,7 @@ class LinuxNativeTests(unittest.TestCase):
             host_write = None
             self.assertTrue(file_service.stop())
             self.assertEqual(retained, [])
-            self.assertEqual(os.listdir(self.views), [])
+            self.assertEqual(os.listdir(views), [])
         finally:
             for fd in (host_write, host_read, environment, root_fd, *artifacts.values()):
                 if fd is not None:
