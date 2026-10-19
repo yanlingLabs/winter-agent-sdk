@@ -912,3 +912,66 @@ describe("fix round 17 (R.3 I-2): the SDK's own floor covers its own home and st
     expect(existsSync(join(fakeHome, "notes.md"))).toBe(true);
   });
 });
+
+// A `"` in a path that reaches a regex clause used to be written as `\"` inside a raw `#"..."` literal,
+// which Seatbelt ends at that quote: the profile failed to load and EVERY sandboxed command exited 65.
+// Such a regex is now a plain SBPL string. Each name below runs one command that must succeed on its
+// ordinary write and be refused on every protected target -- several of which ONLY a regex clause
+// covers (an any-depth `.git/hooks`, a `**/*.key` denyWrite glob, a `**/.env` denyRead glob).
+describe("a working directory with `\"`, `\\`, parentheses, `;`, spaces or unicode in its name", () => {
+  const PROBE = [
+    "echo ok > ok.txt || exit 10",
+    "(echo x > sub/.git/hooks/x) 2>/dev/null && exit 11", // any-depth default protection: regex only
+    "(echo x > .git/hooks/x) 2>/dev/null && exit 12", // cwd's own default protection: subpath
+    "(echo x > sub/.winter/settings.json) 2>/dev/null && exit 13", // control-plane regex
+    "(echo x > sub/a.key) 2>/dev/null && exit 14", // denyWrite glob: regex only
+    "(cat sub/.env) >/dev/null 2>&1 && exit 15", // denyRead glob: regex only
+    "exit 0",
+  ].join("\n");
+
+  for (const name of ['q"uote', "back\\slash", "pa(re)n", "semi;colon", "sp ace", "ünïcødé", 'a"b\\c (d);e é']) {
+    t(`${JSON.stringify(name)}: the profile loads, the ordinary write succeeds and every deny still holds`, async () => {
+      const cwd = specialRoot(name);
+      for (const dir of [join("sub", ".git", "hooks"), join("sub", ".winter"), join(".git", "hooks")]) mkdirSync(join(cwd, dir), { recursive: true });
+      writeFileSync(join(cwd, "sub", ".env"), "SECRET=1\n");
+      const write = splitDenyPathsByGlobShape([join(cwd, "**", "*.key")]);
+      const read = splitDenyPathsByGlobShape([join(cwd, "**", ".env")]);
+      const res = await runCommand({
+        command: PROBE,
+        cwd,
+        env: { ...process.env, TMPDIR: cwd },
+        timeoutMs: 8000,
+        settings: {},
+        denyWriteRegexes: write.regexes,
+        denyWriteGlobFixedPrefixes: write.globFixedPrefixes,
+        denyReadRegexes: read.regexes,
+        denyReadGlobFixedPrefixes: read.globFixedPrefixes,
+      });
+      expect(res.exitCode).toBe(0);
+      expect(readFileSync(join(cwd, "ok.txt"), "utf8")).toBe("ok\n");
+      for (const rel of [join("sub", ".git", "hooks", "x"), join(".git", "hooks", "x"), join("sub", ".winter", "settings.json"), join("sub", "a.key")]) {
+        expect(existsSync(join(cwd, rel))).toBe(false);
+      }
+    });
+  }
+
+  t('a home with a `"` in it: the provider-state read deny (a regex) and the run-dir read deny hold; a transcript stays readable', async () => {
+    const home = specialRoot('ho"me');
+    const project = join(home, ".winter", "projects", "k");
+    mkdirSync(project, { recursive: true });
+    mkdirSync(join(home, ".winter", "run"));
+    writeFileSync(join(project, "s.jsonl"), "{}\n");
+    writeFileSync(join(project, "s.provider-state.jsonl"), "opaque\n");
+    writeFileSync(join(home, ".winter", "run", "core.pid"), "1\n");
+    const res = await runCommand({
+      command: ['cat "$H/.winter/projects/k/s.jsonl" >/dev/null || exit 10', '(cat "$H/.winter/projects/k/s.provider-state.jsonl") >/dev/null 2>&1 && exit 11', '(cat "$H/.winter/run/core.pid") >/dev/null 2>&1 && exit 12', "exit 0"].join("\n"),
+      cwd: proj(),
+      env: { ...process.env, H: home },
+      timeoutMs: 8000,
+      settings: {},
+      home,
+    });
+    expect(res.profile).toContain('(regex "');
+    expect(res.exitCode).toBe(0);
+  });
+});

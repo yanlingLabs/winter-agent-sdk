@@ -101,6 +101,30 @@ describe("tagSeatbeltDenials", () => {
     expect(tagSeatbeltDenials('(deny file-read* (regex #"^/never-closed', TAG)).toBeUndefined();
   });
 
+  test("a builder profile whose regexes hold a quote is tagged: they are plain strings now, never `#\"...\\\"`", () => {
+    // Before the fix this profile carried `(regex #"^/Users/some\"one/...")` lines: Seatbelt refused it
+    // (exit 65) and this tagger returned undefined for it.
+    const profile = buildSeatbeltProfile({
+      cwd: '/private/tmp/q"uo\\te (x);y é',
+      denyWriteRegexes: ['^/private/tmp/q"uo\\\\te \\(x\\);y é/(.*/)?\\.key(/.*)?$'],
+      allowNetwork: false,
+      home: '/Users/some"one',
+      darwinUserTempDir: "/private/var/folders/xx/T",
+    });
+    expect(profile).toContain('(regex "');
+    const tagged = tagSeatbeltDenials(profile, TAG);
+    expect(tagged).toBeDefined();
+    expect(tagged!.split(MODIFIER).join("")).toBe(profile);
+    const before = topLevelForms(profile);
+    const after = topLevelForms(tagged!);
+    expect(after).toHaveLength(before.length);
+    for (let i = 0; i < before.length; i++) {
+      if (before[i]!.startsWith("(deny")) expect(after[i]).toBe(`${before[i]!.slice(0, -1)}${MODIFIER})`);
+      else expect(after[i]).toBe(before[i]!);
+    }
+    expect(after.some((f) => f.startsWith("(deny file-read* (regex \"^/Users/some\\\"one/") && f.endsWith(`${MODIFIER})`))).toBe(true);
+  });
+
   test("fails closed to UNTAGGED: an unbalanced profile, an unterminated literal, or a tag that is not a plain token", () => {
     expect(tagSeatbeltDenials("(deny default", TAG)).toBeUndefined();
     expect(tagSeatbeltDenials("(deny default))", TAG)).toBeUndefined();
