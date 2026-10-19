@@ -71,7 +71,7 @@ FROZEN = {
     GUEST + '/linux-instruction-reader-dependency-probe.c': '77ce6f1cdc02cef122eb2806e9df06514fdc7a2f9191d107a897df62d045b20a',
     GUEST + '/linux-session-owner.c': '95457d8f6ff256257b3b211e0201c64a4ed0b575aac6a9f933b3178b823b0d76',
     GUEST + '/linux-session-admission.ts': '18e619c164dc49dd5eae3bf40873fadc6905eb5c8ef935a36f71206f2bf40ff3',
-    GUEST + '/file-worker.c': '357dc7a33a2202ee103ae4eddb0e0203333add4951fd75daf29becb2d47c4244',
+    GUEST + '/file-worker.c': '93e784e46461caceb7bae2ead02ccf96fcf0a3ff53b0138f84c189aabc70a1a0',
     GUEST + '/process-worker.c': '2c4514e2a267c1634cb90abe97a2471dd36057d9d2ba050fb3540703d11bed11',
 }
 CC_FLAGS = ['-std=c11', '-O2', '-Wall', '-Wextra', '-Werror']

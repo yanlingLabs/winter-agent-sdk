@@ -1370,7 +1370,7 @@ class SourceTests(unittest.TestCase):
                      'mknodat', 'linkat', 'symlinkat', 'fchmod', 'fchmodat', 'fchown', 'fchownat', 'setxattr', 'lsetxattr', 'fsetxattr', 'removexattr', 'lremovexattr', 'fremovexattr',
                      'utimensat', 'sendfile', 'copy_file_range', 'splice', 'tee', 'vmsplice', 'socket', 'socketpair', 'connect', 'open_by_handle_at', 'name_to_handle_at',
                      'pidfd_getfd', 'pidfd_open', 'memfd_create', 'userfaultfd', 'keyctl', 'add_key', 'request_key', 'process_madvise',
-                     'setxattrat', 'removexattrat', 'file_setattr', 'dup', 'dup3', 'sendto', 'sendmsg', 'sendmmsg', 'io_uring_setup', 'io_uring_enter', 'io_uring_register'):
+                     'setxattrat', 'removexattrat', 'file_setattr', 'dup', 'dup3', 'sendto', 'sendmsg', 'sendmmsg', 'io_uring_setup', 'io_uring_enter', 'io_uring_register', 'io_setup', 'io_submit', 'io_pgetevents'):
             self.assertIn('BROWSE_DENY(%s)' % name, seal, name)
         self.assertIn('BROWSE_DENY(dup2)', seal)
         self.assertIn('BROWSE_NO_FCNTL_DUP()', seal)
@@ -1685,7 +1685,7 @@ class LinuxNativeTests(unittest.TestCase):
     def test_the_seal(self):
         root = self.root()
         value = self.result(root, 'stat', 'seed.txt', worker=self.seal_probe)
-        self.assertEqual(value['probe'], [1] * 22)
+        self.assertEqual(value['probe'], [1] * 25)
         self.assertEqual((root / 'seed.txt').read_bytes(), b'0123456789')
         # Mutant: the probe build without the seal must observe the kernel, not the filter.
         unsealed = self.build_dir / 'unsealed-src'
@@ -1696,7 +1696,7 @@ class LinuxNativeTests(unittest.TestCase):
         self.assertNotEqual(value['probe'][1], 1)  # openat of "/" succeeds in the view without the seal
         self.assertNotEqual(value['probe'][2], 1)  # stderr is writable without the seal
         self.assertNotEqual(value['probe'][3], 1)  # pwrite reaches the kernel (EBADF on the read-only descriptor)
-        for index in (*range(7, 14), *range(15, 22)):  # pidfd_getfd, pidfd_open, memfd_create, keyctl, add_key, request_key, process_madvise; userfaultfd (14) may say EPERM on its own
+        for index in (*range(7, 14), *range(15, 25)):  # pidfd_getfd, pidfd_open, memfd_create, keyctl, add_key, request_key, process_madvise; userfaultfd (14) may say EPERM on its own
             self.assertNotEqual(value['probe'][index], 1, index)
         self.assertEqual((root / 'seed.txt').read_bytes(), b'0123456789')
 
@@ -1801,7 +1801,7 @@ class LinuxNativeTests(unittest.TestCase):
             mutant = self.mutant_build(WORKER, name, old, new, ['-DWINTER_BROWSE_SEAL_PROBE'] if name == 'the seal' else [])
             if name == 'the seal':
                 value = self.result(root, 'stat', 'seed.txt', worker=mutant)
-                if value.get('probe') == [1] * 22:
+                if value.get('probe') == [1] * 25:
                     survivors.append(name)
                 continue
             if self.worker_outcomes(mutant, root, share) == expected:

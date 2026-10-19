@@ -147,6 +147,7 @@ static int browse_seal(void) {
          * nothing may send through a descriptor with a different call (the three send calls) or queue I/O out of band (io_uring). */
         BROWSE_DENY(dup), BROWSE_DENY(dup3), BROWSE_NO_FCNTL_DUP(), BROWSE_DENY(sendto), BROWSE_DENY(sendmsg), BROWSE_DENY(sendmmsg),
         BROWSE_DENY(io_uring_setup), BROWSE_DENY(io_uring_enter), BROWSE_DENY(io_uring_register),
+        BROWSE_DENY(io_setup), BROWSE_DENY(io_submit), BROWSE_DENY(io_pgetevents),   /* legacy AIO can still write to stderr */
         BROWSE_DENY(setxattrat), BROWSE_DENY(removexattrat), BROWSE_DENY(file_setattr),
         BROWSE_DENY(pidfd_getfd), BROWSE_DENY(pidfd_open), BROWSE_DENY(memfd_create), BROWSE_DENY(userfaultfd),
         BROWSE_DENY(keyctl), BROWSE_DENY(add_key), BROWSE_DENY(request_key),
@@ -170,7 +171,7 @@ static int browse_seal(void) {
 /* TEST BUILDS ONLY (the image compiles this file without the define): after the seal, try each thing it must stop and report errno. */
 static int browse_seal_probe(int file) {
     char *none[] = { NULL };
-    int results[22];
+    int results[25];
     errno = 0; results[0] = execve("/", none, none) < 0 ? errno : 0;
     errno = 0; results[1] = openat(AT_FDCWD, "/", O_RDONLY | O_CLOEXEC) < 0 ? errno : 0;
     errno = 0; results[2] = write(STDERR_FILENO, "x", 1) < 0 ? errno : 0;
@@ -196,8 +197,12 @@ static int browse_seal_probe(int file) {
     errno = 0; results[19] = (int)syscall(463, -1, NULL, NULL, 0, NULL, 0) < 0 ? errno : 0;
     errno = 0; results[20] = (int)syscall(466, -1, NULL, 0, NULL) < 0 ? errno : 0;
     errno = 0; results[21] = (int)syscall(469, -1, NULL, NULL, 0, 0) < 0 ? errno : 0;
-    printf("{\"version\":1,\"ok\":true,\"probe\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]}\n", results[0], results[1], results[2], results[3], results[4], results[5], results[6],
-           results[7], results[8], results[9], results[10], results[11], results[12], results[13], results[14], results[15], results[16], results[17], results[18], results[19], results[20], results[21]);
+    /* Legacy AIO: invalid arguments, so the kernel answers EFAULT or EINVAL and only the filter answers EPERM. */
+    errno = 0; results[22] = (int)syscall(SYS_io_setup, 1, NULL) < 0 ? errno : 0;
+    errno = 0; results[23] = (int)syscall(SYS_io_submit, 0, 0, NULL) < 0 ? errno : 0;
+    errno = 0; results[24] = (int)syscall(SYS_io_pgetevents, 0, 0, 0, NULL, NULL, NULL) < 0 ? errno : 0;
+    printf("{\"version\":1,\"ok\":true,\"probe\":[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]}\n", results[0], results[1], results[2], results[3], results[4], results[5], results[6],
+           results[7], results[8], results[9], results[10], results[11], results[12], results[13], results[14], results[15], results[16], results[17], results[18], results[19], results[20], results[21], results[22], results[23], results[24]);
     return 0;
 }
 #endif
