@@ -113,6 +113,9 @@ else:
             if mode == 'dispatch1_refused' and n == 1:
                 out({'kind': 'host-dispatch', 'n': 1, 'ok': False, 'answer': ''})
                 continue
+            if mode == 'early_result':
+                out({'kind': 'host-result', 'passed': True})
+                continue
             bump()
             text = 'something else' if (mode == 'wrong_answer' and n == 1) else ('x' * 600 if mode == 'long_answer' else answers[n])
             out({'kind': 'host-dispatch', 'n': 3 - n if mode == 'wrong_n' else n, 'ok': True, 'answer': text})
@@ -138,6 +141,10 @@ else:
                 bump(frames=1, begins=0)
             out({'kind': 'host-presented', 'which': 'premint', 'refused': True, 'errorClass': 'other' if mode == 'revoke_wrong_class' else 'required_context_unavailable', 'processStarted': False})
         elif command == 'finish':
+            if mode == 'no_result':
+                time.sleep(30)  # the result only comes after the lifecycle record: the refused order
+            if mode == 'exit_without_result':
+                sys.exit(4)
             passed = mode != 'not_passed'
             out({'kind': 'host-result', 'passed': 'yes' if mode == 'passed_string' else passed})
             sys.exit(0 if passed else 1)

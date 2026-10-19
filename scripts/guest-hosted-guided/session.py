@@ -11,8 +11,9 @@ The pattern is `scripts/guest-host-query/verify.py` (the v1 hosted Root runner):
 provider are the same. It adds only what the runtime-sdk entry contract (C-P*, C-H*) asks of Root: stdin pipes for both roles, no network
 interface for either, metadata files built here, and the lifecycle record.
 
-NOT here (NEEDS FROM OTHER LANE, see docs/guided-hosted-run.md): `fixture-inputs.json`, the Core-dependent DATA (host fixture records,
-the provider script's marker lines, the prompts, the guidance texts). Without it `open_session` refuses.
+Its Core-dependent DATA is `fixture-inputs.json` (derived by derive-fixture-inputs.ts from Winter Core at the run-2 pin's winter head and pinned
+by hash in run.py): the host fixture records, the stub's marker lines, the prompts and the guidance texts. The one value only the kernel knows,
+the boot id, is bound at open (`bind_boot`).
 Never started by its author; nothing here has run as root on Linux.
 """
 from __future__ import annotations
@@ -44,6 +45,12 @@ SELECTION = {'providerId': 'openai', 'modelKey': MODEL, 'providerModelId': 'gpt-
 SUPERVISOR_SUFFIX = 'packages/runtime/src/guest/linux-supervisor.py'
 GUIDED_PROFILE = 'host-query-guided-v1'
 INPUT_KEYS = ('version', 'prompts', 'guidance', 'steps', 'hostFixture')
+FIXTURE_KEYS = ('registration', 'capture', 'runtimeRow', 'workspace', 'binding', 'policy', 'sources', 'grants', 'bootId')
+WORKSPACE, INCARNATION = 'workspace', 'incarnation'
+# The boot id is the kernel's, so it is the ONE value fixture-inputs.json cannot carry: derive-fixture-inputs.ts writes this placeholder
+# in exactly three places and `bind_boot` replaces exactly those three with the run's /proc boot id.
+BOOT_PLACEHOLDER = '00000000-0000-4000-8000-000000000000'
+BOOT_PATHS = (('bootId',), ('capture', 'bootId'), ('registration', 'bootId'))
 HOST_ARGV = ['--input-fd', '3', '--output-fd', '4', '--error-fd', '5', '--metadata-fd', '6', '--lifecycle-fd', '7', '--cancel-fd', '8']
 PROVIDER_ARGV = ['--listener-fd', '3', '--admission-fd', '4', '--owner-library-fd', '5', '--metadata-fd', '6']
 SETTLE_SECONDS = 30
@@ -75,7 +82,8 @@ def sha256_hex(data):
 
 
 def validate_inputs(inputs):
-    """The closed shape of fixture-inputs.json. Content is judged by Core and the SDK; this only refuses what it would have to guess."""
+    """The closed shape of fixture-inputs.json. Content is judged by Core and the SDK; this refuses what it would have to guess, and any
+    fixture record that disagrees with the identities THIS session gives the guest (so a fixture made for another run cannot be used)."""
     if type(inputs) is not dict or set(inputs) != set(INPUT_KEYS) or inputs['version'] != 1:
         raise SessionError('inputs')
     prompts, guidance = inputs['prompts'], inputs['guidance']
@@ -85,7 +93,46 @@ def validate_inputs(inputs):
         raise SessionError('inputs')
     if type(inputs['steps']) is not list or len(inputs['steps']) != 2 or any(type(step) is not dict for step in inputs['steps']) or type(inputs['hostFixture']) is not dict:
         raise SessionError('inputs')
+    fixture = inputs['hostFixture']
+    if set(fixture) != set(FIXTURE_KEYS):
+        raise SessionError('inputs')
+    capture, registration = fixture['capture'], fixture['registration']
+    if type(capture) is not dict or type(registration) is not dict or type(capture.get('source')) is not dict:
+        raise SessionError('inputs')
+    expected = {'workspaceId': WORKSPACE, 'sessionId': LOGICAL, 'backendSessionId': BACKEND, 'trustedQuerySessionId': BACKEND, 'incarnationId': INCARNATION,
+                'leaseEpoch': 1, 'backendGeneration': 1, 'cwd': SOURCE_GUEST}
+    if any(capture.get(key) != value or type(capture.get(key)) is not type(value) for key, value in expected.items()) or capture['source'].get('root') != SOURCE_GUEST:
+        raise SessionError('inputs')
+    if any(registration.get(key) != capture.get(key) for key in ('trustedQuerySessionId', 'sessionId', 'workspaceId', 'backendSessionId', 'backendGeneration', 'incarnationId', 'leaseEpoch')):
+        raise SessionError('inputs')
+    if any(_at(inputs['hostFixture'], path) != BOOT_PLACEHOLDER for path in BOOT_PATHS):
+        raise SessionError('inputs')
     return inputs
+
+
+def _at(value, path):
+    for key in path:
+        if type(value) is not dict or key not in value:
+            return None
+        value = value[key]
+    return value
+
+
+def bind_boot(inputs, boot):
+    """A copy of the inputs with the run's boot id in exactly the three places that carry the placeholder, and nowhere else."""
+    if type(boot) is not str or not re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', boot) or boot == BOOT_PLACEHOLDER:
+        raise SessionError('inputs')
+    bound = json.loads(json.dumps(inputs))
+    for path in BOOT_PATHS:
+        parent = bound['hostFixture']
+        for key in path[:-1]:
+            parent = parent[key]
+        if parent.get(path[-1]) != BOOT_PLACEHOLDER:
+            raise SessionError('inputs')
+        parent[path[-1]] = boot
+    if BOOT_PLACEHOLDER in json.dumps(bound):
+        raise SessionError('inputs')
+    return bound
 
 
 def role_hashes(pin):
@@ -96,7 +143,7 @@ def role_hashes(pin):
 
 
 def authority():
-    return {'workspaceId': 'workspace', 'sessionId': BACKEND, 'incarnationId': 'incarnation', 'leaseEpoch': 1, 'configRevision': 1, 'grantRevision': 1, 'policyRevision': 1}
+    return {'workspaceId': WORKSPACE, 'sessionId': BACKEND, 'incarnationId': INCARNATION, 'leaseEpoch': 1, 'configRevision': 1, 'grantRevision': 1, 'policyRevision': 1}
 
 
 def provider_route(boot):
@@ -327,6 +374,7 @@ class GuidedSession:
         self.owner = None
         self.layout = None
         self.lifecycle = None
+        self.lifecycle_record = None
         self.closed = False
         self.edited = ''
 
@@ -344,6 +392,7 @@ class GuidedSession:
             supervisor_path = supervisor_path or Path(directory).resolve().parents[1] / SUPERVISOR_SUFFIX
             self.supervisor = module = (load or load_supervisor)(supervisor_path, staged)
             boot = boot or Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+            inputs = bind_boot(inputs, boot)
             config = trusted_config(self.layout, hashes, boot, staged.pin, str(uuid4()))
             route = config['conversations'][0]['hostQueryGuidedRuntime']['provider']
             pipes = [make_pipe() for _ in range(5)]
@@ -423,9 +472,16 @@ class GuidedSession:
     def edit_shared(self):
         write_guidance(self.layout['guidance'], self.edited)
 
-    def settle(self):
-        """After `finish`: wait for the runtime to stop, require the native/reap/drain conjunction, close the service, check the store lock was released,
-        then write the lifecycle record the host client waits for. True only if every step held."""
+    def settle(self, host_result_seen):
+        """After the host client's `host-result` has been READ: wait for the runtime to stop, require the native/reap/drain conjunction, close the
+        service, check the store lock was released, then write the lifecycle record. True only if every step held.
+
+        The order is derived, not tolerated: `finish` (Root to host stdin), then `host-result` (host stdout), then the fd 7 lifecycle record.
+        The guided host client never waits for fd 7 (host-client-core.ts: `finished = true; break`, `await pump`, `ports.emit(result)`; its
+        `process.exited` is `void`ed in host-client.ts and only the v1 host awaits it), so its result cannot depend on the record, and Root
+        writes the record last. A caller that has not read the result may not write the record: that is the refused order."""
+        if host_result_seen is not True:
+            raise SessionError('finish_order')
         sid = LOGICAL
         try:
             deadline = time.monotonic() + SETTLE_SECONDS
@@ -451,7 +507,13 @@ class GuidedSession:
                 fcntl.flock(flock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             finally:
                 os.close(flock_fd)
-            os.write(self.lifecycle, b'HQX1:0\n')
+            try:
+                os.write(self.lifecycle, b'HQX1:0\n')
+                self.lifecycle_record = 'written'
+            except BrokenPipeError:
+                # The host client has already returned its result and exited, so no reader of fd 7 remains. Nothing in the host awaits the record
+                # (see above); the independent checks just made are the evidence, and the record says which of the two happened.
+                self.lifecycle_record = 'reader_gone'
             os.close(self.lifecycle)
             self.lifecycle = None
             return True

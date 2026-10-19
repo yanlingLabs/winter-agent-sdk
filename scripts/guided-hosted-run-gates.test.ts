@@ -112,17 +112,42 @@ type Doc = {
 const yaml = (Bun as unknown as { YAML: { parse(source: string): unknown } }).YAML;
 const sha256 = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
 
-export interface Context { others: Record<string, string>; runnerExists: boolean; runnerSha256: string; oracleTest: string }
+// The files the root runner may read from beside itself, each pinned in run.py by the SHA-256 of its bytes. Nothing else is named.
+const SIBLINGS: Array<[string, string]> = [["ORACLE_SHA256", "oracle.py"], ["ADAPTER_SHA256", "roles_adapter.py"], ["SESSION_SHA256", "session.py"], ["FIXTURE_INPUTS_SHA256", "fixture-inputs.json"]];
+const RUNNER_FILE_NAMES = new Set([...SIBLINGS.map(([, file]) => file), "packet-inventory.json", "guided-packet.tar.gz", "hostClient.metafile.json", "result.json"]);
+export interface Context { others: Record<string, string>; runnerExists: boolean; runnerSha256: string; oracleTest: string; runnerText: string; sessionText: string; siblingSha256: Record<string, string> }
 export function loadContext(): Context {
   const others: Record<string, string> = {};
   for (const name of readdirSync(WORKFLOWS_DIR)) if (name !== WORKFLOW_NAME && (name.endsWith(".yml") || name.endsWith(".yaml"))) others[name] = readFileSync(join(WORKFLOWS_DIR, name), "utf8");
   const runner = join(ROOT, RUNNER_PATH);
-  return { others, runnerExists: existsSync(runner), runnerSha256: existsSync(runner) ? sha256(readFileSync(runner)) : "", oracleTest: readFileSync(join(ROOT, "scripts/guest-hosted-guided/test_oracle.py"), "utf8") };
+  const directory = join(ROOT, "scripts/guest-hosted-guided");
+  const siblingSha256: Record<string, string> = {};
+  for (const [, file] of SIBLINGS) siblingSha256[file] = existsSync(join(directory, file)) ? sha256(readFileSync(join(directory, file))) : "";
+  return { others, runnerExists: existsSync(runner), runnerSha256: existsSync(runner) ? sha256(readFileSync(runner)) : "", oracleTest: readFileSync(join(directory, "test_oracle.py"), "utf8"),
+    runnerText: existsSync(runner) ? readFileSync(runner, "utf8") : "", sessionText: readFileSync(join(directory, "session.py"), "utf8"), siblingSha256 };
 }
 
 /** The shell lines a step runs: comments and blanks dropped. */
 function logicalLines(run: string): string[] {
   return run.split("\n").map((l) => l.trim()).filter((l) => l !== "" && !l.startsWith("#"));
+}
+
+/** What root may execute and read, derived from the runner's and the session's own text. The workflow hashes run.py; run.py hashes every file it
+ * loads from beside itself (three modules and the fixture inputs) before it uses a byte of it; the one verifier it runs is hashed first too. */
+export function runnerProblems(runnerText: string, sessionText: string, siblingSha256: Record<string, string>): string[] {
+  const problems: string[] = [];
+  for (const [constant, file] of SIBLINGS) {
+    const pinned = new RegExp(`^${constant} = '([0-9a-f]{64})'$`, "m").exec(runnerText)?.[1];
+    if (pinned === undefined || pinned === ZERO64) problems.push(`run.py leaves ${file} unpinned`);
+    else if (pinned !== siblingSha256[file]) problems.push(`run.py pins ${file} to a hash that differs from the file`);
+  }
+  const named = [...runnerText.matchAll(/'([A-Za-z0-9_-]+\.(?:py|json|gz))'/g)].map((m) => m[1] as string);
+  for (const file of new Set(named)) if (!RUNNER_FILE_NAMES.has(file)) problems.push(`run.py names a file that is not pinned: ${file}`);
+  if ((runnerText.match(/\bexec\(/g) ?? []).length !== 1 || !/def load_sibling\([\s\S]*?read_pinned\([\s\S]*?\bexec\(compile\(data,/.test(runnerText)) problems.push("run.py may execute code only in load_sibling, after read_pinned");
+  if (/\beval\(|__import__|import_module|importlib|os\.system|shell\s*=\s*True|os\.exec[lv]|os\.spawn|os\.popen|runpy|pty\.spawn/.test(runnerText + sessionText)) problems.push("the runner or the session reaches another way to execute code");
+  if ((runnerText.match(/subprocess\.run\(/g) ?? []).length !== 1 || !/read_pinned\(verifier, verifier_sha256\)[\s\S]*?\[sys\.executable, '-I', '-B', verifier, archive, inventory, '--pin', pin\]/.test(runnerText)) problems.push("run.py may run only the hashed verifier, with an explicit --pin");
+  if ((sessionText.match(/\bexec\(/g) ?? []).length !== 1 || !/def load_supervisor\([\s\S]*?supervisor_matches_packet\([\s\S]*?\bexec\(compile\(data,/.test(sessionText)) problems.push("session.py may execute code only in load_supervisor, after the packet-hash comparison");
+  return problems;
 }
 
 /** Every problem with this workflow text. Empty means every gate holds. */
@@ -226,6 +251,9 @@ export function violations(text: string, ctx: Context = loadContext()): string[]
   if (sudoLines[sudoLines.length - 1] !== "PY") bad("the root launcher must end the step");
   if (steps.filter((s) => (s.run ?? "").includes(OPT_IN)).length !== 1) bad("opt-in only in the one sudo step");
   if (/WINTER_GUIDED_OWNER_NATIVE_ADMISSION/.test(text)) bad("the owner-matrix admission variable must not appear here");
+
+  // 9b. The privileged step runs ONE file, the hashed runner, and the runner executes only bytes it hashed first.
+  for (const problem of runnerProblems(ctx.runnerText, ctx.sessionText, ctx.siblingSha256)) bad(problem);
 
   // 10. The network: nothing but the checkout and the one download.
   if (/\b(curl|wget|nc|ncat|ssh|scp|apt(-get)?|pip3?|npm|npx|pnpm|yarn|corepack|bun\s+(install|add|x)|git\s+(clone|fetch|pull|push|remote|submodule)|docker|gh)\b/.test(commandText.replace(/--tlsv1\.2/g, ""))) bad("a step reaches the network or installs something");
@@ -586,5 +614,53 @@ describe("root launcher behaviour (the workflow's own launcher, minus the uid li
     const result = launch((dir) => ({ digest: sha256(big), source: write(dir, big) }));
     expect(result.status).not.toBe(0);
     expect(result.ran).toBeNull();
+  });
+});
+
+// The sudo step runs ONE file (the hashed run.py), and run.py executes or reads only bytes it hashed first. These are gates on the committed text of
+// run.py and session.py, each mutation caught by its own named problem.
+describe("the privileged step runs only hashed bytes", () => {
+  const ctx = loadContext();
+  const problemsOf = (change: (runner: string, session: string, siblings: Record<string, string>) => [string, string, Record<string, string>]) => {
+    const [runner, session, siblings] = change(ctx.runnerText, ctx.sessionText, { ...ctx.siblingSha256 });
+    return runnerProblems(runner, session, siblings);
+  };
+  test("the committed runner and session satisfy every one of them, and the workflow gate includes them", () => {
+    expect(runnerProblems(ctx.runnerText, ctx.sessionText, ctx.siblingSha256)).toEqual([]);
+    expect(violations(WORKFLOW, ctx)).toEqual([]);
+    for (const [, file] of SIBLINGS) expect(ctx.siblingSha256[file]).toMatch(/^[0-9a-f]{64}$/);
+  });
+  const CASES: Array<[string, (r: string, s: string, h: Record<string, string>) => [string, string, Record<string, string>], string]> = [
+    ["the fixture inputs change", (r, s, h) => [r, s, { ...h, "fixture-inputs.json": "9".repeat(64) }], "run.py pins fixture-inputs.json to a hash that differs from the file"],
+    ["the oracle changes", (r, s, h) => [r, s, { ...h, "oracle.py": "9".repeat(64) }], "run.py pins oracle.py to a hash that differs from the file"],
+    ["the adapter changes", (r, s, h) => [r, s, { ...h, "roles_adapter.py": "9".repeat(64) }], "run.py pins roles_adapter.py to a hash that differs from the file"],
+    ["the session changes", (r, s, h) => [r, s, { ...h, "session.py": "9".repeat(64) }], "run.py pins session.py to a hash that differs from the file"],
+    ["the fixture inputs are unpinned", (r, s, h) => [r.replace(/^FIXTURE_INPUTS_SHA256 = '[0-9a-f]{64}'$/m, `FIXTURE_INPUTS_SHA256 = '${ZERO64}'`), s, h], "run.py leaves fixture-inputs.json unpinned"],
+    ["the oracle pin is removed", (r, s, h) => [r.replace(/^ORACLE_SHA256 = .*$/m, ""), s, h], "run.py leaves oracle.py unpinned"],
+    ["an unpinned sibling is named", (r, s, h) => [r + "\nEXTRA = 'helper.py'\n", s, h], "run.py names a file that is not pinned: helper.py"],
+    ["an unpinned data file is named", (r, s, h) => [r + "\nEXTRA = 'more-inputs.json'\n", s, h], "run.py names a file that is not pinned: more-inputs.json"],
+    ["a second exec", (r, s, h) => [r + "\nexec(compile(b'', 'x', 'exec'))\n", s, h], "run.py may execute code only in load_sibling, after read_pinned"],
+    ["load_sibling stops hashing first", (r, s, h) => [r.replace("data = read_pinned(os.path.join(directory, name), expected_sha256)", "data = open(os.path.join(directory, name), 'rb').read()"), s, h], "run.py may execute code only in load_sibling, after read_pinned"],
+    ["an importlib load", (r, s, h) => [r + "\nimport importlib\n", s, h], "the runner or the session reaches another way to execute code"],
+    ["an os.system call in the session", (r, s, h) => [r, s + "\nos.system('true')\n", h], "the runner or the session reaches another way to execute code"],
+    ["a second subprocess.run", (r, s, h) => [r + "\nsubprocess.run(['true'])\n", s, h], "run.py may run only the hashed verifier, with an explicit --pin"],
+    ["the verifier loses --pin", (r, s, h) => [r.replace(", '--pin', pin]", "]"), s, h], "run.py may run only the hashed verifier, with an explicit --pin"],
+    ["the verifier is no longer hashed first", (r, s, h) => [r.replace("read_pinned(verifier, verifier_sha256)", "pass"), s, h], "run.py may run only the hashed verifier, with an explicit --pin"],
+    ["the supervisor is run without the packet-hash comparison", (r, s, h) => [r, s.replace("if not supervisor_matches_packet(sha256_hex(data), staged.inventory):", "if False:"), h], "session.py may execute code only in load_supervisor, after the packet-hash comparison"],
+    ["a second exec in the session", (r, s, h) => [r, s + "\nexec(compile(b'', 'x', 'exec'))\n", h], "session.py may execute code only in load_supervisor, after the packet-hash comparison"],
+  ];
+  for (const [name, change, expected] of CASES) {
+    test(`caught: ${name}`, () => {
+      const problems = problemsOf(change);
+      expect(problems).toContain(expected);
+    });
+  }
+  test("every problem the runner gate can emit has a case above", () => {
+    const source = readFileSync(fileURLToPath(import.meta.url), "utf8");
+    const body = source.slice(source.indexOf("export function runnerProblems"), source.indexOf("/** Every problem with this workflow text"));
+    const emitted = [...body.matchAll(/problems\.push\(["`]([^"`$]+)/g)].map((m) => m[1] as string);
+    expect(emitted.length).toBeGreaterThanOrEqual(6);
+    const expected = CASES.map(([, , message]) => message);
+    for (const message of emitted) expect(expected.some((e) => e === message || e.startsWith(message))).toBe(true);
   });
 });

@@ -44,6 +44,8 @@ class FakeSession:
         self.shared = 'old guidance'
         self.closed = False
         self.settle_result, self.exit_result = settle, exits
+        self.settle_calls = []
+        self.lifecycle_record = 'written'
 
     def spawn(self, role):
         name = 'provider' if role == 'providerWorker' else 'host'
@@ -57,7 +59,8 @@ class FakeSession:
     def edit_shared(self):
         self.shared = 'edited guidance'
 
-    def settle(self):
+    def settle(self, host_result_seen):
+        self.settle_calls.append(host_result_seen)
         return self.settle_result
 
     def reap(self):
@@ -85,6 +88,8 @@ class FakePlatform(run.Platform):
         self.exit64 = exit64 or {'site': 'argv_parse', 'exitStatus': 64, 'initReceipt': False, 'pidfdReceived': False}
         self.session = None
         self.metafile, self.settle, self.exits = metafile, settle, exits
+
+    role_timeout = 3.0
 
     def bind(self, session_module, directory):
         self.calls.append('bind')
@@ -170,7 +175,7 @@ class HappyPath(Base):
         self.assertTrue(result['verdict']['passed'])
         self.assertEqual(platform.calls, ['bind', 'stage', 'exit64', 'session'])
         self.assertTrue(platform.session.closed)
-        self.assertEqual(sorted(result), ['exits', 'failureClass', 'hostPassed', 'kernelRelease', 'machine', 'passed', 'schema', 'settled', 'stage', 'verdict'])
+        self.assertEqual(sorted(result), ['exits', 'failureClass', 'hostPassed', 'kernelRelease', 'lifecycle', 'machine', 'passed', 'schema', 'settled', 'stage', 'verdict'])
         self.assertEqual((result['hostPassed'], result['settled'], result['exits']), (True, True, {'host': 0, 'provider': 0}))
 
     def test_relative_paths_are_resolved_before_the_verifier_runs_elsewhere(self):
@@ -366,6 +371,45 @@ class QueryChain(Base):
         self.assertTrue(result['verdict']['passed'])
         self.assertFalse(result['passed'])
 
+    def test_the_finish_order_is_finish_then_result_then_settle(self):
+        # Pinned from the code that emits it (roles_adapter.FINISH_ORDER): the result is READ before the runtime is settled and the record written.
+        status, result, platform = self.go()
+        self.assertEqual(status, 0)
+        self.assertEqual(platform.session.settle_calls, [True])
+        self.assertEqual(result['lifecycle'], 'written')  # the session says whether the record was written or its reader was already gone
+
+    def test_a_result_that_only_comes_after_the_record_is_the_refused_order(self):
+        # A host that waits for the lifecycle record before printing its result can never be read before the record: refused, named, and the
+        # record is never written (settle is not even called).
+        status, result, platform = self.go(platform=FakePlatform(self.state, modes={'host': 'no_result'}))
+        self.assertEqual((status, result['failureClass'], result['stage']), (78, 'finish_order', 'host_result'))
+        self.assertEqual(platform.session.settle_calls, [])
+        self.assertIsNone(result['settled'])
+
+    def test_a_host_that_exits_at_finish_without_a_result_is_host_result_not_finish_order(self):
+        status, result, platform = self.go(platform=FakePlatform(self.state, modes={'host': 'exit_without_result'}))
+        self.assertEqual((status, result['failureClass'], result['stage']), (1, 'host_result', 'host_result'))
+        self.assertEqual(platform.session.settle_calls, [])
+
+    def test_a_platform_that_is_incomplete_is_named_as_such(self):
+        class Incomplete(FakePlatform):
+            def open_session(self, staged):
+                raise run.PlatformIncomplete('open_session')
+        status, result, _ = self.go(platform=Incomplete(self.state))
+        self.assertEqual((status, result['failureClass']), (78, 'platform_incomplete'))
+        self.assertIsNone(result['verdict'])
+
+    def test_a_host_that_exits_without_a_result_is_host_result_not_finish_order(self):
+        status, result, platform = self.go(platform=FakePlatform(self.state, modes={'host': 'exit'}))
+        self.assertEqual(result['failureClass'], 'dispatch1')  # it never got as far as finish
+        status, result, platform = self.go(platform=FakePlatform(self.state, modes={'host': 'garbage'}))
+        self.assertNotEqual(result['failureClass'], 'finish_order')
+
+    def test_a_result_before_finish_is_never_a_pass(self):
+        status, result, platform = self.go(platform=FakePlatform(self.state, modes={'host': 'early_result'}))
+        self.assertEqual((status, result['failureClass']), (78, 'dispatch1'))
+        self.assertEqual(platform.session.settle_calls, [])
+
     def test_a_runtime_that_did_not_settle_fails_the_run(self):
         status, result, _ = self.go(platform=FakePlatform(self.state, settle=False))
         self.assertEqual((status, result['failureClass'], result['settled']), (78, 'teardown', False))
@@ -441,15 +485,98 @@ class Platform(Base):
                     info.linkname = payload
                     tar.addfile(info)
 
-    def test_the_real_platform_refuses_the_session_without_fixture_inputs_and_starts_nothing(self):
-        class Platform64(run.RealPlatform):
-            def exit64_case(self, staged):
-                return {'site': 'argv_parse', 'exitStatus': 64, 'initReceipt': False, 'pidfdReceived': False}
+    def inputs_directory(self, data=None):
+        """A directory holding fixture-inputs.json: the committed bytes, or `data`."""
+        directory = os.path.join(self.dir, 'siblings')
+        os.makedirs(directory, exist_ok=True)
+        shutil.copy(os.path.join(HERE, 'fixture-inputs.json'), os.path.join(directory, 'fixture-inputs.json'))
+        if data is not None:
+            open(os.path.join(directory, 'fixture-inputs.json'), 'wb').write(data)
+        return directory
+
+    def fake_module(self, calls):
+        class GuidedSession:
+            @staticmethod
+            def open(staged, inputs, directory):
+                calls.append(('open', staged, inputs, directory))
+                return FakeSession(self.state, {})
+        return types.SimpleNamespace(GuidedSession=GuidedSession, exit64_case=lambda staged: calls.append(('exit64', staged)) or {'site': 'argv_parse', 'exitStatus': 64, 'initReceipt': False, 'pidfdReceived': False})
+
+    def test_the_committed_fixture_inputs_are_pinned_closed_and_what_the_session_accepts(self):
+        data = open(os.path.join(HERE, 'fixture-inputs.json'), 'rb').read()
+        self.assertEqual(hashlib.sha256(data).hexdigest(), run.FIXTURE_INPUTS_SHA256)
+        self.assertNotEqual(run.FIXTURE_INPUTS_SHA256, '0' * 64)
+        inputs = json.loads(data)
+        self.assertIs(session.validate_inputs(inputs), inputs)
+        self.assertEqual(json.dumps(inputs, separators=(',', ':'), ensure_ascii=False).encode() + b'\n', data)  # compact, in the generator's order
+
+    def test_open_session_hands_the_verified_tree_and_the_pinned_inputs_to_the_session_module(self):
+        calls, staged = [], run.Staged('/staged', GOOD_PIN, {})
+        directory = self.inputs_directory()
+        platform = run.RealPlatform(parent=self.dir)
+        platform.bind(self.fake_module(calls), directory)
+        opened = platform.open_session(staged)
+        self.assertIsInstance(opened, FakeSession)
+        (kind, got_staged, inputs, got_directory), = calls
+        self.assertEqual((kind, got_staged, got_directory), ('open', staged, directory))
+        self.assertEqual(inputs, json.loads(open(os.path.join(HERE, 'fixture-inputs.json'), 'rb').read()))
+
+    def test_exit64_case_drives_the_session_modules_entry_point(self):
+        calls, staged = [], run.Staged('/staged', GOOD_PIN, {})
+        platform = run.RealPlatform(parent=self.dir)
+        platform.bind(self.fake_module(calls), self.inputs_directory())
+        self.assertEqual(platform.exit64_case(staged)['exitStatus'], 64)
+        self.assertEqual(calls, [('exit64', staged)])
+
+    def test_open_session_refuses_changed_inputs_before_anything_starts(self):
+        calls = []
+        data = open(os.path.join(HERE, 'fixture-inputs.json'), 'rb').read()
+        for changed in (data + b' ', data.replace(b'ALPHA', b'alpha'), b'{}', b''):
+            platform = run.RealPlatform(parent=self.dir)
+            platform.bind(self.fake_module(calls), self.inputs_directory(changed))
+            with self.assertRaises((OSError, ValueError)):
+                platform.open_session(run.Staged('/staged', GOOD_PIN, {}))
+        self.assertEqual(calls, [])
+
+    def test_a_missing_inputs_file_or_symlink_is_refused(self):
+        calls, directory = [], self.inputs_directory()
+        os.remove(os.path.join(directory, 'fixture-inputs.json'))
+        platform = run.RealPlatform(parent=self.dir)
+        platform.bind(self.fake_module(calls), directory)
+        with self.assertRaises((OSError, ValueError)):
+            platform.open_session(run.Staged('/staged', GOOD_PIN, {}))
+        os.symlink(os.path.join(HERE, 'fixture-inputs.json'), os.path.join(directory, 'fixture-inputs.json'))
+        with self.assertRaises((OSError, ValueError)):
+            platform.open_session(run.Staged('/staged', GOOD_PIN, {}))
+        self.assertEqual(calls, [])
+
+    def test_an_unpinned_inputs_hash_or_an_unbound_platform_still_refuses_as_incomplete(self):
+        staged = run.Staged('/staged', GOOD_PIN, {})
+        with self.assertRaises(run.PlatformIncomplete):
+            run.RealPlatform(parent=self.dir).open_session(staged)
+        with self.assertRaises(run.PlatformIncomplete):
+            run.RealPlatform(parent=self.dir).exit64_case(staged)
+        platform = run.RealPlatform(parent=self.dir)
+        platform.bind(self.fake_module([]), self.inputs_directory())
+        with mock.patch.object(run, 'FIXTURE_INPUTS_SHA256', '0' * 64), self.assertRaises(run.PlatformIncomplete):
+            platform.open_session(staged)
+
+    def test_the_real_platform_runs_the_whole_chain_over_an_injected_session_module(self):
+        """RealPlatform's own glue end to end: verified packet, staging, metafile preflight, exit-64, open, the chain, settle in the pinned order."""
+        calls = []
         self.tarball([('artifacts/hostClient.metafile.json', 'file', json.dumps(GOOD_METAFILE).encode())])
-        status, result, _ = self.go(platform=Platform64(parent=self.dir))
-        self.assertEqual((status, result['failureClass']), (78, 'platform_incomplete'))
-        self.assertIsNone(result['verdict'])
-        self.assertEqual(run.FIXTURE_INPUTS_SHA256, '0' * 64)
+        module = self.fake_module(calls)
+
+        class Injected(run.RealPlatform):
+            role_timeout = 3.0
+
+            def bind(self_, session_module, directory):
+                super().bind(module, directory)  # the real session.py is loaded and pinned by run(); the injected fake replaces its entry points
+        status, result, _ = self.go(platform=Injected(parent=self.dir), directory=HERE)
+        self.assertEqual((status, result['failureClass'], result['passed']), (0, None, True))
+        self.assertEqual([c[0] for c in calls], ['exit64', 'open'])
+        self.assertEqual(calls[0][1], calls[1][1])  # the same staged tree
+        self.assertTrue(result['verdict']['passed'])
 
     def test_stage_packet_assigns_modes_recreates_links_and_returns_the_inventory(self):
         self.tarball([('artifacts/runtimeEntry', 'file', b'elf'), ('artifacts/runtimeEntry.metafile.json', 'file', b'{}'), ('receipt.json', 'file', b'{}'),
@@ -500,6 +627,16 @@ class Adapter(unittest.TestCase):
         self.assertEqual(roles.present_premint(), 'required_context_unavailable')
         roles.finish_send()
         self.assertIs(roles.finish_result(), True)
+
+    def test_a_host_result_before_finish_is_its_own_kind(self):
+        roles = self.roles(host='early_result')
+        with self.assertRaises(roles_adapter.AdapterError) as raised:
+            roles.dispatch(1)
+        self.assertEqual(raised.exception.kind, 'premature_result')
+
+    def test_the_finish_order_is_pinned_in_the_adapter(self):
+        self.assertEqual(roles_adapter.FINISH_ORDER, ('finish', 'host-result', 'lifecycle-record'))
+        self.assertFalse([line for line in roles_adapter.REMAINING_DIFFERENCES if 'lifecycle' in line])
 
     def test_an_accepted_presentation_is_the_empty_class(self):
         roles = self.roles(host='reuse_accepted')

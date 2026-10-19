@@ -2,7 +2,7 @@
 
 The workflow's root launcher hashes THIS file and executes exactly the hashed bytes with
     run.py <packet-dir> <out-dir> <verifier.py> <verifier-sha256> <pin.json> <pin-sha256>
-It then loads its two siblings, `oracle.py` and `roles_adapter.py`, only by the SHA-256 embedded below, so every byte that
+It then loads its three siblings, `oracle.py`, `roles_adapter.py` and `session.py`, and reads `fixture-inputs.json`, only by the SHA-256 embedded below, so every byte that
 runs as root is covered by RUNNER_SHA256 through this file. Order, and why:
 
   1. admission: root, and the one opt-in variable;
@@ -14,9 +14,12 @@ runs as root is covered by RUNNER_SHA256 through this file. Order, and why:
   5. the exit-64 case (independent), then the guided query chain through the roles adapter, then teardown;
   6. the verdict is `oracle.evaluate` over Root-side evidence; the result is one bounded JSON written with O_EXCL.
 
-PLATFORM: the Root-side primitives that need the supervisor, the native owner, the mounts and the reader launcher
-(`exit64_case`, `open_session`) are NOT written yet; `RealPlatform` refuses them with the class `platform_incomplete`.
-So this file, as committed, can never spend the approved run on a half-built fixture. Writing them is owed.
+PLATFORM: `RealPlatform.exit64_case` and `open_session` drive `session.exit64_case` and `GuidedSession.open` (the Root entry points
+listed in session.py) with the verified staged tree and the pinned `fixture-inputs.json`. Off the runner they are exercised only with
+injected fakes; nothing here runs as root except inside the one approved hosted run.
+
+FINISH ORDER (pinned, derived: roles_adapter.FINISH_ORDER): `finish`, then the host client's `host-result` is READ, then the runtime is
+settled and the fd 7 lifecycle record written. A result that does not arrive is `finish_order`; the record is never written first.
 """
 from __future__ import annotations
 
@@ -38,14 +41,14 @@ OPT_IN = 'WINTER_GUIDED_HOSTED_ADMISSION'
 OPT_IN_VALUE = 'disposable-linux-guided-hosted-run'
 # SHA-256 of the two siblings this file may load. Changing either sibling changes these and therefore this file's hash.
 ORACLE_SHA256 = '295075e74776a4b40a7e5d4f11912d52f47bb8f03e112e6f48d687de6fa3323e'
-ADAPTER_SHA256 = '777afafbfcc3b326e6c7f839af8fe57d06440ac21bda47f4598a82cd529d5bbe'
-SESSION_SHA256 = '61ccfb2e0635074cd47f8292bf65a0856d9286fdc67cb0e8f4726bf70ef4d772'
+ADAPTER_SHA256 = '02593e1c8973ce773224566a34ebbe66efda8edf832231b0385ca5c87d2f7e7b'
+SESSION_SHA256 = 'e6f8ccc9c2c8d268cee99ef55fb6e779ee57e2ed003f219f8039cf279a2606a0'
 # The Core-dependent inputs (the host fixture records, the provider script's marker lines, the two prompts, the guidance
 # texts) are DATA this lane cannot invent; they live in a closed JSON file next to this one, pinned here. Zero = not supplied.
-FIXTURE_INPUTS_SHA256 = '0' * 64
+FIXTURE_INPUTS_SHA256 = 'bfcdc1bffc6ea84548884602d57d23493999d0f8ed5bbe5e4a304b0bc5f74fce'
 CLASSES = (
     'admission', 'arguments', 'packet_verify', 'metafile', 'sibling_pin', 'platform_incomplete', 'stage_packet', 'exit64_case', 'session',
-    'provider_start', 'dispatch1', 'shared_edit', 'dispatch2', 'ticket_reuse', 'revocation', 'host_result', 'teardown', 'verdict',
+    'provider_start', 'dispatch1', 'shared_edit', 'dispatch2', 'ticket_reuse', 'revocation', 'finish_order', 'host_result', 'settle', 'teardown', 'verdict',
     'result_write',
 )
 MAX_SMALL = 16 * 1024 * 1024
@@ -153,6 +156,8 @@ def load_sibling(directory, name, expected_sha256, module_name):
 class Platform:
     """Root-side primitives. Everything here needs the supervisor, the native owner or the reader launcher."""
 
+    role_timeout = None  # seconds per role reply; None = the adapter's own bound (tests shorten it)
+
     def bind(self, session_module, directory):
         """Hands the pinned `session.py` module to the platform before any primitive is used."""
 
@@ -253,7 +258,7 @@ def write_result(out_dir, record):
 def run(argv, platform, env, directory, euid=os.geteuid):
     """Returns (record, exit_status). Never raises: every failure becomes a bounded class in the record."""
     record = {'schema': SCHEMA, 'kernelRelease': host_platform.release(), 'machine': host_platform.machine(), 'stage': 'start', 'failureClass': None,
-              'passed': False, 'hostPassed': None, 'settled': None, 'exits': None, 'verdict': None}
+              'passed': False, 'hostPassed': None, 'settled': None, 'lifecycle': None, 'exits': None, 'verdict': None}
     session = roles = None
     try:
         record['stage'] = 'admission'
@@ -286,7 +291,7 @@ def run(argv, platform, env, directory, euid=os.geteuid):
         stub, host = {}, {}
         record['stage'] = 'provider_start'
         try:
-            roles = adapter.GuidedRoles(session.spawn('providerWorker'), session.spawn('hostClient'))
+            roles = adapter.GuidedRoles(session.spawn('providerWorker'), session.spawn('hostClient'), platform.role_timeout or adapter.TIMEOUT)
             roles.await_provider_ready()
             record['stage'] = 'dispatch1'
             host['dispatch1Text'] = roles.dispatch(1)
@@ -308,9 +313,16 @@ def run(argv, platform, env, directory, euid=os.geteuid):
             host['revocationError'] = roles.present_premint()
             stub['afterRevocation'] = roles.stub_receipt('after-present')
             record['stage'] = 'host_result'
+            # The pinned finish order (roles_adapter.FINISH_ORDER): finish, then the host's result is READ, then the runtime is settled and the
+            # lifecycle record written. A result that does not arrive before the record could be written is `finish_order`, never a wait on the record.
             roles.finish_send()
-            record['settled'] = session.settle() is True
-            record['hostPassed'] = roles.finish_result() is True
+            try:
+                record['hostPassed'] = roles.finish_result() is True
+            except adapter.AdapterError as error:
+                raise RunnerError('finish_order' if error.kind == 'timeout' else 'host_result') from None
+            record['stage'] = 'settle'
+            record['settled'] = session.settle(host_result_seen=True) is True
+            record['lifecycle'] = getattr(session, 'lifecycle_record', None)
             record['stage'] = 'teardown'
             final = roles.stop()
             if final is None:

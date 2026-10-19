@@ -69,7 +69,7 @@ success, and on failure only the bounded result and diagnostics records; 7 days 
 | Prerequisite | State |
 | --- | --- |
 | Packet roles `hostClient` and `providerWorker` | **Real, in compile run 2** (runtime-sdk intake #23, merged at `04f82b13`): run 39227365159, artifact 12174387240 (`guided-packet-compile-39227365159`, 195,477,535 bytes, zip sha256 `a4d731f6...0296`, expires 2026-10-26). The workflow is bound to it (below); run 1's placeholder packet (39165162201) is refused by the gate test. |
-| The root runner `run.py`, `session.py`, `roles_adapter.py` | **Written, never run as root on Linux.** Packet verification, metafile preflight, staging, the exit-64 case, the session (driving the existing Root entry points), the query chain, teardown and the result record are implemented and unit-tested with fakes. `RUNNER_SHA256` is the real hash of `run.py`, which embeds the hashes of its three siblings; the gate test fails on any disagreement. It cannot start a run without `fixture-inputs.json` (below). |
+| The root runner `run.py`, `session.py`, `roles_adapter.py` | **Written, never run as root on Linux.** Packet verification, metafile preflight, staging, the exit-64 case, the session (driving the existing Root entry points), the query chain, teardown and the result record are implemented and unit-tested with fakes. `RUNNER_SHA256` is the real hash of `run.py`, which embeds the hashes of its three siblings and of `fixture-inputs.json`; the gate test fails on any disagreement. `RealPlatform.exit64_case` and `open_session` drive `session.exit64_case` and `GuidedSession.open` (tested here with injected fakes only). |
 | F2 ticket minting on the host side | Issuer exists (`claimGuidedGuestIssuer`, `guided-guest-attestation.md`); no host code claims it yet. The real host client claims it. |
 | SDK host guard | Already lifted for a guided query that presents a valid one-shot ticket (`guided-guest-attestation.md`); nothing here changes it. |
 | Trusted config | PID 1's `wg_build_trusted_config` writes neither `reader` nor `guidanceDirectory`. The supervisor takes its trusted config on a descriptor handed by the process that starts it (`linux-supervisor.py`, the argv grammar near its end), so a hosted runner can supply the guided block directly, as the supervisor's own tests do; this is not a blocker for the run. It stays owed before any activation. |
@@ -108,18 +108,22 @@ runtime-sdk's `verify_packet.py` and its SHA-256, and the run-2 pin file and its
    default lookup exits 2), and refuses unless it exits 0, `allChecksHold` is true, every check is true, the report lists no
    placeholder role and the pin marks none. CI cannot catch a well-formed wrong hash in a pin; this check can. The workflow's
    unprivileged verify step runs the same verifier before `sudo`;
-3. loads `oracle.py`, `roles_adapter.py` and `session.py` only by the SHA-256 embedded in `run.py`;
+3. loads `oracle.py`, `roles_adapter.py` and `session.py`, and reads `fixture-inputs.json`, only by the SHA-256 embedded in `run.py`
+   (the gate test checks each embedded hash against the committed file, that no other sibling is named, that `run.py` executes code in
+   exactly one place, `load_sibling`, after `read_pinned`, and runs exactly one subprocess, the hashed verifier with an explicit `--pin`; it
+   checks the same for `session.py`'s one `exec`, which runs the supervisor only after its bytes matched the verified packet);
 4. stages the archive into a fresh root-owned tree (files 0400; roles, natives, libraries and the Bun base 0555; links
    recreated; any escaping name or link refused);
 5. **preflight, executing nothing**: every SDK module appears exactly once in the hostClient metafile (two copies of
    `guided-query-reader.ts` would make the reader lookup refuse everything and waste the run);
-6. runs the independent exit-64 case, opens the session, runs the query chain, finishes, settles and tears down, and writes
-   one bounded `result.json` (`O_EXCL`). Role text never enters the record. The run passes only if the verdict passes, the host
+6. runs the independent exit-64 case, opens the session, runs the query chain, finishes (in the pinned order below), settles and tears
+   down, and writes one bounded `result.json` (`O_EXCL`). Role text never enters the record. The run passes only if the verdict passes, the host
    client's own `host-result.passed` is true, the runtime settled, and both roles exited 0.
 
 Failure classes of the runner itself: `admission`, `arguments`, `packet_verify`, `metafile`, `sibling_pin`,
 `platform_incomplete`, `stage_packet`, `exit64_case`, `session`, `provider_start`, `dispatch1`, `shared_edit`, `dispatch2`,
-`ticket_reuse`, `revocation`, `host_result`, `teardown`, `verdict`, `result_write`.
+`ticket_reuse`, `revocation`, `finish_order`, `host_result`, `settle`, `teardown`, `verdict`, `result_write`. The record also carries
+`lifecycle`: `written` or `reader_gone` (see the finish order).
 
 ## The Root entry points `session.py` drives (all exist on main; nothing is invented)
 
@@ -162,30 +166,80 @@ client adds `version: 1` to every line and `minted: true` to `host-premint` (ign
 `refused:false, processStarted:true` and the run cannot pass (the oracle fails it as `reuse_not_refused`/`revocation_not_refused`);
 `host-result.passed` also needs `contextCalls >= 2` and no result after the revoke, which the host client judges itself.
 
+### The finish order (pinned, derived from the code that emits it)
+
+`finish` (Root to the host client's stdin), then the host client's `host-result` (its stdout), then Root's `HQX1:0` lifecycle record on fd 7.
+The runner reads the result BEFORE it settles the runtime and writes the record, and refuses the other order by name:
+
+* `runtime-sdk scripts/guest-guided-build/entries/host-client-core.ts` (04f82b13): `finish` sets `finished = true; break;` out of the command
+  loop (line 229), the host then `await pump;` (line 234) and only then `ports.emit(result)` (line 240). Nothing between `finish` and the result
+  reads the lifecycle reader.
+* `scripts/guest-guided-build/entries/host-client.ts`: the lifecycle reader (`HOST_FDS.lifecycle`, fd 7) feeds `process.exited`, and the only
+  consumer is `void process.exited.catch(() => {})` (line 57). `runGuidedHost` never awaits it. The v1 host client
+  (`scripts/guest-host-query/host-client.ts` line 144, `await process.exited`) is the contrast: only that one waits for the record.
+* `packages/sdk/src/query.ts` ends the read loop on the runtime's stdout end, not on `exited`; its only `await proc.exited` (line 1733) is the
+  path with no terminal result and no abort, which a finished run does not take.
+* Root writes the record last: `scripts/guest-host-query/verify.py` `phase='observer'` follows the independent native/reap/drain, close and
+  flock checks, and `session.py` `settle` does the same.
+
+Refused: `settle(host_result_seen)` raises `finish_order` unless the caller has read the result, and writes nothing; a host-result that has not
+arrived when the reply deadline passes is the class `finish_order` (the result never comes before the record could be written); a `host-result`
+before `finish` was sent is the adapter kind `premature_result` and never a pass. Because the host client returns right after its result,
+fd 7 may have no reader left when Root writes the record; that is not a failure (nothing awaits the record, and the checks just made are the
+evidence) and the result says which happened: `lifecycle: "written"` or `"reader_gone"`.
+
 ### Remaining differences (unsettled, listed in `roles_adapter.REMAINING_DIFFERENCES`)
 
-D1 the order of `finish`, the lifecycle record (fd 7) and `host-result` (the runner sends finish, settles and writes the record, then reads
-the result, which works for either order); D2 whether `host-spawn` is printed at startup or at the first dispatch (tolerated anywhere
-before a reply); D3 the errorClass for a presentation that threw for another reason is `other`; D4 `provider-request` and
-`provider-outcome` lines are bounded noise, never evidence; D5 a `host-query-ended` line is recorded and does not fail a command.
+D1 whether `host-spawn` is printed at startup or at the first dispatch (tolerated anywhere before a reply); D2 the errorClass for a
+presentation that threw for another reason is `other`; D3 `provider-request` and `provider-outcome` lines are bounded noise, never evidence;
+D4 a `host-query-ended` line is recorded and does not fail a command.
 
-### NEEDS FROM OTHER LANE (not built here)
+### `fixture-inputs.json`: derived, pinned, and where each field comes from
 
-1. **`fixture-inputs.json`** (runtime-sdk entries lane, which owns `FIXTURE_KEYS` and Winter Core's planner): the Core-dependent DATA. Its
-   closed shape is `{version: 1, prompts: [2], guidance: {old, edited}, steps: [2 stub steps], hostFixture: {registration, capture,
-   runtimeRow, workspace, binding, policy, sources, grants, bootId}}` (validated by `session.validate_inputs`). The `hostFixture`
-   records must satisfy exactly the two raw statements Core's planner issues; the stub steps' marker lines are what Core's mapper emits for
-   the old and the edited guidance. Neither can be invented here. It is pinned in `run.py` as `FIXTURE_INPUTS_SHA256`, zero until supplied.
-2. A decision on D1 (the finish/lifecycle order) and on whether the host client waits for the lifecycle record.
+`scripts/guest-hosted-guided/fixture-inputs.json` (sha256 pinned in `run.py` as `FIXTURE_INPUTS_SHA256`) is produced by
+`scripts/guest-hosted-guided/derive-fixture-inputs.ts`, run over Winter at the run-2 pin's winter head (`8b52ef83`, the packet's own
+`source/winter` bytes) and the host client core from the packet's builder origin:
+
+```sh
+bun scripts/guest-hosted-guided/derive-fixture-inputs.ts <winter checkout at 8b52ef83> <packet source/builder/scripts/guest-guided-build/entries> <out>
+```
+
+It is not run by CI or by the workflow; the committed file is pinned instead, and two runs produce the same bytes. Core's own classes create
+the records (`CoworkRepository` with a folder source granted as `source`, `RuntimeSessionRecords`, `CoworkGuestRuntimeSupervisor.prepareQuery`,
+`captureCoworkGuestOwner`, `CoworkGuestContextOwners`), the way Core's `guided-reader-adapter.test.ts` fixture does, and are dumped as data. The
+tool then runs the host client's own `buildFixtureRecords` and Core's real `createCoworkGuidedRuntimeContextHandler` over the dumped data
+(JSON round trip) for the old and the edited guidance, and reads the stub's marker lines from what Core produced. Any step that does not hold
+throws and writes nothing.
+
+| Field | Source |
+| --- | --- |
+| `hostFixture.registration`, `capture` | Core: the owner registry's `registrationPort` and `captureCoworkGuestOwner`, over the Root identities `session.py` also gives the guest (workspace `workspace`, logical session `guided-hosted`, backend session id, incarnation, lease 1, generation 1, source root `/workspace/folders/source`); `session.validate_inputs` refuses a fixture that disagrees with them |
+| `hostFixture.runtimeRow`, `workspace`, `binding`, `policy`, `sources`, `grants` | Core's repository and runtime-session rows for that conversation (policy `ask`, like the guest's trusted config), plus the one folder grant |
+| `hostFixture.bootId`, `capture.bootId`, `registration.bootId` | the kernel's boot id: the file carries a placeholder in exactly these three places and `session.bind_boot` replaces exactly those with `/proc/sys/kernel/random/boot_id` |
+| `capture.launchId` | Core mints a random uuid; nothing on the host path reads it, so it is fixed to a constant to keep the file reproducible |
+| `capture.readerRegistrationId` | presence-checked only (the frame carries no such field); a constant |
+| `steps[].system` | lines of the host FACTS Core produced: the engine renders them under `# Current workspace context` in `system` (`packages/runtime/src/context/required-context.ts` `applyRequiredContext`); the header, the source line (`admitted at /workspace/folders/source; read-write.`) and the `Completion default:` line, in Core's order |
+| `steps[].user` / `absentUser` | lines of the INSTRUCTIONS Core produced for the old and the edited guidance; the engine renders them under `# claudeMd` in message 0 (`requiredContextEntries`, `renderUserContext`); the block boundary lines carry a random render token and are not used |
+| `guidance.old`, `guidance.edited`, `prompts`, `steps[].response` | Root's own choices: two distinct two-line guidance texts, two neutral dispatch prompts and the scripted answers the oracle compares; none depends on Core |
+
+### NEEDS FROM OTHER LANE
+
+1. **Engine confirmation** (agent-sdk runtime lane, `packages/runtime/src/context/required-context.ts`): the marker placement above is read from
+   that source; the first run is the first time the compiled engine renders it. A `ordered_marker` refusal in the provider receipts would
+   point at the placement, not at Core.
+2. **`interrupt {scope:"turn"}`** (agent-sdk lane, routed separately by the coordinator): DOOR found that the guest host-query profile accepts only an
+   empty `interrupt` payload while the host SDK sends `{scope:"turn"}`. This lane does not touch that profile and does not fix it.
 3. Confirmation that the verified packet inventory carries the agent-sdk supervisor under exactly one `.../packages/runtime/src/guest/linux-supervisor.py`
-   member (the session refuses otherwise).
+   member (the session refuses otherwise; checked against the run-2 inventory: one member).
 
 ### What is unverified until the run
 
 Nothing in `session.py` has run as root on Linux. The pure builders are checked against the real supervisor's own validators
 (`guided_host_query_config`, `guided_reader_registration`, and a real `ToolService` constructed with the supervisor's patches), and the sequence
 against a fake supervisor module; the descriptor layouts are copied from the v1 harness. The unshare, the `/proc` interface check, the owner
-hand-off and the real `settle()` are exercised for the first time by the approved run.
+hand-off and the real `settle()` are exercised for the first time by the approved run. `exit64_case` and `open_session` no longer refuse: with
+the inputs pinned they drive `session.exit64_case` and `GuidedSession.open`, tested here only against injected fakes (the whole chain runs over
+an injected session module, and the inputs are refused if one byte differs). Nothing in `session.py` runs as root off the runner.
 
 ## Cross-repository download
 

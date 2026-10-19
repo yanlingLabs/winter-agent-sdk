@@ -33,10 +33,8 @@ BINDING = '5f6e7d8c-0000-4000-a000-00000000000b'
 ARTIFACTS = ('runtimeEntry', 'providerWorker', 'hostClient', 'instructionReader', 'toolLauncher', 'runtimeLauncher', 'fileWorker', 'processWorker', 'ownerLibrary', 'instructionReaderLauncher')
 LIBS = ('environment/lib/aarch64-linux-gnu/libc.so.6', 'environment/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1', 'environment/usr/lib/aarch64-linux-gnu/libm.so.6')
 HASH = lambda data: hashlib.sha256(data).hexdigest()
-INPUTS = {'version': 1, 'prompts': ['first prompt', 'second prompt'], 'guidance': {'old': 'old shared guidance\n', 'edited': 'edited shared guidance\n'},
-          'steps': [{'system': ['host fact'], 'user': ['old shared guidance'], 'absentSystem': [], 'absentUser': [], 'response': 'first deterministic answer'},
-                    {'system': ['host fact'], 'user': ['edited shared guidance'], 'absentSystem': [], 'absentUser': ['old shared guidance'], 'response': 'second deterministic answer'}],
-          'hostFixture': {'registration': {}, 'bootId': BOOT}}
+# The REAL derived inputs (derive-fixture-inputs.ts over Winter Core at the run-2 pin's winter head), not a stand-in.
+INPUTS = json.loads(Path(HERE, 'fixture-inputs.json').read_bytes())
 
 
 def real_root():
@@ -75,6 +73,66 @@ class Builders(unittest.TestCase):
             with self.assertRaises(session.SessionError):
                 session.validate_inputs(bad)
 
+    def mutated(self, *path_value):
+        copy = json.loads(json.dumps(INPUTS))
+        *path, value = path_value
+        parent = copy
+        for key in path[:-1]:
+            parent = parent[key]
+        parent[path[-1]] = value
+        return copy
+
+    def test_the_fixture_must_agree_with_the_identities_this_session_gives_the_guest(self):
+        for name, bad in {
+            'logical session': self.mutated('hostFixture', 'capture', 'sessionId', 'other'),
+            'backend session': self.mutated('hostFixture', 'capture', 'backendSessionId', 'other'),
+            'trusted query id': self.mutated('hostFixture', 'capture', 'trustedQuerySessionId', 'other'),
+            'workspace': self.mutated('hostFixture', 'capture', 'workspaceId', 'other'),
+            'incarnation': self.mutated('hostFixture', 'capture', 'incarnationId', 'other'),
+            'lease epoch': self.mutated('hostFixture', 'capture', 'leaseEpoch', 2),
+            'generation': self.mutated('hostFixture', 'capture', 'backendGeneration', 2),
+            'cwd': self.mutated('hostFixture', 'capture', 'cwd', '/workspace/folders/other'),
+            'source root': self.mutated('hostFixture', 'capture', 'source', 'root', '/workspace/folders/other'),
+            'registration disagrees with the capture': self.mutated('hostFixture', 'registration', 'sessionId', 'other'),
+            'registration lease epoch': self.mutated('hostFixture', 'registration', 'leaseEpoch', 2),
+            'a boot id already bound': self.mutated('hostFixture', 'bootId', BOOT),
+            'capture boot id already bound': self.mutated('hostFixture', 'capture', 'bootId', BOOT),
+            'registration boot id already bound': self.mutated('hostFixture', 'registration', 'bootId', BOOT),
+            'an extra fixture key': self.mutated('hostFixture', 'extra', 1),
+            'a missing fixture key': {**INPUTS, 'hostFixture': {k: v for k, v in INPUTS['hostFixture'].items() if k != 'policy'}},
+        }.items():
+            with self.assertRaises(session.SessionError, msg=name):
+                session.validate_inputs(bad)
+
+    def test_a_wrong_identity_is_refused_even_when_capture_and_registration_agree_with_each_other(self):
+        # The registration-agreement check alone would pass these: the Root identities themselves are what is pinned.
+        for key, value in (('workspaceId', 'other'), ('sessionId', 'other'), ('backendSessionId', 'other'), ('trustedQuerySessionId', 'other'), ('incarnationId', 'other'),
+                           ('leaseEpoch', 2), ('backendGeneration', 2), ('leaseEpoch', True), ('backendGeneration', True)):
+            both = json.loads(json.dumps(INPUTS))
+            both['hostFixture']['capture'][key] = value
+            both['hostFixture']['registration'][key] = value
+            with self.assertRaises(session.SessionError, msg=key + repr(value)):
+                session.validate_inputs(both)
+
+    def test_bind_boot_replaces_exactly_the_three_placeholders_on_a_copy(self):
+        bound = session.bind_boot(INPUTS, BOOT)
+        fixture = bound['hostFixture']
+        self.assertEqual((fixture['bootId'], fixture['capture']['bootId'], fixture['registration']['bootId']), (BOOT, BOOT, BOOT))
+        self.assertNotIn(session.BOOT_PLACEHOLDER, json.dumps(bound))
+        self.assertEqual(INPUTS['hostFixture']['bootId'], session.BOOT_PLACEHOLDER)
+        stripped = json.loads(json.dumps(bound).replace(BOOT, session.BOOT_PLACEHOLDER))
+        self.assertEqual(stripped, INPUTS)  # nothing else moved
+        for bad in (session.BOOT_PLACEHOLDER, 'not-a-uuid', '', None, 'ABCDEF01-0000-0000-0000-000000000000'):
+            with self.assertRaises(session.SessionError, msg=repr(bad)):
+                session.bind_boot(INPUTS, bad)
+        with self.assertRaises(session.SessionError):
+            session.bind_boot(self.mutated('hostFixture', 'bootId', BOOT), BOOT)
+
+    def test_a_placeholder_left_anywhere_else_is_refused(self):
+        leaked = self.mutated('hostFixture', 'workspace', 'note', session.BOOT_PLACEHOLDER)
+        with self.assertRaises(session.SessionError):
+            session.bind_boot(leaked, BOOT)
+
     def test_provider_metadata_is_the_exact_C_P3_shape(self):
         route = session.provider_route(BOOT)
         meta = json.loads(session.provider_metadata(INPUTS, route))
@@ -95,7 +153,7 @@ class Builders(unittest.TestCase):
         self.assertEqual(data, session.canonical(meta))
         self.assertLessEqual(len(data), 65536)
         with self.assertRaises(session.SessionError):
-            session.host_metadata({**INPUTS, 'hostFixture': {'big': 'x' * 70000}}, runtime_config, {})
+            session.host_metadata({**INPUTS, 'hostFixture': {**INPUTS['hostFixture'], 'sources': ['x' * 70000]}}, runtime_config, {})
 
     def test_role_hashes_come_from_the_pin_and_refuse_a_placeholder(self):
         staged = make_staged(real_root())
@@ -456,6 +514,10 @@ class Sequence(unittest.TestCase):
         self.assertNotIn('requiredRuntimeContext', host_meta['runtimeConfig'])
         self.assertEqual(host_meta['readerRegistration']['registrationId'], 'r')
         self.assertEqual(host_meta['prompts'], INPUTS['prompts'])
+        fixture = host_meta['fixture']
+        self.assertEqual((fixture['bootId'], fixture['capture']['bootId'], fixture['registration']['bootId']), (BOOT, BOOT, BOOT))
+        self.assertNotIn(session.BOOT_PLACEHOLDER, json.dumps(host_meta))
+        self.assertEqual(INPUTS['hostFixture']['bootId'], session.BOOT_PLACEHOLDER)  # the shared inputs are never mutated
 
     def test_the_owner_pidfd_is_handed_to_the_provider_once(self):
         self.open()
@@ -487,7 +549,7 @@ class Sequence(unittest.TestCase):
         if mutate:
             mutate(service, runtime)
         lifecycle = self.spawned[-1]['fds'][4]
-        result = sess.settle()
+        result = sess.settle(True)
         return result, lifecycle, service
 
     def test_settle_writes_the_lifecycle_record_only_after_every_check(self):
@@ -511,6 +573,34 @@ class Sequence(unittest.TestCase):
             with self.assertRaises(BlockingIOError):
                 os.read(lifecycle, 64)
 
+    def test_settle_refuses_the_other_finish_order_and_writes_nothing(self):
+        # The lifecycle record before the host-result has been read is the refused order: named, raised, nothing written.
+        for seen in (False, None, 1, 'yes'):
+            sess = self.open()
+            service = self.services[-1]
+            service.runtimes[session.LOGICAL]['state'] = 'stopped'
+            lifecycle = self.spawned[-1]['fds'][4]
+            with self.assertRaises(session.SessionError) as caught:
+                sess.settle(seen)
+            self.assertEqual(str(caught.exception), 'finish_order')
+            self.assertNotIn('close', service.events)
+            os.set_blocking(lifecycle, False)
+            with self.assertRaises(BlockingIOError):
+                os.read(lifecycle, 64)
+
+    def test_the_lifecycle_record_is_written_after_the_result_and_says_so(self):
+        sess = self.open()
+        self.services[-1].runtimes[session.LOGICAL]['state'] = 'stopped'
+        self.assertIs(sess.settle(True), True)
+        self.assertEqual(sess.lifecycle_record, 'written')
+
+    def test_a_host_that_already_exited_is_not_a_failed_settle_but_is_recorded(self):
+        sess = self.open()
+        self.services[-1].runtimes[session.LOGICAL]['state'] = 'stopped'
+        os.close(self.spawned[-1]['fds'][4])  # the host's read end of fd 7 is gone
+        self.assertIs(sess.settle(True), True)
+        self.assertEqual(sess.lifecycle_record, 'reader_gone')
+
     def test_settle_refuses_on_debt_of_any_conversation_not_just_its_own(self):
         result, lifecycle, _ = self.settle(lambda s, r: s.debt.add('another-conversation'))
         self.assertIs(result, False)
@@ -530,7 +620,7 @@ class Sequence(unittest.TestCase):
     def test_settle_gives_up_at_its_deadline(self):
         with mock.patch.object(session, 'SETTLE_SECONDS', 0.05):
             sess = self.open()
-            self.assertIs(sess.settle(), False)
+            self.assertIs(sess.settle(True), False)
 
     def test_close_is_idempotent_kills_the_roles_revokes_and_removes_the_tree(self):
         sess = self.open()

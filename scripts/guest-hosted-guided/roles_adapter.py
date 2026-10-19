@@ -33,12 +33,21 @@ CONTRACT = (
     'C-H12 the host client exits 0 only when host-result.passed is true; the last stdout line is host-result or host-refused',
     'C-P10 the provider exits 0 on a normal stop even if it refused requests',
 )
+# The order is DERIVED from the code that emits it, and pinned (docs/guided-hosted-run.md, "The finish order"):
+#   1. `finish` is written by Root to the host stdin;
+#   2. the host client leaves its command loop (`finished = true; break`), awaits its query pump and prints `host-result`
+#      (runtime-sdk scripts/guest-guided-build/entries/host-client-core.ts, `finished = true; break;` then `await pump;` then `ports.emit(result);`);
+#   3. only then does Root, having READ the result, wait for the runtime to stop and write the fd 7 lifecycle record
+#      (session.py `GuidedSession.settle`, modelled on scripts/guest-host-query/verify.py `phase='observer'`).
+# The host never waits for fd 7: host-client.ts `void process.exited.catch(...)` is the only use of the lifecycle reader, and no await in
+# runGuidedHost depends on it (the v1 host-client.ts line 144 `await process.exited` is the contrast). The other order, a record written before
+# the result is read, is refused by `settle(host_result_seen)` and a host-result that cannot be read before the record fails as `finish_order`.
+FINISH_ORDER = ('finish', 'host-result', 'lifecycle-record')
 REMAINING_DIFFERENCES = (
-    'D1 the order of `finish`, the lifecycle record on fd 7 and the `host-result` line is not stated; the runner sends finish, settles the runtime, writes the lifecycle record, then reads host-result, which works for either order',
-    'D2 whether `host-spawn` is printed at startup or at the first dispatch is not stated; it is tolerated anywhere before a reply',
-    'D3 the exact run-time errorClass for a presentation that threw for another reason is `other`; the oracle treats anything but required_context_unavailable as not refused-as-required',
-    'D4 the provider-request/provider-outcome lines are tolerated noise (bounded); they are never counted as evidence',
-    'D5 a host-query-ended line is recorded and does not fail a command, but host-result.passed must still be true',
+    'D1 whether `host-spawn` is printed at startup or at the first dispatch is not stated; it is tolerated anywhere before a reply',
+    'D2 the exact run-time errorClass for a presentation that threw for another reason is `other`; the oracle treats anything but required_context_unavailable as not refused-as-required',
+    'D3 the provider-request/provider-outcome lines are tolerated noise (bounded); they are never counted as evidence',
+    'D4 a host-query-ended line is recorded and does not fail a command, but host-result.passed must still be true',
 )
 
 
@@ -108,6 +117,8 @@ class Channel:
                 continue
             if value['kind'] == 'host-command-refused':
                 raise AdapterError('refused')
+            if value['kind'] == 'host-result':
+                raise AdapterError('premature_result')  # a result before `finish` was sent: the host ended its own run, which is never a pass
             raise AdapterError('protocol')
 
 
