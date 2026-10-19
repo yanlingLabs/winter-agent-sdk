@@ -1,23 +1,29 @@
 # Guided owner: CLOEXEC proof, single transfer, and what "holder" can claim
 
-Status: **proposed, not applied.** Nothing here changes the tracked
-`packages/runtime/src/guest/linux-session-owner.c`, the owner fixture or the
-owner matrix. The change is a pair of DATA patches under `docs/research/`,
-authored and tested against scratch copies, following the #25/#34 precedent.
-Applying them is an owner decision (below) because they move pinned hashes.
+Status: **applied, not yet run on a kernel.** Both DATA patches under
+`docs/research/` were applied byte-exactly (zero fuzz, no offset) to
+`packages/runtime/src/guest/linux-session-owner.c`,
+`scripts/guest-supervisor/guided_owner_native_fixture.c` and
+`scripts/guest-supervisor/test_guided_owner.py`. The patches stay in the tree as the
+record: a test reverses them to the previously pinned bytes and re-applies them.
+Option A was chosen: a successor one-run reviewed workflow
+(`.github/workflows/guided-owner-matrix-holder-reviewed.yml`, `docs/guided-owner-matrix-run-2.md`)
+carries the new cases. It is authored, never triggered here.
 
 Tests: `scripts/guest-supervisor/test_guided_owner_holder.py` (portable, runs on
 this Mac and in ordinary CI; the Linux compile class is compile-only and is never
-executed). No Linux run, no workflow run and no new trigger was made for this slice.
+executed). The four new native cases are skipped off a root Linux runner like the
+other twelve; they have not run on a kernel.
 
 ## Recorded hashes
 
-| Artifact | SHA-256 |
-|---|---|
-| tracked `linux-session-owner.c` (unchanged) | `c149d451eaa79442dfd41e9375c891ae8c9a06135d2cfc85851bcc8b5ce51fd8` |
-| owner DATA patch `2026-10-18-guided-owner-holder-DATA.patch` | `6f44da8cc9345f944ac805a3ca635b732b425e284b00765eb55d40cdaa7097b6` |
-| owner after the patch is applied | `95457d8f6ff256257b3b211e0201c64a4ed0b575aac6a9f933b3178b823b0d76` |
-| fixture DATA patch `2026-10-18-guided-owner-holder-fixture-DATA.patch` | `efa9fa9f2fc84308df7a6a238fd7e0267239cf6dbb5d8689d0f68139120c46d4` |
+| Artifact | Before (spent run `39133771464`) | Now (tracked) |
+|---|---|---|
+| `linux-session-owner.c` | `c149d451eaa79442dfd41e9375c891ae8c9a06135d2cfc85851bcc8b5ce51fd8` | `95457d8f6ff256257b3b211e0201c64a4ed0b575aac6a9f933b3178b823b0d76` |
+| `guided_owner_native_fixture.c` | `ef1a3e4554551a47e5857ec90618cb968be2e3a1a653817df5bcac5d269f2d39` | `a0c4929d88ae9dc66fc2201a2ff65c047e4c9ea0e85807d181080835539587d1` |
+| `test_guided_owner.py` (the matrix) | `b9ea9804d57806f3ecfa765d65c2eb92c93ce1171b08cef72c3c81e8e5bbedbf` | `8f93e9f8327e7da20241f52bdd2a2fdb556134456b64f037ab9a046811406cb4` |
+| owner DATA patch `2026-10-18-guided-owner-holder-DATA.patch` | | `6f44da8cc9345f944ac805a3ca635b732b425e284b00765eb55d40cdaa7097b6` |
+| fixture DATA patch `2026-10-18-guided-owner-holder-fixture-DATA.patch` | | `efa9fa9f2fc84308df7a6a238fd7e0267239cf6dbb5d8689d0f68139120c46d4` |
 
 ## Audit of the tracked owner
 
@@ -92,44 +98,29 @@ a per-incarnation exclusive handoff that Root performs and attests (already the
 reader-service design), a privileged census run by Root across the runtime's
 process tree, or a sock_diag query. Each is a separate owner decision.
 
-## Owner decisions
+## Owner decision (taken)
 
-The patched owner, fixture and matrix have only been tested portably here (the
-fixture compiles on Linux in CI as compile-only). Proving the new cases on a real
-kernel needs the native owner matrix run.
+Option A: a successor one-run reviewed workflow on a new never-used branch,
+carrying the patched owner and fixture and the four cases. Option B (a privileged
+step in ordinary CI) was rejected because it contradicts the documented rule that
+ordinary CI never runs the native owner. The old workflow
+`guided-owner-matrix-reviewed.yml` is left byte-for-byte as the record of the first
+run (its branch is spent; its gate test now pins its bytes).
 
-- **Option A (recommended).** Author a successor one-run reviewed workflow, on a
-  new never-used branch, that carries the patched owner, the patched fixture and
-  the four new native cases (`holder-census`, `holder-clear-cloexec`,
-  `holder-stray-dup`, `holder-bootstrap-cloexec`), copying the existing
-  `guided-owner-matrix-reviewed.yml` structure. This keeps the one-run rule
-  (`run_attempt == '1'`) and does not reuse the spent branch.
-- **Option B.** Add a privileged step to ordinary CI. This contradicts the
-  documented rule that ordinary CI never runs the native owner and is not
-  recommended.
+## Pins that moved when the patches were applied
 
-Applying either option's patches is separate and moves pins (below). No trigger
-was authored here.
-
-## Pins that move if the patches are applied
-
-- `OWNER_SHA256`, `FIXTURE_SHA256`, `MATRIX_SHA256` in
-  `.github/workflows/guided-owner-matrix-reviewed.yml` and in
-  `scripts/guided-owner-matrix-gates.test.ts`.
-- `FROZEN` in `scripts/guest-supervisor/test_guided_guidance_view.py`.
-- The owner hash check in `scripts/guest-supervisor/test_guided_reader_service.py`.
-- The v1 packet `ownerLibrary` hashes.
-- Winter's `expectedArtifact` for the owner library.
-- The matrix count. The fixture patch adds 4 cases: 12 -> 16 total, 11 -> 15 pass,
-  1 skip. This moves the reviewed workflow root runner's
-  `len(tests) == 12 and count('pass') == 11` and its skip list, and the gate test's
-  12-case / "11 pass + 1 skip" expectations. The successor workflow (Option A)
-  carries its own count expectations (16 / 15 / 1) rather than editing the spent one.
-- The constants hard-coded in `scripts/guest-supervisor/test_guided_owner_holder.py`
-  (`TRACKED_OWNER_SHA256`, `PATCHED_OWNER_SHA256`, `FIXTURE_SHA256`, `MATRIX_SHA256`),
-  and this document's own hash table (the tracked hashes become the applied hashes).
-
-None of these were changed.
+- `FROZEN` in `scripts/guest-supervisor/test_guided_guidance_view.py` and the hash
+  check in `scripts/guest-supervisor/test_guided_reader_service.py`: the owner is
+  `95457d8f...`.
+- The constants and the hash table in this document and in
+  `scripts/guest-supervisor/test_guided_owner_holder.py`.
+- The successor workflow carries its own pins and its own count expectations:
+  16 total, 15 pass, 1 skip (`test_actual_pidfs_absent_before_69`), against 12 / 11 / 1
+  for the spent one.
+- Not pins in this repo (checked by search): no source file here, and no compile-input
+  pin in the runtime-sdk, carries the owner's hash. The compiled `ownerLibrary` hash
+  in the v1 packet changes at the next compile run, and Winter's `expectedArtifact`
+  must follow it. Both belong to other lanes.
 
 ## Low-severity note
 

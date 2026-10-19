@@ -1,21 +1,32 @@
-// Tripwires for `.github/workflows/guided-owner-matrix-reviewed.yml`, the ONE-RUN workflow that runs the
-// 12-entry guided owner matrix as root on a disposable runner (docs/guided-owner-matrix-run.md).
+// Tripwires for `.github/workflows/guided-owner-matrix-holder-reviewed.yml`, the SUCCESSOR one-run workflow that runs the
+// 16-entry guided owner matrix (the first 12 plus the four holder cases) as root on a disposable runner
+// (docs/guided-owner-matrix-run-2.md). The first workflow, guided-owner-matrix-reviewed.yml, is spent and kept byte-for-byte.
 //
 // A workflow that can never fire by accident and one that can look identical in a diff, so each property
 // is asserted on the PARSED workflow. `violations()` is a pure function of the workflow text; the
 // mutation table at the bottom feeds it a deliberately broken copy per gate and requires that every
-// single removal is caught, so a gate that silently stopped checking fails here.
+// single removal is caught, so a gate that silently stopped checking fails here. The arming guard is also RUN, as bash,
+// against throwaway Git repositories.
 import { describe, test, expect } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { chmodSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const WORKFLOWS_DIR = join(ROOT, ".github/workflows");
-const WORKFLOW_NAME = "guided-owner-matrix-reviewed.yml";
+const WORKFLOW_NAME = "guided-owner-matrix-holder-reviewed.yml";
+const SPENT_WORKFLOW_NAME = "guided-owner-matrix-reviewed.yml";
+// The first workflow is the record of run 39133771464 and must never change: its branch is spent.
+const SPENT_WORKFLOW_SHA256 = "4427c22add78530df2004016ddc40cdfb90d905c82e89940cfc49f691e96edf9";
+const WORKFLOW_PATH = `.github/workflows/${WORKFLOW_NAME}`;
+const ZERO_HEAD = "0".repeat(40);
 const WORKFLOW = readFileSync(join(WORKFLOWS_DIR, WORKFLOW_NAME), "utf8");
-const TRIGGER_BRANCH = "cowork/guided-owner-matrix-run";
+const TRIGGER_BRANCH = "cowork/guided-owner-matrix-run-2";
+const SPENT_BRANCH = "cowork/guided-owner-matrix-run";
 const REPOSITORY = "yanlingLabs/winter-agent-sdk";
 const OPT_IN = "WINTER_GUIDED_OWNER_NATIVE_ADMISSION";
 const FIXTURE_PATH = "scripts/guest-supervisor/guided_owner_native_fixture.c";
@@ -24,9 +35,36 @@ const OWNER_PATH = "packages/runtime/src/guest/linux-session-owner.c";
 const PIN_ENV: Record<string, string> = { FIXTURE_SHA256: FIXTURE_PATH, MATRIX_SHA256: MATRIX_PATH, OWNER_SHA256: OWNER_PATH };
 const ALLOWED_ACTIONS = new Set(["actions/checkout", "actions/upload-artifact"]);
 // Branches that already fired (or are armed for) another reviewed workflow: never reusable here.
-const USED_BRANCHES = ["cowork/linux-host-query-fixture", "cowork/linux-host-query-utilities"];
+const USED_BRANCHES = ["cowork/linux-host-query-fixture", "cowork/linux-host-query-utilities", SPENT_BRANCH, "cowork/guided-owner-matrix-workflow"];
+/** The arming guard, line for line. It runs before any pinned file is read and refuses unless ARMED_HEAD is an ancestor of the
+ * pushed commit AND the whole difference is the one ARMED_HEAD line of this workflow; then it checks the armed head out. */
+const GUARD: Array<[string, string]> = [
+  ["the strict shell", "set -euo pipefail"],
+  ["the unarmed refusal", `test "$ARMED_HEAD" != "${ZERO_HEAD}"`],
+  ["the ancestor check", 'git merge-base --is-ancestor "$ARMED_HEAD" "$GITHUB_SHA"'],
+  ["the single-file check", `test "$(git diff --name-only "$ARMED_HEAD" "$GITHUB_SHA")" = "${WORKFLOW_PATH}"`],
+  ["the numstat check", `test "$(git diff --numstat "$ARMED_HEAD" "$GITHUB_SHA")" = "$(printf '1\\t1\\t%s' ${WORKFLOW_PATH})"`],
+  ["the diff capture", `armed_diff=$(git diff -U0 --no-color "$ARMED_HEAD" "$GITHUB_SHA" | grep -E '^[-+][^-+]' || true)`],
+  ["the exact one-line diff check", `test "$armed_diff" = "$(printf '%s\\n%s' "-  ARMED_HEAD: '${ZERO_HEAD}'" "+  ARMED_HEAD: '$ARMED_HEAD'")"`],
+  ["the armed-head checkout", 'git checkout --detach --quiet "$ARMED_HEAD"'],
+  ["the checkout proof", 'test "$(git rev-parse HEAD)" = "$ARMED_HEAD"'],
+];
 
-type Step = { name?: string; "continue-on-error"?: boolean; uses?: string; run?: string; if?: string; env?: Record<string, unknown>; with?: Record<string, unknown> };
+/** The shell lines a step runs: continuations joined, comments and blanks dropped. */
+function logicalLines(run: string): string[] {
+  const out: string[] = [];
+  let carry = "";
+  for (const raw of run.split("\n")) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    if (line.endsWith("\\")) { carry += `${line.slice(0, -1).trim()} `; continue; }
+    out.push(`${carry}${line}`);
+    carry = "";
+  }
+  return out;
+}
+
+type Step = { name?: string; shell?: string; "continue-on-error"?: boolean; uses?: string; run?: string; if?: string; env?: Record<string, unknown>; with?: Record<string, unknown> };
 type Doc = {
   on?: Record<string, unknown>;
   permissions?: Record<string, unknown>;
@@ -107,6 +145,16 @@ export function violations(text: string, otherWorkflows: Record<string, string> 
   const checkout = steps.find((s) => s.uses?.startsWith("actions/checkout@"));
   if (!checkout || checkout.with?.["persist-credentials"] !== false) bad("checkout must set persist-credentials: false");
   if (checkout && checkout.with?.ref !== "${{ github.sha }}") bad("checkout must use github.sha");
+  if (steps[0] !== checkout || checkout?.with?.["fetch-depth"] !== 0) bad("the first step must be the pushed-commit checkout with full history");
+  if (steps.filter((s) => s.uses?.startsWith("actions/checkout@")).length !== 1) bad("exactly one checkout (the guard checks the armed head out itself)");
+  const guardStep = steps[1];
+  const guardLines = logicalLines(guardStep?.run ?? "");
+  if (!guardStep || guardStep.run === undefined || guardStep.shell !== "bash") bad("the arming guard must be the second step, run by bash");
+  for (const [label, line] of GUARD) if (!guardLines.includes(line)) bad(`arming guard lacks ${label}`);
+  if (JSON.stringify(guardLines) !== JSON.stringify(GUARD.map(([, line]) => line))) bad("arming guard is not exactly the reviewed script");
+  const armed = (doc.env ?? {}).ARMED_HEAD;
+  if (typeof armed !== "string" || !/^[0-9a-f]{40}$/.test(armed)) bad("ARMED_HEAD must be a 40-hex commit (all zeros while unarmed)");
+  if (JSON.stringify(Object.keys(doc.env ?? {}).sort()) !== JSON.stringify(["ARMED_HEAD", ...Object.keys(PIN_ENV)].sort())) bad("env keys must be exactly ARMED_HEAD and the three pins");
 
   // 5. The opt-in variable: once in the file, only in the one sudo step, never in any env block.
   if (text.split(OPT_IN).length - 1 !== 1) bad("opt-in variable must appear exactly once in the workflow");
@@ -131,6 +179,7 @@ export function violations(text: string, otherWorkflows: Record<string, string> 
   if (verify < 0) bad("a strict sha256sum check covering every pinned file is required");
   if (compile < 0) bad("the unprivileged cc compile step is required");
   if (verify >= 0 && compile >= 0 && root >= 0 && !(verify < compile && compile < root)) bad("order must be hash check, cc compile, root run");
+  if (verify >= 0 && verify <= 1) bad("the hash check must come after the arming guard");
   if (root !== steps.length - 2) bad("the root run must be the last run step (only the upload follows)");
   const rootRun = holders[0]?.run ?? "";
   for (const [variable, path] of Object.entries(PIN_ENV)) {
@@ -141,7 +190,7 @@ export function violations(text: string, otherWorkflows: Record<string, string> 
   else bad_python(python, bad);
 
   // 7. Result: one minimal JSON; exactly one upload, 7 days, always uploaded.
-  if (!/\bpython3 -I -S -B - "\$GITHUB_SHA" /.test(rootRun) || /\bpython3 -I -S -B -\S/.test(rootRun)) bad("root interpreter line must be exactly python3 -I -S -B -");
+  if (!/\bpython3 -I -S -B - "\$ARMED_HEAD" "\$GITHUB_SHA" /.test(rootRun) || /\bpython3 -I -S -B -\S/.test(rootRun)) bad("root interpreter line must be exactly python3 -I -S -B -");
   const uploads = steps.filter((s) => s.uses?.startsWith("actions/upload-artifact@"));
   if (uploads.length !== 1) bad("exactly one upload");
   const upload = uploads[0];
@@ -150,7 +199,7 @@ export function violations(text: string, otherWorkflows: Record<string, string> 
   if (steps[steps.length - 1] !== upload) bad("upload is the last step");
   if (upload?.if !== "always()") bad("upload must keep if: always()");
   if (Object.keys(upload?.with ?? {}).sort().join() !== "if-no-files-found,name,path,retention-days") bad("upload keys");
-  if (JSON.stringify(Object.keys(checkout?.with ?? {}).sort()) !== JSON.stringify(["persist-credentials", "ref"])) bad("checkout has extra with: keys");
+  if (JSON.stringify(Object.keys(checkout?.with ?? {}).sort()) !== JSON.stringify(["fetch-depth", "persist-credentials", "ref"])) bad("checkout has extra with: keys");
   if (/continue-on-error/.test(text)) bad("continue-on-error anywhere");
   return problems;
 }
@@ -163,9 +212,9 @@ function rootPython(run: string): string | null {
   return end < 0 ? null : run.slice(start + 7, end + 1);
 }
 
-const RESULT_KEYS = ["schema", "headSha", "kernelRelease", "machine", "pinnedSha256", "total", "passed", "skipped", "failed", "matchesExpected11Plus1", "tests"];
+const RESULT_KEYS = ["schema", "headSha", "armingSha", "kernelRelease", "machine", "pinnedSha256", "total", "passed", "skipped", "failed", "matchesExpected15Plus1", "tests"];
 const EXPECTED_LINE =
-  "expected = major_minor >= (6, 9) and len(tests) == 12 and count('pass') == 11 and count('fail') == 0 and skipped == ['test_actual_pidfs_absent_before_69']";
+  "expected = major_minor >= (6, 9) and len(tests) == 16 and count('pass') == 15 and count('fail') == 0 and skipped == ['test_actual_pidfs_absent_before_69']";
 const IMPORT_LINE = "import hashlib, json, os, platform, re, sys, types, unittest";
 const COMPARE_LINE = "if hashes[name] != digest:";
 const COUNT_LINE = "if len(hashes) != 3 or not matrix:";
@@ -278,13 +327,30 @@ describe("guided owner matrix workflow gates", () => {
     for (const [name, text] of Object.entries(others())) expect([name, text.includes(TRIGGER_BRANCH)]).toEqual([name, false]);
   });
 
-  test("the doc exists and states the trigger, the expected 11+1 and the freeze", () => {
-    const doc = readFileSync(join(ROOT, "docs/guided-owner-matrix-run.md"), "utf8");
-    expect(existsSync(join(ROOT, "docs/guided-owner-matrix-run.md"))).toBe(true);
+  test("the doc exists and states the trigger, the expected 15+1, the arming step and the freeze", () => {
+    expect(existsSync(join(ROOT, "docs/guided-owner-matrix-run-2.md"))).toBe(true);
+    const doc = readFileSync(join(ROOT, "docs/guided-owner-matrix-run-2.md"), "utf8");
     expect(doc).toContain(TRIGGER_BRANCH);
-    expect(doc).toContain("11 pass");
+    expect(doc).toContain("15 pass");
     expect(doc).toContain("1 skip");
+    expect(doc).toContain("ARMED_HEAD");
     expect(doc.toLowerCase()).toContain("frozen");
+  });
+
+  test("the first workflow is the spent record: its bytes are unchanged, its branch is used, and nothing else may name it", () => {
+    const spent = readFileSync(join(WORKFLOWS_DIR, SPENT_WORKFLOW_NAME));
+    expect(createHash("sha256").update(spent).digest("hex")).toBe(SPENT_WORKFLOW_SHA256);
+    expect(USED_BRANCHES).toContain(SPENT_BRANCH);
+    expect(spent.toString("utf8")).toContain(`'${SPENT_BRANCH}'`);
+    expect(WORKFLOW.includes(`'${SPENT_BRANCH}'`)).toBe(false);
+    expect(TRIGGER_BRANCH).not.toBe(SPENT_BRANCH);
+  });
+
+  test("the committed workflow is the unarmed form or an armed form whose only difference is the ARMED_HEAD line", () => {
+    const armedLine = /^  ARMED_HEAD: '[0-9a-f]{40}'$/m;
+    expect(armedLine.test(WORKFLOW)).toBe(true);
+    const unarmed = WORKFLOW.replace(armedLine, `  ARMED_HEAD: '${ZERO_HEAD}'`);
+    expect(violations(unarmed, others())).toEqual([]);
   });
 });
 
@@ -295,12 +361,12 @@ const MUTATIONS: Array<[string, (text: string) => string]> = [
   ["add pull_request_target trigger", (t) => t.replace("on:\n  push:", "on:\n  pull_request_target:\n  push:")],
   ["add workflow_dispatch trigger", (t) => t.replace("on:\n  push:", "on:\n  workflow_dispatch:\n  push:")],
   ["add schedule trigger", (t) => t.replace("on:\n  push:", "on:\n  schedule:\n    - cron: '0 0 * * *'\n  push:")],
-  ["widen the branch to a glob", (t) => t.replace("'cowork/guided-owner-matrix-run'", "'cowork/**'")],
+  ["widen the branch to a glob", (t) => t.replace("'cowork/guided-owner-matrix-run-2'", "'cowork/**'")],
   ["add a tags filter", (t) => t.replace("    branches:\n", "    tags: ['*']\n    branches:\n")],
-  ["swap to a previously used branch", (t) => t.replaceAll("cowork/guided-owner-matrix-run", "cowork/linux-host-query-fixture")],
+  ["swap to a previously used branch", (t) => t.replaceAll("cowork/guided-owner-matrix-run-2", "cowork/linux-host-query-fixture")],
   ["drop the repository gate", (t) => t.replace("github.repository == 'yanlingLabs/winter-agent-sdk' && ", "")],
   ["drop the event-name gate", (t) => t.replace("github.event_name == 'push' && ", "")],
-  ["drop the exact-ref gate", (t) => t.replace(" && github.ref == 'refs/heads/cowork/guided-owner-matrix-run'", "")],
+  ["drop the exact-ref gate", (t) => t.replace(" && github.ref == 'refs/heads/cowork/guided-owner-matrix-run-2'", "")],
   ["drop the first-creation gate", (t) => t.replace(" && github.event.created == true", "")],
   ["drop the run_attempt gate", (t) => t.replace(" && github.run_attempt == '1'", "")],
   ["turn the gate into a disjunction", (t) => t.replace("github.event.created == true &&", "github.event.created == true ||")],
@@ -328,7 +394,7 @@ const MUTATIONS: Array<[string, (text: string) => string]> = [
   ["owner pin not handed to the root step", (t) => t.replace(' "packages/runtime/src/guest/linux-session-owner.c=$OWNER_SHA256"', "")],
   ["root python drops -I", (t) => t.replace("python3 -I -S -B - ", "python3 -S -B - ")],
   ["root python gains -c style suffix", (t) => t.replace("python3 -I -S -B - ", "python3 -I -S -B -u - ")],
-  ["unpinned import after sys.path edit", (t) => t.replace("          head, destination", "          sys.path.insert(0, 'x')\n          import helper\n          head, destination")],
+  ["unpinned import after sys.path edit", (t) => t.replace("          head, pushed, destination", "          sys.path.insert(0, 'x')\n          import helper\n          head, pushed, destination")],
   ["extra import", (t) => t.replace(IMPORTS, IMPORTS + ", subprocess")],
   ["extra exec of a file", (t) => t.replace("          def classify", "          exec(open('x.py').read())\n          def classify")],
   ["extra open of a file", (t) => t.replace("          def classify", "          extra = open('x.py').read()\n          def classify")],
@@ -365,6 +431,32 @@ const MUTATIONS: Array<[string, (text: string) => string]> = [
   ["result drops the head sha", (t) => t.replace("'headSha': head, ", "")],
   ["two jobs", (t) => `${t}  second:\n    runs-on: ubuntu-24.04-arm\n    steps: []\n`],
   ["no timeout", (t) => t.replace("    timeout-minutes: 15\n", "")],
+  ["expected 12 total", (t) => t.replace("len(tests) == 16", "len(tests) == 12")],
+  ["expected 11 pass", (t) => t.replace("count('pass') == 15", "count('pass') == 11")],
+  ["result keeps the old match key", (t) => t.replace("'matchesExpected15Plus1'", "'matchesExpected11Plus1'")],
+  ["result drops the arming sha", (t) => t.replace("'armingSha': pushed, ", "")],
+  ["root step gets only the push sha", (t) => t.replace('- "$ARMED_HEAD" "$GITHUB_SHA" out/', '- "$GITHUB_SHA" out/')],
+  ["guard: unarmed refusal removed", (t) => t.replace(/ *test "\$ARMED_HEAD" != "0+"\n/, "")],
+  ["guard: strict shell weakened", (t) => t.replace("set -euo pipefail", "set -uo pipefail")],
+  ["guard: ancestor check removed", (t) => t.replace(/ *git merge-base --is-ancestor[^\n]*\n/, "")],
+  ["guard: ancestor check made advisory", (t) => t.replace('"$GITHUB_SHA"\n          test "$(git diff --name-only', '"$GITHUB_SHA" || true\n          test "$(git diff --name-only')],
+  ["guard: single-file check removed", (t) => t.replace(/ *test "\$\(git diff --name-only[^\n]*\n/, "")],
+  ["guard: single-file check allows a second file", (t) => t.replace('= ".github/workflows/guided-owner-matrix-holder-reviewed.yml"\n          test "$(git diff --numstat', '!= ""\n          test "$(git diff --numstat')],
+  ["guard: numstat check removed", (t) => t.replace(/ *test "\$\(git diff --numstat[^\n]*\n/, "")],
+  ["guard: numstat check allows two added lines", (t) => t.replace("'1\\t1\\t%s'", "'2\\t1\\t%s'")],
+  ["guard: diff capture removed", (t) => t.replace(/ *armed_diff=\$\([^\n]*\n/, "")],
+  ["guard: one-line diff check removed", (t) => t.replace(/ *test "\$armed_diff"[^\n]*\n/, "")],
+  ["guard: diff filter accepts two lines", (t) => t.replace("grep -E '^[-+][^-+]'", "grep -E '^[+][^+]'")],
+  ["guard: armed-head checkout removed", (t) => t.replace(/ *git checkout --detach --quiet[^\n]*\n/, "")],
+  ["guard: checkout proof removed", (t) => t.replace(/ *test "\$\(git rev-parse HEAD\)"[^\n]*\n/, "")],
+  ["guard: an extra line after the proof", (t) => t.replace('= "$ARMED_HEAD"\n      - name: Refuse unless', '= "$ARMED_HEAD"\n          git submodule update --init\n      - name: Refuse unless')],
+  ["guard step removed", (t) => t.replace(/      - name: Refuse any arming commit[\s\S]*?test "\$\(git rev-parse HEAD\)" = "\$ARMED_HEAD"\n/, "")],
+  ["guard not run by bash", (t) => t.replace("        shell: bash\n", "")],
+  ["checkout without full history", (t) => t.replace("          fetch-depth: 0\n", "")],
+  ["armed head not a commit", (t) => t.replace(/ARMED_HEAD: '0+'/, "ARMED_HEAD: main")],
+  ["armed head key missing", (t) => t.replace(/  ARMED_HEAD: '0+'\n/, "")],
+  ["a second checkout", (t) => t.replace("      - name: Refuse unless", "      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5\n        with:\n          persist-credentials: false\n          ref: main\n      - name: Refuse unless")],
+  ["hash check before the guard", (t) => { const g = t.match(/      - name: Refuse any arming commit[\s\S]*?= "\$ARMED_HEAD"\n/)?.[0] ?? ""; return t.replace(g, "").replace("      - name: Compile the fixture", `${g}      - name: Compile the fixture`); }],
 ];
 
 const EXPECT: Record<string, string> = {
@@ -383,7 +475,7 @@ const EXPECT: Record<string, string> = {
   "swap to a previously used branch": "on.push must be exactly one literal branch and nothing else",
   "drop the repository gate": "job if lacks: github.repository == 'yanlingLabs/winter-agent-sdk'",
   "drop the event-name gate": "job if lacks: github.event_name == 'push'",
-  "drop the exact-ref gate": "job if lacks: github.ref == 'refs/heads/cowork/guided-owner-matrix-run'",
+  "drop the exact-ref gate": "job if lacks: github.ref == 'refs/heads/cowork/guided-owner-matrix-run-2'",
   "drop the first-creation gate": "job if lacks: github.event.created == true",
   "drop the run_attempt gate": "job if lacks: github.run_attempt == '1'",
   "turn the gate into a disjunction": "job if must be a pure conjunction",
@@ -442,6 +534,32 @@ const EXPECT: Record<string, string> = {
   "result drops the head sha": "result keys must be exactly the intended set",
   "two jobs": "exactly one job",
   "no timeout": "bounded timeout required",
+  "expected 12 total": "expected must have every conjunct exactly",
+  "expected 11 pass": "expected must have every conjunct exactly",
+  "result keeps the old match key": "result keys must be exactly the intended set",
+  "result drops the arming sha": "result keys must be exactly the intended set",
+  "root step gets only the push sha": "root interpreter line must be exactly python3 -I -S -B -",
+  "guard: unarmed refusal removed": "arming guard lacks the unarmed refusal",
+  "guard: strict shell weakened": "arming guard lacks the strict shell",
+  "guard: ancestor check removed": "arming guard lacks the ancestor check",
+  "guard: ancestor check made advisory": "arming guard lacks the ancestor check",
+  "guard: single-file check removed": "arming guard lacks the single-file check",
+  "guard: single-file check allows a second file": "arming guard lacks the single-file check",
+  "guard: numstat check removed": "arming guard lacks the numstat check",
+  "guard: numstat check allows two added lines": "arming guard lacks the numstat check",
+  "guard: diff capture removed": "arming guard lacks the diff capture",
+  "guard: one-line diff check removed": "arming guard lacks the exact one-line diff check",
+  "guard: diff filter accepts two lines": "arming guard lacks the diff capture",
+  "guard: armed-head checkout removed": "arming guard lacks the armed-head checkout",
+  "guard: checkout proof removed": "arming guard lacks the checkout proof",
+  "guard: an extra line after the proof": "arming guard is not exactly the reviewed script",
+  "guard step removed": "the hash check must come after the arming guard",
+  "guard not run by bash": "the arming guard must be the second step, run by bash",
+  "checkout without full history": "the first step must be the pushed-commit checkout with full history",
+  "armed head not a commit": "ARMED_HEAD must be a 40-hex commit (all zeros while unarmed)",
+  "armed head key missing": "ARMED_HEAD must be a 40-hex commit (all zeros while unarmed)",
+  "a second checkout": "exactly one checkout (the guard checks the armed head out itself)",
+  "hash check before the guard": "the hash check must come after the arming guard",
 };
 
 const CI_MUTATIONS: Array<[string, (ci: string) => string, string]> = [
@@ -510,4 +628,117 @@ describe("every gate removal is caught", () => {
   test("another workflow naming the trigger branch is caught", () => {
     expect(violations(WORKFLOW, { "x.yml": `on: { push: { branches: ['${TRIGGER_BRANCH}'] } }` }).length).toBeGreaterThan(0);
   });
+});
+
+// The guard is RUN, as bash, against throwaway Git repositories: each way an arming commit can be wrong must fail, and each
+// line of the guard must be load-bearing (or provably subsumed by another) when removed.
+describe("arming guard behaviour (runs the workflow's own guard script against temporary repositories)", () => {
+  const doc = Bun.YAML.parse(WORKFLOW) as Doc;
+  const script = (Object.values(doc.jobs ?? {})[0]?.steps ?? [])[1]?.run ?? "";
+  const workflow = (head: string, extra = "") => `name: x\nenv:\n  ARMED_HEAD: '${head}'\n  OTHER: 1\n${extra}`;
+  function git(cwd: string, ...args: string[]): string {
+    const r = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@invalid", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: cwd, GIT_CONFIG_NOSYSTEM: "1" } });
+    if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+    return r.stdout.trim();
+  }
+  /** Builds the reviewed commit B (unarmed workflow), then a pushed commit P produced by `arm`; returns the guard's exit status. */
+  function run(arm: (dir: string, reviewed: string) => string | void, options: { armedOverride?: string; guard?: string } = {}): number {
+    const dir = mkdtempSync(join(tmpdir(), "owner-arming-guard-"));
+    try {
+      git(dir, "init", "-q", "-b", "main");
+      mkdirSync(join(dir, ".github/workflows"), { recursive: true });
+      writeFileSync(join(dir, WORKFLOW_PATH), workflow(ZERO_HEAD));
+      writeFileSync(join(dir, "reviewed.txt"), "reviewed\n");
+      git(dir, "add", "-A");
+      git(dir, "commit", "-q", "-m", "reviewed");
+      const reviewed = git(dir, "rev-parse", "HEAD");
+      const head = arm(dir, reviewed) ?? reviewed;
+      git(dir, "add", "-A");
+      git(dir, "commit", "-q", "-m", "arming");
+      const pushed = git(dir, "rev-parse", "HEAD");
+      return spawnSync("bash", ["-c", options.guard ?? script], { cwd: dir, env: { PATH: process.env.PATH ?? "", HOME: dir, GIT_CONFIG_NOSYSTEM: "1", ARMED_HEAD: options.armedOverride ?? head, GITHUB_SHA: pushed } }).status ?? -1;
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  const armLine = (dir: string, reviewed: string) => { writeFileSync(join(dir, WORKFLOW_PATH), workflow(reviewed)); return reviewed; };
+  /** Each scenario: true when the guard must refuse. */
+  const SCENARIOS: Array<[string, boolean, (guard?: string) => number]> = [
+    ["exact one-line arming passes", false, (guard) => run(armLine, { guard })],
+    ["unarmed (all zeros)", true, (guard) => run((dir) => { writeFileSync(join(dir, "note.txt"), "x"); return ZERO_HEAD; }, { guard })],
+    ["extra empty file (no diff line; numstat still lists it)", true, (guard) => run((dir, reviewed) => { armLine(dir, reviewed); writeFileSync(join(dir, "extra-empty-file"), ""); return reviewed; }, { guard })],
+    ["mode-only change of another file (no diff line; numstat still lists it)", true, (guard) => run((dir, reviewed) => { armLine(dir, reviewed); chmodSync(join(dir, "reviewed.txt"), 0o755); return reviewed; }, { guard })],
+    ["edits another file in place", true, (guard) => run((dir, reviewed) => { armLine(dir, reviewed); writeFileSync(join(dir, "reviewed.txt"), "changed\n"); return reviewed; }, { guard })],
+    ["armed head not an ancestor, perfect one-line diff", true, (guard) => run((dir, reviewed) => { const side = git(dir, "commit-tree", `${reviewed}^{tree}`, "-m", "side"); writeFileSync(join(dir, WORKFLOW_PATH), workflow(side)); return side; }, { guard })],
+    ["adds a --- line (invisible to the changed-line filter)", true, (guard) => run((dir, reviewed) => { writeFileSync(join(dir, WORKFLOW_PATH), `${workflow(reviewed)}---\n`); return reviewed; }, { guard })],
+    ["adds a line starting with a plus", true, (guard) => run((dir, reviewed) => { writeFileSync(join(dir, WORKFLOW_PATH), `${workflow(reviewed)}+x\n`); return reviewed; }, { guard })],
+    ["two-line diff", true, (guard) => run((dir, reviewed) => { writeFileSync(join(dir, WORKFLOW_PATH), workflow(reviewed).replace("OTHER: 1", "OTHER: 2")); return reviewed; }, { guard })],
+    ["different spelling of the ARMED_HEAD line", true, (guard) => run((dir, reviewed) => { writeFileSync(join(dir, WORKFLOW_PATH), workflow(reviewed).replace(`'${reviewed}'`, reviewed)); return reviewed; }, { guard })],
+    ["arms to a commit other than the recorded one", true, (guard) => run(armLine, { armedOverride: "1".repeat(40), guard })],
+  ];
+  const refusals = (guard?: string) => SCENARIOS.map(([, , go]) => go(guard) !== 0);
+  const expected = SCENARIOS.map(([, mustRefuse]) => mustRefuse);
+
+  test("the extracted script is the guard under test", () => {
+    expect(script).toContain("git merge-base --is-ancestor");
+  });
+  for (const [name, mustRefuse, go] of SCENARIOS) {
+    test(`${mustRefuse ? "refused" : "passes"}: ${name}`, () => {
+      expect(go() !== 0).toBe(mustRefuse);
+    });
+  }
+  test("control: the same shape as the non-ancestor case, but with an ancestor, passes (so the refusal is the ancestry alone)", () => {
+    expect(run((dir, reviewed) => { const child = git(dir, "commit-tree", `${reviewed}^{tree}`, "-p", reviewed, "-m", "child"); git(dir, "reset", "-q", "--soft", child); writeFileSync(join(dir, WORKFLOW_PATH), workflow(child)); return child; })).toBe(0);
+  });
+  test("the checked-out tree is the armed head, not the pushed commit", () => {
+    const dir = mkdtempSync(join(tmpdir(), "owner-arming-head-"));
+    try {
+      git(dir, "init", "-q", "-b", "main");
+      mkdirSync(join(dir, ".github/workflows"), { recursive: true });
+      writeFileSync(join(dir, WORKFLOW_PATH), workflow(ZERO_HEAD));
+      git(dir, "add", "-A");
+      git(dir, "commit", "-q", "-m", "reviewed");
+      const reviewed = git(dir, "rev-parse", "HEAD");
+      writeFileSync(join(dir, WORKFLOW_PATH), workflow(reviewed));
+      git(dir, "add", "-A");
+      git(dir, "commit", "-q", "-m", "arming");
+      const pushed = git(dir, "rev-parse", "HEAD");
+      const r = spawnSync("bash", ["-c", `${script}\ngit rev-parse HEAD`], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: dir, GIT_CONFIG_NOSYSTEM: "1", ARMED_HEAD: reviewed, GITHUB_SHA: pushed } });
+      expect(r.status).toBe(0);
+      expect(r.stdout.trim()).toBe(reviewed);
+      expect(reviewed).not.toBe(pushed);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  // Guard-script mutations, judged by behaviour. A line that another line fully subsumes is named, not hidden.
+  const lines = script.split("\n");
+  const without = (needle: string) => lines.filter((l) => !l.includes(needle)).join("\n");
+  const KILLED: Array<[string, string]> = [
+    ["strict shell weakened", script.replace("set -euo pipefail", "set -uo pipefail")],
+    ["ancestor check removed", without("merge-base")],
+    ["ancestor check advisory", script.replace(/(merge-base[^\n]*)\n/, "$1 || true\n")],
+    ["numstat check removed", without("--numstat")],
+    ["diff capture removed", without("armed_diff=$(")],
+    ["exact one-line diff check removed", without('test "$armed_diff"')],
+    ["diff filter blind to minus lines", script.replace("^[-+][^-+]", "^[+][^+]")],
+    ["armed-head checkout removed", without("git checkout --detach")],
+  ];
+  const SUBSUMED: Array<[string, string]> = [
+    ["single-file check removed (numstat names every changed path, mode-only changes included)", without("--name-only")],
+    ["unarmed refusal removed (git merge-base on the all-zero object already fails)", without('!= "0000')],
+    ["checkout proof removed (a belt: the checkout itself already fails closed)", without("rev-parse HEAD")],
+  ];
+  test("the baseline refusal vector is the expected one", () => {
+    expect(refusals()).toEqual(expected);
+  }, 60000);
+  for (const [name, mutated] of KILLED) {
+    test(`guard mutation killed by behaviour: ${name}`, () => {
+      expect(mutated).not.toBe(script);
+      expect(refusals(mutated)).not.toEqual(expected);
+    }, 60000);
+  }
+  for (const [name, mutated] of SUBSUMED) {
+    test(`guard mutation subsumed (still pinned line-for-line by the static gate): ${name}`, () => {
+      expect(mutated).not.toBe(script);
+      expect(refusals(mutated)).toEqual(expected);
+    }, 60000);
+  }
 });

@@ -1,5 +1,9 @@
 # Guided owner matrix: the one-run workflow
 
+> This run is spent (run 39133771464: 11 pass + 1 skip on the bytes pinned below). The tracked owner,
+> fixture and matrix have since changed (`docs/guided-owner-holder.md`); the successor run is
+> `docs/guided-owner-matrix-run-2.md`. The workflow below is kept byte-for-byte as the record.
+
 `.github/workflows/guided-owner-matrix-reviewed.yml` runs the 12-entry guided owner matrix
 (`scripts/guest-supervisor/test_guided_owner.py`, fixture `guided_owner_native_fixture.c`) once, as
 root, on a disposable `ubuntu-24.04-arm` runner. This document is the review brief. The workflow is

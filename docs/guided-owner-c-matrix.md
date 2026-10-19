@@ -8,6 +8,7 @@ The accepted delta is `docs/research/guided-owner-envelope-DATA.patch`, SHA256
 `22e69ddc41ba7ef2bbf2e00ab65bd5f0705af81983920c4bf0522ce99c7b51b1`.
 The resulting production `linux-session-owner.c` must have SHA256
 `c149d451eaa79442dfd41e9375c891ae8c9a06135d2cfc85851bcc8b5ce51fd8`.
+(Superseded by the holder patch below: the tracked owner is now `95457d8f6ff256257b3b211e0201c64a4ed0b575aac6a9f933b3178b823b0d76`; `c149d451...` is the owner the first matrix run ran.)
 
 Applied unchanged after the reviewed W1/W6 construction cleanup prerequisite:
 original commit `b766e7bc13505aa481ae8e22332856e69dde47cd`, cherry-picked as
@@ -43,14 +44,15 @@ at open, reader authentication on later checks, pidfs/service/runtime comparison
 single CLOEXEC transfer, no numeric close of a caller-owned duplicate, terminal
 shutdown and stream half-close refusal. Static assertions are source evidence.
 
-Proposed, NOT applied: `docs/guided-owner-holder.md` records a DATA patch pair
-(owner `6f44da8c...`, fixture `efa9fa9f...`) that adds a per-check CLOEXEC re-proof
-of every retained descriptor and the bootstrap socket, an own-process census guard
-on the single CLOEXEC reader transfer, and four native cases (`holder-census`,
-`holder-clear-cloexec`, `holder-stray-dup`, `holder-bootstrap-cloexec`). The pinned
-hashes in this document and the tracked owner, fixture and matrix are unchanged;
-real-kernel proof of the new cases is an owner decision (a successor one-run
-reviewed workflow), not something this matrix run covers.
+Applied: `docs/guided-owner-holder.md` records the DATA patch pair (owner `6f44da8c...`,
+fixture `efa9fa9f...`) now applied byte-exactly. The owner re-proves close-on-exec for every
+retained descriptor and the bootstrap socket on each check, and transfers the reader through one
+CLOEXEC dup guarded by an own-process census. The fixture and the matrix gain four native cases
+(`holder-census`, `holder-clear-cloexec`, `holder-stray-dup`, `holder-bootstrap-cloexec`), so the
+matrix has 16 native entries. Tracked hashes: owner `95457d8f...`, fixture `a0c4929d...`, matrix
+`8f93e9f8...`. The four new cases have not run on a kernel; the first run's 11 pass + 1 skip
+(run 39133771464) covered the 12 original entries on the earlier bytes. The successor one-run
+workflow (`docs/guided-owner-matrix-run-2.md`) expects 15 pass + 1 skip.
 A third source test checks the fixture's pre-effect opt-in guard, baseline and
 shutdown oracles without compiling or executing the target fixture.
 A fourth checks that every case normally forks a fresh Root supervisor before

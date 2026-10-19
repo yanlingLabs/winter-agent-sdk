@@ -1,0 +1,135 @@
+# Successor one-run reviewed workflow for the 16-entry guided owner matrix (docs/guided-owner-matrix-run-2.md).
+# The first matrix run is spent (guided-owner-matrix-reviewed.yml, kept as its record). This one runs the owner,
+# fixture and matrix AFTER the holder patches (docs/guided-owner-holder.md), including the four new native cases.
+# It fires ONLY on the first creation of the never-used branch below, by a push, and never again: no pull_request,
+# pull_request_target, workflow_dispatch or schedule trigger exists, so no ordinary PR (including the one that adds
+# this file) can run it. ARMED_HEAD is all zeros until the owner-approved arming commit sets it to the reviewed
+# commit; the first steps refuse unless ARMED_HEAD is an ancestor of the pushed commit and the whole diff is that one
+# line, then check out ARMED_HEAD, so the bytes that run are exactly the reviewed ones. The author never creates the branch.
+name: Reviewed guided owner matrix 2 (one run, holder cases)
+on:
+  push:
+    branches:
+      - 'cowork/guided-owner-matrix-run-2'
+permissions:
+  contents: read
+concurrency:
+  group: guided-owner-matrix-run-2
+  cancel-in-progress: false
+env:
+  ARMED_HEAD: '0000000000000000000000000000000000000000'
+  FIXTURE_SHA256: a0c4929d88ae9dc66fc2201a2ff65c047e4c9ea0e85807d181080835539587d1
+  MATRIX_SHA256: 8f93e9f8327e7da20241f52bdd2a2fdb556134456b64f037ab9a046811406cb4
+  # The fixture #includes this file (the production owner); the matrix recompiles the fixture as root.
+  OWNER_SHA256: 95457d8f6ff256257b3b211e0201c64a4ed0b575aac6a9f933b3178b823b0d76
+jobs:
+  reviewed-disposable-owner-matrix:
+    if: github.repository == 'yanlingLabs/winter-agent-sdk' && github.event_name == 'push' && github.ref == 'refs/heads/cowork/guided-owner-matrix-run-2' && github.event.created == true && github.run_attempt == '1'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Refuse any arming commit that is not the one reviewed line, then check out the armed head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$ARMED_HEAD" != "0000000000000000000000000000000000000000"
+          git merge-base --is-ancestor "$ARMED_HEAD" "$GITHUB_SHA"
+          test "$(git diff --name-only "$ARMED_HEAD" "$GITHUB_SHA")" = ".github/workflows/guided-owner-matrix-holder-reviewed.yml"
+          test "$(git diff --numstat "$ARMED_HEAD" "$GITHUB_SHA")" = "$(printf '1\t1\t%s' .github/workflows/guided-owner-matrix-holder-reviewed.yml)"
+          armed_diff=$(git diff -U0 --no-color "$ARMED_HEAD" "$GITHUB_SHA" | grep -E '^[-+][^-+]' || true)
+          test "$armed_diff" = "$(printf '%s\n%s' "-  ARMED_HEAD: '0000000000000000000000000000000000000000'" "+  ARMED_HEAD: '$ARMED_HEAD'")"
+          git checkout --detach --quiet "$ARMED_HEAD"
+          test "$(git rev-parse HEAD)" = "$ARMED_HEAD"
+      - name: Refuse unless the fixture and matrix are the reviewed bytes
+        run: |
+          set -eu
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = aarch64
+          printf '%s  %s\n' "$FIXTURE_SHA256" scripts/guest-supervisor/guided_owner_native_fixture.c "$MATRIX_SHA256" scripts/guest-supervisor/test_guided_owner.py "$OWNER_SHA256" packages/runtime/src/guest/linux-session-owner.c | sha256sum --check --strict --quiet
+          command -v cc
+      - name: Compile the fixture without privilege
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/owner-matrix-build"
+          cc -std=c11 -O2 -Wall -Wextra -Werror scripts/guest-supervisor/guided_owner_native_fixture.c -o "$RUNNER_TEMP/owner-matrix-build/fixture"
+      - name: Run the matrix as root on the disposable runner and write the summary only
+        run: |
+          set -eu
+          mkdir -p out/guided-owner-matrix
+          sudo -n env WINTER_GUIDED_OWNER_NATIVE_ADMISSION=disposable-linux-guided-owner-matrix python3 -I -S -B - "$ARMED_HEAD" "$GITHUB_SHA" out/guided-owner-matrix/result.json "scripts/guest-supervisor/guided_owner_native_fixture.c=$FIXTURE_SHA256" "scripts/guest-supervisor/test_guided_owner.py=$MATRIX_SHA256" "packages/runtime/src/guest/linux-session-owner.c=$OWNER_SHA256" <<'PY'
+          import hashlib, json, os, platform, re, sys, types, unittest
+          head, pushed, destination, *pins = sys.argv[1:]
+          if os.geteuid() != 0:
+              raise SystemExit('root required')
+          def read(name):
+              with open(name, 'rb') as handle:
+                  return handle.read(16777217)
+          hashes = {}
+          matrix = b''
+          for pin in pins:
+              name, digest = pin.split('=')
+              data = read(name)
+              hashes[name] = hashlib.sha256(data).hexdigest()
+              if hashes[name] != digest:
+                  raise SystemExit('unreviewed matrix bytes refused')
+              if name.endswith('test_guided_owner.py'):
+                  matrix = data
+          if len(hashes) != 3 or not matrix:
+              raise SystemExit('unreviewed matrix bytes refused')
+          module = types.ModuleType('guided_owner_matrix')
+          module.__file__ = os.path.abspath('scripts/guest-supervisor/test_guided_owner.py')
+          exec(compile(matrix, module.__file__, 'exec'), module.__dict__)
+          def classify(test, err):
+              if test.id().startswith('setUpClass'):
+                  return 'compile-error'
+              text = str(err[1])
+              if 'timed out' in text:
+                  return 'timeout'
+              if re.search(r'ENOSYS|EPERM|EINVAL|EOPNOTSUPP|not supported|SO_PEERPIDFD|pidfd|unshare', text):
+                  return 'missing-kernel-feature'
+              return 'assertion'
+          class Recorder(unittest.TestResult):
+              def __init__(self):
+                  super().__init__()
+                  self.rows = []
+              def addSuccess(self, test):
+                  self.rows.append((test.id(), 'pass', None))
+              def addSkip(self, test, reason):
+                  self.rows.append((test.id(), 'skip', None))
+              def addFailure(self, test, err):
+                  self.rows.append((test.id(), 'fail', classify(test, err)))
+              def addError(self, test, err):
+                  self.rows.append((test.id(), 'fail', classify(test, err)))
+              def addExpectedFailure(self, test, err):
+                  self.rows.append((test.id(), 'fail', 'assertion'))
+              def addUnexpectedSuccess(self, test):
+                  self.rows.append((test.id(), 'fail', 'assertion'))
+          suite = unittest.TestLoader().loadTestsFromTestCase(module.GuidedOwnerNativeTargetTests)
+          recorder = Recorder()
+          suite.run(recorder)
+          kernel = platform.release()
+          major_minor = tuple(int(part) for part in kernel.split('-')[0].split('.')[:2])
+          tests = [{'id': name.split('.')[-1], 'outcome': outcome, 'failureClass': cls} for name, outcome, cls in sorted(recorder.rows, key=lambda row: row[0])]
+          count = lambda outcome: sum(1 for row in tests if row['outcome'] == outcome)
+          skipped = [row['id'] for row in tests if row['outcome'] == 'skip']
+          expected = major_minor >= (6, 9) and len(tests) == 16 and count('pass') == 15 and count('fail') == 0 and skipped == ['test_actual_pidfs_absent_before_69']
+          result = {'schema': 'winter-guided-owner-matrix-result/3', 'headSha': head, 'armingSha': pushed, 'kernelRelease': kernel, 'machine': platform.machine(), 'pinnedSha256': hashes, 'total': len(tests), 'passed': count('pass'), 'skipped': count('skip'), 'failed': count('fail'), 'matchesExpected15Plus1': expected, 'tests': tests}
+          fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+          with os.fdopen(fd, 'w') as handle:
+              json.dump(result, handle, indent=1, sort_keys=True)
+              handle.write('\n')
+          print('guided owner matrix: total=%d passed=%d skipped=%d failed=%d expected=%s kernel=%s' % (result['total'], result['passed'], result['skipped'], result['failed'], expected, kernel))
+          raise SystemExit(0 if expected else 1)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: guided-owner-matrix-result
+          path: out/guided-owner-matrix/result.json
+          if-no-files-found: warn
+          retention-days: 7
