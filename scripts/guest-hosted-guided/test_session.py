@@ -30,6 +30,7 @@ import test_host_query as hq  # noqa: E402
 REAL_REQUIRE = session.require_root_linux
 BOOT = '00000000-0000-0000-0000-000000000000'
 BINDING = '5f6e7d8c-0000-4000-a000-00000000000b'
+REGISTRATION = '9a8b7c6d-0000-4000-b000-00000000000c'
 ARTIFACTS = ('runtimeEntry', 'providerWorker', 'hostClient', 'instructionReader', 'toolLauncher', 'runtimeLauncher', 'fileWorker', 'processWorker', 'ownerLibrary', 'instructionReaderLauncher')
 LIBS = ('environment/lib/aarch64-linux-gnu/libc.so.6', 'environment/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1', 'environment/usr/lib/aarch64-linux-gnu/libm.so.6')
 HASH = lambda data: hashlib.sha256(data).hexdigest()
@@ -151,7 +152,7 @@ class Builders(unittest.TestCase):
         self.assertEqual(set(meta['script']['scope']), {'homeId', 'workspaceId', 'sessionId', 'backendSessionId', 'taskId', 'incarnationId', 'bootId', 'leaseEpoch', 'grantRevision', 'accountRevision', 'modelRevision'})
 
     def test_host_metadata_is_the_exact_C_H3_shape_and_drops_the_required_context(self):
-        runtime_config = {'model': 'm', 'requiredRuntimeContext': {'version': 1, 'bindingId': BINDING}}
+        runtime_config = {'model': 'm'}
         data = session.host_metadata(INPUTS, runtime_config, {'registrationId': 'r'})
         meta = json.loads(data)
         self.assertEqual(','.join(sorted(meta)), 'fixture,incarnationId,leaseEpoch,prompts,readerRegistration,runtimeConfig,version,workspaceKey')
@@ -160,6 +161,11 @@ class Builders(unittest.TestCase):
         self.assertLessEqual(len(data), 65536)
         with self.assertRaises(session.SessionError):
             session.host_metadata({**INPUTS, 'hostFixture': {**INPUTS['hostFixture'], 'sources': ['x' * 70000]}}, runtime_config, {})
+        binding = {'version': 1, 'bindingId': BINDING}
+        with self.assertRaises(session.SessionError):  # a binding in either piece is a stale Root-chosen id the host must never see
+            session.host_metadata(INPUTS, {**runtime_config, 'requiredRuntimeContext': binding}, {'registrationId': 'r'})
+        with self.assertRaises(session.SessionError):
+            session.host_metadata(INPUTS, runtime_config, {'registrationId': 'r', 'requiredRuntimeContext': binding})
 
     def test_role_hashes_come_from_the_pin_and_refuse_a_placeholder(self):
         staged = make_staged(real_root())
@@ -278,6 +284,44 @@ class TreeAndConfig(unittest.TestCase):
         self.assertEqual(registration['views']['sourceRoot'], session.SOURCE_GUEST)
         self.assertEqual(registration['owner']['logicalSessionId'], session.LOGICAL)
         self.assertEqual(registration['requiredRuntimeContext'], value['requiredRuntimeContext'])
+
+    def test_the_hosts_view_is_what_the_real_supervisor_computes_for_the_same_conversation(self):
+        """`host_view` runs the supervisor's pure builders with a placeholder binding. The REAL `_configure_runtime` and `_runtime_record`, given the same
+        conversation and the SDK's binding, must produce the same runtime config and (apart from the registration id) the same registration."""
+        import tempfile
+        layout = self.prepare()
+        service = hq_guided.service
+        early = session.trusted_config(layout, self.hashes, BOOT, self.staged.pin, session.PLACEHOLDER_BINDING)
+        host_config, host_registration = session.host_view(service, early, BOOT, REGISTRATION)
+        self.assertNotIn('requiredRuntimeContext', host_config)
+        self.assertNotIn('requiredRuntimeContext', host_registration)
+        late = session.trusted_config(layout, self.hashes, BOOT, self.staged.pin, BINDING)
+        entry = late['conversations'][0]
+        temp = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(__import__('shutil').rmtree, temp, True)
+        for name in ('store', 'home'):
+            (temp / name).mkdir(mode=0o700)
+        value = {**entry['hostQueryGuidedRuntime'], 'storeDirectory': str(temp / 'store'), 'runhomeDirectory': str(temp / 'home')}
+
+        class Port:
+            def bind(self, item):
+                pass
+        with mock.patch.object(service, 'RuntimeDuplexPorts', Port):
+            obj = service.ToolService.__new__(service.ToolService)
+            obj.runtime_artifacts, obj.owned, obj.runtimes, obj.guest_boot, obj.host_query_ports = {'fixture': -1}, [], {}, BOOT, {session.LOGICAL: Port()}
+            root = service.runtime_root_metadata(entry['roots'][0], entry['policy'], True)
+            item = {'logicalSessionId': entry['logicalSessionId'], 'runtimeUid': os.getuid(), 'toolUid': entry['toolUid'], 'workspaceGid': entry['workspaceGid'],
+                    'authority': service.authority(entry['authority']), 'policy': entry['policy'], 'revoked': False, 'roots': {'source': {'root': root, 'fd': -9}}}
+            obj._configure_runtime(item, value, profile=service.GUIDED_PROFILE)
+            record = obj._runtime_record(item, obj.runtimes[session.LOGICAL])
+        binding = {'version': 1, 'bindingId': BINDING}
+        self.assertEqual(record['runtimeConfig']['requiredRuntimeContext'], binding)
+        self.assertEqual(record['readerRegistration']['requiredRuntimeContext'], binding)
+        self.assertEqual(session.without_binding(record['runtimeConfig']), host_config)
+        real_registration = session.without_binding(record['readerRegistration'])
+        self.assertNotEqual(real_registration['registrationId'], REGISTRATION)
+        real_registration['registrationId'] = REGISTRATION
+        self.assertEqual(real_registration, host_registration)
 
     def test_the_real_tool_service_accepts_the_top_level_config(self):
         layout = self.prepare()
@@ -481,24 +525,42 @@ class FakeProcess:
 
 
 class FakeService:
-    def __init__(self, config, host_query_ports):
+    """A service that computes its runtime config and reader registration with the REAL supervisor builders from the config it is given, as the real one does."""
+
+    def __init__(self, config, host_query_ports, real, events, tamper=None, tamper_runtime=None):
         self.config, self.ports = config, host_query_ports
         self.lock = threading.RLock()
         self.active, self.debt = set(), set()
         sid = session.LOGICAL
-        self.conversations = {sid: {}}
-        self.runtimes = {sid: {'state': 'configured', 'readerRegistration': {'registrationId': 'r', 'requiredRuntimeContext': {'version': 1, 'bindingId': BINDING}}, 'exitCode': 0, 'cleanupConfirmed': True}}
+        conversation = config['conversations'][0]
+        value = conversation['hostQueryGuidedRuntime']
+        root = conversation['roots'][0]
+        item = {'logicalSessionId': sid, 'authority': real.authority(conversation['authority']), 'policy': conversation['policy'],
+                'roots': {root['id']: {'root': real.runtime_root_metadata(root, conversation['policy'], True)}}}
+        host_config = real.guided_host_query_config(item, value['toolClasses'], value['model'], value['requiredRuntimeContext'])
+        registration = real.guided_reader_registration(item, host_config, config['guestBootId'], str(uuid.uuid4()), value['generation'])
+        runtime_registration = json.loads(json.dumps(registration))  # the service's own copy, before any tamper of the record
+        if tamper:
+            tamper(host_config, registration)
+        self.conversations = {sid: item}
+        self.record = {'runtimeConfig': host_config, 'readerRegistration': registration}
+        if tamper_runtime:
+            tamper_runtime(runtime_registration)
+        self.runtimes = {sid: {'state': 'configured', 'readerRegistration': runtime_registration, 'exitCode': 0, 'cleanupConfirmed': True}}
         os.makedirs(os.path.join(config['controlDirectory'], sid))
         self.events, self.closed_result = [], True
+        self.shared_events = events
 
     def _runtime_record(self, item, runtime):
-        return {'runtimeConfig': {'model': session.MODEL, 'requiredRuntimeContext': {'version': 1, 'bindingId': BINDING}}}
+        return self.record
 
     def start(self):
         self.events.append('start')
+        self.shared_events.append('start')
 
     def launch_runtime(self, sid):
         self.events.append('launch')
+        self.shared_events.append('launch')
         self.runtimes[sid].update(state='running', initPidfd=os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC))
 
     def revoke(self, sid):
@@ -527,43 +589,152 @@ class Sequence(unittest.TestCase):
         self.staged = make_staged(self.base)
         self.spawned = []
         self.services = []
+        self.events = []
+        self.tamper = None
+        self.tamper_runtime = None
 
     def spawn(self, binary, args, descriptors, uid):
         # The descriptors are the caller's own at this point; keep dups so the test can read them after the caller closes its copies.
         record = {'binary': Path(binary).name, 'args': args, 'fds': [os.dup(fd) for fd in descriptors], 'uid': uid}
+        self.events.append('spawn ' + record['binary'])
         self.spawned.append(record)
         return FakeProcess(record['binary'])
 
+    def role(self, binary):
+        return [record for record in self.spawned if record['binary'] == binary][-1]
+
     def load(self, path, staged):
-        module = types.SimpleNamespace()
-        module.RuntimeDuplexPorts = lambda *a: ('ports', a)
+        real = hq_guided.service
+        module = types.SimpleNamespace(authority=real.authority, runtime_root_metadata=real.runtime_root_metadata,
+                                       guided_host_query_config=real.guided_host_query_config, guided_reader_registration=real.guided_reader_registration)
+        module.RuntimeDuplexPorts = lambda *a: self.events.append('ports') or ('ports', a)
 
         def make(config, host_query_ports):
-            service = FakeService(config, host_query_ports)
+            self.events.append('service')
+            service = FakeService(config, host_query_ports, real, self.events, self.tamper, self.tamper_runtime)
             self.services.append(service)
             return service
         module.ToolService = make
         return module
 
-    def open(self, **kw):
-        sess = session.GuidedSession.open(self.staged, INPUTS, HERE, parent=str(self.base), spawn=self.spawn, boot=BOOT, uuid4=lambda: uuid.UUID(BINDING), load=self.load, **kw)
+    def open_only(self, **kw):
+        sess = session.GuidedSession.open(self.staged, INPUTS, HERE, parent=str(self.base), spawn=self.spawn, boot=BOOT, uuid4=lambda: uuid.UUID(REGISTRATION), load=self.load, **kw)
         self.addCleanup(sess.close)
         return sess
+
+    def open(self, **kw):
+        """Open, then launch with the SDK binding id (what the host's `host-spawn` line would carry)."""
+        sess = self.open_only(**kw)
+        sess.launch(BINDING)
+        return sess
+
+    def test_open_starts_only_the_host_and_launch_builds_everything_from_the_sdk_binding_id(self):
+        sess = self.open_only()
+        self.assertEqual(self.services, [])  # no service, no runtime, no provider before the binding id is known
+        self.assertEqual([record['binary'] for record in self.spawned], ['hostClient'])
+        self.assertEqual(self.events, ['ports', 'spawn hostClient'])
+        provider = sess.launch(BINDING)
+        self.assertEqual(provider.name, 'providerWorker')
+        # the provider is spawned before any service thread exists (spawn_role forks only from an unthreaded Root), then start, then the runtime
+        self.assertEqual(self.events, ['ports', 'spawn hostClient', 'service', 'spawn providerWorker', 'start', 'launch'])
+        self.assertEqual(self.services[0].events, ['start', 'launch'])
+        self.assertEqual(self.services[0].config['conversations'][0]['hostQueryGuidedRuntime']['requiredRuntimeContext'], {'version': 1, 'bindingId': BINDING})
 
     def test_the_sequence_and_the_descriptor_layouts_follow_the_v1_harness(self):
         sess = self.open()
         service = self.services[0]
         self.assertEqual(service.events, ['start', 'launch'])
-        provider, host = self.spawned
+        host, provider = self.role('hostClient'), self.role('providerWorker')
         self.assertEqual((provider['binary'], provider['args'], provider['uid'], len(provider['fds'])), ('providerWorker', session.PROVIDER_ARGV, session.PROVIDER_UID, 4))
         self.assertEqual((host['binary'], host['args'], host['uid'], len(host['fds'])), ('hostClient', session.HOST_ARGV, session.HOST_UID, 6))
         self.assertIs(sess.spawn('providerWorker').name == 'providerWorker', True)
         with self.assertRaises(session.SessionError):
             sess.spawn('somethingElse')
 
+    def test_launch_is_one_shot_and_takes_only_a_lowercase_uuid_v4_that_is_not_the_placeholder(self):
+        sess = self.open_only()
+        for bad in (None, 7, '', 'not-a-uuid', BINDING.upper(), '5f6e7d8c-0000-1000-a000-00000000000b', '5f6e7d8c-0000-4000-c000-00000000000b', session.PLACEHOLDER_BINDING, BINDING + '0'):
+            with self.assertRaises(session.SessionError, msg=repr(bad)) as caught:
+                sess.launch(bad)
+            self.assertEqual(str(caught.exception), 'binding id invalid', repr(bad))
+        self.assertEqual(self.services, [])  # a refused id does not consume the one launch
+        sess.launch(BINDING)
+        with self.assertRaises(session.SessionError):
+            sess.launch(BINDING)
+        self.assertEqual(len(self.services), 1)
+
+    def test_a_service_that_disagrees_with_what_the_host_was_given_is_never_launched(self):
+        def model(config, registration):
+            config['model'] = 'openai/other'
+        def owner(config, registration):
+            registration['owner']['leaseEpoch'] = 2
+        def views(config, registration):
+            registration['views']['sourceCwd'] = '/workspace/folders/other'
+        def limits(config, registration):
+            registration['limits']['maxFileBytes'] = 1
+        def binding(config, registration):
+            registration['requiredRuntimeContext'] = {'version': 1, 'bindingId': session.PLACEHOLDER_BINDING}
+        def config_binding(config, registration):
+            config['requiredRuntimeContext'] = {'version': 1, 'bindingId': session.PLACEHOLDER_BINDING}
+        def home(config, registration):
+            config['winterHome'] = '/run/winter/conversations/other'
+        def extra(config, registration):
+            registration['extra'] = 1
+        def missing(config, registration):
+            del config['tools']
+        REASONS = {'model': 'host config mismatch', 'owner': 'host registration mismatch', 'views': 'host registration mismatch', 'limits': 'host registration mismatch',
+                   'binding': 'binding mismatch', 'config_binding': 'binding mismatch', 'home': 'host config mismatch', 'extra': 'host registration mismatch', 'missing': 'host config mismatch'}
+        for tamper in (model, owner, views, limits, binding, config_binding, home, extra, missing):
+            self.tamper = tamper
+            sess = self.open_only()
+            before = len(self.spawned)
+            with self.assertRaises(session.SessionError, msg=tamper.__name__) as caught:
+                sess.launch(BINDING)
+            self.assertEqual(str(caught.exception), REASONS[tamper.__name__], tamper.__name__)
+            self.assertEqual(len(self.spawned), before, tamper.__name__)  # no provider
+            self.assertEqual(self.services[-1].events, [], tamper.__name__)  # not started, no runtime
+            self.assertNotIn('start', self.events[-3:], tamper.__name__)
+
+    def test_the_binding_must_be_carried_by_the_runtime_record_and_by_the_services_own_registration_separately(self):
+        wrong = {'version': 1, 'bindingId': session.PLACEHOLDER_BINDING}
+        self.tamper_runtime = lambda registration: registration.update(requiredRuntimeContext=wrong)
+        sess = self.open_only()
+        with self.assertRaises(session.SessionError) as caught:
+            sess.launch(BINDING)
+        self.assertEqual(str(caught.exception), 'binding mismatch')
+        self.assertEqual(self.services[-1].events, [])
+        self.tamper_runtime = None
+        self.tamper = lambda config, registration: registration.update(requiredRuntimeContext=wrong)
+        sess = self.open_only()
+        with self.assertRaises(session.SessionError) as caught:
+            sess.launch(BINDING)
+        self.assertEqual(str(caught.exception), 'binding mismatch')
+
+    def test_launch_refuses_once_the_session_is_closed(self):
+        sess = self.open_only()
+        sess.close()
+        with self.assertRaises(session.SessionError) as caught:
+            sess.launch(BINDING)
+        self.assertEqual(str(caught.exception), 'launch not allowed')
+        self.assertEqual(self.services, [])
+
+    def test_a_different_registration_id_alone_is_not_a_mismatch(self):
+        sess = self.open_only()
+        sess.launch(BINDING)
+        self.assertNotEqual(self.services[0].record['readerRegistration']['registrationId'], REGISTRATION)
+
+    def test_closing_before_a_launch_releases_the_transport_and_the_tree(self):
+        sess = self.open_only()
+        closed = []
+        sess.ports = types.SimpleNamespace(close=lambda: closed.append(True))
+        root = sess.root
+        sess.close()
+        self.assertEqual(closed, [True])
+        self.assertFalse(root.exists())
+
     def test_both_metadata_files_are_root_immutable_and_exactly_the_built_bytes(self):
         sess = self.open()
-        provider, host = self.spawned
+        provider, host = self.role('providerWorker'), self.role('hostClient')
         for record, name, index in ((provider, 'provider-metadata.json', 3), (host, 'host-metadata.json', 3)):
             path = sess.root / name
             self.assertEqual(oct(stat.S_IMODE(os.lstat(path).st_mode)), '0o444')
@@ -571,7 +742,9 @@ class Sequence(unittest.TestCase):
             self.assertEqual(path.read_bytes(), session.canonical(json.loads(path.read_bytes())))
         host_meta = json.loads((sess.root / 'host-metadata.json').read_bytes())
         self.assertNotIn('requiredRuntimeContext', host_meta['runtimeConfig'])
-        self.assertEqual(host_meta['readerRegistration']['registrationId'], 'r')
+        self.assertEqual(host_meta['readerRegistration']['registrationId'], REGISTRATION)
+        self.assertNotIn('requiredRuntimeContext', host_meta['readerRegistration'])
+        self.assertNotIn(BINDING, json.dumps(host_meta))
         self.assertEqual(host_meta['prompts'], INPUTS['prompts'])
         fixture = host_meta['fixture']
         self.assertEqual((fixture['bootId'], fixture['capture']['bootId'], fixture['registration']['bootId']), (BOOT, BOOT, BOOT))
@@ -580,7 +753,7 @@ class Sequence(unittest.TestCase):
 
     def test_the_owner_pidfd_is_handed_to_the_provider_once(self):
         self.open()
-        admission = socket.socket(fileno=self.spawned[0]['fds'][1])
+        admission = socket.socket(fileno=self.role('providerWorker')['fds'][1])
         data, ancillary, _, _ = admission.recvmsg(4, socket.CMSG_LEN(4))
         self.assertEqual(data, b'I')
         self.assertEqual(len(ancillary), 1)
@@ -607,7 +780,7 @@ class Sequence(unittest.TestCase):
         runtime['state'] = 'stopped'
         if mutate:
             mutate(service, runtime)
-        lifecycle = self.spawned[-1]['fds'][4]
+        lifecycle = self.role('hostClient')['fds'][4]
         result = sess.settle(True)
         return result, lifecycle, service
 
@@ -638,7 +811,7 @@ class Sequence(unittest.TestCase):
             sess = self.open()
             service = self.services[-1]
             service.runtimes[session.LOGICAL]['state'] = 'stopped'
-            lifecycle = self.spawned[-1]['fds'][4]
+            lifecycle = self.role('hostClient')['fds'][4]
             with self.assertRaises(session.SessionError) as caught:
                 sess.settle(seen)
             self.assertEqual(str(caught.exception), 'finish_order')
@@ -670,7 +843,7 @@ class Sequence(unittest.TestCase):
     def test_a_host_that_already_exited_is_not_a_failed_settle_but_is_recorded(self):
         sess = self.open()
         self.services[-1].runtimes[session.LOGICAL]['state'] = 'stopped'
-        os.close(self.spawned[-1]['fds'][4])  # the host's read end of fd 7 is gone
+        os.close(self.role('hostClient')['fds'][4])  # the host's read end of fd 7 is gone
         self.assertIs(sess.settle(True), True)
         self.assertEqual(sess.lifecycle_record, 'reader_gone')
 

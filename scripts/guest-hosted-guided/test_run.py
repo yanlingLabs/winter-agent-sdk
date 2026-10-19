@@ -46,12 +46,26 @@ class FakeSession:
         self.settle_result, self.exit_result = settle, exits
         self.settle_calls = []
         self.lifecycle_record = 'written'
+        self.named, self.launches, self.launch_error = {}, [], None
 
-    def spawn(self, role):
-        name = 'provider' if role == 'providerWorker' else 'host'
+    def start(self, name):
         process = subprocess.Popen([sys.executable, '-I', '-B', FAKE, name, self.state, self.modes.get(name, '')], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self.processes.append(process)
+        self.named[name] = process
         return process
+
+    def spawn(self, role):
+        if role != 'hostClient':
+            raise RuntimeError('only the host client exists before launch')
+        return self.named['host'] if 'host' in self.named else self.start('host')
+
+    def launch(self, binding_id):
+        self.launches.append(binding_id)
+        if len(self.launches) > 1:
+            raise RuntimeError('launched twice')
+        if self.launch_error:
+            raise self.launch_error
+        return self.start('provider')
 
     def shared_sha256(self):
         return sha(self.shared)
@@ -67,7 +81,9 @@ class FakeSession:
         if self.exit_result is not None:
             return self.exit_result
         result = {}
-        for label, process in zip(('provider', 'host'), self.processes):
+        for label, process in (('provider', self.named.get('provider')), ('host', self.named.get('host'))):
+            if process is None:
+                continue
             try:
                 result[label] = process.wait(timeout=5)
             except subprocess.TimeoutExpired:
@@ -181,7 +197,7 @@ class HappyPath(Base):
         self.assertTrue(result['verdict']['passed'])
         self.assertEqual(platform.calls, ['bind', 'stage', 'exit64', 'session'])
         self.assertTrue(platform.session.closed)
-        self.assertEqual(sorted(result), ['exits', 'failureClass', 'hostPassed', 'kernelRelease', 'lifecycle', 'machine', 'passed', 'schema', 'settled', 'stage', 'verdict'])
+        self.assertEqual(sorted(result), ['diagnostic', 'exits', 'failureClass', 'hostPassed', 'kernelRelease', 'lifecycle', 'machine', 'passed', 'schema', 'settled', 'stage', 'verdict'])
         self.assertEqual((result['hostPassed'], result['settled'], result['exits']), (True, True, {'host': 0, 'provider': 0}))
 
     def test_relative_paths_are_resolved_before_the_verifier_runs_elsewhere(self):
@@ -366,6 +382,77 @@ class QueryChain(Base):
     def chain(self, **modes):
         return self.go(platform=FakePlatform(self.state, modes))
 
+    def test_the_provider_is_started_only_after_the_binding_id_and_with_exactly_that_id(self):
+        status, result, platform = self.chain()
+        self.assertEqual(status, 0)
+        self.assertEqual(platform.session.launches, ['5f6e7d8c-0000-4000-a000-00000000000b'])
+        self.assertEqual([p for p in platform.session.named], ['host', 'provider'])  # the host first, the provider only from launch
+        self.assertIsNone(result['diagnostic'])
+
+    def test_no_host_spawn_line_means_nothing_is_launched(self):
+        for mode in ('spawn_extra_key', 'spawn_bad_id', 'spawn_v1_id', 'spawn_no_version', 'spawn_v2', 'spawn_int_id', 'refuse_before_spawn', 'host_refused', 'ended_weird'):
+            status, result, platform = self.chain(host=mode)
+            self.assertEqual((status, result['failureClass']), (78, 'host_spawn'), mode)
+            self.assertEqual(platform.session.launches, [], mode)
+            self.assertNotIn('provider', platform.session.named, mode)
+            os.remove(os.path.join(self.out, 'result.json'))
+            shutil.rmtree(self.state)
+            os.mkdir(self.state)
+
+    def test_a_silent_host_before_the_spawn_line_times_out_without_a_launch(self):
+        status, result, platform = self.chain(host='no_spawn')
+        self.assertEqual((status, result['failureClass'], platform.session.launches), (78, 'host_spawn', []))
+        self.assertEqual(result['diagnostic'], {'kind': 'timeout', 'detail': None})
+
+    def test_a_second_host_spawn_line_fails_the_first_dispatch(self):
+        status, result, platform = self.chain(host='second_spawn')
+        self.assertEqual((status, result['failureClass']), (78, 'dispatch1'))
+        self.assertEqual(result['diagnostic'], {'kind': 'protocol', 'detail': 'second_host_spawn'})
+        self.assertEqual(len(platform.session.launches), 1)
+
+    def test_a_failed_launch_is_the_class_launch_with_its_fixed_reason_and_starts_no_provider(self):
+        class Failing(FakePlatform):
+            def open_session(self, staged):
+                super().open_session(staged)
+                self.session.launch_error = session.SessionError('host config mismatch')
+                return self.session
+        status, result, platform = self.go(platform=Failing(self.state))
+        self.assertEqual((status, result['failureClass']), (78, 'launch'))
+        self.assertEqual(result['diagnostic'], {'kind': 'exception', 'detail': 'SessionError:host config mismatch'})
+        self.assertNotIn('provider', platform.session.named)
+
+    def test_a_failure_names_its_cause_from_a_closed_vocabulary_and_never_carries_role_text(self):
+        cases = {
+            'refuse_before_spawn': ('host_spawn', {'kind': 'refused', 'detail': 'failed:config'}),
+            'ended_weird': ('host_spawn', {'kind': 'refused', 'detail': 'other'}),
+            'host_refused': ('host_spawn', {'kind': 'host_refused', 'detail': 'metadata'}),
+            'host_refused_weird': ('host_spawn', {'kind': 'host_refused', 'detail': 'other'}),
+            'spawn_int_id': ('host_spawn', {'kind': 'protocol', 'detail': 'host_spawn_shape'}),
+            'spawn_v2': ('host_spawn', {'kind': 'protocol', 'detail': 'host_spawn_shape'}),
+            'spawn_bad_id': ('host_spawn', {'kind': 'protocol', 'detail': 'host_spawn_shape'}),
+            'exit': ('host_spawn', {'kind': 'closed', 'detail': 'exit:3'}),
+            'dispatch1_refused': ('dispatch1', {'kind': 'refused', 'detail': 'none'}),
+        }
+        for mode, (failure_class, diagnostic) in cases.items():
+            status, result, _ = self.chain(host=mode)
+            self.assertEqual((result['failureClass'], result['diagnostic']), (failure_class, diagnostic), mode)
+            self.assertNotIn('secret', json.dumps(result))
+            os.remove(os.path.join(self.out, 'result.json'))
+            shutil.rmtree(self.state)
+            os.mkdir(self.state)
+
+    def test_an_unexpected_exception_is_recorded_by_class_name_only(self):
+        class Boom(FakePlatform):
+            def open_session(self, staged):
+                raise KeyError('/secret/path with spaces')
+        status, result, _ = self.go(platform=Boom(self.state))
+        self.assertEqual(result['diagnostic'], {'kind': 'exception', 'detail': 'KeyError'})
+        self.assertNotIn('secret', json.dumps(result))
+
+    def test_a_revocation_that_leaks_still_fails_the_verdict_and_records_no_diagnostic(self):
+        status, result, _ = self.chain(host='revoke_leaks')
+        self.assertIsNone(result['diagnostic'])
+
     def test_revocation_that_reaches_the_stub_fails_the_verdict_even_though_the_host_refused(self):
         status, result, _ = self.chain(host='revoke_leaks')
         self.assertEqual(status, 1)
@@ -394,7 +481,7 @@ class QueryChain(Base):
 
     def test_both_role_channels_are_closed_at_the_end(self):
         status, result, platform = self.chain()
-        host, provider = platform.session.processes[1], platform.session.processes[0]
+        host, provider = platform.session.named['host'], platform.session.named['provider']
         self.assertTrue(host.stdin.closed)
         self.assertIsNotNone(provider.poll() if provider.wait(timeout=5) is not None else None)
 
@@ -423,12 +510,13 @@ class QueryChain(Base):
 
     def test_a_command_the_host_refuses_is_a_stage_class(self):
         status, result, _ = self.chain(host='command_refused')
-        self.assertEqual((status, result['failureClass']), (78, 'dispatch1'))
+        self.assertEqual((status, result['failureClass']), (78, 'host_spawn'))
+        self.assertEqual(result['diagnostic'], {'kind': 'refused', 'detail': 'command:order'})
 
     def test_a_role_that_exits_or_speaks_garbage_is_a_bounded_class(self):
         for mode in ('exit', 'garbage', 'huge', 'bad_kind'):
             status, result, platform = self.chain(host=mode)
-            self.assertEqual((status, result['failureClass']), (78, 'dispatch1'), mode)
+            self.assertEqual((status, result['failureClass']), (78, 'host_spawn'), mode)
             os.remove(os.path.join(self.out, 'result.json'))
             shutil.rmtree(self.state)
             os.mkdir(self.state)
@@ -473,7 +561,7 @@ class QueryChain(Base):
 
     def test_a_host_that_exits_without_a_result_is_host_result_not_finish_order(self):
         status, result, platform = self.go(platform=FakePlatform(self.state, modes={'host': 'exit'}))
-        self.assertEqual(result['failureClass'], 'dispatch1')  # it never got as far as finish
+        self.assertEqual(result['failureClass'], 'host_spawn')  # it never got as far as finish
         status, result, platform = self.go(platform=FakePlatform(self.state, modes={'host': 'garbage'}))
         self.assertNotEqual(result['failureClass'], 'finish_order')
 
@@ -787,23 +875,27 @@ class Adapter(unittest.TestCase):
         self.addCleanup(lambda: [(p.kill(), p.wait()) for p in procs])
         return roles_adapter.GuidedRoles(procs[0], procs[1], timeout=1.0)
 
+    def first_dispatch(self, roles):
+        roles.begin_dispatch(1)
+        return roles.finish_dispatch(1)
+
     def test_counters_come_only_from_the_provider_receipt(self):
         roles = self.roles()
         roles.await_provider_ready()
         self.assertEqual(roles.stub_receipt('first'), {key: 0 for key in roles_adapter.COUNTERS})
-        self.assertEqual(roles.dispatch(1), 'first deterministic answer')
+        self.assertEqual(self.first_dispatch(roles), 'first deterministic answer')
         self.assertEqual(roles.stub_receipt('second')['receivedBegins'], 1)
 
     def test_the_provider_summary_is_the_final_figure(self):
         roles = self.roles()
         roles.await_provider_ready()
-        roles.dispatch(1)
+        self.first_dispatch(roles)
         self.assertEqual(roles.stop()['acceptedBegins'], 1)
 
     def test_host_commands_and_results(self):
         roles = self.roles()
         roles.await_provider_ready()
-        roles.dispatch(1)
+        self.first_dispatch(roles)
         roles.dispatch(2)
         self.assertEqual(roles.present_spent(), 'required_context_unavailable')
         roles.premint()
@@ -812,10 +904,17 @@ class Adapter(unittest.TestCase):
         roles.finish_send()
         self.assertIs(roles.finish_result(), True)
 
+    def test_attaching_a_second_provider_is_refused(self):
+        roles = self.roles()
+        with self.assertRaises(roles_adapter.AdapterError) as raised:
+            roles.attach_provider(object())
+        self.assertEqual((raised.exception.kind, raised.exception.detail), ('protocol', 'second_provider'))
+
     def test_a_host_result_before_finish_is_its_own_kind(self):
         roles = self.roles(host='early_result')
+        self.assertEqual(roles.begin_dispatch(1), '5f6e7d8c-0000-4000-a000-00000000000b')
         with self.assertRaises(roles_adapter.AdapterError) as raised:
-            roles.dispatch(1)
+            roles.finish_dispatch(1)
         self.assertEqual(raised.exception.kind, 'premature_result')
 
     def test_the_finish_order_is_pinned_in_the_adapter(self):

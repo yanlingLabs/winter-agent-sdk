@@ -46,6 +46,7 @@ def raw(text):
 
 
 answers = {1: 'first deterministic answer', 2: 'second deterministic answer'}
+BINDING = '5f6e7d8c-0000-4000-a000-00000000000b'
 
 if role == 'provider':
     def terminate(signum, frame):
@@ -80,11 +81,14 @@ if role == 'provider':
     time.sleep(0)
 else:
     revoked = False
+    if mode in ('host_refused', 'host_refused_weird'):
+        out({'version': 1, 'kind': 'host-refused', 'code': '/secret/code' if mode == 'host_refused_weird' else 'metadata'})
+        sys.exit(2)
     if mode == 'noise':
-        out({'kind': 'host-spawn'})
+        out({'kind': 'host-query-ended', 'how': 'completed'})
     if mode == 'spam':
         for _ in range(5000):
-            out({'kind': 'host-spawn'})
+            out({'kind': 'host-query-ended', 'how': 'completed'})
     for line in sys.stdin:
         if mode == 'silent':
             time.sleep(30)
@@ -110,6 +114,31 @@ else:
         flag = load(flags, {})
         if words[:1] == ['dispatch']:
             n = int(words[1])
+            if n == 1:
+                if mode == 'refuse_before_spawn':
+                    out({'kind': 'host-dispatch', 'n': 1, 'ok': False, 'answer': '', 'ended': 'failed:config'})
+                    continue
+                if mode == 'ended_weird':
+                    out({'kind': 'host-dispatch', 'n': 1, 'ok': False, 'answer': '', 'ended': 'failed:/secret/path'})
+                    continue
+                if mode == 'no_spawn':
+                    time.sleep(30)
+                spawn_line = {'version': 1, 'kind': 'host-spawn', 'bindingId': BINDING}
+                if mode == 'spawn_extra_key':
+                    spawn_line['extra'] = 1
+                if mode == 'spawn_bad_id':
+                    spawn_line['bindingId'] = 'not-a-uuid'
+                if mode == 'spawn_v1_id':
+                    spawn_line['bindingId'] = '5f6e7d8c-0000-1000-a000-00000000000b'
+                if mode == 'spawn_v2':
+                    spawn_line['version'] = 2
+                if mode == 'spawn_int_id':
+                    spawn_line['bindingId'] = 7
+                if mode == 'spawn_no_version':
+                    del spawn_line['version']
+                out(spawn_line)
+                if mode == 'second_spawn':
+                    out(spawn_line)
             if mode == 'dispatch1_refused' and n == 1:
                 out({'kind': 'host-dispatch', 'n': 1, 'ok': False, 'answer': ''})
                 continue

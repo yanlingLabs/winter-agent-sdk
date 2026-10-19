@@ -157,14 +157,44 @@ def provider_metadata(inputs, route):
     return canonical({'version': 1, 'runtimeUid': RUNTIME_UID, 'scriptSha256': sha256_hex(canonical(script)), 'script': script})
 
 
+def without_binding(value):
+    """A deep copy of a runtime config or a reader registration with its `requiredRuntimeContext` removed."""
+    return {key: json.loads(json.dumps(item)) for key, item in value.items() if key != 'requiredRuntimeContext'}
+
+
 def host_metadata(inputs, runtime_config, reader_registration):
-    config = {key: value for key, value in runtime_config.items() if key != 'requiredRuntimeContext'}
-    value = {'version': 1, 'workspaceKey': 'workspace', 'incarnationId': 'incarnation', 'leaseEpoch': 1, 'prompts': inputs['prompts'], 'runtimeConfig': config,
+    """The host client's metadata. Neither the runtime config nor the registration carries a `requiredRuntimeContext`: the binding id is the SDK
+    query's own, generated inside `query()`, so Root cannot choose it. The host builds the full registration from the SDK's id when it spawns (its
+    `host-spawn` line carries that id back to Root), and refuses metadata that still has the key."""
+    if 'requiredRuntimeContext' in runtime_config or 'requiredRuntimeContext' in reader_registration:
+        raise SessionError('inputs')
+    value = {'version': 1, 'workspaceKey': WORKSPACE, 'incarnationId': INCARNATION, 'leaseEpoch': 1, 'prompts': inputs['prompts'], 'runtimeConfig': runtime_config,
              'readerRegistration': reader_registration, 'fixture': inputs['hostFixture']}
     data = canonical(value)
     if len(data) > 65536:
         raise SessionError('inputs')
     return data
+
+
+PLACEHOLDER_BINDING = '00000000-0000-4000-8000-0000000000bb'
+BINDING_V4 = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
+
+
+def host_view(module, config, boot, registration_id):
+    """What the host client is given BEFORE the SDK has made its binding id: the runtime config and the reader registration, each WITHOUT the
+    binding. They come from the supervisor's own pure builders (`guided_host_query_config`, `guided_reader_registration`) run on the conversation of the
+    trusted config with a placeholder binding that is removed again, so they are by construction what a service built later computes. `launch` compares
+    them with the real service's values and refuses to launch on any difference. The registration id is Root's own here; the service makes a new random one,
+    which the host only format-checks and never compares."""
+    conversation = config['conversations'][0]
+    value = conversation['hostQueryGuidedRuntime']
+    root = conversation['roots'][0]
+    item = {'logicalSessionId': conversation['logicalSessionId'], 'authority': module.authority(conversation['authority']), 'policy': conversation['policy'],
+            'roots': {root['id']: {'root': module.runtime_root_metadata(root, conversation['policy'], True)}}}
+    placeholder = {'version': 1, 'bindingId': PLACEHOLDER_BINDING}
+    host_config = module.guided_host_query_config(item, value['toolClasses'], value['model'], placeholder)
+    registration = module.guided_reader_registration(item, host_config, boot, registration_id, value['generation'])
+    return without_binding(json.loads(canonical(host_config))), without_binding(json.loads(canonical(registration)))
 
 
 def reader_dependencies(pin, environment_dir):
@@ -388,10 +418,15 @@ class GuidedSession:
         self.lifecycle = None
         self.lifecycle_record = None
         self.closed = False
+        self.launched = False
+        self.ports = None
         self.edited = ''
 
     @classmethod
     def open(cls, staged, inputs, directory, *, supervisor_path=None, parent='/tmp', spawn=spawn_role, boot=None, uuid4=uuid.uuid4, load=None):
+        """Everything that does not need the SDK's binding id: the tree, the supervisor module (hash-compared to the packet), the transport pipes and the
+        HOST client, started with its binding-free metadata. No service exists yet, no runtime, no provider: `launch(binding_id)` makes those once the host's
+        `host-spawn` line has told Root the id the SDK's query generated."""
         validate_inputs(inputs)
         require_root_linux()
         hashes = role_hashes(staged.pin)
@@ -404,45 +439,72 @@ class GuidedSession:
             supervisor_path = supervisor_path or Path(directory).resolve().parents[1] / SUPERVISOR_SUFFIX
             self.supervisor = module = (load or load_supervisor)(supervisor_path, staged)
             boot = boot or Path('/proc/sys/kernel/random/boot_id').read_text().strip()
-            inputs = bind_boot(inputs, boot)
-            config = trusted_config(self.layout, hashes, boot, staged.pin, str(uuid4()))
-            route = config['conversations'][0]['hostQueryGuidedRuntime']['provider']
+            self.inputs = inputs = bind_boot(inputs, boot)
+            self.staged, self.hashes, self.boot, self.spawn_function = staged, hashes, boot, spawn
+            config = trusted_config(self.layout, hashes, boot, staged.pin, PLACEHOLDER_BINDING)
+            self.host_runtime_config, self.host_registration = host_view(module, config, boot, str(uuid4()))
             pipes = [make_pipe() for _ in range(5)]
             self.fds.extend(fd for pair in pipes for fd in pair)
-            ports = module.RuntimeDuplexPorts(LOGICAL, config['conversations'][0]['authority'], pipes[0][0], pipes[1][1], pipes[2][1])
-            self.service = module.ToolService(config, host_query_ports={LOGICAL: ports})
+            self.ports = module.RuntimeDuplexPorts(LOGICAL, config['conversations'][0]['authority'], pipes[0][0], pipes[1][1], pipes[2][1])
             for fd in (pipes[0][0], pipes[1][1], pipes[2][1]):
                 os.close(fd)
                 self.fds.remove(fd)
-            sid = LOGICAL
-            runtime = self.service.runtimes[sid]
-            record = self.service._runtime_record(self.service.conversations[sid], runtime)
-            host_meta = self._metadata('host-metadata.json', host_metadata(inputs, record['runtimeConfig'], runtime['readerRegistration']))
-            provider_meta = self._metadata('provider-metadata.json', provider_metadata(inputs, route))
-            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            self.channels.append(listener)
-            socket_path = self.layout['control'] / sid / 'provider.sock'
-            listener.bind(str(socket_path))
-            os.chmod(socket_path, 0o660)
-            os.chown(socket_path, 0, RUNTIME_UID)
-            listener.listen(4)
-            admission, worker = socket.socketpair(socket.AF_UNIX, SEQPACKET)
-            self.channels.extend((admission, worker))
-            library = os.open(self.layout['bin'] / 'ownerLibrary', os.O_RDONLY | os.O_CLOEXEC)
-            self.fds.append(library)
-            self.processes['providerWorker'] = spawn(self.layout['bin'] / 'providerWorker', PROVIDER_ARGV, [listener.fileno(), worker.fileno(), library, provider_meta], PROVIDER_UID)
+            host_meta = self._metadata('host-metadata.json', host_metadata(inputs, self.host_runtime_config, self.host_registration))
             self.processes['hostClient'] = spawn(self.layout['bin'] / 'hostClient', HOST_ARGV, [pipes[0][1], pipes[1][0], pipes[2][0], host_meta, pipes[3][0], pipes[4][1]], HOST_UID)
             self.lifecycle = pipes[3][1]
             for fd in (pipes[0][1], pipes[1][0], pipes[2][0], pipes[3][0], pipes[4][1]):
                 os.close(fd)
                 self.fds.remove(fd)
-            self.service.start()
-            self.service.launch_runtime(sid)
-            self._hand_over_owner(admission, sid)
             return self
         except BaseException:
             self.close()
             raise
+
+    def launch(self, binding_id):
+        """Called ONCE, with the binding id the host client's `host-spawn` line carried (the SDK query's own id). Builds the trusted config with it, constructs
+        the service, REFUSES to go on unless the real service's runtime config and reader registration are exactly what the host was given (apart from the
+        registration id, which the host never compares) and carry that binding, then spawns the provider, starts the service, launches the runtime and hands
+        the owner to the provider. Returns the provider process."""
+        if self.launched or self.closed:
+            raise SessionError('launch not allowed')
+        if type(binding_id) is not str or not BINDING_V4.fullmatch(binding_id) or binding_id == PLACEHOLDER_BINDING:
+            raise SessionError('binding id invalid')
+        self.launched = True
+        module, sid = self.supervisor, LOGICAL
+        config = trusted_config(self.layout, self.hashes, self.boot, self.staged.pin, binding_id)
+        route = config['conversations'][0]['hostQueryGuidedRuntime']['provider']
+        self.service = module.ToolService(config, host_query_ports={sid: self.ports})
+        runtime = self.service.runtimes[sid]
+        record = self.service._runtime_record(self.service.conversations[sid], runtime)
+        registration = record['readerRegistration']
+        binding = {'version': 1, 'bindingId': binding_id}
+        if (record['runtimeConfig'].get('requiredRuntimeContext') != binding or registration.get('requiredRuntimeContext') != binding
+                or runtime['readerRegistration'].get('requiredRuntimeContext') != binding):
+            raise SessionError('binding mismatch')
+        same = lambda left, right: json.loads(canonical(left)) == json.loads(canonical(right))  # key order is the producer's business, not a difference
+        service_registration = without_binding(registration)
+        service_registration['registrationId'] = self.host_registration['registrationId']
+        if not same(without_binding(record['runtimeConfig']), self.host_runtime_config):
+            raise SessionError('host config mismatch')
+        if not same(service_registration, self.host_registration):
+            raise SessionError('host registration mismatch')
+        provider_meta = self._metadata('provider-metadata.json', provider_metadata(self.inputs, route))
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.channels.append(listener)
+        socket_path = self.layout['control'] / sid / 'provider.sock'
+        listener.bind(str(socket_path))
+        os.chmod(socket_path, 0o660)
+        os.chown(socket_path, 0, RUNTIME_UID)
+        listener.listen(4)
+        admission, worker = socket.socketpair(socket.AF_UNIX, SEQPACKET)
+        self.channels.extend((admission, worker))
+        library = os.open(self.layout['bin'] / 'ownerLibrary', os.O_RDONLY | os.O_CLOEXEC)
+        self.fds.append(library)
+        self.processes['providerWorker'] = self.spawn_function(self.layout['bin'] / 'providerWorker', PROVIDER_ARGV, [listener.fileno(), worker.fileno(), library, provider_meta], PROVIDER_UID)
+        self.service.start()
+        self.service.launch_runtime(sid)
+        self._hand_over_owner(admission, sid)
+        return self.processes['providerWorker']
 
     def _metadata(self, name, data):
         path = self.root / name
@@ -563,6 +625,11 @@ class GuidedSession:
         if self.service is not None:
             try:
                 self.service.close()
+            except Exception:  # noqa: BLE001
+                pass
+        elif getattr(self, 'ports', None) is not None:
+            try:
+                self.ports.close()  # no service ever took the transport over
             except Exception:  # noqa: BLE001
                 pass
         for channel in self.channels:

@@ -43,14 +43,14 @@ OPT_IN = 'WINTER_GUIDED_HOSTED_ADMISSION'
 OPT_IN_VALUE = 'disposable-linux-guided-hosted-run'
 # SHA-256 of the two siblings this file may load. Changing either sibling changes these and therefore this file's hash.
 ORACLE_SHA256 = '295075e74776a4b40a7e5d4f11912d52f47bb8f03e112e6f48d687de6fa3323e'
-ADAPTER_SHA256 = '02593e1c8973ce773224566a34ebbe66efda8edf832231b0385ca5c87d2f7e7b'
-SESSION_SHA256 = '876282e37efbdd6c759093646888d1e2dbc70de09a6c400c77568e7bbd8c495d'
+ADAPTER_SHA256 = '62eccd5981f325b439338eba1f3d95cedf2c1f30ac816e785b5a35d9601eb1ec'
+SESSION_SHA256 = 'e6fe9735e2b5fb102457ccf84b6e24a704f08c0fae884dab43fbf301b185451f'
 # The Core-dependent inputs (the host fixture records, the provider script's marker lines, the two prompts, the guidance
 # texts) are DATA this lane cannot invent; they live in a closed JSON file next to this one, pinned here. Zero = not supplied.
 FIXTURE_INPUTS_SHA256 = 'bfcdc1bffc6ea84548884602d57d23493999d0f8ed5bbe5e4a304b0bc5f74fce'
 CLASSES = (
     'admission', 'arguments', 'packet_verify', 'metafile', 'sibling_pin', 'platform_incomplete', 'stage_packet', 'exit64_case', 'session',
-    'provider_start', 'dispatch1', 'shared_edit', 'dispatch2', 'ticket_reuse', 'revocation', 'finish_order', 'host_result', 'settle', 'teardown', 'verdict',
+    'host_spawn', 'launch', 'provider_start', 'dispatch1', 'shared_edit', 'dispatch2', 'ticket_reuse', 'revocation', 'finish_order', 'host_result', 'settle', 'teardown', 'verdict',
     'result_write',
 )
 MAX_SMALL = 16 * 1024 * 1024
@@ -306,10 +306,26 @@ def write_result(out_dir, record):
         os.close(fd)
 
 
+SAFE_NAME = re.compile(r'^[A-Za-z][A-Za-z0-9_]{0,39}$')
+SAFE_MESSAGE = re.compile(r'^[a-z][a-z_ ]{0,39}$')
+
+
+def exception_diagnostic(error):
+    """{kind: 'exception', detail: '<ClassName>[:<fixed short message>]'} for the exception types this runner raises on purpose (their messages are fixed
+    lowercase words such as `host config mismatch`); any other message is dropped, so no path, id or role text can enter the record."""
+    name = type(error).__name__
+    if not SAFE_NAME.fullmatch(name):
+        name = 'Exception'
+    message = str(error)
+    if name in ('SessionError', 'RunnerError', 'PlatformIncomplete', 'ValueError') and SAFE_MESSAGE.fullmatch(message):
+        return {'kind': 'exception', 'detail': '%s:%s' % (name, message)}
+    return {'kind': 'exception', 'detail': name}
+
+
 def run(argv, platform, env, directory, euid=os.geteuid):
     """Returns (record, exit_status). Never raises: every failure becomes a bounded class in the record."""
     record = {'schema': SCHEMA, 'kernelRelease': host_platform.release(), 'machine': host_platform.machine(), 'stage': 'start', 'failureClass': None,
-              'passed': False, 'hostPassed': None, 'settled': None, 'lifecycle': None, 'exits': None, 'verdict': None}
+              'passed': False, 'hostPassed': None, 'settled': None, 'lifecycle': None, 'exits': None, 'verdict': None, 'diagnostic': None}
     session = roles = None
     try:
         record['stage'] = 'admission'
@@ -337,15 +353,23 @@ def run(argv, platform, env, directory, euid=os.geteuid):
             session = platform.open_session(staged)
         except PlatformIncomplete:
             raise RunnerError('platform_incomplete') from None
-        except (OSError, ValueError):
+        except (OSError, ValueError) as error:
+            record['diagnostic'] = exception_diagnostic(error)
             raise RunnerError(record['stage']) from None
         stub, host = {}, {}
         record['stage'] = 'provider_start'
         try:
-            roles = adapter.GuidedRoles(session.spawn('providerWorker'), session.spawn('hostClient'), platform.role_timeout or adapter.TIMEOUT)
+            roles = adapter.GuidedRoles(None, session.spawn('hostClient'), platform.role_timeout or adapter.TIMEOUT)
+            # The SDK query makes its own binding id when it starts, so the first dispatch is split: send it, read the host's ONE `host-spawn` line (the id),
+            # and only then build the service, start the runtime and the provider with that id. The reply to dispatch 1 is read last.
+            record['stage'] = 'host_spawn'
+            binding_id = roles.begin_dispatch(1)
+            record['stage'] = 'launch'
+            roles.attach_provider(session.launch(binding_id))
+            record['stage'] = 'provider_start'
             roles.await_provider_ready()
             record['stage'] = 'dispatch1'
-            host['dispatch1Text'] = roles.dispatch(1)
+            host['dispatch1Text'] = roles.finish_dispatch(1)
             stub['afterDispatch1'] = roles.stub_receipt('after-dispatch1')
             record['stage'] = 'shared_edit'
             shared = {'beforeSha256': session.shared_sha256()}
@@ -380,7 +404,8 @@ def run(argv, platform, env, directory, euid=os.geteuid):
                 raise RunnerError('teardown')
             stub['final'] = final
             record['exits'] = session.reap()
-        except adapter.AdapterError:
+        except adapter.AdapterError as error:
+            record['diagnostic'] = error.diagnostic()
             raise RunnerError(record['stage']) from None
         record['stage'] = 'verdict'
         verdict = oracle.evaluate({'exit64': exit64, 'stub': stub, 'host': host, 'sharedFile': shared})
@@ -394,8 +419,9 @@ def run(argv, platform, env, directory, euid=os.geteuid):
         record['passed'] = record['failureClass'] is None
     except RunnerError as error:
         record['failureClass'] = error.failure_class
-    except Exception:  # noqa: BLE001 -- the record keeps the stage and a bounded class, never the exception text
+    except Exception as error:  # noqa: BLE001 -- the record keeps the stage and a bounded class, never the exception text
         record['failureClass'] = record['stage'] if record['stage'] in CLASSES else 'verdict'
+        record['diagnostic'] = record['diagnostic'] or exception_diagnostic(error)
     finally:
         for closer in (getattr(roles, 'stop', None), getattr(session, 'close', None)):
             try:

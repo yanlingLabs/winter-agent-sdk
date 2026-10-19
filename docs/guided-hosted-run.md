@@ -139,14 +139,47 @@ runtime-sdk's `verify_packet.py` and its SHA-256, and the run-2 pin file and its
    complete;
 5. **preflight, executing nothing**: every SDK module appears exactly once in the hostClient metafile (two copies of
    `guided-query-reader.ts` would make the reader lookup refuse everything and waste the run);
-6. runs the independent exit-64 case, opens the session, runs the query chain, finishes (in the pinned order below), settles and tears
+6. runs the independent exit-64 case, opens the session (the tree, the supervisor module, the transport and the HOST client only), then
+   **sends `dispatch 1`, reads the host's one `host-spawn` line (the SDK query's own binding id), and only then launches** the service, the
+   provider and the runtime with that id (below), runs the rest of the query chain, finishes (in the pinned order below), settles and tears
    down, and writes one bounded `result.json` (`O_EXCL`). Role text never enters the record. The run passes only if the verdict passes, the host
    client's own `host-result.passed` is true, the runtime settled, and both roles exited 0.
 
 Failure classes of the runner itself: `admission`, `arguments`, `packet_verify`, `metafile`, `sibling_pin`,
-`platform_incomplete`, `stage_packet`, `exit64_case`, `session`, `provider_start`, `dispatch1`, `shared_edit`, `dispatch2`,
+`platform_incomplete`, `stage_packet`, `exit64_case`, `session`, `host_spawn`, `launch`, `provider_start`, `dispatch1`, `shared_edit`, `dispatch2`,
 `ticket_reuse`, `revocation`, `finish_order`, `host_result`, `settle`, `teardown`, `verdict`, `result_write`. The record also carries
-`lifecycle`: `written` or `reader_gone` (see the finish order).
+`lifecycle`: `written` or `reader_gone` (see the finish order), and `diagnostic` (below).
+
+### The binding id (why hosted run 39310740026 was red, and the fix)
+
+The first hosted run failed at `dispatch1`. The cause is a design gap, now reproduced deterministically by
+`packages/runtime/src/guest/linux-guided-binding-correlation.test.ts`: the SDK's `query()` generates the guided `requiredRuntimeContext.bindingId`
+itself (`randomUUID()`, `packages/sdk/src/query.ts`), and the host client asserted the emitted config against a reader registration Root had produced
+BEFORE the query existed, with an id Root had chosen. No query can pick that id, so every query was refused with `required_context_unavailable`
+(`docs/guided-root-producer.md` listed this as the open "correlation delivery" item). The test shows two queries get two different ids, both refused
+against an early registration and both accepted against a registration made from their own id.
+
+The fix is a two-sided contract (the host half is runtime-sdk PR 24, C-H3/C-H7):
+
+* **Metadata.** Root's `readerRegistration` and `runtimeConfig` for the host carry no `requiredRuntimeContext` (the host REFUSES metadata that does).
+  They come from the supervisor's own pure builders (`guided_host_query_config`, `guided_reader_registration`) run with a placeholder binding that is removed
+  again (`session.host_view`). The registration id in the host's copy is Root's own; the service later makes a new random one; the host only
+  format-checks it and never compares or prints it.
+* **The line.** The host's spawn hook consumes the SDK correlation, asserts Root's config plus the SDK's id, and prints exactly
+  `{"version":1,"kind":"host-spawn","bindingId":"<lowercase uuid v4>"}`. The adapter refuses any other key, a missing version, a non-v4 id, a second
+  `host-spawn` (fails the first dispatch as `second_host_spawn`), and a `host-dispatch ok:false`, `host-refused` or `host-command-refused` in that slot.
+* **Root, after the line.** `GuidedSession.launch(binding_id)` (one shot, a lowercase uuid v4 that is not the placeholder) builds the trusted config
+  with the id, constructs `ToolService`, and **refuses to go on** unless the service's runtime config carries exactly that binding and, apart from the binding
+  and the registration id, both the runtime config and the registration are identical to what the host was given. Only then does it bind the provider
+  listener, spawn the provider (still before any service thread exists), `start()`, `launch_runtime()` and hand the owner to the provider. The provider prints
+  `provider-ready` only after that hand-over, so it is awaited after `launch`, and the reply to dispatch 1 is read last. The SDK's first frames wait in
+  the pipe until the runtime exists (the supervisor reads them at launch). Every hash-before-exec rule is unchanged.
+
+**Diagnostics.** A red run now names its cause in `result.json`: `diagnostic` is `{kind, detail}` from a closed vocabulary: the adapter error kind
+(`timeout`, `closed`, `protocol`, `refused`, `host_refused`, `premature_result`) and a detail that is a role exit status (`exit:<n>`), the host's own
+`ended` code (`failed:config`, `torn-down:...`; anything else is `other`), a refusal code (`command:order`, a `host-refused` code), or a fixed word
+(`host_spawn_shape`, `second_host_spawn`); or `{kind: "exception", detail: "<ClassName>[:<fixed reason>]"}` for a failure inside Root, such as
+`SessionError:host config mismatch` (the fixed reasons are `binding mismatch`, `host config mismatch`, `host registration mismatch`, `binding id invalid`, `launch not allowed`). No role text, path or id can enter it; it is `null` on a pass.
 
 ## The Root entry points `session.py` drives (all exist on main; nothing is invented)
 
@@ -247,6 +280,9 @@ throws and writes nothing.
 
 ### NEEDS FROM OTHER LANE
 
+0. **The host half of the binding contract** (runtime-sdk PR 24, C-H3/C-H7) and a **third compile run** that carries it, then intake and a fresh pin
+   for this workflow. Until then the workflow is bound to run 2's packet, whose host client cannot work with this Root (it asserts against an early
+   registration). Nothing here can be armed against the old packet.
 1. **Engine confirmation** (agent-sdk runtime lane, `packages/runtime/src/context/required-context.ts`): the marker placement above is read from
    that source; the first run is the first time the compiled engine renders it. A `ordered_marker` refusal in the provider receipts would
    point at the placement, not at Core.
