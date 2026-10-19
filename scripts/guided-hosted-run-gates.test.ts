@@ -26,17 +26,17 @@ const OPT_IN_VALUE = "disposable-linux-guided-hosted-run";
 const RUNNER_PATH = "scripts/guest-hosted-guided/run.py";
 const ZERO40 = "0".repeat(40);
 const ZERO64 = "0".repeat(64);
-// The run-2 binding the workflow must carry (runtime-sdk intake #23, merged at 04f82b13; compile run 39227365159, artifact 12174387240,
+// The run-3 binding the workflow must carry (runtime-sdk intake #26, merged at 8cc73321; compile run 39327386044, artifact 12223150881,
 // zip sha256 a4d731f6...0296, expires 2026-10-26). A drift in any of them is caught here, not by the packet verifier at run time.
 const EXPECTED_BINDING: Record<string, string> = {
-  PACKET_RUN_ID: "39227365159",
-  RUNTIME_SDK_HEAD: "04f82b13a2af965a487d16b15ccfee8afc99fc09",
-  PACKET_PIN_SHA256: "220acd961ab11c0a02d3e8ea797e5b10c24e3ab595573e893b05d7a7418e77a2",
+  PACKET_RUN_ID: "39327386044",
+  RUNTIME_SDK_HEAD: "8cc73321d561ebc7ee60263accec0c8bc8cfa060",
+  PACKET_PIN_SHA256: "11fb875ec4dfc45e8a1c19fe96c912a94ff8b5137c826990d663eaa61730b4de",
   VERIFIER_SHA256: "2ac6b1af5875690ab84fcd87c09dbb1ab67a3c703a0aee84845c29da962301f3",
-  PACKET_ARTIFACT_ID: "12174387240",
-  PACKET_ZIP_SHA256: "a4d731f6fbe7d03858522a85f28654d797ee82ff868e139edfd9f777de690296",
-  PACKET_ARCHIVE_SHA256: "1bea0da978ac7ef731bb3b1dc89158f0efd29deeb551ec6df1b7fdc8279b98d1",
-  PACKET_INVENTORY_SHA256: "18f5fa5b84b041a6982cf07ae3a203f42d095418b5d1991004d49301d80dce62",
+  PACKET_ARTIFACT_ID: "12223150881",
+  PACKET_ZIP_SHA256: "3e4e5359750573c82ea191c5c0365438d7d686f7c252fe0a47f3d3c0864757cb",
+  PACKET_ARCHIVE_SHA256: "fc2acae10686a7218bb64e970d71a4845ae58ec2191feb34122c3a43a517859a",
+  PACKET_INVENTORY_SHA256: "58c23a87763650544cb8aec10538364a1ee1b78146cb2bee2dc4d4d593f3670d",
 };
 const ACTIONS: Record<string, string> = {
   "actions/checkout": "34e114876b0b11c390a56381ad16ebd13914f8d5",
@@ -261,7 +261,8 @@ export function violations(text: string, ctx: Context = loadContext()): string[]
   if (typeof env.PACKET_RUN_ID !== "string" || !/^(0|[1-9][0-9]{8,12})$/.test(env.PACKET_RUN_ID)) bad("PACKET_RUN_ID must be a plain run id (0 while unset)");
   if (typeof env.PACKET_ARTIFACT_ID !== "string" || !/^(0|[1-9][0-9]{8,12})$/.test(env.PACKET_ARTIFACT_ID)) bad("PACKET_ARTIFACT_ID must be a plain artifact id (0 while unset)");
   if (env.PACKET_RUN_ID === "39165162201") bad("the first guided packet (placeholder roles) must never be bound");
-  for (const [key, want] of Object.entries(EXPECTED_BINDING)) if (env[key] !== want) bad(`${key} is not the reviewed run-2 value`);
+  if (env.PACKET_RUN_ID === "39227365159") bad("the second guided packet (run 2, the earlier hostClient) must never be bound");
+  for (const [key, want] of Object.entries(EXPECTED_BINDING)) if (env[key] !== want) bad(`${key} is not the reviewed run-3 value`);
   // The runner is committed, so its pin is always the real hash of the file; it is never a placeholder.
   if (!ctx.runnerExists) bad("RUNNER_SHA256 is set but the runner file does not exist");
   else if (ctx.runnerSha256 !== env.RUNNER_SHA256) bad("RUNNER_SHA256 does not match the runner file");
@@ -346,14 +347,14 @@ describe("guided hosted run workflow gates", () => {
     // the root step carries the same pin file, and the runner passes --pin itself
     expect(steps[7]?.run).toContain('"origins/runtime/scripts/guest-guided-intake/compile-${PACKET_RUN_ID}.pin.json" "$PACKET_PIN_SHA256"');
     expect(readFileSync(join(ROOT, "scripts/guest-hosted-guided/run.py"), "utf8")).toContain("'--pin', pin");
-    expect(`compile-${EXPECTED_BINDING.PACKET_RUN_ID}.pin.json`).toBe("compile-39227365159.pin.json");
+    expect(`compile-${EXPECTED_BINDING.PACKET_RUN_ID}.pin.json`).toBe("compile-39327386044.pin.json");
   });
 
   test("the trigger branch is absent from every other workflow", () => {
     for (const [name, text] of Object.entries(loadContext().others)) expect([name, text.includes(TRIGGER_BRANCH)]).toEqual([name, false]);
   });
 
-  test("the committed state is unarmed: only the head is unset, so the first step refuses; the packet is bound to run 39227365159", () => {
+  test("the committed state is unarmed: only the head is unset, so the first step refuses; the packet is bound to run 39327386044", () => {
     const env = (yaml.parse(WORKFLOW) as Doc).env as Record<string, string>;
     expect(env.HOSTED_HEAD).toBe(ZERO40);
     for (const [key, want] of Object.entries(EXPECTED_BINDING)) expect([key, env[key]]).toEqual([key, want]);
@@ -446,14 +447,15 @@ const MUTATIONS: Array<[string, (text: string) => string, string, Partial<Contex
   ["env: a pin key added", sub("  RUNNER_SHA256:", "  EXTRA: 'x'\n  RUNNER_SHA256:"), "env keys must be exactly the reviewed pins"],
   ["env: HOSTED_HEAD becomes a branch name", sub(`HOSTED_HEAD: '${ZERO40}'`, "HOSTED_HEAD: 'main'"), "HOSTED_HEAD must be a 40-hex commit (all zeros while unarmed)"],
   ["env: archive pin becomes short", sub(/PACKET_ARCHIVE_SHA256: '[0-9a-f]{64}'/, "PACKET_ARCHIVE_SHA256: 'abc'"), "PACKET_ARCHIVE_SHA256 must be 64-hex (all zeros while unset)"],
-  ["env: run id becomes a name", sub("PACKET_RUN_ID: '39227365159'", "PACKET_RUN_ID: 'latest'"), "PACKET_RUN_ID must be a plain run id (0 while unset)"],
-  ["env: archive digest drifts", sub(/PACKET_ARCHIVE_SHA256: '[0-9a-f]{64}'/, `PACKET_ARCHIVE_SHA256: '${"5".repeat(64)}'`), "PACKET_ARCHIVE_SHA256 is not the reviewed run-2 value"],
-  ["env: inventory digest drifts", sub(/PACKET_INVENTORY_SHA256: '[0-9a-f]{64}'/, `PACKET_INVENTORY_SHA256: '${"5".repeat(64)}'`), "PACKET_INVENTORY_SHA256 is not the reviewed run-2 value"],
-  ["env: pin digest drifts", sub(/PACKET_PIN_SHA256: '[0-9a-f]{64}'/, `PACKET_PIN_SHA256: '${"5".repeat(64)}'`), "PACKET_PIN_SHA256 is not the reviewed run-2 value"],
-  ["env: verifier digest drifts", sub(/VERIFIER_SHA256: '[0-9a-f]{64}'/, `VERIFIER_SHA256: '${"5".repeat(64)}'`), "VERIFIER_SHA256 is not the reviewed run-2 value"],
-  ["env: runtime head drifts", sub(/RUNTIME_SDK_HEAD: '[0-9a-f]{40}'/, `RUNTIME_SDK_HEAD: '${"5".repeat(40)}'`), "RUNTIME_SDK_HEAD is not the reviewed run-2 value"],
-  ["env: run id drifts", sub("PACKET_RUN_ID: '39227365159'", "PACKET_RUN_ID: '39227365160'"), "PACKET_RUN_ID is not the reviewed run-2 value"],
-  ["env: the first (placeholder-role) packet is bound", sub("PACKET_RUN_ID: '39227365159'", "PACKET_RUN_ID: '39165162201'"), "the first guided packet (placeholder roles) must never be bound"],
+  ["env: run id becomes a name", sub("PACKET_RUN_ID: '39327386044'", "PACKET_RUN_ID: 'latest'"), "PACKET_RUN_ID must be a plain run id (0 while unset)"],
+  ["env: archive digest drifts", sub(/PACKET_ARCHIVE_SHA256: '[0-9a-f]{64}'/, `PACKET_ARCHIVE_SHA256: '${"5".repeat(64)}'`), "PACKET_ARCHIVE_SHA256 is not the reviewed run-3 value"],
+  ["env: inventory digest drifts", sub(/PACKET_INVENTORY_SHA256: '[0-9a-f]{64}'/, `PACKET_INVENTORY_SHA256: '${"5".repeat(64)}'`), "PACKET_INVENTORY_SHA256 is not the reviewed run-3 value"],
+  ["env: pin digest drifts", sub(/PACKET_PIN_SHA256: '[0-9a-f]{64}'/, `PACKET_PIN_SHA256: '${"5".repeat(64)}'`), "PACKET_PIN_SHA256 is not the reviewed run-3 value"],
+  ["env: verifier digest drifts", sub(/VERIFIER_SHA256: '[0-9a-f]{64}'/, `VERIFIER_SHA256: '${"5".repeat(64)}'`), "VERIFIER_SHA256 is not the reviewed run-3 value"],
+  ["env: runtime head drifts", sub(/RUNTIME_SDK_HEAD: '[0-9a-f]{40}'/, `RUNTIME_SDK_HEAD: '${"5".repeat(40)}'`), "RUNTIME_SDK_HEAD is not the reviewed run-3 value"],
+  ["env: run id drifts", sub("PACKET_RUN_ID: '39327386044'", "PACKET_RUN_ID: '39227365160'"), "PACKET_RUN_ID is not the reviewed run-3 value"],
+  ["env: the first (placeholder-role) packet is bound", sub("PACKET_RUN_ID: '39327386044'", "PACKET_RUN_ID: '39165162201'"), "the first guided packet (placeholder roles) must never be bound"],
+  ["env: the second (earlier hostClient) packet is bound", sub("PACKET_RUN_ID: '39327386044'", "PACKET_RUN_ID: '39227365159'"), "the second guided packet (run 2, the earlier hostClient) must never be bound"],
   ["pin refusal: run id removed", sub(/ *test "\$PACKET_RUN_ID" != "0"\n/, ""), "pin refusal lacks the run id refusal"],
   ["env: runner pin is not the runner file's hash", sub(/RUNNER_SHA256: '[0-9a-f]{64}'/, `RUNNER_SHA256: '${"1".repeat(64)}'`), "RUNNER_SHA256 does not match the runner file"],
   ["env: runner file missing", sub(/RUNNER_SHA256: '[0-9a-f]{64}'/, `RUNNER_SHA256: '${"1".repeat(64)}'`), "RUNNER_SHA256 is set but the runner file does not exist", { runnerExists: false, runnerSha256: "" }],
@@ -537,9 +539,9 @@ const MUTATIONS: Array<[string, (text: string) => string, string, Partial<Contex
   ["sudo step loses its own timeout", sub("        timeout-minutes: 15\n", ""), "step keys are not the reviewed closed sets"],
   ["sudo step timeout reaches the job's", sub("timeout-minutes: 15", "timeout-minutes: 19"), "the sudo step needs its own timeout, below the job's, so the failure diagnostics still upload"],
   // the packet artifact's id and zip digest are bound and checked at the API
-  ["artifact id drifts", sub(/PACKET_ARTIFACT_ID: '[0-9]+'/, "PACKET_ARTIFACT_ID: '12174387241'"), "PACKET_ARTIFACT_ID is not the reviewed run-2 value"],
+  ["artifact id drifts", sub(/PACKET_ARTIFACT_ID: '[0-9]+'/, "PACKET_ARTIFACT_ID: '12223150882'"), "PACKET_ARTIFACT_ID is not the reviewed run-3 value"],
   ["artifact id unset but armed", sub(/PACKET_ARTIFACT_ID: '[0-9]+'/, "PACKET_ARTIFACT_ID: 'abc'"), "PACKET_ARTIFACT_ID must be a plain artifact id (0 while unset)"],
-  ["zip digest drifts", sub(/PACKET_ZIP_SHA256: '[0-9a-f]{64}'/, `PACKET_ZIP_SHA256: '${"6".repeat(64)}'`), "PACKET_ZIP_SHA256 is not the reviewed run-2 value"],
+  ["zip digest drifts", sub(/PACKET_ZIP_SHA256: '[0-9a-f]{64}'/, `PACKET_ZIP_SHA256: '${"6".repeat(64)}'`), "PACKET_ZIP_SHA256 is not the reviewed run-3 value"],
   ["zip digest short", sub(/PACKET_ZIP_SHA256: '[0-9a-f]{64}'/, "PACKET_ZIP_SHA256: 'abc'"), "PACKET_ZIP_SHA256 must be 64-hex (all zeros while unset)"],
   ["pin refusal: artifact id removed", sub(/ *test "\$PACKET_ARTIFACT_ID" != "0"\n/, ""), "pin refusal lacks the artifact id refusal"],
   ["pin refusal: zip digest removed", sub(/ *test "\$PACKET_ZIP_SHA256" != "0+"\n/, ""), "pin refusal lacks the zip digest refusal"],

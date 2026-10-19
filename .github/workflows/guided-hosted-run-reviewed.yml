@@ -3,11 +3,11 @@ name: guided-hosted-run-reviewed
 # NEVER triggered by its author: the owner approves the single run, then the branch below is created once, from the
 # exact reviewed commit, and frozen. There is no pull_request, pull_request_target, workflow_dispatch, schedule or
 # workflow_run trigger, so no ordinary PR can run it.
-# UNARMED: HOSTED_HEAD is all zeros, so the first step refuses. The packet is the SECOND guided compile run (39227365159, the
-# real hostClient and providerWorker); its archive, inventory, pin file and verifier are bound below (runtime-sdk 04f82b13) and
+# UNARMED: HOSTED_HEAD is all zeros, so the first step refuses. The packet is the THIRD guided compile run (39327386044, the
+# real hostClient and providerWorker); its archive, inventory, pin file and verifier are bound below (runtime-sdk 8cc73321) and
 # RUNNER_SHA256 names the committed runner, which pins its siblings and its fixture inputs by hash.
-# The packet is the SECOND guided compile run (made after the real hostClient/providerWorker replace the placeholders);
-# the first packet's run 39165162201 must never be bound here. The first two
+# The packet is the THIRD guided compile run (its hostClient is the one that omits requiredRuntimeContext and emits host-spawn);
+# the first packet (39165162201) and the second (39227365159) must never be bound here. The first two
 # steps refuse while any is unset, so this file can sit on main without being able to run anything. The three digests
 # are set in an ordinary reviewed commit; the owner-approved ARMING commit then changes exactly one line, HOSTED_HEAD.
 # The sudo step is the only privileged step: Root-created peers, pidfds, and mount/PID/IPC/UTS/network namespaces need
@@ -20,14 +20,14 @@ permissions:
   actions: read
 env:
   HOSTED_HEAD: '0000000000000000000000000000000000000000'
-  PACKET_RUN_ID: '39227365159'
-  RUNTIME_SDK_HEAD: '04f82b13a2af965a487d16b15ccfee8afc99fc09'
-  PACKET_PIN_SHA256: '220acd961ab11c0a02d3e8ea797e5b10c24e3ab595573e893b05d7a7418e77a2'
+  PACKET_RUN_ID: '39327386044'
+  RUNTIME_SDK_HEAD: '8cc73321d561ebc7ee60263accec0c8bc8cfa060'
+  PACKET_PIN_SHA256: '11fb875ec4dfc45e8a1c19fe96c912a94ff8b5137c826990d663eaa61730b4de'
   VERIFIER_SHA256: '2ac6b1af5875690ab84fcd87c09dbb1ab67a3c703a0aee84845c29da962301f3'
-  PACKET_ARTIFACT_ID: '12174387240'
-  PACKET_ZIP_SHA256: 'a4d731f6fbe7d03858522a85f28654d797ee82ff868e139edfd9f777de690296'
-  PACKET_ARCHIVE_SHA256: '1bea0da978ac7ef731bb3b1dc89158f0efd29deeb551ec6df1b7fdc8279b98d1'
-  PACKET_INVENTORY_SHA256: '18f5fa5b84b041a6982cf07ae3a203f42d095418b5d1991004d49301d80dce62'
+  PACKET_ARTIFACT_ID: '12223150881'
+  PACKET_ZIP_SHA256: '3e4e5359750573c82ea191c5c0365438d7d686f7c252fe0a47f3d3c0864757cb'
+  PACKET_ARCHIVE_SHA256: 'fc2acae10686a7218bb64e970d71a4845ae58ec2191feb34122c3a43a517859a'
+  PACKET_INVENTORY_SHA256: '58c23a87763650544cb8aec10538364a1ee1b78146cb2bee2dc4d4d593f3670d'
   RUNNER_SHA256: '4db73ac3029bfa854d8813603ce868b32d0035421a725a27e3fca9586e82f96a'
 concurrency:
   group: guided-hosted-run
