@@ -214,3 +214,17 @@ test("a body that begins with a slash is invalid, after any leading whitespace: 
   expect(journal.list()).toEqual([]);
   for (const [index, text] of ["a/b", "hello /compact", "1/2"].entries()) expect(journal.hold({ inputId: `ok-${index}`, holdToken: T(1), text, clientName: "peer" })).toEqual({ held: true });
 });
+
+test("the same id with another body is a conflict in every state, by the digest the record keeps; the same body still answers by state", () => {
+  const { journal, path } = open();
+  hold(journal);
+  expect(code(() => hold(journal, "r1", T(2), "another body"))).toBe("conflict");               // held
+  expect(code(() => hold(journal, "r1", T(2), "body", "other client"))).toBe("conflict");       // the client name is part of the digest
+  journal.commit("r1", T(1));
+  expect(code(() => hold(journal, "r1", T(2), "another body"))).toBe("conflict");               // committed
+  journal.markInTranscript("r1");
+  const before = readFileSync(path, "utf8");
+  expect(code(() => hold(journal, "r1", T(2), "another body"))).toBe("conflict");               // in_transcript (a tombstone keeps its digest)
+  expect(readFileSync(path, "utf8")).toBe(before);
+  expect(hold(journal, "r1", T(2))).toEqual({ held: false, state: "in_transcript" });
+});
