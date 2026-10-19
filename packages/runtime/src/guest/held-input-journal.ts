@@ -177,8 +177,9 @@ export function openHeldInputJournal(path: string, io: HeldInputIo = realHeldInp
         persist([...records, { inputId: request.inputId, digest, holdToken: request.holdToken, state: "held", text: request.text, clientName: request.clientName }]);
         return { held: true };
       }
+      // The digest the record keeps decides first, in every state: the same id with another body is a conflict, never `{held:false}`.
+      if (existing.digest !== digest) throw new HeldInputError("conflict", "inputId already recorded with a different body");
       if (existing.state !== "held") return { held: false, state: existing.state };
-      if (existing.digest !== digest) throw new HeldInputError("conflict", "inputId already held with a different body");
       // The same input offered again: the token is REPLACED, so a late verdict for the earlier hold answers `superseded`.
       persist(replace({ ...existing, holdToken: request.holdToken }));
       return { held: true, again: true };

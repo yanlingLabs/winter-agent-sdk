@@ -71,5 +71,6 @@ The native owner library, fixture and matrix are untouched.
 ## Review folds
 
 - A hold's text may not begin with `/` (after leading whitespace), in the frame checker and again in the journal: a committed input is a user turn, and the host-query vocabulary stays closed (a committed `/compact` had run built-in compaction).
+- The same id with another body (by the digest the record keeps, in every state) answers `conflict`; commit carries no body, so it has no digest to compare.
 - A hold for an id the transcript already holds, with no journal record (the tombstone was forgotten), answers `{held:false, state:"in_transcript"}` and is never delivered again.
 - `host_input_commit` for a `committed` or `in_transcript` record answers `already` whatever the token (checked before the token). Only a still-`held` record can be `superseded`. This is the 4.5 row "hold answers `{held:false}`, then ack, then commit answers `already`".
