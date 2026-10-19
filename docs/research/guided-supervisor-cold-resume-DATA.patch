@@ -20,16 +20,19 @@
  
  def wire_json(value):return json.dumps(value,separators=(',',':'),ensure_ascii=False,allow_nan=False)
  def _wire_int(text):
-@@ -949,7 +962,7 @@ class ToolService:
+@@ -949,7 +962,10 @@ class ToolService:
          else:
              with self.lock:
                  result={'active':sum(sid==request['sessionId'] for sid,_,_ in self.active.values()),'uncertain':request['sessionId'] in self.debt}
 -                if request['sessionId'] in getattr(self,'runtimes',{}):result['runtime']={key:self.runtimes[request['sessionId']].get(key) for key in ('state','exitCode','cleanupConfirmed')}
-+                if request['sessionId'] in getattr(self,'runtimes',{}):result['runtime']={key:self.runtimes[request['sessionId']].get(key) for key in ('state','exitCode','cleanupConfirmed','continuation')}
++                if request['sessionId'] in getattr(self,'runtimes',{}):
++                    known=self.runtimes[request['sessionId']];result['runtime']={key:known.get(key) for key in ('state','exitCode','cleanupConfirmed')}
++                    # The resolved continuation is a host-query fact; the fixture's status reply is unchanged.
++                    if known.get('profile') in ('host-query-v1',GUIDED_PROFILE):result['runtime']['continuation']=known.get('continuation')
                  frame_write(channel,result)
      def revoke(self,sid):
          with self.lock:
-@@ -1117,7 +1130,7 @@ class ToolService:
+@@ -1117,7 +1133,7 @@ class ToolService:
          # Only immutable root bootstrap can select artifacts, directories, model or
          # public provider metadata. The tool/admin launch request carries only sid.
          allowed={'storeDirectory','runhomeDirectory','provider','model','timeoutMs'}
@@ -38,7 +41,7 @@
          if profile==GUIDED_PROFILE:allowed.update(('requiredRuntimeContext','generation','guidanceDirectory'))
          elif profile not in ('fresh','host-query-v1'):raise Refusal('runtime_profile_conflict')
          if not self.runtime_artifacts or not isinstance(value,dict) or set(value)-allowed or not {'storeDirectory','runhomeDirectory','provider','model'}<=set(value):raise Refusal('runtime_config')
-@@ -1151,7 +1164,15 @@ class ToolService:
+@@ -1151,7 +1167,15 @@ class ToolService:
          if any(provider_scope[key]!=expected[key] for key in expected) or selection['modelKey']!=value['model']:raise Refusal('runtime_provider_scope')
          if len(canonical(provider).encode())>32768:raise Refusal('runtime_provider_limit')
          timeout=value.get('timeoutMs',600000)
@@ -55,7 +58,7 @@
          descriptors={}
          for key in ('storeDirectory','runhomeDirectory'):
              fd=source_directory(value[key],[]);self.owned.append(fd);st=os.fstat(fd)
-@@ -1161,9 +1182,9 @@ class ToolService:
+@@ -1161,9 +1185,9 @@ class ToolService:
          # root services. Fresh admission refuses every prior file/lease/history.
          try:fcntl.flock(descriptors['storeDirectory'],fcntl.LOCK_EX|fcntl.LOCK_NB)
          except BlockingIOError:raise Refusal('runtime_store_in_use')
@@ -68,7 +71,7 @@
          if reader_registration is not None:self.runtimes[item['logicalSessionId']].update(readerRegistration=reader_registration)
      def _runtime_record(self,item,runtime):
          sid=item['logicalSessionId'];home=f'/run/winter/conversations/{sid}';store=f'/workspace/.winter/conversations/{sid}'
-@@ -1175,6 +1196,11 @@ class ToolService:
+@@ -1175,6 +1199,11 @@ class ToolService:
          if runtime.get('profile')==GUIDED_PROFILE:
              record.update(profile=GUIDED_PROFILE,runtimeConfig=json.loads(canonical(runtime['hostConfig'])),readerRegistration=json.loads(canonical(runtime['readerRegistration'])))
              if record['runtimeConfig'].get('requiredRuntimeContext')!=record['readerRegistration']['requiredRuntimeContext']:raise Refusal('guided_context')
@@ -80,7 +83,7 @@
          return record
      def _open_reader(self,value,conversations):
          # Guided only. Root's trusted config alone names the isolated reader's launcher, loader, dependency closure and identity.
-@@ -1230,7 +1256,8 @@ class ToolService:
+@@ -1230,7 +1259,8 @@ class ToolService:
          try:
              if port is not None:port.claim(item)
              for name,fd in self.runtime_artifacts.items():verify_held_artifact(fd,self.runtime_pins[name])

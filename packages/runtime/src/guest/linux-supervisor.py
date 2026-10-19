@@ -962,7 +962,10 @@ class ToolService:
         else:
             with self.lock:
                 result={'active':sum(sid==request['sessionId'] for sid,_,_ in self.active.values()),'uncertain':request['sessionId'] in self.debt}
-                if request['sessionId'] in getattr(self,'runtimes',{}):result['runtime']={key:self.runtimes[request['sessionId']].get(key) for key in ('state','exitCode','cleanupConfirmed','continuation')}
+                if request['sessionId'] in getattr(self,'runtimes',{}):
+                    known=self.runtimes[request['sessionId']];result['runtime']={key:known.get(key) for key in ('state','exitCode','cleanupConfirmed')}
+                    # The resolved continuation is a host-query fact; the fixture's status reply is unchanged.
+                    if known.get('profile') in ('host-query-v1',GUIDED_PROFILE):result['runtime']['continuation']=known.get('continuation')
                 frame_write(channel,result)
     def revoke(self,sid):
         with self.lock:

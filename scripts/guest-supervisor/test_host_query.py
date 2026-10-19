@@ -404,7 +404,21 @@ class ColdResumeTests(unittest.TestCase):
             self.assertEqual(diagnostic['failure']['code'],'runtime_resume_store_missing' if kwargs['continuation']=='resume' else 'runtime_fresh_store_required',kwargs);self.assertEqual(diagnostic['observations']['phase'],'artifact-admission')
     def test_the_resolved_continuation_is_reported_in_the_status_reply(self):
         text=(Path(service.__file__).read_text())
-        self.assertIn("for key in ('state','exitCode','cleanupConfirmed','continuation')",text)
+        self.assertIn("if known.get('profile') in ('host-query-v1',GUIDED_PROFILE):result['runtime']['continuation']=known.get('continuation')",text)
+        self.assertIn("for key in ('state','exitCode','cleanupConfirmed')}",text)
+    def status(self):
+        sent=[]
+        self.obj.lock=threading.Lock();self.obj.active={};self.obj.debt=set()
+        with patch.object(service,'frame_read',return_value={'operation':'status','sessionId':'logical'}),patch.object(service,'frame_write',side_effect=lambda channel,value:sent.append(value)):
+            self.obj._admin(object())
+        return sent[0]
+    def test_status_reports_the_resolved_continuation_for_host_query_only(self):
+        self.attempt(store=True,continuation='either')
+        self.assertEqual(self.status()['runtime']['continuation'],'resume')
+        self.tearDown();self.setUp()
+        self.obj._configure_runtime(self.fixture.item,self.fixture.config)
+        self.assertNotIn('continuation',self.status()['runtime'])
+        self.assertEqual(set(self.status()['runtime']),{'state','exitCode','cleanupConfirmed'})
     def test_both_host_query_profiles_accept_the_two_keys(self):
         text=Path(service.__file__).read_text()
         self.assertIn("if profile in ('host-query-v1',GUIDED_PROFILE):allowed.update(('toolClasses','continuation','endedGuestBoots'))",text)

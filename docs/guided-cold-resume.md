@@ -21,7 +21,7 @@ It is stacked on guest messaging (`cowork/guest-messaging`) because both edit th
 
 - The store directory is already required to be owned by `runtimeUid` with mode 0700 (`runtime_directory_identity`).
 - The same predicate runs again at launch with the RESOLVED value, so a store that changed between configure and launch refuses.
-- The resolved value is in the status reply as `runtime.continuation`.
+- The resolved value is in the status reply as `runtime.continuation` (host-query profiles only; the fixture reply is unchanged).
 - `endedGuestBoots`: 0 to 4 distinct canonical boot ids, never this boot (`runtime_ended_boots`). Any other `continuation` is `runtime_continuation`.
 - A launch is always a new run. `launch_runtime` still refuses a second launch of one configured runtime.
 - The fixture `fresh` profile takes neither key and keeps its ten-minute cap.
@@ -35,7 +35,7 @@ It is stacked on guest messaging (`cowork/guest-messaging`) because both edit th
 
 ## Image pins that move
 
-- Supervisor sha: `a1ac484b...` (was `53b507bb...`). Re-pin once.
+- Supervisor sha: `82e2f43f...` (was `53b507bb...`). Re-pin once.
 - Engine bundle: moves (admission and profile change).
 - The native owner library does NOT move here. A resume record is refused by the unmodified owner (it requires `freshOnly`), failing closed. `docs/research/guided-owner-cold-resume-DATA.patch` is the proposed owner patch (not applied): it admits `continuation: "resume"` without `freshOnly`. Applying it moves `OWNER_SHA256` in the reviewed owner-matrix workflow, which is the owner's step.
 - `docs/research/guided-supervisor-cold-resume-DATA.patch` records the supervisor delta for the pin chain.
