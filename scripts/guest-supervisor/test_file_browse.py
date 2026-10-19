@@ -1513,7 +1513,7 @@ class LinuxNativeTests(unittest.TestCase):
         os.chown(path, self.UID if uid is None else uid, self.GID if gid is None else gid)
         path.chmod(mode)
 
-    def launch(self, root, op, relative, limit=1024, offset=0, uid=None, gid=None, worker=None, guest='/workspace/repos/r1', extra=None, mutate=None, launcher=None):
+    def launch(self, root, op, relative, limit=1024, offset=0, uid=None, gid=None, worker=None, guest='/workspace/repos/r1', extra=None, mutate=None, launcher=None, extra_fds=()):
         view = tempfile.mkdtemp(prefix='view-', dir=self.views)
         control_root, control_launcher = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         held = []
@@ -1530,7 +1530,7 @@ class LinuxNativeTests(unittest.TestCase):
             if extra:
                 argv += extra
             child = subprocess.Popen(argv, executable=str(launcher or self.launcher), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                     pass_fds=[worker_fd, control_launcher.fileno(), environment, root_fd], close_fds=True, env={'LANG': 'C', 'LC_ALL': 'C'}, start_new_session=True)
+                                     pass_fds=[worker_fd, control_launcher.fileno(), environment, root_fd, *extra_fds], close_fds=True, env={'LANG': 'C', 'LC_ALL': 'C'}, start_new_session=True)
             control_launcher.close()
             out, err = child.communicate(timeout=60)
             return child.returncode, out, err.decode(errors='replace')
@@ -1626,7 +1626,11 @@ class LinuxNativeTests(unittest.TestCase):
                        lambda argv: argv[:14] + ['2'] + argv[15:] + [argv[15], '/workspace/repos/r2', '1']):
             code, _, _ = self.launch(root, 'stat', 'seed.txt', mutate=mutate)
             self.assertEqual(code, 64)
-        code, _, _ = self.launch(root, 'stat', 'seed.txt', extra=['--guidance', '3'])
+        guidance = os.open(root.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            code, _, _ = self.launch(root, 'stat', 'seed.txt', extra=['--guidance', str(guidance)], extra_fds=(guidance,))
+        finally:
+            os.close(guidance)
         self.assertEqual(code, 64)
 
     def probe_run(self, root, launcher=None):
@@ -1680,7 +1684,8 @@ class LinuxNativeTests(unittest.TestCase):
 
     def test_browse_stays_read_only_whatever_the_policy_argument(self):
         root = self.root()
-        code, out, err = self.launch(root, 'stat', 'seed.txt', worker=self.probe, mutate=lambda argv: argv[:7] + ['auto'] + argv[8:])
+        writable = lambda argv: argv[:7] + ['auto'] + argv[8:17] + ['0'] + argv[18:]  # neither the policy nor the root's flag asks for read only
+        code, out, err = self.launch(root, 'stat', 'seed.txt', worker=self.probe, mutate=writable)
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(out)['writeOpen'], 30)
 
@@ -1733,7 +1738,7 @@ class LinuxNativeTests(unittest.TestCase):
         link = root.parent / 'root-link'
         if not link.is_symlink():
             link.symlink_to('r')
-        return [outcome(lambda: via_launcher('seed.txt')), outcome(lambda: via_launcher('link.txt')), outcome(lambda: via_launcher('dir')), outcome(lambda: via_launcher('linked.txt')),
+        return [outcome(lambda: via_launcher('seed.txt')), outcome(lambda: via_launcher('link.txt')), outcome(lambda: via_launcher('dirlink/inner.txt')), outcome(lambda: via_launcher('dir')), outcome(lambda: via_launcher('linked.txt')),
                 outcome(lambda: via_harness('../r/seed.txt')), outcome(lambda: via_harness('nested/below.txt')), outcome(lambda: via_harness('fifo')),
                 outcome(lambda: via_harness('shared.txt', target=share)), outcome(lambda: via_harness('seed.txt', device=os.stat(root).st_dev + 1)),
                 outcome(lambda: via_harness('seed.txt', target=link))]
@@ -1753,7 +1758,7 @@ class LinuxNativeTests(unittest.TestCase):
         survivors, total = [], 0
         expected = self.worker_outcomes(self.worker, root, share)
         self.assertEqual([item[1] if isinstance(item, tuple) else item for item in expected],
-                         [None, 'path_denied', 'not_regular', 'linked', 'path_denied', 'path_denied', 'not_regular', 'root_not_data', 'root_not_data', 'root_unavailable'])
+                         [None, 'path_denied', 'path_denied', 'not_regular', 'linked', 'path_denied', 'path_denied', 'not_regular', 'root_not_data', 'root_not_data', 'root_unavailable'])
         for name, old, new in self.TOOL_MUTANTS:
             total += 1
             launcher = self.mutant_build(TOOL, name, old, new)
@@ -1761,9 +1766,13 @@ class LinuxNativeTests(unittest.TestCase):
                 code, out, _ = self.launch(root, 'stat', 'seed.txt', worker=self.probe, launcher=launcher, mutate=mutate)
                 return code, (json.loads(out)['writeOpen'] if code == 0 else None)
             two_roots = lambda argv: argv[:14] + ['2'] + argv[15:] + [argv[15], '/workspace/repos/r2', '1']
-            outcomes = [probe(lambda argv: argv[:7] + ['auto'] + argv[8:]), probe(two_roots), probe(lambda argv: argv[:10] + ['/workspace/repos/other'] + argv[11:]),
+            outcomes = [probe(lambda argv: argv[:7] + ['auto'] + argv[8:17] + ['0'] + argv[18:]), probe(two_roots), probe(lambda argv: argv[:10] + ['/workspace/repos/other'] + argv[11:]),
                         probe(lambda argv: argv[:9] + ['read'] + argv[10:])]
-            code, out, _ = self.launch(root, 'stat', 'seed.txt', launcher=launcher, extra=['--guidance', '3'])
+            guidance = os.open(root.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+            try:
+                code, out, _ = self.launch(root, 'stat', 'seed.txt', launcher=launcher, extra=['--guidance', str(guidance)], extra_fds=(guidance,))
+            finally:
+                os.close(guidance)
             outcomes.append((code, None))
             code, out, _ = self.launch(root, 'stat', 'seed.txt', launcher=launcher)
             outcomes.append((code, json.loads(out).get('ok') if out else None))
