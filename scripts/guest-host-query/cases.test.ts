@@ -31,9 +31,9 @@ test("tool outcome oracle rejects missing/foreign/error results and changed exac
   ]) { const data = frames("ask-allow"); mutate(data); expect(() => fixtureTranscript("ask-allow", data, PATHS)).toThrow(); }
 });
 test("host SDK options never derive native config authority from environment or preapproved tools", () => {
-  const config: any = { executionPosture: "confined-guest", sessionId: "backend", model: "model", cwd: "/workspace/folders/source", winterHome: "/run/winter/conversations/logical", storeHome: "/workspace/.winter/conversations/logical", persistSession: true, tools: ["Read", "Edit", "Write", "Bash"], allowedTools: [], settingSources: [], skills: [], plugins: [], strictMcpConfig: true, mcpServers: {}, permissionMode: "bypassPermissions", permissions: { disableBypassPermissionsMode: false }, allowDangerouslySkipPermissions: true };
+  const config: any = { executionPosture: "confined-guest", sessionId: "backend", model: "model", cwd: "/workspace/folders/source", winterHome: "/run/winter/conversations/logical", storeHome: "/workspace/.winter/conversations/logical", persistSession: true, tools: ["Read", "Edit", "Write", "Bash"], allowedTools: [], settingSources: [], skills: [], plugins: [], strictMcpConfig: true, mcpServers: {}, permissionMode: "default", permissions: { disableBypassPermissionsMode: true }, allowDangerouslySkipPermissions: false };
   assertLinuxHostQueryConfig(config); const options = hostOptions(config);
-  expect(options.env).toEqual({}); expect(options.allowedTools).toEqual([]); expect(options.permissionMode).toBe("bypassPermissions");
+  expect(options.env).toEqual({}); expect(options.allowedTools).toEqual([]); expect(options.permissionMode).toBe("default"); expect(options.allowDangerouslySkipPermissions).toBe(false);
 });
 
 test("actual local SDK query/engine callback routing matches fixed allow/deny/plan/bypass cases", async () => {
