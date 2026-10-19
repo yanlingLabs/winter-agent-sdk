@@ -22,6 +22,8 @@ jobs:
         run: cc -std=c11 -O2 -Wall -Wextra -Werror scripts/guest-supervisor/guided_owner_native_fixture.c -o "$RUNNER_TEMP/guided-owner-fixture-compile-only"
       - name: guided owner portable source tests under this gcc (native cases skip, no root and no admission)
         run: python3 -I -S -B scripts/guest-supervisor/test_guided_owner.py
+      - name: guided owner holder DATA patches (proposed, not applied) -- portable tests, Linux compile-only, nothing executed natively
+        run: env WINTER_REQUIRE_OWNER_HOLDER_COMPILE=1 python3 -I -S -B scripts/guest-supervisor/test_guided_owner_holder.py
       - run: sudo -n python3 scripts/guest-files/verify.py
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "1.4.2" }

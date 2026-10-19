@@ -1,0 +1,65 @@
+--- a/scripts/guest-supervisor/guided_owner_native_fixture.c
++++ b/scripts/guest-supervisor/guided_owner_native_fixture.c
+@@ -66,6 +66,29 @@
+         if(replacement!=duplicate){assert(dup2(replacement,duplicate)==duplicate);close(replacement);}
+         winter_owner_close(owner);assert(fcntl(duplicate,F_GETFD)>=0);close(duplicate);owner=0;
+     }
++    else if(!strncmp(name,"holder-",7)){
++        /* Holder hygiene of the retained reader descriptor (needs the owner holder DATA patch). The fixture includes the
++         * owner source, so it may read the owner's own slots; it changes only descriptor flags and makes plain dups. */
++        struct owner *held=get(owner);assert(held&&held->guided&&held->fd[4]>=3);
++        if(!strcmp(name,"holder-census")){
++            assert(census(held->fd[4])==1&&(fcntl(held->fd[4],F_GETFD)&FD_CLOEXEC));
++            int copy=winter_owner_claim_reader(owner);assert(copy>=3&&copy!=held->fd[4]&&(fcntl(copy,F_GETFD)&FD_CLOEXEC));
++            assert(census(held->fd[4])==2);close(copy);assert(census(held->fd[4])==1);assert(!winter_owner_check(owner));
++        }else if(!strcmp(name,"holder-clear-cloexec")){
++            assert(fcntl(held->fd[4],F_SETFD,0)==0);assert(winter_owner_claim_reader(owner)==-1);
++            assert(winter_owner_check(owner)==-1);assert(!strcmp(winter_owner_error(),"owner_lost"));
++            assert(fcntl(held->fd[4],F_SETFD,FD_CLOEXEC)==0);assert(!winter_owner_check(owner));
++            /* A claim the owner check refused did not reach the transfer, so it is not spent. */
++            int copy=winter_owner_claim_reader(owner);assert(copy>=3&&(fcntl(copy,F_GETFD)&FD_CLOEXEC));close(copy);
++        }else if(!strcmp(name,"holder-stray-dup")){
++            int stray=dup(held->fd[4]);assert(stray>=3);assert(census(held->fd[4])==2);
++            assert(winter_owner_claim_reader(owner)==-1);assert(census(held->fd[4])==2);   /* nothing leaked */
++            close(stray);assert(census(held->fd[4])==1);assert(winter_owner_claim_reader(owner)==-1);   /* spent */
++        }else if(!strcmp(name,"holder-bootstrap-cloexec")){
++            assert(fcntl(bootstrap,F_GETFD)&FD_CLOEXEC);assert(held->socket==bootstrap);
++            assert(fcntl(bootstrap,F_SETFD,0)==0);assert(winter_owner_check(owner)==-1);assert(!strcmp(winter_owner_error(),"owner_lost"));
++        }
++    }
+     if(owner)winter_owner_close(owner);
+     close(control);_exit(0);
+ }
+@@ -110,7 +133,7 @@
+             run(argv[1],argv[2],count,2,registration,count==4&&!registration);
+     }else{
+         int rejected=!strncmp(argv[1],"alias",5)||!strcmp(argv[1],"non-socket")||!strcmp(argv[1],"pidfs-absent");
+-        assert(rejected||!strcmp(argv[1],"claim-twice")||!strcmp(argv[1],"reader-shutdown")||!strcmp(argv[1],"bootstrap-close")||!strcmp(argv[1],"half-close"));
++        assert(rejected||!strncmp(argv[1],"holder-",7)||!strcmp(argv[1],"claim-twice")||!strcmp(argv[1],"reader-shutdown")||!strcmp(argv[1],"bootstrap-close")||!strcmp(argv[1],"half-close"));
+         if(!strcmp(argv[1],"pidfs-absent"))run("ordinary-baseline",argv[2],4,0,0,1);
+         run(argv[1],argv[2],5,1,1,!rejected);
+     }
+--- a/scripts/guest-supervisor/test_guided_owner.py
++++ b/scripts/guest-supervisor/test_guided_owner.py
+@@ -111,7 +111,9 @@
+         self.assertIn('SO_PEERPIDFD', peer)
+         self.assertIn('pidfs(peerfd)&&identity(peerfd,service)&&!identity(peerfd,runtime)', peer)
+         self.assertIn('o->reader_claimed', claim)
+-        self.assertLess(claim.index('o->reader_claimed=1'), claim.index('F_DUPFD_CLOEXEC'))
++        transfer = function(source, 'transfer_reader')
++        self.assertIn('F_DUPFD_CLOEXEC', transfer)
++        self.assertLess(claim.index('o->reader_claimed=1'), claim.index('transfer_reader('))
+         self.assertNotIn('close(', claim)
+         self.assertIn('o->fd[4]=-1;shutdown(fd,SHUT_RDWR);close(fd)', shutdown)
+         self.assertIn('shutdown(o->fd[4],SHUT_RDWR)', closed)
+@@ -231,6 +233,10 @@
+     def test_claim_twice_and_no_numeric_double_close(self): self.case('claim-twice')
+     def test_reader_shutdown_loses_owner(self): self.case('reader-shutdown')
+     def test_closed_bootstrap_peer_preserves_owner(self): self.case('bootstrap-close')
++    def test_holder_census_is_one_then_two_then_one(self): self.case('holder-census')
++    def test_holder_cleared_cloexec_loses_owner_and_spends_the_claim(self): self.case('holder-clear-cloexec')
++    def test_holder_stray_dup_refuses_the_claim_without_a_leak(self): self.case('holder-stray-dup')
++    def test_holder_bootstrap_socket_is_cloexec_and_rechecked(self): self.case('holder-bootstrap-cloexec')
+     def test_stream_half_close_loses_owner(self): self.case('half-close')
+ 
+ 
