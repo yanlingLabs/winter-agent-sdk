@@ -59,7 +59,29 @@ test("floor renders narrow wildcard reads, full writes/link floor and literal an
   expect(() => buildMandatoryFloorProfile({ denyReadPaths: ["relative"], denyWritePaths: [] })).toThrow("absolute");
   expect(() => buildMandatoryFloorProfile({ denyReadPaths: [], denyWritePaths: [], denyReadGlobs: ["/fixture/{unsafe}"] })).toThrow("unsupported");
 });
+test('a regex or glob holding `"` renders as a plain SBPL string: Seatbelt reads `#"..."` raw, so `\\"` inside it ended the literal (exit 65)', () => {
+  const quoted = buildMandatoryFloorProfile({ denyReadPaths: [], denyWritePaths: [], denyWriteGlobs: ['/fixture/q"t/*.key'], denyReadRegexes: ['^/fixture/a"b\\.c$'] });
+  expect(quoted).toContain('(regex "^/fixture/q\\"t/[^/]*\\\\.key$")');
+  expect(quoted).toContain('(regex "^/fixture/a\\"b\\\\.c$")');
+  expect(quoted).not.toMatch(/#"[^"\n]*\\"/);
+  // Without a quote the raw literal is unchanged.
+  expect(buildMandatoryFloorProfile({ denyReadPaths: [], denyWritePaths: [], denyWriteGlobs: ["/fixture/q/*.key"] })).toContain('(regex #"^/fixture/q/[^/]*\\.key$")');
+});
 describe.skipIf(!darwin)("real macOS persistent floor, disposable files only", () => {
+  test('a registered glob under a folder named with `"`, `\\`, parentheses, `;`, spaces and unicode: the floor loads and its regex denies hold', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "winter-mandatory-floor-"))); dirs.push(dir);
+    const q = join(dir, 'q"uo\\te (x);y é'); mkdirSync(q);
+    writeFileSync(join(q, "b.env"), "planted-floor-needle");
+    const spawn = createMandatoryFloorSpawn({ spawn: defaultSpawn, floor: { denyReadPaths: [], denyWritePaths: [], denyWriteGlobs: [join(q, "*.key")], denyReadGlobs: [join(q, "*.env")] } });
+    const proc = spawn({ command: "/bin/sh", args: ["-c", 'echo ok > "$1/ok.txt" || exit 10; (echo x > "$1/a.key") 2>/dev/null && exit 11; (cat "$1/b.env") 2>/dev/null && exit 12; exit 0', "sh", q], cwd: dir, env: { PATH: "/usr/bin:/bin", WINTER_TEST_KEYCHAIN: "memory" } });
+    let out = "", err = "";
+    await Promise.all([ (async () => { for await (const chunk of proc.stdout) out += chunk; })(), (async () => { for await (const chunk of proc.stderr!) err += chunk; })() ]);
+    const exited = await proc.exited;
+    expect({ code: exited.code, err }).toEqual({ code: 0, err: "" });
+    expect(out).not.toContain("planted-floor-needle");
+    expect(readFileSync(join(q, "ok.txt"), "utf8")).toBe("ok\n");
+    expect(existsSync(join(q, "a.key"))).toBe(false);
+  });
   test("control reads denied, shared reads allowed, own runtime/outside writes remain available", async () => {
     const f = fixture();
     for (const controlPath of [f.manifest, join(f.cowork, "workspaces", "w", "data.ext4"), join(f.cowork, "workspaces", "w", "env.ext4")]) {
