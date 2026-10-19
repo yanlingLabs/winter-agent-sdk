@@ -1,6 +1,7 @@
 /** Pure closed-profile checks. Passing these checks never creates a native admission. */
 import type { GuestFileRoot } from "./file-helper.ts";
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
+import { HOST_INPUT_COMMIT_SUBTYPE, HOST_INPUT_DISCARD_SUBTYPE, HOST_INPUT_FORGET_SUBTYPE, HOST_INPUT_HOLD_SUBTYPE } from "@yanlinglabs/winter-agent-sdk";
 import { isHostMessageSendAnswer, normaliseHostMessageListAnswer } from "@yanlinglabs/winter-agent-sdk/messaging";
 
 export const LINUX_HOST_QUERY_PROFILE = "host-query-v1" as const;
@@ -46,6 +47,17 @@ function interruptPayload(subtype: unknown, payload: unknown): boolean {
   if (keys.length === 0) return true;
   return subtype === "interrupt" && keys.length === 1 && keys[0] === "scope" && payload.scope === "turn";
 }
+const HELD_INPUT_CONTROL_SUBTYPES: ReadonlySet<string> = new Set([HOST_INPUT_HOLD_SUBTYPE, HOST_INPUT_COMMIT_SUBTYPE, HOST_INPUT_DISCARD_SUBTYPE, HOST_INPUT_FORGET_SUBTYPE]);
+const HELD_INPUT_TEXT_BYTES = 64 * 1024;
+const exactly = (value: unknown, keys: readonly string[]): value is Record<string, unknown> => object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+const heldId = (value: unknown): boolean => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
+const heldToken = (value: unknown): boolean => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+function heldInputPayload(subtype: string, payload: unknown): boolean {
+  if (subtype !== HOST_INPUT_HOLD_SUBTYPE) return exactly(payload, ["inputId", "holdToken"]) && heldId(payload.inputId) && heldToken(payload.holdToken);
+  if (!exactly(payload, ["inputId", "holdToken", "epoch", "text", "clientName"]) || !heldId(payload.inputId) || !heldToken(payload.holdToken)) return false;
+  if (!exactly(payload.epoch, ["incarnationId", "leaseEpoch"]) || typeof payload.epoch.incarnationId !== "string" || payload.epoch.incarnationId.length === 0 || payload.epoch.incarnationId.length > 256 || !Number.isSafeInteger(payload.epoch.leaseEpoch) || (payload.epoch.leaseEpoch as number) < 0) return false;
+  return typeof payload.text === "string" && payload.text.length > 0 && Buffer.byteLength(payload.text) <= HELD_INPUT_TEXT_BYTES && typeof payload.clientName === "string" && payload.clientName.length <= 256;
+}
 const requestId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 /** Only pending permission answers can settle runtime RPCs. Stale/foreign answers are harmless drops. */
 /** The control subtypes a host-query guest may issue to its host beside `permission` (SendMessage, ListAgents). Never `host_session_stop`: TaskStop is withheld. */
@@ -65,6 +77,11 @@ export function checkLinuxHostQueryFrame(frame: unknown, ownsPermission: (reques
   }
   if (!requestId(frame.requestId)) refuse();
   if (frame.type === "control_request") {
+    if (typeof frame.subtype === "string" && HELD_INPUT_CONTROL_SUBTYPES.has(frame.subtype)) {
+      // The four host -> runtime held-input verbs (N2 extensions 4.5): closed payloads only, bounded to the 64 KiB message plus its envelope.
+      if (!closed(frame, ["type", "requestId", "subtype", "payload"]) || !heldInputPayload(frame.subtype, frame.payload)) refuse();
+      return "accept";
+    }
     if (!closed(frame, ["type", "requestId", "subtype", "payload"]) || !["end_input", "interrupt"].includes(String(frame.subtype)) || !interruptPayload(frame.subtype, frame.payload)) refuse();
     return "accept";
   }

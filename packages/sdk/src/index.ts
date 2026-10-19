@@ -17,7 +17,7 @@ export { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_
 // `CredentialRef` in particular — it is declared ONCE, here in the dependency-free sdk, and
 // re-exported by @yanlinglabs/winter-provider-runtime, so a lane importing it from either package
 // gets the identical type rather than two structurally-similar twins that can drift.
-export { DEFAULT_PROVIDER_STALL_TIMEOUT_MS, DEFAULT_KEYCHAIN_SERVICE, TEST_KEYCHAIN_ENV, TEST_KEYCHAIN_MEMORY, MCP_OAUTH_REFRESH_SUBTYPE, CREDENTIAL_RESOLVE_SUBTYPE, HOST_MESSAGE_SEND_SUBTYPE, HOST_MESSAGE_LIST_SUBTYPE, HOST_SESSION_STOP_SUBTYPE } from "./options.ts";
+export { DEFAULT_PROVIDER_STALL_TIMEOUT_MS, DEFAULT_KEYCHAIN_SERVICE, TEST_KEYCHAIN_ENV, TEST_KEYCHAIN_MEMORY, MCP_OAUTH_REFRESH_SUBTYPE, CREDENTIAL_RESOLVE_SUBTYPE, HOST_MESSAGE_SEND_SUBTYPE, HOST_MESSAGE_LIST_SUBTYPE, HOST_SESSION_STOP_SUBTYPE, HOST_INPUT_HOLD_SUBTYPE, HOST_INPUT_COMMIT_SUBTYPE, HOST_INPUT_DISCARD_SUBTYPE, HOST_INPUT_FORGET_SUBTYPE, HELD_INPUT_CAPABILITY } from "./options.ts";
 export type { HostMessagingHandler } from "./options.ts";
 export { WEB_TOOLS_DEFAULTS, resolveWebToolsConfig } from "./options.ts";
 export type { ResolvedWebToolsConfig } from "./options.ts";
@@ -81,7 +81,7 @@ export type { McpServerConfigForProcessTransport, McpVersionNegotiation, AgentMc
 // WS-25 (MCP OAuth): the per-server `oauth` block and the runtime -> host refresh request/answer.
 export type { McpOAuthConfig, McpOAuthSecretRef, McpOAuthRefreshRequest, McpOAuthRefreshAnswer } from "./protocol/config.ts";
 // WS-25 §7: the host-brokered credential request/answer.
-export type { CredentialResolveRequest, CredentialResolveAnswer, HostMessageSendRequest, HostMessageSendAnswer, HostMessageListRequest, HostMessageListAnswer, HostReachableSession, HostSessionStopRequest, HostSessionStopAnswer } from "./protocol/config.ts";
+export type { CredentialResolveRequest, CredentialResolveAnswer, HostMessageSendRequest, HostMessageSendAnswer, HostMessageListRequest, HostMessageListAnswer, HostReachableSession, HostSessionStopRequest, HostSessionStopAnswer, HeldInputState, HeldInputEpoch, HostInputHoldRequest, HostInputHoldAnswer, HostInputCommitOutcome, HostInputCommitAnswer, HostInputDiscardAnswer, HostInputForgetAnswer, HeldInputReport } from "./protocol/config.ts";
 
 // Wire protocol (WS-02 §3: owned by the sdk, the runtime depends on it — never the reverse).
 // Previously reachable only via the runtime; now the sdk's own public surface.
@@ -164,6 +164,8 @@ export type {
   SDKInformationalMessage,
   // Winter-only: host input folded into the running turn (`Query.clearQueuedInput()` is its other half).
   SDKHostInputFoldedMessage,
+  SDKHeldInputsMessage,
+  SDKHostInputCommittedMessage,
   // Phase 6 Task 3 (R6-5/R6-D, derived-shapes-p6.md items (a)/(b)): the provider-facing frame family
   // plus the Winter-DECLARED wire vocabularies it carries. Named on the barrel because a host that
   // renders live tokens must be able to discriminate `stream_event` and reach inside `event`, and

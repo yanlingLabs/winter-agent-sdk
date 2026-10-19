@@ -35,6 +35,7 @@ import {
 import type { ContentBlock, ProviderMessage, SessionPersistence } from "../engine.ts";
 import { assertProtectedStoreConfig, createProtectedRuntimeStore, type OpenedProtectedStoreBootstrap } from "../guest/store-bootstrap.ts";
 import { durableOperationGuard, guardedDurableMethods, type DurableOperationGuard } from "./durable-authority.ts";
+import { heldInputJournalPath, openHeldInputJournal, type HeldInputJournal } from "../guest/held-input-journal.ts";
 import type { CompactBoundaryRecord, CompactBoundaryWriteResult } from "../compaction/seam.ts";
 import { resolveProjectDirName } from "../paths/project-dir-name.ts";
 import { findContinueTarget, findResumeTarget, truncateAt, toDialectEntries, rebuildProviderMessages, ResumeTargetError } from "./resume.ts";
@@ -1126,6 +1127,8 @@ export interface ResolvedEngineSession {
   // non-persistent session's fallback counters live for the life of the process only (engine.ts
   // falls back to an in-memory AutoCounterStore when this is undefined).
   autoStateStore?: AutoCounterStore;
+  /** Present only when the caller asked for it (`heldInputs: true`) on a persistent session: the guest's held-input journal (guarded by the store lease) and the inputIds the resumed transcript already holds. */
+  held?: { journal: HeldInputJournal; transcriptInputIds: ReadonlySet<string> };
 }
 
 // Task 8: wraps a TranscriptWriter with the ONE extra SessionPersistence method engine.ts's
@@ -1307,6 +1310,17 @@ export async function listChildAgentIds(store: SessionStore, key: { projectKey: 
 // `process.env` (its own deliberate, documented policy); testing.ts passes its own `env` parameter
 // (or `{}` when omitted), mirroring resolveInMemoryWinterHome's existing "never silently fall
 // through to the real process.env" discipline.
+/** The inputIds a transcript already holds for held-input journal inputs: a tagged `user` entry's `origin`, or a folded attachment's `inputId`. */
+export function transcriptHostInputIds(raw: readonly { [key: string]: unknown }[]): Set<string> {
+  const ids = new Set<string>();
+  const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+  for (const entry of raw) {
+    if (entry["type"] === "user" && record(entry["origin"]) && entry["origin"]["kind"] === "host-input" && typeof entry["origin"]["inputId"] === "string") ids.add(entry["origin"]["inputId"]);
+    if (record(entry["attachment"]) && typeof entry["attachment"]["inputId"] === "string") ids.add(entry["attachment"]["inputId"]);
+  }
+  return ids;
+}
+
 export async function resolveEngineSession(opts: {
   config: RuntimeConfig;
   resolveWinterHome: () => string;
@@ -1327,6 +1341,8 @@ export async function resolveEngineSession(opts: {
   resolveStoreHome?: () => string | undefined;
   /** Sealed trusted supervisor dependency; never supplied by config/env or a wire message. */
   protectedStoreBootstrap?: OpenedProtectedStoreBootstrap;
+  /** Open the session's held-input journal beside its transcript (a guest host-query run; N2 extensions 4.5). */
+  heldInputs?: boolean;
   env: Record<string, string | undefined>;
 }): Promise<ResolvedEngineSession> {
   const { config } = opts;
@@ -1351,6 +1367,17 @@ export async function resolveEngineSession(opts: {
   // if any) up front — every branch below (fresh session AND continue's single-directory scope)
   // uses this SAME resolved value, never the raw default.
   const cwdKey = resolveProjectDirName(defaultProjectKey, opts.env, config.brand ?? WINTER_BRAND);
+  // N2 extensions 4.5: the held-input journal beside the transcript, under the same store-lease guard as the other durable stores.
+  const heldFor = (projectKey: string, sessionId: string, transcriptIds: ReadonlySet<string>): { held?: { journal: HeldInputJournal; transcriptInputIds: ReadonlySet<string> } } => {
+    if (opts.heldInputs !== true) return {};
+    const guard = durableOperationGuard(store, durableRoot, { projectKey, sessionId });
+    const journal = guardedDurableMethods(guard, () => {
+      const opened = openHeldInputJournal(heldInputJournalPath(durableRoot, projectKey, sessionId));
+      if (opened.quarantined !== undefined) console.error("winter: held input journal was unreadable and was moved aside; any input it held will be reported unknown_input by the host's verdict");
+      return opened.journal;
+    });
+    return { held: { journal, transcriptInputIds: transcriptIds } };
+  };
   // The scoped path requires an exclusive writer even for an explicitly allocated fresh ID.
   // Ordinary legacy callers retain their existing fresh-session behavior.
   if (opts.protectedStoreBootstrap !== undefined && config.resume === undefined) await store.acquireSessionLease({ projectKey: cwdKey, sessionId: config.sessionId });
@@ -1385,6 +1412,7 @@ export async function resolveEngineSession(opts: {
       initialMessages: [],
       approvalStore: createFileDurableApprovalStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }, durableOperationGuard(store, durableRoot, { projectKey: cwdKey, sessionId: config.sessionId })),
       autoStateStore: createFileAutoCounterStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }, durableOperationGuard(store, durableRoot, { projectKey: cwdKey, sessionId: config.sessionId })),
+      ...heldFor(cwdKey, config.sessionId, new Set()),
     };
   }
 
@@ -1406,6 +1434,7 @@ export async function resolveEngineSession(opts: {
         initialMessages: [],
         approvalStore: createFileDurableApprovalStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }, durableOperationGuard(store, durableRoot, { projectKey: cwdKey, sessionId: config.sessionId })),
         autoStateStore: createFileAutoCounterStore({ winterHome: durableRoot, projectKey: cwdKey, sessionId: config.sessionId }, durableOperationGuard(store, durableRoot, { projectKey: cwdKey, sessionId: config.sessionId })),
+        ...heldFor(cwdKey, config.sessionId, new Set()),
       };
     }
     targetSessionId = found;
@@ -1518,7 +1547,7 @@ export async function resolveEngineSession(opts: {
   const guard = durableOperationGuard(store, durableRoot, { projectKey: targetProjectKey, sessionId: targetSessionId });
   const approvalStore = createFileDurableApprovalStore({ winterHome: durableRoot, projectKey: targetProjectKey, sessionId: targetSessionId }, guard);
   const autoStateStore = createFileAutoCounterStore({ winterHome: durableRoot, projectKey: targetProjectKey, sessionId: targetSessionId }, guard);
-  return { config: effectiveConfig, store: writer, initialMessages, approvalStore, autoStateStore };
+  return { config: effectiveConfig, store: writer, initialMessages, approvalStore, autoStateStore, ...heldFor(targetProjectKey, targetSessionId, transcriptHostInputIds(rawEntries)) };
 }
 
 // main.ts's own production policy: config.winterHome (an explicit per-run override — RuntimeConfig
