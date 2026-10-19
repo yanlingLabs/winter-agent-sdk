@@ -37,10 +37,10 @@ def route(relay,selector,name):
 
 class HostQueryProducerTests(unittest.TestCase):
     def test_policy_and_source_tool_facts_derive_all_closed_sdk_modes(self):
-        for policy,mode in [('auto','default'),('ask','default'),('plan','plan'),('accept-edits','acceptEdits'),('dont-ask','dontAsk'),('bypass','bypassPermissions')]:
+        for policy,mode in [('auto','default'),('ask','default'),('plan','plan'),('accept-edits','default'),('dont-ask','default'),('bypass','default')]:
             current=item(policy);config=service.host_query_config(current,['read','write','execute'],'openai/fixture')
             self.assertEqual(config['permissionMode'],mode);self.assertEqual(config['tools'],['Read','Edit','Write','Bash']);self.assertEqual(config['allowedTools'],[])
-            self.assertEqual(config['permissions'],{'disableBypassPermissionsMode':policy!='bypass'});self.assertEqual(config['allowDangerouslySkipPermissions'],policy=='bypass')
+            self.assertEqual(config['permissions'],{'disableBypassPermissionsMode':True});self.assertIs(config['allowDangerouslySkipPermissions'],False)
             self.assertEqual(config['cwd'],'/workspace/folders/source');self.assertEqual(config['storeHome'],'/workspace/.winter/conversations/logical')
             self.assertNotIn('resume',config);self.assertNotIn('env',config);self.assertNotIn('hooks',config)
         self.assertEqual(service.host_query_config(item(),['write'],'model')['tools'],['Write'])

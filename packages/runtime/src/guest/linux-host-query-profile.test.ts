@@ -6,12 +6,21 @@ import { admitHostQueryLinuxSession, linuxSessionProfile, checkLinuxSessionFrame
 import { createRpcBridge } from "../rpc/bridge.ts";
 const config = (): RuntimeConfig => ({ executionPosture: "confined-guest", sessionId: "backend", model: "model", cwd: "/workspace/source", winterHome: "/run/winter/conversations/logical", storeHome: "/workspace/.winter/conversations/logical", persistSession: true, tools: ["Read", "Edit", "Write", "Bash"], allowedTools: [], settingSources: [], skills: [], plugins: [], strictMcpConfig: true, mcpServers: {}, permissionMode: "default", permissions: { disableBypassPermissionsMode: true }, allowDangerouslySkipPermissions: false });
 
-test("closed host-query config requires empty preapprovals and matching immutable bypass clamp", () => {
-  for (const mode of ["default", "acceptEdits", "dontAsk", "plan", "bypassPermissions"] as const) {
-    const value = { ...config(), permissionMode: mode, permissions: { disableBypassPermissionsMode: mode !== "bypassPermissions" }, allowDangerouslySkipPermissions: mode === "bypassPermissions" };
+test("closed host-query config admits only default and plan with the fixed bypass clamp, and refuses every other mode and pair", () => {
+  const clamp = { permissions: { disableBypassPermissionsMode: true }, allowDangerouslySkipPermissions: false };
+  for (const mode of ["default", "plan"] as const) {
+    const value = { ...config(), permissionMode: mode, ...clamp };
     expect(() => assertLinuxHostQueryConfig(value)).not.toThrow();
-    expect(() => assertLinuxHostQueryConfig({ ...value, allowDangerouslySkipPermissions: !value.allowDangerouslySkipPermissions })).toThrow();
-    expect(() => assertLinuxHostQueryConfig({ ...value, permissions: { disableBypassPermissionsMode: !value.permissions.disableBypassPermissionsMode } })).toThrow();
+    expect(() => assertLinuxHostQueryConfig({ ...value, allowDangerouslySkipPermissions: true })).toThrow();
+    expect(() => assertLinuxHostQueryConfig({ ...value, permissions: { disableBypassPermissionsMode: false } })).toThrow();
+    expect(() => assertLinuxHostQueryConfig({ ...value, allowDangerouslySkipPermissions: undefined } as unknown as RuntimeConfig)).toThrow();
+    expect(() => assertLinuxHostQueryConfig({ ...value, permissions: {} })).toThrow();
+    for (const permissions of [undefined, null, [], "x"]) expect(() => assertLinuxHostQueryConfig({ ...value, permissions } as unknown as RuntimeConfig)).toThrow("Linux host-query profile unavailable");
+  }
+  for (const mode of ["acceptEdits", "dontAsk", "bypassPermissions", "auto", "", undefined]) {
+    for (const pair of [clamp, { permissions: { disableBypassPermissionsMode: false }, allowDangerouslySkipPermissions: true }, { permissions: { disableBypassPermissionsMode: !(mode === "bypassPermissions") }, allowDangerouslySkipPermissions: mode === "bypassPermissions" }]) {
+      expect(() => assertLinuxHostQueryConfig({ ...config(), permissionMode: mode, ...pair } as RuntimeConfig), String(mode)).toThrow();
+    }
   }
   for (const change of [
     { allowedTools: ["Bash"] }, { tools: ["Agent"] }, { tools: ["Read", "Read"] }, { tools: ["Edit"] },

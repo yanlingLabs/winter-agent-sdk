@@ -20,7 +20,7 @@ service = fresh.service
 class RuntimeLauncherPolicyTests(unittest.TestCase):
     def test_actual_runtime_argv_maps_all_policies_without_changing_sdk_or_roots(self):
         policies = {'auto': 'default', 'ask': 'default', 'plan': 'plan',
-                    'accept-edits': 'acceptEdits', 'dont-ask': 'dontAsk', 'bypass': 'bypassPermissions'}
+                    'accept-edits': 'default', 'dont-ask': 'default', 'bypass': 'default'}
         for policy, sdk_mode in policies.items():
             with self.subTest(policy=policy), tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
                 directory = Path(temp)
@@ -83,8 +83,8 @@ class RuntimeLauncherPolicyTests(unittest.TestCase):
                 self.assertEqual(config, before_config)
                 self.assertEqual(config['permissionMode'], sdk_mode)
                 self.assertEqual(config['allowedTools'], [])
-                self.assertEqual(config['permissions'], {'disableBypassPermissionsMode': policy != 'bypass'})
-                self.assertEqual(config['allowDangerouslySkipPermissions'], policy == 'bypass')
+                self.assertEqual(config['permissions'], {'disableBypassPermissionsMode': True})
+                self.assertIs(config['allowDangerouslySkipPermissions'], False)
                 self.assertEqual(service.ToolService._runtime_record(fake, item, runtime), bootstrap_before)
                 port.claim.assert_called_once_with(item)
                 port.verify.assert_called_once()

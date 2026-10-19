@@ -70,12 +70,18 @@ test("guided policy preserves v1 permission clamps and never widens sources or a
   const { config, registration } = fixture(), roots = [{ id: "source", guestPath: registration.views.sourceRoot, readOnly: false }];
   expect(() => assertLinuxGuidedHostQueryRoots(config, roots, registration)).not.toThrow();
   expect(() => assertLinuxHostQueryConfig(config)).toThrow();
-  for (const permissionMode of ["default", "acceptEdits", "dontAsk", "plan", "bypassPermissions"] as const) {
-    const bypass = permissionMode === "bypassPermissions";
-    const own = { ...config, permissionMode, permissions: { disableBypassPermissionsMode: !bypass }, allowDangerouslySkipPermissions: bypass };
+  for (const permissionMode of ["default", "plan"] as const) {
+    const own = { ...config, permissionMode, permissions: { disableBypassPermissionsMode: true }, allowDangerouslySkipPermissions: false };
     expect(() => assertLinuxGuidedHostQueryConfig(own, registration)).not.toThrow();
-    expect(() => assertLinuxGuidedHostQueryConfig({ ...own, allowDangerouslySkipPermissions: !bypass }, registration)).toThrow();
+    expect(() => assertLinuxGuidedHostQueryConfig({ ...own, allowDangerouslySkipPermissions: true }, registration)).toThrow();
+    expect(() => assertLinuxGuidedHostQueryConfig({ ...own, permissions: { disableBypassPermissionsMode: false } }, registration)).toThrow();
     if (permissionMode === "plan") expect(() => assertLinuxGuidedHostQueryRoots(own, roots, registration)).toThrow();
+  }
+  for (const permissionMode of ["acceptEdits", "dontAsk", "bypassPermissions"] as const) {
+    const bypass = permissionMode === "bypassPermissions";
+    for (const pair of [{ permissions: { disableBypassPermissionsMode: true }, allowDangerouslySkipPermissions: false }, { permissions: { disableBypassPermissionsMode: !bypass }, allowDangerouslySkipPermissions: bypass }]) {
+      expect(() => assertLinuxGuidedHostQueryConfig({ ...config, permissionMode, ...pair }, registration), permissionMode).toThrow();
+    }
   }
   for (const change of [{ sessionId: "foreign" }, { cwd: registration.views.sourceRoot }, { storeHome: "/workspace/.winter/conversations/foreign" },
     { agentId: "child" }, { resume: "backend" }, { forkSession: true }, { settingSources: ["user"] }, { hooks: {} }, { allowedTools: ["Bash"] },

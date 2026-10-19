@@ -29,10 +29,9 @@ owner object can mint either admission. The native C helper is unchanged.
 
 The host-query config is closed: visible tools are a unique subset of
 Read/Write/Edit/Bash (Edit requires Read and Write), `allowedTools` is empty,
-settings/skills/plugins/MCP are empty, and only default/acceptEdits/dontAsk/plan/
-bypassPermissions are accepted. Bypass requires `allowDangerouslySkipPermissions: true` and
-`permissions.disableBypassPermissionsMode: false`; other modes require the
-opposite pair. Captured config remains fixed except bounded provider-derived
+settings/skills/plugins/MCP are empty, and only default and plan are accepted (the host
+matrix behind `canUseTool` is the policy authority; every other SDK mode would resolve calls without it). The pair is fixed:
+`allowDangerouslySkipPermissions: false` and `permissions.disableBypassPermissionsMode: true`. Captured config remains fixed except bounded provider-derived
 context sizing. Tool execution also checks the admitted subset. The record must
 bind cwd exactly to a source root, admit at most 16 roots, exclude every
 `/workspace/.winter` root, and mark every plan root read-only. These are narrow

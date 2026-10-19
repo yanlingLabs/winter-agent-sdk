@@ -22,9 +22,10 @@ kernel boot. The default CLI has no transport adapter and cannot activate this
 route from JSON alone; missing/JSON/stale/closed adapters refuse.
 
 `host_query_config` derives the SDK config from root-owned conversation policy,
-source roots and captured tool classes. Auto/ask map to SDK default; plan,
-accept-edits, dont-ask and bypass map to their admitted SDK equivalents. The four
-tools are the ceiling, `allowedTools` is empty, and the bypass/clamp pair is exact.
+source roots and captured tool classes. Plan maps to SDK plan and every other policy
+(auto, ask, accept-edits, dont-ask, bypass) maps to SDK default, so the host matrix behind `canUseTool` stays the policy
+authority. The received policy is recorded unchanged. The four tools are the ceiling, `allowedTools` is empty, and the clamp
+pair is always `disableBypassPermissionsMode: true`, `allowDangerouslySkipPermissions: false`.
 The root record carries `profile: host-query-v1`, protocol 1 and freshOnly true.
 The existing four inherited owner-proof descriptors still pass through unchanged
 native peer/UID/pidfd/executable/store/kernel-boot admission; the transport object,
@@ -189,8 +190,7 @@ Both tool and runtime argv assembly now use one `native_mount_policy`: plan iff
 the Root-admitted full policy is plan, otherwise auto. This selects the existing
 native readonly/writable view; it does not select SDK approval mode. Item policy,
 effect grants, roots/readonly metadata, bootstrap and `host_query_config` remain
-unchanged: ask/default, plan/plan, accept-edits/acceptEdits, dont-ask/dontAsk and
-bypass/bypassPermissions with the exact bypass clamp pair. Native C/helpers,
+unchanged, except that the SDK mode is plan for plan and default otherwise, with the bypass clamp always on. Native C/helpers,
 owner proof, filters, deadlines, capability flags and fixture oracles are unchanged.
 
 The original first-SDK `scripts/guest-engine/verify.py` fixed policy to auto.

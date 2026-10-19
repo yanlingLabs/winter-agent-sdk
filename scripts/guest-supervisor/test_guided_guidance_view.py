@@ -38,6 +38,8 @@ MATRIX = ROOT / 'docs/guided-guidance-view-matrix.md'
 # The Root reader service (agent-sdk Track A S2) later changed linux-supervisor.py again. Its delta is recorded as a patch from the bytes
 # this file's APPLIED_TARGETS pin to the tracked bytes, so the chain tracked -> (reverse reader service) -> applied -> (reverse view) -> main still holds.
 SERVICE_PATCH = ROOT / 'docs/research/guided-reader-service-supervisor.patch'
+# The host-query runtime-mode collapse (agent-sdk wave 4) changed linux-supervisor.py a third time; its delta sits on top of the reader service.
+POLICY_PATCH = ROOT / 'docs/research/guided-supervisor-policy-mode-DATA.patch'
 PROBE = Path(__file__).with_name('guidance_view_probe.c')
 TOOL, SUPERVISOR = GUEST + '/linux-tool-compartment.c', GUEST + '/linux-supervisor.py'
 
@@ -52,7 +54,8 @@ APPLIED_TARGETS = {
     SUPERVISOR: '51259b0ff1651dfd05663b3796fe6a187120884fbf68f75977d05af454aa4359',
 }
 # The tracked Root service once the reader service is applied on top of the view patch.
-TRACKED_SUPERVISOR = 'a26dacd86b805ca47b3e4805d06af2b178eee82003ebe6c38f2aeeb85e48035d'
+PRE_POLICY_SUPERVISOR = 'a26dacd86b805ca47b3e4805d06af2b178eee82003ebe6c38f2aeeb85e48035d'
+TRACKED_SUPERVISOR = 'f1e124fe21dac2d3a7c94a4e7923ac2ff92e9afd9600a0dd24d7f01c8fa9e8ab'
 FROZEN = {
     GUEST + '/linux-compartment.h': '92fef7c0708a23b1e930c5b2560dae6bef27294dfd682346e69d35c0484b967d',
     GUEST + '/linux-runtime-compartment.c': 'fcb90dba8cf9552b9c10cde4012603ac9471b03f31a09bc408667257f65842fa',
@@ -97,15 +100,18 @@ _applied = {}
 
 
 def tracked_applied_text(name):
-    """The bytes the view patch was applied to produce: the tracked file, with the reader service delta reversed for the Root service."""
+    """The bytes the view patch was applied to produce: the tracked file, with the policy-mode and reader service deltas reversed for the Root service."""
     if not _applied:
         directory = Path(tempfile.mkdtemp(prefix='winter-guidance-view-applied-text-'))
         try:
             for target in MAIN_TARGETS:
                 (directory / target).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / target, directory / target)
-            reverse = subprocess.run(['patch', '-p1', '-R', '-s', '-d', str(directory), '-i', str(SERVICE_PATCH)], capture_output=True, text=True, timeout=30)
-            assert reverse.returncode == 0, reverse.stderr
+            for undo in (POLICY_PATCH, SERVICE_PATCH):
+                reverse = subprocess.run(['patch', '-p1', '-R', '-s', '-d', str(directory), '-i', str(undo)], capture_output=True, text=True, timeout=30)
+                assert reverse.returncode == 0, reverse.stderr
+                if undo == POLICY_PATCH:
+                    assert hashlib.sha256((directory / SUPERVISOR).read_bytes()).hexdigest() == PRE_POLICY_SUPERVISOR
             for target in MAIN_TARGETS:
                 _applied[target] = (directory / target).read_text()
         finally:

@@ -16,9 +16,10 @@ export function assertLinuxHostQueryConfig(config: RuntimeConfig): void {
   if (Object.keys(config).some(key => !configKeys.has(key)) || config.executionPosture !== "confined-guest" || config.persistSession !== true || !Array.isArray(config.tools) || config.tools.length > 4 || new Set(config.tools).size !== config.tools.length || config.tools.some(tool => typeof tool !== "string" || !tools.has(tool)) || (config.tools.includes("Edit") && (!config.tools.includes("Read") || !config.tools.includes("Write")))) refuse();
   if (![config.sessionId, config.model, config.cwd, config.winterHome, config.storeHome].every(value => typeof value === "string" && value.length > 0 && value.length <= 4096)) refuse();
   if (!emptyList(config.allowedTools) || !emptyList(config.settingSources) || !emptyList(config.skills) || !emptyList(config.plugins) || config.strictMcpConfig !== true || !object(config.mcpServers) || Object.keys(config.mcpServers).length !== 0) refuse();
-  if (!["default", "acceptEdits", "dontAsk", "plan", "bypassPermissions"].includes(config.permissionMode ?? "")) refuse();
-  const bypass = config.permissionMode === "bypassPermissions";
-  if (config.allowDangerouslySkipPermissions !== bypass || !object(config.permissions) || !closed(config.permissions, ["disableBypassPermissionsMode"]) || config.permissions.disableBypassPermissionsMode !== !bypass) refuse();
+  // Cowork's host matrix behind canUseTool is the policy authority, so the guest runs only default or plan: any other mode lets the SDK
+  // resolve calls without canUseTool. The bypass clamp pair is fixed (never allowed to skip, bypass mode disabled).
+  if (!["default", "plan"].includes(config.permissionMode ?? "")) refuse();
+  if (config.allowDangerouslySkipPermissions !== false || !object(config.permissions) || !closed(config.permissions, ["disableBypassPermissionsMode"]) || config.permissions.disableBypassPermissionsMode !== true) refuse();
   if (config.contextWindowTokens !== undefined && (!Number.isSafeInteger(config.contextWindowTokens) || config.contextWindowTokens < 1 || config.contextWindowTokens > 16 * 1024 * 1024)) refuse();
 }
 /** Root metadata is corroboration, not mount proof; native supervisor must enforce these roots. */
