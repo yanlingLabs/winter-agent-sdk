@@ -80,7 +80,7 @@ test("commit on an idle runtime starts a turn, appends the tagged transcript ent
   await g.waitFor(() => journalRecords(home)[0]?.state === "in_transcript" ? true : undefined, "journal in_transcript");
   expect(journalRecords(home)[0]!.text).toBeUndefined();
   expect(await g.commit("r1", "a")).toMatchObject({ ok: true, payload: { outcome: "already" } });
-  expect(await g.commit("r1", "other")).toMatchObject({ ok: false, error: { code: "superseded" } });
+  expect(await g.commit("r1", "other")).toMatchObject({ ok: true, payload: { outcome: "already" } });   // whatever the token once it is part of the conversation
   expect(g.requests.length).toBe(1);
 });
 
@@ -314,4 +314,29 @@ test("a run with no journal (the ordinary local leg) never emits held_inputs and
   const text = seen.join("");
   expect(text).not.toContain("held_inputs");
   expect(text).not.toContain('"outcome"');
+});
+
+test("a replayed hold after forget is answered {held:false, state:in_transcript} and the input is never delivered twice", async () => {
+  const { home, cwd } = fresh("replay");
+  const g = guest({ home, cwd });
+  await g.hold("r1", "a", "only once");
+  await g.commit("r1", "a");
+  await g.waitFor(() => journalRecords(home)[0]?.state === "in_transcript" ? true : undefined, "journal in_transcript");
+  expect(await g.forget("r1", "a")).toMatchObject({ ok: true, payload: { forgotten: true } });
+  expect(journalRecords(home)).toEqual([]);
+  // The tombstone is gone but the transcript holds the id: a re-offer must not hold it again.
+  expect(await g.hold("r1", "b", "only once")).toMatchObject({ ok: true, payload: { held: false, state: "in_transcript" } });
+  expect(journalRecords(home)).toEqual([]);
+  expect(await g.commit("r1", "b")).toMatchObject({ ok: true, payload: { outcome: "already" } });
+  await sleep(150);
+  expect(transcriptLinesFor(home, "r1")).toHaveLength(1);
+  expect(g.texts().join("").split("only once").length - 1).toBeLessThanOrEqual(1);
+  // And across a restart: the transcript dedupe seeds the same knowledge.
+  g.kill();
+  await Promise.race([g.proc.exited, sleep(300)]);
+  const again = guest({ home, cwd, resume: true });
+  await again.waitFor(() => again.system("held_inputs")[0], "held_inputs");
+  expect(await again.hold("r1", "c", "only once")).toMatchObject({ ok: true, payload: { held: false, state: "in_transcript" } });
+  expect(await again.commit("r1", "c")).toMatchObject({ ok: true, payload: { outcome: "already" } });
+  expect(transcriptLinesFor(home, "r1")).toHaveLength(1);
 });

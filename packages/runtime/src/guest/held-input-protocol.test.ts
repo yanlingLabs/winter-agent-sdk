@@ -138,3 +138,9 @@ test("Query.holdInput/commitInput/discardInput/forgetInput drive the journal, an
     await expect(q.discardInput!("never", "not-a-token")).rejects.toMatchObject({ code: "invalid" });
   });
 });
+
+test("a hold whose text begins with a slash (after any whitespace) is refused by the frame checker, as a user frame is; a slash inside the text is fine", () => {
+  const refused = (text: string) => expect(() => checkLinuxHostQueryFrame(request("host_input_hold", { ...hold, text }), () => false), JSON.stringify(text)).toThrow(REFUSAL);
+  for (const text of ["/compact keep nothing", " /clear", "\n\t/x", "\u00a0/compact", "/"]) refused(text);
+  for (const text of ["a/b", "hello /compact", "1/2"]) expect(checkLinuxHostQueryFrame(request("host_input_hold", { ...hold, text }), () => false)).toBe("accept");
+});

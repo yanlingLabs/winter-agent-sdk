@@ -58,7 +58,8 @@ function heldInputPayload(subtype: string, payload: unknown): boolean {
   if (subtype !== HOST_INPUT_HOLD_SUBTYPE) return exactly(payload, ["inputId", "holdToken"]) && heldId(payload.inputId) && heldToken(payload.holdToken);
   if (!exactly(payload, ["inputId", "holdToken", "epoch", "text", "clientName"]) || !heldId(payload.inputId) || !heldToken(payload.holdToken)) return false;
   if (!exactly(payload.epoch, ["incarnationId", "leaseEpoch"]) || typeof payload.epoch.incarnationId !== "string" || payload.epoch.incarnationId.length === 0 || payload.epoch.incarnationId.length > 256 || !Number.isSafeInteger(payload.epoch.leaseEpoch) || (payload.epoch.leaseEpoch as number) < 0) return false;
-  return typeof payload.text === "string" && payload.text.length > 0 && Buffer.byteLength(payload.text) <= HELD_INPUT_TEXT_BYTES && typeof payload.clientName === "string" && payload.clientName.length <= 256;
+  // A committed input becomes a user turn, so it keeps the user-frame vocabulary closed: no leading slash command (built-in compaction ran from one).
+  return typeof payload.text === "string" && payload.text.length > 0 && !payload.text.trimStart().startsWith("/") && Buffer.byteLength(payload.text) <= HELD_INPUT_TEXT_BYTES && typeof payload.clientName === "string" && payload.clientName.length <= 256;
 }
 const requestId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 /** Only pending permission answers can settle runtime RPCs. Stale/foreign answers are harmless drops. */

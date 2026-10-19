@@ -6317,6 +6317,12 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         if (!heldInputExactKeys(payload, ["inputId", "holdToken", "epoch", "text", "clientName"]) || !heldInputExactKeys(payload.epoch, ["incarnationId", "leaseEpoch"])) throw new HeldInputError("invalid", "host_input_hold payload");
         const epoch = payload.epoch as Record<string, unknown>;
         if (epoch.incarnationId !== support.epoch.incarnationId || epoch.leaseEpoch !== support.epoch.leaseEpoch) throw new HeldInputError("epoch", "the hold is for another epoch");
+        // The transcript is the last word: an id it already holds (its tombstone may have been forgotten) is never held, and so never delivered, again.
+        const known = typeof payload.inputId === "string" ? journal.list().find((record) => record.inputId === payload.inputId) : undefined;
+        if (known === undefined && typeof payload.inputId === "string" && transcriptHoldsInput.has(payload.inputId)) {
+          output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { held: false, state: "in_transcript" } });
+          return;
+        }
         const answer = journal.hold({ inputId: payload.inputId as string, holdToken: payload.holdToken as string, text: payload.text as string, clientName: payload.clientName as string });
         output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: answer });
         return;
