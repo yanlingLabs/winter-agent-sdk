@@ -1699,7 +1699,7 @@ class LinuxNativeTests(unittest.TestCase):
         ('no mount crossing', '.resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV', '.resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS'),
         ('non-blocking open', '.flags = O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_NOCTTY | O_CLOEXEC,', '.flags = O_RDONLY | O_NOFOLLOW | O_NOCTTY | O_CLOEXEC,'),
         ('regular file only', '    if (!S_ISREG(mode)) return "not_regular";', '    if (!S_ISREG(mode) && 0) return "not_regular";'),
-        ('one link only', '    if (links != 1) return "linked";\n', ''),
+        ('one link only', '    if (links != 1) return "linked";', '    if (links != 1 && 0) return "linked";'),
         ('ext4 root', '(unsigned long)fs.f_type != BROWSE_EXT4_MAGIC || ', ''),
         ('root on the admitted device', ' || (unsigned long long)root_st.st_dev != root_device', ''),
         ('root without symlinks', 'O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, .resolve = RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS };\n    int root = (int)syscall(SYS_openat2, AT_FDCWD, argv[2], &browse_root_how', 'O_PATH | O_DIRECTORY | O_CLOEXEC, .resolve = RESOLVE_NO_MAGICLINKS };\n    int root = (int)syscall(SYS_openat2, AT_FDCWD, argv[2], &browse_root_how'),
