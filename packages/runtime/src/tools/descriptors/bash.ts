@@ -21,8 +21,32 @@
 //     a subset of that -- a claim the executor does not enforce as written;
 //   - "Briefly explain what sandbox restriction likely caused the failure." is SHORTENED: its second
 //     sentence names a `/sandbox` command Winter does not have;
-//   - the "Network egress goes through a filtering proxy ... `<sandbox_violations>` block" bullet is
-//     DROPPED: there is no proxy and no violations block.
+//   - the "Network egress goes through a filtering proxy. Attempt requests and read the error rather
+//     than predicting whether a host is reachable; denied connections are reported in a
+//     `<sandbox_violations>` block explaining the reason" bullet is DROPPED: there is no proxy -- the
+//     profile denies the network outright, so no host is reachable to attempt. claude's other sentence
+//     naming the block ("If the `<sandbox_violations>` block names a denied host, re-run the command
+//     with that host in its `allowed_domains` (auto mode); otherwise ...") is not carried either: it
+//     names an `allowed_domains` parameter Winter does not have;
+//   - the evidence list carries ONE item that is Winter's, not claude's: "A `<sandbox_violations>`
+//     block in the output, listing what the sandbox denied while the command ran". Winter's Bash
+//     result now carries that block (`sandbox/violations.ts`: a FAILED sandboxed command's own
+//     Seatbelt denials, read from the macOS unified log, baseline start-up denials removed), and the
+//     two claude sentences above are the only ones that name it -- both tied to a proxy or a
+//     parameter Winter lacks. Only the override variant has an evidence list, so only it gains the item;
+//   - claude's `open`/`osascript` bullet ("Opening an app, file or URL with `open` ... is blocked
+//     inside this sandbox ... do not retry it with `dangerouslyDisableSandbox: true`. Tell the user
+//     ...") is NOT carried: in Winter such a failure is retried with the override like any other
+//     sandbox-caused failure (it goes through the permission gate), and the violations block shows the
+//     refused LaunchServices lookup as the evidence;
+//   - claude's counterweight to that retry advice IS carried, ADAPTED in one phrase: "A sandbox denial
+//     on a credential, a file or a host that the task does not involve is the boundary above at work:
+//     tell the user rather than retrying with `dangerouslyDisableSandbox: true`." -- "the boundary
+//     above" becomes "the sandbox", because the boundary it points at in claude (a filesystem sentence
+//     about Claude Code's own settings and the user's credentials) is not rendered here. It stands
+//     where claude puts it, right after the "When you see evidence ..." list, in the override variant
+//     only; with the violations block listing every denial a failed command hit, it is what keeps a
+//     denial the task never needed (a credential read, a cache write) from becoming a retry.
 // Under `sandbox.allowUnsandboxedCommands: false` the override guidance is replaced by claude's own
 // "disabled by policy" bullets, verbatim -- true there, because the runtime then IGNORES the flag and
 // runs the command sandboxed (`sandbox/spawn.ts`), as claude does.
@@ -48,6 +72,13 @@ export const BASH_DESCRIPTION =
   "Fresh shell per call; cwd changes persist only within allowed working directories; env exports do not persist. run_in_background returns a background task. Recognized read-only forms are built-in pre-approvals.";
 
 export const BASH_SANDBOX_HEADING = "## Bash command sandbox";
+
+/** claude's counterweight to the retry advice, one phrase adapted (see the header). */
+export const SANDBOX_DENIAL_COUNTERWEIGHT =
+  "A sandbox denial on a credential, a file or a host that the task does not involve is the sandbox at work: tell the user rather than retrying with `dangerouslyDisableSandbox: true`.";
+
+/** The evidence-list item naming the `<sandbox_violations>` block -- Winter's wording (see the header). */
+export const SANDBOX_VIOLATIONS_EVIDENCE = "A `<sandbox_violations>` block in the output, listing what the sandbox denied while the command ran";
 
 /** The facts the section is rendered from. Absent (`bashDescriptionFor(undefined)`) means commands do not run in a sandbox at all. */
 export interface BashSandboxFacts {
@@ -83,9 +114,18 @@ export function bashSandboxSection(facts: BashSandboxFacts): string {
             "A specific command just failed and you see evidence of sandbox restrictions causing the failure. Note that commands can fail for many reasons unrelated to the sandbox (missing files, wrong arguments, network issues, etc.).",
           ],
           "Evidence of sandbox-caused failures includes:",
-          ['"Operation not permitted" errors for file/network operations', "Access denied to specific paths outside allowed directories", "Network connection failures to non-whitelisted hosts", "Unix socket connection errors"],
+          [
+            '"Operation not permitted" errors for file/network operations',
+            "Access denied to specific paths outside allowed directories",
+            "Network connection failures to non-whitelisted hosts",
+            "Unix socket connection errors",
+            // Winter's own line, not claude's -- see this file's header.
+            SANDBOX_VIOLATIONS_EVIDENCE,
+          ],
           "When you see evidence of sandbox-caused failure:",
           ["Immediately retry with `dangerouslyDisableSandbox: true` (don't ask, just do it)", "Briefly explain what sandbox restriction likely caused the failure.", "This goes through the permission gate"],
+          // claude's counterweight, "the boundary above" adapted to "the sandbox" -- see this file's header.
+          SANDBOX_DENIAL_COUNTERWEIGHT,
           "Treat each command you execute with `dangerouslyDisableSandbox: true` individually. Even if you have recently run a command with this setting, you should default to running future commands within the sandbox.",
           "Do not suggest adding sensitive paths like ~/.bashrc, ~/.zshrc, ~/.ssh/*, or credential files to the sandbox allowlist.",
         ];
