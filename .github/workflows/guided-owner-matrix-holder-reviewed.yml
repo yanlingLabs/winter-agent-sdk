@@ -17,7 +17,7 @@ concurrency:
   group: guided-owner-matrix-run-2
   cancel-in-progress: false
 env:
-  ARMED_HEAD: '0000000000000000000000000000000000000000'
+  ARMED_HEAD: '9c980c326638489e0183d7fcddcf1a93553be0ba'
   FIXTURE_SHA256: a0c4929d88ae9dc66fc2201a2ff65c047e4c9ea0e85807d181080835539587d1
   MATRIX_SHA256: 8f93e9f8327e7da20241f52bdd2a2fdb556134456b64f037ab9a046811406cb4
   # The fixture #includes this file (the production owner); the matrix recompiles the fixture as root.
