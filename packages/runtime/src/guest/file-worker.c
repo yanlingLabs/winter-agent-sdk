@@ -162,17 +162,17 @@ static int browse_main(char **argv) {
         || !browse_decimal(argv[7], ~0ULL, &root_device) || argv[2][0] != '/' || !argv[3][0] || argv[3][0] == '/') { errno = EINVAL; return error_result("invalid_request"); }
     if (syscall(SYS_close_range, 3U, ~0U, 0U)) return error_result("fd_cleanup_unavailable");
     /* 1. The root, without RESOLVE_NO_XDEV: the root is itself a mount point in the view. */
-    struct open_how root_how = { .flags = O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, .resolve = RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS };
-    int root = (int)syscall(SYS_openat2, AT_FDCWD, argv[2], &root_how, sizeof(root_how));
+    struct open_how browse_root_how = { .flags = O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, .resolve = RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS };
+    int root = (int)syscall(SYS_openat2, AT_FDCWD, argv[2], &browse_root_how, sizeof(browse_root_how));
     if (root < 0) return error_result("root_unavailable");
     /* 2. The root-device check: an ext4 root on the admitted descriptor's device. A share root (a host-share mount point) fails here. */
     struct statfs fs; struct stat root_st;
     if (fstatfs(root, &fs) || fstat(root, &root_st)) { close(root); return error_result("root_unavailable"); }
     if ((unsigned long)fs.f_type != BROWSE_EXT4_MAGIC || (unsigned long long)root_st.st_dev != root_device) { close(root); errno = EXDEV; return error_result("root_not_data"); }
     /* 3. Kernel-enforced walk: no symlink in any component, no escape, no magic link, no mount crossing below the root. */
-    struct open_how how = { .flags = O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_NOCTTY | O_CLOEXEC,
+    struct open_how browse_how = { .flags = O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_NOCTTY | O_CLOEXEC,
         .resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV };
-    int file = (int)syscall(SYS_openat2, root, argv[3], &how, sizeof(how));
+    int file = (int)syscall(SYS_openat2, root, argv[3], &browse_how, sizeof(browse_how));
     int saved = errno; close(root); errno = saved;
     if (file < 0) return error_result(browse_open_code(errno));
     /* 4. One regular file, one link, the root's device. */

@@ -1673,6 +1673,110 @@ class LinuxNativeTests(unittest.TestCase):
         self.assertNotEqual(value['probe'][3], 1)  # pwrite reaches the kernel (EBADF on the read-only descriptor)
         self.assertEqual((root / 'seed.txt').read_bytes(), b'0123456789')
 
+    def test_browse_stays_read_only_whatever_the_policy_argument(self):
+        root = self.root()
+        code, out, err = self.launch(root, 'stat', 'seed.txt', worker=self.probe, mutate=lambda argv: argv[:7] + ['auto'] + argv[8:])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)['writeOpen'], 30)
+
+    # Built-in mutants of the C guards: each is built from the tracked source with one guard removed and must change an observable outcome.
+    TOOL_MUTANTS = [
+        ('read-only whatever the policy', '||!strcmp(argv[7],"plan")||browse,0);', '||!strcmp(argv[7],"plan"),0);'),
+        ('one root only', 'if(browse&&(roots!=1||guided||', 'if(browse&&(guided||'),
+        ('never guided', 'if(browse&&(roots!=1||guided||', 'if(browse&&(roots!=1||'),
+        ('root shown at the requested path', '||strcmp(argv[10],argv[16])||', '||'),
+        ('stat or browse-read only', '||(strcmp(argv[9],"stat")&&strcmp(argv[9],"browse-read"))))_exit(64);', '))_exit(64);'),
+        ('the admitted device reaches the worker', 'snprintf(root_device,sizeof root_device,"%ju",(uintmax_t)admitted.st_dev);', 'snprintf(root_device,sizeof root_device,"%ju",(uintmax_t)admitted.st_dev+1);'),
+    ]
+    WORKER_MUTANTS = [
+        ('no symlinks', '.resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV', '.resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV'),
+        ('beneath', '.resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV', '.resolve = RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV'),
+        ('no mount crossing', '.resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV', '.resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS'),
+        ('non-blocking open', '.flags = O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_NOCTTY | O_CLOEXEC,', '.flags = O_RDONLY | O_NOFOLLOW | O_NOCTTY | O_CLOEXEC,'),
+        ('regular file only', '    if (!S_ISREG(mode)) return "not_regular";\n', ''),
+        ('one link only', '    if (links != 1) return "linked";\n', ''),
+        ('ext4 root', '(unsigned long)fs.f_type != BROWSE_EXT4_MAGIC || ', ''),
+        ('root on the admitted device', ' || (unsigned long long)root_st.st_dev != root_device', ''),
+        ('root without symlinks', 'O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, .resolve = RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS };\n    int root = (int)syscall(SYS_openat2, AT_FDCWD, argv[2], &browse_root_how', 'O_PATH | O_DIRECTORY | O_CLOEXEC, .resolve = RESOLVE_NO_MAGICLINKS };\n    int root = (int)syscall(SYS_openat2, AT_FDCWD, argv[2], &browse_root_how'),
+        ('the seal', 'if (browse_seal()) {', 'if (0 && browse_seal()) {'),
+    ]
+
+    def mutant_build(self, source, name, old, new, extra=()):
+        text = source.read_text()
+        self.assertEqual(text.count(old), 1, name)
+        directory = self.build_dir / ('mutant-' + re.sub('[^a-z0-9]+', '-', name))
+        directory.mkdir(exist_ok=True)
+        (directory / source.name).write_text(text.replace(old, new))
+        return self.build(directory / source.name, 'mutant-' + re.sub('[^a-z0-9]+', '-', name) + '-bin', extra)
+
+    def worker_outcomes(self, worker, root, share):
+        """What one worker build answers in every browse scenario, through the launcher and through the host-tree harness."""
+        def outcome(runner):
+            try:
+                return runner()
+            except (subprocess.TimeoutExpired, AssertionError, ValueError) as error:
+                return 'error:' + type(error).__name__
+        def via_launcher(relative):
+            code, out, _ = self.launch(root, 'stat', relative, worker=worker)
+            value = json.loads(out)
+            return (code, value.get('code'), value.get('ok'))
+        def via_harness(relative, target=root, device=None):
+            argv = [str(self.harness), str(worker), str(self.BROWSE), str(self.GID), 'stat', str(target), relative, '1024', '0', str(os.stat(target).st_dev if device is None else device)]
+            run = subprocess.run(argv, capture_output=True, timeout=5)
+            value = json.loads(run.stdout)
+            return (run.returncode, value.get('code'), value.get('ok'))
+        link = root.parent / 'root-link'
+        if not link.is_symlink():
+            link.symlink_to('r')
+        return [outcome(lambda: via_launcher('seed.txt')), outcome(lambda: via_launcher('link.txt')), outcome(lambda: via_launcher('dir')), outcome(lambda: via_launcher('linked.txt')),
+                outcome(lambda: via_harness('../r/seed.txt')), outcome(lambda: via_harness('nested/below.txt')), outcome(lambda: via_harness('fifo')),
+                outcome(lambda: via_harness('shared.txt', target=share)), outcome(lambda: via_harness('seed.txt', device=os.stat(root).st_dev + 1)),
+                outcome(lambda: via_harness('seed.txt', target=link))]
+
+    def test_built_in_mutants_of_the_browse_guards(self):
+        root = self.root('mutants')
+        share = root.parent / 'share'
+        share.mkdir()
+        subprocess.run(['mount', '-t', 'tmpfs', '-o', 'mode=2770,gid=%d' % self.GID, 'tmpfs', str(share)], check=True)
+        type(self).mounts.append(share)
+        self.write(share / 'shared.txt', b'shared')
+        nested = root / 'nested'
+        nested.mkdir()
+        subprocess.run(['mount', '-t', 'tmpfs', '-o', 'mode=2770,gid=%d' % self.GID, 'tmpfs', str(nested)], check=True)
+        type(self).mounts.append(nested)
+        self.write(nested / 'below.txt', b'below')
+        survivors, total = [], 0
+        expected = self.worker_outcomes(self.worker, root, share)
+        self.assertEqual([item[1] if isinstance(item, tuple) else item for item in expected],
+                         [None, 'path_denied', 'not_regular', 'linked', 'path_denied', 'path_denied', 'not_regular', 'root_not_data', 'root_not_data', 'root_unavailable'])
+        for name, old, new in self.TOOL_MUTANTS:
+            total += 1
+            launcher = self.mutant_build(TOOL, name, old, new)
+            def probe(mutate=None):
+                code, out, _ = self.launch(root, 'stat', 'seed.txt', worker=self.probe, launcher=launcher, mutate=mutate)
+                return code, (json.loads(out)['writeOpen'] if code == 0 else None)
+            two_roots = lambda argv: argv[:14] + ['2'] + argv[15:] + [argv[15], '/workspace/repos/r2', '1']
+            outcomes = [probe(lambda argv: argv[:7] + ['auto'] + argv[8:]), probe(two_roots), probe(lambda argv: argv[:10] + ['/workspace/repos/other'] + argv[11:]),
+                        probe(lambda argv: argv[:9] + ['read'] + argv[10:])]
+            code, out, _ = self.launch(root, 'stat', 'seed.txt', launcher=launcher, extra=['--guidance', '3'])
+            outcomes.append((code, None))
+            code, out, _ = self.launch(root, 'stat', 'seed.txt', launcher=launcher)
+            outcomes.append((code, json.loads(out).get('ok') if out else None))
+            if outcomes == [(0, 30), (64, None), (64, None), (64, None), (64, None), (0, True)]:
+                survivors.append(name)
+        for name, old, new in self.WORKER_MUTANTS:
+            total += 1
+            mutant = self.mutant_build(WORKER, name, old, new, ['-DWINTER_BROWSE_SEAL_PROBE'] if name == 'the seal' else [])
+            if name == 'the seal':
+                value = self.result(root, 'stat', 'seed.txt', worker=mutant)
+                if value.get('probe') == [1, 1, 1, 1, 1, 1, 1]:
+                    survivors.append(name)
+                continue
+            if self.worker_outcomes(mutant, root, share) == expected:
+                survivors.append(name)
+        print('\nbrowse C mutants: %d/%d killed; survivors: %s' % (total - len(survivors), total, survivors), file=sys.stderr)
+        self.assertEqual(survivors, [])
+
     def test_root_service_end_to_end(self):
         """Root's BrowseLauncher and GuestFileService over real FIFOs, with the real launcher and worker."""
         root = self.root()
