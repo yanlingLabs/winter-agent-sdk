@@ -30,7 +30,9 @@ function safePath(value: string): string {
   return value;
 }
 const quoted = (value: string) => `"${safeText(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-const regexClause = (value: string) => `(regex #"${safeText(value).replace(/"/g, '\\"')}")`;
+// Seatbelt reads `#"..."` RAW: it ends at the first `"`, so `\"` inside it broke the profile (exit 65).
+// A source holding a quote, or ending in a backslash, is a plain string instead, which Seatbelt unescapes.
+const regexClause = (value: string) => (/"|\\$/.test(safeText(value)) ? `(regex ${quoted(value)})` : `(regex #"${value}")`);
 const pathClause = (value: string) => `(subpath ${quoted(safePath(value))})`;
 function globRegex(value: string): string {
   safeText(value);

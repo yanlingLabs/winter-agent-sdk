@@ -42,6 +42,9 @@ SERVICE_PATCH = ROOT / 'docs/research/guided-reader-service-supervisor.patch'
 POLICY_PATCH = ROOT / 'docs/research/guided-supervisor-policy-mode-DATA.patch'
 # Host-query roots are admitted only from their own guest path (agent-sdk wave 4); a fourth delta, on top of the policy-mode one.
 SOURCE_PATCH = ROOT / 'docs/research/guided-supervisor-source-check-DATA.patch'
+# The guest file channel's browse mode (agent-sdk FC4) changed the tool launcher and linux-supervisor.py; a fifth delta, on top of the
+# source-check one, and the first since the view patch to touch the tool launcher as well.
+BROWSE_PATCH = ROOT / 'docs/research/guest-file-browse-DATA.patch'
 PROBE = Path(__file__).with_name('guidance_view_probe.c')
 TOOL, SUPERVISOR = GUEST + '/linux-tool-compartment.c', GUEST + '/linux-supervisor.py'
 
@@ -56,17 +59,28 @@ APPLIED_TARGETS = {
     SUPERVISOR: '51259b0ff1651dfd05663b3796fe6a187120884fbf68f75977d05af454aa4359',
 }
 # The tracked Root service once the reader service is applied on top of the view patch.
-PRE_POLICY_SUPERVISOR = 'a26dacd86b805ca47b3e4805d06af2b178eee82003ebe6c38f2aeeb85e48035d'
-PRE_SOURCE_SUPERVISOR = 'f1e124fe21dac2d3a7c94a4e7923ac2ff92e9afd9600a0dd24d7f01c8fa9e8ab'
-TRACKED_SUPERVISOR = '26d1ac8937d9c2e98bf050433a309ca9e7bc74b0668d960a42dce81c7b30c5bb'
+PRE_BROWSE_TOOL = '621f2ceb579c5b3832d4887f1d02dc8342a90e914bc44a3a6b204ce235b6d449'
+# Every later delta on linux-supervisor.py, NEWEST FIRST, each with the sha256 the file must have once that delta is reversed (None: the
+# reader-service delta, whose pre-image is the view patch's APPLIED target, asserted below).
+MESSAGING_PATCH = ROOT / 'docs/research/guided-supervisor-guest-messaging-DATA.patch'
+COLD_RESUME_PATCH = ROOT / 'docs/research/guided-supervisor-cold-resume-DATA.patch'
+SUPERVISOR_DELTAS = [
+    (BROWSE_PATCH, '82e2f43f76877426089afdd406b6bc35ede1e074e1b7b560587bc1bd17f8e252'),
+    (COLD_RESUME_PATCH, '53b507bbe3816ba0f68939670bb3e424bcf64a66599777e964188d34bdbff97e'),
+    (MESSAGING_PATCH, '26d1ac8937d9c2e98bf050433a309ca9e7bc74b0668d960a42dce81c7b30c5bb'),
+    (SOURCE_PATCH, 'f1e124fe21dac2d3a7c94a4e7923ac2ff92e9afd9600a0dd24d7f01c8fa9e8ab'),
+    (POLICY_PATCH, 'a26dacd86b805ca47b3e4805d06af2b178eee82003ebe6c38f2aeeb85e48035d'),
+    (SERVICE_PATCH, None),
+]
+TRACKED_SUPERVISOR = '00274717197787a109b171061a4397eb16582a2d369cf719ee4431e815f5ea09'
 FROZEN = {
-    GUEST + '/linux-compartment.h': '92fef7c0708a23b1e930c5b2560dae6bef27294dfd682346e69d35c0484b967d',
+    GUEST + '/linux-compartment.h': 'e666d010aab902c84ae86d3eea1fca6baaf75a7d94f55d936e020b30584a7e6b',
     GUEST + '/linux-runtime-compartment.c': 'fcb90dba8cf9552b9c10cde4012603ac9471b03f31a09bc408667257f65842fa',
     GUEST + '/linux-instruction-reader-compartment.c': '28aa279d6ecb560424fe24bf8ccc0893ffc61cfbb9ba6ba72d38c66b7b655893',
     GUEST + '/linux-instruction-reader-dependency-probe.c': '77ce6f1cdc02cef122eb2806e9df06514fdc7a2f9191d107a897df62d045b20a',
     GUEST + '/linux-session-owner.c': '95457d8f6ff256257b3b211e0201c64a4ed0b575aac6a9f933b3178b823b0d76',
-    GUEST + '/linux-session-admission.ts': '18e619c164dc49dd5eae3bf40873fadc6905eb5c8ef935a36f71206f2bf40ff3',
-    GUEST + '/file-worker.c': 'fcb6b489e7b7c22b484cf5aad4d8f157614bf6b8c6a28d59be90651c286abcef',
+    GUEST + '/linux-session-admission.ts': 'b003e79d73bc4bc87a587ee4f1f3a9e511377a5f15f026b1f3e92ce4adedb14c',
+    GUEST + '/file-worker.c': '93e784e46461caceb7bae2ead02ccf96fcf0a3ff53b0138f84c189aabc70a1a0',
     GUEST + '/process-worker.c': '2c4514e2a267c1634cb90abe97a2471dd36057d9d2ba050fb3540703d11bed11',
 }
 CC_FLAGS = ['-std=c11', '-O2', '-Wall', '-Wextra', '-Werror']
@@ -110,13 +124,13 @@ def tracked_applied_text(name):
             for target in MAIN_TARGETS:
                 (directory / target).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / target, directory / target)
-            for undo in (SOURCE_PATCH, POLICY_PATCH, SERVICE_PATCH):
+            for undo, before in SUPERVISOR_DELTAS:
                 reverse = subprocess.run(['patch', '-p1', '-R', '-s', '-d', str(directory), '-i', str(undo)], capture_output=True, text=True, timeout=30)
                 assert reverse.returncode == 0, reverse.stderr
-                if undo == SOURCE_PATCH:
-                    assert hashlib.sha256((directory / SUPERVISOR).read_bytes()).hexdigest() == PRE_SOURCE_SUPERVISOR
-                if undo == POLICY_PATCH:
-                    assert hashlib.sha256((directory / SUPERVISOR).read_bytes()).hexdigest() == PRE_POLICY_SUPERVISOR
+                if undo == BROWSE_PATCH:
+                    assert hashlib.sha256((directory / TOOL).read_bytes()).hexdigest() == PRE_BROWSE_TOOL
+                if before is not None:
+                    assert hashlib.sha256((directory / SUPERVISOR).read_bytes()).hexdigest() == before
             for target in MAIN_TARGETS:
                 _applied[target] = (directory / target).read_text()
         finally:
@@ -431,11 +445,13 @@ class PatchedCSourceTests(unittest.TestCase):
         self.assertIn('strstr(guest,"..")', body)
 
     def test_existing_code_between_the_patched_lines_is_unchanged(self):
+        # The view patch's own bytes: the later browse delta (guest-file-browse-DATA.patch) rewrites three tool lines and is pinned by its own test.
         before = tracked_main_text(TOOL)
+        applied = self.source if OVERRIDE else tracked_applied_text(TOOL)
         for line in before.splitlines():
             if 'argc!=15+3*roots' in line:
                 continue
-            self.assertIn(line, self.source.splitlines(), line)
+            self.assertIn(line, applied.splitlines(), line)
 
 
 class GuidanceDirectoryTests(unittest.TestCase):
@@ -764,7 +780,7 @@ class ConfigureAndConstructTests(unittest.TestCase):
         source = patched_text(SUPERVISOR)
         self.assertIn("if profile==GUIDED_PROFILE:allowed.update(('requiredRuntimeContext','generation','guidanceDirectory'))", source)
         self.assertEqual(source.count('guidanceDirectory'), 4)   # the allow list, the early refusal, the post-pass refusal and the post-pass walk
-        self.assertIn("if profile in ('host-query-v1',GUIDED_PROFILE):allowed.add('toolClasses')", source)
+        self.assertIn("if profile in ('host-query-v1',GUIDED_PROFILE):allowed.update(('toolClasses','continuation','endedGuestBoots'))", source)
 
 
 class PostApplyRegressionTests(unittest.TestCase):

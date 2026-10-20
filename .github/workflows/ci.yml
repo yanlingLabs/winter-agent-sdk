@@ -52,6 +52,12 @@ jobs:
         run: python3 -I -S -B scripts/guest-supervisor/test_guided_reader_service.py
       - name: guided reader service -- the unchanged reader launcher, launched by Root's ReaderLauncher in real private mount, PID, IPC, UTS and network namespaces with a static stand-in loader
         run: sudo -n env WINTER_REQUIRE_NATIVE_READER=1 python3 -I -S -B scripts/guest-supervisor/test_guided_reader_service.py LinuxNativeTests
+      - name: guest file channel service -- Root's FILE_IN/FILE_OUT service, the browse envelope and the C contract, and the request parser against winter's own grammar under bun (source only, nothing admitted)
+        env:
+          WINTER_REQUIRE_FILE_CHANNEL_DIFFERENTIAL: "1"
+        run: python3 -I -S -B scripts/guest-supervisor/test_file_browse.py
+      - name: guest file channel -- the tracked tool launcher's browse mode and file worker's browse operations as root in real private mount and PID namespaces, with built-in mutants of the browse guards
+        run: sudo -n env WINTER_REQUIRE_NATIVE_BROWSE=1 python3 -I -S -B scripts/guest-supervisor/test_file_browse.py LinuxNativeTests
       - name: Root's init transport (argv, three FIFOs, one conversation, PID 1 shaped config) and the tool-device inventory (source only)
         run: |
           python3 -I -S -B scripts/guest-supervisor/test_runtime_port_arguments.py

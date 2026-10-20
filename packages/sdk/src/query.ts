@@ -8,7 +8,8 @@ import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRe
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
 import type { AccountInfo, AgentInfo, CredentialResolveAnswer, CredentialResolveRequest, EffortLevel, ModelInfo, ModelFamilyListing, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, McpOAuthRefreshAnswer, McpOAuthRefreshRequest, RewindFilesResult } from "./protocol/config.ts";
-import { CREDENTIAL_RESOLVE_SUBTYPE, HOST_MESSAGE_LIST_SUBTYPE, HOST_MESSAGE_SEND_SUBTYPE, HOST_SESSION_STOP_SUBTYPE, isWinterMcpServerInstance, MCP_OAUTH_REFRESH_SUBTYPE, TEST_KEYCHAIN_ENV, type HostMessagingHandler, type Options, type McpServerConfig } from "./options.ts";
+import { CREDENTIAL_RESOLVE_SUBTYPE, HOST_INPUT_COMMIT_SUBTYPE, HOST_INPUT_DISCARD_SUBTYPE, HOST_INPUT_FORGET_SUBTYPE, HOST_INPUT_HOLD_SUBTYPE, HOST_MESSAGE_LIST_SUBTYPE, HOST_MESSAGE_SEND_SUBTYPE, HOST_SESSION_STOP_SUBTYPE, isWinterMcpServerInstance, MCP_OAUTH_REFRESH_SUBTYPE, TEST_KEYCHAIN_ENV, type HostMessagingHandler, type Options, type McpServerConfig } from "./options.ts";
+import type { HostInputCommitAnswer, HostInputDiscardAnswer, HostInputForgetAnswer, HostInputHoldAnswer, HostInputHoldRequest } from "./protocol/config.ts";
 import { isHostMessageListRequest, isHostMessageSendAnswer, isHostMessageSendRequest, isHostSessionStopAnswer, isHostSessionStopRequest, normaliseHostMessageListAnswer } from "./messaging/host.ts";
 import type {
   PermissionMode,
@@ -47,6 +48,7 @@ import {
   isMessagingIdleNoticePayload,
   isMessagingNotificationsPage,
 } from "./protocol/messaging.ts";
+const isRecordValue = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 // The runtime's SdkMessage is deliberately open (a trailing `{ type: string; [k: string]: unknown }`
 // catch-all for lossless pass-through of unknown message kinds, Task 5). The SDK's public surface
@@ -218,6 +220,22 @@ export interface Query extends AsyncGenerator<SdkMessage> {
    * type-checking); every `Query` this package returns has it.
    */
   clearQueuedInput?(): Promise<{ cleared: number }>;
+  /**
+   * WINTER-ONLY, additive (N2 extensions 4.5): the held-input verbs. Send them ONLY to a runtime that offers `HELD_INPUT_CAPABILITY`
+   * (an older runtime refuses an unknown control subtype, and a refusal ends the run). Each names the hold token of the exact hold it is
+   * about. Each rejects with a `WinterRpcError` carrying the runtime's typed code: `conflict`, `superseded`, `unknown_input` (TERMINAL),
+   * `committed`, `epoch`, `invalid`, `journal_full`, `journal_failed`.
+   *
+   * `holdInput`: write a `held` record (durable, invisible to the model). `commitInput`: only for a record held under exactly this token ->
+   * the input becomes part of the conversation (answered after the durable journal write; the transcript write follows at the next user-message
+   * point). `discardInput`: delete a held record. `forgetInput`: delete the tombstone of an input the transcript holds.
+   *
+   * OPTIONAL on the interface for the same reason as `compact`; every `Query` this package returns has them.
+   */
+  holdInput?(request: HostInputHoldRequest): Promise<HostInputHoldAnswer>;
+  commitInput?(inputId: string, holdToken: string): Promise<HostInputCommitAnswer>;
+  discardInput?(inputId: string, holdToken: string): Promise<HostInputDiscardAnswer>;
+  forgetInput?(inputId: string, holdToken: string): Promise<HostInputForgetAnswer>;
   /**
    * Phase 6 Task 10 (derived-shapes-p6 item (d), `sdk.d.ts:2566`): the models this session may select.
    *
@@ -1823,6 +1841,17 @@ function queryImplementation(args: { prompt: string | AsyncIterable<string>; opt
     const cleared = typeof payload === "object" && payload !== null ? (payload as { cleared?: unknown }).cleared : undefined;
     return { cleared: typeof cleared === "number" ? cleared : 0 };
   };
+  // N2 extensions 4.5: the held-input verbs. The wire payload is camelCase like `host_message_*`; the answers are returned as the runtime
+  // sent them after a shape check, so a malformed answer REJECTS (it is never read as "nothing happened").
+  const heldInputAnswer = async <T>(subtype: string, payload: unknown, valid: (value: unknown) => value is T): Promise<T> => {
+    const answer = await sendControlRequest(subtype, payload);
+    if (!valid(answer)) throw new WinterRpcError("invalid_answer", `the runtime answered '${subtype}' with a malformed answer`);
+    return answer;
+  };
+  gen.holdInput = request => heldInputAnswer(HOST_INPUT_HOLD_SUBTYPE, request, (v): v is HostInputHoldAnswer => isRecordValue(v) && (v.held === true ? v.again === undefined || v.again === true : v.held === false && (v.state === "committed" || v.state === "in_transcript")));
+  gen.commitInput = (inputId, holdToken) => heldInputAnswer(HOST_INPUT_COMMIT_SUBTYPE, { inputId, holdToken }, (v): v is HostInputCommitAnswer => isRecordValue(v) && (v.outcome === "folded" || v.outcome === "queued" || v.outcome === "started" || v.outcome === "already"));
+  gen.discardInput = (inputId, holdToken) => heldInputAnswer(HOST_INPUT_DISCARD_SUBTYPE, { inputId, holdToken }, (v): v is HostInputDiscardAnswer => isRecordValue(v) && (v.discarded === true || (v.discarded === false && v.reason === "superseded")));
+  gen.forgetInput = (inputId, holdToken) => heldInputAnswer(HOST_INPUT_FORGET_SUBTYPE, { inputId, holdToken }, (v): v is HostInputForgetAnswer => isRecordValue(v) && typeof v.forgotten === "boolean");
   // Phase 6 Task 10: the pinned payload-free `list_models` (`sdk.d.ts:3855`) and Winter's own
   // `account_info`. A malformed/absent runtime payload degrades to an empty answer rather than a
   // throw, matching `rewindFiles`' own posture: both pinned methods return data, so a host that got a

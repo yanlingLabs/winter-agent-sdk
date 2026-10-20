@@ -4,6 +4,31 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.54
+
+### The model is told what the sandbox refused
+
+When a sandboxed Bash command (or Monitor) is refused by the macOS sandbox, the result now ends in a
+`<sandbox_violations>` block naming each refused operation and path, so the model knows the failure
+came from the sandbox and can retry outside it through the usual approval instead of guessing. Each
+command reads its own tagged denials from a per-command `log stream`, so nothing is lost or mixed
+between commands.
+
+### Sandbox profile fixes
+
+A write root whose path contains a `"` or ends in a backslash produced a broken profile; such roots
+now compile as plain-string regexes.
+
+### Cold resume of a sub-agent
+
+After a parent runtime restarts, SendMessage to a saved sub-agent continues that sub-agent's own ID and transcript
+instead of reaching a placeholder that refused every message.
+
+### Cowork guest runtime (inert)
+
+The Linux guest runtime, supervisor, guided query and owner/reader pieces for Cowork land in this
+release. Nothing in a host is wired to create or run a Cowork session yet.
+
 ## 0.0.53
 
 ### A host tool's image reaches the model as an image

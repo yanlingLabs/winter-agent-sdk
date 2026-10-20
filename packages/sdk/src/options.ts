@@ -131,6 +131,18 @@ export const CREDENTIAL_RESOLVE_SUBTYPE = "credential_resolve";
 export const HOST_MESSAGE_SEND_SUBTYPE = "host_message_send";
 /** Host messaging: the runtime -> host control subtype `ListAgents` asks its host what it can reach with (`HostMessageListRequest` -> `HostMessageListAnswer`). */
 export const HOST_MESSAGE_LIST_SUBTYPE = "host_message_list";
+/**
+ * Held input (N2 extensions 4.5), WINTER-ONLY, host -> runtime: the four control subtypes a Cowork host drives a guest runtime's held-input
+ * journal with. Each names a hold token, never only an epoch. A host sends them ONLY to a runtime that offers `HELD_INPUT_CAPABILITY`: an
+ * older runtime refuses an unknown control subtype, and a refusal ends the run.
+ */
+export const HOST_INPUT_HOLD_SUBTYPE = "host_input_hold";
+export const HOST_INPUT_COMMIT_SUBTYPE = "host_input_commit";
+export const HOST_INPUT_DISCARD_SUBTYPE = "host_input_discard";
+export const HOST_INPUT_FORGET_SUBTYPE = "host_input_forget";
+/** The capability a runtime offers when it serves the four `host_input_*` subtypes and always emits `system/held_inputs`. */
+export const HELD_INPUT_CAPABILITY = "held-input-v1";
+
 /** Host messaging: the runtime -> host control subtype `TaskStop` asks its host to stop one of the host's sessions with (`HostSessionStopRequest` -> `HostSessionStopAnswer`). */
 export const HOST_SESSION_STOP_SUBTYPE = "host_session_stop";
 

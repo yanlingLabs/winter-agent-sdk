@@ -124,6 +124,73 @@ describe("buildSeatbeltProfile: case-variant write roots on a case-sensitive vol
   });
 });
 
+/**
+ * Every `(regex ...)` filter in a profile, as the regex SOURCE Seatbelt compiles: a raw `#"..."`
+ * literal's content as written, a plain `"..."` string's content unescaped (`\\` -> `\`, `\"` -> `"`).
+ */
+function regexSourcesOf(profile: string): string[] {
+  const out: string[] = [];
+  for (const m of profile.matchAll(/\(regex (#"[^"]*"|"(?:[^"\\]|\\.)*")\)/g)) {
+    const lit = m[1]!;
+    out.push(lit.startsWith("#") ? lit.slice(2, -1) : lit.slice(1, -1).replace(/\\(.)/g, "$1"));
+  }
+  return out;
+}
+
+describe("buildSeatbeltProfile: a regex source holding a `\"` is a plain SBPL string, never a raw `#\"...\"` literal", () => {
+  // Every input that reaches a regex clause, with a `"` in it. In the twin, `~` stands in for the quote:
+  // like `"` it is no letter (the brand dot-dir is case-folded) and no regex or glob metacharacter.
+  const withQuote = (q: string): SeatbeltProfileInput => ({
+    cwd: `/cr/q${q}t (a);b é`,
+    writableRoots: [`/cr/r${q}w`],
+    denyWriteRegexes: [`^/cr/q${q}t/(.*/)?\\.key(/.*)?$`],
+    denyReadRegexes: [`^/cr/q${q}t/(.*/)?\\.env(/.*)?$`],
+    denyReadGlobEntries: [{ regex: `^/cr/q${q}t (a);b é/(.*/)?secret(/.*)?$`, fixedPrefix: `/cr/q${q}t (a);b é` }],
+    denyReadPaths: [`/cr/q${q}t (a);b é/inner`],
+    allowNetwork: false,
+    home: `/cr/h${q}me`,
+    winterHome: `/cr/w${q}h`,
+    storeHome: `/cr/s${q}h`,
+    darwinUserTempDir: `/cr/t${q}mp/T`,
+    brand: { homeDirName: `.h${q}d`, projectDirName: `.p${q}d` },
+  });
+
+  test("the plain string carries exactly the regex the quote-free twin carries raw, at every regex site", () => {
+    const quoted = buildSeatbeltProfile(withQuote('"'));
+    const twin = buildSeatbeltProfile(withQuote("~"));
+    const quotedSources = regexSourcesOf(quoted);
+    const twinSources = regexSourcesOf(twin);
+    // default protections (cwd), deny regexes both sides, keep-in-place, provider state (home + store),
+    // mktemp, swift-driver, and the brand's control-plane regexes (two dot-dirs x three files).
+    expect(quotedSources.length).toBe(twinSources.length);
+    expect(quotedSources.length).toBeGreaterThan(30);
+    expect(quotedSources.map((s) => s.replace(/"/g, "~"))).toEqual(twinSources);
+    expect(twin).not.toContain('(regex "');
+    // Every clause whose source holds the quote took the plain form, and no raw literal holds an escape
+    // of one (Seatbelt ends `#"...` at its first quote and refuses the rest, exit 65).
+    expect(quotedSources.filter((s) => s.includes('"')).length).toBe(quoted.split('(regex "').length - 1);
+    expect(quoted).not.toMatch(/#"[^"\n]*\\"/);
+  });
+
+  test("exact text: backslashes doubled and quotes escaped, as in a (subpath ...) string", () => {
+    const p = buildSeatbeltProfile({ cwd: '/cr/q"t\\b', denyWriteRegexes: ['^/cr/a"b\\.c$'], allowNetwork: false });
+    expect(p).toContain('(deny file-write* file-write-unlink file-write-create (regex "^/cr/a\\"b\\\\.c$"))');
+    expect(p).toContain('(deny file-write* file-write-unlink file-write-create (regex "^/cr/q\\"t\\\\\\\\b/(.*/)?\\\\.gitconfig(/.*)?$"))');
+  });
+
+  test("a source ending in a backslash also takes the plain form, so no raw literal ends in `\\\"`", () => {
+    const p = buildSeatbeltProfile({ cwd: "/cr/w", denyReadRegexes: ["^/cr/a\\\\"], allowNetwork: false });
+    expect(p).toContain('(deny file-read* (regex "^/cr/a\\\\\\\\"))');
+    expect(regexSourcesOf(p)).toContain("^/cr/a\\\\");
+  });
+
+  test("a source with neither keeps the raw literal, byte for byte", () => {
+    const p = buildSeatbeltProfile({ cwd: "/cr/w", denyWriteRegexes: ["^/cr/w/(.*/)?\\.key(/.*)?$"], allowNetwork: false });
+    expect(p).toContain('(deny file-write* file-write-unlink file-write-create (regex #"^/cr/w/(.*/)?\\.key(/.*)?$"))');
+    expect(p).not.toContain('(regex "');
+  });
+});
+
 // WS-12 §5.2 verbatim carry (Winter-renamed `.norma` -> `.winter`): the seatbelt itself must
 // independently deny the control-plane files, because a bash-invoked write never passes through a
 // write/edit TOOL's own permission fence at all.

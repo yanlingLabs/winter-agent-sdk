@@ -142,6 +142,8 @@ export function inMemoryProcess(
   // pre-existing test that does so already spells it out at the call site).
   tools?: ToolExecutor,
   env?: Record<string, string | undefined>,
+  /** Test-only seam for the guest's held-input journal (N2 extensions 4.5): the epoch holds must name. Absent: no journal, exactly as before. */
+  heldInputEpoch?: { incarnationId: string; leaseEpoch: number },
 ): SpawnedRuntimeProcess {
   const config = parseConfigFromArgv(argv);
 
@@ -211,8 +213,9 @@ export function inMemoryProcess(
   // already maps to CLIConnectionError("runtime exited before init") on the child leg.
   void (async () => {
     try {
-      const { config: effectiveConfig, store, initialMessages, approvalStore, autoStateStore } = await resolveEngineSession({
+      const { config: effectiveConfig, store, initialMessages, approvalStore, autoStateStore, held } = await resolveEngineSession({
         config,
+        ...(heldInputEpoch !== undefined ? { heldInputs: true } : {}),
         resolveWinterHome: winterHomeOnce,
         // WS-21 §6.3 item 3 (durable-write audit, fix round 2): mirrors main.ts's own
         // `resolveStoreHome` -- see `resolveInMemoryStoreHome`'s own header for why this degrades to
@@ -325,6 +328,7 @@ export function inMemoryProcess(
         ...(approvalStore !== undefined ? { approvalStore } : {}),
         // Task 12 (WS-07 §10.5): same precedent, same resolved triple.
         ...(autoStateStore !== undefined ? { autoStateStore } : {}),
+        ...(held !== undefined && heldInputEpoch !== undefined ? { heldInputs: { ...held, epoch: heldInputEpoch } } : {}),
         // Phase 4 Task 3: `inMemoryProcess`'s own `env` param, UNMODIFIED (never the `env ?? {}`
         // widening resolveEngineSession's own call just above uses for winterHome resolution -- that
         // widening is deliberately winterHome-specific, per resolveInMemoryWinterHome's own "must

@@ -166,6 +166,22 @@ describe("the Bash tool shows a failed sandboxed command's own Seatbelt denials 
   );
 
   t(
+    'a working directory with a `"` in its name: the profile loads, is tagged, and the refused write (an any-depth regex deny) is reported',
+    async () => {
+      // Before: the cwd's regexes were `#"...\"..."` literals -- Seatbelt refused the profile (every
+      // command exited 65) and the tagger would not read it (no block).
+      const cwd = join(dir("winter-violations-cwd-"), 'q"uo\\te (x);y é');
+      mkdirSync(join(cwd, "sub", ".git", "hooks"), { recursive: true });
+      const output = await bash({ command: "echo ok > ok.txt && echo hi > sub/.git/hooks/x" }, ctxFor(cwd));
+      expect(existsSync(join(cwd, "ok.txt"))).toBe(true);
+      expect(existsSync(join(cwd, "sub", ".git", "hooks", "x"))).toBe(false);
+      expect(output).toContain("[exit 1]");
+      expect(blockOf(output)).toContain(`bash deny(1) file-write-create ${join(cwd, "sub", ".git", "hooks", "x")}`);
+    },
+    SLOW,
+  );
+
+  t(
     "a failure that is NOT the sandbox's (`ls` of a missing path) gets no block: only start-up noise was denied",
     async () => {
       const output = await bash({ command: "ls /nonexistent-winter-violations-probe" }, ctxFor(dir("winter-violations-cwd-")));

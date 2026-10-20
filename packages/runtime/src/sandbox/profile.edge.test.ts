@@ -277,10 +277,13 @@ describe("default write protections", () => {
     expect(blocks(p, FENCE)[0]!.split("\n").slice(0, 4)).toEqual([FENCE, '  (subpath "/cr/v/.gitconfig")', '  (literal "/cr/v")', '  (literal "/cr")']);
   });
 
-  test("a quote and a backslash in cwd: subpath clauses escape both; regex clauses escape only the quote", () => {
+  test("a quote and a backslash in cwd: subpath clauses escape both; a regex holding the quote becomes a plain string, escaped the same way", () => {
     const p = profile({ cwd: '/cr/q"t\\b' });
     expect(p).toContain(`(deny ${OPS} (subpath "/cr/q\\"t\\\\b/.gitconfig"))`);
-    expect(p).toContain(`(deny ${OPS} (regex #"^/cr/q\\"t\\\\b/(.*/)?\\.gitconfig(/.*)?$"))`);
+    // Source `^/cr/q"t\\b/(.*/)?\.gitconfig(/.*)?$`: every backslash doubled, the quote escaped. A raw
+    // `#"..."` literal cannot hold a `"` (Seatbelt ends it there and refuses the profile, exit 65).
+    expect(p).toContain(`(deny ${OPS} (regex "^/cr/q\\"t\\\\\\\\b/(.*/)?\\\\.gitconfig(/.*)?$"))`);
+    expect(p).not.toMatch(/#"[^"\n]*\\"/);
     expect(blocks(p, FENCE)[0]!.split("\n").slice(0, 4)).toEqual([FENCE, '  (subpath "/cr/q\\"t\\\\b/.gitconfig")', '  (literal "/cr/q\\"t\\\\b")', '  (literal "/cr")']);
   });
 
@@ -383,14 +386,14 @@ describe("keep read-denied paths in place", () => {
     expect(blocks(root, KEEP)).toEqual([block(KEEP, ['(regex #"^/(.*/)?x(/.*)?$")'])]);
   });
 
-  test("a regex is embedded with only its double quotes escaped; plain paths escape quotes and backslashes", () => {
+  test("a regex holding a quote is embedded as a plain string (backslashes doubled, quotes escaped); plain paths escape quotes and backslashes", () => {
     const p = profile({
       cwd: "/cr/w",
       denyReadPaths: ['/cr/w/q"t\\b/f'],
       denyReadGlobEntries: [{ regex: '^/cr/w/"x\\.y(/.*)?$', fixedPrefix: "/cr/w" }],
     });
     expect(blocks(p, KEEP)).toEqual([
-      block(KEEP, ['(subpath "/cr/w/q\\"t\\\\b/f")', '(literal "/cr/w/q\\"t\\\\b")', '(regex #"^/cr/w/\\"x\\.y(/.*)?$")']),
+      block(KEEP, ['(subpath "/cr/w/q\\"t\\\\b/f")', '(literal "/cr/w/q\\"t\\\\b")', '(regex "^/cr/w/\\"x\\\\.y(/.*)?$")']),
     ]);
   });
 

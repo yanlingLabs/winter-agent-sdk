@@ -526,7 +526,7 @@ class NoPreviousBootEvidenceTests(unittest.TestCase):
 
     Only the host can independently establish that a previous guest has terminated; a marker on the guest's own disk would be written by the
     party being judged, and a set `needs_recovery` flag in the superblock is evidence AGAINST an orderly stop. The native owner keeps
-    answering "no evidence" and a cold resume stays refused. If an honest source is ever added, this pin must change deliberately."""
+    answering "no evidence" until the host attests a boot as ended (endedGuestBoots, CR2); the supervisor itself still reads none."""
 
     def test_the_supervisor_source_has_no_previous_boot_evidence_path(self):
         """Structural: no config key (subscript or .get) named like previous-boot evidence is read by the entry path."""
@@ -552,9 +552,16 @@ class NoPreviousBootEvidenceTests(unittest.TestCase):
         for needle in ('needs_recovery', 'previousBootTermination'):
             self.assertNotIn(needle, text)
 
-    def test_the_native_owner_adapter_still_answers_no_evidence(self):
-        source = (SUPERVISOR.parent / 'linux-session-admission.ts').read_text()
-        self.assertIn('previousBootTermination: () => null', source)
+    def test_the_native_owner_adapter_answers_only_from_the_hosts_attested_ended_boots(self):
+        """CR2 changes this pin deliberately: evidence now exists, but only for a boot id the host listed in endedGuestBoots (never a guest marker)."""
+        guest = SUPERVISOR.parent
+        source = (guest / 'linux-session-admission.ts').read_text()
+        self.assertIn('previousBootTermination: bootId => linuxEndedBootEvidence(record, bootId)', source)
+        self.assertNotIn('previousBootTermination: () => null', source)
+        evidence = (guest / 'linux-cold-resume.ts').read_text()
+        self.assertIn('ended.includes(bootId)', evidence)
+        for needle in ('needs_recovery', 'readFileSync', 'existsSync', '/proc'):
+            self.assertNotIn(needle, evidence)
 
 
 if __name__ == '__main__':
