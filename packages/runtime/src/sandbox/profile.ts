@@ -286,8 +286,9 @@ const WRITE_OPS_SURVIVING_READ_DENY_REPERMIT = "file-write* file-write-unlink fi
  * `.git/config`, an `.mcp.json` server, a shell rc file -- so these entries are denied unconditionally,
  * with no opt-in flag to forget (`.git/config` alone can be exempted, `allowGitConfigWrites`).
  *
- * Nine bare shell/git/MCP config filenames, matched case-sensitively (unlike this module's own
- * `<projectDir>`/`settings.json` control-plane regexes, which are case-folded).
+ * Nine bare shell/git/MCP config filenames. Spelled in one case here, but Seatbelt matches every path
+ * filter case-insensitively ("SEATBELT PATH MATCHING IGNORES CASE", below), so `.ZSHRC` is denied too -- on
+ * a case-sensitive volume that over-denies a distinct file of that spelling, the safe direction.
  */
 const DEFAULT_PROTECTED_FILES = [".gitconfig", ".gitmodules", ".bashrc", ".bash_profile", ".zshrc", ".zprofile", ".profile", ".ripgreprc", ".mcp.json"] as const;
 
@@ -392,11 +393,22 @@ function buildReadDenyKeepInPlaceBlock(plainDenyReadPaths: readonly string[], gl
 
 const CONTROL_PLANE_FILES = ["permissions.local.json", "settings.json", "settings.local.json"] as const;
 
-// Per-character case-folding classes -- SBPL's regex engine does not honor `(?i)` (verified against
-// real sandbox-exec by the Norma original: with `(?i)` the write sailed through) and the default
-// macOS volume is case-insensitive, so `.WINTER/Settings.json` reaches the same file a case-exact
-// regex would miss. Three SEPARATE regexes, never merged by alternation (WS-12 §5.2: "never merged
-// by alternation -- only the per-character-class form is verified").
+// SEATBELT PATH MATCHING IGNORES CASE -- measured with real `sandbox-exec` on macOS 26 (2026-10-20):
+//
+// EVERY path filter -- `(regex ...)`, `(literal ...)` and `(subpath ...)` -- matches IGNORING CASE, on a
+// case-insensitive volume AND on a case-sensitive one. A deny on `.../ab` refuses a write to `.../AB`;
+// on a case-sensitive APFS volume holding two DISTINCT directories `dd` and `DD`, a `(subpath ".../dd")`
+// deny refuses a write into `DD` too. So a deny written in one case already covers every case variant:
+// it over-matches on a case-sensitive volume, which for a deny is the safe direction. (The ALLOW side
+// over-matches the same way -- a write root also admits its case-variant siblings on a case-sensitive
+// volume; that is a separate, open issue.) `(?i)` is not supported at all: a regex starting with it
+// makes the whole profile fail to load (exit 65).
+//
+// The per-character case-folding classes below (`[Ww][Ii]...`) are therefore redundant for matching --
+// they predate this measurement (the Norma original concluded a case-exact regex would miss
+// `.WINTER/Settings.json`) -- but harmless, and kept so the profile text stays unchanged and does not
+// depend on Seatbelt keeping this behaviour. Three SEPARATE regexes, never merged by alternation (WS-12
+// §5.2: "never merged by alternation -- only the per-character-class form is verified").
 
 /**
  * P7a fix r1 (Important-1): render ONE brand token as a case-insensitive, regex-escaped SBPL literal.
@@ -447,8 +459,9 @@ function controlPlaneRegexes(dotDir: string): { rules: string; settings: string;
   };
 }
 // Phase 6 Task 3 (R6-7's P4-M MUST): the provider-state sidecar filename, case-folded per character
-// for exactly the reason above -- SBPL ignores `(?i)` and the default macOS volume is
-// case-insensitive, so `Sess-1.Provider-State.JSONL` reaches the same file a case-exact regex misses.
+// like the control-plane regexes above -- redundant for matching (Seatbelt ignores case in every path
+// filter, "SEATBELT PATH MATCHING IGNORES CASE" above), kept so `Sess-1.Provider-State.JSONL` stays covered
+// even if that ever changes.
 const PROVIDER_CF = "[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]";
 const STATE_CF = "[Ss][Tt][Aa][Tt][Ee]";
 const JSONL_CF = "[Jj][Ss][Oo][Nn][Ll]";
@@ -457,9 +470,9 @@ const PROJECTS_CF = "[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]";
 // `~/notes/foo.provider-state.jsonl` is their file, and a bare-suffix regex would deny reading it.
 // `<projectsRoot>` is interpolated per call because it depends on the resolved winter root.
 // The `projects` SEGMENT is case-folded too, for the same reason the filename is: this rule owns
-// that segment in both anchors, and on a case-insensitive volume `.../Projects/s.provider-state.jsonl`
-// reaches the same file. The root prefix above it is left exactly as resolved -- identical posture to
-// the run-dir and backups denies in this file, which anchor on the resolved path verbatim.
+// that segment in both anchors. The root prefix above it is left exactly as resolved -- identical
+// posture to the run-dir and backups denies in this file, which anchor on the resolved path verbatim
+// (Seatbelt matches that prefix ignoring case anyway).
 const providerStateReadDenyRegex = (winterRootRegexSafe: string): string =>
   String.raw`^${winterRootRegexSafe}/${PROJECTS_CF}/.*\.${PROVIDER_CF}-${STATE_CF}\.${JSONL_CF}$`;
 
