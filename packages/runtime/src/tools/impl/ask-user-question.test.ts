@@ -178,6 +178,121 @@ describe("AskUserQuestion (task-7 brief, tool-surface-only)", () => {
     });
   });
 
+  describe("free-text questions (options absent or empty)", () => {
+    const freeText = (extra?: Record<string, unknown>) => ({ question: "What should the service be called?", header: "Name", ...extra });
+
+    test("a free-text-only call (options absent) is valid and returns the typed answer plainly", async () => {
+      const result = await askUserQuestionExecutor.execute({ questions: [freeText({ placeholder: "e.g. billing-api" })], answers: { "What should the service be called?": "ledger-svc" } }, makeCtx());
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.output);
+      expect(parsed.unanswered).toEqual([]);
+      expect(parsed.results[0]).toEqual({ header: "Name", question: "What should the service be called?", multiSelect: false, freeText: true, answer: "ledger-svc" });
+    });
+
+    test("options: [] is a free-text question too", async () => {
+      const result = await askUserQuestionExecutor.execute({ questions: [freeText({ options: [] })], answers: { "What should the service be called?": "x" } }, makeCtx());
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.output);
+      expect(parsed.results[0]).toMatchObject({ freeText: true, answer: "x" });
+      expect(parsed.results[0].otherResponse).toBeUndefined();
+    });
+
+    test("mixed option and free-text questions in one call", async () => {
+      const input = {
+        questions: [oneQuestion().questions[0], freeText()],
+        answers: { "Which approach?": "A", "What should the service be called?": "ledger-svc" },
+      };
+      const result = await askUserQuestionExecutor.execute(input, makeCtx());
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.output);
+      expect(parsed.unanswered).toEqual([]);
+      expect(parsed.results[0]).toEqual({ header: "Approach", question: "Which approach?", multiSelect: false, freeText: false, answer: "A" });
+      expect(parsed.results[1]).toEqual({ header: "Name", question: "What should the service be called?", multiSelect: false, freeText: true, answer: "ledger-svc" });
+    });
+
+    test("an option question's typed answer still comes back as otherResponse", async () => {
+      const result = await askUserQuestionExecutor.execute({ ...oneQuestion(), answers: { "Which approach?": "Neither" } }, makeCtx());
+      const parsed = JSON.parse(result.output);
+      expect(parsed.results[0]).toEqual({ header: "Approach", question: "Which approach?", multiSelect: false, freeText: false, answer: "Neither", otherResponse: "Neither" });
+    });
+
+    test("an empty or whitespace-only free-text answer counts as skipped (null + unanswered)", async () => {
+      for (const empty of ["", "   "]) {
+        const result = await askUserQuestionExecutor.execute({ questions: [freeText()], answers: { "What should the service be called?": empty } }, makeCtx());
+        expect(result.isError).toBeUndefined();
+        const parsed = JSON.parse(result.output);
+        expect(parsed.results[0]).toEqual({ header: "Name", question: "What should the service be called?", multiSelect: false, freeText: true, answer: null });
+        expect(parsed.unanswered).toEqual(["What should the service be called?"]);
+      }
+    });
+
+    test("an empty answer to an option question is skipped too, never an empty otherResponse", async () => {
+      const parsed = JSON.parse((await askUserQuestionExecutor.execute({ ...oneQuestion(), answers: { "Which approach?": "" } }, makeCtx())).output);
+      expect(parsed.results[0].answer).toBeNull();
+      expect(parsed.results[0].otherResponse).toBeUndefined();
+      expect(parsed.unanswered).toEqual(["Which approach?"]);
+    });
+
+    test("multiSelect on a free-text question is normalized to false", async () => {
+      const parsed = JSON.parse((await askUserQuestionExecutor.execute({ questions: [freeText({ multiSelect: true })], answers: { "What should the service be called?": "a" } }, makeCtx())).output);
+      expect(parsed.results[0]).toMatchObject({ multiSelect: false, freeText: true, answer: "a" });
+    });
+
+    test("1 option is rejected", async () => {
+      const result = await askUserQuestionExecutor.execute({ questions: [freeText({ options: [{ label: "A", description: "a" }] })] }, makeCtx());
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("between 2 and 4");
+    });
+
+    test("5 options are rejected", async () => {
+      const five = Array.from({ length: 5 }, (_, i) => ({ label: `L${i}`, description: "d" }));
+      const result = await askUserQuestionExecutor.execute({ questions: [freeText({ options: five })] }, makeCtx());
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("between 2 and 4");
+    });
+
+    test("options that is not an array is rejected", async () => {
+      const result = await askUserQuestionExecutor.execute({ questions: [freeText({ options: "A,B" })] }, makeCtx());
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("options must be an array");
+    });
+
+    test("placeholder up to 80 characters is accepted; longer or non-string is rejected", async () => {
+      const ok = await askUserQuestionExecutor.execute({ questions: [freeText({ placeholder: "x".repeat(80) })], answers: { "What should the service be called?": "a" } }, makeCtx());
+      expect(ok.isError).toBeUndefined();
+      const tooLong = await askUserQuestionExecutor.execute({ questions: [freeText({ placeholder: "x".repeat(81) })] }, makeCtx());
+      expect(tooLong.isError).toBe(true);
+      expect(tooLong.output).toContain("placeholder");
+      const notString = await askUserQuestionExecutor.execute({ questions: [freeText({ placeholder: 5 })] }, makeCtx());
+      expect(notString.isError).toBe(true);
+    });
+
+    test("placeholder is accepted on an option question too", async () => {
+      const q = { ...oneQuestion().questions[0], placeholder: "or describe your own" };
+      const result = await askUserQuestionExecutor.execute({ questions: [q], answers: { "Which approach?": "A" } }, makeCtx());
+      expect(result.isError).toBeUndefined();
+    });
+  });
+
+  describe("advertised schema", () => {
+    test("options is optional with no minItems, placeholder is capped at 80, no oneOf anywhere", () => {
+      const schema = getRegisteredTool(ASK_USER_QUESTION_TOOL_NAME)!.descriptor.inputSchema as Record<string, any>;
+      const item = schema.properties.questions.items;
+      expect(item.required).toEqual(["question", "header"]);
+      expect(item.properties.options.minItems).toBeUndefined();
+      expect(item.properties.options.maxItems).toBe(4);
+      expect(item.properties.placeholder).toMatchObject({ type: "string", maxLength: 80 });
+      expect(JSON.stringify(schema)).not.toMatch(/"(oneOf|anyOf|allOf)"/);
+    });
+
+    test("the description is model guidance, not the host contract", () => {
+      const description = getRegisteredTool(ASK_USER_QUESTION_TOOL_NAME)!.descriptor.description;
+      expect(description).toContain("(Recommended)");
+      expect(description).toContain("plain text");
+      expect(description).not.toContain("canUseTool");
+    });
+  });
+
   // M7 (fix wave, ledger carry, P3 close-out) — RULING P5-C (Phase 5 Task 3): the answers/
   // annotations keying convention is exported as ONE named constant
   // (ASK_USER_QUESTION_ANSWER_KEY_FIELD) so nothing hand-copies the literal string -- this test
