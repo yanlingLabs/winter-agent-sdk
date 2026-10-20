@@ -1,3 +1,4 @@
+import { LINUX_HOST_QUERY_TOOLS } from "../guest/linux-host-query-profile.ts";
 import { bindGuestFileSession, type GuestFileSession, guestFileError } from "../guest/file-session.ts";
 // WS-06 §1: the ToolDescriptor registry -- the one object every consumer (ToolSearch, permissions,
 // hooks, telemetry, execution) operates on (report §85). This module owns:
@@ -1848,7 +1849,7 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
   return {
     async execute(call: EngineToolCall, opts?: ToolCallExecuteOptions): Promise<EngineToolResult> {
       if (deps.executionPosture !== undefined && deps.executionPosture !== "local" && deps.executionPosture !== "confined-guest") return foldResult({ output: "Error [guest_file_posture_invalid]: unknown execution posture", isError: true });
-      if (deps.executionPosture === "confined-guest" && !["Read", "Write", "Edit", "Bash"].includes(call.name)) return foldResult({ output: `Error [guest_tool_unsupported]: ${call.name} has no confined guest implementation`, isError: true });
+      if (deps.executionPosture === "confined-guest" && !LINUX_HOST_QUERY_TOOLS.includes(call.name)) return foldResult({ output: `Error [guest_tool_unsupported]: ${call.name} has no confined guest implementation`, isError: true });
       const registered = getRegisteredTool(call.name);
       if (!registered) return foldResult(unknownToolResult(call.name));
       if (registered.descriptor.disposition === "correctly-absent") return foldResult(correctlyAbsentResult(call.name));

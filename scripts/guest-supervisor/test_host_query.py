@@ -45,6 +45,22 @@ class HostQueryProducerTests(unittest.TestCase):
             self.assertNotIn('resume',config);self.assertNotIn('env',config);self.assertNotIn('hooks',config)
         self.assertEqual(service.host_query_config(item(),['write'],'model')['tools'],['Write'])
         self.assertEqual(service.host_query_config(item(),[],'model')['tools'],[])
+    def test_the_coordinate_class_offers_messaging_and_the_task_graph_and_never_task_stop_or_output(self):
+        coordination=['SendMessage','ListAgents','AskUserQuestion','TaskCreate','TaskGet','TaskList','TaskUpdate']
+        config=service.host_query_config(item(),['coordinate'],'model')
+        self.assertEqual(config['tools'],coordination);self.assertIs(config['hostMessaging'],True)
+        full=service.host_query_config(item(),['read','write','execute','coordinate'],'model')
+        self.assertEqual(full['tools'],['Read','Edit','Write','Bash']+coordination);self.assertIs(full['hostMessaging'],True)
+        for classes in (['read'],['read','write','execute'],[]):
+            plain=service.host_query_config(item(),classes,'model');self.assertNotIn('hostMessaging',plain)
+            self.assertFalse(set(plain['tools'])&set(coordination))
+        for policy in ('auto','ask','plan','accept-edits','dont-ask','bypass'):
+            current=service.host_query_config(item(policy),['coordinate'],'model')
+            self.assertEqual(current['tools'],coordination);self.assertNotIn('TaskStop',current['tools']);self.assertNotIn('TaskOutput',current['tools'])
+            self.assertIs(current['allowDangerouslySkipPermissions'],False);self.assertEqual(current['allowedTools'],[])
+    def test_unknown_duplicate_or_excess_tool_classes_still_refuse(self):
+        for classes in (['coordinate','coordinate'],['coordinate','stop'],['TaskStop'],['read','write','execute','coordinate','read'],[1],'coordinate',None):
+            with self.assertRaisesRegex(service.Refusal,'host_query_tools'):service.host_query_config(item(),classes,'model')
     def test_plan_metadata_matches_tool_service_descriptor_and_source_flags(self):
         root={'id':'source','guestPath':'/workspace/folders/source','readOnly':False}
         self.assertFalse(service.runtime_root_metadata(root,'plan',False)['readOnly']) # old fresh route unchanged

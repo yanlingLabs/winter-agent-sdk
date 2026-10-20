@@ -1,4 +1,4 @@
-import { claimLinuxSession, linuxSessionBindings, bindLinuxGuidedSessionChannel, closeLinuxSession, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
+import { claimLinuxSession, linuxSessionHeldInputEpoch, linuxSessionBindings, bindLinuxGuidedSessionChannel, closeLinuxSession, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
 // WS-23 (embedded chat/dispatch): `runEmbeddedSession` -- ONE Winter session, run to completion, with
 // every process global turned into a parameter.
 //
@@ -285,7 +285,9 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
     // continue/resume/forkSession/resumeSessionAt against `env` (WINTER_PROJECT_DIR_NAME). A
     // resolution failure throws here, before any frame is written, and exits 1 with the detail on
     // stderr (WS-04 §6.1's "exited before init").
-    const { config: effectiveConfig, store, initialMessages, approvalStore, autoStateStore } = await resolveEngineSession({
+    const heldEpoch = opts.linuxSessionAdmission !== undefined ? linuxSessionHeldInputEpoch(opts.linuxSessionAdmission) : undefined;
+    const { config: effectiveConfig, store, initialMessages, approvalStore, autoStateStore, held } = await resolveEngineSession({
+      heldInputs: heldEpoch !== undefined,
       config,
       resolveWinterHome: () => resolveProductionWinterHome(config, env),
       // WS-21 §6.3 item 3 (durable-write audit, fix round 2): every store `resolveEngineSession`
@@ -397,6 +399,7 @@ export async function runEmbeddedSession(opts: EmbeddedSessionOptions): Promise<
         // Task 11 (WS-07 §9) / Task 12 (WS-07 §10.5): the same resolved triple as `store`.
         ...(approvalStore !== undefined ? { approvalStore } : {}),
         ...(autoStateStore !== undefined ? { autoStateStore } : {}),
+        ...(held !== undefined && heldEpoch !== undefined ? { heldInputs: { ...held, epoch: heldEpoch } } : {}),
         // STATED, where main.ts used to leave it to runEngine's `process.env` default: the two are
         // the same object for the spawned child (main.ts passes `process.env`), and for an embedded
         // session the env parameter is the only environment that is this session's.

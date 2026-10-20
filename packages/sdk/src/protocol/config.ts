@@ -398,6 +398,25 @@ export interface HostSessionStopAnswer {
    *  that were queued behind the interrupted turn. Rendered into TaskStop's `message`. */
   note?: string;
 }
+/**
+ * Held input, WINTER-ONLY (N2 extensions 4.5). The runtime keeps a durable journal of host inputs that are HELD (invisible to the model,
+ * undecided), COMMITTED (part of the conversation; reaches the transcript exactly once) or IN_TRANSCRIPT (a tombstone). Every host request
+ * names the hold token of the exact hold it is about; the runtime acts only on a record carrying exactly that token.
+ */
+export type HeldInputState = "held" | "committed" | "in_transcript";
+/** The admitted scope a hold is for; the runtime refuses an epoch that is not its own. */
+export interface HeldInputEpoch { incarnationId: string; leaseEpoch: number }
+/** `host_input_hold`: `inputId` is the ledger receipt id, `holdToken` is derived by the host, `clientName` rides with the rendered `text`. */
+export interface HostInputHoldRequest { inputId: string; holdToken: string; epoch: HeldInputEpoch; text: string; clientName: string }
+/** `{held:true}`; the same id and body again -> `{held:true, again:true}` with the token REPLACED; an id already committed or in the transcript -> `{held:false, state}`, nothing changed. Another body under the same id is the error `conflict`. */
+export type HostInputHoldAnswer = { held: true; again?: true } | { held: false; state: "committed" | "in_transcript" };
+/** Where a committed input entered the conversation, or `already` when the commit had happened before. */
+export type HostInputCommitOutcome = "folded" | "queued" | "started" | "already";
+export interface HostInputCommitAnswer { outcome: HostInputCommitOutcome }
+export type HostInputDiscardAnswer = { discarded: true } | { discarded: false; reason: "superseded" };
+export interface HostInputForgetAnswer { forgotten: boolean }
+/** One entry of `system/held_inputs`: every `held` record and every not-yet-appended `committed` one, after the restart dedupe. */
+export interface HeldInputReport { inputId: string; digest: string; holdToken: string; state: HeldInputState }
 export interface McpStdioServerConfig {
   type?: "stdio"; // the ONLY optional discriminant of the four transport variants (derived-shapes item (a))
   command: string;

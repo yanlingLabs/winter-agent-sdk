@@ -1,5 +1,5 @@
 /** Fresh-store Linux supervisor admission. Kernel-validated owner capability, not config/env authority. */
-import { assertLinuxHostQueryConfig, assertLinuxHostQueryRoots, checkLinuxHostQueryFrame, LINUX_HOST_QUERY_PROFILE } from "./linux-host-query-profile.ts";
+import { assertLinuxHostQueryConfig, assertLinuxHostQueryRoots, checkLinuxHostQueryFrame, LINUX_HOST_QUERY_PROFILE, type OwnsHostRequest } from "./linux-host-query-profile.ts";
 import { assertLinuxGuidedHostQueryConfig, assertLinuxGuidedHostQueryRoots, LINUX_GUIDED_HOST_QUERY_PROFILE } from "./linux-guided-host-query-profile.ts";
 import { parseLinuxGuidedReaderRegistration, type LinuxGuidedReaderRegistration } from "./linux-guided-reader-protocol.ts";
 import type { LinuxGuidedReaderChannel } from "./linux-guided-reader-channel.ts";
@@ -10,7 +10,7 @@ import type { FrameSink } from "../protocol/channel.ts";
 import { dlopen, FFIType } from "bun:ffi";
 import { fstatSync } from "node:fs";
 import { createConnection } from "node:net";
-import type { RuntimeConfig, UserFrame } from "@yanlinglabs/winter-agent-sdk";
+import type { HeldInputEpoch, RuntimeConfig, UserFrame } from "@yanlinglabs/winter-agent-sdk";
 import type { ToolExecutionContext } from "../tools/registry.ts";
 import { createLinuxSupervisorSession } from "./supervisor-client.ts";
 import type { GuestFileSession } from "./file-session.ts";
@@ -150,10 +150,10 @@ function admitLinuxSession(bootstrapFd: number, ownerLibraryFd: number, profile:
   } catch (error) { closeOwner(); throw error; }
 }
 /** Rechecks native liveness before selecting the closed input surface. */
-export function checkLinuxSessionFrame(value: LinuxSessionAdmission, config: RuntimeConfig, frame: unknown, ownsPermission: (id: string) => boolean): "accept" | "drop" {
+export function checkLinuxSessionFrame(value: LinuxSessionAdmission, config: RuntimeConfig, frame: unknown, ownsPermission: (id: string) => boolean, ownsHostRequest?: OwnsHostRequest): "accept" | "drop" {
   const state = stateOf(value); validateConfig(config, state.record);
-  if (state.record.profile === LINUX_HOST_QUERY_PROFILE) return checkLinuxHostQueryFrame(frame, ownsPermission);
-  if (state.record.profile === LINUX_GUIDED_HOST_QUERY_PROFILE) return checkLinuxHostQueryFrame(frame, ownsPermission);
+  if (state.record.profile === LINUX_HOST_QUERY_PROFILE) return checkLinuxHostQueryFrame(frame, ownsPermission, ownsHostRequest);
+  if (state.record.profile === LINUX_GUIDED_HOST_QUERY_PROFILE) return checkLinuxHostQueryFrame(frame, ownsPermission, ownsHostRequest);
   assertFreshLinuxUserFrame(frame); return "accept";
 }
 /** One output/channel binding for this actual admitted parent incarnation. */
@@ -182,6 +182,12 @@ export function claimLinuxSession(value: LinuxSessionAdmission, config: RuntimeC
 export function assertLinuxSession(value: LinuxSessionAdmission | undefined, config: RuntimeConfig): void { const state = stateOf(value); validateConfig(config, state.record); }
 export function assertRunningLinuxSession(value: LinuxSessionAdmission | undefined, config: RuntimeConfig, provider?: object): void { const state = stateOf(value); if (state.phase !== "running") unavailable(); validateConfig(config, state.record); if (provider !== undefined) assertGuestProviderRoute(state.provider, provider); }
 export function linuxSessionBindings(value: LinuxSessionAdmission) { const state = stateOf(value); return { store: state.store, files: state.files, provider: state.provider, signal: state.signal }; }
+/** The admitted incarnation and lease epoch a held-input hold must name; only a host-query profile has a held-input journal. */
+export function linuxSessionHeldInputEpoch(value: LinuxSessionAdmission): HeldInputEpoch | undefined {
+  const state = stateOf(value), profile = state.record.profile;
+  if (profile !== LINUX_HOST_QUERY_PROFILE && profile !== LINUX_GUIDED_HOST_QUERY_PROFILE) return undefined;
+  return { incarnationId: state.record.scope.incarnationId, leaseEpoch: state.record.scope.leaseEpoch };
+}
 export function bindLinuxSessionContext(value: LinuxSessionAdmission, ctx: ToolExecutionContext): void { const state = stateOf(value); if (state.phase !== "running") unavailable(); bindGuestFileSession(ctx, state.files); }
 export function closeLinuxSession(value: LinuxSessionAdmission): void { const state = admissions.get(value); if (!state || state.phase === "closed") return; state.phase = "closed"; state.dispose(); }
 

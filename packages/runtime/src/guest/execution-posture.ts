@@ -1,9 +1,9 @@
-import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
+import { HELD_INPUT_CAPABILITY, type RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import { assertLinuxSession, type LinuxSessionAdmission } from "./linux-session-admission.ts";
 /** Negotiated capability of this runtime image; does not assert an OS sandbox exists. */
 export const RUNTIME_EXECUTION_POSTURE_CAPABILITIES = Object.freeze({
   protocolVersion: 1,
-  capabilities: ["confined-guest-posture-v1"] as readonly string[],
+  capabilities: ["confined-guest-posture-v1", HELD_INPUT_CAPABILITY] as readonly string[],
   supportsConfinedGuestExecution: false,
 });
 

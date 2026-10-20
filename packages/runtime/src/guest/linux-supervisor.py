@@ -325,7 +325,7 @@ def runtime_root_metadata(root,policy,host_query=False):
     return {'id':root['id'],'guestPath':root['guestPath'],'readOnly':root['readOnly'] or (host_query and policy=='plan')}
 
 def host_query_config(item,tool_classes,model):
-    if not isinstance(tool_classes,list) or len(tool_classes)>3 or any(type(value)!=str or value not in ('read','write','execute') for value in tool_classes) or len(set(tool_classes))!=len(tool_classes):raise Refusal('host_query_tools')
+    if not isinstance(tool_classes,list) or len(tool_classes)>4 or any(type(value)!=str or value not in ('read','write','execute','coordinate') for value in tool_classes) or len(set(tool_classes))!=len(tool_classes):raise Refusal('host_query_tools')
     # Only the SDK runtime mode collapses: the host matrix behind canUseTool is the Cowork policy authority, and any guest mode other than
     # default/plan lets the SDK resolve calls without canUseTool. The received policy stays recorded as-is (item['policy']); plan roots, the
     # plan write refusal and native_mount_policy still read it directly. Bypass is never produced here.
@@ -339,8 +339,12 @@ def host_query_config(item,tool_classes,model):
         if 'read' in tool_classes:tools.append('Edit')
         tools.append('Write')
     if 'execute' in tool_classes:tools.append('Bash')
+    # `coordinate` is the messaging and task surface: SendMessage/ListAgents (host messaging), AskUserQuestion (a permission-class prompt the host
+    # bridges) and the in-process Task graph. TaskStop and TaskOutput are never offered (the guest has no background tasks or subagents).
+    coordinate='coordinate' in tool_classes
+    if coordinate:tools.extend(('SendMessage','ListAgents','AskUserQuestion','TaskCreate','TaskGet','TaskList','TaskUpdate'))
     sid=item['logicalSessionId']
-    return {'executionPosture':'confined-guest','sessionId':item['authority']['sessionId'],'model':model,'cwd':roots[0]['guestPath'],'winterHome':f'/run/winter/conversations/{sid}','storeHome':f'/workspace/.winter/conversations/{sid}','persistSession':True,'settingSources':[],'tools':tools,'allowedTools':[],'skills':[],'plugins':[],'strictMcpConfig':True,'mcpServers':{},'permissionMode':modes[item['policy']],'permissions':{'disableBypassPermissionsMode':True},'allowDangerouslySkipPermissions':False}
+    return {'executionPosture':'confined-guest','sessionId':item['authority']['sessionId'],'model':model,'cwd':roots[0]['guestPath'],'winterHome':f'/run/winter/conversations/{sid}','storeHome':f'/workspace/.winter/conversations/{sid}','persistSession':True,'settingSources':[],'tools':tools,'allowedTools':[],'skills':[],'plugins':[],'strictMcpConfig':True,'mcpServers':{},'permissionMode':modes[item['policy']],'permissions':{'disableBypassPermissionsMode':True},'allowDangerouslySkipPermissions':False,**({'hostMessaging':True} if coordinate else {})}
 
 def select_runtime_profile(config):
     # Only the key Root's own trusted config FD carries selects a profile. Tool and
