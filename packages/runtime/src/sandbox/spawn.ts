@@ -25,6 +25,7 @@ import { trackProcessGroup } from "../process-groups.ts";
 import { buildMandatoryFloorProfile, hasMandatoryFloor, type HostExecutionFloor, type HostCodeProcessScope, type HostCodeProcessHandle } from "@yanlinglabs/winter-agent-sdk";
 import { currentHostCodeProcessClient, hostCodeProcessBrokerRequired, requireBoundHandle } from "./host-code-process.ts";
 import { currentHostChildFloorProfile, prepareHostChildLaunch } from "./host-child-floor.ts";
+import { findCaseVariantsOf, isOnCaseSensitiveVolume } from "./case-variants.ts";
 import { newSandboxViolationTag, startViolationMonitor, tagSeatbeltDenials, VIOLATION_STREAM_MARGIN_SECONDS, type SandboxViolationReport, type ViolationMonitor } from "./violations.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -49,6 +50,39 @@ export class SandboxUnavailableError extends Error {
     super(message);
     this.name = "SandboxUnavailableError";
   }
+}
+
+/**
+ * A write root on a case-SENSITIVE volume has a case variant that already exists (`/v/proj` and a
+ * distinct `/v/PROJ`). Seatbelt matches paths ignoring case, so the sandbox would let the command write
+ * into the variant too, and no profile rule can exclude it without also excluding the root (see
+ * profile.ts's `buildCaseVariantRootFence`). The command is refused rather than run with that hole; a
+ * subclass of `SandboxUnavailableError`, so every caller already reports it to the model as an error.
+ */
+export class SandboxCaseVariantError extends SandboxUnavailableError {
+  constructor(readonly root: string, readonly variants: readonly string[]) {
+    super(
+      `the sandbox cannot run this command: the writable folder ${JSON.stringify(root)} is on a case-sensitive volume next to ` +
+        `${variants.map((v) => JSON.stringify(v)).join(", ")}, which differs from it only in letter case. macOS's sandbox matches ` +
+        "paths ignoring case, so it would let the command write there too. Rename one of them, or run the command outside the sandbox.",
+    );
+    this.name = "SandboxCaseVariantError";
+  }
+}
+
+/**
+ * The canonical write roots that sit on a case-sensitive volume, after checking that none of them has an
+ * existing case variant (throws `SandboxCaseVariantError` when one does). Empty on the default volume,
+ * which keeps the profile byte-identical there.
+ */
+export function caseSensitiveWriteRootsOrRefuse(roots: readonly string[]): string[] {
+  const canonical = [...new Set(roots.map(canonicalizePath))];
+  const sensitive = canonical.filter(isOnCaseSensitiveVolume);
+  for (const root of sensitive) {
+    const variants = findCaseVariantsOf(root, canonical.filter((r) => r !== root));
+    if (variants.length > 0) throw new SandboxCaseVariantError(root, variants);
+  }
+  return sensitive;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -354,6 +388,8 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
     }
     const allowNetwork = resolveNetworkPosture(opts.settings.network); // throws SandboxConfigError on a domain-list config -- propagates to the caller uncaught, by design (§2/§12)
     const darwinUserTempDir = resolveDarwinUserTempDir();
+    // Before any process starts: refuses when a write root has an existing case variant.
+    const caseSensitiveWriteRoots = caseSensitiveWriteRootsOrRefuse([opts.cwd, ...(opts.writableRoots ?? [])]);
     const protection = currentHostCodeProtectionPaths();
     const read = splitDenyPathsByGlobShape(protection.denyReadPaths), write = splitDenyPathsByGlobShape(protection.denyWritePaths);
     profile = buildSeatbeltProfile({
@@ -376,6 +412,7 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
       ...(opts.storeHome !== undefined ? { storeHome: opts.storeHome } : {}),
       ...(opts.brand !== undefined ? { brand: opts.brand } : {}),
       ...(opts.allowGitConfigWrites !== undefined ? { allowGitConfigWrites: opts.allowGitConfigWrites } : {}),
+      ...(caseSensitiveWriteRoots.length > 0 ? { caseSensitiveWriteRoots } : {}),
     });
     spawnProfile = profile;
     if (opts.reportViolations === true) {

@@ -491,6 +491,33 @@ function buildHomeSelfGrantFloor(anchors: readonly (string | undefined)[], brand
   return [...denies, fence].filter((s) => s.length > 0).join("\n");
 }
 
+/**
+ * Case-variant write roots (a case-SENSITIVE volume only).
+ *
+ * Seatbelt matches every path filter IGNORING case (measured on macOS 26, on a case-sensitive APFS disk
+ * image as well as on the default volume). So on a case-sensitive volume the write-root allow
+ * `(subpath "/v/proj")` also admits a DISTINCT sibling `/v/PROJ` -- measured: from cwd `/v/proj`,
+ * `echo x > ../PROJ/escape.txt` landed. No SBPL filter can tell the two apart: a deny of `/v/PROJ` in
+ * any form (`subpath`, `literal`, an exact-case regex) also denies `/v/proj` (measured). Two halves:
+ *   - a variant that ALREADY exists cannot be fenced here at all; spawn.ts refuses to run the command
+ *     sandboxed (`SandboxCaseVariantError`) before this profile is ever built;
+ *   - a variant that does not exist yet must not be CREATED by the sandboxed command (`mkdir /v/PROJ`
+ *     matched the root's allow, measured). This block denies `file-write-create` on each such root as a
+ *     `(literal ...)`, which -- matching ignoring case -- names exactly the root and its case variants and
+ *     nothing inside the root. Named explicitly (not `file-write*`) so it beats the earlier explicit
+ *     create re-permit (`buildReadDenyWritePermitBlock`); emitted after it, so it wins that tie by order.
+ *     Measured: `mkdir /v/SCRATCH` and `ln -s ... /v/SCRATCH` refused; creating, moving and removing
+ *     files and folders INSIDE the root unaffected. cwd already had this through the default
+ *     protections' ancestor fence (its `(literal cwd)`); other write roots did not.
+ * The cost, on a case-sensitive volume only: a write root that does not exist yet cannot be created by
+ * the sandboxed command itself.
+ */
+function buildCaseVariantRootFence(caseSensitiveRoots: readonly string[]): string {
+  const block = new ClauseBlock();
+  for (const root of caseSensitiveRoots) block.add(literalClause(canon(root)));
+  return block.render("(deny file-write-create");
+}
+
 // ---------------------------------------------------------------------------------------------
 // buildSeatbeltProfile
 // ---------------------------------------------------------------------------------------------
@@ -608,6 +635,13 @@ export interface SeatbeltProfileInput {
    * (round 16).
    */
   allowGitConfigWrites?: boolean;
+  /**
+   * The write roots (cwd and `writableRoots`, canonical) that sit on a CASE-SENSITIVE volume -- resolved
+   * by spawn.ts (`pathconf(_PC_CASE_SENSITIVE)`), never by this module. See `buildCaseVariantRootFence`.
+   * Omitted or empty (every root on the default case-insensitive volume) -> nothing is emitted and the
+   * profile is byte-identical to one built without this field.
+   */
+  caseSensitiveWriteRoots?: string[];
 }
 
 /**
@@ -711,6 +745,9 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // Fix round 14: the write-root create/unlink re-permit -- see `WRITE_OPS_SURVIVING_READ_DENY_REPERMIT`'s
   // header. Reuses the SAME canonicalized `roots` array the write-allow block below builds.
   const denyReadWritePermitBlock = buildReadDenyWritePermitBlock(roots);
+  // A case-sensitive volume only -- see `buildCaseVariantRootFence`. Emitted right after the write-root
+  // allow block (below), only when non-empty, so a default-volume profile is byte-identical.
+  const caseVariantRootFence = buildCaseVariantRootFence(input.caseSensitiveWriteRoots ?? []);
 
   // Fix round 15: the default write protections -- see `DEFAULT_PROTECTED_FILES`'s header.
   const defaultWriteProtectionBlock = buildDefaultWriteProtectionBlock(input.cwd, brand, input.allowGitConfigWrites ?? false);
@@ -848,7 +885,7 @@ ${denyReadWritePermitBlock}
 ${denyRunDirRule}
 ${denyProviderStateReadRule}
 (allow file-write*
-${writeRules})
+${writeRules})${caseVariantRootFence === "" ? "" : `\n${caseVariantRootFence}`}
 ${denyWriteRules}
 ${denyWriteRegexRules}
 ${denyWriteAncestorRenameBlock}
