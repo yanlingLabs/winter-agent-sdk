@@ -9,6 +9,7 @@
 // its `runs` ([start, count] pairs, flattened) joined with "\n".
 import { expect, test } from "bun:test";
 import { buildSeatbeltProfile, type SeatbeltProfileInput } from "./profile.ts";
+import { tagSeatbeltDenials } from "./violations.ts";
 import corpus from "./__corpus__/seatbelt-profile.json";
 
 type Row = { input: SeatbeltProfileInput; runs: number[] } | { input: SeatbeltProfileInput; error: string };
@@ -45,4 +46,20 @@ test("the recorded corpus renders exactly as recorded", () => {
     mismatches.push(`row ${i}: first difference at line ${at + 1}\n  expected: ${JSON.stringify(e[at])}\n  actual:   ${JSON.stringify(a[at])}\ninput: ${JSON.stringify(row.input)}`);
   }
   expect(mismatches.slice(0, 5)).toEqual([]);
+});
+
+// Many recorded inputs hold `"` and `\` in paths, regexes, homes, the per-user temp dir and brand
+// dot-dirs. A raw `#"..."` literal ends at its first quote, so one holding `\"` makes Seatbelt refuse
+// the whole profile (exit 65), and the violations tagger refuses to read it.
+test("no recorded profile holds a raw regex literal with a quote in it, and every one can be tagged", () => {
+  const { lines, rows } = corpus as unknown as { lines: string[]; rows: Row[] };
+  let profiles = 0;
+  for (const row of rows) {
+    if ("error" in row) continue;
+    const text = expectedText(row.runs, lines);
+    expect(text).not.toMatch(/#"[^"\n]*\\"/);
+    expect(tagSeatbeltDenials(text, "winter-sbx-corpus")).toBeDefined();
+    profiles++;
+  }
+  expect(profiles).toBe(590);
 });

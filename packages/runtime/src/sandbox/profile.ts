@@ -136,23 +136,39 @@ function sbplString(p: string): string {
   return p.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-/** Escape a string for embedding inside an SBPL `(regex #"...")` literal. */
+/**
+ * Escape a literal path as regex SOURCE text (every regex metacharacter backslashed), for splicing into
+ * a hand-built regex. It does nothing about the SBPL string delimiter: that is `regexClause`'s job, the
+ * one place regex source becomes SBPL text.
+ */
 function sbplRegexLiteral(p: string): string {
-  return p.replace(/[\\^$.|?*+()[\]{}]/g, "\\$&").replace(/"/g, '\\"');
+  return p.replace(/[\\^$.|?*+()[\]{}]/g, "\\$&");
 }
 
 /**
- * Fix round 11: escapes ONLY the `"` delimiter, for a string that is ALREADY compiled regex source
- * (`globToSbplRegexSource`/`recursiveGlobToSbplRegexSource`, permissions/file-rules.ts) and must
- * reach the SBPL `(regex #"...")` literal with its own backslash-escapes UNTOUCHED -- unlike
- * `sbplString` (which doubles every backslash, correct for a PLAIN string literal's own escaping
- * rules but wrong here: it would turn this regex's `\.` into `\\.`, changing its meaning) and unlike
- * `sbplRegexLiteral` (which escapes regex metacharacters too, correct for embedding a literal PATH as
- * fixed prefix text inside a hand-built regex, but wrong here: this text is already regex syntax, not
- * a literal to be escaped INTO regex syntax).
+ * Render regex SOURCE as an SBPL `(regex ...)` filter that hands Seatbelt's regex engine exactly that
+ * source. Every regex this module emits goes through here.
+ *
+ * Two spellings, chosen per source:
+ *   - `(regex #"<source>")` -- the raw literal, used whenever it can hold the source. Seatbelt reads
+ *     `#"..."` RAW: no escape is processed and the literal ends at the FIRST `"`. So it can never hold
+ *     a `"`, and `\"` inside it is not an escaped quote (the old spelling; measured with real
+ *     `sandbox-exec`: the literal ends at that quote and the whole profile fails to load, exit 65 --
+ *     every sandboxed command in a working directory whose path holds a `"` failed that way).
+ *   - `(regex "<sbplString(source)>")` -- the plain string, used when the source holds a `"` or ends
+ *     with a backslash. Seatbelt unescapes a plain string (`\\` -> `\`, `\"` -> `"`) before compiling
+ *     it, so doubling every backslash and escaping every quote delivers the source unchanged (measured:
+ *     `(regex "^/x/a\"b\\.c$")` denies `/x/a"b.c` and not `/x/a"bxc`). A trailing backslash takes this
+ *     form too, so no raw literal ever ends in `\"`, which the violations tagger
+ *     (`tagSeatbeltDenials`) refuses to read.
+ * Not used, also measured: Seatbelt's regex dialect has no `\x22` or `\042` escape (each matches its
+ * letters and digits literally), and `[\x22]` is the class of `\`, `x` and `2` -- it never matches `"`.
+ *
+ * A source with neither character keeps the raw spelling, so every such profile is byte-identical to
+ * what this module emitted before.
  */
-function escapeSbplRegexDelimiter(r: string): string {
-  return r.replace(/"/g, '\\"');
+function regexClause(source: string): string {
+  return /"|\\$/.test(source) ? `(regex "${sbplString(source)}")` : `(regex #"${source}")`;
 }
 
 // realpath a path if it exists (canonicalizes macOS /tmp and /var symlinks); fall through to the
@@ -180,7 +196,6 @@ const canon = canonicalizePath;
 // Clause renderers shared by the blocks below.
 const subpathClause = (p: string): string => `(subpath "${sbplString(p)}")`;
 const literalClause = (p: string): string => `(literal "${sbplString(p)}")`;
-const regexClause = (source: string): string => `(regex #"${escapeSbplRegexDelimiter(source)}")`;
 
 /**
  * Collects clauses for one multi-line block, keeping each distinct clause once at the position it was
@@ -271,8 +286,9 @@ const WRITE_OPS_SURVIVING_READ_DENY_REPERMIT = "file-write* file-write-unlink fi
  * `.git/config`, an `.mcp.json` server, a shell rc file -- so these entries are denied unconditionally,
  * with no opt-in flag to forget (`.git/config` alone can be exempted, `allowGitConfigWrites`).
  *
- * Nine bare shell/git/MCP config filenames, matched case-sensitively (unlike this module's own
- * `<projectDir>`/`settings.json` control-plane regexes, which are case-folded).
+ * Nine bare shell/git/MCP config filenames. Spelled in one case here, but Seatbelt matches every path
+ * filter case-insensitively ("SEATBELT PATH MATCHING IGNORES CASE", below), so `.ZSHRC` is denied too -- on
+ * a case-sensitive volume that over-denies a distinct file of that spelling, the safe direction.
  */
 const DEFAULT_PROTECTED_FILES = [".gitconfig", ".gitmodules", ".bashrc", ".bash_profile", ".zshrc", ".zprofile", ".profile", ".ripgreprc", ".mcp.json"] as const;
 
@@ -377,11 +393,22 @@ function buildReadDenyKeepInPlaceBlock(plainDenyReadPaths: readonly string[], gl
 
 const CONTROL_PLANE_FILES = ["permissions.local.json", "settings.json", "settings.local.json"] as const;
 
-// Per-character case-folding classes -- SBPL's regex engine does not honor `(?i)` (verified against
-// real sandbox-exec by the Norma original: with `(?i)` the write sailed through) and the default
-// macOS volume is case-insensitive, so `.WINTER/Settings.json` reaches the same file a case-exact
-// regex would miss. Three SEPARATE regexes, never merged by alternation (WS-12 §5.2: "never merged
-// by alternation -- only the per-character-class form is verified").
+// SEATBELT PATH MATCHING IGNORES CASE -- measured with real `sandbox-exec` on macOS 26 (2026-10-20):
+//
+// EVERY path filter -- `(regex ...)`, `(literal ...)` and `(subpath ...)` -- matches IGNORING CASE, on a
+// case-insensitive volume AND on a case-sensitive one. A deny on `.../ab` refuses a write to `.../AB`;
+// on a case-sensitive APFS volume holding two DISTINCT directories `dd` and `DD`, a `(subpath ".../dd")`
+// deny refuses a write into `DD` too. So a deny written in one case already covers every case variant:
+// it over-matches on a case-sensitive volume, which for a deny is the safe direction. (The ALLOW side
+// over-matches the same way -- a write root also admits its case-variant siblings on a case-sensitive
+// volume; that is a separate, open issue.) `(?i)` is not supported at all: a regex starting with it
+// makes the whole profile fail to load (exit 65).
+//
+// The per-character case-folding classes below (`[Ww][Ii]...`) are therefore redundant for matching --
+// they predate this measurement (the Norma original concluded a case-exact regex would miss
+// `.WINTER/Settings.json`) -- but harmless, and kept so the profile text stays unchanged and does not
+// depend on Seatbelt keeping this behaviour. Three SEPARATE regexes, never merged by alternation (WS-12
+// §5.2: "never merged by alternation -- only the per-character-class form is verified").
 
 /**
  * P7a fix r1 (Important-1): render ONE brand token as a case-insensitive, regex-escaped SBPL literal.
@@ -432,8 +459,9 @@ function controlPlaneRegexes(dotDir: string): { rules: string; settings: string;
   };
 }
 // Phase 6 Task 3 (R6-7's P4-M MUST): the provider-state sidecar filename, case-folded per character
-// for exactly the reason above -- SBPL ignores `(?i)` and the default macOS volume is
-// case-insensitive, so `Sess-1.Provider-State.JSONL` reaches the same file a case-exact regex misses.
+// like the control-plane regexes above -- redundant for matching (Seatbelt ignores case in every path
+// filter, "SEATBELT PATH MATCHING IGNORES CASE" above), kept so `Sess-1.Provider-State.JSONL` stays covered
+// even if that ever changes.
 const PROVIDER_CF = "[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]";
 const STATE_CF = "[Ss][Tt][Aa][Tt][Ee]";
 const JSONL_CF = "[Jj][Ss][Oo][Nn][Ll]";
@@ -442,9 +470,9 @@ const PROJECTS_CF = "[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]";
 // `~/notes/foo.provider-state.jsonl` is their file, and a bare-suffix regex would deny reading it.
 // `<projectsRoot>` is interpolated per call because it depends on the resolved winter root.
 // The `projects` SEGMENT is case-folded too, for the same reason the filename is: this rule owns
-// that segment in both anchors, and on a case-insensitive volume `.../Projects/s.provider-state.jsonl`
-// reaches the same file. The root prefix above it is left exactly as resolved -- identical posture to
-// the run-dir and backups denies in this file, which anchor on the resolved path verbatim.
+// that segment in both anchors. The root prefix above it is left exactly as resolved -- identical
+// posture to the run-dir and backups denies in this file, which anchor on the resolved path verbatim
+// (Seatbelt matches that prefix ignoring case anyway).
 const providerStateReadDenyRegex = (winterRootRegexSafe: string): string =>
   String.raw`^${winterRootRegexSafe}/${PROJECTS_CF}/.*\.${PROVIDER_CF}-${STATE_CF}\.${JSONL_CF}$`;
 
@@ -660,9 +688,9 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // same string, so exactly one set is emitted and the default profile is byte-identical.
   const controlPlaneDirs = [...new Set([brand.projectDirName, brand.homeDirName])];
   const controlPlane = controlPlaneDirs.map(controlPlaneRegexes);
-  const denyRulesFileRegex = controlPlane.map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (regex #"${r.rules}"))`).join("\n");
-  const denySettingsFileRegex = controlPlane.map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (regex #"${r.settings}"))`).join("\n");
-  const denySettingsLocalFileRegex = controlPlane.map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (regex #"${r.settingsLocal}"))`).join("\n");
+  const denyRulesFileRegex = controlPlane.map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} ${regexClause(r.rules)})`).join("\n");
+  const denySettingsFileRegex = controlPlane.map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} ${regexClause(r.settings)})`).join("\n");
+  const denySettingsLocalFileRegex = controlPlane.map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} ${regexClause(r.settingsLocal)})`).join("\n");
 
   // WS-12 §5.3 (new at cutover): user-configured filesystem.denyWrite/denyRead, rendered as
   // (subpath ...) denies -- UNLIKE the control-plane carve-outs above (filename-literal/regex
@@ -688,16 +716,16 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // followed by "any character"), which no longer means what the regex intends. This module's OWN
   // pre-existing regex clauses (`controlPlaneRegexes`/`providerStateReadDenyRegex`, above) already
   // establish the real convention: a `(regex #"...")` clause's content is embedded WITH NO
-  // backslash-doubling at all -- only the outer `#"..."` quote character itself needs escaping, which
-  // `escapeSbplRegexDelimiter` (below) does and nothing else.
+  // backslash-doubling at all. A raw literal cannot hold a `"` at all, so a source holding one is
+  // rendered as a plain string instead -- `regexClause` (above) makes that choice and owns all of it.
   //
   // Deliberately NOT `canon()`-ed HERE -- there is no real filesystem path in the REGEX TEXT ITSELF to
   // canonicalize (it is already a compiled regex pattern, wildcards included). The glob's own fixed
   // PREFIX IS canonicalized, through a real symlink and guarded against suspicious resolutions, one
   // level upstream before conversion (`permissions/file-rules.ts`'s `canonicalizeGlobFixedPrefix`/
   // `isSuspiciousRealpathResolution`).
-  const denyWriteRegexRules = (input.denyWriteRegexes ?? []).map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} (regex #"${escapeSbplRegexDelimiter(r)}"))`).join("\n");
-  const denyReadRegexRules = (input.denyReadRegexes ?? []).map((r) => `(deny file-read* (regex #"${escapeSbplRegexDelimiter(r)}"))`).join("\n");
+  const denyWriteRegexRules = (input.denyWriteRegexes ?? []).map((r) => `(deny ${WRITE_OPS_SURVIVING_READ_DENY_REPERMIT} ${regexClause(r)})`).join("\n");
+  const denyReadRegexRules = (input.denyReadRegexes ?? []).map((r) => `(deny file-read* ${regexClause(r)})`).join("\n");
 
   // Fix round 12: the ancestor-rename fence. For EVERY write-denied path (plain OR glob-shaped) and
   // EVERY read-denied path, additionally deny `file-write-unlink`/`file-write-create` on the denied path
@@ -760,10 +788,10 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // -- a subpath deny would also block `cat`-ing a transcript, regressing the model-facing `.output`
   // stub contract that M13's own read-side scoping decision exists to preserve.
   const denyProviderStateReadRule = [
-    input.home ? `(deny file-read* (regex #"${providerStateReadDenyRegex(sbplRegexLiteral(canon(join(input.home, brand.homeDirName))))}"))` : "",
+    input.home ? `(deny file-read* ${regexClause(providerStateReadDenyRegex(sbplRegexLiteral(canon(join(input.home, brand.homeDirName)))))})` : "",
     // The RESOLVED root's own projects directory, when it is not `<home>/<homeDirName>` (Phase 5 fix
     // wave I1). WS-21 §3.7: `durableRoot` prefers `storeHome` -- see this function's own header.
-    durableRoot && canon(durableRoot) !== canon(join(input.home ?? "", brand.homeDirName)) ? `(deny file-read* (regex #"${providerStateReadDenyRegex(sbplRegexLiteral(canon(durableRoot)))}"))` : "",
+    durableRoot && canon(durableRoot) !== canon(join(input.home ?? "", brand.homeDirName)) ? `(deny file-read* ${regexClause(providerStateReadDenyRegex(sbplRegexLiteral(canon(durableRoot))))})` : "",
   ]
     .filter((r) => r.length > 0)
     .join("\n");
@@ -811,9 +839,7 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // structurally overriding (no control-plane file can be a direct child of this dir anyway --
   // they all sit under the project dot-dir -- but the ordering makes that structural rather than
   // incidental).
-  const allowDarwinTempFiles = input.darwinUserTempDir
-    ? `(allow file-write* (regex #"^${sbplRegexLiteral(input.darwinUserTempDir)}/[^/]+$"))`
-    : "";
+  const allowDarwinTempFiles = input.darwinUserTempDir ? `(allow file-write* ${regexClause(`^${sbplRegexLiteral(input.darwinUserTempDir)}/[^/]+$`)})` : "";
 
   const network = input.allowNetwork ? "(allow network*)" : "(deny network*)";
 
