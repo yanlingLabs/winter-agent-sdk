@@ -60,6 +60,11 @@ interface QuestionInput {
   header: string;
   options: OptionInput[];
   multiSelect: boolean;
+  // FREE-TEXT QUESTIONS (2026-10-20): `options` absent, `null` or `[]` -> the user types the answer.
+  // Present and non-empty, it must still carry 2-4 entries (the pinned Claude Code rule). The JSON
+  // Schema cannot say "0 or 2-4" without `oneOf`, which some providers' strict tool schemas reject,
+  // so the schema only drops `minItems` and this validator owns the rule.
+  freeText: boolean;
 }
 
 type ValidationResult = { ok: true; questions: QuestionInput[] } | { ok: false; message: string };
@@ -114,17 +119,32 @@ function validateQuestions(raw: unknown): ValidationResult {
       };
     }
     seenAnswerKeys.add(answerKey);
-    if (!Array.isArray(rec.options) || rec.options.length < 2 || rec.options.length > 4) {
-      return { ok: false, message: `questions[${i}].options must contain between 2 and 4 entries` };
+    const rawOptions: unknown = rec.options ?? [];
+    if (!Array.isArray(rawOptions)) {
+      return { ok: false, message: `questions[${i}].options must be an array (omit it, or pass [], for a free-text question)` };
+    }
+    if (rawOptions.length === 1 || rawOptions.length > 4) {
+      return {
+        ok: false,
+        message: `questions[${i}].options must contain between 2 and 4 entries, or be omitted/empty for a free-text question (got ${rawOptions.length})`,
+      };
     }
     const options: OptionInput[] = [];
-    for (let j = 0; j < rec.options.length; j++) {
-      const validated = validateOption(rec.options[j], i, j);
+    for (let j = 0; j < rawOptions.length; j++) {
+      const validated = validateOption(rawOptions[j], i, j);
       if (!validated.ok) return validated;
       options.push(validated.option);
     }
-    const multiSelect = rec.multiSelect === true;
-    questions.push({ question: rec.question, header: rec.header, options, multiSelect });
+    // `placeholder` is DISPLAY-ONLY and is deliberately never validated here. This executor runs
+    // AFTER canUseTool has already shown the question and collected the answer, and providers do not
+    // enforce the schema's `maxLength` (ASK_USER_QUESTION_PLACEHOLDER_MAX_LENGTH, guidance only), so
+    // rejecting an over-long or non-string placeholder here would throw the user's answer away. The
+    // host clamps or ignores it when it renders the answer box; nothing here reads it.
+    const freeText = options.length === 0;
+    // multiSelect has nothing to select on a free-text question: it is normalized to false rather
+    // than rejected, so a model that always sends `multiSelect: false|true` does not loop on an error.
+    const multiSelect = !freeText && rec.multiSelect === true;
+    questions.push({ question: rec.question, header: rec.header, options, multiSelect, freeText });
   }
   return { ok: true, questions };
 }
@@ -177,7 +197,10 @@ export const askUserQuestionExecutor: ToolExecutor = {
     const unanswered: string[] = [];
     const results = questions.map((q) => {
       const rawAnswer = answers[q[ASK_USER_QUESTION_ANSWER_KEY_FIELD]];
-      const answer = typeof rawAnswer === "string" ? rawAnswer : null;
+      // An empty (or whitespace-only) answer is the user skipping the question -- reported exactly
+      // like a missing one (`answer: null` + listed in `unanswered`), for option and free-text
+      // questions alike: an empty "Other" response carries no answer either.
+      const answer = typeof rawAnswer === "string" && rawAnswer.trim().length > 0 ? rawAnswer : null;
       if (answer === null) unanswered.push(q[ASK_USER_QUESTION_ANSWER_KEY_FIELD]);
 
       // "Runtime adds the free-form 'Other' path" (WS-06 §3.3 prose): an answer that does not match
@@ -186,7 +209,10 @@ export const askUserQuestionExecutor: ToolExecutor = {
       // chose to encode (the schema gives multi-select answers no structure beyond "one string"), and
       // this executor does not invent a delimiter/parsing convention the spec never pins; it is
       // echoed verbatim with no Other-detection judgment applied to it.
-      const isOther = answer !== null && !q.multiSelect && !q.options.some((o) => o.label === answer);
+      //
+      // A free-text question has no options to match, so its answer is never an "Other": it is the
+      // answer itself, reported as `freeText: true` + `answer`, with no `otherResponse`.
+      const isOther = answer !== null && !q.freeText && !q.multiSelect && !q.options.some((o) => o.label === answer);
 
       const annotation = extractAnnotation(annotations[q[ASK_USER_QUESTION_ANSWER_KEY_FIELD]]);
 
@@ -194,6 +220,7 @@ export const askUserQuestionExecutor: ToolExecutor = {
         header: q.header,
         question: q.question,
         multiSelect: q.multiSelect,
+        freeText: q.freeText,
         answer,
         ...(isOther ? { otherResponse: answer } : {}),
         ...(annotation !== undefined ? { annotation } : {}),
