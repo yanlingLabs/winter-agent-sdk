@@ -59,20 +59,22 @@ APPLIED_TARGETS = {
 # Every later delta on linux-supervisor.py, NEWEST FIRST, each with the sha256 the file must have once that delta is reversed (None: the
 # reader-service delta, whose pre-image is the view patch's APPLIED target, asserted below).
 MESSAGING_PATCH = ROOT / 'docs/research/guided-supervisor-guest-messaging-DATA.patch'
+COLD_RESUME_PATCH = ROOT / 'docs/research/guided-supervisor-cold-resume-DATA.patch'
 SUPERVISOR_DELTAS = [
+    (COLD_RESUME_PATCH, '53b507bbe3816ba0f68939670bb3e424bcf64a66599777e964188d34bdbff97e'),
     (MESSAGING_PATCH, '26d1ac8937d9c2e98bf050433a309ca9e7bc74b0668d960a42dce81c7b30c5bb'),
     (SOURCE_PATCH, 'f1e124fe21dac2d3a7c94a4e7923ac2ff92e9afd9600a0dd24d7f01c8fa9e8ab'),
     (POLICY_PATCH, 'a26dacd86b805ca47b3e4805d06af2b178eee82003ebe6c38f2aeeb85e48035d'),
     (SERVICE_PATCH, None),
 ]
-TRACKED_SUPERVISOR = '53b507bbe3816ba0f68939670bb3e424bcf64a66599777e964188d34bdbff97e'
+TRACKED_SUPERVISOR = '82e2f43f76877426089afdd406b6bc35ede1e074e1b7b560587bc1bd17f8e252'
 FROZEN = {
     GUEST + '/linux-compartment.h': '92fef7c0708a23b1e930c5b2560dae6bef27294dfd682346e69d35c0484b967d',
     GUEST + '/linux-runtime-compartment.c': 'fcb90dba8cf9552b9c10cde4012603ac9471b03f31a09bc408667257f65842fa',
     GUEST + '/linux-instruction-reader-compartment.c': '28aa279d6ecb560424fe24bf8ccc0893ffc61cfbb9ba6ba72d38c66b7b655893',
     GUEST + '/linux-instruction-reader-dependency-probe.c': '77ce6f1cdc02cef122eb2806e9df06514fdc7a2f9191d107a897df62d045b20a',
     GUEST + '/linux-session-owner.c': '95457d8f6ff256257b3b211e0201c64a4ed0b575aac6a9f933b3178b823b0d76',
-    GUEST + '/linux-session-admission.ts': '8771b7f0940041cd8e45ab8eaf0baa4b4fab8708095df8b90d87c1ff835e7f5e',
+    GUEST + '/linux-session-admission.ts': 'b003e79d73bc4bc87a587ee4f1f3a9e511377a5f15f026b1f3e92ce4adedb14c',
     GUEST + '/file-worker.c': 'fcb6b489e7b7c22b484cf5aad4d8f157614bf6b8c6a28d59be90651c286abcef',
     GUEST + '/process-worker.c': '2c4514e2a267c1634cb90abe97a2471dd36057d9d2ba050fb3540703d11bed11',
 }
@@ -769,7 +771,7 @@ class ConfigureAndConstructTests(unittest.TestCase):
         source = patched_text(SUPERVISOR)
         self.assertIn("if profile==GUIDED_PROFILE:allowed.update(('requiredRuntimeContext','generation','guidanceDirectory'))", source)
         self.assertEqual(source.count('guidanceDirectory'), 4)   # the allow list, the early refusal, the post-pass refusal and the post-pass walk
-        self.assertIn("if profile in ('host-query-v1',GUIDED_PROFILE):allowed.add('toolClasses')", source)
+        self.assertIn("if profile in ('host-query-v1',GUIDED_PROFILE):allowed.update(('toolClasses','continuation','endedGuestBoots'))", source)
 
 
 class PostApplyRegressionTests(unittest.TestCase):

@@ -12,7 +12,7 @@ export const LINUX_HOST_QUERY_FILE_TOOLS = ["Read", "Write", "Edit", "Bash"] as 
 export const LINUX_HOST_QUERY_COORDINATION_TOOLS = ["SendMessage", "ListAgents", "AskUserQuestion", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"] as const;
 export const LINUX_HOST_QUERY_TOOLS: readonly string[] = [...LINUX_HOST_QUERY_FILE_TOOLS, ...LINUX_HOST_QUERY_COORDINATION_TOOLS];
 const tools = new Set<string>(LINUX_HOST_QUERY_TOOLS);
-const configKeys = new Set(["executionPosture", "sessionId", "model", "cwd", "winterHome", "storeHome", "persistSession", "settingSources", "tools", "allowedTools", "skills", "plugins", "strictMcpConfig", "mcpServers", "permissionMode", "permissions", "allowDangerouslySkipPermissions", "contextWindowTokens", "hostMessaging"]);
+const configKeys = new Set(["executionPosture", "sessionId", "resume", "model", "cwd", "winterHome", "storeHome", "persistSession", "settingSources", "tools", "allowedTools", "skills", "plugins", "strictMcpConfig", "mcpServers", "permissionMode", "permissions", "allowDangerouslySkipPermissions", "contextWindowTokens", "hostMessaging"]);
 function refuse(): never { throw new Error("Linux host-query profile unavailable"); }
 function object(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
 function closed(value: Record<string, unknown>, keys: readonly string[]): boolean { return Object.keys(value).every(key => keys.includes(key)); }
@@ -28,6 +28,8 @@ export function assertLinuxHostQueryConfig(config: RuntimeConfig): void {
   if (config.allowDangerouslySkipPermissions !== false || !object(config.permissions) || !closed(config.permissions, ["disableBypassPermissionsMode"]) || config.permissions.disableBypassPermissionsMode !== true) refuse();
   // Host messaging is a flag, never a grant: only `true`, and only when a tool that uses it is offered.
   if (config.hostMessaging !== undefined && (config.hostMessaging !== true || !(config.tools.includes("SendMessage") || config.tools.includes("ListAgents")))) refuse();
+  // A cold resume names its own conversation and nothing else; continue, fork and resume-at stay outside configKeys.
+  if (config.resume !== undefined && config.resume !== config.sessionId) refuse();
   if (config.contextWindowTokens !== undefined && (!Number.isSafeInteger(config.contextWindowTokens) || config.contextWindowTokens < 1 || config.contextWindowTokens > 16 * 1024 * 1024)) refuse();
 }
 /** Root metadata is corroboration, not mount proof; native supervisor must enforce these roots. */

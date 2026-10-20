@@ -25,10 +25,19 @@ test("closed host-query config admits only default and plan with the fixed bypas
   for (const change of [
     { allowedTools: ["Bash"] }, { tools: ["Agent"] }, { tools: ["Read", "Read"] }, { tools: ["Edit"] },
     { permissionMode: "auto" }, { permissions: { disableBypassPermissionsMode: true, allow: ["Bash"] } },
-    { profile: "host-query-v1" }, { allowedSubtypes: ["permission"] }, { resume: "backend" }, { hooks: {} }, { agents: {} }, { env: {} }, { unknown: true },
+    { profile: "host-query-v1" }, { allowedSubtypes: ["permission"] }, { resume: "foreign" }, { hooks: {} }, { agents: {} }, { env: {} }, { unknown: true },
     { settingSources: ["project"] }, { mcpServers: { x: {} } }, { plugins: ["x"] }, { contextWindowTokens: Infinity },
   ]) expect(() => assertLinuxHostQueryConfig({ ...config(), ...change } as RuntimeConfig)).toThrow();
   expect(() => assertLinuxHostQueryConfig({ ...config(), tools: [], contextWindowTokens: 8192 })).not.toThrow();
+});
+
+test("cold resume: `resume` is admitted only as the conversation's own session; continue, fork and resume-at stay refused", () => {
+  const value = { ...config(), permissionMode: "default" as const, permissions: { disableBypassPermissionsMode: true }, allowDangerouslySkipPermissions: false };
+  expect(() => assertLinuxHostQueryConfig({ ...value, resume: "backend" })).not.toThrow();
+  expect(() => assertLinuxHostQueryConfig(value)).not.toThrow();
+  for (const change of [{ resume: "foreign" }, { resume: "" }, { resume: undefined, continue: true }, { forkSession: true }, { resume: "backend", forkSession: true }, { resumeSessionAt: "m" }, { resume: "backend", resumeSessionAt: "m" }, { resumeDropsTurn: true }, { resume: "backend", resumeDropsTurn: true }, { resume: "backend", continue: true }]) {
+    expect(() => assertLinuxHostQueryConfig({ ...value, ...change } as RuntimeConfig), JSON.stringify(change)).toThrow();
+  }
 });
 
 test("interrupt admits exactly no payload, {} and the host SDK's { scope: \"turn\" }; every other payload is refused", () => {

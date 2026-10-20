@@ -1,4 +1,5 @@
 /** Fresh-store Linux supervisor admission. Kernel-validated owner capability, not config/env authority. */
+import { linuxEndedBootEvidence, linuxRecordContinuationValid, linuxResumeSelectorMatches } from "./linux-cold-resume.ts";
 import { assertLinuxHostQueryConfig, assertLinuxHostQueryRoots, checkLinuxHostQueryFrame, LINUX_HOST_QUERY_PROFILE, type OwnsHostRequest } from "./linux-host-query-profile.ts";
 import { assertLinuxGuidedHostQueryConfig, assertLinuxGuidedHostQueryRoots, LINUX_GUIDED_HOST_QUERY_PROFILE } from "./linux-guided-host-query-profile.ts";
 import { parseLinuxGuidedReaderRegistration, type LinuxGuidedReaderRegistration } from "./linux-guided-reader-protocol.ts";
@@ -29,7 +30,7 @@ export function assertFreshLinuxUserFrame(frame: unknown): asserts frame is User
 declare const brand: unique symbol;
 export interface LinuxSessionAdmission { readonly [brand]: true }
 interface BootstrapRecord {
-  profile?: typeof LINUX_HOST_QUERY_PROFILE | typeof LINUX_GUIDED_HOST_QUERY_PROFILE; protocolVersion: 1; freshOnly: true; runtimeUid: number; toolUid: number; logicalSessionId: string;
+  profile?: typeof LINUX_HOST_QUERY_PROFILE | typeof LINUX_GUIDED_HOST_QUERY_PROFILE; protocolVersion: 1; freshOnly?: true; continuation?: "fresh" | "resume"; endedGuestBoots?: string[]; runtimeUid: number; toolUid: number; logicalSessionId: string;
   scope: ProtectedStoreScope; ownerToken: string; runtimeConfig: RuntimeConfig;
   authority: GuestFileAuthority; roots: GuestFileRoot[]; toolSocketPath: string;
   provider: { scope: GuestProviderScope; selection: GuestProviderSelection };
@@ -47,7 +48,7 @@ const unavailable = (): never => { throw new Error("fresh Linux session admissio
 type LinuxProfile = "fresh" | typeof LINUX_HOST_QUERY_PROFILE | typeof LINUX_GUIDED_HOST_QUERY_PROFILE;
 function validateRecord(record: BootstrapRecord, profile: LinuxProfile): void {
   if ((profile === "fresh" && record.profile !== undefined) || (profile !== "fresh" && record.profile !== profile)) unavailable();
-  if (record.protocolVersion !== 1 || record.freshOnly !== true || !id(record.logicalSessionId) || record.runtimeUid !== process.getuid?.() || !Number.isSafeInteger(record.toolUid) || record.toolUid < 1000 || record.toolUid === record.runtimeUid || !record.ownerToken || record.scope.sessionId !== record.authority.sessionId || record.scope.workspaceId !== record.authority.workspaceId || record.scope.incarnationId !== record.authority.incarnationId || record.scope.leaseEpoch !== record.authority.leaseEpoch) unavailable();
+  if (record.protocolVersion !== 1 || !linuxRecordContinuationValid(record) || !id(record.logicalSessionId) || record.runtimeUid !== process.getuid?.() || !Number.isSafeInteger(record.toolUid) || record.toolUid < 1000 || record.toolUid === record.runtimeUid || !record.ownerToken || record.scope.sessionId !== record.authority.sessionId || record.scope.workspaceId !== record.authority.workspaceId || record.scope.incarnationId !== record.authority.incarnationId || record.scope.leaseEpoch !== record.authority.leaseEpoch) unavailable();
   const home = `/run/winter/conversations/${record.logicalSessionId}`, store = `/workspace/.winter/conversations/${record.logicalSessionId}`;
   if (record.scope.storeHome !== store || record.toolSocketPath !== `${home}/.control/tools.sock` || record.runtimeConfig.winterHome !== home || record.runtimeConfig.storeHome !== store || record.runtimeConfig.sessionId !== record.scope.sessionId || record.provider.scope.backendSessionId !== record.scope.sessionId || record.provider.scope.sessionId !== record.logicalSessionId || record.provider.scope.bootId !== record.scope.currentBootId || record.runtimeConfig.model !== record.provider.selection.modelKey) unavailable();
   validateConfig(record.runtimeConfig, record);
@@ -62,6 +63,8 @@ function validateRecord(record: BootstrapRecord, profile: LinuxProfile): void {
 }
 function validateConfig(config: RuntimeConfig, record: BootstrapRecord): void {
   const fixed = record.runtimeConfig;
+  // The cold-resume selector is part of the admitted identity: a fresh record admits no `resume`, a resume record admits exactly its own session.
+  if (record.profile !== undefined && !linuxResumeSelectorMatches(fixed, config)) unavailable();
   if (record.profile === LINUX_GUIDED_HOST_QUERY_PROFILE) {
     assertLinuxGuidedHostQueryConfig(config, record.readerRegistration);
     for (const key of Object.keys(fixed) as (keyof RuntimeConfig)[]) if (!same(config[key], fixed[key])) unavailable();
@@ -118,10 +121,11 @@ function admitLinuxSession(bootstrapFd: number, ownerLibraryFd: number, profile:
     const raw = library.symbols.winter_owner_record(handle); if (!raw || Buffer.byteLength(raw.toString()) > 65536) return unavailable();
     const record = JSON.parse(raw.toString()) as BootstrapRecord; validateRecord(record, profile);
     if (record.profile === LINUX_GUIDED_HOST_QUERY_PROFILE) assertLinuxGuidedReaderSymbols(library.symbols);
+    // Evidence only for a boot the host attested as ended (see linux-cold-resume.ts); an unlisted boot reads as alive.
     const owner: ProtectedStoreOwner = {
       scope: Object.freeze({ ...record.scope }), ownerToken: record.ownerToken, signal: controller.signal, assertHeld: check,
       processIdentity(pid) { check(); if (pid !== process.pid) return null; const value = library.symbols.winter_owner_process_identity(handle, pid); if (!value) return null; const identity = JSON.parse(value.toString()); return typeof identity.bootId === "string" && typeof identity.startTicks === "string" && /^\d+$/.test(identity.startTicks) ? identity : null; },
-      previousBootTermination: () => null, runtimeTeardownEvidence: () => null,
+      previousBootTermination: bootId => linuxEndedBootEvidence(record, bootId), runtimeTeardownEvidence: () => null,
       release: async () => { throw new Error("live runtime cannot prove native teardown; service retains store ownership"); },
     };
     const store = createProtectedStoreBootstrap(record.scope, { acquire: async scope => { check(); if (!same(scope, record.scope)) return unavailable(); return owner; } });
