@@ -779,6 +779,29 @@ export interface SDKHostInputFoldedMessage {
 }
 
 /**
+ * Held input, WINTER-ONLY: emitted EXACTLY ONCE per run by a runtime that offers `HELD_INPUT_CAPABILITY`, right after `init` and before the
+ * first input is read, ALWAYS -- an empty `inputs` list says "nothing is held". Each entry is a `held` record or a `committed` record the
+ * transcript does not hold yet, after the restart dedupe against the transcript. A host that sees no such frame from a runtime that offers
+ * the capability treats the runtime as faulty. Nothing held starts a turn until the host decides.
+ */
+export interface SDKHeldInputsMessage {
+  type: "system";
+  subtype: "held_inputs";
+  inputs: Array<{ inputId: string; digest: string; holdToken: string; state: "held" | "committed" | "in_transcript" }>;
+  uuid: string;
+  session_id: string;
+}
+/** Held input, WINTER-ONLY: a commit was journalled and handed to the conversation. `outcome` as in `HostInputCommitOutcome`. */
+export interface SDKHostInputCommittedMessage {
+  type: "system";
+  subtype: "host_input_committed";
+  inputId: string;
+  outcome: "folded" | "queued" | "started" | "already";
+  uuid: string;
+  session_id: string;
+}
+
+/**
  * WS-23: claude 2.1.282's `SDKInformationalMessage` -- "generic text banner emitted by the loop --
  * non-error status lines, hook feedback (e.g. a UserPromptSubmit hook's block reason)". Winter had no
  * text-notice frame at all; this is the one a hook's `systemMessage`, a blocked prompt's reason and a
@@ -840,6 +863,8 @@ export type SdkMessage =
   | SDKSessionStateChangedMessage
   | SDKInformationalMessage
   | SDKHostInputFoldedMessage
+  | SDKHeldInputsMessage
+  | SDKHostInputCommittedMessage
   | BackgroundTaskMessage
   // Phase 6 Task 3: the provider-facing family. Listed BEFORE the open catch-all at the end of this
   // union so each stays independently discriminable on `type`/`subtype`.

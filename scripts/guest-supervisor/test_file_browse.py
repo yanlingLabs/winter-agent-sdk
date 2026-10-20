@@ -1437,7 +1437,7 @@ int main(void) {
 
 
 # The origin/main commit the browse patch was cut from. The byte-equality check above runs only while origin/main is still that commit.
-PATCH_BASE = 'b1ea8cf33b3cec7aad12a51dcef4f58905176de2'
+PATCH_BASE = 'f54198f8b57d7ffd72139e7b93fc910a543e9923'
 
 
 # ---------------------------------------------------------------------------------------------------------------------------------------------

@@ -45,6 +45,22 @@ class HostQueryProducerTests(unittest.TestCase):
             self.assertNotIn('resume',config);self.assertNotIn('env',config);self.assertNotIn('hooks',config)
         self.assertEqual(service.host_query_config(item(),['write'],'model')['tools'],['Write'])
         self.assertEqual(service.host_query_config(item(),[],'model')['tools'],[])
+    def test_the_coordinate_class_offers_messaging_and_the_task_graph_and_never_task_stop_or_output(self):
+        coordination=['SendMessage','ListAgents','AskUserQuestion','TaskCreate','TaskGet','TaskList','TaskUpdate']
+        config=service.host_query_config(item(),['coordinate'],'model')
+        self.assertEqual(config['tools'],coordination);self.assertIs(config['hostMessaging'],True)
+        full=service.host_query_config(item(),['read','write','execute','coordinate'],'model')
+        self.assertEqual(full['tools'],['Read','Edit','Write','Bash']+coordination);self.assertIs(full['hostMessaging'],True)
+        for classes in (['read'],['read','write','execute'],[]):
+            plain=service.host_query_config(item(),classes,'model');self.assertNotIn('hostMessaging',plain)
+            self.assertFalse(set(plain['tools'])&set(coordination))
+        for policy in ('auto','ask','plan','accept-edits','dont-ask','bypass'):
+            current=service.host_query_config(item(policy),['coordinate'],'model')
+            self.assertEqual(current['tools'],coordination);self.assertNotIn('TaskStop',current['tools']);self.assertNotIn('TaskOutput',current['tools'])
+            self.assertIs(current['allowDangerouslySkipPermissions'],False);self.assertEqual(current['allowedTools'],[])
+    def test_unknown_duplicate_or_excess_tool_classes_still_refuse(self):
+        for classes in (['coordinate','coordinate'],['coordinate','stop'],['TaskStop'],['read','write','execute','coordinate','read'],[1],'coordinate',None):
+            with self.assertRaisesRegex(service.Refusal,'host_query_tools'):service.host_query_config(item(),classes,'model')
     def test_plan_metadata_matches_tool_service_descriptor_and_source_flags(self):
         root={'id':'source','guestPath':'/workspace/folders/source','readOnly':False}
         self.assertFalse(service.runtime_root_metadata(root,'plan',False)['readOnly']) # old fresh route unchanged
@@ -315,5 +331,96 @@ class ConfiguredHostRuntimeTests(unittest.TestCase):
         runtime,observed=self.run_injected(parent_code=7)
         self.assertEqual(runtime['state'],'retained');self.assertFalse(runtime['cleanupConfirmed']);self.assertIn('logical',self.obj.debt)
         self.assertTrue(observed['nativeReceiptObserved']);self.assertTrue(observed['parentReaped']);self.assertFalse(observed['nativeCleanupConfirmed'])
+
+OLD_BOOT='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+class ColdResumeTests(unittest.TestCase):
+    """CR2: the supervisor's continuation rules. One definition of fresh and resumable, applied at configure and again at launch."""
+    def setUp(self):ConfiguredHostRuntimeTests.setUp(self)
+    def tearDown(self):ConfiguredHostRuntimeTests.tearDown(self)
+    def attempt(self,store=False,run=False,**extra):
+        """A fresh scratch conversation each time (a store can be flocked once): optionally prior store/run-home files, then configure."""
+        self.tearDown();self.setUp()
+        if store:(self.fixture.store/'transcript').write_text('prior turn')
+        if run:(self.fixture.home/'leftover').write_text('not a new boot')
+        self.config={**self.config,**extra}
+        self.obj._configure_runtime(self.fixture.item,self.config,profile='host-query-v1')
+        return self.obj.runtimes['logical']
+    def refused(self,code,**kw):
+        with self.assertRaisesRegex(service.Refusal,code):self.attempt(**kw)
+    def record(self,runtime):return self.obj._runtime_record(self.fixture.item,runtime)
+    def test_no_continuation_key_is_the_unchanged_legacy_fresh_record(self):
+        record=self.record(self.attempt())
+        self.assertTrue(record['freshOnly']);self.assertNotIn('continuation',record);self.assertNotIn('endedGuestBoots',record);self.assertNotIn('resume',record['runtimeConfig'])
+    def test_fresh_requires_an_empty_store_and_run_home(self):
+        record=self.record(self.attempt(continuation='fresh'))
+        self.assertEqual(record['continuation'],'fresh');self.assertTrue(record['freshOnly']);self.assertEqual(record['endedGuestBoots'],[]);self.assertNotIn('resume',record['runtimeConfig'])
+        self.refused('runtime_fresh_store_required',store=True,continuation='fresh')
+        self.refused('runtime_fresh_store_required',run=True,continuation='fresh')
+    def test_resume_requires_a_nonempty_store_and_an_empty_run_home_and_names_its_own_session(self):
+        runtime=self.attempt(store=True,continuation='resume',endedGuestBoots=[OLD_BOOT]);record=self.record(runtime)
+        self.assertEqual(record['continuation'],'resume');self.assertNotIn('freshOnly',record);self.assertEqual(record['runtimeConfig']['resume'],'backend')
+        self.assertEqual(record['endedGuestBoots'],[OLD_BOOT]);self.assertEqual(record['scope']['sessionId'],'backend')
+        self.refused('runtime_resume_store_missing',continuation='resume')
+        self.refused('runtime_fresh_store_required',store=True,run=True,continuation='resume')
+    def test_either_lets_the_store_pick_and_still_needs_an_empty_run_home(self):
+        self.assertEqual(self.attempt(continuation='either')['continuation'],'fresh')
+        runtime=self.attempt(store=True,continuation='either');self.assertEqual(runtime['continuation'],'resume')
+        self.assertEqual(self.record(runtime)['continuation'],'resume');self.assertEqual(self.record(runtime)['runtimeConfig']['resume'],'backend')
+        fresh=self.attempt(continuation='either');self.assertEqual(self.record(fresh)['continuation'],'fresh');self.assertNotIn('resume',self.record(fresh)['runtimeConfig'])
+        self.refused('runtime_fresh_store_required',run=True,continuation='either')
+        self.refused('runtime_fresh_store_required',store=True,run=True,continuation='either')
+    def test_the_continuation_set_is_closed(self):
+        for bad in ('','Fresh','RESUME','cold',None,1,True,['fresh'],{}):self.refused('runtime_continuation',continuation=bad)
+    def test_ended_boots_are_zero_to_four_distinct_canonical_ids_that_are_not_this_boot(self):
+        ids=['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','cccccccc-cccc-4ccc-8ccc-cccccccccccc','dddddddd-dddd-4ddd-8ddd-dddddddddddd']
+        for ended in ([],[OLD_BOOT],[OLD_BOOT,*ids]):self.assertEqual(self.record(self.attempt(store=True,continuation='resume',endedGuestBoots=ended))['endedGuestBoots'],ended)
+        fifth='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+        for bad in ([OLD_BOOT,*ids,fifth],[OLD_BOOT,OLD_BOOT],['00000000-0000-0000-0000-000000000000'],[OLD_BOOT,'00000000-0000-0000-0000-000000000000'],[OLD_BOOT.upper()],['not-a-boot'],[''],[1],[None],[OLD_BOOT+' '],[OLD_BOOT+'\n'],OLD_BOOT,None,{},{'a':1}):
+            self.refused('runtime_ended_boots',store=True,continuation='resume',endedGuestBoots=bad)
+        self.assertEqual(self.record(self.attempt(endedGuestBoots=[OLD_BOOT]))['continuation'],'fresh')
+        # Naming ended boots alone does not make a run a resume: the continuation defaults to fresh, so a populated store refuses.
+        self.refused('runtime_fresh_store_required',store=True,endedGuestBoots=[OLD_BOOT])
+    def test_the_fixture_fresh_profile_takes_neither_key_and_keeps_its_ten_minute_cap(self):
+        self.tearDown();self.setUp()
+        for key,value in (('continuation','fresh'),('endedGuestBoots',[])):
+            with self.assertRaisesRegex(service.Refusal,'runtime_config'):self.obj._configure_runtime(self.fixture.item,{**self.fixture.config,key:value})
+        self.tearDown();self.setUp()
+        with self.assertRaisesRegex(service.Refusal,'runtime_deadline'):self.obj._configure_runtime(self.fixture.item,{**self.fixture.config,'timeoutMs':600001})
+        self.tearDown();self.setUp();self.obj._configure_runtime(self.fixture.item,{**self.fixture.config,'timeoutMs':600000})
+    def test_host_query_runs_up_to_twenty_four_hours_and_no_longer(self):
+        self.assertEqual(self.attempt(timeoutMs=86400000)['timeout'],86400)
+        self.assertEqual(self.attempt(timeoutMs=600001)['timeout'],600.001)
+        for bad in (86400001,0,-1,True,1.5,'1',None):self.refused('runtime_deadline',timeoutMs=bad)
+    def test_launch_rechecks_the_resolved_continuation_under_the_same_flock(self):
+        for kwargs,mutate in (({'continuation':'fresh'},lambda: (self.fixture.store/'late').write_text('x')),
+                              ({'continuation':'resume','store':True},lambda: [p.unlink() for p in self.fixture.store.iterdir()]),
+                              ({'continuation':'either','store':True},lambda: (self.fixture.home/'late').write_text('x')),
+                              ({'continuation':'either'},lambda: (self.fixture.store/'late').write_text('x'))):
+            runtime=self.attempt(**kwargs);mutate()
+            with patch.object(service,'verify_held_artifact'),patch.object(service.subprocess,'Popen') as spawn:
+                self.obj._run_runtime(self.fixture.item,runtime);spawn.assert_not_called()
+            self.assertEqual(runtime['state'],'retained',kwargs)
+            diagnostic=json.loads((self.obj.directory/'logical'/'runtime-diagnostic.json').read_text())
+            self.assertEqual(diagnostic['failure']['code'],'runtime_resume_store_missing' if kwargs['continuation']=='resume' else 'runtime_fresh_store_required',kwargs);self.assertEqual(diagnostic['observations']['phase'],'artifact-admission')
+    def test_the_resolved_continuation_is_reported_in_the_status_reply(self):
+        text=(Path(service.__file__).read_text())
+        self.assertIn("if known.get('profile') in ('host-query-v1',GUIDED_PROFILE):result['runtime']['continuation']=known.get('continuation')",text)
+        self.assertIn("for key in ('state','exitCode','cleanupConfirmed')}",text)
+    def status(self):
+        sent=[]
+        self.obj.lock=threading.Lock();self.obj.active={};self.obj.debt=set()
+        with patch.object(service,'frame_read',return_value={'operation':'status','sessionId':'logical'}),patch.object(service,'frame_write',side_effect=lambda channel,value:sent.append(value)):
+            self.obj._admin(object())
+        return sent[0]
+    def test_status_reports_the_resolved_continuation_for_host_query_only(self):
+        self.attempt(store=True,continuation='either')
+        self.assertEqual(self.status()['runtime']['continuation'],'resume')
+        self.tearDown();self.setUp()
+        self.obj._configure_runtime(self.fixture.item,self.fixture.config)
+        self.assertNotIn('continuation',self.status()['runtime'])
+        self.assertEqual(set(self.status()['runtime']),{'state','exitCode','cleanupConfirmed'})
+    def test_both_host_query_profiles_accept_the_two_keys(self):
+        text=Path(service.__file__).read_text()
+        self.assertIn("if profile in ('host-query-v1',GUIDED_PROFILE):allowed.update(('toolClasses','continuation','endedGuestBoots'))",text)
 
 if __name__=='__main__':unittest.main()

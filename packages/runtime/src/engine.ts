@@ -1,9 +1,10 @@
 import type { RuntimeContextChannel } from "./context/runtime-context-channel.ts";
-import { parseRuntimeContextConfig, RUNTIME_CONTEXT_VERSION, RUNTIME_CONTEXT_SUBTYPE } from "@yanlinglabs/winter-agent-sdk";
+import { parseRuntimeContextConfig, RUNTIME_CONTEXT_VERSION, RUNTIME_CONTEXT_SUBTYPE, HOST_INPUT_HOLD_SUBTYPE, HOST_INPUT_COMMIT_SUBTYPE, HOST_INPUT_DISCARD_SUBTYPE, HOST_INPUT_FORGET_SUBTYPE } from "@yanlinglabs/winter-agent-sdk";
 import { assertLinuxSession, assertRunningLinuxSession, checkLinuxSessionFrame, linuxSessionProfile, linuxSessionBindings, linuxGuidedSessionChannel, FRESH_LINUX_TOOLS, type LinuxSessionAdmission } from "./guest/linux-session-admission.ts";
 import { LINUX_GUIDED_HOST_QUERY_PROFILE } from "./guest/linux-guided-host-query-profile.ts";
 import { dispatchGuidedParentControl } from "./guest/guided-parent-input.ts";
-import { LINUX_HOST_QUERY_PROFILE } from "./guest/linux-host-query-profile.ts";
+import { HeldInputError, type HeldInputSupport } from "./guest/held-input-journal.ts";
+import { hostMessageRequestKind, LINUX_HOST_MESSAGE_SUBTYPES, LINUX_HOST_QUERY_PROFILE } from "./guest/linux-host-query-profile.ts";
 import { sourceReadRestrictionGeneration } from "./sandbox/source-read.ts";
 import { randomUUID } from "node:crypto";
 import { assertRuntimeExecutionPosture } from "./guest/execution-posture.ts";
@@ -1559,6 +1560,8 @@ export interface SessionPersistence {
 }
 
 export interface EngineOptions {
+  /** Held-input journal for a guest host-query run (N2 extensions 4.5). Never parsed from config/env/frames; a subagent never gets one. */
+  heldInputs?: HeldInputSupport;
   /** Private native Linux invocation capability; never parsed from config/env/frames. */
   linuxSessionAdmission?: LinuxSessionAdmission;
   config: RuntimeConfig;
@@ -3035,9 +3038,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
   const bridge = createRpcBridge(output, {
     holdUntilOpen: true,
     ...(opts.linuxSessionAdmission !== undefined && linuxSessionProfile(opts.linuxSessionAdmission) === LINUX_HOST_QUERY_PROFILE
-      ? { allowedSubtypes: ["permission"] } : {}),
+      ? { allowedSubtypes: ["permission", ...LINUX_HOST_MESSAGE_SUBTYPES] } : {}),
     ...(opts.linuxSessionAdmission !== undefined && linuxSessionProfile(opts.linuxSessionAdmission) === LINUX_GUIDED_HOST_QUERY_PROFILE
-      ? { allowedSubtypes: ["permission", RUNTIME_CONTEXT_SUBTYPE] } : {}),
+      ? { allowedSubtypes: ["permission", RUNTIME_CONTEXT_SUBTYPE, ...LINUX_HOST_MESSAGE_SUBTYPES] } : {}),
   });
   if (config.hostCodeProcessBroker !== undefined) {
     if (typeof config.hostCodeProcessBroker.generationId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(config.hostCodeProcessBroker.generationId)) throw new Error("invalid host Code broker generation");
@@ -6157,11 +6160,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // input, so a resume can never lose a message the host was told was folded.
     let folded = 0;
     for (const [index, { frame, composite }] of claimed.entries()) {
-      const attachment = queuedPromptAttachment(frame.text);
+      const journalId = journalFrames.get(frame);
+      const attachment = journalId === undefined ? queuedPromptAttachment(frame.text) : { ...queuedPromptAttachment(frame.text), inputId: journalId };
       if (!(await recordFoldedInput(attachment))) {
         userFrames.restore(claimed.slice(index).map((c) => c.frame));
         break;
       }
+      if (journalId !== undefined && store?.recordAttachmentEntry !== undefined) markJournalInputAppended(journalId);
       const message = attachmentMessage(attachment);
       if (message !== undefined) messages.push(message);
       for (const notice of contextStrings(composite.systemMessages)) emitHookNotice(notice);
@@ -6184,7 +6189,13 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     }
   };
   /** `clear_queued_input`: drops every pending host input; answers how many. */
-  const clearPendingHostInputs = (): number => userFrames.remove(new Set(userFrames.pending().filter((frame) => hostInputFrames.has(frame))));
+  /**
+   * Held-input journal inputs (N2 extensions 4.5): a COMMITTED peer input belongs to the conversation, so it rides `userFrames` like host input
+   * (it folds at a tool boundary, queues, or starts a turn) but `clearQueuedInput` never drops it and never counts it -- otherwise the
+   * ledger would say `delivered` while the model never saw the message. Maps the frame to its journal inputId.
+   */
+  const journalFrames = new WeakMap<UserFrame, string>();
+  const clearPendingHostInputs = (): number => userFrames.remove(new Set(userFrames.pending().filter((frame) => hostInputFrames.has(frame) && !journalFrames.has(frame))));
 
   // --- SDK 0.0.16 Lane N: background completions reaching the MODEL ------------------------------
   //
@@ -6257,6 +6268,116 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     pumpNotifications();
     signalBackgroundWait();
   });
+  // --- N2 extensions 4.5: the held-input journal --------------------------------------------------------
+  //
+  // A guest host-query run keeps a durable journal of peer inputs the host has HELD but not yet decided (`guest/held-input-journal.ts`). The
+  // host drives it with four Winter-only control subtypes, each naming the hold token of the exact hold it is about. The pieces here:
+  //   - STARTUP, before the first input is read: dedupe the journal against the transcript by inputId, feed every `committed` input that the
+  //     transcript does not hold FIRST (before any other input), and emit `system/held_inputs` -- exactly once, ALWAYS, even empty.
+  //   - `host_input_commit`: answered only after the durable journal write; the input then rides `userFrames` (fold, else queue, else a turn)
+  //     and the transcript append, tagged with its inputId, happens at the next user-message point (never between a tool call and its result).
+  //   - `clearQueuedInput` never drops a journal input (`journalFrames`, above).
+  const heldInputs = config.agentId === undefined ? opts.heldInputs : undefined;
+  const HELD_INPUT_SUBTYPES: ReadonlySet<string> = new Set([HOST_INPUT_HOLD_SUBTYPE, HOST_INPUT_COMMIT_SUBTYPE, HOST_INPUT_DISCARD_SUBTYPE, HOST_INPUT_FORGET_SUBTYPE]);
+  /** Every inputId the transcript holds: those found at startup plus those appended in this run. A commit consults it BEFORE answering `unknown_input`. */
+  const transcriptHoldsInput = new Set<string>(heldInputs?.transcriptInputIds ?? []);
+  const markJournalInputAppended = (inputId: string): void => {
+    transcriptHoldsInput.add(inputId);
+    try {
+      heldInputs?.journal.markInTranscript(inputId);
+    } catch {
+      console.error("winter: held input journal: could not mark an appended input; the restart dedupe against the transcript decides");
+    }
+  };
+  /** The turn-start transcript append for a journal input: tagged with its inputId, and only a SUCCESSFUL append marks the journal. */
+  const recordJournalUser = async (text: string, inputId: string): Promise<void> => {
+    if (store === undefined) return;
+    try {
+      await store.recordUserEntry(text, { origin: { kind: "host-input", inputId } });
+    } catch {
+      return; // auxiliary, like every store write: the journal keeps it `committed` and the restart dedupe decides
+    }
+    markJournalInputAppended(inputId);
+  };
+  const feedJournalInput = (inputId: string, text: string): void => {
+    const frame: UserFrame = { type: "user", text };
+    hostInputFrames.add(frame);
+    journalFrames.set(frame, inputId);
+    // After the input side has closed nothing reads `userFrames` again: the input stays `committed` in the journal and is fed at the next start.
+    if (!userFramesEnded) userFrames.write(frame);
+  };
+  const heldInputExactKeys = (value: unknown, keys: readonly string[]): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+  const answerHeldInput = (cf: ControlRequestFrame): void => {
+    const support = heldInputs!;
+    const { journal } = support;
+    try {
+      const payload = cf.payload;
+      if (cf.subtype === HOST_INPUT_HOLD_SUBTYPE) {
+        if (!heldInputExactKeys(payload, ["inputId", "holdToken", "epoch", "text", "clientName"]) || !heldInputExactKeys(payload.epoch, ["incarnationId", "leaseEpoch"])) throw new HeldInputError("invalid", "host_input_hold payload");
+        const epoch = payload.epoch as Record<string, unknown>;
+        if (epoch.incarnationId !== support.epoch.incarnationId || epoch.leaseEpoch !== support.epoch.leaseEpoch) throw new HeldInputError("epoch", "the hold is for another epoch");
+        // The transcript is the last word: an id it already holds (its tombstone may have been forgotten) is never held, and so never delivered, again.
+        const known = typeof payload.inputId === "string" ? journal.list().find((record) => record.inputId === payload.inputId) : undefined;
+        if (known === undefined && typeof payload.inputId === "string" && transcriptHoldsInput.has(payload.inputId)) {
+          output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { held: false, state: "in_transcript" } });
+          return;
+        }
+        const answer = journal.hold({ inputId: payload.inputId as string, holdToken: payload.holdToken as string, text: payload.text as string, clientName: payload.clientName as string });
+        output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: answer });
+        return;
+      }
+      if (!heldInputExactKeys(payload, ["inputId", "holdToken"])) throw new HeldInputError("invalid", `${cf.subtype} payload`);
+      const inputId = payload.inputId as string, holdToken = payload.holdToken as string;
+      if (cf.subtype === HOST_INPUT_COMMIT_SUBTYPE) {
+        let result: ReturnType<typeof journal.commit>;
+        try {
+          result = journal.commit(inputId, holdToken);
+        } catch (error) {
+          // No journal record at all: the tombstone may have been forgotten after the transcript took the input. The transcript is the last
+          // word, so it is consulted before the terminal `unknown_input`.
+          if (error instanceof HeldInputError && error.code === "unknown_input" && transcriptHoldsInput.has(inputId)) result = { kind: "already" };
+          else throw error;
+        }
+        if (result.kind === "already") {
+          output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { outcome: "already" } });
+          return;
+        }
+        // The record is durably `committed`. Where it enters the conversation: a running turn folds it at its next tool boundary (or, if the turn
+        // ends first, it starts its own turn), anything already waiting means it queues, otherwise it starts a turn.
+        const outcome = turnActive ? "folded" : userFrames.pending().length > 0 ? "queued" : "started";
+        feedJournalInput(inputId, result.record.text ?? "");
+        try {
+          output.write({ type: "data", message: { type: "system", subtype: "host_input_committed", inputId, outcome, uuid: randomUUID(), session_id: config.sessionId } });
+        } catch { /* a closed sink must not cost the input */ }
+        output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { outcome } });
+        return;
+      }
+      if (cf.subtype === HOST_INPUT_DISCARD_SUBTYPE) {
+        output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: journal.discard(inputId, holdToken) });
+        return;
+      }
+      output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: journal.forget(inputId, holdToken) });
+    } catch (error) {
+      const typed = error instanceof HeldInputError ? error : new HeldInputError("journal_failed", "held input journal failure");
+      output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: typed.code, message: typed.message } });
+    }
+  };
+  if (heldInputs !== undefined) {
+    heldInputs.journal.dedupe(heldInputs.transcriptInputIds);
+    const records = heldInputs.journal.list();
+    for (const record of records) if (record.state === "committed" && record.text !== undefined) feedJournalInput(record.inputId, record.text);
+    output.write({
+      type: "data",
+      message: {
+        type: "system",
+        subtype: "held_inputs",
+        inputs: records.filter((record) => record.state !== "in_transcript").map(({ inputId, digest, holdToken, state }) => ({ inputId, digest, holdToken, state })),
+        uuid: randomUUID(),
+        session_id: config.sessionId,
+      },
+    });
+  }
   /** True once the host has closed its input (`end_input`, or the pump reaching EOF). */
   let inputClosed = false;
   /**
@@ -6589,7 +6710,7 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
               const channel = linuxGuidedSessionChannel(opts.linuxSessionAdmission, config, output);
               if (dispatchGuidedParentControl(channel, frame, () => { channel.close(); hardStop(); })) continue;
             }
-            if (checkLinuxSessionFrame(opts.linuxSessionAdmission, config, frame, id => bridge.ownsRequest(id, "permission")) === "drop") continue;
+            if (checkLinuxSessionFrame(opts.linuxSessionAdmission, config, frame, id => bridge.ownsRequest(id, "permission"), hostMessageRequestKind(bridge)) === "drop") continue;
           } catch (error) {
             // A malformed confined input cancels pending approvals/in-flight work; it is not
             // merely a logical end_input followed by continued execution.
@@ -6639,6 +6760,10 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
         }
         if (frame.type === "control_request") {
           const cf = frame as ControlRequestFrame;
+          if (heldInputs !== undefined && HELD_INPUT_SUBTYPES.has(cf.subtype)) {
+            answerHeldInput(cf);
+            continue;
+          }
           if (cf.subtype === "end_input") {
             output.write({ type: "control_response", requestId: cf.requestId, ok: true });
             // Ruling P2-B: "no more USER envelopes," NOT "stop reading frames" — see this const's
@@ -9436,7 +9561,9 @@ async function runEngineBody(opts: EngineOptions, facetDisposers: Array<() => vo
     // writes one (`isMeta: true`, `origin: {kind: "task-notification"}`) -- so a transcript reader, a
     // resumed session and the daemon's projector can all tell a turn the runtime started from one the
     // human typed. The provider history is identical either way: the text IS the turn's input.
-    await recordUser(userText, turnStartedByNotification ? { isMeta: true, origin: { kind: "task-notification" } } : undefined);
+    const journalInputId = journalFrames.get(userFrame);
+    if (journalInputId !== undefined) await recordJournalUser(userText, journalInputId);
+    else await recordUser(userText, turnStartedByNotification ? { isMeta: true, origin: { kind: "task-notification" } } : undefined);
     // WS-23: the prompt's own hook context (UserPromptSubmit), plus anything SessionStart/SubagentStart
     // queued before this session's first turn -- appended right after the prompt, so it rides WITH it.
     await flushPendingHookAttachments();

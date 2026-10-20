@@ -325,7 +325,7 @@ def runtime_root_metadata(root,policy,host_query=False):
     return {'id':root['id'],'guestPath':root['guestPath'],'readOnly':root['readOnly'] or (host_query and policy=='plan')}
 
 def host_query_config(item,tool_classes,model):
-    if not isinstance(tool_classes,list) or len(tool_classes)>3 or any(type(value)!=str or value not in ('read','write','execute') for value in tool_classes) or len(set(tool_classes))!=len(tool_classes):raise Refusal('host_query_tools')
+    if not isinstance(tool_classes,list) or len(tool_classes)>4 or any(type(value)!=str or value not in ('read','write','execute','coordinate') for value in tool_classes) or len(set(tool_classes))!=len(tool_classes):raise Refusal('host_query_tools')
     # Only the SDK runtime mode collapses: the host matrix behind canUseTool is the Cowork policy authority, and any guest mode other than
     # default/plan lets the SDK resolve calls without canUseTool. The received policy stays recorded as-is (item['policy']); plan roots, the
     # plan write refusal and native_mount_policy still read it directly. Bypass is never produced here.
@@ -339,8 +339,12 @@ def host_query_config(item,tool_classes,model):
         if 'read' in tool_classes:tools.append('Edit')
         tools.append('Write')
     if 'execute' in tool_classes:tools.append('Bash')
+    # `coordinate` is the messaging and task surface: SendMessage/ListAgents (host messaging), AskUserQuestion (a permission-class prompt the host
+    # bridges) and the in-process Task graph. TaskStop and TaskOutput are never offered (the guest has no background tasks or subagents).
+    coordinate='coordinate' in tool_classes
+    if coordinate:tools.extend(('SendMessage','ListAgents','AskUserQuestion','TaskCreate','TaskGet','TaskList','TaskUpdate'))
     sid=item['logicalSessionId']
-    return {'executionPosture':'confined-guest','sessionId':item['authority']['sessionId'],'model':model,'cwd':roots[0]['guestPath'],'winterHome':f'/run/winter/conversations/{sid}','storeHome':f'/workspace/.winter/conversations/{sid}','persistSession':True,'settingSources':[],'tools':tools,'allowedTools':[],'skills':[],'plugins':[],'strictMcpConfig':True,'mcpServers':{},'permissionMode':modes[item['policy']],'permissions':{'disableBypassPermissionsMode':True},'allowDangerouslySkipPermissions':False}
+    return {'executionPosture':'confined-guest','sessionId':item['authority']['sessionId'],'model':model,'cwd':roots[0]['guestPath'],'winterHome':f'/run/winter/conversations/{sid}','storeHome':f'/workspace/.winter/conversations/{sid}','persistSession':True,'settingSources':[],'tools':tools,'allowedTools':[],'skills':[],'plugins':[],'strictMcpConfig':True,'mcpServers':{},'permissionMode':modes[item['policy']],'permissions':{'disableBypassPermissionsMode':True},'allowDangerouslySkipPermissions':False,**({'hostMessaging':True} if coordinate else {})}
 
 def select_runtime_profile(config):
     # Only the key Root's own trusted config FD carries selects a profile. Tool and
@@ -421,6 +425,19 @@ GUIDED_OWNER_KEYS=('workspaceId','logicalSessionId','backendSessionId','incarnat
 GUIDED_TERMINAL_FLAGS=('namespaceInitReaped','monitorReaped','stdoutEof','stderrEof','captureDrained')
 READER_VIEWS_ROOT='/run/winter/instruction-reader-views'
 READER_DEPENDENCY_LIMIT=32
+HOST_QUERY_TIMEOUT_MAX_MS=86400000
+def resolve_continuation(descriptors,requested):
+    # One definition of "fresh" and "resumable", used at configure time and again at launch, always under the store flock.
+    store=os.listdir(descriptors['storeDirectory']);run=os.listdir(descriptors['runhomeDirectory'])
+    if requested=='fresh':
+        if store or run:raise Refusal('runtime_fresh_store_required')
+        return 'fresh'
+    # A run home is tmpfs and empty at every new boot; a leftover means this is not a new run.
+    if run:raise Refusal('runtime_fresh_store_required')
+    if requested=='resume':
+        if not store:raise Refusal('runtime_resume_store_missing')
+        return 'resume'
+    return 'resume' if store else 'fresh'
 
 def wire_json(value):return json.dumps(value,separators=(',',':'),ensure_ascii=False,allow_nan=False)
 def _wire_int(text):
@@ -1421,7 +1438,10 @@ class ToolService:
         else:
             with self.lock:
                 result={'active':sum(sid==request['sessionId'] for sid,_,_ in self.active.values()),'uncertain':request['sessionId'] in self.debt}
-                if request['sessionId'] in getattr(self,'runtimes',{}):result['runtime']={key:self.runtimes[request['sessionId']].get(key) for key in ('state','exitCode','cleanupConfirmed')}
+                if request['sessionId'] in getattr(self,'runtimes',{}):
+                    known=self.runtimes[request['sessionId']];result['runtime']={key:known.get(key) for key in ('state','exitCode','cleanupConfirmed')}
+                    # The resolved continuation is a host-query fact; the fixture's status reply is unchanged.
+                    if known.get('profile') in ('host-query-v1',GUIDED_PROFILE):result['runtime']['continuation']=known.get('continuation')
                 frame_write(channel,result)
     def revoke(self,sid):
         with self.lock:
@@ -1589,7 +1609,7 @@ class ToolService:
         # Only immutable root bootstrap can select artifacts, directories, model or
         # public provider metadata. The tool/admin launch request carries only sid.
         allowed={'storeDirectory','runhomeDirectory','provider','model','timeoutMs'}
-        if profile in ('host-query-v1',GUIDED_PROFILE):allowed.add('toolClasses')
+        if profile in ('host-query-v1',GUIDED_PROFILE):allowed.update(('toolClasses','continuation','endedGuestBoots'))
         if profile==GUIDED_PROFILE:allowed.update(('requiredRuntimeContext','generation','guidanceDirectory'))
         elif profile not in ('fresh','host-query-v1'):raise Refusal('runtime_profile_conflict')
         if not self.runtime_artifacts or not isinstance(value,dict) or set(value)-allowed or not {'storeDirectory','runhomeDirectory','provider','model'}<=set(value):raise Refusal('runtime_config')
@@ -1623,7 +1643,15 @@ class ToolService:
         if any(provider_scope[key]!=expected[key] for key in expected) or selection['modelKey']!=value['model']:raise Refusal('runtime_provider_scope')
         if len(canonical(provider).encode())>32768:raise Refusal('runtime_provider_limit')
         timeout=value.get('timeoutMs',600000)
-        if type(timeout)!=int or not 1<=timeout<=600000:raise Refusal('runtime_deadline')
+        # Host-query profiles outlive the fresh fixture's ten minutes: the host bounds each turn and stops an idle run, and this is the 24 h backstop.
+        if type(timeout)!=int or not 1<=timeout<=(HOST_QUERY_TIMEOUT_MAX_MS if port is not None else 600000):raise Refusal('runtime_deadline')
+        continuation='fresh';ended=[];explicit=False
+        if port is not None:
+            explicit='continuation' in value or 'endedGuestBoots' in value
+            continuation=value.get('continuation','fresh');ended=value.get('endedGuestBoots',[])
+            if continuation not in ('fresh','resume','either'):raise Refusal('runtime_continuation')
+            # Host-attested boot ids only: canonical UUID text, distinct, never this boot. A lying PID 1 can name nothing the host did not record.
+            if type(ended) is not list or len(ended)>4 or len(set(ended))!=len(ended) or any(type(entry) is not str or not GUIDED_BOOT_ID.fullmatch(entry) or entry==self.guest_boot for entry in ended):raise Refusal('runtime_ended_boots')
         descriptors={}
         for key in ('storeDirectory','runhomeDirectory'):
             fd=source_directory(value[key],[]);self.owned.append(fd);st=os.fstat(fd)
@@ -1633,9 +1661,9 @@ class ToolService:
         # root services. Fresh admission refuses every prior file/lease/history.
         try:fcntl.flock(descriptors['storeDirectory'],fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:raise Refusal('runtime_store_in_use')
-        if os.listdir(descriptors['storeDirectory']) or os.listdir(descriptors['runhomeDirectory']):raise Refusal('runtime_fresh_store_required')
-        self.runtimes[item['logicalSessionId']]={'state':'configured','cancel':threading.Event(),'fds':descriptors,'provider':json.loads(canonical(provider)),'model':value['model'],'timeout':timeout/1000,'cleanupConfirmed':False,'exitCode':None,'ownerToken':os.urandom(32).hex()}
-        if port is not None:self.runtimes[item['logicalSessionId']].update(profile=profile,duplex=port,hostConfig=host_config)
+        continuation=resolve_continuation(descriptors,continuation)
+        self.runtimes[item['logicalSessionId']]={'state':'configured','cancel':threading.Event(),'fds':descriptors,'provider':json.loads(canonical(provider)),'model':value['model'],'timeout':timeout/1000,'cleanupConfirmed':False,'exitCode':None,'ownerToken':os.urandom(32).hex(),'continuation':continuation}
+        if port is not None:self.runtimes[item['logicalSessionId']].update(profile=profile,duplex=port,hostConfig=host_config,endedGuestBoots=list(ended),continuationExplicit=explicit)
         if reader_registration is not None:self.runtimes[item['logicalSessionId']].update(readerRegistration=reader_registration)
     def _runtime_record(self,item,runtime):
         sid=item['logicalSessionId'];home=f'/run/winter/conversations/{sid}';store=f'/workspace/.winter/conversations/{sid}'
@@ -1647,6 +1675,11 @@ class ToolService:
         if runtime.get('profile')==GUIDED_PROFILE:
             record.update(profile=GUIDED_PROFILE,runtimeConfig=json.loads(canonical(runtime['hostConfig'])),readerRegistration=json.loads(canonical(runtime['readerRegistration'])))
             if record['runtimeConfig'].get('requiredRuntimeContext')!=record['readerRegistration']['requiredRuntimeContext']:raise Refusal('guided_context')
+        if runtime.get('continuationExplicit'):
+            # Only a host that names a continuation changes the record (a bare v1 record stays byte-identical). It carries the resolved continuation and the attested ended boots. A resume names its own session.
+            # A fresh record keeps freshOnly: true because the unmodified native owner requires it; a resume cannot say it, so it needs the owner patch.
+            record.update(continuation=runtime['continuation'],endedGuestBoots=list(runtime['endedGuestBoots']))
+            if runtime['continuation']=='resume':del record['freshOnly'];record['runtimeConfig']['resume']=item['authority']['sessionId']
         return record
     def _open_reader(self,value,conversations):
         # Guided only. Root's trusted config alone names the isolated reader's launcher, loader, dependency closure and identity.
@@ -1702,7 +1735,8 @@ class ToolService:
         try:
             if port is not None:port.claim(item)
             for name,fd in self.runtime_artifacts.items():verify_held_artifact(fd,self.runtime_pins[name])
-            if os.listdir(runtime['fds']['storeDirectory']) or os.listdir(runtime['fds']['runhomeDirectory']):raise Refusal('runtime_fresh_store_required')
+            resolved=runtime.get('continuation','fresh')
+            if resolve_continuation(runtime['fds'],resolved)!=resolved:raise Refusal('runtime_fresh_store_required')
             observations['phase']='native-startup'
             view=tempfile.mkdtemp(prefix='runtime-view-',dir=self.directory);control,parent=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET);bootstrap,guest=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET)
             control_directory=os.open(self.directory/sid,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)

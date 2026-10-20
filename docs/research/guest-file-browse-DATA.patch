@@ -1,8 +1,8 @@
 diff --git a/packages/runtime/src/guest/linux-supervisor.py b/packages/runtime/src/guest/linux-supervisor.py
-index 4ff1eafb..7ce54c9a 100644
+index 58f1ba36..16751c15 100644
 --- a/packages/runtime/src/guest/linux-supervisor.py
 +++ b/packages/runtime/src/guest/linux-supervisor.py
-@@ -823,6 +823,479 @@ class GuidedReaderService:
+@@ -840,6 +840,479 @@ class GuidedReaderService:
              self.state='closed'
          return not self.debt
  
@@ -482,7 +482,7 @@ index 4ff1eafb..7ce54c9a 100644
  class ToolService:
      def __init__(self,config,*,host_query_ports=None):
          if sys.platform!='linux' or os.geteuid()!=0:raise Refusal('protected_linux_root_required')
-@@ -831,6 +1304,7 @@ class ToolService:
+@@ -848,6 +1321,7 @@ class ToolService:
          self.lock=threading.RLock();self.stop_event=threading.Event();self.conversations={};self.active={};self.debt=set();self.tickets={};self.retained_children=[];self.tool_connections=threading.BoundedSemaphore(TOOL_CONNECTION_LIMIT);self.admin_connections=threading.BoundedSemaphore(ADMIN_CONNECTION_LIMIT)
          self.host_query_ports=dict(host_query_ports or {})
          self.reader=None;self.artifacts={};self.artifact_pins={};self.owned=[];self.listeners=[];self.threads=[];self.runtimes={};self.runtime_artifacts={};self.runtime_pins={};self.guest_boot=config['guestBootId']
@@ -490,7 +490,7 @@ index 4ff1eafb..7ce54c9a 100644
          try:
              # First inside the try: a conflict still refuses before any artifact opens, and close() releases injected ports.
              self.runtime_profile=select_runtime_profile(config)
-@@ -892,6 +1366,8 @@ class ToolService:
+@@ -909,6 +1383,8 @@ class ToolService:
                          if 'guidanceDirectory' not in entry[runtime_key]:raise Refusal('guided_guidance_required')
                          fd=guidance_directory(entry[runtime_key]['guidanceDirectory'],protected,root_sources);self.owned.append(fd);self.conversations[entry['logicalSessionId']]['guidance']=fd
                  if any(runtime_key in entry for entry in config['conversations']):self.reader=self._open_reader(config[runtime_key]['reader'],config['conversations'])
@@ -499,7 +499,7 @@ index 4ff1eafb..7ce54c9a 100644
          except BaseException:
              self.close();raise
      def _listener(self,path,uid,handler,*,admin=False):
-@@ -1361,6 +1837,19 @@ class ToolService:
+@@ -1395,6 +1871,19 @@ class ToolService:
              for channel in (control,parent,bootstrap,guest,reader_root,reader_guest):
                  if channel is not None:channel.close()
              if confirmed and view is not None:os.rmdir(view)
@@ -519,7 +519,7 @@ index 4ff1eafb..7ce54c9a 100644
      def close(self):
          self.stop_event.set()
          with self.lock:
-@@ -1373,6 +1862,7 @@ class ToolService:
+@@ -1407,6 +1896,7 @@ class ToolService:
          if any(thread.is_alive() for thread in self.threads):return False
          for port in getattr(self,'host_query_ports',{}).values():
              if type(port) is RuntimeDuplexPorts:port.close()
@@ -527,7 +527,7 @@ index 4ff1eafb..7ce54c9a 100644
          if self.debt:return False
          for fd in self.owned:
              try:os.close(fd)
-@@ -1429,19 +1919,50 @@ def read_trusted_config(fd):
+@@ -1463,19 +1953,50 @@ def read_trusted_config(fd):
      if fd<3 or not stat.S_ISREG(st.st_mode) or st.st_uid!=0 or st.st_mode&0o022 or st.st_size>65536:raise SystemExit(64)
      with os.fdopen(fd,'rb') as stream:return json.load(stream)
  
