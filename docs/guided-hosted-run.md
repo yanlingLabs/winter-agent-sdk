@@ -331,3 +331,37 @@ runtime-sdk (as the earlier reader-only hosted workflow was), checking out this 
 `reuse_not_refused`, `reuse_provider_request`, `not_run`. Nothing here says anything about C59.
 
 if an automated safety flag fires on follow-on work, that work stops and is surfaced to the owner, never reworded or rerouted.
+
+## Outcome: hosted run 5 passed
+
+The one-run lane ended green on its fifth hosted run. Evidence, as recorded by the controller (nothing here is a claim beyond bytes and the six verdict cases):
+
+| Item | Value |
+| --- | --- |
+| hosted run | 39407326682, attempt 1, push to `cowork/guided-hosted-run-5` (first creation), conclusion `success`, 2026-10-20T10:21:11Z |
+| armed head | `70aeccf882d5a05d8c4dce6e20590104dd1b6c22` (parent `e3e09879`, the reviewed workflow head; one `HOSTED_HEAD` line) |
+| `result.json` | sha256 `294ba4777f100807e04311daee7f4f36bad3f61e498e717cd7241bb65ee22943`, 2,890 bytes (artifact `guided-hosted-diagnostics-39407326682`) |
+| verdict | `dispatch1`, `dispatch2`, `reader_exit64`, `revocation`, `shared_edit`, `ticket_reuse` all passed; `hostPassed` true; `settled` true; `lifecycle` written; exits host 0, provider 0; `diagnostic` null |
+| stub receipt (`final`) | 6 requests, 6 frames, 2 begins received and accepted, 2 completed, 0 refused, 0 unreadable, 0 unframed; outcomes all `accepted`; no refusal sites |
+| kernel | `7.0.0-1017-azure`, aarch64 |
+| packet | compile run 39399991186, artifact 12254327073 (`guided-packet-compile-39399991186`), zip `cf0df075...7229`, archive `1594f281...7795`, inventory `2174dd3f...4727`, pin `9becc378...19c4`, verified with `verify_packet.py --pin` (exit 0, 19 of 19) |
+| heads | runtime-sdk `566ac236` (intake merge), agent-sdk `9c980c32` (supervisor `a26dacd8`), Winter Core `8b52ef83`, compile builder `94d05e43` |
+
+This says: with the reviewed Root, on a throwaway hosted runner, the real guided hostClient and providerWorker completed two deterministic dispatches through the real
+guest runtime, the shared file edit reached dispatch 2, a spent ticket and a revoked ticket were refused with no provider request, and the exit-64 launcher case held.
+It says nothing about C59, native owner admission beyond what ran, or any VM.
+
+### What the five hosted runs found
+
+1. **Binding id (run 1).** The SDK `query()` generates its own `requiredRuntimeContext.bindingId`, so Root cannot choose it. The host now prints one `host-spawn` line with
+   the id, and Root builds the service from it (runtime-sdk PR 24 and this Root).
+2. **Refused first request (run 2).** The diagnostics were too thin to say why; the provider worker now reports counters, outcomes and a closed list of refusal sites
+   (runtime-sdk PR 27), and Root keeps all six receipts in `result.json`, counting frameless strays apart from real refusals.
+3. **Stub layout (run 3, `not_meta`).** The engine merges the meta userContext message into the user turn that follows it, which drops `isMeta`; the stub only accepted the
+   separate-meta shape. The stub now accepts a closed `<system-reminder>` first block (markers matched in that block only) and is cross-checked against the real
+   `buildRequestMessages` output (runtime-sdk PR 30).
+4. **Provider stdin (run 4, teardown).** Every functional case passed, but the provider was SIGKILLed after Root's 5 s wait: its control reader held the worker alive after
+   its summary. Stopping it is now SIGTERM then EOF on its stdin, and a teardown failure names itself (`provider_killed`, `host_killed`, ...).
+5. **Process.** Each burned hosted branch is frozen, so every fix landed with a new first-creation branch name; the verdict logic and diagnostics were widened between runs
+   so each red run named the next cause.
+
