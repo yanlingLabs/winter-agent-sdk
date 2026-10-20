@@ -37,7 +37,7 @@ site it saw, and the doc must not claim more. A separate run is not needed.
 
 ## The trigger, the arming and the owner approval
 
-* Trigger: ONLY a `push` that creates the never-used branch `cowork/guided-hosted-run-3` (`cowork/guided-hosted-run` and `cowork/guided-hosted-run-2` are spent by the red runs and ruleset-protected; the gate refuses both), with `github.event.created ==
+* Trigger: ONLY a `push` that creates the never-used branch `cowork/guided-hosted-run-4` (`cowork/guided-hosted-run`, `-2` and `-3` are spent by the red runs and ruleset-protected; the gate refuses all three), with `github.event.created ==
   true`, the exact ref, this repository and `run_attempt == '1'`. No `pull_request`, `pull_request_target`,
   `workflow_dispatch`, `schedule` or `workflow_run` trigger exists, so no ordinary PR (including the one that adds this
   file) can run it. A re-run has `run_attempt` 2 and is refused.
@@ -48,7 +48,7 @@ site it saw, and the doc must not claim more. A separate run is not needed.
   fails if the runner digest does not match the file). The owner-approved ARMING commit then changes exactly one line,
   `HOSTED_HEAD`, to the reviewed commit: the guard demands that commit be an ancestor of the pushed one, that the whole
   diff be that one file, `--numstat` `1 1`, and the exact one-line diff.
-* Owner approval needed: one push of the armed head to `cowork/guided-hosted-run-3`, by the controller only after the owner
+* Owner approval needed: one push of the armed head to `cowork/guided-hosted-run-4`, by the controller only after the owner
   approves that exact head. The branch is frozen after that one run: never push to it again, and **never delete and
   recreate it**, because creating it again is another first-creation push and would fire the workflow again.
 
@@ -69,7 +69,7 @@ steps`; and per step an exact set (the artifact check alone has `env`; the sudo 
 an `if`, and it is `failure()`). So `defaults.run.shell`, `services`, `container`, `strategy`, `needs`, `outputs`, `environment`, `continue-on-error`,
 `working-directory`, `id`, an `if: always()` on the verify or sudo step, and `cancel-in-progress: true` are each refused by name; every shell is `bash`.
 
-**The artifact is bound by id and digest.** `PACKET_ARTIFACT_ID` (12249582986) and `PACKET_ZIP_SHA256` (`9895ae16...fc9c`) are env pins. The step before the
+**The artifact is bound by id and digest.** `PACKET_ARTIFACT_ID` (12254327073) and `PACKET_ZIP_SHA256` (`cf0df075...7229`) are env pins. The step before the
 download asks the API for that artifact id and refuses unless its name is `guided-packet-compile-<run id>`, its workflow run is the pinned run, its
 digest is `sha256:<PACKET_ZIP_SHA256>` and it has not expired. The download still names the artifact by name inside that run (names are unique per
 run); the archive and inventory inside it are pinned by their own digests and verified again below.
@@ -86,7 +86,7 @@ files. Uploads: the result JSON on success, and on failure only the bounded resu
 
 | Prerequisite | State |
 | --- | --- |
-| Packet roles `hostClient` and `providerWorker` | **Real, in compile run 4** (runtime-sdk intake #29, merged at `c329bd7f`): run 39391435225, artifact 12249582986 (`guided-packet-compile-39391435225`, 195,503,119 bytes, zip sha256 `9895ae16...fc9c`, expires 2026-10-27). The workflow is bound to it (below); run 1's placeholder packet (39165162201) is refused by the gate test. |
+| Packet roles `hostClient` and `providerWorker` | **Real, in compile run 5** (runtime-sdk intake #32, merged at `566ac236`): run 39399991186, artifact 12254327073 (`guided-packet-compile-39399991186`, 195,504,867 bytes, zip sha256 `cf0df075...7229`, expires 2026-10-27). The workflow is bound to it (below); run 1's placeholder packet (39165162201) is refused by the gate test. |
 | The root runner `run.py`, `session.py`, `roles_adapter.py` | **Written, never run as root on Linux.** Packet verification, metafile preflight, staging, the exit-64 case, the session (driving the existing Root entry points), the query chain, teardown and the result record are implemented and unit-tested with fakes. `RUNNER_SHA256` is the real hash of `run.py`, which embeds the hashes of its three siblings and of `fixture-inputs.json`; the gate test fails on any disagreement. `RealPlatform.exit64_case` and `open_session` drive `session.exit64_case` and `GuidedSession.open` (tested here with injected fakes only). |
 | F2 ticket minting on the host side | Issuer exists (`claimGuidedGuestIssuer`, `guided-guest-attestation.md`); no host code claims it yet. The real host client claims it. |
 | SDK host guard | Already lifted for a guided query that presents a valid one-shot ticket (`guided-guest-attestation.md`); nothing here changes it. |
@@ -96,19 +96,19 @@ files. Uploads: the result JSON on success, and on failure only the bounded resu
 | The stub allows exactly two begins | A third begin is refused by the stub but still counted in `receivedBegins`; the oracle reads those counters, so a request that reached the stub after revocation fails the case even though the stub refused it. |
 | Bun FD adapter, holder authentication of the guest stream | Unproven by design; this run is their first real exercise. |
 
-## The run-4 binding
+## The run-5 binding
 
 | Pin | Value |
 | --- | --- |
-| compile run / artifact | 39391435225 / 12249582986, `guided-packet-compile-39391435225` |
-| `guided-packet.tar.gz` | `791685a6bb83d38072f920e1a0b98ed067e3924f0ae2973187fc85055f54f2a2` |
-| `packet-inventory.json` | `1da4770dc4366a22e972a6bb6342911f2540faf99bb5ecb69e0dd07845236c92` |
-| runtime-sdk head (verifier and pin) | `c329bd7f7febfa1f1992ded35a6efe5a8ab91cd1` |
-| `verify_packet.py` / `compile-39391435225.pin.json` there | `2ac6b1af...01f3` / `1c8f942a...7912` |
-| roles (in the pin, not constants here) | providerWorker `bbf309b9...`, hostClient `82997255...`, runtimeEntry `ce3f5c38...`, instructionReader `4d0702b2...`, ownerLibrary `4fe5304a...` |
-| origins | runtime `a32330d6`, agent-sdk `9c980c32`, Winter Core `8b52ef83`, builder `1e3ff285` |
+| compile run / artifact | 39399991186 / 12254327073, `guided-packet-compile-39399991186` |
+| `guided-packet.tar.gz` | `1594f2813fafb6904c7055695136e1008a79e31fd72b26da21a9299e61577795` |
+| `packet-inventory.json` | `2174dd3fe58bea8b83e17c17a4a25a38ac2bc1c22260a91e80937488859b4727` |
+| runtime-sdk head (verifier and pin) | `566ac2362bdad196af871b06155cb4b5e7b8b891` |
+| `verify_packet.py` / `compile-39399991186.pin.json` there | `2ac6b1af...01f3` / `9becc378...19c4` |
+| roles (in the pin, not constants here) | providerWorker `e34ab240...`, hostClient `82997255...`, runtimeEntry `ce3f5c38...`, instructionReader `4d0702b2...`, ownerLibrary `4fe5304a...` |
+| origins | runtime `2b170ab0`, agent-sdk `9c980c32`, Winter Core `8b52ef83`, builder `94d05e43` |
 
-The verification step, the runner and the root step all call `verify_packet.py <tar.gz> <inventory.json> --pin origins/runtime/scripts/guest-guided-intake/compile-39391435225.pin.json`:
+The verification step, the runner and the root step all call `verify_packet.py <tar.gz> <inventory.json> --pin origins/runtime/scripts/guest-guided-intake/compile-39399991186.pin.json`:
 with three pins side by side the verifier's default lookup exits 2, and CI cannot catch a well-formed wrong hash, so this call is the guard. A named
 gate test pins the `--pin` argument and the absence of any `|| true`. The same packet was downloaded and checked locally with these exact calls:
 the real verifier reported all 19 checks true and no placeholder; the runner's staging, metafile preflight (every SDK module exactly once) and tree
@@ -118,7 +118,7 @@ libraries satisfy the launcher's dependency grammar with no overlap. That check 
 ## The runner, in order
 
 `run.py` is executed by the root launcher as the exact bytes it hashed, with the packet directory, the output directory,
-runtime-sdk's `verify_packet.py` and its SHA-256, and the run-4 pin file and its SHA-256. It then:
+runtime-sdk's `verify_packet.py` and its SHA-256, and the run-5 pin file and its SHA-256. It then:
 
 1. checks admission (root and the one opt-in variable);
 2. **verifies the packet first, before anything else**: it hashes the verifier and the pin, then runs the verifier as the
@@ -204,7 +204,7 @@ The pattern is `scripts/guest-host-query/verify.py`, the v1 hosted Root runner (
 | Settle and teardown | `service.runtimes[sid]` state, `exitCode`, `cleanupConfirmed`, `service.active`, `service.debt`, `service.close()`, `service.revoke(sid)` |
 | Exit-64 observation | the packet's own `instructionReaderLauncher`, run with a wrong argument count (the `argv_parse` site), a receipt socket inherited. It runs from a root-owned private copy made by `copy_exact` (re-hashed against the pin; the staged tree is not trusted at exec time), in a fresh network namespace. The site name is a CONSTANT on purpose: the launcher reports no site, only an exit status, so the name labels the one refusal this envelope provokes; what is observed is the status, no init receipt and no pidfd |
 | The Root supervisor itself | its bytes must equal the copy captured in the verified packet, exactly one such member, or the session refuses |
-| The native owner | the `ownerLibrary` hash comes from the run-4 pin, never a constant: the #37 holder patch will change it |
+| The native owner | the `ownerLibrary` hash comes from the run-5 pin, never a constant: the #37 holder patch will change it |
 
 The owner binding, the reader dependencies (the packet's six libraries at their packet-relative guest paths) and every
 artifact are re-hashed against the pin as they are copied into the run tree.
@@ -221,7 +221,7 @@ entry never calls; stderr of both roles is discarded (the contract says it is ne
 provider's `requests` (every native arrival, readable or not) and the other receipt counters, at five barriers plus the final
 summary, so a third begin that the stub refused (begins 3, accepted 2, refused 1) or an unreadable arrival after revocation still fails.
 
-### Reconciled against the real entries (runtime-sdk `c329bd7f`)
+### Reconciled against the real entries (runtime-sdk `566ac236`)
 
 The adapter matches the merged `host-client-core.ts` and `provider-worker-core.ts`: the command words, the reply kinds and fields
 (`host-dispatch` n/ok/answer/ended, `host-presented` which/refused/errorClass/processStarted, `host-premint` minted, `host-result` passed,
@@ -236,7 +236,7 @@ client adds `version: 1` to every line and `minted: true` to `host-premint` (ign
 `finish` (Root to the host client's stdin), then the host client's `host-result` (its stdout), then Root's `HQX1:0` lifecycle record on fd 7.
 The runner reads the result BEFORE it settles the runtime and writes the record, and refuses the other order by name:
 
-* `runtime-sdk scripts/guest-guided-build/entries/host-client-core.ts` (c329bd7f): `finish` sets `finished = true; break;` out of the command
+* `runtime-sdk scripts/guest-guided-build/entries/host-client-core.ts` (566ac236): `finish` sets `finished = true; break;` out of the command
   loop (line 229), the host then `await pump;` (line 234) and only then `ports.emit(result)` (line 240). Nothing between `finish` and the result
   reads the lifecycle reader.
 * `scripts/guest-guided-build/entries/host-client.ts`: the lifecycle reader (`HOST_FDS.lifecycle`, fd 7) feeds `process.exited`, and the only
@@ -262,7 +262,7 @@ D4 a `host-query-ended` line is recorded and does not fail a command.
 ### `fixture-inputs.json`: derived, pinned, and where each field comes from
 
 `scripts/guest-hosted-guided/fixture-inputs.json` (sha256 pinned in `run.py` as `FIXTURE_INPUTS_SHA256`) is produced by
-`docs/guided-hosted-run/derive-fixture-inputs.ts` (kept under `docs/` on purpose: it dynamically imports from two other checkouts and spells no brand literal, which the repository's `scripts/**` scans would flag; it is a derivation record, not a build input), run over Winter at the run-4 pin's winter head (`8b52ef83`, the packet's own
+`docs/guided-hosted-run/derive-fixture-inputs.ts` (kept under `docs/` on purpose: it dynamically imports from two other checkouts and spells no brand literal, which the repository's `scripts/**` scans would flag; it is a derivation record, not a build input), run over Winter at the run-5 pin's winter head (`8b52ef83`, the packet's own
 `source/winter` bytes) and the host client core from the packet's builder origin:
 
 ```sh
@@ -289,15 +289,15 @@ throws and writes nothing.
 
 ### NEEDS FROM OTHER LANE
 
-0. **Done:** the host half of the binding contract (runtime-sdk PR 24, C-H3/C-H7) is in compile run 3 (39327386044); compile run 4 (39391435225, intake #29, only `providerWorker`
-   changed from run 3: it names each refused arrival's site) is what the workflow is bound to. Runs 1, 2 and 3 are refused by the gate test.
+0. **Done:** the host half of the binding contract (runtime-sdk PR 24, C-H3/C-H7) is in compile run 3 (39327386044); compile run 5 (39399991186, intake #32, only `providerWorker`
+   changed from run 4: its stub accepts the engine's merged first message) is what the workflow is bound to. Runs 1 to 4 are refused by the gate test.
 1. **Engine confirmation** (agent-sdk runtime lane, `packages/runtime/src/context/required-context.ts`): the marker placement above is read from
    that source; the first run is the first time the compiled engine renders it. A `ordered_marker` refusal in the provider receipts would
    point at the placement, not at Core.
 2. **`interrupt {scope:"turn"}`** (agent-sdk lane, routed separately by the coordinator): DOOR found that the guest host-query profile accepts only an
    empty `interrupt` payload while the host SDK sends `{scope:"turn"}`. This lane does not touch that profile and does not fix it.
 3. Confirmation that the verified packet inventory carries the agent-sdk supervisor under exactly one `.../packages/runtime/src/guest/linux-supervisor.py`
-   member (the session refuses otherwise; checked against the run-4 inventory: one member).
+   member (the session refuses otherwise; checked against the run-5 inventory: one member).
 
 ### What is unverified until the run
 
