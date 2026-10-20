@@ -37,7 +37,7 @@ site it saw, and the doc must not claim more. A separate run is not needed.
 
 ## The trigger, the arming and the owner approval
 
-* Trigger: ONLY a `push` that creates the never-used branch `cowork/guided-hosted-run-2` (the first name, `cowork/guided-hosted-run`, was spent by the red run and is ruleset-protected), with `github.event.created ==
+* Trigger: ONLY a `push` that creates the never-used branch `cowork/guided-hosted-run-3` (`cowork/guided-hosted-run` and `cowork/guided-hosted-run-2` are spent by the red runs and ruleset-protected; the gate refuses both), with `github.event.created ==
   true`, the exact ref, this repository and `run_attempt == '1'`. No `pull_request`, `pull_request_target`,
   `workflow_dispatch`, `schedule` or `workflow_run` trigger exists, so no ordinary PR (including the one that adds this
   file) can run it. A re-run has `run_attempt` 2 and is refused.
@@ -48,7 +48,7 @@ site it saw, and the doc must not claim more. A separate run is not needed.
   fails if the runner digest does not match the file). The owner-approved ARMING commit then changes exactly one line,
   `HOSTED_HEAD`, to the reviewed commit: the guard demands that commit be an ancestor of the pushed one, that the whole
   diff be that one file, `--numstat` `1 1`, and the exact one-line diff.
-* Owner approval needed: one push of the armed head to `cowork/guided-hosted-run-2`, by the controller only after the owner
+* Owner approval needed: one push of the armed head to `cowork/guided-hosted-run-3`, by the controller only after the owner
   approves that exact head. The branch is frozen after that one run: never push to it again, and **never delete and
   recreate it**, because creating it again is another first-creation push and would fire the workflow again.
 
@@ -180,6 +180,15 @@ The fix is a two-sided contract (the host half is runtime-sdk PR 24, C-H3/C-H7):
 `ended` code (`failed:config`, `torn-down:...`; anything else is `other`), a refusal code (`command:order`, a `host-refused` code), or a fixed word
 (`host_spawn_shape`, `second_host_spawn`); or `{kind: "exception", detail: "<ClassName>[:<fixed reason>]"}` for a failure inside Root, such as
 `SessionError:host config mismatch` (the fixed reasons are `binding mismatch`, `host config mismatch`, `host registration mismatch`, `binding id invalid`, `launch not allowed`). No role text, path or id can enter it; it is `null` on a pass.
+
+**Evidence.** `result.json` also carries `evidence.stub`: the provider's six receipts (`afterDispatch1`, `afterDispatch2`, `afterReuse`, `beforeRevocation`,
+`afterRevocation`, `final`), each the eight integer counters plus `outcomes` (at most 64 of `accepted`/`refused`/`unreadable`) and `refusalSites` (at most 16 of
+`{n, site}`; `site` is one of `read_null`, `frame_empty_or_nul`, `decode`, `keys`, `scope`, `sequence`, `model`, `system_marker`, `user_marker`,
+`absent_marker`, `not_meta`, `closed`, `reply_frame`: where an arrival stopped, never what it carried). The adapter checks every value against that vocabulary
+and refuses the receipt (`protocol`, `receipt_outcomes`/`receipt_sites`) rather than pass anything else through; a provider that predates the sites reports none.
+A run that stops early keeps the snapshots it took. The verdict also separates **strays** from **refusals**: an arrival with no frame (`unreadable`, or
+`unframed`, which the provider also counts in `refused`) is reported but cannot fail dispatch 1 by itself; a real refusal (`refused - unframed`) or a begin that
+was received and not accepted is still `dispatch_refused`, and any arrival after revocation still fails the zero-requests claim.
 
 ## The Root entry points `session.py` drives (all exist on main; nothing is invented)
 

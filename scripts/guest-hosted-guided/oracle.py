@@ -20,7 +20,7 @@ FAILURE_CLASSES = (
     'reader_receipt',      # an init receipt or pidfd existed for a refused envelope
     'reader_site',         # the named _exit(64) site is not a known one
     'dispatch_count',      # begins/accepts/completions differ from the expected count
-    'dispatch_refused',    # the stub refused a begin it should have accepted
+    'dispatch_refused',    # the stub refused a begin it should have accepted (a REAL refusal; a frameless stray arrival is not one)
     'dispatch_answer',     # the host saw a different answer than the script's
     'edit_unchanged',      # the shared file did not change between the dispatches
     'revocation_not_refused',  # the host's post-revocation query was not refused as required_context_unavailable
@@ -80,6 +80,8 @@ def _counters_ok(stub):
         snapshot = stub[name]
         if any(not _integer(snapshot[key]) for key in COUNTERS):
             return False
+        if snapshot['refused'] < snapshot['unframed']:  # the provider counts every unframed arrival as refused too
+            return False
         if previous is not None and any(snapshot[key] < previous[key] for key in COUNTERS):
             return False
         previous = snapshot
@@ -100,8 +102,18 @@ def _reader(exit64):
     return _case(True)
 
 
+def strays(snapshot):
+    """Arrivals that carried no frame: a connection with nothing readable (`unreadable`) or an empty/NUL body (`unframed`). The provider counts an
+    unframed arrival in `refused` too, so a REAL refusal is `refused - unframed`: a begin the fixture port turned away (or a reply it could not frame)."""
+    return snapshot['unreadable'] + snapshot['unframed']
+
+
+def real_refusals(snapshot):
+    return snapshot['refused'] - snapshot['unframed']
+
+
 def _dispatch(snapshot, count, text, expected):
-    if snapshot['receivedBegins'] != snapshot['acceptedBegins'] or snapshot['refused'] or snapshot['unreadable'] or snapshot['unframed']:
+    if snapshot['receivedBegins'] != snapshot['acceptedBegins'] or real_refusals(snapshot):
         return _case(False, 'dispatch_refused')
     if snapshot['acceptedBegins'] != count or snapshot['completed'] != count or snapshot['receivedBegins'] != count:
         return _case(False, 'dispatch_count')

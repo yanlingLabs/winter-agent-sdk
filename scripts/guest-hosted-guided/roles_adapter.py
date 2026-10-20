@@ -22,6 +22,11 @@ TIMEOUT = 60.0
 MAX_NOISE = 4096
 TAG = re.compile(r'^[a-z0-9][a-z0-9-]{0,31}$')
 COUNTERS = ('requests', 'unreadable', 'unframed', 'refused', 'receivedFrames', 'receivedBegins', 'acceptedBegins', 'completed')
+OUTCOMES = frozenset(('accepted', 'refused', 'unreadable'))
+MAX_OUTCOMES = 64
+# WHERE a non-accepted arrival stopped (runtime-sdk provider-worker-core.ts REFUSAL_SITES); never request content.
+SITES = ('read_null', 'frame_empty_or_nul', 'decode', 'keys', 'scope', 'sequence', 'model', 'system_marker', 'user_marker', 'absent_marker', 'not_meta', 'closed', 'reply_frame')
+MAX_SITES = 16
 CLASSES = frozenset(('required_context_unavailable', 'other', 'none'))
 CONTRACT = (
     'C-P11 Root writes `receipt <tag>` to the provider stdin; it answers one `provider-receipt` line with the same tag and the counters',
@@ -164,6 +169,23 @@ def counters(record):
     return {key: record[key] for key in COUNTERS}
 
 
+def detail(record):
+    """The bounded, closed-vocabulary diagnostic part of a receipt or summary: `outcomes` (at most 64 of accepted/refused/unreadable) and
+    `refusalSites` (at most 16 of {n, site}). A provider that predates the sites reports none; every present value is checked, never passed through."""
+    outcomes = record.get('outcomes', [])
+    if type(outcomes) is not list or len(outcomes) > MAX_OUTCOMES or any(type(item) is not str or item not in OUTCOMES for item in outcomes):
+        raise AdapterError('protocol', 'receipt_outcomes')
+    sites = record.get('refusalSites', [])
+    if type(sites) is not list or len(sites) > MAX_SITES:
+        raise AdapterError('protocol', 'receipt_sites')
+    clean = []
+    for item in sites:
+        if type(item) is not dict or set(item) != {'n', 'site'} or not _int(item['n']) or item['n'] < 1 or type(item['site']) is not str or item['site'] not in SITES:
+            raise AdapterError('protocol', 'receipt_sites')
+        clean.append({'n': item['n'], 'site': item['site']})
+    return {'outcomes': list(outcomes), 'refusalSites': clean}
+
+
 def _presented(reply, which):
     if reply.get('which') != which or type(reply.get('refused')) is not bool or reply.get('errorClass') not in CLASSES or type(reply.get('processStarted')) is not bool:
         raise AdapterError('protocol')
@@ -190,6 +212,7 @@ class GuidedRoles:
         self.host_process = host
         self.host = Channel(host, timeout)
         self.query_ended = []
+        self.details = {}
         if provider is not None:
             self.attach_provider(provider)
 
@@ -231,7 +254,9 @@ class GuidedRoles:
         reply = self.provider.expect('provider-receipt', self.PROVIDER_TOLERATED)
         if reply.get('tag') != tag:
             raise AdapterError('protocol')
-        return counters(reply)
+        value = counters(reply)
+        self.details[tag] = detail(reply)
+        return value
 
     def dispatch(self, n):
         self.host.send('dispatch %d' % n)
@@ -275,7 +300,9 @@ class GuidedRoles:
             if self.provider_process is None:
                 raise AdapterError('protocol', 'no_provider')
             self.provider_process.terminate()
-            summary = counters(self.provider.expect('provider-summary', self.PROVIDER_TOLERATED + ('provider-receipt',)))
+            line = self.provider.expect('provider-summary', self.PROVIDER_TOLERATED + ('provider-receipt',))
+            summary = counters(line)
+            self.details['final'] = detail(line)
         except (AdapterError, OSError):
             summary = None
         try:

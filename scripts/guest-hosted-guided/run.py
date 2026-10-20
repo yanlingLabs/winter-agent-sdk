@@ -42,8 +42,8 @@ SCHEMA = 'winter-guided-hosted-run/1'
 OPT_IN = 'WINTER_GUIDED_HOSTED_ADMISSION'
 OPT_IN_VALUE = 'disposable-linux-guided-hosted-run'
 # SHA-256 of the two siblings this file may load. Changing either sibling changes these and therefore this file's hash.
-ORACLE_SHA256 = '295075e74776a4b40a7e5d4f11912d52f47bb8f03e112e6f48d687de6fa3323e'
-ADAPTER_SHA256 = '62eccd5981f325b439338eba1f3d95cedf2c1f30ac816e785b5a35d9601eb1ec'
+ORACLE_SHA256 = '070d36b884b909e7574b734ce68c2b4a6f2204f0c43e0827502d86bf8769b886'
+ADAPTER_SHA256 = '05710cb345525d883948571139c3b648537417be7e23b4ca34a455dce14131d4'
 SESSION_SHA256 = 'e6fe9735e2b5fb102457ccf84b6e24a704f08c0fae884dab43fbf301b185451f'
 # The Core-dependent inputs (the host fixture records, the provider script's marker lines, the two prompts, the guidance
 # texts) are DATA this lane cannot invent; they live in a closed JSON file next to this one, pinned here. Zero = not supplied.
@@ -325,7 +325,7 @@ def exception_diagnostic(error):
 def run(argv, platform, env, directory, euid=os.geteuid):
     """Returns (record, exit_status). Never raises: every failure becomes a bounded class in the record."""
     record = {'schema': SCHEMA, 'kernelRelease': host_platform.release(), 'machine': host_platform.machine(), 'stage': 'start', 'failureClass': None,
-              'passed': False, 'hostPassed': None, 'settled': None, 'lifecycle': None, 'exits': None, 'verdict': None, 'diagnostic': None}
+              'passed': False, 'hostPassed': None, 'settled': None, 'lifecycle': None, 'exits': None, 'verdict': None, 'diagnostic': None, 'evidence': None}
     session = roles = None
     try:
         record['stage'] = 'admission'
@@ -357,6 +357,7 @@ def run(argv, platform, env, directory, euid=os.geteuid):
             record['diagnostic'] = exception_diagnostic(error)
             raise RunnerError(record['stage']) from None
         stub, host = {}, {}
+        record['evidence'] = {'stub': {}}  # filled snapshot by snapshot, so a run that stops early still shows what it saw
         record['stage'] = 'provider_start'
         try:
             roles = adapter.GuidedRoles(None, session.spawn('hostClient'), platform.role_timeout or adapter.TIMEOUT)
@@ -371,6 +372,7 @@ def run(argv, platform, env, directory, euid=os.geteuid):
             record['stage'] = 'dispatch1'
             host['dispatch1Text'] = roles.finish_dispatch(1)
             stub['afterDispatch1'] = roles.stub_receipt('after-dispatch1')
+            record['evidence']['stub']['afterDispatch1'] = {**stub['afterDispatch1'], **roles.details['after-dispatch1']}
             record['stage'] = 'shared_edit'
             shared = {'beforeSha256': session.shared_sha256()}
             session.edit_shared()
@@ -378,15 +380,19 @@ def run(argv, platform, env, directory, euid=os.geteuid):
             record['stage'] = 'dispatch2'
             host['dispatch2Text'] = roles.dispatch(2)
             stub['afterDispatch2'] = roles.stub_receipt('after-dispatch2')
+            record['evidence']['stub']['afterDispatch2'] = {**stub['afterDispatch2'], **roles.details['after-dispatch2']}
             record['stage'] = 'ticket_reuse'
             host['reuseError'] = roles.present_spent()
             stub['afterReuse'] = roles.stub_receipt('after-reuse')
+            record['evidence']['stub']['afterReuse'] = {**stub['afterReuse'], **roles.details['after-reuse']}
             record['stage'] = 'revocation'
             roles.premint()
             stub['beforeRevocation'] = roles.stub_receipt('before-revoke')
+            record['evidence']['stub']['beforeRevocation'] = {**stub['beforeRevocation'], **roles.details['before-revoke']}
             roles.revoke()
             host['revocationError'] = roles.present_premint()
             stub['afterRevocation'] = roles.stub_receipt('after-present')
+            record['evidence']['stub']['afterRevocation'] = {**stub['afterRevocation'], **roles.details['after-present']}
             record['stage'] = 'host_result'
             # The pinned finish order (roles_adapter.FINISH_ORDER): finish, then the host's result is READ, then the runtime is settled and the
             # lifecycle record written. A result that does not arrive before the record could be written is `finish_order`, never a wait on the record.
@@ -403,6 +409,7 @@ def run(argv, platform, env, directory, euid=os.geteuid):
             if final is None:
                 raise RunnerError('teardown')
             stub['final'] = final
+            record['evidence']['stub']['final'] = {**final, **roles.details['final']}
             record['exits'] = session.reap()
         except adapter.AdapterError as error:
             record['diagnostic'] = error.diagnostic()

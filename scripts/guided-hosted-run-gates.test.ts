@@ -18,7 +18,7 @@ const WORKFLOWS_DIR = join(ROOT, ".github/workflows");
 const WORKFLOW_NAME = "guided-hosted-run-reviewed.yml";
 const WORKFLOW_PATH = `.github/workflows/${WORKFLOW_NAME}`;
 const WORKFLOW = readFileSync(join(ROOT, WORKFLOW_PATH), "utf8");
-const TRIGGER_BRANCH = "cowork/guided-hosted-run-2";
+const TRIGGER_BRANCH = "cowork/guided-hosted-run-3";
 const REPOSITORY = "yanlingLabs/winter-agent-sdk";
 const RUNTIME_REPOSITORY = "yanlingLabs/winter-runtime-sdk";
 const OPT_IN = "WINTER_GUIDED_HOSTED_ADMISSION";
@@ -46,7 +46,7 @@ const ACTIONS: Record<string, string> = {
 // Branches that already fired, or are armed for, another reviewed workflow: never reusable here.
 const USED_BRANCHES = [
   "cowork/linux-host-query-fixture", "cowork/linux-host-query-utilities", "cowork/guided-owner-matrix-run", "cowork/guided-packet-compile-fixture",
-  "cowork/instruction-reader-compile-fixture", "cowork/reader-hosted-dependency-probe", "cowork/reader-hosted-fixture-stderr", "cowork/guided-packet-build", "cowork/guided-hosted-run",
+  "cowork/instruction-reader-compile-fixture", "cowork/reader-hosted-dependency-probe", "cowork/reader-hosted-fixture-stderr", "cowork/guided-packet-build", "cowork/guided-hosted-run", "cowork/guided-hosted-run-2",
 ];
 
 /** The arming guard, line for line. It runs before any reviewed code is checked out and refuses unless HOSTED_HEAD is
@@ -387,10 +387,12 @@ const MUTATIONS: Array<[string, (text: string) => string, string, Partial<Contex
   ["add workflow_dispatch trigger", sub("on:\n  push:", "on:\n  workflow_dispatch:\n  push:"), "on: must be exactly {push}, got workflow_dispatch,push"],
   ["add schedule trigger", sub("on:\n  push:", "on:\n  schedule:\n    - cron: '0 0 * * *'\n  push:"), "on: must be exactly {push}, got schedule,push"],
   ["add workflow_run trigger", sub("on:\n  push:", "on:\n  workflow_run:\n    workflows: [ci]\n  push:"), "on: must be exactly {push}, got workflow_run,push"],
-  ["widen the branch to a glob", sub("[cowork/guided-hosted-run-2]", "[cowork/**]"), "on.push must be exactly one literal branch and nothing else"],
+  ["widen the branch to a glob", sub("[cowork/guided-hosted-run-3]", "[cowork/**]"), "on.push must be exactly one literal branch and nothing else"],
   ["add a tags filter", sub("  push:\n    branches:", "  push:\n    tags: ['*']\n    branches:"), "on.push must be exactly one literal branch and nothing else"],
-  ["add a paths filter", sub("    branches: [cowork/guided-hosted-run-2]\n", "    branches: [cowork/guided-hosted-run-2]\n    paths: ['x']\n"), "on.push must be exactly one literal branch and nothing else"],
-  ["swap to a used branch", subAll("cowork/guided-hosted-run-2", "cowork/guided-owner-matrix-run"), "on.push must be exactly one literal branch and nothing else"],
+  ["add a paths filter", sub("    branches: [cowork/guided-hosted-run-3]\n", "    branches: [cowork/guided-hosted-run-3]\n    paths: ['x']\n"), "on.push must be exactly one literal branch and nothing else"],
+  ["swap to a used branch", subAll("cowork/guided-hosted-run-3", "cowork/guided-owner-matrix-run"), "on.push must be exactly one literal branch and nothing else"],
+  ["swap to the first spent hosted branch", subAll("cowork/guided-hosted-run-3", "cowork/guided-hosted-run"), "on.push must be exactly one literal branch and nothing else"],
+  ["swap to the second spent hosted branch", subAll("cowork/guided-hosted-run-3", "cowork/guided-hosted-run-2"), "on.push must be exactly one literal branch and nothing else"],
   // permissions, secrets
   ["drop top-level permissions", sub("permissions:\n  contents: read\n  actions: read\n", ""), "permissions must be exactly contents: read and actions: read"],
   ["widen contents to write", sub("contents: read", "contents: write"), "permissions must be exactly contents: read and actions: read"],
@@ -405,7 +407,7 @@ const MUTATIONS: Array<[string, (text: string) => string, string, Partial<Contex
   // firing gate
   ["drop the repository gate", sub("github.repository == 'yanlingLabs/winter-agent-sdk' && ", ""), "job if lacks: github.repository == 'yanlingLabs/winter-agent-sdk'"],
   ["drop the event-name gate", sub("github.event_name == 'push' && ", ""), "job if lacks: github.event_name == 'push'"],
-  ["drop the exact-ref gate", sub(" && github.ref == 'refs/heads/cowork/guided-hosted-run-2'", ""), "job if lacks: github.ref == 'refs/heads/cowork/guided-hosted-run-2'"],
+  ["drop the exact-ref gate", sub(" && github.ref == 'refs/heads/cowork/guided-hosted-run-3'", ""), "job if lacks: github.ref == 'refs/heads/cowork/guided-hosted-run-3'"],
   ["drop the first-creation gate", sub(" && github.event.created == true", ""), "job if lacks: github.event.created == true"],
   ["drop the run_attempt gate", sub(" && github.run_attempt == '1'", ""), "job if lacks: github.run_attempt == '1'"],
   ["gate becomes a disjunction", sub("github.event.created == true &&", "github.event.created == true ||"), "job if must be a pure conjunction"],

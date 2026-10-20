@@ -197,7 +197,7 @@ class HappyPath(Base):
         self.assertTrue(result['verdict']['passed'])
         self.assertEqual(platform.calls, ['bind', 'stage', 'exit64', 'session'])
         self.assertTrue(platform.session.closed)
-        self.assertEqual(sorted(result), ['diagnostic', 'exits', 'failureClass', 'hostPassed', 'kernelRelease', 'lifecycle', 'machine', 'passed', 'schema', 'settled', 'stage', 'verdict'])
+        self.assertEqual(sorted(result), ['diagnostic', 'evidence', 'exits', 'failureClass', 'hostPassed', 'kernelRelease', 'lifecycle', 'machine', 'passed', 'schema', 'settled', 'stage', 'verdict'])
         self.assertEqual((result['hostPassed'], result['settled'], result['exits']), (True, True, {'host': 0, 'provider': 0}))
 
     def test_relative_paths_are_resolved_before_the_verifier_runs_elsewhere(self):
@@ -601,6 +601,61 @@ class QueryChain(Base):
     def test_tolerated_noise_does_not_change_the_verdict(self):
         status, result, _ = self.chain(host='noise', provider='noise')
         self.assertEqual(status, 0)
+
+
+class Evidence(Base):
+    """The result carries the stub's six snapshots, each with the eight counters, the capped outcomes and the capped refusal sites: closed keys, closed values."""
+    SNAPSHOTS = ('afterDispatch1', 'afterDispatch2', 'afterReuse', 'beforeRevocation', 'afterRevocation', 'final')
+
+    def chain(self, **modes):
+        return self.go(platform=FakePlatform(self.state, modes))
+
+    def reset(self):
+        os.remove(os.path.join(self.out, 'result.json'))
+        shutil.rmtree(self.state)
+        os.mkdir(self.state)
+
+    def test_a_passing_run_reports_all_six_snapshots_with_closed_keys(self):
+        status, result, _ = self.chain()
+        self.assertEqual(status, 0)
+        stub = result['evidence']['stub']
+        self.assertEqual(sorted(stub), sorted(self.SNAPSHOTS))
+        for name in self.SNAPSHOTS:
+            self.assertEqual(sorted(stub[name]), sorted(roles_adapter.COUNTERS + ('outcomes', 'refusalSites')), name)
+            self.assertEqual((stub[name]['outcomes'], stub[name]['refusalSites']), ([], []), name)
+        self.assertEqual(result['evidence'].keys(), {'stub'})
+        self.assertEqual((stub['afterDispatch1']['receivedBegins'], stub['final']['completed']), (1, 2))
+
+    def test_provider_outcomes_and_sites_ride_the_result(self):
+        status, result, _ = self.chain(provider='sites')
+        self.assertEqual(status, 0)
+        for name in self.SNAPSHOTS:
+            self.assertEqual(result['evidence']['stub'][name]['outcomes'], ['unreadable', 'refused', 'accepted'], name)
+            self.assertEqual(result['evidence']['stub'][name]['refusalSites'], [{'n': 1, 'site': 'read_null'}, {'n': 2, 'site': 'frame_empty_or_nul'}], name)
+
+    def test_a_site_or_outcome_outside_the_closed_vocabulary_is_a_protocol_failure_and_is_never_echoed(self):
+        for mode in ('sites_bad_site', 'sites_extra_key', 'sites_too_many', 'sites_bad_outcome', 'outcomes_too_many', 'sites_not_list'):
+            status, result, _ = self.chain(provider=mode)
+            self.assertEqual((status, result['failureClass'], result['diagnostic']['kind']), (78, 'dispatch1', 'protocol'), mode)
+            self.assertNotIn('secret', json.dumps(result), mode)
+            self.reset()
+
+    def test_a_run_that_stops_early_keeps_the_snapshots_it_saw(self):
+        status, result, _ = self.chain(host='reuse_accepted')
+        self.assertIn('afterDispatch1', result['evidence']['stub'])
+        self.assertIn('afterDispatch2', result['evidence']['stub'])
+
+    def test_a_frameless_stray_in_dispatch_1_is_reported_and_does_not_fail_the_run(self):
+        for mode, key in (('stray_unreadable', 'unreadable'), ('stray_unframed', 'unframed')):
+            status, result, _ = self.chain(host=mode)
+            self.assertEqual((status, result['failureClass'], result['verdict']['cases']['dispatch1']), (0, None, {'passed': True, 'failureClass': None}), mode)
+            self.assertEqual(result['evidence']['stub']['afterDispatch1'][key], 1, mode)
+            self.reset()
+
+    def test_a_real_refusal_in_dispatch_1_still_fails_the_verdict(self):
+        status, result, _ = self.chain(host='real_refusal')
+        self.assertEqual((status, result['failureClass'], result['verdict']['cases']['dispatch1']['failureClass']), (1, 'verdict', 'dispatch_refused'))
+        self.assertEqual(result['evidence']['stub']['afterDispatch1']['refused'], 1)
 
 
 class Metafile(Base):

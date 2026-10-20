@@ -35,6 +35,36 @@ def bump(frames=3, begins=1, refused=0):
     save(c)
 
 
+def bump_stray(kind):
+    """A frameless arrival (nothing readable, or an empty/NUL body); the provider counts an unframed arrival as refused too."""
+    c = load(path, ZERO)
+    c['requests'] += 1
+    c[kind] += 1
+    if kind == 'unframed':
+        c['refused'] += 1
+    save(c)
+
+
+def detail_fields():
+    """The provider's diagnostic fields; modes 'sites*' send valid or deliberately bad ones, every other mode sends none beyond `outcomes`."""
+    good = [{'n': 1, 'site': 'read_null'}, {'n': 2, 'site': 'frame_empty_or_nul'}]
+    if mode == 'sites':
+        return {'outcomes': ['unreadable', 'refused', 'accepted'], 'refusalSites': good}
+    if mode == 'sites_bad_site':
+        return {'outcomes': [], 'refusalSites': [{'n': 1, 'site': '/secret/path'}]}
+    if mode == 'sites_extra_key':
+        return {'outcomes': [], 'refusalSites': [{'n': 1, 'site': 'keys', 'text': 'x'}]}
+    if mode == 'sites_too_many':
+        return {'outcomes': [], 'refusalSites': [{'n': i + 1, 'site': 'keys'} for i in range(17)]}
+    if mode == 'sites_bad_outcome':
+        return {'outcomes': ['accepted', 'rejected'], 'refusalSites': []}
+    if mode == 'outcomes_too_many':
+        return {'outcomes': ['accepted'] * 65, 'refusalSites': []}
+    if mode == 'sites_not_list':
+        return {'outcomes': [], 'refusalSites': {'n': 1}}
+    return {'outcomes': []}
+
+
 def out(value):
     sys.stdout.write(json.dumps(value) + '\n')
     sys.stdout.flush()
@@ -53,7 +83,7 @@ if role == 'provider':
         if mode == 'summary_late':
             bump(frames=1, begins=0)
         c = load(path, ZERO)
-        out({'kind': 'provider-summary', **c, 'answered': c['completed'], 'portClosed': False, 'scriptSha256': 'a' * 64, 'turnSha256': [], 'countersAgree': mode != 'summary_disagree'})
+        out({'kind': 'provider-summary', **c, 'answered': c['completed'], 'portClosed': False, 'scriptSha256': 'a' * 64, 'turnSha256': [], 'countersAgree': mode != 'summary_disagree', **detail_fields()})
         sys.exit(0 if mode != 'summary_exit' else 3)
     signal.signal(signal.SIGTERM, terminate)
     if mode != 'not_ready':
@@ -75,7 +105,7 @@ if role == 'provider':
             out({'kind': 'provider-request', 'n': 1, 'readable': True}) if mode == 'noise' else None
             c = load(path, ZERO)
             tag = parts[1] if mode != 'wrong_tag' else 'other-tag'
-            out({'kind': 'provider-receipt', 'tag': tag, **c, 'answered': c['completed'], 'portClosed': False, 'outcomes': [], 'countersAgree': mode != 'agree_false', 'controlRefused': 0})
+            out({'kind': 'provider-receipt', 'tag': tag, **c, 'answered': c['completed'], 'portClosed': False, 'countersAgree': mode != 'agree_false', 'controlRefused': 0, **detail_fields()})
         else:
             out({'kind': 'provider-control-refused', 'code': 'line'})
     time.sleep(0)
@@ -146,6 +176,12 @@ else:
                 out({'kind': 'host-result', 'passed': True})
                 continue
             bump()
+            if n == 1 and mode in ('stray_unreadable', 'stray_unframed'):
+                bump_stray(mode[len('stray_'):])
+            if n == 1 and mode == 'real_refusal':
+                c = load(path, ZERO)
+                c['refused'] += 1
+                save(c)
             text = 'something else' if (mode == 'wrong_answer' and n == 1) else ('x' * 600 if mode == 'long_answer' else answers[n])
             out({'kind': 'host-dispatch', 'n': 3 - n if mode == 'wrong_n' else n, 'ok': True, 'answer': text})
         elif command == 'reuse':

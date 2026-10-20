@@ -157,13 +157,45 @@ class Final(unittest.TestCase):
         evidence['stub']['final'] = snap(6, 2, 2, 2, requests=7, unreadable=1)
         self.assertEqual(failing(evidence), {'revocation': 'revocation_provider_request'})
 
-    def test_a_refused_or_unreadable_arrival_in_a_dispatch_is_a_refusal(self):
-        for kw in ({'refused': 1}, {'unreadable': 1}, {'unframed': 1}):
-            evidence = good()
-            evidence['stub']['afterDispatch1'] = snap(3, 1, 1, 1, **kw)
-            for name, shape in (('afterDispatch2', (6, 2, 2, 2)), ('afterReuse', (6, 2, 2, 2)), ('beforeRevocation', (6, 2, 2, 2)), ('afterRevocation', (6, 2, 2, 2)), ('final', (6, 2, 2, 2))):
-                evidence['stub'][name] = snap(*shape, **kw)
+    def _with_stray(self, **kw):
+        """A stray arrival in dispatch 1 stays in every later snapshot, so only the dispatch verdict can see it."""
+        evidence = good()
+        evidence['stub']['afterDispatch1'] = snap(3, 1, 1, 1, requests=3 + kw.get('unreadable', 0) + kw.get('unframed', 0), **kw)
+        for name in ('afterDispatch2', 'afterReuse', 'beforeRevocation', 'afterRevocation', 'final'):
+            evidence['stub'][name] = snap(6, 2, 2, 2, requests=6 + kw.get('unreadable', 0) + kw.get('unframed', 0), **kw)
+        return evidence
+
+    def test_a_real_refusal_in_a_dispatch_is_fatal(self):
+        for kw in ({'refused': 1}, {'refused': 2, 'unframed': 1}):
+            evidence = self._with_stray(**kw)
             self.assertEqual(failing(evidence)['dispatch1'], 'dispatch_refused', kw)
+
+    def test_a_frameless_stray_arrival_does_not_fail_a_dispatch_on_its_own(self):
+        for kw in ({'unreadable': 1}, {'unframed': 1, 'refused': 1}, {'unreadable': 2, 'unframed': 1, 'refused': 1}):
+            evidence = self._with_stray(**kw)
+            self.assertEqual(failing(evidence), {}, kw)
+            self.assertEqual(oracle.strays(evidence['stub']['afterDispatch1']), kw.get('unreadable', 0) + kw.get('unframed', 0))
+
+    def test_a_stray_never_hides_a_real_refusal_or_a_begin_that_was_not_accepted(self):
+        evidence = self._with_stray(unreadable=1, refused=1)
+        self.assertEqual(failing(evidence)['dispatch1'], 'dispatch_refused')
+        evidence = self._with_stray(unreadable=1)
+        evidence['stub']['afterDispatch1'] = snap(3, 2, 1, 1, requests=4, unreadable=1)
+        self.assertEqual(failing(evidence)['dispatch1'], 'dispatch_refused')
+
+    def test_the_real_refusal_count_is_refused_minus_unframed(self):
+        self.assertEqual(oracle.real_refusals(snap(3, 1, 1, 1, refused=3, unframed=2)), 1)
+        self.assertEqual(oracle.real_refusals(snap(3, 1, 1, 1, refused=2, unframed=2)), 0)
+
+    def test_more_unframed_than_refused_is_inconsistent_counters(self):
+        evidence = self._with_stray(unframed=1)
+        self.assertEqual(set(failing(evidence).values()), {'stub_counters'})
+
+    def test_a_stray_after_revocation_still_fails_the_zero_requests_claim(self):
+        evidence = good()
+        evidence['stub']['afterRevocation'] = snap(6, 2, 2, 2, requests=7, unreadable=1)
+        evidence['stub']['final'] = snap(6, 2, 2, 2, requests=7, unreadable=1)
+        self.assertEqual(failing(evidence), {'revocation': 'revocation_provider_request'})
 
     def test_a_refused_third_begin_shows_as_begins_three_accepted_two(self):
         evidence = good()
