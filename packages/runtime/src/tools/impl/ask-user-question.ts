@@ -32,7 +32,7 @@
 // anywhere in the pinned input_schema code block) and never a timer this executor could own even in
 // principle -- by the time this executor runs, the call has already been answered (or the whole
 // question never reaches execution at all). Documented here, not implemented, per the brief.
-import { ASK_USER_QUESTION_PLACEHOLDER_MAX_LENGTH } from "../descriptors/ask-user-question.ts"; // self-sufficiency: guarantees the "AskUserQuestion" stub is registered before replaceExecutor runs below.
+import "../descriptors/ask-user-question.ts"; // self-sufficiency: guarantees the "AskUserQuestion" stub is registered before replaceExecutor runs below.
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 
 export const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
@@ -135,10 +135,11 @@ function validateQuestions(raw: unknown): ValidationResult {
       if (!validated.ok) return validated;
       options.push(validated.option);
     }
-    const placeholder: unknown = rec.placeholder;
-    if (placeholder !== undefined && placeholder !== null && (typeof placeholder !== "string" || placeholder.length > ASK_USER_QUESTION_PLACEHOLDER_MAX_LENGTH)) {
-      return { ok: false, message: `questions[${i}].placeholder must be a string of at most ${ASK_USER_QUESTION_PLACEHOLDER_MAX_LENGTH} characters` };
-    }
+    // `placeholder` is DISPLAY-ONLY and is deliberately never validated here. This executor runs
+    // AFTER canUseTool has already shown the question and collected the answer, and providers do not
+    // enforce the schema's `maxLength` (ASK_USER_QUESTION_PLACEHOLDER_MAX_LENGTH, guidance only), so
+    // rejecting an over-long or non-string placeholder here would throw the user's answer away. The
+    // host clamps or ignores it when it renders the answer box; nothing here reads it.
     const freeText = options.length === 0;
     // multiSelect has nothing to select on a free-text question: it is normalized to false rather
     // than rejected, so a model that always sends `multiSelect: false|true` does not loop on an error.

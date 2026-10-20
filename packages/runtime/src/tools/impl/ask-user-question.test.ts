@@ -257,14 +257,39 @@ describe("AskUserQuestion (task-7 brief, tool-surface-only)", () => {
       expect(result.output).toContain("options must be an array");
     });
 
-    test("placeholder up to 80 characters is accepted; longer or non-string is rejected", async () => {
-      const ok = await askUserQuestionExecutor.execute({ questions: [freeText({ placeholder: "x".repeat(80) })], answers: { "What should the service be called?": "a" } }, makeCtx());
-      expect(ok.isError).toBeUndefined();
-      const tooLong = await askUserQuestionExecutor.execute({ questions: [freeText({ placeholder: "x".repeat(81) })] }, makeCtx());
-      expect(tooLong.isError).toBe(true);
-      expect(tooLong.output).toContain("placeholder");
-      const notString = await askUserQuestionExecutor.execute({ questions: [freeText({ placeholder: 5 })] }, makeCtx());
-      expect(notString.isError).toBe(true);
+    // The placeholder is display-only and the executor runs after the answer was collected: it never
+    // rejects on it (providers do not enforce the schema's maxLength), so the user's answer survives.
+    test("a placeholder never rejects the call: over-long, empty, null or non-string, the answer comes back", async () => {
+      for (const placeholder of ["x".repeat(80), "x".repeat(95), "", null, 5, { not: "a string" }]) {
+        const result = await askUserQuestionExecutor.execute({ questions: [freeText({ placeholder })], answers: { "What should the service be called?": "ledger-svc" } }, makeCtx());
+        expect(result.isError).toBeUndefined();
+        const parsed = JSON.parse(result.output);
+        expect(parsed.results[0]).toEqual({ header: "Name", question: "What should the service be called?", multiSelect: false, freeText: true, answer: "ledger-svc" });
+        expect(parsed.unanswered).toEqual([]);
+      }
+    });
+
+    test("a long placeholder on an option question with valid answers returns the answers, not an error", async () => {
+      const q = { ...oneQuestion().questions[0], placeholder: "y".repeat(95) };
+      const result = await askUserQuestionExecutor.execute({ questions: [q, freeText({ placeholder: "z".repeat(120) })], answers: { "Which approach?": "B", "What should the service be called?": "svc" } }, makeCtx());
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.output);
+      expect(parsed.results.map((r: { answer: string }) => r.answer)).toEqual(["B", "svc"]);
+    });
+
+    test("options: null is a free-text question", async () => {
+      const result = await askUserQuestionExecutor.execute({ questions: [freeText({ options: null })], answers: { "What should the service be called?": "x" } }, makeCtx());
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.output);
+      expect(parsed.results[0]).toEqual({ header: "Name", question: "What should the service be called?", multiSelect: false, freeText: true, answer: "x" });
+    });
+
+    test("an empty answer on a multiSelect question is skipped (null + unanswered)", async () => {
+      for (const empty of ["", "  "]) {
+        const parsed = JSON.parse((await askUserQuestionExecutor.execute({ ...oneQuestion({ multiSelect: true }), answers: { "Which approach?": empty } }, makeCtx())).output);
+        expect(parsed.results[0]).toEqual({ header: "Approach", question: "Which approach?", multiSelect: true, freeText: false, answer: null });
+        expect(parsed.unanswered).toEqual(["Which approach?"]);
+      }
     });
 
     test("placeholder is accepted on an option question too", async () => {
