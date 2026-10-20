@@ -99,6 +99,31 @@ describe("buildSeatbeltProfile", () => {
   });
 });
 
+describe("buildSeatbeltProfile: case-variant write roots on a case-sensitive volume", () => {
+  const base: SeatbeltProfileInput = { cwd: "/cr/w", writableRoots: ["/cr/x"], allowNetwork: false, home: "/cr/h", darwinUserTempDir: "/cr/t/T" };
+
+  test("no case-sensitive roots (the default volume): byte-identical to a profile built without the field", () => {
+    const without = buildSeatbeltProfile({ ...base });
+    expect(buildSeatbeltProfile({ ...base, caseSensitiveWriteRoots: [] })).toBe(without);
+    expect(without).not.toContain("(deny file-write-create\n");
+  });
+
+  test("each case-sensitive root gets an explicit create deny on its own literal, right after the write-root allow block", () => {
+    const p = buildSeatbeltProfile({ ...base, caseSensitiveWriteRoots: ["/cr/w", "/cr/x", "/cr/x"] });
+    const lines = p.split("\n");
+    const at = lines.indexOf("(deny file-write-create");
+    expect(lines.slice(at - 3, at + 3)).toEqual(["(allow file-write*", '  (subpath "/cr/w")', '  (subpath "/cr/x"))', "(deny file-write-create", '  (literal "/cr/w")', '  (literal "/cr/x"))']);
+    // After the explicit create re-permit for the same roots, so it wins that explicit-vs-explicit tie by order.
+    expect(at).toBeGreaterThan(lines.indexOf("(allow file-write-unlink file-write-create"));
+    // Exactly one line block added; everything else unchanged.
+    expect(lines.filter((_, i) => i < at || i > at + 2).join("\n")).toBe(buildSeatbeltProfile({ ...base }));
+  });
+
+  test("a root path with a quote is escaped like any literal", () => {
+    expect(buildSeatbeltProfile({ cwd: '/cr/q"t', allowNetwork: false, caseSensitiveWriteRoots: ['/cr/q"t'] })).toContain('(deny file-write-create\n  (literal "/cr/q\\"t"))');
+  });
+});
+
 /**
  * Every `(regex ...)` filter in a profile, as the regex SOURCE Seatbelt compiles: a raw `#"..."`
  * literal's content as written, a plain `"..."` string's content unescaped (`\\` -> `\`, `\"` -> `"`).
