@@ -4,6 +4,23 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.55
+
+### Free-text questions in AskUserQuestion
+
+A question may now leave out `options` (absent, `null` or `[]`): the user types the answer. A question
+with options keeps 2–4 of them, and the user can still type their own answer. A new optional
+`placeholder` gives the answer box a hint (display-only: the runtime never rejects a call over it).
+Every result entry now carries `freeText`, and an empty answer counts as unanswered. The tool's
+description is now guidance for the model: ask only when you can't proceed on a sensible default,
+prefer concrete options with your recommendation first, and never ask in prose.
+
+### Sandbox: write roots on a case-sensitive volume
+
+Seatbelt matches paths case-insensitively even on a case-sensitive volume, so a folder that differs
+from a write root only in letter case (including Unicode folds such as ẞ/ss) was writable. A command
+is now refused while such a variant exists next to a root, and the profile denies creating one.
+
 ## 0.0.54
 
 ### The model is told what the sandbox refused
