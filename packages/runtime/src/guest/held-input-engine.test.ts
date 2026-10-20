@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { dirname } from "node:path";
-import { EPOCH, gate, journalRecords, sleep, startGuest, tempRoot, tokenOf, transcriptLinesFor, type Guest } from "./held-input-harness.ts";
+import { EPOCH, filesUnder, gate, journalRecords, sleep, startGuest, tempRoot, tokenOf, transcriptLinesFor, type Guest } from "./held-input-harness.ts";
 
 const open: Guest[] = [];
 const roots: string[] = [];
@@ -301,19 +301,33 @@ test("an unreadable journal is kept aside and never trusted: the restart starts 
   expect(await second.commit("r1", "a")).toMatchObject({ ok: false, error: { code: "unknown_input" } });
 });
 
-test("a run with no journal (the ordinary local leg) never emits held_inputs and answers the verbs as unknown control subtypes", async () => {
+test("a run with no journal (the ordinary local leg) never emits held_inputs and refuses each of the four verbs with the exact unknown_subtype error, creating no journal", async () => {
   const { home, cwd } = fresh("none");
   const { inMemoryProcess } = await import("../testing.ts");
   const config = { sessionId: "22222222-2222-4222-8222-222222222222", cwd, model: "winter-test/echo", persistSession: true, winterHome: home, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, sandbox: { enabled: false } };
   const proc = inMemoryProcess(["--run", "--config-json", JSON.stringify(config)], { async generate() { return { kind: "text", text: "ok" }; } }, undefined, { WINTER_HOME: home });
   const seen: string[] = [];
   void (async () => { for await (const chunk of proc.stdout) seen.push(chunk); })();
-  proc.stdin.write(JSON.stringify({ type: "control_request", requestId: "x", subtype: "host_input_commit", payload: { inputId: "r1", holdToken: tokenOf("a") } }) + "\n");
-  await sleep(400);
+  const token = tokenOf("a");
+  const verbs: Array<[string, unknown]> = [
+    ["host_input_hold", { inputId: "r1", holdToken: token, epoch: EPOCH, text: "hello", clientName: "peer" }],
+    ["host_input_commit", { inputId: "r1", holdToken: token }],
+    ["host_input_discard", { inputId: "r1", holdToken: token }],
+    ["host_input_forget", { inputId: "r1", holdToken: token }],
+  ];
+  for (const [subtype, payload] of verbs) proc.stdin.write(JSON.stringify({ type: "control_request", requestId: `req-${subtype}`, subtype, payload }) + "\n");
+  const frames = (): Array<Record<string, any>> => seen.join("").split("\n").filter(line => line.startsWith("{")).map(line => JSON.parse(line));
+  for (let i = 0; i < 80 && frames().filter(f => f.type === "control_response").length < verbs.length; i++) await sleep(50);
   proc.stdin.end(); proc.kill();
+  for (const [subtype] of verbs) {
+    const answers = frames().filter(f => f.type === "control_response" && f.requestId === `req-${subtype}`);
+    expect(answers, subtype).toEqual([{ type: "control_response", requestId: `req-${subtype}`, ok: false, error: { code: "unknown_subtype", message: `unrecognized control subtype '${subtype}'` } }]);
+  }
   const text = seen.join("");
   expect(text).not.toContain("held_inputs");
+  expect(text).not.toContain("host_input_committed");
   expect(text).not.toContain('"outcome"');
+  expect(filesUnder(home, name => name.startsWith("held-inputs"))).toEqual([]);   // no journal file, not even a corrupt-aside one
 });
 
 test("a replayed hold after forget is answered {held:false, state:in_transcript} and the input is never delivered twice", async () => {

@@ -840,6 +840,479 @@ class GuidedReaderService:
             self.state='closed'
         return not self.debt
 
+# ---- Guest file channel service (FC4): stat, read and readRange for Mac readers of guest-only files --------------------------
+# winter's packages/core/src/cowork/guest-file-channel.ts OWNS this grammar; the literals below are a copy, pinned by a drift test
+# (scripts/guest-supervisor/test_file_browse.py) against the copied winter tables and that parser's own verdicts. Requests arrive on
+# the FILE_IN FIFO and responses leave on the FILE_OUT FIFO (Root's init owns the port and the relay; this process never sees them).
+# One response line per request; nothing but the channel's six error codes; never authority_denied (revocation is a host fact).
+# Every read runs in the tool launcher's `browse` mode: the per-workspace browse uid, the workspace group, no capability, ONE root
+# mounted read-only, the shared seccomp filter, then the file worker's own read-only seal.
+FILE_CHANNEL_VERSION=1
+FILE_OPERATIONS=('stat','read','readRange')
+FILE_ERROR_CODES=('file_missing','file_unavailable','stale_file','file_incomplete','response_too_large','invalid_request')
+FILE_BINDING=('workspaceId','sessionId','locationId','relativePath','incarnationId','sourceRevision')
+FILE_REQUEST_KEYS={'stat':('version','requestId','op',*FILE_BINDING),'read':('version','requestId','op',*FILE_BINDING,'expectedGeneration','maxBytes'),
+                   'readRange':('version','requestId','op',*FILE_BINDING,'expectedGeneration','offset','maxBytes')}
+FILE_STAT_RESPONSE=('version','requestId','op','ok',*FILE_BINDING,'generation','bytes','kind')
+FILE_RESPONSE_KEYS={'error':('version','requestId','op','ok','code'),'stat':FILE_STAT_RESPONSE,'chunk':(*FILE_STAT_RESPONSE,'offset','nextOffset','eof','contentBase64','encoding')}
+FILE_LIMITS={'pathBytes':4096,'pathComponents':32,'componentBytes':255,'chunkMaxBytes':256*1024,'chunkDefaultBytes':64*1024,'base64MaxChars':349528,
+             'requestFrameBytes':16*1024,'responseFrameBytes':384*1024,'frameDepth':1}
+FILE_ID=re.compile(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,199}')
+FILE_UUID4=re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}')
+FILE_DIGEST=re.compile(r'[a-f0-9]{64}')
+FILE_CONTROL=re.compile('[\x00-\x1f\x7f-\x9f]')
+FILE_DANGEROUS_KEYS=('__proto__','constructor','prototype')
+FILE_IN_FLIGHT=4
+FILE_WRITE_PIECE=256*1024
+FILE_SUPERVISE_SECONDS=3
+FILE_REAP_SECONDS=2
+FILE_STDOUT_BYTES=FILE_LIMITS['base64MaxChars']+4096
+FILE_STDERR_BYTES=16*1024
+FILE_ROOT_MODE=0o2770
+# The file worker's own refusals. Only a missing component is file_missing and only an offset past the end is the caller's error;
+# every other refusal (a share root, a symlink, a mount crossing, a special file, a hard link, a permission) is file_unavailable.
+FILE_WORKER_CODES={'path_missing':'file_missing','offset_beyond':'invalid_request'}
+class FileRefusal(Exception):pass
+class FileChannelFatal(Exception):pass
+
+def _js_string(text):
+    """JSON.stringify of one string: the escapes ECMAScript emits and no others (no ASCII escaping, lowercase hex, lone surrogates escaped)."""
+    out=['"']
+    for char in text:
+        code=ord(char)
+        if char=='"':out.append('\\"')
+        elif char=='\\':out.append('\\\\')
+        elif char in '\b\f\n\r\t':out.append({'\b':'\\b','\f':'\\f','\n':'\\n','\r':'\\r','\t':'\\t'}[char])
+        elif code<0x20 or 0xd800<=code<=0xdfff:out.append('\\u%04x'%code)
+        else:out.append(char)
+    out.append('"');return ''.join(out)
+def _js_scalar(value):
+    if value is None:return 'null'
+    if value is True:return 'true'
+    if value is False:return 'false'
+    if type(value) is int:return str(value)
+    if type(value) is str:return _js_string(value)
+    raise FileRefusal('invalid_request')
+def file_wire(value):
+    """JSON.stringify of a flat object, in its own key order. Only the scalars the channel uses are accepted."""
+    if type(value) is not dict:raise FileRefusal('invalid_request')
+    return '{'+','.join(_js_string(key)+':'+_js_scalar(item) for key,item in value.items())+'}'
+def _no_duplicates(pairs):
+    seen={}
+    for key,value in pairs:
+        if key in seen:raise ValueError('duplicate key')
+        seen[key]=value
+    return seen
+def _refuse_constant(_):raise ValueError('non-finite number')
+def _refuse_float(_):raise ValueError('non-integer number')
+def _nests_within(body,maximum):
+    """parseCoworkGuestFileRequest's string-aware brace/bracket bound over the raw text, before any parse."""
+    depth=0;in_string=False;index=0
+    while index<len(body):
+        char=body[index]
+        if in_string:
+            if char=='\\':index+=1
+            elif char=='"':in_string=False
+        elif char=='"':in_string=True
+        elif char in '{[':
+            depth+=1
+            if depth>maximum:return False
+        elif char in '}]':
+            depth-=1
+            if depth<0:return False
+        index+=1
+    return depth==0 and not in_string
+def _file_line(raw):
+    """One request line (bytes, newline included) to its plain object, or FileRefusal. The exact re-serialization compare refuses duplicate
+    keys, whitespace, alternate escapes and every non-canonical number, as the TypeScript parser does."""
+    if type(raw) is not bytes or len(raw)>FILE_LIMITS['requestFrameBytes'] or not raw.endswith(b'\n'):raise FileRefusal('invalid_request')
+    try:body=raw[:-1].decode('utf-8')
+    except UnicodeDecodeError:raise FileRefusal('invalid_request')
+    if not _nests_within(body,FILE_LIMITS['frameDepth']):raise FileRefusal('invalid_request')
+    try:parsed=json.loads(body,object_pairs_hook=_no_duplicates,parse_constant=_refuse_constant,parse_float=_refuse_float)
+    except (ValueError,RecursionError):raise FileRefusal('invalid_request')
+    if type(parsed) is not dict or file_wire(parsed)!=body:raise FileRefusal('invalid_request')
+    for key,value in parsed.items():
+        if key in FILE_DANGEROUS_KEYS or any(0xd800<=ord(char)<=0xdfff for char in key):raise FileRefusal('invalid_request')
+        if type(value) is str and any(0xd800<=ord(char)<=0xdfff for char in value):raise FileRefusal('invalid_request')
+    return parsed
+def file_relative_path(value):
+    """parseCoworkGuestRelativePath: 4096 UTF-8 bytes, 32 components of 255 bytes; no absolute path, empty, '.' or '..' component, control
+    character (C0, DEL, C1) or ill-formed string."""
+    if type(value) is not str or not value or any(0xd800<=ord(char)<=0xdfff for char in value) or FILE_CONTROL.search(value) or len(value.encode('utf-8'))>FILE_LIMITS['pathBytes']:raise FileRefusal('invalid_request')
+    parts=value.split('/')
+    if len(parts)>FILE_LIMITS['pathComponents'] or any(part in ('','.','..') or len(part.encode('utf-8'))>FILE_LIMITS['componentBytes'] for part in parts):raise FileRefusal('invalid_request')
+    return value
+def _file_int(value,minimum,maximum):
+    if type(value) is not int or not minimum<=value<=maximum:raise FileRefusal('invalid_request')
+    return value
+def _file_text(value,pattern):
+    if type(value) is not str or not pattern.fullmatch(value):raise FileRefusal('invalid_request')
+    return value
+def file_request(raw):
+    """A strict Python port of parseCoworkGuestFileRequest. Returns the request as a plain dict in the channel's key order, or raises
+    FileRefusal('invalid_request')."""
+    parsed=_file_line(raw);op=parsed.get('op')
+    if op not in FILE_OPERATIONS or set(parsed)!=set(FILE_REQUEST_KEYS[op]):raise FileRefusal('invalid_request')
+    if type(parsed['version']) is not int or parsed['version']!=FILE_CHANNEL_VERSION:raise FileRefusal('invalid_request')
+    request={'version':1,'requestId':_file_text(parsed['requestId'],FILE_UUID4),'op':op}
+    for key in ('workspaceId','sessionId','locationId'):request[key]=_file_text(parsed[key],FILE_ID)
+    request['relativePath']=file_relative_path(parsed['relativePath']);request['incarnationId']=_file_text(parsed['incarnationId'],FILE_ID)
+    request['sourceRevision']=_file_int(parsed['sourceRevision'],1,JS_SAFE_INTEGER)
+    if op!='stat':request['expectedGeneration']=_file_text(parsed['expectedGeneration'],FILE_DIGEST)
+    if op=='readRange':request['offset']=_file_int(parsed['offset'],0,JS_SAFE_INTEGER)
+    if op!='stat':request['maxBytes']=_file_int(parsed['maxBytes'],1,FILE_LIMITS['chunkMaxBytes'])
+    return request
+def file_echo(raw):
+    """The (requestId, op) of a refused line that can still be answered with invalid_request, or None when the line is too broken to echo:
+    not one bounded UTF-8 JSON object without duplicate keys, or no UUID v4 requestId, or no known op. The service then ends FILE_OUT."""
+    try:
+        if type(raw) is not bytes or len(raw)>FILE_LIMITS['requestFrameBytes'] or not raw.endswith(b'\n'):return None
+        parsed=json.loads(raw[:-1].decode('utf-8'),object_pairs_hook=_no_duplicates,parse_constant=_refuse_constant)
+    except (ValueError,RecursionError):return None
+    if type(parsed) is not dict or type(parsed.get('requestId')) is not str or not FILE_UUID4.fullmatch(parsed['requestId']) or parsed.get('op') not in FILE_OPERATIONS:return None
+    return parsed['requestId'],parsed['op']
+def file_error_line(request_id,op,code):
+    if code not in FILE_ERROR_CODES:code='file_unavailable'
+    return (file_wire({'version':1,'requestId':request_id,'op':op,'ok':False,'code':code})+'\n').encode('utf-8')
+def file_generation(incarnation,identity):
+    """The opaque generation token: SHA-256 over the incarnation and the file identity, so a token never carries across a boot."""
+    dev,ino,size,mtime,ctime,mode,nlink,uid=identity
+    return hashlib.sha256(f'v1|{incarnation}|{dev}|{ino}|{size}|{mtime}|{ctime}|{mode}|{nlink}|{uid}'.encode()).hexdigest()
+def _file_identity(value):
+    if type(value) is not list or len(value)!=8 or any(type(item) is not int for item in value):raise FileRefusal('file_unavailable')
+    if not 0<=value[2]<=JS_SAFE_INTEGER or any(item<0 for item in (value[0],value[1],value[5],value[6],value[7])):raise FileRefusal('file_unavailable')
+    return tuple(value)
+def file_worker_result(stdout,code,request):
+    """The browse worker's one stdout line to (before, after, data) or FileRefusal with a channel code. Anything not exactly the worker's
+    closed shapes is file_unavailable."""
+    try:
+        text=bytes(stdout).decode('utf-8')
+        if text.count('\n')!=1 or not text.endswith('\n'):raise ValueError('lines')
+        value=json.loads(text,object_pairs_hook=_no_duplicates,parse_constant=_refuse_constant,parse_float=_refuse_float)
+    except (ValueError,RecursionError):raise FileRefusal('file_unavailable')
+    if type(value) is not dict or value.get('version')!=1 or type(value.get('version')) is not int:raise FileRefusal('file_unavailable')
+    if value.get('ok') is False:
+        if code!=1 or set(value)!={'version','ok','code','errno'} or type(value['code']) is not str:raise FileRefusal('file_unavailable')
+        raise FileRefusal(FILE_WORKER_CODES.get(value['code'],'file_unavailable'))
+    if value.get('ok') is not True or code!=0:raise FileRefusal('file_unavailable')
+    if request['op']=='stat':
+        if set(value)!={'version','ok','before'}:raise FileRefusal('file_unavailable')
+        return _file_identity(value['before']),None,None
+    if set(value)!={'version','ok','before','after','bytes','dataBase64'} or type(value['bytes']) is not int or type(value['dataBase64']) is not str:raise FileRefusal('file_unavailable')
+    try:data=base64.b64decode(value['dataBase64'],validate=True)
+    except ValueError:raise FileRefusal('file_unavailable')
+    if len(data)!=value['bytes'] or base64.b64encode(data).decode()!=value['dataBase64'] or len(data)>request['maxBytes']:raise FileRefusal('file_unavailable')
+    return _file_identity(value['before']),_file_identity(value['after']),data
+def file_response_line(request,before,after,data):
+    """The canonical success line, or FileRefusal. Order of judgment for reads: the worker's span (a shorter read is file_incomplete), then
+    the generation the caller expected, then the generation after the read (both stale_file). Bytes are discarded on every refusal."""
+    generation=file_generation(request['incarnationId'],before);size=before[2]
+    response={'version':1,'requestId':request['requestId'],'op':request['op'],'ok':True}
+    for key in FILE_BINDING:response[key]=request[key]
+    response.update(generation=generation,bytes=size,kind='file')
+    if request['op']!='stat':
+        offset=request.get('offset',0)
+        if offset>size:raise FileRefusal('invalid_request')
+        promised=min(request['maxBytes'],size-offset)
+        if len(data)!=promised:raise FileRefusal('file_incomplete')
+        if generation!=request['expectedGeneration'] or file_generation(request['incarnationId'],after)!=generation:raise FileRefusal('stale_file')
+        response.update(offset=offset,nextOffset=offset+len(data),eof=offset+len(data)==size,contentBase64=base64.b64encode(data).decode(),encoding='base64')
+    line=(file_wire(response)+'\n').encode('utf-8')
+    if len(line)>FILE_LIMITS['responseFrameBytes']:raise FileRefusal('response_too_large')
+    return line
+def file_binding(conversations,request):
+    """The delivered conversation and root a request names. Not delivered, revoked or unknown location: file_unavailable. Another
+    incarnation: stale_file. sourceRevision is echoed, never checked (a host fence)."""
+    item=next((value for value in conversations.values() if value['authority']['workspaceId']==request['workspaceId'] and value['authority']['sessionId']==request['sessionId']),None)
+    if item is None or item.get('revoked'):raise FileRefusal('file_unavailable')
+    if item['authority']['incarnationId']!=request['incarnationId']:raise FileRefusal('stale_file')
+    root=item['roots'].get(request['locationId'])
+    if root is None or root['root']['id']!=request['locationId']:raise FileRefusal('file_unavailable')
+    return item,root
+def file_root_admitted(fd,data_device,workspace_gid):
+    """Root's half of the root-device check, on the held descriptor: the data volume's device, and the setgid root:workspaceGid 2770 root
+    that makes every member's files group-readable. A share root (another device) never reaches the browse compartment."""
+    st=os.fstat(fd)
+    return stat.S_ISDIR(st.st_mode) and st.st_dev==data_device and st.st_uid==0 and st.st_gid==workspace_gid and stat.S_IMODE(st.st_mode)==FILE_ROOT_MODE
+def file_channel_config(value,conversations,reader_uid=None):
+    """The trusted config's set-level file channel: the per-workspace browse uid and the data volume's device (from Root's init's own
+    mount of /workspace). The browse uid is also its own primary gid, so it must differ from every runtime, tool, group and reader id."""
+    if type(value) is not dict or set(value)!={'browseUid','dataDevice'}:raise Refusal('file_channel_config')
+    uid=value['browseUid'];device=value['dataDevice']
+    if type(uid) is not int or not 1000<=uid<=65535 or type(device) is not int or not 0<=device<2**64:raise Refusal('file_channel_config')
+    reserved={0}
+    for item in conversations:reserved.update((item['runtimeUid'],item['toolUid'],item['workspaceGid']))
+    if reader_uid is not None:reserved.add(reader_uid)
+    if uid in reserved:raise Refusal('browse_identity_collision')
+    return {'browseUid':uid,'dataDevice':device}
+def browse_argv(launcher,worker,view,receipt,environment,uid,gid,op,guest_path,relative,limit,offset,root_fd):
+    """The exact Root-only envelope of the tool launcher's browse mode: one root, read only, never a guidance trailer."""
+    return [str(launcher),str(worker),view,str(receipt),str(environment),str(uid),str(gid),'plan','browse','stat' if op=='stat' else 'browse-read',guest_path,relative,str(limit),str(offset),'1',str(root_fd),guest_path,'1']
+
+class FileChannelPorts:
+    """The two FIFOs Root's init made for the file channel: FILE_IN (read) and FILE_OUT (write). Checked like RuntimeDuplexPorts; a pipe never
+    carries descriptors, which is what makes the plain reads below safe. Distinct from each other and from every runtime FIFO."""
+    def __init__(self,input_fd,output_fd,others=()):
+        self.fds={};self.identities={};self.closed=False
+        try:
+            for name,fd,access in (('input',input_fd,os.O_RDONLY),('output',output_fd,os.O_WRONLY)):
+                if type(fd) is not int or fd<0:raise Refusal('file_channel_descriptor')
+                held=fcntl.fcntl(fd,fcntl.F_DUPFD_CLOEXEC,64);self.fds[name]=held
+                st=os.fstat(held);flags=fcntl.fcntl(held,fcntl.F_GETFL)
+                if not stat.S_ISFIFO(st.st_mode) or st.st_uid!=os.geteuid() or st.st_nlink!=1 or flags&os.O_ACCMODE!=access or not flags&os.O_NONBLOCK:raise Refusal('file_channel_descriptor')
+                identity=(st.st_dev,st.st_ino,st.st_uid,st.st_mode,access)
+                if any(identity[:2]==old[:2] for old in self.identities.values()):raise Refusal('file_channel_alias')
+                self.identities[name]=identity
+            for fd in others:
+                st=os.fstat(fd)
+                if any((st.st_dev,st.st_ino)==old[:2] for old in self.identities.values()):raise Refusal('file_channel_alias')
+        except BaseException:self.close();raise
+    def descriptor(self,name):
+        """The checked descriptor of one end. Each end has one owner thread, which alone uses and closes it, so a number is never reused under it."""
+        fd=self.fds.get(name)
+        if self.closed or fd is None:raise FileChannelFatal('closed')
+        st=os.fstat(fd);flags=fcntl.fcntl(fd,fcntl.F_GETFL)
+        if (st.st_dev,st.st_ino,st.st_uid,st.st_mode,flags&os.O_ACCMODE)!=self.identities[name] or st.st_nlink!=1 or not flags&os.O_NONBLOCK:raise FileChannelFatal('changed')
+        return fd
+    def verify(self):
+        for name in tuple(self.fds):self.descriptor(name)
+        if self.closed:raise FileChannelFatal('closed')
+    def close_end(self,name):
+        fd=self.fds.pop(name,None)
+        if fd is not None:
+            try:os.close(fd)
+            except OSError:pass
+    def close(self):
+        self.closed=True
+        for name in tuple(self.fds):self.close_end(name)
+
+class BrowseLauncher:
+    """Runs ONE browse worker through the tool launcher's browse mode and returns the evidence, never raising for a launch that started.
+    The calling thread must stay alive until the child is reaped (PDEATHSIG tracks the thread). A child whose reap is unproven is
+    retained, and the evidence says so: the service turns that into debt."""
+    def __init__(self,*,artifacts,pins,environment,directory,uid,retained=None,spawn=None,clock=time.monotonic,kill_init=None,pidfd_check=None,root_uid=0):
+        self.artifacts=dict(artifacts);self.pins=dict(pins);self.environment=environment;self.directory=directory;self.uid=uid
+        self.retained=retained if retained is not None else [];self.spawn=spawn or subprocess.Popen;self.clock=clock
+        self.kill_init=kill_init or reader_kill_init;self.pidfd_check=pidfd_check or reader_pidfd_check;self.root_uid=root_uid
+    def run(self,*,op,guest_path,relative,limit,offset,gid,root_fd,cancel):
+        result={'launched':False,'reaped':True,'code':None,'stdout':b'','outcome':'unavailable'}
+        view=None;control=remote=child=selector=pidfd=None
+        try:
+            for name in ('launcher','fileWorker'):verify_held_artifact(self.artifacts[name],self.pins[name])
+            view=tempfile.mkdtemp(prefix='browse-',dir=str(self.directory));st=os.lstat(view)
+            if not stat.S_ISDIR(st.st_mode) or st.st_uid!=self.root_uid or st.st_mode&0o777!=0o700:raise Refusal('browse_view')
+            control,remote=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET)
+            argv=browse_argv(self.artifacts['launcher'],self.artifacts['fileWorker'],view,remote.fileno(),self.environment,self.uid,gid,op,guest_path,relative,limit,offset,root_fd)
+            fds=[self.artifacts['launcher'],self.artifacts['fileWorker'],remote.fileno(),self.environment,root_fd]
+        except (Refusal,OSError):
+            for end in (control,remote):
+                if end is not None:end.close()
+            if view is not None:
+                try:os.rmdir(view)
+                except OSError:pass
+            return result
+        out=bytearray();err=bytearray();status=None;killed=False;fallback=False;overrun=False;timed_out=False
+        try:
+            executable=f"/proc/self/fd/{self.artifacts['launcher']}"
+            try:
+                child=self.spawn(argv,executable=executable,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=fds,close_fds=True,env={'LANG':'C','LC_ALL':'C'},start_new_session=True,bufsize=0)
+            except OSError as error:
+                if error.filename!=executable:result.update(launched=True,reaped=False)
+                raise
+            finally:remote.close()
+            result.update(launched=True,reaped=False)
+            selector=selectors.DefaultSelector();control.setblocking(False);selector.register(control,selectors.EVENT_READ)
+            for stream in (child.stdout,child.stderr):os.set_blocking(stream.fileno(),False);selector.register(stream,selectors.EVENT_READ)
+            start=self.clock();hard=start+FILE_SUPERVISE_SECONDS+FILE_REAP_SECONDS
+            while selector.get_map():
+                now=self.clock()
+                if now>hard:raise Uncertain('browse_cleanup_unconfirmed')
+                if now-start>FILE_SUPERVISE_SECONDS:timed_out=True
+                want=cancel.is_set() or timed_out or overrun
+                if want and not killed and pidfd is not None:self.kill_init(pidfd);killed=True
+                elif want and pidfd is None and not fallback and timed_out:
+                    try:child.kill()
+                    except OSError:pass
+                    fallback=True
+                for event,_ in selector.select(.05):
+                    stream=event.fileobj
+                    if stream is control:
+                        try:kind,value=reader_control_message(control,pidfd is None and status is None)
+                        except BlockingIOError:continue
+                        if kind=='eof':selector.unregister(control)
+                        elif kind=='init':pidfd=value;self.pidfd_check(pidfd)
+                        elif pidfd is None or status is not None:raise Uncertain('browse_receipt')
+                        else:status=value
+                    else:
+                        try:data=os.read(stream.fileno(),65536)
+                        except BlockingIOError:continue
+                        if not data:selector.unregister(stream);continue
+                        target,limit_bytes=(out,FILE_STDOUT_BYTES) if stream is child.stdout else (err,FILE_STDERR_BYTES)
+                        room=limit_bytes+1-len(target)
+                        if room>0:target.extend(data[:room])
+                        if len(target)>limit_bytes:overrun=True
+            try:code=child.wait(timeout=max(.1,hard-self.clock()))
+            except subprocess.TimeoutExpired:raise Uncertain('browse_cleanup_unconfirmed')
+            # The loop ends only once the receipt socket and both pipes reached EOF. Exit 64 is the launcher refusing its own envelope,
+            # strictly before the namespace fork: no init ever existed. Any other exit without the init's receipt is unaccounted for.
+            if status is None and not (pidfd is None and code==64):raise Uncertain('browse_receipt')
+            result.update(reaped=True,code=code)
+            if status is not None and os.waitstatus_to_exitcode(status)!=code:result['outcome']='unavailable'
+            elif not (cancel.is_set() or killed or timed_out or overrun or fallback or code not in (0,1)):result.update(outcome='ok',stdout=bytes(out))
+        except (Refusal,Uncertain,OSError,ValueError):result['outcome']='unavailable'
+        finally:
+            if selector is not None:selector.close()
+            if child is not None and not result['reaped']:
+                try:child.kill()
+                except OSError:pass
+                self.retained.append(child)
+            if child is not None:
+                for stream in (child.stdout,child.stderr):
+                    try:
+                        if stream is not None:stream.close()
+                    except OSError:pass
+            for end in (control,remote):
+                if end is not None:end.close()
+            if pidfd is not None:os.close(pidfd)
+            if view is not None and result['reaped']:
+                try:os.rmdir(view)
+                except OSError:pass
+        return result
+
+class GuestFileService:
+    """Root's file service on the FILE_IN/FILE_OUT FIFOs, for ONE incarnation. At most four requests are unanswered at once (FILE_IN is not
+    read while four are), each gets exactly one response line, lines never interleave and leave in pieces of at most 256 KiB.
+
+    FILE_IN's end is the drain: the line in progress finishes, nothing more is written, FILE_OUT closes and the service is over. The same
+    happens on a fault: a line too broken to echo (or over 16 KiB), a FIFO that changed or failed, or a browse child left unaccounted for
+    (retained debt). The host's port then fails closed; there is no resynchronization within an incarnation."""
+    def __init__(self,*,ports,resolve,launch,clock=time.monotonic):
+        self.ports=ports;self.resolve=resolve;self.launch=launch;self.clock=clock
+        self.cv=threading.Condition();self.state='new';self.failure=None;self.threads=[];self.queue=[];self.responses=[];self.outstanding=0;self.cancels=set();self.uncertain=0
+        self.counts={'requests':0,'answered':0,'refused':0}
+    @property
+    def debt(self):return self.uncertain>0
+    def start(self):
+        with self.cv:
+            if self.state!='new':raise Refusal('file_channel_claimed')
+            self.state='serving'
+        self.threads=[threading.Thread(target=self._read,daemon=True),threading.Thread(target=self._write,daemon=True),*[threading.Thread(target=self._work,daemon=True) for _ in range(FILE_IN_FLIGHT)]]
+        for thread in self.threads:thread.start()
+    def observations(self):
+        with self.cv:return {'state':self.state,'failure':self.failure,'outstanding':self.outstanding,'uncertain':self.uncertain,**self.counts}
+    def _end(self,code):
+        """Stop accepting and stop answering. Queued work is dropped, running work is cancelled, the line in progress still completes."""
+        with self.cv:
+            if self.state!='serving':return
+            self.state='ending';self.failure=code
+            del self.queue[:];del self.responses[:]
+            for cancel in self.cancels:cancel.set()
+            self.cv.notify_all()
+    def _read(self):
+        buffer=bytearray()
+        try:
+            while True:
+                with self.cv:
+                    while self.state=='serving' and self.outstanding>=FILE_IN_FLIGHT:self.cv.wait(.1)
+                    if self.state!='serving':return
+                # A complete line already buffered is admitted before any more bytes are read.
+                index=buffer.find(b'\n',0,FILE_LIMITS['requestFrameBytes'])
+                if index>=0:
+                    line=bytes(buffer[:index+1]);del buffer[:index+1]
+                    self._admit(line);continue
+                if len(buffer)>=FILE_LIMITS['requestFrameBytes']:raise FileChannelFatal('request_too_large')
+                fd=self.ports.descriptor('input')
+                # The poll is only a bounded wait: the non-blocking read below is what observes data and FILE_IN's end alike.
+                poll_readable([fd],.05)
+                try:data=os.read(fd,65536)
+                except (BlockingIOError,InterruptedError):continue
+                if not data:self._end('drained');return
+                buffer.extend(data)
+        except (FileChannelFatal,OSError,ValueError) as error:self._end(str(error) if isinstance(error,FileChannelFatal) else 'file_in_lost')
+        finally:self.ports.close_end('input')
+    def _admit(self,line):
+        try:request=file_request(line)
+        except FileRefusal:
+            echo=file_echo(line)
+            if echo is None:raise FileChannelFatal('request_unechoable')
+            with self.cv:
+                self.outstanding+=1;self.counts['requests']+=1;self.counts['refused']+=1
+                self.responses.append(file_error_line(echo[0],echo[1],'invalid_request'));self.cv.notify_all()
+            return
+        with self.cv:
+            self.outstanding+=1;self.counts['requests']+=1;self.queue.append(request);self.cv.notify_all()
+    def _work(self):
+        while True:
+            with self.cv:
+                while not self.queue and self.state=='serving':self.cv.wait(.1)
+                if self.state!='serving':return
+                request=self.queue.pop(0);cancel=threading.Event();self.cancels.add(cancel)
+            try:line=self._answer(request,cancel)
+            finally:
+                with self.cv:self.cancels.discard(cancel)
+            if line is None:return
+            with self.cv:
+                if self.state!='serving':return
+                self.responses.append(line);self.cv.notify_all()
+    def _answer(self,request,cancel):
+        """One response line for one parsed request, or None after a fault that ended the service."""
+        try:
+            try:target=self.resolve(request)
+            except FileRefusal:raise
+            except (Refusal,OSError,KeyError,TypeError,ValueError):raise FileRefusal('file_unavailable')
+            # Only the launch can leave a process behind: a launch that raised, or whose child's reap is unproven, is debt and ends the service.
+            try:result=self.launch(op=request['op'],guest_path=target['guestPath'],relative=request['relativePath'],limit=request.get('maxBytes',1),offset=request.get('offset',0),gid=target['gid'],root_fd=target['fd'],cancel=cancel)
+            except BaseException:result=None
+            if type(result) is not dict or result.get('reaped') is not True:
+                with self.cv:self.uncertain+=1
+                self._end('browse_debt');return None
+            if result.get('outcome')!='ok':raise FileRefusal('file_unavailable')
+            try:
+                before,after,data=file_worker_result(result.get('stdout'),result.get('code'),request)
+                line=file_response_line(request,before,after,data)
+            except FileRefusal:raise
+            except (KeyError,TypeError,ValueError):raise FileRefusal('file_unavailable')
+            with self.cv:self.counts['answered']+=1
+            return line
+        except FileRefusal as refusal:
+            with self.cv:self.counts['refused']+=1
+            return file_error_line(request['requestId'],request['op'],str(refusal))
+    def _write(self):
+        try:
+            while True:
+                with self.cv:
+                    while not self.responses and self.state=='serving':self.cv.wait(.1)
+                    if not self.responses:return
+                    line=self.responses.pop(0)
+                # Lines never interleave: this one thread writes each line whole before it takes the next.
+                view=memoryview(line);deadline=self.clock()+FILE_SUPERVISE_SECONDS
+                while view:
+                    fd=self.ports.descriptor('output')
+                    try:count=os.write(fd,view[:FILE_WRITE_PIECE])
+                    except (BlockingIOError,InterruptedError):count=0
+                    if count:view=view[count:];continue
+                    if self.clock()>deadline:raise FileChannelFatal('file_out_stalled')
+                    poller=select.poll();poller.register(fd,select.POLLOUT);poller.poll(50)
+                with self.cv:self.outstanding-=1;self.cv.notify_all()
+        except (FileChannelFatal,OSError,ValueError) as error:self._end(str(error) if isinstance(error,FileChannelFatal) else 'file_out_lost')
+        finally:
+            # FILE_OUT closes as soon as nothing more will be written: that close is what the relay frames as the stream's end.
+            self._end('stopped');self.ports.close_end('output')
+            with self.cv:self.state='closed'
+    def stop(self):
+        """End service (the same path as a drain) and wait for every thread. True only when no browse child is left unaccounted for."""
+        with self.cv:
+            fresh=self.state=='new'
+            if fresh:self.state='closed'
+        if fresh:self.ports.close();return True
+        self._end('stopped')
+        deadline=self.clock()+FILE_SUPERVISE_SECONDS+FILE_REAP_SECONDS+1
+        for thread in self.threads:thread.join(max(0,deadline-self.clock()))
+        with self.cv:
+            if any(thread.is_alive() for thread in self.threads):self.uncertain+=1
+        return not self.debt
+
 class ToolService:
     def __init__(self,config,*,host_query_ports=None):
         if sys.platform!='linux' or os.geteuid()!=0:raise Refusal('protected_linux_root_required')
@@ -848,6 +1321,7 @@ class ToolService:
         self.lock=threading.RLock();self.stop_event=threading.Event();self.conversations={};self.active={};self.debt=set();self.tickets={};self.retained_children=[];self.tool_connections=threading.BoundedSemaphore(TOOL_CONNECTION_LIMIT);self.admin_connections=threading.BoundedSemaphore(ADMIN_CONNECTION_LIMIT)
         self.host_query_ports=dict(host_query_ports or {})
         self.reader=None;self.artifacts={};self.artifact_pins={};self.owned=[];self.listeners=[];self.threads=[];self.runtimes={};self.runtime_artifacts={};self.runtime_pins={};self.guest_boot=config['guestBootId']
+        self.file_channel=None;self.file_service=None
         try:
             # First inside the try: a conflict still refuses before any artifact opens, and close() releases injected ports.
             self.runtime_profile=select_runtime_profile(config)
@@ -909,6 +1383,8 @@ class ToolService:
                         if 'guidanceDirectory' not in entry[runtime_key]:raise Refusal('guided_guidance_required')
                         fd=guidance_directory(entry[runtime_key]['guidanceDirectory'],protected,root_sources);self.owned.append(fd);self.conversations[entry['logicalSessionId']]['guidance']=fd
                 if any(runtime_key in entry for entry in config['conversations']):self.reader=self._open_reader(config[runtime_key]['reader'],config['conversations'])
+            # The guest file channel's set-level browse identity, beside the conversations (after the reader, whose uid it must differ from).
+            if 'fileChannel' in config:self.file_channel=file_channel_config(config['fileChannel'],config['conversations'],self.reader['uid'] if self.reader else None)
         except BaseException:
             self.close();raise
     def _listener(self,path,uid,handler,*,admin=False):
@@ -1395,6 +1871,19 @@ class ToolService:
             for channel in (control,parent,bootstrap,guest,reader_root,reader_guest):
                 if channel is not None:channel.close()
             if confirmed and view is not None:os.rmdir(view)
+    def start_file_channel(self,ports):
+        """Start the one file service of this incarnation on Root's init's FILE_IN/FILE_OUT FIFOs (after the ready line)."""
+        if self.file_channel is None or self.file_service is not None or type(ports) is not FileChannelPorts or self.stop_event.is_set():raise Refusal('file_channel_unavailable')
+        launcher=BrowseLauncher(artifacts={name:self.artifacts[name] for name in ('launcher','fileWorker')},pins={name:self.artifact_pins[name] for name in ('launcher','fileWorker')},
+                                environment=self.environment,directory=self.directory,uid=self.file_channel['browseUid'],retained=self.retained_children)
+        self.file_service=GuestFileService(ports=ports,resolve=self._file_target,launch=launcher.run)
+        self.file_service.start()
+    def _file_target(self,request):
+        with self.lock:
+            if self.stop_event.is_set():raise FileRefusal('file_unavailable')
+            item,root=file_binding(self.conversations,request)
+        if not file_root_admitted(root['fd'],self.file_channel['dataDevice'],item['workspaceGid']):raise FileRefusal('file_unavailable')
+        return {'guestPath':root['root']['guestPath'],'gid':item['workspaceGid'],'fd':root['fd']}
     def close(self):
         self.stop_event.set()
         with self.lock:
@@ -1407,6 +1896,7 @@ class ToolService:
         if any(thread.is_alive() for thread in self.threads):return False
         for port in getattr(self,'host_query_ports',{}).values():
             if type(port) is RuntimeDuplexPorts:port.close()
+        if getattr(self,'file_service',None) is not None and not self.file_service.stop():return False
         if self.debt:return False
         for fd in self.owned:
             try:os.close(fd)
@@ -1463,19 +1953,50 @@ def read_trusted_config(fd):
     if fd<3 or not stat.S_ISREG(st.st_mode) or st.st_uid!=0 or st.st_mode&0o022 or st.st_size>65536:raise SystemExit(64)
     with os.fdopen(fd,'rb') as stream:return json.load(stream)
 
+def file_channel_arguments(argv):
+    """Root's init (FC3) appends `--file-channel-fds IN,OUT` after every other argument: argv -> (argv without it, (in, out) or None)."""
+    arguments=list(argv)
+    if len(arguments)>=3 and arguments[-2]=='--file-channel-fds':
+        parts=arguments[-1].split(',')
+        if len(parts)!=2:raise SystemExit(64)
+        fds=tuple(descriptor_number(part) for part in parts)
+        if len(set(fds))!=2 or min(fds)<3:raise SystemExit(64)
+        return arguments[:-2],fds
+    if '--file-channel-fds' in arguments:raise SystemExit(64)
+    return arguments,None
+
+def file_channel_ports(config,descriptors,runtime_descriptors):
+    """The checked file channel FIFOs, or None when Root's init passed none. FIFOs without the trusted config's fileChannel are a usage error."""
+    if descriptors is None:return None
+    if not isinstance(config,dict) or 'fileChannel' not in config:raise SystemExit(64)
+    return FileChannelPorts(*descriptors,others=tuple(runtime_descriptors or ()))
+
 def main(argv=None):
-    config_fd,descriptors=parse_arguments(sys.argv if argv is None else argv)
+    arguments,file_descriptors=file_channel_arguments(sys.argv if argv is None else argv)
+    config_fd,descriptors=parse_arguments(arguments)
+    if file_descriptors is not None and {config_fd,*(descriptors or ())}&set(file_descriptors):raise SystemExit(64)
+    file_ports=None
     try:
         config=read_trusted_config(config_fd)
         ports=runtime_ports_from_descriptors(config,descriptors)
-    finally:close_descriptors(descriptors)  # exactly once, success or failure
+        try:file_ports=file_channel_ports(config,file_descriptors,descriptors)
+        except BaseException:
+            for port in ports.values():port.close()
+            raise
+    finally:
+        close_descriptors(descriptors)  # exactly once, success or failure
+        close_descriptors(file_descriptors)
     try:service=ToolService(config,host_query_ports=ports)
     except BaseException:
         for port in ports.values():port.close()
+        if file_ports is not None:file_ports.close()
         raise
     try:
         service.start();print(canonical({'ready':True,'fullGuestExecutionEnabled':False}),flush=True)
+        # The file service starts after the ready line; from here it owns (and closes) the two FIFOs.
+        if file_ports is not None:service.start_file_channel(file_ports);file_ports=None
         while sys.stdin.buffer.read(1):pass
     finally:
+        if file_ports is not None:file_ports.close()
         if not service.close():raise SystemExit(78)
 if __name__=='__main__':main()
