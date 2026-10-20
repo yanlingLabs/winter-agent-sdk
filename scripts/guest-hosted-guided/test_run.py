@@ -1067,7 +1067,7 @@ class RealPacket(unittest.TestCase):
     """Optional, off in CI (the artifact is 195 MB): the runner's own packet code against the REAL run-2 artifact."""
 
     def setUp(self):
-        self.pin = os.path.join(REAL_RUNTIME, 'compile-39327386044.pin.json')
+        self.pin = os.path.join(REAL_RUNTIME, 'compile-39391435225.pin.json')
         self.verifier = os.path.join(REAL_RUNTIME, 'verify_packet.py')
         self.pin_data = json.load(open(self.pin))
 
