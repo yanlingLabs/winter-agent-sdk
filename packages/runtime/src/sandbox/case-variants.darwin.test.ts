@@ -36,6 +36,10 @@ const imageReady = process.platform === "darwin" && setUpImage();
 // Attaching it as a user needs the outer volume attached with `-owners on`.
 const nestedParent = imageReady ? join(realpathSync(mountPoint), "nested") : "";
 const nestedReady = imageReady && (mkdirSync(nestedParent), attachNested(join(nestedParent, "mnt")));
+// A second case-INSENSITIVE image mounted AT a write root (`mp/ci`) whose parent `mp` is on the
+// case-sensitive volume: a variant of that root would be created in `mp`, on the case-sensitive side.
+const mountRootParent = imageReady ? join(realpathSync(mountPoint), "mp") : "";
+const mountRootReady = imageReady && (mkdirSync(mountRootParent), attachNested(join(mountRootParent, "ci")));
 const t = test.skipIf(!imageReady);
 let n = 0;
 /** A fresh folder on the case-sensitive volume for one test. */
@@ -122,6 +126,28 @@ describe("case-variant write roots on a case-sensitive volume (real disk image, 
     expect(readdirSync(join(v, "MNT", "proj"))).toEqual([]);
   });
 
+  test.skipIf(!mountRootReady)("a write root that IS the mount point of a case-insensitive volume in a case-sensitive folder: creating its variant is refused (the parent's volume counts)", async () => {
+    const root = join(mountRootParent, "ci");
+    const cwd = vol();
+    expect(isOnCaseSensitiveVolume(root)).toBe(false);
+    expect(isOnCaseSensitiveVolume(mountRootParent)).toBe(true);
+    const escape = `mkdir "${mountRootParent}/CI" && echo x > "${mountRootParent}/CI/e"`;
+    // Without the fix (the fence judged only the root's own volume, so only cwd was fenced): the escape works.
+    const unfenced = buildSeatbeltProfile({ cwd, allowNetwork: false, writableRoots: [root], caseSensitiveWriteRoots: [cwd] });
+    const raw = spawnSync("/usr/bin/sandbox-exec", ["-p", unfenced, "/bin/sh", "-c", escape], { cwd, timeout: 8000 });
+    expect(raw.status).toBe(0);
+    expect(readdirSync(join(mountRootParent, "CI"))).toEqual(["e"]);
+    rmSync(join(mountRootParent, "CI"), { recursive: true });
+    // With the fix: the root is fenced and the same command fails; work inside the root is unaffected.
+    expect(caseSensitiveWriteRootsOrRefuse([cwd, root])).toEqual([cwd, root]);
+    const res = await run(escape, cwd, [root]);
+    expect(res.exitCode).not.toBe(0);
+    expect(res.profile).toContain(`(literal "${root}")`);
+    expect(readdirSync(mountRootParent).sort()).toEqual(["ci"]);
+    const ok = await run(`echo ok > "${root}/f" && mkdir "${root}/d" && mv "${root}/f" "${root}/d/" && rm -r "${root}/d"`, cwd, [root]);
+    expect(ok.exitCode).toBe(0);
+  });
+
   t("a folder on the way to a root that cannot be listed refuses with the unlistable message, not as a variant", async () => {
     const v = vol();
     mkdirSync(join(v, "locked", "proj"), { recursive: true });
@@ -173,10 +199,13 @@ describe("case-variant write roots on a case-sensitive volume (real disk image, 
   t("the default (case-insensitive) volume: no create fence, so the profile is byte-identical to one built without the field", async () => {
     const cwd = realpathSync(mkdtempSync(join(tmpdir(), "winter-casevol-default-")));
     try {
-      const res = await run("echo ok > a", cwd);
+      mkdirSync(join(cwd, "out"));
+      const res = await run("echo ok > a && echo ok > out/b", cwd, [join(cwd, "out")]);
       expect(res.exitCode).toBe(0);
       expect(res.profile).not.toContain("(deny file-write-create\n");
-      expect(caseSensitiveWriteRootsOrRefuse([cwd])).toEqual([]);
+      // Neither the roots nor their parent folders are on a case-sensitive volume: nothing to fence, so the
+      // field is omitted and the profile is byte-identical (next line, and profile.test.ts).
+      expect(caseSensitiveWriteRootsOrRefuse([cwd, join(cwd, "out")])).toEqual([]);
       expect(buildSeatbeltProfile({ cwd, allowNetwork: false, caseSensitiveWriteRoots: [] })).toBe(buildSeatbeltProfile({ cwd, allowNetwork: false }));
     } finally {
       rmSync(cwd, { recursive: true, force: true });

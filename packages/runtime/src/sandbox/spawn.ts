@@ -25,6 +25,7 @@ import { trackProcessGroup } from "../process-groups.ts";
 import { buildMandatoryFloorProfile, hasMandatoryFloor, type HostExecutionFloor, type HostCodeProcessScope, type HostCodeProcessHandle } from "@yanlinglabs/winter-agent-sdk";
 import { currentHostCodeProcessClient, hostCodeProcessBrokerRequired, requireBoundHandle } from "./host-code-process.ts";
 import { currentHostChildFloorProfile, prepareHostChildLaunch } from "./host-child-floor.ts";
+import { dirname } from "node:path";
 import { findCaseVariantsOf, isOnCaseSensitiveVolume } from "./case-variants.ts";
 import { newSandboxViolationTag, startViolationMonitor, tagSeatbeltDenials, VIOLATION_STREAM_MARGIN_SECONDS, type SandboxViolationReport, type ViolationMonitor } from "./violations.ts";
 
@@ -82,7 +83,7 @@ export class SandboxCaseVariantError extends SandboxUnavailableError {
 /**
  * Checks that no write root has an existing case variant (throws `SandboxCaseVariantError` when one does,
  * or when a folder on the way cannot be listed) and returns the canonical write roots that sit on a
- * case-sensitive volume, for the profile's create fence. EVERY root is scanned, not only the ones on a
+ * case-sensitive volume, or whose parent folder does, for the profile's create fence. EVERY root is scanned, not only the ones on a
  * case-sensitive volume: a root on a case-insensitive volume mounted under a case-sensitive one has
  * case-sensitive ancestors, and the scan checks each level's volume as it walks. On the default volume
  * the scan lists nothing (one `pathconf` per path level) and the result is empty, which keeps the
@@ -97,7 +98,10 @@ export function caseSensitiveWriteRootsOrRefuse(roots: readonly string[]): strin
     const scan = findCaseVariantsOf(root, canonical.filter((r) => r !== root));
     if (scan.unlistable !== undefined || scan.variants.length > 0) throw new SandboxCaseVariantError(root, scan.variants, scan.unlistable);
   }
-  return canonical.filter(isOnCaseSensitiveVolume);
+  // A variant of a root is created in the root's PARENT folder, so a root gets the create fence when the
+  // root OR its parent is on a case-sensitive volume (a case-insensitive volume mounted at the root inside
+  // a case-sensitive folder). Both are false on the default volume, which keeps the profile byte-identical.
+  return canonical.filter((root) => isOnCaseSensitiveVolume(root) || isOnCaseSensitiveVolume(dirname(root)));
 }
 
 // ---------------------------------------------------------------------------------------------
