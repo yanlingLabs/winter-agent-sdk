@@ -43,8 +43,8 @@ OPT_IN = 'WINTER_GUIDED_HOSTED_ADMISSION'
 OPT_IN_VALUE = 'disposable-linux-guided-hosted-run'
 # SHA-256 of the two siblings this file may load. Changing either sibling changes these and therefore this file's hash.
 ORACLE_SHA256 = '070d36b884b909e7574b734ce68c2b4a6f2204f0c43e0827502d86bf8769b886'
-ADAPTER_SHA256 = '05710cb345525d883948571139c3b648537417be7e23b4ca34a455dce14131d4'
-SESSION_SHA256 = 'e6fe9735e2b5fb102457ccf84b6e24a704f08c0fae884dab43fbf301b185451f'
+ADAPTER_SHA256 = '6424650d8027f9ab8be457ae737659bb4d062f57fda1a1deab72b9a9d916d8c1'
+SESSION_SHA256 = 'f6243e49476037b651d6dc28e6e0e4211e4da7585110b71039ecd4a8ed2c60cf'
 # The Core-dependent inputs (the host fixture records, the provider script's marker lines, the two prompts, the guidance
 # texts) are DATA this lane cannot invent; they live in a closed JSON file next to this one, pinned here. Zero = not supplied.
 FIXTURE_INPUTS_SHA256 = 'bfcdc1bffc6ea84548884602d57d23493999d0f8ed5bbe5e4a304b0bc5f74fce'
@@ -310,6 +310,32 @@ SAFE_NAME = re.compile(r'^[A-Za-z][A-Za-z0-9_]{0,39}$')
 SAFE_MESSAGE = re.compile(r'^[a-z][a-z_ ]{0,39}$')
 
 
+TEARDOWN_DETAIL = re.compile(r'^(not_settled|summary_missing|provider_killed|host_killed|(provider|host)_exit:([0-9]{1,3}|other))$')
+
+
+def teardown_diagnostic(settled, exits, killed, summary_seen):
+    """{kind: 'teardown', detail, summary}: WHICH teardown condition held, from a closed vocabulary, and whether the provider's summary arrived before any kill.
+    Order: the provider's summary never arrived; the runtime was not settled; a role had to be SIGKILLed; a role exited non-zero on its own."""
+    detail = None
+    if summary_seen is not True:
+        detail = 'summary_missing'
+    elif settled is not True:
+        detail = 'not_settled'
+    elif 'provider' in killed:
+        detail = 'provider_killed'
+    elif 'host' in killed:
+        detail = 'host_killed'
+    elif type(exits) is dict:
+        for label in ('provider', 'host'):
+            code = exits.get(label)
+            if code != 0:
+                detail = '%s_exit:%s' % (label, code if type(code) is int and 0 <= code <= 255 else 'other')
+                break
+    if detail is None or not TEARDOWN_DETAIL.fullmatch(detail):
+        return None
+    return {'kind': 'teardown', 'detail': detail, 'summary': summary_seen is True}
+
+
 def exception_diagnostic(error):
     """{kind: 'exception', detail: '<ClassName>[:<fixed short message>]'} for the exception types this runner raises on purpose (their messages are fixed
     lowercase words such as `host config mismatch`); any other message is dropped, so no path, id or role text can enter the record."""
@@ -357,6 +383,7 @@ def run(argv, platform, env, directory, euid=os.geteuid):
             record['diagnostic'] = exception_diagnostic(error)
             raise RunnerError(record['stage']) from None
         stub, host = {}, {}
+        killed = []
         record['evidence'] = {'stub': {}}  # filled snapshot by snapshot, so a run that stops early still shows what it saw
         record['stage'] = 'provider_start'
         try:
@@ -407,10 +434,12 @@ def run(argv, platform, env, directory, euid=os.geteuid):
             record['stage'] = 'teardown'
             final = roles.stop()
             if final is None:
+                record['diagnostic'] = teardown_diagnostic(record['settled'], None, [], False)
                 raise RunnerError('teardown')
             stub['final'] = final
             record['evidence']['stub']['final'] = {**final, **roles.details['final']}
             record['exits'] = session.reap()
+            killed = list(getattr(session, 'killed', ()))
         except adapter.AdapterError as error:
             record['diagnostic'] = error.diagnostic()
             raise RunnerError(record['stage']) from None
@@ -423,6 +452,7 @@ def run(argv, platform, env, directory, euid=os.geteuid):
             record['failureClass'] = 'host_result'
         elif record['settled'] is not True or record['exits'] != {'host': 0, 'provider': 0}:
             record['failureClass'] = 'teardown'
+            record['diagnostic'] = teardown_diagnostic(record['settled'], record['exits'], killed, getattr(roles, 'summary_seen', False))
         record['passed'] = record['failureClass'] is None
     except RunnerError as error:
         record['failureClass'] = error.failure_class

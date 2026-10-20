@@ -39,8 +39,9 @@ GOOD_METAFILE = {'inputs': {'x/packages/sdk/src/query.ts': {}, 'x/packages/sdk/s
 
 
 class FakeSession:
-    def __init__(self, state, modes, settle=True, exits=None):
+    def __init__(self, state, modes, settle=True, exits=None, killed=()):
         self.state, self.modes, self.processes = state, modes, []
+        self.killed = list(killed)
         self.shared = 'old guidance'
         self.closed = False
         self.settle_result, self.exit_result = settle, exits
@@ -88,6 +89,7 @@ class FakeSession:
                 result[label] = process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill()
+                self.killed.append(label)
                 result[label] = process.wait()
         return result
 
@@ -99,11 +101,11 @@ class FakeSession:
 
 
 class FakePlatform(run.Platform):
-    def __init__(self, state, modes=None, exit64=None, metafile=GOOD_METAFILE, settle=True, exits=None):
+    def __init__(self, state, modes=None, exit64=None, metafile=GOOD_METAFILE, settle=True, exits=None, killed=()):
         self.state, self.modes, self.calls = state, modes or {}, []
         self.exit64 = exit64 or {'site': 'argv_parse', 'exitStatus': 64, 'initReceipt': False, 'pidfdReceived': False}
         self.session = None
-        self.metafile, self.settle, self.exits = metafile, settle, exits
+        self.metafile, self.settle, self.exits, self.killed = metafile, settle, exits, killed
 
     role_timeout = 3.0
 
@@ -124,7 +126,7 @@ class FakePlatform(run.Platform):
 
     def open_session(self, staged):
         self.calls.append('session')
-        self.session = FakeSession(self.state, self.modes, self.settle, self.exits)
+        self.session = FakeSession(self.state, self.modes, self.settle, self.exits, self.killed)
         return self.session
 
 
@@ -656,6 +658,82 @@ class Evidence(Base):
         status, result, _ = self.chain(host='real_refusal')
         self.assertEqual((status, result['failureClass'], result['verdict']['cases']['dispatch1']['failureClass']), (1, 'verdict', 'dispatch_refused'))
         self.assertEqual(result['evidence']['stub']['afterDispatch1']['refused'], 1)
+
+
+class Teardown(Base):
+    """A teardown failure names itself (closed `teardown` diagnostic), and the worker that lingers on its control reader is stopped by closing its stdin."""
+
+    def chain(self, **kw):
+        modes = kw.pop('modes', {})
+        return self.go(platform=FakePlatform(self.state, modes, **kw))
+
+    def reset(self):
+        os.remove(os.path.join(self.out, 'result.json'))
+        shutil.rmtree(self.state)
+        os.mkdir(self.state)
+
+    def test_each_teardown_condition_is_named_once_from_the_closed_list(self):
+        cases = [
+            (dict(exits={'host': 0, 'provider': -9}, killed=['provider']), 'provider_killed'),
+            (dict(exits={'host': -9, 'provider': 0}, killed=['host']), 'host_killed'),
+            (dict(exits={'host': 0, 'provider': 3}), 'provider_exit:3'),
+            (dict(exits={'host': 1, 'provider': 0}), 'host_exit:1'),
+            (dict(exits={'host': 0, 'provider': -11}), 'provider_exit:other'),
+            (dict(settle=False), 'not_settled'),
+        ]
+        for kw, detail in cases:
+            status, result, _ = self.chain(**kw)
+            self.assertEqual((status, result['failureClass'], result['diagnostic']), (78, 'teardown', {'kind': 'teardown', 'detail': detail, 'summary': True}), detail)
+            self.assertTrue(run.TEARDOWN_DETAIL.fullmatch(result['diagnostic']['detail']))
+            self.reset()
+
+    def test_a_provider_that_never_sends_its_summary_is_summary_missing(self):
+        status, result, _ = self.chain(modes={'provider': 'summary_disagree'})
+        self.assertEqual((status, result['failureClass'], result['diagnostic']), (78, 'teardown', {'kind': 'teardown', 'detail': 'summary_missing', 'summary': False}))
+
+    def test_the_precedence_is_summary_then_settle_then_kills_then_exit_codes(self):
+        d = run.teardown_diagnostic
+        self.assertEqual(d(False, {'host': 0, 'provider': -9}, ['provider'], False)['detail'], 'summary_missing')
+        self.assertEqual(d(False, {'host': 0, 'provider': -9}, ['provider'], True)['detail'], 'not_settled')
+        self.assertEqual(d(True, {'host': -9, 'provider': -9}, ['host', 'provider'], True)['detail'], 'provider_killed')
+        self.assertEqual(d(True, {'host': 2, 'provider': 3}, [], True)['detail'], 'provider_exit:3')
+        self.assertEqual(d(True, {'host': 2, 'provider': 0}, [], True)['detail'], 'host_exit:2')
+        self.assertIsNone(d(True, {'host': 0, 'provider': 0}, [], True))
+        self.assertEqual(d(True, {'host': 0}, [], True)['detail'], 'provider_exit:other')
+        self.assertEqual(d(True, {'host': 0, 'provider': 999}, [], True)['detail'], 'provider_exit:other')
+
+    def test_a_passing_run_has_no_teardown_diagnostic(self):
+        status, result, _ = self.chain()
+        self.assertEqual((status, result['diagnostic']), (0, None))
+
+    # ---- the hang itself: a worker that keeps reading stdin after its summary --------------------------------------------------------------
+    def _linger(self, close_stdin):
+        provider = subprocess.Popen([sys.executable, '-I', '-B', FAKE, 'provider', self.state, 'linger'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        host = subprocess.Popen([sys.executable, '-I', '-B', '-c', 'pass'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: [p.kill() or p.wait() for p in (provider, host)])
+        roles = roles_adapter.GuidedRoles(provider, host, 5.0)
+        roles.await_provider_ready()
+        if not close_stdin:  # the behaviour before the fix: stop() leaves the provider's stdin open
+            real = provider.stdin
+            provider.stdin = types.SimpleNamespace(close=lambda: None, write=real.write, flush=real.flush)
+            self.addCleanup(real.close)
+        final = roles.stop()
+        reaper = session.GuidedSession()
+        reaper.REAP_WAIT = 1.5
+        reaper.processes = {'hostClient': host, 'providerWorker': provider}
+        return roles, final, reaper.reap(), reaper.killed
+
+    def test_a_worker_that_lingers_on_its_control_reader_exits_zero_once_stdin_is_closed(self):
+        roles, final, exits, killed = self._linger(close_stdin=True)
+        self.assertIsNotNone(final)
+        self.assertEqual((exits, killed, roles.summary_seen), ({'host': 0, 'provider': 0}, [], True))
+        self.assertIsNone(run.teardown_diagnostic(True, exits, killed, roles.summary_seen))
+
+    def test_without_the_close_the_same_worker_is_killed_and_reported_as_provider_killed(self):
+        roles, final, exits, killed = self._linger(close_stdin=False)
+        self.assertIsNotNone(final)
+        self.assertEqual((exits, killed), ({'host': 0, 'provider': -9}, ['provider']))
+        self.assertEqual(run.teardown_diagnostic(True, exits, killed, roles.summary_seen), {'kind': 'teardown', 'detail': 'provider_killed', 'summary': True})
 
 
 class Metafile(Base):

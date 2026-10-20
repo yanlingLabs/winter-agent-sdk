@@ -37,7 +37,7 @@ site it saw, and the doc must not claim more. A separate run is not needed.
 
 ## The trigger, the arming and the owner approval
 
-* Trigger: ONLY a `push` that creates the never-used branch `cowork/guided-hosted-run-4` (`cowork/guided-hosted-run`, `-2` and `-3` are spent by the red runs and ruleset-protected; the gate refuses all three), with `github.event.created ==
+* Trigger: ONLY a `push` that creates the never-used branch `cowork/guided-hosted-run-5` (`cowork/guided-hosted-run` and `-2` to `-4` are spent and ruleset-protected; the gate refuses all four), with `github.event.created ==
   true`, the exact ref, this repository and `run_attempt == '1'`. No `pull_request`, `pull_request_target`,
   `workflow_dispatch`, `schedule` or `workflow_run` trigger exists, so no ordinary PR (including the one that adds this
   file) can run it. A re-run has `run_attempt` 2 and is refused.
@@ -48,7 +48,7 @@ site it saw, and the doc must not claim more. A separate run is not needed.
   fails if the runner digest does not match the file). The owner-approved ARMING commit then changes exactly one line,
   `HOSTED_HEAD`, to the reviewed commit: the guard demands that commit be an ancestor of the pushed one, that the whole
   diff be that one file, `--numstat` `1 1`, and the exact one-line diff.
-* Owner approval needed: one push of the armed head to `cowork/guided-hosted-run-4`, by the controller only after the owner
+* Owner approval needed: one push of the armed head to `cowork/guided-hosted-run-5`, by the controller only after the owner
   approves that exact head. The branch is frozen after that one run: never push to it again, and **never delete and
   recreate it**, because creating it again is another first-creation push and would fire the workflow again.
 
@@ -180,6 +180,11 @@ The fix is a two-sided contract (the host half is runtime-sdk PR 24, C-H3/C-H7):
 `ended` code (`failed:config`, `torn-down:...`; anything else is `other`), a refusal code (`command:order`, a `host-refused` code), or a fixed word
 (`host_spawn_shape`, `second_host_spawn`); or `{kind: "exception", detail: "<ClassName>[:<fixed reason>]"}` for a failure inside Root, such as
 `SessionError:host config mismatch` (the fixed reasons are `binding mismatch`, `host config mismatch`, `host registration mismatch`, `binding id invalid`, `launch not allowed`). No role text, path or id can enter it; it is `null` on a pass.
+
+**Teardown.** Stopping the provider is SIGTERM and then EOF on its stdin: the worker's control reader would otherwise keep it alive after its summary (hosted run 39404692730 ended red
+for exactly that: the provider was SIGKILLed after the 5 s wait, exit `-9`, with every functional case green). The teardown check is unchanged (settled, and exits `{host: 0, provider: 0}`),
+but a teardown failure now names itself: `diagnostic` is `{kind: "teardown", detail, summary}`, `detail` one of `summary_missing`, `not_settled`, `provider_killed`, `host_killed`,
+`provider_exit:<0..255|other>`, `host_exit:<0..255|other>` (first match in that order) and `summary` whether the provider's summary arrived before any kill. `reap()` records the roles it had to kill.
 
 **Evidence.** `result.json` also carries `evidence.stub`: the provider's six receipts (`afterDispatch1`, `afterDispatch2`, `afterReuse`, `beforeRevocation`,
 `afterRevocation`, `final`), each the eight integer counters plus `outcomes` (at most 64 of `accepted`/`refused`/`unreadable`) and `refusalSites` (at most 16 of

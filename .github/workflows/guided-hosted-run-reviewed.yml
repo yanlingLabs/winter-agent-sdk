@@ -14,7 +14,7 @@ name: guided-hosted-run-reviewed
 # real root, exactly as the owner-matrix run did. It runs only the runner file whose SHA-256 is RUNNER_SHA256.
 on:
   push:
-    branches: [cowork/guided-hosted-run-4]
+    branches: [cowork/guided-hosted-run-5]
 permissions:
   contents: read
   actions: read
@@ -28,13 +28,13 @@ env:
   PACKET_ZIP_SHA256: 'cf0df075c1e72ac589a77ed356150a9059bc04777642519dd04cd05180437229'
   PACKET_ARCHIVE_SHA256: '1594f2813fafb6904c7055695136e1008a79e31fd72b26da21a9299e61577795'
   PACKET_INVENTORY_SHA256: '2174dd3fe58bea8b83e17c17a4a25a38ac2bc1c22260a91e80937488859b4727'
-  RUNNER_SHA256: '9fd0780240c26dd9f928fac52f63de7dc5daf2ae404e648a4ff9b3edbaa2a3a4'
+  RUNNER_SHA256: 'e9f8b3f85b6a6a786c24e47d38b5ec6a8edce0617e5794bffee648bf0a2fe109'
 concurrency:
   group: guided-hosted-run
   cancel-in-progress: false
 jobs:
   guided-hosted-run:
-    if: github.repository == 'yanlingLabs/winter-agent-sdk' && github.event_name == 'push' && github.ref == 'refs/heads/cowork/guided-hosted-run-4' && github.event.created == true && github.run_attempt == '1'
+    if: github.repository == 'yanlingLabs/winter-agent-sdk' && github.event_name == 'push' && github.ref == 'refs/heads/cowork/guided-hosted-run-5' && github.event.created == true && github.run_attempt == '1'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:

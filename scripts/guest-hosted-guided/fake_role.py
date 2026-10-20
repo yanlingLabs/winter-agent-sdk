@@ -84,6 +84,10 @@ if role == 'provider':
             bump(frames=1, begins=0)
         c = load(path, ZERO)
         out({'kind': 'provider-summary', **c, 'answered': c['completed'], 'portClosed': False, 'scriptSha256': 'a' * 64, 'turnSha256': [], 'countersAgree': mode != 'summary_disagree', **detail_fields()})
+        if mode == 'linger':
+            # the real worker's hang: after its summary the control reader (stdin) keeps it alive until EOF
+            while os.read(0, 4096):
+                pass
         sys.exit(0 if mode != 'summary_exit' else 3)
     signal.signal(signal.SIGTERM, terminate)
     if mode != 'not_ready':

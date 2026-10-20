@@ -411,6 +411,7 @@ class GuidedSession:
     def __init__(self):
         self.root = self.service = self.supervisor = None
         self.processes = {}
+        self.killed = []  # the labels `reap` had to SIGKILL after its wait, in order
         self.fds = []
         self.channels = []
         self.owner = None
@@ -594,15 +595,18 @@ class GuidedSession:
         except (OSError, KeyError, SessionError):
             return False
 
+    REAP_WAIT = 5.0  # seconds a role gets to exit by itself before reap SIGKILLs it
+
     def reap(self):
         result = {}
         for label, role in (('host', 'hostClient'), ('provider', 'providerWorker')):
             process = self.processes[role]
             try:
-                result[label] = process.wait(timeout=5)
+                result[label] = process.wait(timeout=self.REAP_WAIT)
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+                self.killed.append(label)
                 result[label] = -9
         return result
 

@@ -213,6 +213,7 @@ class GuidedRoles:
         self.host = Channel(host, timeout)
         self.query_ended = []
         self.details = {}
+        self.summary_seen = False
         if provider is not None:
             self.attach_provider(provider)
 
@@ -300,8 +301,14 @@ class GuidedRoles:
             if self.provider_process is None:
                 raise AdapterError('protocol', 'no_provider')
             self.provider_process.terminate()
+            # The provider's control reader (stdin) would otherwise keep a worker alive after its summary: the stop is SIGTERM, then EOF.
+            try:
+                self.provider_process.stdin.close()
+            except (OSError, ValueError, AttributeError):
+                pass
             line = self.provider.expect('provider-summary', self.PROVIDER_TOLERATED + ('provider-receipt',))
             summary = counters(line)
+            self.summary_seen = True
             self.details['final'] = detail(line)
         except (AdapterError, OSError):
             summary = None
