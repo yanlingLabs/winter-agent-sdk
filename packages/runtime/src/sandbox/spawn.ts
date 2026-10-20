@@ -54,35 +54,50 @@ export class SandboxUnavailableError extends Error {
 
 /**
  * A write root on a case-SENSITIVE volume has a case variant that already exists (`/v/proj` and a
- * distinct `/v/PROJ`). Seatbelt matches paths ignoring case, so the sandbox would let the command write
- * into the variant too, and no profile rule can exclude it without also excluding the root (see
- * profile.ts's `buildCaseVariantRootFence`). The command is refused rather than run with that hole; a
- * subclass of `SandboxUnavailableError`, so every caller already reports it to the model as an error.
+ * distinct `/v/PROJ`), or a folder on the way to it could not be listed, so a variant cannot be ruled
+ * out. Seatbelt matches paths ignoring case, so the sandbox would let the command write into a variant
+ * too, and no profile rule can exclude it without also excluding the root (see profile.ts's
+ * `buildCaseVariantRootFence`). The command is refused rather than run with that hole; a subclass of
+ * `SandboxUnavailableError`, so every caller already reports it to the model as an error (Bash in its
+ * result; Monitor and background Bash in their later "failed to start" notification).
  */
 export class SandboxCaseVariantError extends SandboxUnavailableError {
-  constructor(readonly root: string, readonly variants: readonly string[]) {
+  readonly unlistable: string | undefined;
+  constructor(readonly root: string, readonly variants: readonly string[], unlistable?: string) {
     super(
-      `the sandbox cannot run this command: the writable folder ${JSON.stringify(root)} is on a case-sensitive volume next to ` +
-        `${variants.map((v) => JSON.stringify(v)).join(", ")}, which differs from it only in letter case. macOS's sandbox matches ` +
-        "paths ignoring case, so it would let the command write there too. Rename one of them, or run the command outside the sandbox.",
+      unlistable !== undefined
+        ? `the sandbox cannot run this command: the writable folder ${JSON.stringify(root)} is on a case-sensitive volume, and the folder ` +
+            `${JSON.stringify(unlistable)} on the way to it cannot be listed, so the sandbox cannot rule out a folder or file there that ` +
+            "differs from it only in letter case. macOS's sandbox matches paths ignoring case, so it would let the command write into such a " +
+            "variant too. Make that folder listable, or run the command outside the sandbox."
+        : `the sandbox cannot run this command: the writable folder ${JSON.stringify(root)} is on a case-sensitive volume next to ` +
+            `${variants.map((v) => JSON.stringify(v)).join(", ")}, which differs from it only in letter case. macOS's sandbox matches ` +
+            "paths ignoring case, so it would let the command write there too. Rename one of them, or run the command outside the sandbox.",
     );
     this.name = "SandboxCaseVariantError";
+    this.unlistable = unlistable;
   }
 }
 
 /**
- * The canonical write roots that sit on a case-sensitive volume, after checking that none of them has an
- * existing case variant (throws `SandboxCaseVariantError` when one does). Empty on the default volume,
- * which keeps the profile byte-identical there.
+ * Checks that no write root has an existing case variant (throws `SandboxCaseVariantError` when one does,
+ * or when a folder on the way cannot be listed) and returns the canonical write roots that sit on a
+ * case-sensitive volume, for the profile's create fence. EVERY root is scanned, not only the ones on a
+ * case-sensitive volume: a root on a case-insensitive volume mounted under a case-sensitive one has
+ * case-sensitive ancestors, and the scan checks each level's volume as it walks. On the default volume
+ * the scan lists nothing (one `pathconf` per path level) and the result is empty, which keeps the
+ * profile byte-identical there.
+ *
+ * A snapshot, not a fence: a variant that appears after this check (made by the user, another session,
+ * or an approved unsandboxed command) is writable by the sandboxed command for its whole lifetime.
  */
 export function caseSensitiveWriteRootsOrRefuse(roots: readonly string[]): string[] {
   const canonical = [...new Set(roots.map(canonicalizePath))];
-  const sensitive = canonical.filter(isOnCaseSensitiveVolume);
-  for (const root of sensitive) {
-    const variants = findCaseVariantsOf(root, canonical.filter((r) => r !== root));
-    if (variants.length > 0) throw new SandboxCaseVariantError(root, variants);
+  for (const root of canonical) {
+    const scan = findCaseVariantsOf(root, canonical.filter((r) => r !== root));
+    if (scan.unlistable !== undefined || scan.variants.length > 0) throw new SandboxCaseVariantError(root, scan.variants, scan.unlistable);
   }
-  return sensitive;
+  return canonical.filter(isOnCaseSensitiveVolume);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -388,7 +403,8 @@ export async function runCommandLocally(opts: RunCommandOptions): Promise<RunCom
     }
     const allowNetwork = resolveNetworkPosture(opts.settings.network); // throws SandboxConfigError on a domain-list config -- propagates to the caller uncaught, by design (§2/§12)
     const darwinUserTempDir = resolveDarwinUserTempDir();
-    // Before any process starts: refuses when a write root has an existing case variant.
+    // Before any process starts: refuses when a write root has an existing case variant. A snapshot --
+    // a variant made by someone else while the command runs is not caught (see the function's header).
     const caseSensitiveWriteRoots = caseSensitiveWriteRootsOrRefuse([opts.cwd, ...(opts.writableRoots ?? [])]);
     const protection = currentHostCodeProtectionPaths();
     const read = splitDenyPathsByGlobShape(protection.denyReadPaths), write = splitDenyPathsByGlobShape(protection.denyWritePaths);

@@ -510,7 +510,11 @@ function buildHomeSelfGrantFloor(anchors: readonly (string | undefined)[], brand
  *     files and folders INSIDE the root unaffected. cwd already had this through the default
  *     protections' ancestor fence (its `(literal cwd)`); other write roots did not.
  * The cost, on a case-sensitive volume only: a write root that does not exist yet cannot be created by
- * the sandboxed command itself.
+ * the sandboxed command itself, and a non-cwd root the command deletes cannot be recreated in the same
+ * command (`rm -rf "$OUTDIR" && mkdir "$OUTDIR"` fails at the mkdir).
+ * Not covered: spawn.ts's variant scan is a snapshot taken before the command starts, so a variant made
+ * by someone else (the user, another session, an approved unsandboxed command) while the command runs is
+ * writable by it for the rest of its lifetime.
  */
 function buildCaseVariantRootFence(caseSensitiveRoots: readonly string[]): string {
   const block = new ClauseBlock();
