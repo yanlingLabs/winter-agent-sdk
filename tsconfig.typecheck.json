@@ -10,6 +10,7 @@
     "packages/provider-catalog/src/**/*.ts",
     "packages/provider-runtime/src/**/*.ts",
     "packages/provider-conformance/src/**/*.ts",
+    "packages/web/src/**/*.ts",
     "scripts/**/*.ts"
   ]
 }

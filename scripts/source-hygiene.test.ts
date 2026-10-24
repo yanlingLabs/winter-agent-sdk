@@ -89,10 +89,10 @@ describe("P7a fix wave (item 6): no raw control bytes in TypeScript source", () 
     // A gate whose enumerator quietly returns nothing passes forever. Every guard here is a fact
     // about THIS repository that a broken listing cannot satisfy by accident.
     expect(files.length).toBeGreaterThan(400);
-    // Six of the seven packages; `packages/platform` is the prebuilt-binary package and has no
+    // Seven of the eight packages; `packages/platform` is the prebuilt-binary package and has no
     // `src` tree at all (its only tracked file is `darwin-arm64/package.json`), so naming it here
     // would assert a fact about this repository that is false.
-    for (const pkg of ["sdk", "runtime", "provider-runtime", "provider-catalog", "conformance", "provider-conformance"]) {
+    for (const pkg of ["sdk", "runtime", "provider-runtime", "provider-catalog", "conformance", "provider-conformance", "web"]) {
       expect([pkg, files.some((f) => f.startsWith(`packages/${pkg}/src/`))]).toEqual([pkg, true]);
     }
     expect(files.some((f) => f.startsWith("scripts/"))).toBe(true);

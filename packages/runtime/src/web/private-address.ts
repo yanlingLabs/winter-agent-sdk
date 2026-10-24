@@ -8,19 +8,15 @@
 // looking hostname that resolves to `127.0.0.1` (DNS rebinding) is the classic bypass a
 // lexical-only check misses entirely.
 //
-// IP-RANGE CLASSIFICATION ITSELF IS NOT REBUILT HERE. `@yanlinglabs/winter-provider-runtime` already
-// carries a tested classifier (`classifyAddress`, moved there from this SDK's own `monitor.ts` for
-// exactly this "one classifier, one fixture set" reason, R6-11) -- this module is deliberately a
-// THIN layer over it: `net.isIP` picks the family exactly the way that package's own
-// `evaluateEndpoint` does (its file header names this convention directly), and the only work this
-// module adds is what the shared classifier does not attempt: reserved HOSTNAMES (`localhost`,
-// `.local`) that are private by name regardless of what they resolve to, and the "lexical, else every
-// resolved address" orchestration `WebFetch` itself needs. A second hand-rolled IPv4/IPv6 parser
-// here would be exactly the duplicate copy R6-11 exists to forbid.
+// IP-RANGE CLASSIFICATION ITSELF IS NOT REBUILT HERE. `@yanlinglabs/winter-web` carries the
+// classifier its own fetcher enforces on every hop (bytes, not spellings: every IPv4 notation, the
+// IPv4-embedding IPv6 forms, cloud metadata, multicast, this machine's own interface addresses), so
+// this module is a THIN layer over it: the verdict shape the permission layer and the cache-hit gate
+// read, and the "lexical, else every resolved address" orchestration `WebFetch` itself needs.
 //
 // This module registers no tool and has no dependency on anything under `tools/`.
 import { isIP } from "node:net";
-import { classifyAddress, type AddressClass } from "@yanlinglabs/winter-provider-runtime";
+import { classifyAddress, classifyHostnameLexically as classifyLexically, isReservedPrivateName } from "@yanlinglabs/winter-web";
 
 export type AddressVerdict = "public" | "private";
 
@@ -33,47 +29,27 @@ export interface PrivateAddressFinding {
 
 const PUBLIC: PrivateAddressFinding = { class: "public" };
 
-/**
- * The classes this module treats as private, beyond `@yanlinglabs/winter-provider-runtime`'s own
- * `isLocalAddressClass` (loopback/private/link-local/unique-local): `cgnat` (100.64.0.0/10, RFC
- * 6598 -- a real bypass-relevant range that classifier's own `isLocalAddressClass` deliberately
- * excludes, because ITS consumer, the provider endpoint policy, is answering a different question)
- * and `unspecified` (0.0.0.0/8, "::") -- both named explicitly in this tool's own requirements.
- * `multicast` and `invalid` are left PUBLIC: neither is a real bypass target (an unreachable address
- * simply fails the fetch itself, which is the honest failure to report).
- */
-const PRIVATE_CLASSES: ReadonlySet<AddressClass> = new Set(["loopback", "private", "link-local", "unique-local", "cgnat", "unspecified"]);
-
 /** Strips a `[...]` IPv6 literal's brackets; a non-bracketed host is returned unchanged. */
 export function stripIpv6Brackets(hostname: string): string {
   return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
 }
 
 /**
- * Classifies a literal IP address -- family auto-detected via `net.isIP` (0 = not a literal IP at
- * all, in which case this returns `undefined` rather than guessing). Delegates the actual range
- * logic to the shared classifier, which already handles IPv4-mapped IPv6 in both its dotted-quad
- * (`::ffff:127.0.0.1`) and hex-group (`::ffff:7f00:1`) forms.
+ * Classifies a literal IP address -- `undefined` when `address` is not one (`net.isIP` decides, as
+ * before). The class and its reason are `@yanlinglabs/winter-web`'s.
  */
 export function classifyIpLiteral(address: string): PrivateAddressFinding | undefined {
-  const family = isIP(address);
-  if (family === 0) return undefined;
-  const cls = classifyAddress(address, family);
-  // `classifyAddress`'s own IPv4 arm fails closed to "invalid" for something `net.isIP` nonetheless
-  // called a 4 (should not happen in practice; both use the same dotted-quad shape) -- treated as
-  // "not classifiable," letting the fetch attempt itself report the real failure rather than this
-  // module inventing a verdict for an address it cannot parse.
-  if (cls === "invalid") return undefined;
-  return { class: PRIVATE_CLASSES.has(cls) ? "private" : "public", reason: cls };
+  if (isIP(address) === 0) return undefined;
+  const verdict = classifyAddress(address);
+  return verdict.public ? { class: "public", reason: "public" } : { class: "private", reason: verdict.reason };
 }
 
-/** Reserved names RFC 6761 (`localhost`) and mDNS (`.local`) carve out -- private by NAME, whatever they resolve to. A single trailing dot (the DNS root, `localhost.`/`a.localhost.`/`foo.local.`) is stripped first so it cannot defeat the check. */
+/** Reserved names RFC 6761 (`localhost`) and mDNS (`.local`) carve out -- private by NAME, whatever they resolve to. A single trailing dot is ignored. */
 export function classifyReservedName(hostname: string): PrivateAddressFinding | undefined {
+  if (!isReservedPrivateName(hostname)) return undefined;
   let h = hostname.toLowerCase();
   if (h.endsWith(".")) h = h.slice(0, -1);
-  if (h === "localhost" || h.endsWith(".localhost")) return { class: "private", reason: "the localhost TLD (RFC 6761)" };
-  if (h === "local" || h.endsWith(".local")) return { class: "private", reason: "the .local mDNS TLD" };
-  return undefined;
+  return { class: "private", reason: h === "localhost" || h.endsWith(".localhost") ? "the localhost TLD (RFC 6761)" : "the .local mDNS TLD" };
 }
 
 /**
@@ -83,7 +59,12 @@ export function classifyReservedName(hostname: string): PrivateAddressFinding | 
  */
 export function classifyHostnameLexically(hostname: string): PrivateAddressFinding | undefined {
   const bare = stripIpv6Brackets(hostname);
-  return classifyIpLiteral(bare) ?? classifyReservedName(hostname);
+  const literal = classifyIpLiteral(bare) ?? classifyReservedName(hostname);
+  if (literal !== undefined) return literal;
+  // Any other address spelling (`0x7f.1`, `2130706433`) -- the URL parser normalises these, but the
+  // verdict never depends on that.
+  const verdict = classifyLexically(hostname);
+  return verdict === undefined ? undefined : verdict.public ? { class: "public", reason: "public" } : { class: "private", reason: verdict.reason };
 }
 
 /** The verdict for one resolved connection address (whatever DNS returned for an ordinary name). */

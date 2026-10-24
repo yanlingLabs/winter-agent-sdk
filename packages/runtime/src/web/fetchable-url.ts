@@ -23,33 +23,17 @@
 // (`127.0.0.1`, four labels) or on a name the URL parser leaves with two or more labels
 // (`printer.local`, `api.localhost`, and -- claude's behaviour too -- a trailing-dot `localhost.`).
 
+// THE RULES THEMSELVES LIVE IN `@yanlinglabs/winter-web` (`url.ts` there): the executor's own hop
+// walk is that package's, so the permission layer reads the very same predicate it applies.
+import { fetchTimeUrlRefusal, upgradeToHttps } from "@yanlinglabs/winter-web";
+
+export { fetchTimeUrlRefusal, upgradeToHttps };
+
 /** claude's fetch-time rejects, as a reason a caller may name in a comment or a test. The TEXT the model sees is always `FETCH_TIME_INVALID_URL`. */
 export type UnfetchableUrlReason = "too-long" | "embedded-credentials" | "single-label-hostname";
 
 /** The three FETCH-TIME rejects' text: a bare `Invalid URL`, never the fuller parse-failure sentence (extraction-notes fidelity #2, corrected). */
 export const FETCH_TIME_INVALID_URL = "Invalid URL";
-
-/** The `http:` -> `https:` upgrade, unconditional and claude's own. Returns `url` itself for any other scheme. */
-export function upgradeToHttps(url: URL): URL {
-  if (url.protocol !== "http:") return url;
-  const upgraded = new URL(url.toString());
-  upgraded.protocol = "https:";
-  return upgraded;
-}
-
-/**
- * claude's own fetch-time rejects for ONE already-parsed URL: overlong, embedded credentials, a
- * hostname with fewer than two dot-separated labels. `undefined` means none of them applies.
- *
- * Run PER HOP by the executor (claude runs it once on the raw input; running it again on every
- * upgraded hop is strictly stricter and is kept deliberately -- a disclosed, safe deviation).
- */
-export function fetchTimeUrlRefusal(url: URL): UnfetchableUrlReason | undefined {
-  if (url.toString().length > 2000) return "too-long";
-  if (url.username !== "" || url.password !== "") return "embedded-credentials";
-  if (url.hostname.split(".").length < 2) return "single-label-hostname";
-  return undefined;
-}
 
 /**
  * Is this target one the executor is CERTAIN to refuse before it touches the network -- i.e. after

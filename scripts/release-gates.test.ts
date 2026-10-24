@@ -492,6 +492,8 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     //
     // WS-23: the runtime is a ROOT of its own (`NPM_EMBEDDING_ROOT_PACKAGE`) -- an embedding host
     // installs it by name -- and its dependencies were already in the closure, so exactly one more.
+    //
+    // 0.0.58: `@yanlinglabs/winter-web` enters BY CLOSURE -- the runtime's WebSearch/WebFetch import it.
     expect(npmExpectedSet()).toEqual([
       "@yanlinglabs/winter-agent-runtime",
       "@yanlinglabs/winter-agent-sdk",
@@ -500,6 +502,7 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
       "@yanlinglabs/winter-provider-catalog",
       "@yanlinglabs/winter-provider-conformance",
       "@yanlinglabs/winter-provider-runtime",
+      "@yanlinglabs/winter-web",
     ]);
     // The two roles stay distinct: `provider-runtime` is on npm BY CLOSURE (provider-conformance
     // imports values from it), never by being a harness.
@@ -523,8 +526,8 @@ describe("release.yml publishes to BOTH registries, npm second and token-gated",
     // Every publishable package is now on npm -- which is exactly why the plants below exist: on THIS
     // tree the rule and "all of them" give the same answer, so only a synthetic tree can show it
     // refusing anything.
-    expect(npmPublishSet()).toHaveLength(7);
-    expect(discoverPublishablePackages()).toHaveLength(7);
+    expect(npmPublishSet()).toHaveLength(8);
+    expect(discoverPublishablePackages()).toHaveLength(8);
     // WS-23: the runtime -- until now the one package outside the publishable set -- is IN it, as an
     // npm ROOT of its own (an embedding host installs it by name), not by some other package's
     // closure. The darwin-arm64 platform package is IN the set too (P9a-3 -- R-7-2's gap is closed,

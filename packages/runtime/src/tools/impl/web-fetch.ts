@@ -43,21 +43,17 @@ import { isDomainBlocked } from "./_domains.ts";
 import { classifyHostname, classifyHostnameLexically, stripIpv6Brackets, UNRESOLVABLE_HOST_REASON } from "../../web/private-address.ts";
 import { isPreapprovedUrl } from "../../web/preapproved-hosts.ts";
 import { FETCHABLE_TARGET_SHAPE } from "../../web/fetchable-url.ts";
-import { convertFetchedHtml, WEB_FETCH_HTML_TRUNCATION_NOTICE } from "./_web-fetch-html.ts";
+import { convertFetchedHtml } from "./_web-fetch-html.ts";
+import { classifyContentType, webFetchDigestPrompt, WEB_FETCH_PERMISSIVE_GUIDELINES as PERMISSIVE_GUIDELINES, WEB_FETCH_STRICT_GUIDELINES as STRICT_GUIDELINES } from "@yanlinglabs/winter-web";
 import { webFetchCache, WebFetchCache, type WebFetchCacheEntry } from "./_web-fetch-cache.ts";
 import { defaultResolveHost, parseFailureMessage, performWebFetch, WEB_FETCH_TIMEOUT_MS, type NormalizedPrivateAddressPolicy, type WebFetchNetDeps } from "./_web-fetch-net.ts";
 import { INNER_MODEL_BUDGET_EXCEEDED_DETAIL, runInnerModel, type InnerModelFailureCode } from "./_inner-model.ts";
 import { collectSiteIcons, pageIconUrl } from "./_site-icons.ts";
 
-const DIGEST_CONTENT_CAP = 100_000;
 const RESULT_CAP = 50_000;
 
-const PERMISSIVE_GUIDELINES = "Provide a concise response based on the content above. Include relevant details, code examples, and documentation excerpts as needed.";
-const STRICT_GUIDELINES = `Provide a concise response based only on the content above. In your response:
- - Enforce a strict 125-character maximum for quotes from any source document. Open Source Software is ok as long as we respect the license.
- - Use quotation marks for exact language from articles; any language outside of the quotation should never be word-for-word the same.
- - You are not a lawyer and never comment on the legality of your own prompts and responses.
- - Never produce or reproduce exact song lyrics.`;
+// The digest prompt (its 100,000-character page cap, both guideline texts) and the content-type
+// reading come from `@yanlinglabs/winter-web`, which builds the identical request for any host.
 
 // --- input validation --------------------------------------------------------------------------------
 
@@ -128,17 +124,9 @@ function capResult(text: string): string {
   return `${text.slice(0, RESULT_CAP)}\n\n[Result truncated at ${RESULT_CAP.toLocaleString("en-US")} characters.]`;
 }
 
-// --- content classification ---------------------------------------------------------------------------
-
-type ContentKind = "html" | "text" | "binary";
-
-/** Fidelity #10 (corrections §4.10): claude converts ONLY when the content type includes `text/html` -- NOT `application/xhtml+xml`, which this now falls through to the plain "text" branch as raw UTF-8. */
-function classifyContentType(contentType: string): ContentKind {
-  const ct = contentType.toLowerCase();
-  if (ct.includes("text/html")) return "html";
-  if (ct === "" || ct.startsWith("text/") || ct.includes("json") || ct.includes("xml") || ct.includes("javascript") || ct.includes("csv")) return "text";
-  return "binary";
-}
+// Content classification is `@yanlinglabs/winter-web`'s `classifyContentType`. Fidelity #10
+// (corrections §4.10): claude converts ONLY when the content type includes `text/html` -- NOT
+// `application/xhtml+xml`, which falls through to the plain "text" branch as raw UTF-8.
 
 function sanitizeFilenameSegment(segment: string): string {
   const cleaned = segment.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80);
@@ -216,14 +204,6 @@ async function saveBinaryToTemp(ctx: ToolExecutionContext, url: URL, bytes: Uint
 
 // --- the digest pass -----------------------------------------------------------------------------
 
-function digestPrompt(content: string, prompt: string, guidelines: string): string {
-  return `\nWeb page content:\n---\n${content}\n---\n\n${prompt}\n\n${guidelines}\n`;
-}
-
-function cappedForDigest(content: string): string {
-  return content.length > DIGEST_CONTENT_CAP ? content.slice(0, DIGEST_CONTENT_CAP) + WEB_FETCH_HTML_TRUNCATION_NOTICE : content;
-}
-
 // The inner-model helper reports a session-BUDGET stop as the `aborted` code with the detail
 // `INNER_MODEL_BUDGET_EXCEEDED_DETAIL`, so its code union does not grow. Imported, never re-spelled:
 // this file ALSO has an unrelated budget of its own (the saved-binary allowance), and the two used to
@@ -263,8 +243,7 @@ function digestFailureMessage(code: InnerModelFailureCode, message: string, deta
  * `runInnerModel` throw hazard, see the module header, is caught here regardless).
  */
 async function runDigest(ctx: ToolExecutionContext, runtime: WebSessionRuntime, content: string, prompt: string, preapproved: boolean): Promise<{ output: string; isError: boolean }> {
-  const guidelines = preapproved ? PERMISSIVE_GUIDELINES : STRICT_GUIDELINES;
-  const built = digestPrompt(cappedForDigest(content), prompt, guidelines);
+  const built = webFetchDigestPrompt(content, prompt, preapproved ? "permissive" : "strict");
   const digestModel = runtime.web.fetch.digestModel;
   const model = digestModel !== undefined ? ({ kind: "tag" as const, tag: digestModel, ...(runtime.web.fetch.authRef !== undefined ? { authRef: runtime.web.fetch.authRef } : {}) }) : undefined;
   try {

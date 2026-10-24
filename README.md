@@ -23,6 +23,7 @@ refuse that stronger requirement. See the
 | [`@yanlinglabs/winter-provider-runtime`](packages/provider-runtime) | The provider layer: adapters, credential refs, endpoint policy, retry and identity headers. | npm + GitHub Packages |
 | [`@yanlinglabs/winter-conformance`](packages/conformance) | The drop-in conformance corpus: trace normalizer, goldens, pinned-upstream mechanics. | npm + GitHub Packages |
 | [`@yanlinglabs/winter-provider-conformance`](packages/provider-conformance) | The provider-layer conformance harness and its loopback fakes. Bun only. | npm + GitHub Packages |
+| [`@yanlinglabs/winter-web`](packages/web) | Web search (Exa) and SSRF-guarded web fetching for agents -- what the runtime's WebSearch/WebFetch use. No dependencies; Node >= 20 and Bun. | npm + GitHub Packages |
 
 Public npm carries the **closure of two kinds of root**: the wrapper — what
 `npm install @yanlinglabs/winter-agent-sdk` needs at run time — and the two conformance harnesses,
@@ -30,6 +31,7 @@ which are the org's own test tooling but are consumed out of this repository by 
 `@yanlinglabs/winter-runtime-sdk`, whose CI would otherwise need a cross-repo token solely to fetch
 test fixtures. `@yanlinglabs/winter-provider-runtime` follows by closure: the provider-conformance
 harness imports it, and a published manifest pins its dependencies at an exact version.
+`@yanlinglabs/winter-web` follows by closure too: the runtime's WebSearch and WebFetch import it.
 
 The opt-in [required current-context RPC](docs/runtime-context.md) transports
 trusted host-resolved guidance through ordinary query transports. It remains

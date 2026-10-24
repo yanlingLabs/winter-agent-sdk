@@ -25,6 +25,8 @@
 //     one path where session ids are reused within a process. A resumed session therefore starts with
 //     a COLD cache, which is what a resumed session gets in claude too (a new process).
 
+import { MemoryWebFetchCache, WEB_FETCH_CACHE_MAX_BYTES, WEB_FETCH_CACHE_TTL_MS } from "@yanlinglabs/winter-web";
+
 export interface WebFetchCacheEntry {
   /** The converted content's own UTF-8 byte length -- the cache's weight unit. */
   bytes: number;
@@ -40,74 +42,12 @@ export interface WebFetchCacheEntry {
   iconUrl?: string;
 }
 
-interface StoredEntry {
-  entry: WebFetchCacheEntry;
-  storedAtMs: number;
-}
-
-export const WEB_FETCH_CACHE_TTL_MS = 15 * 60_000;
-export const WEB_FETCH_CACHE_MAX_BYTES = 50 * 1024 * 1024;
+export { WEB_FETCH_CACHE_MAX_BYTES, WEB_FETCH_CACHE_TTL_MS } from "@yanlinglabs/winter-web";
 
 export type ClockFn = () => number;
 
-/**
- * One session's LRU store. A plain `Map` doubles as the LRU ledger: `set` always re-inserts (delete
- * then set) so the MOST recently used key is always last in iteration order, and eviction walks from
- * the front.
- */
-class SessionCache {
-  private readonly entries = new Map<string, StoredEntry>();
-  private weight = 0;
-
-  constructor(
-    private readonly ttlMs: number,
-    private readonly maxBytes: number,
-  ) {}
-
-  private sweepExpired(now: number): void {
-    for (const [key, stored] of this.entries) {
-      if (now - stored.storedAtMs >= this.ttlMs) {
-        this.weight -= stored.entry.bytes;
-        this.entries.delete(key);
-      }
-    }
-  }
-
-  isEmpty(): boolean {
-    return this.entries.size === 0;
-  }
-
-  get(key: string, now: number): WebFetchCacheEntry | undefined {
-    this.sweepExpired(now);
-    const stored = this.entries.get(key);
-    if (stored === undefined) return undefined;
-    // Touch for LRU recency.
-    this.entries.delete(key);
-    this.entries.set(key, stored);
-    return stored.entry;
-  }
-
-  set(key: string, entry: WebFetchCacheEntry, now: number): void {
-    this.sweepExpired(now);
-    const existing = this.entries.get(key);
-    if (existing !== undefined) {
-      this.weight -= existing.entry.bytes;
-      this.entries.delete(key);
-    }
-    // A single entry heavier than the whole budget is never cached -- there is no eviction order
-    // that could make room for it, and admitting it would evict everything else for a "hit" that
-    // itself blows the budget on the very next entry.
-    if (entry.bytes > this.maxBytes) return;
-    while (this.weight + entry.bytes > this.maxBytes && this.entries.size > 0) {
-      const oldestKey = this.entries.keys().next().value as string;
-      const oldest = this.entries.get(oldestKey)!;
-      this.weight -= oldest.entry.bytes;
-      this.entries.delete(oldestKey);
-    }
-    this.entries.set(key, { entry, storedAtMs: now });
-    this.weight += entry.bytes;
-  }
-}
+/** One session's store: the TTL + byte-weighted LRU from `@yanlinglabs/winter-web`. */
+type SessionCache = MemoryWebFetchCache<WebFetchCacheEntry>;
 
 export class WebFetchCache {
   private readonly sessions = new Map<string, SessionCache>();
@@ -124,19 +64,19 @@ export class WebFetchCache {
   get(sessionId: string, url: string): WebFetchCacheEntry | undefined {
     const session = this.sessions.get(sessionId);
     if (session === undefined) return undefined;
-    const hit = session.get(url, this.now());
-    if (session.isEmpty()) this.sessions.delete(sessionId);
+    const hit = session.get(url);
+    if (session.size === 0) this.sessions.delete(sessionId);
     return hit;
   }
 
   set(sessionId: string, url: string, entry: WebFetchCacheEntry): void {
     let session = this.sessions.get(sessionId);
     if (session === undefined) {
-      session = new SessionCache(this.ttlMs, this.maxBytes);
+      session = new MemoryWebFetchCache<WebFetchCacheEntry>({ ttlMs: this.ttlMs, maxBytes: this.maxBytes, now: this.now });
       this.sessions.set(sessionId, session);
     }
-    session.set(url, entry, this.now());
-    if (session.isEmpty()) this.sessions.delete(sessionId);
+    session.set(url, entry);
+    if (session.size === 0) this.sessions.delete(sessionId);
   }
 
   /**

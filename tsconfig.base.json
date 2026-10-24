@@ -50,6 +50,9 @@
       "@yanlinglabs/winter-provider-conformance/fakes": [
         "./packages/provider-conformance/src/fakes/index.ts"
       ],
+      "@yanlinglabs/winter-web": [
+        "./packages/web/src/index.ts"
+      ],
       "@yanlinglabs/winter-agent-runtime": [
         "./packages/runtime/src/index.ts"
       ],

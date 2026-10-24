@@ -124,6 +124,7 @@
     "@yanlinglabs/winter-agent-sdk": "workspace:*",
     "@yanlinglabs/winter-provider-catalog": "workspace:*",
     "@yanlinglabs/winter-provider-runtime": "workspace:*",
+    "@yanlinglabs/winter-web": "workspace:*",
     "ajv": "^8.20.0",
     "ignore": "7.0.5"
   },
