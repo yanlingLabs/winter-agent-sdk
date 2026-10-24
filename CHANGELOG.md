@@ -4,6 +4,75 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.56
+
+### The provider packages are a supported library for a host's own agent loop
+
+`@yanlinglabs/winter-provider-runtime` and `@yanlinglabs/winter-provider-catalog` are now a supported
+public API for a host that drives `streamTurn` itself, in process, under Node 18+ or Bun. Both READMEs
+list the supported surface and the versioning rules: additive changes in any release; anything that can
+break a host only under a "Breaking for provider-package hosts" heading here, after a release of
+deprecation; pin both packages to the same exact version. `stripOpaque` is part of that surface.
+
+- **No sdk, no binary.** `provider-runtime` no longer depends on `@yanlinglabs/winter-agent-sdk` (whose
+  optional dependency is the ~71 MB darwin-arm64 `winter` binary). It depends on the catalog alone. A
+  release gate (`scripts/provider-pack-closure.ts`) packs both packages, installs them offline into an
+  empty project, refuses any other package in the tree, any binary and any compiled import of the sdk,
+  and runs a Node host's path from the installed tarballs.
+- **A host's own identity.** `setWinterIdentity` takes an optional `version`, so the `User-Agent` names
+  the host's release (`example-host/1.2.3`) rather than the provider layer's. It now validates what it is
+  given (the same rules as the sdk's brand profile) and throws `TypeError` on a bad value.
+- **The stream assembler moved here** (from the runtime's provider bridge, which now imports it, with no
+  change in the engine's behaviour): `foldProviderStream(stream, { sink, signal })` folds the events into
+  one turn (text, tool calls, reasoning blocks in stream order, usage, native state);
+  `assembledToMessage(turn, origin)` makes it the assistant message `createHistoryRenderer` and the next
+  request take; `stampNativeState`; `ProviderStreamError` (`error`, `committed`). The sink's
+  `onTextDelta` streams the answer's text, for an SSE forwarder; a throwing sink method ends the turn.
+- **A Node-usable fake adapter** in `./testing`: `createFakeProviderAdapter` with `fakeTextTurn`,
+  `fakeToolCallTurn` and `fakeErrorTurn`.
+
+### OpenRouter
+
+- **Anthropic prompt caching through OpenRouter.** For an Anthropic model on OpenRouter whose row
+  declares prompt caching, the Chat Completions adapter sends the system prompt as cache-marked parts from
+  `systemBlocks`, and the rolling and lookback message breakpoints, each with its own lifetime. Every
+  `openrouter/anthropic/*` row now declares `promptCaching`.
+- **Reasoning replay.** `reasoning_details` are captured whole (streamed fragments joined by `index`) and
+  sent back verbatim on the model's own next turn, so a Claude tool loop through OpenRouter keeps its
+  signed reasoning. The OpenRouter Haiku 5.5, Sonnet 5.5, DeepSeek V4.1 Flash, GPT-6 Luna and GPT-6.1 Sol
+  rows are now `opaque-provider-state`, each its own continuation domain. A live probe the owner runs with
+  their own key: `scripts/probe-openrouter-reasoning.mjs` (`--dry-run` needs no key).
+- **Reported cost.** OpenRouter's `usage.cost` (USD) rides the usage event as `reportedCostUsd` and the
+  assembled turn's usage, and `estimateCostUsd` returns it beside the estimate. Its
+  `prompt_tokens_details.cache_write_tokens` is now `cacheWriteTokens` (taken out of `inputTokens`).
+
+### Prompt caching: a lifetime per breakpoint
+
+`TurnRequest.messageCacheTtl: { rolling?, lookback? }` sets the message breakpoints' lifetime (`"5m"` or
+`"1h"`) beside `cacheTtl` for the system prompt, on the Anthropic adapter and the OpenRouter path. An
+unset `lookback` takes `rolling`'s value. Anthropic requires every 1-hour breakpoint before every
+5-minute one, so a request whose lifetimes would increase along system, lookback, rolling is refused
+before it is sent (`bad_request`), never silently shortened.
+
+### Breaking for provider-package hosts
+
+- `setWinterIdentity` throws `TypeError` on an identity the sdk's brand profile would refuse (an
+  uppercase or spaced product token, a first-party codex originator, a non-https contact URL). Winter's
+  own wiring always passed valid values.
+- On OpenRouter, a response that reports `prompt_tokens_details.cache_write_tokens` now counts those
+  tokens as `cacheWriteTokens` and no longer inside `inputTokens`.
+
+### Catalog
+
+- New rows: `anthropic/claude-haiku-5-5` (and its `console/` twin), `openrouter/anthropic/claude-haiku-5.5`,
+  `openrouter/openai/gpt-6.1-sol` and `openrouter/meta/muse-spark-1.3-contributor`, each field cited to
+  the vendor's page or OpenRouter's public model list.
+- **Long-context price tiers.** `pricing.value.longContextTiers` lists prompt-length tiers (inclusive
+  `minPromptTokens`); a request whose whole prompt (input, cache reads and cache writes) reaches one is
+  priced entirely at the highest such tier. `estimateCostUsd` applies them and reports
+  `pricingTierMinPromptTokens`; `pricingTierFor` is exported. Flat-priced rows are unchanged. Haiku 5.5
+  ("over 100,000 tokens") and OpenRouter's `min_prompt_tokens` overrides for the new rows use it.
+
 ## 0.0.55
 
 ### Free-text questions in AskUserQuestion
