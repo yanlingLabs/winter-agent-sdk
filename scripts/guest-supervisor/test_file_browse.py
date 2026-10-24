@@ -1709,7 +1709,7 @@ class LinuxNativeTests(unittest.TestCase):
 
     # Built-in mutants of the C guards: each is built from the tracked source with one guard removed and must change an observable outcome.
     TOOL_MUTANTS = [
-        ('read-only whatever the policy', '||!strcmp(argv[7],"plan")||browse,0);', '||!strcmp(argv[7],"plan"),0);'),
+        ('read-only whatever the policy', 'number(argv[17+3*i],0,2)!=2)||browse,0);', 'number(argv[17+3*i],0,2)!=2),0);'),
         ('one root only', 'if(browse&&(roots!=1||guided||', 'if(browse&&(guided||'),
         ('never guided', 'if(browse&&(roots!=1||guided||', 'if(browse&&(roots!=1||'),
         ('root shown at the requested path', '||strcmp(argv[10],argv[16])||', '||'),

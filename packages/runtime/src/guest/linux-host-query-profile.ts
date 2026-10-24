@@ -33,7 +33,7 @@ export function assertLinuxHostQueryConfig(config: RuntimeConfig): void {
   if (config.contextWindowTokens !== undefined && (!Number.isSafeInteger(config.contextWindowTokens) || config.contextWindowTokens < 1 || config.contextWindowTokens > 16 * 1024 * 1024)) refuse();
 }
 /** Root metadata is corroboration, not mount proof; native supervisor must enforce these roots. */
-/** The plan view (contract revision 3, 12.5): the conversation's own epoch-scoped planning scratch, `/workspace/plan/<logicalSessionId>/<epoch>`, OUTSIDE `.winter`,
+/** The plan view (contract revision 3, 12.5): the conversation's own epoch-scoped planning scratch, `/workspace/plan/<logicalSessionId>/<epoch>`, OUTSIDE the store tree,
  * epoch a canonical decimal of at most nine digits. Read-write only under plan, at most once, and only for this conversation (its own id). That an EARLIER epoch is never
  * mounted once a later one exists is the supervisor's check (it alone sees the data disk); this profile check is corroboration of the record's shape. */
 export const LINUX_PLAN_VIEW = /^\/workspace\/plan\/([A-Za-z0-9][A-Za-z0-9_.-]{0,127})\/(0|[1-9][0-9]{0,8})$/;

@@ -40,6 +40,8 @@ jobs:
         run: |
           python3 -I -S -B -m unittest discover -s scripts/guest-supervisor -p 'test_host_query*.py'
           python3 -I -S -B -m unittest discover -s scripts/guest-supervisor -p 'test_runtime_launcher_policy.py'
+      - name: plan view -- the supervisor's admission (under plan only, once, writable, never a stale epoch), the launcher flag and the Linux fixture runner (source only)
+        run: python3 -I -S -B scripts/guest-supervisor/test_plan_view.py
       - name: guided Root bootstrap producer, fifth descriptor and profile selection (source only, nothing admitted)
         run: python3 -I -S -B scripts/guest-supervisor/test_guided_host_query.py
       - name: guided guidance view and WINTER.md alias -- the APPLIED sources, portable tests (source only, nothing admitted)
