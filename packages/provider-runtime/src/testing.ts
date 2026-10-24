@@ -47,3 +47,7 @@ export { googleCompletionMarker } from "./adapters/google/generate-content.ts";
 export { THINKING_ENABLED_NEEDS_BUDGET } from "./adapters/refusals.ts";
 
 export { fixtureCatalog, fixtureModel, fixtureProvider, fixtureReasoning, scriptedAdapter } from "./continuity/fixtures.ts";
+
+// 0.0.56: a scripted adapter for a HOST's own tests, Node and Bun alike (no loopback server, no Bun API).
+export { createFakeProviderAdapter, fakeErrorTurn, fakeTextTurn, fakeToolCallTurn } from "./fake-adapter.ts";
+export type { FakeProviderAdapter, FakeProviderAdapterOptions, FakeTurnScript } from "./fake-adapter.ts";
