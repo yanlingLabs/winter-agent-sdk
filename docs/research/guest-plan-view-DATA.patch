@@ -1,0 +1,99 @@
+diff --git a/packages/runtime/src/guest/linux-supervisor.py b/packages/runtime/src/guest/linux-supervisor.py
+index 16751c15..3d90ec06 100644
+--- a/packages/runtime/src/guest/linux-supervisor.py
++++ b/packages/runtime/src/guest/linux-supervisor.py
+@@ -320,9 +320,32 @@ def native_mount_policy(policy):
+     # The Root-admitted full policy remains unchanged in item/bootstrap/config.
+     return 'plan' if policy=='plan' else 'auto'
+ 
++# The plan view (contract revision 3, 12.5): the conversation's own epoch-scoped planning scratch, OUTSIDE .winter, at /workspace/plan/<logicalSessionId>/<epoch>
++# (epoch a canonical decimal, at most nine digits). It is the one root that is read-write under plan and it exists only under plan. PID 1 makes the directory
++# (root-side, no symlink); this service only admits it, and never admits an epoch below one that already exists beside it: an earlier epoch is never mounted again.
++PLAN_ROOT='/workspace/plan'
++PLAN_VIEW=re.compile(r'/workspace/plan/([A-Za-z0-9][A-Za-z0-9_.-]{0,127})/(0|[1-9][0-9]{0,8})')
++def plan_view_epoch(guest_path,sid):
++    match=PLAN_VIEW.fullmatch(guest_path) if type(guest_path) is str else None
++    return int(match.group(2)) if match and match.group(1)==sid else None
++def is_plan_view(guest_path):
++    return type(guest_path) is str and PLAN_VIEW.fullmatch(guest_path) is not None
++def plan_view_stale(sid,epoch):
++    # The data disk is the record of the epochs ever made for this conversation: any canonical sibling above this epoch makes this one stale. The parent is opened
++    # without following a symlink and must be a directory; a parent that cannot be read refuses (fail closed), never admits.
++    try:
++        fd=os.open(f'{PLAN_ROOT}/{sid}',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
++        try:names=os.listdir(fd)
++        finally:os.close(fd)
++    except OSError:return True
++    return any(re.fullmatch(r'0|[1-9][0-9]{0,8}',name) and int(name)>epoch for name in names)
+ def runtime_root_metadata(root,policy,host_query=False):
+     # Effective descriptor metadata MUST match the plan mount override and tool request comparison.
+-    return {'id':root['id'],'guestPath':root['guestPath'],'readOnly':root['readOnly'] or (host_query and policy=='plan')}
++    return {'id':root['id'],'guestPath':root['guestPath'],'readOnly':root['readOnly'] or (host_query and policy=='plan' and not is_plan_view(root['guestPath']))}
++
++def file_write_denied(policy,root):
++    # A write-class file operation is refused on a read-only root, and under plan on every root but the plan view (the one writable root there).
++    return root['readOnly'] or (policy=='plan' and not is_plan_view(root['guestPath']))
+ 
+ def host_query_config(item,tool_classes,model):
+     if not isinstance(tool_classes,list) or len(tool_classes)>4 or any(type(value)!=str or value not in ('read','write','execute','coordinate') for value in tool_classes) or len(set(tool_classes))!=len(tool_classes):raise Refusal('host_query_tools')
+@@ -332,7 +355,7 @@ def host_query_config(item,tool_classes,model):
+     modes={'auto':'default','ask':'default','plan':'plan','accept-edits':'default','dont-ask':'default','bypass':'default'}
+     if item['policy'] not in modes:raise Refusal('host_query_policy')
+     roots=[binding['root'] for binding in item['roots'].values()]
+-    if not 1<=len(roots)<=16 or any(not root['guestPath'].startswith('/workspace/') or root['guestPath']=='/workspace/.winter' or root['guestPath'].startswith('/workspace/.winter/') or item['policy']=='plan' and not root['readOnly'] for root in roots):raise Refusal('host_query_roots')
++    if not 1<=len(roots)<=16 or any(not root['guestPath'].startswith('/workspace/') or root['guestPath']=='/workspace/.winter' or root['guestPath'].startswith('/workspace/.winter/') or item['policy']=='plan' and not root['readOnly'] and not is_plan_view(root['guestPath']) for root in roots):raise Refusal('host_query_roots')
+     tools=[]
+     if 'read' in tool_classes:tools.append('Read')
+     if 'write' in tool_classes:
+@@ -1363,6 +1386,11 @@ class ToolService:
+                     if not ID.fullmatch(root['id']) or root['id'] in roots or not isinstance(guest,str) or not guest.startswith('/') or len(guest)>1024 or any(p in ('.','..','') for p in guest[1:].split('/')) or type(root['readOnly'])!=bool:raise Refusal('admitted_root')
+                     parts=guest[1:].split('/')
+                     allowed=(len(parts)>=3 and parts[:2] in (['workspace','folders'],['workspace','repos'])) or parts==['workspace','.winter','memory'] or parts==['workspace','.winter','scratch',sid] or parts==['workspace','outputs',sid]
++                    if is_plan_view(guest) or parts[:2]==['workspace','plan']:
++                        # The plan view: host-query conversations only, under plan only, once, writable, this conversation's own id, and never an epoch below one already made.
++                        epoch=plan_view_epoch(guest,sid)
++                        if not ('hostQueryRuntime' in item or 'hostQueryGuidedRuntime' in item) or item['policy']!='plan' or epoch is None or plan_view_stale(sid,epoch) or root['readOnly'] or any(is_plan_view(other['root']['guestPath']) for other in roots.values()):raise Refusal('plan_view')
++                        allowed=True
+                     if not allowed:raise Refusal('protected_root')
+                     # Host-query roots are served at the path they are admitted from: the source is exactly the guest view, so it is inside the admitted
+                     # views by construction and can never name a different (protected or foreign) directory.
+@@ -1501,7 +1529,7 @@ class ToolService:
+                 if kind=='file':
+                     operation=request.get('operation')
+                     if operation not in ('read','write','write-check'):raise Refusal('invalid_request')
+-                    if operation!='read' and (root['root']['readOnly'] or item['policy']=='plan'):raise Refusal('authority_denied')
++                    if operation!='read' and file_write_denied(item['policy'],root['root']):raise Refusal('authority_denied')
+                     data=request.get('dataBase64','')
+                     if not isinstance(data,str) or len(data)>((limit+2)//3)*4:raise Refusal('payload_limit')
+                     try:decoded=base64.b64decode(data,validate=True)
+@@ -1536,7 +1564,7 @@ class ToolService:
+             worker=self.artifacts['processWorker' if kind=='process' else 'fileWorker']
+             arguments=[str(self.artifacts['launcher']),str(worker),view,str(parent.fileno()),str(self.environment),str(item['toolUid']),str(item['workspaceGid']),native_mount_policy(item['policy']),kind,operation,root['root']['guestPath'],relative,str(limit),extra,str(len(item['roots']))]
+             descriptors=[self.artifacts['launcher'],worker,parent.fileno(),self.environment]
+-            for binding in item['roots'].values():arguments.extend((str(binding['fd']),binding['root']['guestPath'],'1' if binding['root']['readOnly'] else '0'));descriptors.append(binding['fd'])
++            for binding in item['roots'].values():arguments.extend((str(binding['fd']),binding['root']['guestPath'],'1' if binding['root']['readOnly'] else '2' if kind=='file' and item['policy']=='plan' and is_plan_view(binding['root']['guestPath']) else '0'));descriptors.append(binding['fd'])
+             if item.get('guidance') is not None:arguments.extend(('--guidance',str(item['guidance'])));descriptors.append(item['guidance'])
+             child=subprocess.Popen(arguments,executable=f"/proc/self/fd/{self.artifacts['launcher']}",stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=descriptors,close_fds=True,env={'LANG':'C','LC_ALL':'C'},start_new_session=True,bufsize=0)
+             parent.close();control.settimeout(2)
+diff --git a/packages/runtime/src/guest/linux-tool-compartment.c b/packages/runtime/src/guest/linux-tool-compartment.c
+index b2329561..63e5ea32 100644
+--- a/packages/runtime/src/guest/linux-tool-compartment.c
++++ b/packages/runtime/src/guest/linux-tool-compartment.c
+@@ -189,7 +189,7 @@ int main(int argc,char **argv) {
+      * browse-read only. The supervisor launches it as the per-workspace browse uid; the mount is read-only whatever the policy. */
+     if(browse&&(roots!=1||guided||strcmp(argv[10],argv[16])||(strcmp(argv[9],"stat")&&strcmp(argv[9],"browse-read"))))_exit(64);
+     pinned_file(worker);directory_fd(environment);
+-    for(int i=0;i<roots;i++){directory_fd(descriptor(argv[15+3*i]));number(argv[17+3*i],0,1);}
++    for(int i=0;i<roots;i++){directory_fd(descriptor(argv[15+3*i]));/* 2 is the plan view: writable under plan, for the file worker only */if(number(argv[17+3*i],0,2)==2&&(strcmp(argv[7],"plan")||strcmp(argv[8],"file")))_exit(64);}
+     int supervisor_pidfd=(int)syscall(SYS_pidfd_open,getppid(),0);require(supervisor_pidfd,"supervisor pidfd");
+     require(prctl(PR_SET_PDEATHSIG,SIGKILL),"supervisor owner death");struct pollfd supervisor={.fd=supervisor_pidfd,.events=POLLIN};
+     if(poll(&supervisor,1,0)!=0)_exit(77);
+@@ -199,7 +199,7 @@ int main(int argc,char **argv) {
+      * Detached mount objects can then cross into the child's private namespace. */
+     int root_trees[16],environment_trees[4]={-1,-1,-1,-1};
+     const char *environment_parts[]={"bin","lib","lib64","usr"};
+-    for(int i=0;i<roots;i++)root_trees[i]=clone_descriptor(descriptor(argv[15+3*i]),number(argv[17+3*i],0,1)||!strcmp(argv[7],"plan")||browse,0);
++    for(int i=0;i<roots;i++)root_trees[i]=clone_descriptor(descriptor(argv[15+3*i]),number(argv[17+3*i],0,2)==1||(!strcmp(argv[7],"plan")&&number(argv[17+3*i],0,2)!=2)||browse,0);
+     /* The browse worker re-proves, inside the view, that the root it opens is the admitted descriptor's filesystem. */
+     char root_device[32]="";
+     if(browse){struct stat admitted;require(fstat(descriptor(argv[15]),&admitted),"browse root identity");snprintf(root_device,sizeof root_device,"%ju",(uintmax_t)admitted.st_dev);}

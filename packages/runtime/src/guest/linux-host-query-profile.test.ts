@@ -129,6 +129,21 @@ test("host-query record binds cwd to roots and plan requires read-only metadata,
   for (const roots of [[], [root, root], [{ ...root, guestPath: "/workspace/.winter" }], [{ ...root, guestPath: "/workspace/source/../other" }], [{ ...root, guestPath: "/workspace/other" }], Array(17).fill(root)]) expect(() => assertLinuxHostQueryRoots(config(), roots)).toThrow();
 });
 
+test("the plan view is admitted only under plan, writable, once, for this conversation, at a canonical epoch of at most nine digits", () => {
+  const source = { id: "source", guestPath: "/workspace/source", readOnly: true };
+  const sid = "conversation", view = (epoch: string, readOnly = false) => ({ id: "plan", guestPath: `/workspace/plan/${sid}/${epoch}`, readOnly });
+  const plan = { ...config(), permissionMode: "plan" as const, winterHome: `/run/winter/conversations/${sid}` };
+  const live = { ...config(), winterHome: plan.winterHome };
+  for (const epoch of ["0", "4", "123456789"]) expect(() => assertLinuxHostQueryRoots(plan, [source, view(epoch)]), epoch).not.toThrow();
+  // Only the plan view may be writable under plan; any other writable root still refuses.
+  expect(() => assertLinuxHostQueryRoots(plan, [{ ...source, readOnly: false }, view("4")])).toThrow();
+  for (const bad of [view("4", true), view("04"), view("1234567890"), view("-1"), view("4/x"), { ...view("4"), guestPath: `/workspace/plan/other/4` }, { ...view("4"), guestPath: `/workspace/plan/${sid}` }, { ...view("4"), guestPath: "/workspace/plan" }, { ...view("4"), guestPath: "/workspace/plan/" }])
+    expect(() => assertLinuxHostQueryRoots(plan, [source, bad]), bad.guestPath).toThrow();
+  expect(() => assertLinuxHostQueryRoots(plan, [source, view("4"), { ...view("3"), id: "plan2" }])).toThrow();
+  // Outside plan it is refused for every writable or read-only spelling.
+  for (const readOnly of [false, true]) expect(() => assertLinuxHostQueryRoots(live, [{ ...source, readOnly: false }, view("4", readOnly)])).toThrow();
+});
+
 test("a root carries no host source: any `source` key, equal to the guest path or not, is refused (the supervisor admits only source === guestPath for host-query roots)", () => {
   const root = { id: "source", guestPath: "/workspace/source", readOnly: false };
   for (const source of [root.guestPath, "/workspace/other", "/workspace/source/", "/tmp/x", "/workspace/.winter/store", "", 1, null, undefined]) {
