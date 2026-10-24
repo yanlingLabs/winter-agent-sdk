@@ -45,6 +45,8 @@ SOURCE_PATCH = ROOT / 'docs/research/guided-supervisor-source-check-DATA.patch'
 # The guest file channel's browse mode (agent-sdk FC4) changed the tool launcher and linux-supervisor.py; a fifth delta, on top of the
 # source-check one, and the first since the view patch to touch the tool launcher as well.
 BROWSE_PATCH = ROOT / 'docs/research/guest-file-browse-DATA.patch'
+# The plan view (agent-sdk, contract revision 3, 12.5) changed the tool launcher and linux-supervisor.py again; a sixth delta, on top of the browse one.
+PLAN_VIEW_PATCH = ROOT / 'docs/research/guest-plan-view-DATA.patch'
 PROBE = Path(__file__).with_name('guidance_view_probe.c')
 TOOL, SUPERVISOR = GUEST + '/linux-tool-compartment.c', GUEST + '/linux-supervisor.py'
 
@@ -59,12 +61,14 @@ APPLIED_TARGETS = {
     SUPERVISOR: '51259b0ff1651dfd05663b3796fe6a187120884fbf68f75977d05af454aa4359',
 }
 # The tracked Root service once the reader service is applied on top of the view patch.
+POST_BROWSE_TOOL = '0e87774b7adbe4fe5f4d13adcb44ea2068425c7889e367f6368aff3f1efcfac8'
 PRE_BROWSE_TOOL = '621f2ceb579c5b3832d4887f1d02dc8342a90e914bc44a3a6b204ce235b6d449'
 # Every later delta on linux-supervisor.py, NEWEST FIRST, each with the sha256 the file must have once that delta is reversed (None: the
 # reader-service delta, whose pre-image is the view patch's APPLIED target, asserted below).
 MESSAGING_PATCH = ROOT / 'docs/research/guided-supervisor-guest-messaging-DATA.patch'
 COLD_RESUME_PATCH = ROOT / 'docs/research/guided-supervisor-cold-resume-DATA.patch'
 SUPERVISOR_DELTAS = [
+    (PLAN_VIEW_PATCH, '00274717197787a109b171061a4397eb16582a2d369cf719ee4431e815f5ea09'),
     (BROWSE_PATCH, '82e2f43f76877426089afdd406b6bc35ede1e074e1b7b560587bc1bd17f8e252'),
     (COLD_RESUME_PATCH, '53b507bbe3816ba0f68939670bb3e424bcf64a66599777e964188d34bdbff97e'),
     (MESSAGING_PATCH, '26d1ac8937d9c2e98bf050433a309ca9e7bc74b0668d960a42dce81c7b30c5bb'),
@@ -72,7 +76,7 @@ SUPERVISOR_DELTAS = [
     (POLICY_PATCH, 'a26dacd86b805ca47b3e4805d06af2b178eee82003ebe6c38f2aeeb85e48035d'),
     (SERVICE_PATCH, None),
 ]
-TRACKED_SUPERVISOR = '00274717197787a109b171061a4397eb16582a2d369cf719ee4431e815f5ea09'
+TRACKED_SUPERVISOR = '2f55cc2b042660e8db9389d3355842af12279fba64fdba2de91b08023929cc21'
 FROZEN = {
     GUEST + '/linux-compartment.h': 'e666d010aab902c84ae86d3eea1fca6baaf75a7d94f55d936e020b30584a7e6b',
     GUEST + '/linux-runtime-compartment.c': 'fcb90dba8cf9552b9c10cde4012603ac9471b03f31a09bc408667257f65842fa',
@@ -127,6 +131,8 @@ def tracked_applied_text(name):
             for undo, before in SUPERVISOR_DELTAS:
                 reverse = subprocess.run(['patch', '-p1', '-R', '-s', '-d', str(directory), '-i', str(undo)], capture_output=True, text=True, timeout=30)
                 assert reverse.returncode == 0, reverse.stderr
+                if undo == PLAN_VIEW_PATCH:
+                    assert hashlib.sha256((directory / TOOL).read_bytes()).hexdigest() == POST_BROWSE_TOOL
                 if undo == BROWSE_PATCH:
                     assert hashlib.sha256((directory / TOOL).read_bytes()).hexdigest() == PRE_BROWSE_TOOL
                 if before is not None:

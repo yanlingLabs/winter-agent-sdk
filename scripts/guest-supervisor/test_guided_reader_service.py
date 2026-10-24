@@ -1122,7 +1122,7 @@ class ServiceBoundaryTests(unittest.TestCase):
             'linux-guided-reader-protocol.ts': None, 'linux-instruction-reader-compartment.c': '28aa279d6ecb560424fe24bf8ccc0893ffc61cfbb9ba6ba72d38c66b7b655893',
             'linux-compartment.h': 'e666d010aab902c84ae86d3eea1fca6baaf75a7d94f55d936e020b30584a7e6b', 'linux-session-admission.ts': 'b003e79d73bc4bc87a587ee4f1f3a9e511377a5f15f026b1f3e92ce4adedb14c',
             'linux-runtime-compartment.c': 'fcb90dba8cf9552b9c10cde4012603ac9471b03f31a09bc408667257f65842fa', 'linux-session-owner.c': '7630cb1f2e9b76be78fb6fb0f0efb6df74d437b39f9e3db69ac8aacc83162372',
-            'linux-tool-compartment.c': '0e87774b7adbe4fe5f4d13adcb44ea2068425c7889e367f6368aff3f1efcfac8',
+            'linux-tool-compartment.c': '56415c3f8b73c1696ab5456a0d24cc94ec291e3a1281dad3c9788c82ec1b6e9b',
         }
         for name, digest in pinned.items():
             if digest is not None:

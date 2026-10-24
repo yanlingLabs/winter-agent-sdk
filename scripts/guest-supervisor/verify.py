@@ -118,7 +118,12 @@ def main():
             except (ConnectionResetError,BrokenPipeError,AssertionError) as failure:
                 if str(failure)=='root peer was admitted as runtime':raise
             server.stdin.close();server.wait(timeout=5);assert server.returncode==0,server.stderr.read()
-            print(json.dumps({'passed':True,'fullGuestExecutionEnabled':False,'checks':['actual-registry-read-edit-write-bash','two-distinct-runtime-uids','plan-and-readonly-kernel-mounts','no-runtime-proc-env-view','private-peer-credential-admission','bounded-cancel-and-revoke','setsid-descendants-reaped']}))
+            # The plan view (docs/guest-plan-view.md): the real constructor and real directories, as root, in its own isolated interpreter. Admitted under plan,
+            # refused outside plan and for another profile, refused for a stale epoch; no native process and no service starts.
+            plan_work=root/'plan-view';plan_work.mkdir()
+            plan_result=json.loads(checked([sys.executable,'-I','-S','-B',ROOT/'scripts/guest-supervisor/plan_view_cases.py',ROOT/'packages/runtime/src/guest/linux-supervisor.py',plan_work]))
+            assert plan_result=={'passed':True,'cases':['admitted-under-plan','refused-outside-plan','refused-foreign-malformed-read-only','refused-stale-epoch','stale-check-fails-closed']},plan_result
+            print(json.dumps({'passed':True,'fullGuestExecutionEnabled':False,'checks':['actual-registry-read-edit-write-bash','two-distinct-runtime-uids','plan-and-readonly-kernel-mounts','no-runtime-proc-env-view','private-peer-credential-admission','bounded-cancel-and-revoke','setsid-descendants-reaped','plan-view-admission']}))
         finally:
             for child in clients:
                 if child.poll() is None:child.kill();child.wait(timeout=2)

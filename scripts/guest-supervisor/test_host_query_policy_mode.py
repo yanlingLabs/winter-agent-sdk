@@ -104,7 +104,8 @@ class OtherPolicyConsumersAreUnchangedTests(unittest.TestCase):
     def test_the_admission_list_and_the_plan_write_refusal_still_read_the_raw_policy(self):
         text = source()
         self.assertIn("if item['policy'] not in ('auto','plan','ask','accept-edits','dont-ask','bypass')", text)
-        self.assertIn("(root['root']['readOnly'] or item['policy']=='plan'):raise Refusal('authority_denied')", text)
+        self.assertIn("if operation!='read' and file_write_denied(item['policy'],root['root']):raise Refusal('authority_denied')", text)
+        self.assertEqual(function(text, 'file_write_denied').count("policy=='plan'"), 1)
         self.assertIn("'policy':item['policy']", text)
         self.assertIn("native_mount_policy(item['policy'])", text)
         self.assertEqual(function(text, 'native_mount_policy').count("policy=='plan'"), 1)
