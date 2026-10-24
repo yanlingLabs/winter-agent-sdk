@@ -1,6 +1,6 @@
 {
   "name": "@yanlinglabs/winter-web",
-  "version": "0.0.57",
+  "version": "0.0.58",
   "license": "MIT",
   "type": "module",
   "description": "Web search (Exa) and SSRF-guarded web fetching for agents, with no runtime dependencies. Runs under Node >= 20 and Bun.",
