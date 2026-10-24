@@ -1321,7 +1321,7 @@ class SourceTests(unittest.TestCase):
         source = code_only(TOOL.read_text())
         self.assertIn('browse=!strcmp(argv[8],"browse");if(!process&&!browse&&strcmp(argv[8],"file"))_exit(64);', source)
         self.assertIn('if(browse&&(roots!=1||guided||strcmp(argv[10],argv[16])||(strcmp(argv[9],"stat")&&strcmp(argv[9],"browse-read"))))_exit(64);', source)
-        self.assertIn('number(argv[17+3*i],0,1)||!strcmp(argv[7],"plan")||browse,0);', source)
+        self.assertIn('number(argv[17+3*i],0,2)==1||(!strcmp(argv[7],"plan")&&number(argv[17+3*i],0,2)!=2)||browse,0);', source)
         self.assertIn('char *browse_args[]={"/file-worker",argv[9],argv[10],argv[11],argv[5],argv[12],argv[13],root_device,NULL};', source)
         self.assertIn('execve(args[0],process?shell:browse?browse_args:args,env);', source)
         # Browse is never `process`: no devices, environment, scratch or procfs; the shared filter runs with clone fully denied.

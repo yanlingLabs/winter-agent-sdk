@@ -189,7 +189,7 @@ int main(int argc,char **argv) {
      * browse-read only. The supervisor launches it as the per-workspace browse uid; the mount is read-only whatever the policy. */
     if(browse&&(roots!=1||guided||strcmp(argv[10],argv[16])||(strcmp(argv[9],"stat")&&strcmp(argv[9],"browse-read"))))_exit(64);
     pinned_file(worker);directory_fd(environment);
-    for(int i=0;i<roots;i++){directory_fd(descriptor(argv[15+3*i]));number(argv[17+3*i],0,1);}
+    for(int i=0;i<roots;i++){directory_fd(descriptor(argv[15+3*i]));/* 2 is the plan view: writable under plan, for the file worker only */if(number(argv[17+3*i],0,2)==2&&(strcmp(argv[7],"plan")||strcmp(argv[8],"file")))_exit(64);}
     int supervisor_pidfd=(int)syscall(SYS_pidfd_open,getppid(),0);require(supervisor_pidfd,"supervisor pidfd");
     require(prctl(PR_SET_PDEATHSIG,SIGKILL),"supervisor owner death");struct pollfd supervisor={.fd=supervisor_pidfd,.events=POLLIN};
     if(poll(&supervisor,1,0)!=0)_exit(77);
@@ -199,7 +199,7 @@ int main(int argc,char **argv) {
      * Detached mount objects can then cross into the child's private namespace. */
     int root_trees[16],environment_trees[4]={-1,-1,-1,-1};
     const char *environment_parts[]={"bin","lib","lib64","usr"};
-    for(int i=0;i<roots;i++)root_trees[i]=clone_descriptor(descriptor(argv[15+3*i]),number(argv[17+3*i],0,1)||!strcmp(argv[7],"plan")||browse,0);
+    for(int i=0;i<roots;i++)root_trees[i]=clone_descriptor(descriptor(argv[15+3*i]),number(argv[17+3*i],0,2)==1||(!strcmp(argv[7],"plan")&&number(argv[17+3*i],0,2)!=2)||browse,0);
     /* The browse worker re-proves, inside the view, that the root it opens is the admitted descriptor's filesystem. */
     char root_device[32]="";
     if(browse){struct stat admitted;require(fstat(descriptor(argv[15]),&admitted),"browse root identity");snprintf(root_device,sizeof root_device,"%ju",(uintmax_t)admitted.st_dev);}
