@@ -10,15 +10,15 @@
 // STRUCTURAL RULE (R6-4): this package NEVER imports `winter-agent-runtime`. The engine's
 // `ProviderTurn`/`ProviderMessage`/`ContentBlock` stay defined in `engine.ts`, the runtime-side
 // bridge (T3) folds an adapter's event stream into one `ProviderTurn`, and the dependency runs
-// runtime → provider-runtime only. It DOES import `@yanlinglabs/winter-agent-sdk` (dependency-free,
-// no cycle) for the one type Options must also carry: `CredentialRef`.
+// runtime → provider-runtime only. 0.0.56 (W9): it no longer imports `@yanlinglabs/winter-agent-sdk`
+// at all -- `CredentialRef` is declared in `winter-defaults.ts`, held equal to the sdk's by a test.
 
 import type { ProviderProtocol, ToolCalling, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 
-// ONE declaration, re-exported — see the sdk's own protocol/config.ts header for why it lives there.
-// A lane importing `CredentialRef` from either package gets the identical type.
-export type { CredentialRef } from "@yanlinglabs/winter-agent-sdk";
-import type { CredentialRef } from "@yanlinglabs/winter-agent-sdk";
+// The sdk's `CredentialRef`, structurally identical (`winter-defaults.ts`, and the test beside it that
+// keeps the two equal). A lane importing `CredentialRef` from either package gets the same shape.
+export type { CredentialRef } from "./winter-defaults.ts";
+import type { CredentialRef } from "./winter-defaults.ts";
 
 /** The wire-mapping family an adapter belongs to. Coarser than `ProviderProtocol`: Azure and OpenRouter are both `openai`, Vertex and the Gemini API are both `google`. */
 export type ProviderFamily = "openai" | "anthropic" | "google" | "bedrock" | "local-openai" | "custom";
@@ -260,6 +260,18 @@ export interface TurnRequest {
    */
   cacheTtl?: "5m" | "1h";
   /**
+   * 0.0.56 (W3): the cache lifetime of the two MESSAGE-level breakpoints -- `rolling`, on the request's
+   * tail, and `lookback`, on the block the previous request's rolling breakpoint wrote. ABSENT means
+   * the provider's default (5 minutes), as before; an absent `lookback` takes `rolling`'s value.
+   *
+   * Anthropic requires every 1-hour breakpoint to come before every 5-minute one, and the wire order is
+   * system, lookback, rolling -- so `cacheTtl >= lookback >= rolling`. A request that breaks the order
+   * is REFUSED before it is sent (`bad_request`), never silently shortened. Honoured by the Anthropic
+   * Messages adapter and by the Chat Completions adapter for an Anthropic model routed through
+   * OpenRouter; every other adapter ignores it, as it ignores `cacheTtl`.
+   */
+  messageCacheTtl?: { rolling?: "5m" | "1h"; lookback?: "5m" | "1h" };
+  /**
    * WS-23: Anthropic's cache diagnostics opt-in -- the PREVIOUS main-loop response's id, or `null` on
    * a session's first request ("pass `previous_message_id: null` to opt in without a prior message to
    * compare against", https://platform.claude.com/docs/en/build-with-claude/cache-diagnostics). GA,
@@ -379,6 +391,14 @@ export type ProviderEvent =
        * thinking blocks), so its adapter leaves this absent rather than inventing a zero.
        */
       reasoningTokens?: number;
+      /**
+       * 0.0.56 (W5): what the PROVIDER says this request cost, in USD -- OpenRouter's `usage.cost`
+       * ("Cost in credits", https://openrouter.ai/docs/use-cases/usage-accounting; "OpenRouter uses a
+       * credit system where the base currency is US dollars", https://openrouter.ai/docs/faq). Absent
+       * for every provider that reports no cost. Carried beside `estimateCostUsd`'s list-price estimate,
+       * never in place of it.
+       */
+      reportedCostUsd?: number;
     }
   /**
    * R6-B: SUBSCRIPTION-QUOTA states ONLY, and the `kind` discriminant is what says so at the type

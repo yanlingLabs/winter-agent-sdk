@@ -50,6 +50,7 @@
 //      callback cannot `yield`, so its events are buffered and flushed ahead of the first stream event
 //      -- the same order a consumer would have seen, since every retry precedes the stream by
 //      construction.
+import { cacheControlFor, resolveCacheTtls, type CacheTtl } from "../cache-ttl.ts";
 import type { WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { boundedFetch, ProviderRequestError } from "../../http.ts";
@@ -471,19 +472,18 @@ export function promptCachingLayout(req: TurnRequest, descriptor: WinterModelDes
   return descriptor?.promptCaching?.value === true;
 }
 
-const EPHEMERAL_CACHE_CONTROL = { type: "ephemeral" } as const;
-
 /**
  * `systemBlocks` -> the wire `system` array, cache-marked per block scope. Empty blocks are dropped (claude's `filter(Boolean)`).
  *
- * WS-23: `ttl: "1h"` rides the SYSTEM breakpoints only, when the session asked for it; the messages'
- * breakpoints stay at the default 5 minutes. That is the order the vendor requires ("cache entries
- * with longer TTL must appear before shorter TTLs",
- * https://platform.claude.com/docs/en/build-with-claude/prompt-caching#mixing-different-ttls), and the
- * system prompt is the one prefix worth keeping across a long idle gap.
+ * WS-23: `ttl: "1h"` rides the SYSTEM breakpoints when the session asked for it. 0.0.56 (W3): the
+ * message breakpoints take their own lifetimes (`TurnRequest.messageCacheTtl`, default 5 minutes), and
+ * `resolveCacheTtls` (adapters/cache-ttl.ts) refuses any combination that would put a 1-hour breakpoint
+ * after a 5-minute one -- the order the vendor requires ("cache entries with longer TTL must appear
+ * before shorter TTLs",
+ * https://platform.claude.com/docs/en/build-with-claude/prompt-caching#mixing-different-ttls).
  */
 export function toWireSystemBlocks(blocks: readonly { text: string; cacheScope: "global" | "org" | null }[], ttl?: "5m" | "1h"): Record<string, unknown>[] {
-  const cacheControl = ttl === "1h" ? { ...EPHEMERAL_CACHE_CONTROL, ttl: "1h" } : { ...EPHEMERAL_CACHE_CONTROL };
+  const cacheControl = cacheControlFor(ttl ?? "5m");
   return blocks
     .filter((block) => block.text.length > 0)
     .map((block) => ({ type: "text", text: block.text, ...(block.cacheScope !== null ? { cache_control: { ...cacheControl } } : {}) }));
@@ -553,10 +553,10 @@ function positionsBetween(messages: readonly WireMessage[], from: BlockAt, to: B
   return count;
 }
 
-function markAt(messages: WireMessage[], at: BlockAt): void {
+function markAt(messages: WireMessage[], at: BlockAt, ttl: CacheTtl = "5m"): void {
   const message = messages[at.m]!;
   const content = message.content.slice();
-  content[at.b] = { ...content[at.b]!, cache_control: { ...EPHEMERAL_CACHE_CONTROL } };
+  content[at.b] = { ...content[at.b]!, cache_control: cacheControlFor(ttl) };
   messages[at.m] = { ...message, content };
 }
 
@@ -573,12 +573,12 @@ function markAt(messages: WireMessage[], at: BlockAt): void {
  *     write is a guaranteed read ("a second breakpoint ... starts a second lookback window there",
  *     same page), and it costs nothing extra: a breakpoint over an already-cached prefix is a read.
  */
-export function withMessageCacheMarkers(messages: WireMessage[], budget: number): WireMessage[] {
+export function withMessageCacheMarkers(messages: WireMessage[], budget: number, ttls: { rolling?: CacheTtl; lookback?: CacheTtl } = {}): WireMessage[] {
   const out = messages.slice();
   if (budget <= 0) return out;
   const tail = lastMarkable(out, out.length);
   if (tail === undefined) return out;
-  markAt(out, tail);
+  markAt(out, tail, ttls.rolling);
   if (budget < 2) return out;
   let lastAssistant = -1;
   for (let m = tail.m; m >= 0; m--) {
@@ -589,7 +589,7 @@ export function withMessageCacheMarkers(messages: WireMessage[], budget: number)
   }
   if (lastAssistant <= 0) return out;
   const previousWrite = lastMarkable(out, lastAssistant);
-  if (previousWrite !== undefined && positionsBetween(out, previousWrite, tail) > LOOKBACK_MARGIN_POSITIONS) markAt(out, previousWrite);
+  if (previousWrite !== undefined && positionsBetween(out, previousWrite, tail) > LOOKBACK_MARGIN_POSITIONS) markAt(out, previousWrite, ttls.lookback ?? ttls.rolling);
   return out;
 }
 
@@ -1297,10 +1297,13 @@ export function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescri
   // of the request's budget of four first; the messages get what is left.
   const wireSystem = caching && req.systemBlocks !== undefined ? toWireSystemBlocks(req.systemBlocks, req.cacheTtl) : undefined;
   const systemBreakpoints = wireSystem?.filter((block) => "cache_control" in block).length ?? 0;
+  // 0.0.56 (W3): each breakpoint's lifetime, refused typed when it would break the vendor's
+  // longer-before-shorter order. Only where breakpoints are placed at all.
+  const ttls = caching ? resolveCacheTtls(req, systemBreakpoints > 0) : undefined;
   return {
     model: anthropicWireModelId(req.model),
     max_tokens: maxTokens,
-    messages: caching ? withMessageCacheMarkers(wireMessages, MAX_CACHE_BREAKPOINTS - systemBreakpoints) : wireMessages,
+    messages: caching ? withMessageCacheMarkers(wireMessages, MAX_CACHE_BREAKPOINTS - systemBreakpoints, { rolling: ttls!.rolling, lookback: ttls!.lookback }) : wireMessages,
     stream: true,
     ...(wireSystem !== undefined ? { system: wireSystem } : req.system !== undefined ? { system: req.system } : {}),
     ...(req.tools !== undefined && req.tools.length > 0 ? { tools: req.tools.map(toWireTool) } : {}),
