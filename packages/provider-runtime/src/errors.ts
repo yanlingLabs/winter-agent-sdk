@@ -135,14 +135,92 @@ export function parseRetryAfterMs(value: string | null | undefined, now: number 
   return delta > 0 ? delta : undefined;
 }
 
-/** Provider codes that mean "the account cannot pay", not "you are going too fast" — the distinction is what makes a 429 unretryable. */
-const BILLING_CODES = new Set([
-  "insufficient_quota", "billing_hard_limit_reached", "billing_not_active", "credit_balance_too_low",
-  // ChatGPT Codex backend (measured 2026-09-16): a subscription's usage window is exhausted and resets on a
-  // clock the body names (`resets_in_seconds`). Ten backed-off retries cannot help and cost the user ~90 s
-  // of silence before the truth surfaced; it is terminal like the billing codes above.
-  "usage_limit_reached", "usage_limit_exceeded",
+/**
+ * 0.0.57: provider codes that mean THE ACCOUNT CANNOT PAY -- `ProviderError.code: "billing"`, whatever the
+ * HTTP status. Matched against the error envelope's `code` AND its `type` (OpenAI: "The broader
+ * `error.type` can still be `insufficient_quota`", https://developers.openai.com/api/docs/guides/error-codes):
+ *   - OpenAI (429): `insufficient_quota`, `credit_balance_exhausted`, `organization_spend_limit_exceeded`,
+ *     `project_spend_limit_exceeded`, `organization_usage_limit_exceeded` ("Retrying billing, spend, or
+ *     quota errors won't restore API access", same page), and the older `billing_hard_limit_reached`,
+ *     `billing_not_active`;
+ *   - Anthropic: `billing_error` (402, https://platform.claude.com/docs/en/api/errors), and
+ *     `credit_balance_too_low`;
+ *   - OpenRouter: `payment_required` (its `error.metadata.error_type` for a 402, "Insufficient credits",
+ *     https://openrouter.ai/docs/api-reference/errors).
+ */
+const ACCOUNT_BILLING_CODES = new Set([
+  "insufficient_quota",
+  "credit_balance_exhausted",
+  "organization_spend_limit_exceeded",
+  "project_spend_limit_exceeded",
+  "organization_usage_limit_exceeded",
+  "billing_hard_limit_reached",
+  "billing_not_active",
+  "credit_balance_too_low",
+  "billing_error",
+  "payment_required",
 ]);
+
+/**
+ * ChatGPT Codex backend (measured 2026-09-16): a subscription's usage WINDOW is exhausted and resets on a
+ * clock the body names (`resets_in_seconds`). A quota, not a payment failure: it stays `rate_limit`, but
+ * terminal -- ten backed-off retries cannot help and cost the user ~90 s of silence.
+ */
+const USAGE_WINDOW_CODES = new Set(["usage_limit_reached", "usage_limit_exceeded"]);
+
+/** Provider codes a 429 cannot be retried past (the pinned `billing_error` bucket): account billing and a subscription's usage window. */
+const BILLING_CODES = new Set([...ACCOUNT_BILLING_CODES, ...USAGE_WINDOW_CODES]);
+
+/**
+ * Anthropic's out-of-credit refusal, which arrives as HTTP 400 `invalid_request_error` with only this
+ * sentence to tell it apart ("Your credit balance is too low to access the Anthropic API. Please go to
+ * Plans & Billing to upgrade or purchase credits."). Matched on the provider's own MESSAGE -- never the
+ * raw body -- and on an OpenRouter error's `metadata.raw`, which carries the upstream provider's verbatim
+ * payload when OpenRouter passes Anthropic's refusal through.
+ */
+const CREDIT_BALANCE_RE = /\bcredit balance is too low\b/i;
+
+/**
+ * 0.0.57: whether an error body says the account cannot pay. Reads only structured fields and the
+ * provider's own message: the envelope's `code` and `type` (strings), OpenRouter's `metadata.error_type`
+ * and `metadata.provider_code`, the error message, and OpenRouter's `metadata.raw`. Exported for the
+ * adapters' mid-stream error frames, which carry the same envelope.
+ */
+export function isBillingErrorBody(parsed: unknown): boolean {
+  if (parsed === null || typeof parsed !== "object") return false;
+  const error = (parsed as { error?: unknown }).error;
+  const envelope = error !== null && typeof error === "object" ? (error as Record<string, unknown>) : (parsed as Record<string, unknown>);
+  for (const key of ["code", "type"]) {
+    const value = envelope[key];
+    if (typeof value === "string" && ACCOUNT_BILLING_CODES.has(value)) return true;
+  }
+  const metadata = envelope["metadata"] !== null && typeof envelope["metadata"] === "object" ? (envelope["metadata"] as Record<string, unknown>) : undefined;
+  for (const key of ["error_type", "provider_code"]) {
+    const value = metadata?.[key];
+    if (typeof value === "string" && ACCOUNT_BILLING_CODES.has(value)) return true;
+  }
+  const message = envelope["message"];
+  if (typeof message === "string" && CREDIT_BALANCE_RE.test(message)) return true;
+  const raw = metadata?.["raw"];
+  if (typeof raw === "string" && CREDIT_BALANCE_RE.test(raw)) return true;
+  if (raw !== null && typeof raw === "object" && isBillingErrorBody(raw)) return true;
+  return false;
+}
+
+/** OpenRouter's one WAIT-AND-RETRY 402: an in-flight budget, announced with `Retry-After` (https://openrouter.ai/docs/api-reference/errors). */
+function isInFlightBudget402(status: number, parsed: unknown, retryAfterMs: number | undefined): boolean {
+  if (status !== 402 || retryAfterMs === undefined || parsed === null || typeof parsed !== "object") return false;
+  const error = (parsed as { error?: { metadata?: { limit_source?: unknown } } }).error;
+  return error?.metadata?.limit_source === "openrouter_in_flight_budget";
+}
+
+function parseJson(body: string): unknown {
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    return undefined;
+  }
+}
 
 /** The Codex backend's usage-window fields, when the body carries them (`resets_in_seconds`, `plan_type`). */
 function parseUsageWindow(body: string): { resetsInSeconds?: number; planType?: string } {
@@ -256,6 +334,13 @@ export function normalizeHttpError(status: number, headers: Headers, body: strin
     ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
   };
 
+  // 0.0.57: the account cannot pay -- a 402, or a body whose code/type/message says so at any status
+  // (OpenAI's 429 `insufficient_quota`, Anthropic's 400 "credit balance is too low", OpenRouter's
+  // `payment_required`). Ahead of `auth` and `rate_limit`: none of those is retryable either, and the
+  // host's remedy is different. OpenRouter's in-flight-budget 402 (with Retry-After) is a wait, not this.
+  const parsedBody = parseJson(body);
+  if (isInFlightBudget402(status, parsedBody, retryAfterMs)) return { code: "rate_limit", message, status, retryable: true, ...extra };
+  if (status === 402 || (status >= 400 && status < 500 && isBillingErrorBody(parsedBody))) return { code: "billing", message, status, retryable: false, ...extra };
   if (status === 401 || status === 403 || isFlatCredentialRejection(status, flat)) return { code: "auth", message, status, retryable: false, ...extra };
   if (status === 429) {
     const billing = providerCode !== undefined && BILLING_CODES.has(providerCode);
@@ -422,6 +507,8 @@ export function toSdkAssistantMessageError(err: ProviderError): SdkAssistantMess
   switch (err.code) {
     case "auth":
       return "authentication_failed";
+    case "billing":
+      return "billing_error";
     case "rate_limit":
       return code !== undefined && BILLING_CODES.has(code) ? "billing_error" : "rate_limit";
     case "server":

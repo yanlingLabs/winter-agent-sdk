@@ -439,8 +439,21 @@ export type ProviderEvent =
  * ABSENT — not `null` — for a connection error with no HTTP response, which is the case the pinned
  * `api_retry.error_status: number | null` describes and which capture (G) could not reach.
  */
+/**
+ * Winter's coarse provider-failure taxonomy (`ProviderError.code`).
+ *
+ * 0.0.57: `billing` -- the ACCOUNT cannot pay for the request: out of prepaid credit, payment required, a
+ * spend or billing hard limit. Never retryable (no backoff fixes it), and distinct from `rate_limit`
+ * (going too fast, or a subscription window that resets on a clock) so a host can open a billing cooldown
+ * without matching message text. See `normalizeHttpError` for what each dialect sends.
+ *
+ * WIDENING THIS UNION CAN BREAK AN EXHAUSTIVE `switch` in a host (the CHANGELOG says so under
+ * "Breaking for provider-package hosts"); a host with a `default` arm is unaffected.
+ */
+export type ProviderErrorCode = "auth" | "rate_limit" | "billing" | "server" | "network" | "bad_request" | "timeout" | "stall" | "aborted" | "capability";
+
 export interface ProviderError {
-  code: "auth" | "rate_limit" | "server" | "network" | "bad_request" | "timeout" | "stall" | "aborted" | "capability";
+  code: ProviderErrorCode;
   message: string;
   status?: number;
   providerCode?: string;

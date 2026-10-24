@@ -87,9 +87,10 @@ describe("normalizeHttpError — the five-way map plus retryability", () => {
 
   test("a 429 whose provider code is a BILLING exhaustion is not retryable", () => {
     // `insufficient_quota` means the account is out of credit. Ten exponentially-backed-off retries
-    // cannot fix that; they just delay the error the user needs to see by ~90 seconds.
+    // cannot fix that; they just delay the error the user needs to see by ~90 seconds. 0.0.57: and it is
+    // `billing`, not `rate_limit` -- the host's remedy is a billing cooldown, not a backoff.
     const err = normalizeHttpError(429, h(), JSON.stringify({ error: { code: "insufficient_quota", message: "quota" } }));
-    expect(err.code).toBe("rate_limit");
+    expect(err.code).toBe("billing");
     expect(err.retryable).toBe(false);
     expect(toSdkAssistantMessageError(err)).toBe("billing_error");
   });

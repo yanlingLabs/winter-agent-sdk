@@ -58,7 +58,7 @@ declare, is this package's public API. Anything reached by a deep path (`dist/..
 
 | Entry point | Supported for |
 | --- | --- |
-| `@yanlinglabs/winter-provider-runtime` | Production use. The pieces a host's own agent loop is built from: `createRegistry` / `resolve` and `createShippedAdapters`; `ProviderAdapter.streamTurn` with `TurnRequest` and the `ProviderEvent` stream; the stream assembler `foldProviderStream` (with its `StreamAssemblySink` -- `onTextDelta` for an SSE forwarder), `assembledToMessage`, `stampNativeState` and `ProviderStreamError`; `createHistoryRenderer` and `stripOpaque`; `estimateCostUsd` and `pricingTierFor`; the credential stores (`createEnvCredentialStore`, `createMemoryCredentialStore`, `createFileCredentialStore`, `createCompositeCredentialStore`); `withRetry` / `createRetryPolicy`; the error helpers (`isProviderError`, `normalizeThrown`, `parseRetryAfterMs`, `ProviderRequestError`); and the identity surface (`setWinterIdentity`, `activeWinterIdentity`, `winterUserAgent`, `WINTER_DEFAULT_IDENTITY`). |
+| `@yanlinglabs/winter-provider-runtime` | Production use. The pieces a host's own agent loop is built from: `createRegistry` / `resolve` and `createShippedAdapters`; `ProviderAdapter.streamTurn` with `TurnRequest` and the `ProviderEvent` stream; the stream assembler `foldProviderStream` (with its `StreamAssemblySink` -- `onTextDelta` for an SSE forwarder), `assembledToMessage`, `stampNativeState` and `ProviderStreamError`; `createHistoryRenderer` and `stripOpaque`; `estimateCostUsd` and `pricingTierFor`; the credential stores (`createEnvCredentialStore`, `createMemoryCredentialStore`, `createFileCredentialStore`, `createCompositeCredentialStore`); `withRetry` / `createRetryPolicy`; the error helpers (`isProviderError`, `normalizeThrown`, `parseRetryAfterMs`, `ProviderRequestError`) and the `ProviderErrorCode` taxonomy (0.0.57: `billing` -- the account cannot pay -- beside `rate_limit`, `auth`, `bad_request` and the rest); and the identity surface (`setWinterIdentity`, `activeWinterIdentity`, `winterUserAgent`, `WINTER_DEFAULT_IDENTITY`). |
 | `@yanlinglabs/winter-provider-runtime/testing` | Tests only. `createFakeProviderAdapter` with `fakeTextTurn` / `fakeToolCallTurn` / `fakeErrorTurn` (runs under Node and Bun), plus the fixture helpers Winter's own conformance harness uses. Supported, but a helper here may change shape in any release that says so. |
 
 **How versions move.** Both provider packages are released in lockstep with the rest of this repository,
@@ -113,6 +113,15 @@ const cost = estimateCostUsd(turn.usage ?? { inputTokens: 0, outputTokens: 0 }, 
 `setWinterIdentity` puts the host's own product on every request's `User-Agent` (`example-host/1.0.0`)
 instead of Winter's; it validates what it is given (a lowercase product token, a codex originator that is
 never a first party, an https contact URL, a plain version token) and throws `TypeError` otherwise.
+
+### Type-checking under Node: `skipLibCheck`, or `@types/bun`
+
+One shipped declaration names a Bun type: `AnthropicConsoleBrokerOptions.spawn?: typeof Bun.spawn`
+(`dist/adapters/anthropic/console-broker.d.ts`, the host-brokered Console login, which needs Bun anyway --
+see the next section). A Node project whose `tsconfig` has `skipLibCheck: false` and no Bun types gets
+`TS2868: Cannot find name 'Bun'` from that file, even if it never imports the Console broker. Set
+`"skipLibCheck": true` (what `tsc --init` writes for a new project), or add `@types/bun` as a dev
+dependency. Nothing at runtime depends on it.
 
 ## Bun-only surface
 

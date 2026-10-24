@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import fixture from "./__fixtures__/openrouter-reasoning-tool-loop.json" with { type: "json" };
-import { ChatStreamMapper, ReasoningDetailsAccumulator, buildChatBody, chatReasoningParameterFor, mapChatMessages, openRouterAnthropicCaching, withChatCacheMarkers } from "./chat-completions.ts";
+import { ChatStreamMapper, ReasoningDetailsAccumulator, buildChatBody, chatReasoningParameterFor, createChatCompletionsAdapter, mapChatMessages, openRouterAnthropicCaching, withChatCacheMarkers } from "./chat-completions.ts";
 import { resolveReasoning } from "./shared.ts";
 import { testContext } from "./testing.ts";
 import { createShippedAdapters } from "../index.ts";
@@ -292,6 +292,15 @@ describe("W7 + W1 + W5 end to end: a Claude tool loop through OpenRouter", () =>
     // The tool reply ends the request, so it carries the rolling breakpoint.
     expect(sent.at(-1)).toEqual({ role: "tool", tool_call_id: "toolu_synthetic_01", content: [{ type: "text", text: "sunny", cache_control: { type: "ephemeral" } }] });
     expect(bodies[0]!["model"]).toBe("anthropic/claude-sonnet-5.5");
+  });
+
+  test("0.0.57: reasoning_details are captured on OpenRouter ONLY -- the same opaque-state row on another chat surface captures nothing", async () => {
+    stubFetchSequence([fixture.turn1]);
+    const adapter = createChatCompletionsAdapter({ descriptors: () => SONNET });
+    const events: ProviderEvent[] = [];
+    for await (const e of adapter.streamTurn({ model: "anthropic/claude-sonnet-5.5", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "deepseek", baseUrl: "https://api.deepseek.com" }))) events.push(e);
+    expect(events.filter((e) => e.type === "error")).toEqual([]);
+    expect(events.some((e) => e.type === "native_state")).toBe(false);
   });
 
   test("a different model never receives the state: the renderer strips it outside the route's own domain", () => {

@@ -446,17 +446,17 @@ describe("0.0.49: a mid-stream `error` frame says WHAT the provider refused, and
     frame("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "SIG-NEVER-SHOWN" } }) +
     frame("content_block_stop", { type: "content_block_stop", index: 0 });
 
-  test("an `invalid_request_error` frame after content is a non-retryable `bad_request` carrying the provider's own message -- and is never replayed", async () => {
+  test("an `invalid_request_error` frame after content is non-retryable and carries the provider's own message -- `billing` (0.0.57) when that message is the out-of-credit one -- and is never replayed", async () => {
     const s = start(() => sse(messageStart + thinking + frame("error", { type: "error", error: { type: "invalid_request_error", message: CREDIT } })));
     const events = await collect(s.url);
-    expect(error(events)?.error).toEqual({ code: "bad_request", message: `the provider ended the stream with an error frame (invalid_request_error): ${CREDIT}`, retryable: false, providerCode: "invalid_request_error" });
+    expect(error(events)?.error).toEqual({ code: "billing", message: `the provider ended the stream with an error frame (invalid_request_error): ${CREDIT}`, retryable: false, providerCode: "invalid_request_error" });
     expect(s.requests).toHaveLength(1);
     expect(JSON.stringify(error(events))).not.toContain("SIG-NEVER-SHOWN");
   });
 
   test("each Anthropic error type maps onto the seam's code; none is retryable once streaming", () => {
     const codeOf = (type: string) => streamErrorFrame({ type, message: "x" }).code;
-    expect(["invalid_request_error", "billing_error", "not_found_error", "conflict_error", "request_too_large"].map(codeOf)).toEqual(["bad_request", "bad_request", "bad_request", "bad_request", "bad_request"]);
+    expect(["invalid_request_error", "billing_error", "not_found_error", "conflict_error", "request_too_large"].map(codeOf)).toEqual(["bad_request", "billing", "bad_request", "bad_request", "bad_request"]);
     expect(["authentication_error", "permission_error"].map(codeOf)).toEqual(["auth", "auth"]);
     expect(codeOf("rate_limit_error")).toBe("rate_limit");
     expect(codeOf("timeout_error")).toBe("timeout");
