@@ -37,6 +37,7 @@ int main(void) {
 }
 '''
 ETC_PROBE = r'''
+#define _GNU_SOURCE
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
