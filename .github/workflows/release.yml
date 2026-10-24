@@ -163,6 +163,9 @@ jobs:
       # and there is no `continue-on-error` on this job or on any of its steps. ---
       - run: bun run scripts/smoke-installed.ts --runtime=node   # BLOCKING
       - run: bun run scripts/smoke-installed.ts --runtime=bun    # BLOCKING
+      # 0.0.58: the web package (packages/web) installs ALONE (no dependency of any kind) and its installed
+      # tarball passes the probe under Node and Bun -- refusals, pinned TLS, the proxy behaviour.
+      - run: bun run scripts/web-pack-closure.ts                 # BLOCKING
 
       # version:bump / version:sync are DELIBERATELY not run here. WS-02 §9 item 2 says "every
       # publish is preceded by version:bump + version:sync", but that is the OPERATOR'S own action

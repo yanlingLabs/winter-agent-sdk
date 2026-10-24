@@ -4,6 +4,50 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.58
+
+### New package: `@yanlinglabs/winter-web`
+
+Winter's web tools as a standalone library (`packages/web`) for any Node or Bun host: ESM, Node >= 20
+and Bun >= 1.3, **no runtime dependencies**, on npm and GitHub Packages. The runtime's own WebSearch
+and WebFetch now import it, so there is one copy of the code. See its README for the full API.
+
+- **`fetchWebPage(url, options)`** (and `fetchWebResource` for the raw body): HTML as markdown, text,
+  or a binary flag, with `truncated`; every expected failure a typed `{ ok: false, code, message }`.
+  `privateAddressPolicy` is `"deny"` unless exactly `"allow"` is passed. Under deny, every hop -- each
+  redirect re-validated, up to `maxRedirects` -- refuses loopback, private/LAN, link-local and cloud
+  metadata, CGNAT, multicast, reserved and documentation ranges, IPv6 outside 2000::/3, every IPv4
+  embedding (mapped, compatible, translated, NAT64, 6to4, Teredo) and this machine's own interface
+  addresses; IPv4 literals in every notation; `localhost`/`.local` by name. A name is resolved once
+  per hop, every answer is checked (one private answer refuses the host), and the connection is pinned
+  to the validated address -- DNS rebinding has nothing to act on. Options: `signal`, `timeoutMs`,
+  `maxBytes`, `onOverflow`, `maxEncodedBytes`, `followRedirects`, `blockedDomains`, `userAgent`, and a
+  pluggable `cache` (`WebFetchCache`; `MemoryWebFetchCache` included, hits re-checked).
+- **`createExaSearchClient({ resolveKey?, state? })`**: Exa's hosted MCP server, anonymous tier first
+  with the key as fallback (`x-api-key` header only), the circuit breaker, the pacer, per-call timeout,
+  typed failures (`quota_exhausted`, `rate_limited`, `key_rejected`, `key_unreadable`, `unavailable`,
+  `backend_error`, `timeout`, `aborted`, `blocked_domains`).
+- **`buildWebFetchDigestRequest({ text, prompt })`**: the exact digest prompt winter's WebFetch sends.
+
+### WebFetch and WebSearch (runtime)
+
+- Behaviour is unchanged except where the shared guard is stricter: under `deny`/`ask` a multicast,
+  reserved, documentation or local-interface address, an IPv6 address outside 2000::/3, and a
+  NAT64/6to4/Teredo embedding of a private address are now refused like any other private address.
+- The HTML conversion runs on the package's own tokenizer instead of Bun's `HTMLRewriter` (identical
+  output on a 4,000-document differential). A page carrying an inline SVG icon (`<path .../>`) used
+  to fall back to raw HTML for the digest model; it now converts.
+- A plain (unencoded) body over 10 MiB is reported with the plain-body size message; it was reported
+  with the compressed-content one.
+
+### Release wiring
+
+- `@yanlinglabs/winter-web` is published to both registries (npm by closure: the runtime depends on it).
+- `scripts/web-pack-closure.ts` packs it alone, installs it offline (exactly one package) and runs
+  `scripts/web-node-probe.mjs` from the install under Node and Bun -- in `bun test` under CI and as a
+  BLOCKING release step. A new `web-node` CI job runs its suite under Node 24 and probes the build
+  under Node 20 and 24.
+
 ## 0.0.57
 
 ### A provider error says when the account cannot pay

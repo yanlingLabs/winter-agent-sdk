@@ -28,6 +28,7 @@ const EXPECTED_PACKAGE_NAMES = [
   "@yanlinglabs/winter-provider-catalog",
   "@yanlinglabs/winter-provider-conformance",
   "@yanlinglabs/winter-provider-runtime",
+  "@yanlinglabs/winter-web",
 ];
 
 /** P9a-3: a BIN-ONLY package (no `exports`, a `bin` field) -- ships a native binary, not JS. */
@@ -57,7 +58,7 @@ describe("findPackageManifests / discoverPublishablePackages against the real re
     for (const m of manifests) expect(m.split(/[\\/]/)).not.toContain("node_modules");
   });
 
-  test("the publishable set is exactly R-7-1's five JS packages PLUS the darwin-arm64 platform package (P9a-3) PLUS the runtime (WS-23)", () => {
+  test("the publishable set is exactly R-7-1's five JS packages PLUS the darwin-arm64 platform package (P9a-3) PLUS the runtime (WS-23) PLUS winter-web (0.0.58)", () => {
     const names = discoverPublishablePackages().map((p) => p.name);
     expect(names).toEqual(EXPECTED_PACKAGE_NAMES);
     // WS-23: the runtime was the one private package; an embedding host now installs it by name.

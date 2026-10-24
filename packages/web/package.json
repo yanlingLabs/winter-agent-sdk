@@ -1,0 +1,54 @@
+{
+  "name": "@yanlinglabs/winter-web",
+  "version": "0.0.58",
+  "license": "MIT",
+  "type": "module",
+  "description": "Web search (Exa) and SSRF-guarded web fetching for agents, with no runtime dependencies. Runs under Node >= 20 and Bun.",
+  "engines": {
+    "node": ">=20",
+    "bun": ">=1.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yanlingLabs/winter-agent-sdk.git",
+    "directory": "packages/web"
+  },
+  "homepage": "https://github.com/yanlingLabs/winter-agent-sdk",
+  "bugs": {
+    "url": "https://github.com/yanlingLabs/winter-agent-sdk/issues"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepack": "node -e \"if(!/\\bpnpm\\//.test(process.env.npm_config_user_agent||''))throw new Error('pack/publish this package with pnpm. publishConfig.exports is a pnpm-only feature: under npm the override is ignored, so the packed manifest keeps a bun condition pointing at src/ -- which files does not ship -- and the tarball is broken for every Bun consumer while installing fine under Node. See RELEASING.md.')\""
+  },
+  "publishConfig": {
+    "access": "restricted",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "winter": {
+    "publish": {
+      "npm": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0"
+  }
+}

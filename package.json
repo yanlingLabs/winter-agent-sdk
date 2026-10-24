@@ -23,7 +23,7 @@
     "verify:mcp-oauth": "bun run scripts/verify-mcp-oauth.ts",
     "release:pack": "bun run scripts/release-pack.ts",
     "verify:published-install": "bun run scripts/verify-published-install.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json && tsc --noEmit -p tsconfig.sdk-fence.json",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json && tsc --noEmit -p tsconfig.sdk-fence.json && tsc --noEmit -p packages/web/tsconfig.json",
     "test": "bun test"
   },
   "devDependencies": {
@@ -34,6 +34,7 @@
     "@yanlinglabs/winter-conformance": "workspace:*",
     "@yanlinglabs/winter-provider-catalog": "workspace:*",
     "@yanlinglabs/winter-provider-runtime": "workspace:*",
-    "@yanlinglabs/winter-provider-conformance": "workspace:*"
+    "@yanlinglabs/winter-provider-conformance": "workspace:*",
+    "@yanlinglabs/winter-web": "workspace:*"
   }
 }

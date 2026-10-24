@@ -29,6 +29,9 @@ importers:
       '@yanlinglabs/winter-provider-runtime':
         specifier: workspace:*
         version: link:packages/provider-runtime
+      '@yanlinglabs/winter-web':
+        specifier: workspace:*
+        version: link:packages/web
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
@@ -72,6 +75,9 @@ importers:
       '@yanlinglabs/winter-provider-runtime':
         specifier: workspace:*
         version: link:../provider-runtime
+      '@yanlinglabs/winter-web':
+        specifier: workspace:*
+        version: link:../web
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -102,6 +108,12 @@ importers:
       '@yanlinglabs/winter-agent-sdk-darwin-arm64':
         specifier: workspace:*
         version: link:../platform/darwin-arm64
+
+  packages/web:
+    devDependencies:
+      '@types/node':
+        specifier: ^26.4.0
+        version: 26.4.0
 
 packages:
 

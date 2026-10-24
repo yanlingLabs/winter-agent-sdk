@@ -243,6 +243,37 @@ jobs:
       - name: "pack-smoke-node18 (BLOCKING since the compiled emit landed — R-7a-16 reversed)"
         run: bun run scripts/smoke-installed.ts --runtime=node
 
+  web-node:
+    # 0.0.58: `@yanlinglabs/winter-web` promises Node >= 20 as well as Bun, so it is proven under Node
+    # here, on the oldest and a current line. Its own suite (node:test + node:assert, real loopback
+    # TLS servers, a fake resolver, no network) runs under Node's type stripping (22.18+); the BUILT
+    # package is probed under every line (scripts/web-node-probe.mjs: refusals in every literal
+    # notation, rebinding and mixed answers, pinned TLS validated by name, the environment-proxy
+    # behaviour, the Exa key fallback). The same suite runs under Bun in `build`'s `bun test`, and the
+    # packed tarball's install-alone gate (scripts/web-pack-closure.ts) runs there too.
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 24]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.4.2" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ matrix.node }}" }
+      - run: pnpm install
+      - run: bun run build:packages
+      - name: winter-web's own suite under Node (type stripping)
+        if: ${{ matrix.node >= 22 }}
+        run: node --test packages/web/src/*.test.ts
+      - name: the built winter-web under this Node
+        run: node scripts/web-node-probe.mjs packages/web/dist/index.js
+      - name: the packed winter-web installs alone and passes the probe under Node and Bun
+        run: bun run scripts/web-pack-closure.ts
+
   official-fixture-compile:
     # Task 11 (WS-03 §14 dual-compile, official half): a SEPARATE job (not a step on `build`) so its
     # ephemeral ~200MB official-package install (native optionalDependency included — accepted here,
