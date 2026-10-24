@@ -30,6 +30,21 @@ int main(void){
     assert(!document("{\"n\":1,}",&p));assert(!document("{\"n\":1} garbage",&p));assert(!document("{\"n\":\"bad\\q\"}",&p));
     char deep[256];int count=0;for(int i=0;i<40;i++)deep[count++]='[';deep[count++]='0';for(int i=0;i<40;i++)deep[count++]=']';deep[count]=0;assert(!document(deep,&p));
     assert(document("{\"runtimeUid\":1234567890123456789012345678901234567890}",&p));assert(integer(&p,field(&p,0,"runtimeUid"))==-1);
+    assert(document("{\"freshOnly\":true}",&p)&&continuation_ok(&p));
+    assert(document("{\"freshOnly\":true,\"continuation\":\"fresh\"}",&p)&&continuation_ok(&p));
+    assert(document("{\"continuation\":\"resume\"}",&p)&&continuation_ok(&p));
+    assert(document("{}",&p)&&!continuation_ok(&p));
+    assert(document("{\"continuation\":\"fresh\"}",&p)&&!continuation_ok(&p));
+    assert(document("{\"continuation\":\"either\"}",&p)&&!continuation_ok(&p));
+    assert(document("{\"freshOnly\":true,\"continuation\":\"resume\"}",&p)&&!continuation_ok(&p));
+    assert(document("{\"freshOnly\":false}",&p)&&!continuation_ok(&p));
+    assert(document("{\"freshOnly\":\"true\"}",&p)&&!continuation_ok(&p));
+    assert(document("{\"freshOnly\":false,\"continuation\":\"resume\"}",&p)&&!continuation_ok(&p));
+    assert(document("{\"freshOnly\":true,\"freshOnly\":true,\"continuation\":\"resume\"}",&p)&&!continuation_ok(&p));
+    assert(document("{\"freshOnly\":false,\"freshOnly\":true}",&p)&&!continuation_ok(&p));
+    assert(document("{\"freshOnly\":true,\"continuation\":\"fresh\",\"continuation\":\"resume\"}",&p)&&!continuation_ok(&p));
+    assert(document("{\"continuation\":\"resume\",\"continuation\":\"resume\"}",&p)&&!continuation_ok(&p));
+    assert(document("{\"freshOnly\":true,\"freshOnly\":false,\"continuation\":\"resume\"}",&p)&&!continuation_ok(&p));
     return 0;
 }
 '''

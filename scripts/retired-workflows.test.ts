@@ -7,6 +7,9 @@
 // Kept on purpose: ci.yml and release.yml (live), and cowork-tool-utilities-build.yml, which is not a trigger-only workflow: the utilities build and staging hash it as
 // a pinned input (scripts/guest-utilities/{build.py,compile.ts,stage.py}).
 //
+// Also allowed: guided-owner-matrix-resume-reviewed.yml, a FRESH one-run workflow (its own gate: scripts/guided-owner-matrix-resume-gates.test.ts, trigger branch
+// cowork/guided-owner-matrix-resume-run, never created by its author, unarmed). Once its run is spent, retire it the same way: delete it and move its branch to SPENT_BRANCHES.
+//
 // This test keeps them gone: (1) no retired file exists, (2) no workflow names a retired or spent trigger branch, (3) every remaining workflow is on the reviewed allow-list.
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -32,7 +35,7 @@ export const SPENT_BRANCHES = [
   "cowork/linux-tool-devices", "cowork/isolated-instruction-reader", "cowork/reader-runtime-compatibility",
   "cowork/guided-hosted-run", "cowork/guided-hosted-run-2", "cowork/guided-hosted-run-3", "cowork/guided-hosted-run-4", "cowork/guided-hosted-run-5",
 ] as const;
-export const ALLOWED_WORKFLOWS = ["ci.yml", "release.yml", "cowork-tool-utilities-build.yml"] as const;
+export const ALLOWED_WORKFLOWS = ["ci.yml", "release.yml", "cowork-tool-utilities-build.yml", "guided-owner-matrix-resume-reviewed.yml"] as const;
 
 /** Pure: the violations of a directory listing (name -> text). */
 export function violations(files: Record<string, string>): string[] {

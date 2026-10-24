@@ -33,8 +33,13 @@ REQUIRE_COMPILE = os.environ.get('WINTER_REQUIRE_OWNER_HOLDER_COMPILE') == '1'
 PRE_OWNER_SHA256 = 'c149d451eaa79442dfd41e9375c891ae8c9a06135d2cfc85851bcc8b5ce51fd8'
 PRE_FIXTURE_SHA256 = 'ef1a3e4554551a47e5857ec90618cb968be2e3a1a653817df5bcac5d269f2d39'
 PRE_MATRIX_SHA256 = 'b9ea9804d57806f3ecfa765d65c2eb92c93ce1171b08cef72c3c81e8e5bbedbf'
+# The owner after the holder patch and before the cold-resume patch (the second owner-matrix run's bytes).
+HOLDER_OWNER_SHA256 = '95457d8f6ff256257b3b211e0201c64a4ed0b575aac6a9f933b3178b823b0d76'
+# The cold-resume patch (docs/research/guided-owner-cold-resume-DATA.patch) sits on top of it and also edits the native parser test.
+RESUME_PATCH = ROOT / 'docs/research/guided-owner-cold-resume-DATA.patch'
+PARSER_TEST = 'scripts/guest-supervisor/test_native_parser.py'
 # The tracked bytes now.
-OWNER_SHA256 = '95457d8f6ff256257b3b211e0201c64a4ed0b575aac6a9f933b3178b823b0d76'
+OWNER_SHA256 = '7630cb1f2e9b76be78fb6fb0f0efb6df74d437b39f9e3db69ac8aacc83162372'
 FIXTURE_SHA256 = 'a0c4929d88ae9dc66fc2201a2ff65c047e4c9ea0e85807d181080835539587d1'
 MATRIX_SHA256 = '8f93e9f8327e7da20241f52bdd2a2fdb556134456b64f037ab9a046811406cb4'
 FIXTURE = 'scripts/guest-supervisor/guided_owner_native_fixture.c'
@@ -78,7 +83,7 @@ class PatchIntegrityTests(unittest.TestCase):
     def test_reversing_then_reapplying_both_patches_is_byte_exact_with_zero_fuzz(self):
         directory = Path(tempfile.mkdtemp(prefix='winter-owner-holder-reverse-'))
         try:
-            for name in (OWNER, FIXTURE, MATRIX):
+            for name in (OWNER, FIXTURE, MATRIX, PARSER_TEST):
                 (directory / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / name, directory / name)
 
@@ -87,11 +92,15 @@ class PatchIntegrityTests(unittest.TestCase):
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
                 self.assertNotIn('fuzz', done.stdout.lower())
                 self.assertNotIn('offset', done.stdout.lower())
+            run('-R', RESUME_PATCH)
+            self.assertEqual(sha(directory / OWNER), HOLDER_OWNER_SHA256)
             run('-R', PATCH)
             run('-R', FIXTURE_PATCH)
             self.assertEqual((sha(directory / OWNER), sha(directory / FIXTURE), sha(directory / MATRIX)), (PRE_OWNER_SHA256, PRE_FIXTURE_SHA256, PRE_MATRIX_SHA256))
             run('-N', PATCH)
             run('-N', FIXTURE_PATCH)
+            self.assertEqual((sha(directory / OWNER), sha(directory / FIXTURE), sha(directory / MATRIX)), (HOLDER_OWNER_SHA256, FIXTURE_SHA256, MATRIX_SHA256))
+            run('-N', RESUME_PATCH)
             self.assertEqual((sha(directory / OWNER), sha(directory / FIXTURE), sha(directory / MATRIX)), (OWNER_SHA256, FIXTURE_SHA256, MATRIX_SHA256))
         finally:
             shutil.rmtree(directory, ignore_errors=True)
@@ -99,6 +108,7 @@ class PatchIntegrityTests(unittest.TestCase):
     def test_the_patch_touches_exactly_the_owner(self):
         self.assertEqual(re.findall(r'^--- a/(.+)$', PATCH.read_text(), re.M), [OWNER])
         self.assertEqual(re.findall(r'^\+\+\+ b/(.+)$', PATCH.read_text(), re.M), [OWNER])
+        self.assertEqual(re.findall(r'^\+\+\+ b/(.+)$', RESUME_PATCH.read_text(), re.M), [OWNER, PARSER_TEST])
         self.assertEqual(hashlib.sha256(patched().encode()).hexdigest(), OWNER_SHA256)
 
     def test_the_patch_removes_only_what_it_replaces(self):
@@ -114,7 +124,7 @@ class PatchIntegrityTests(unittest.TestCase):
 
     def test_the_hashes_are_recorded_in_the_doc(self):
         text = DOC.read_text()
-        for digest in (sha(PATCH), sha(FIXTURE_PATCH), OWNER_SHA256, FIXTURE_SHA256, MATRIX_SHA256, PRE_OWNER_SHA256, PRE_FIXTURE_SHA256, PRE_MATRIX_SHA256):
+        for digest in (sha(PATCH), sha(FIXTURE_PATCH), HOLDER_OWNER_SHA256, FIXTURE_SHA256, MATRIX_SHA256, PRE_OWNER_SHA256, PRE_FIXTURE_SHA256, PRE_MATRIX_SHA256):
             self.assertIn(digest, text)
 
 
@@ -251,6 +261,34 @@ int main(int argc,char **argv){
 '''
 
 CASES = ('transfer', 'original-not-cloexec', 'stray-holder', 'stray-holder-even-cloexec-off', 'dup-fails', 'small-numbers', 'not-a-socket', 'census-sees-only-the-same-object', 'retained', 'cloexec', 'unreadable-table')
+
+
+class ColdResumeOwnerTests(unittest.TestCase):
+    """The cold-resume owner patch: the record's continuation is decided in ONE place, and the open path no longer asks for freshOnly on its own. Mutation runs substitute the owner."""
+
+    def test_the_resume_patch_removes_only_the_two_freshonly_lines_it_replaces(self):
+        removed = [line[1:] for line in RESUME_PATCH.read_text().splitlines() if line.startswith('-') and not line.startswith('---')]
+        self.assertEqual(len(removed), 2, removed)
+        self.assertEqual(sum('int fresh=field(&p,0,"freshOnly"),scope=field(&p,0,"scope")' in line for line in removed), 1)
+        self.assertEqual(sum('fresh<0||p.t[fresh].end-p.t[fresh].start!=4' in line for line in removed), 1)
+
+    def test_the_open_path_asks_continuation_ok_and_never_freshonly_itself(self):
+        source = patched()
+        opened = function(source, 'winter_owner_open')
+        self.assertEqual(opened.count('!continuation_ok(&p)'), 1)
+        self.assertNotIn('freshOnly', opened)
+        self.assertEqual(source.count('"freshOnly"'), function(source, 'continuation_ok').count('"freshOnly"'))
+        self.assertLess(source.index('static int continuation_ok('), source.index('winter_owner_open('))
+
+    def test_continuation_ok_admits_exactly_two_shapes(self):
+        body = function(patched(), 'continuation_ok')
+        self.assertIn('if(key_count(p,0,"freshOnly")>1||key_count(p,0,"continuation")>1)return 0;', body)
+        self.assertLess(body.index('key_count(p,0,"freshOnly")'), body.index('field(p,0,"freshOnly")'))
+        self.assertIn('if(fresh>=0)return fresh_true&&(cont<0||eq(p,cont,"fresh"));', body)
+        self.assertIn('return cont>=0&&eq(p,cont,"resume");', body)
+        self.assertIn('p->t[fresh].end-p->t[fresh].start==4&&!memcmp(p->s+p->t[fresh].start,"true",4)', body)
+        self.assertEqual(body.count('"resume"'), 1)
+        self.assertNotIn('either', body)
 
 
 class ExtractedFunctionTests(unittest.TestCase):
