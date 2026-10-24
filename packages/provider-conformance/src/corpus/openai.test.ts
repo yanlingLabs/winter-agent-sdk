@@ -791,7 +791,10 @@ describe("live wire details the corpus does not ask about", () => {
       const adapter = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
       const ctx = testContext({ providerId: "openrouter", stallTimeoutMs: STALL_MS });
       await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [], effort: "high" }, ctx));
-      expect(JSON.parse(fake.requests.at(-1)!.body).reasoning_effort).toBe("high");
+      // OpenRouter takes the effort as a `reasoning` object (0.0.56); the top-level field never rides beside it.
+      const sent = JSON.parse(fake.requests.at(-1)!.body);
+      expect(sent.reasoning).toEqual({ effort: "high" });
+      expect(sent.reasoning_effort).toBeUndefined();
 
       const before = fake.requests.length;
       const events = await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [], effort: 4 }, ctx));

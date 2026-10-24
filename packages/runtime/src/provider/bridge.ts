@@ -1,11 +1,12 @@
 // Phase 6 Task 3 (R6-4): the runtime-side bridge -- an adapter's `AsyncIterable<ProviderEvent>`
 // folded into ONE `ProviderTurn`.
 //
-// WHY IT LIVES HERE AND NOT IN `provider-runtime`. That package must never import the runtime (a
-// cycle whose compiled and dev resolutions differ), and `ProviderTurn`/`ProviderMessage`/
-// `ContentBlock` stay defined in `engine.ts` because they are the ENGINE's contract. So the
-// conversion between the two vocabularies has exactly one place it can live, and this is it: the
-// dependency runs runtime -> provider-runtime, one way, always.
+// WHAT LIVES HERE AND WHAT DOES NOT (0.0.56, W8). The fold itself -- events in, one assembled turn out --
+// moved to `provider-runtime` (`stream-assembler.ts`), so a host with its own agent loop assembles turns
+// with the same code; this file imports it and keeps only what is the ENGINE's: `ProviderTurnError`
+// (the fold's failures are mapped onto it here), the engine's sink and turn types, and the adapter
+// wrapper. That package still never imports the runtime (a cycle whose compiled and dev resolutions
+// differ): the dependency runs runtime -> provider-runtime, one way, always.
 //
 // WHAT THE FOLD IS RESPONSIBLE FOR, stated as obligations rather than steps:
 //
@@ -25,25 +26,17 @@
 //   4. **Errors are typed and redacted.** Everything that goes wrong becomes a `ProviderTurnError`
 //      carrying the provider's status and structured code -- never a raw body, never credential
 //      material, never opaque state.
-import { randomUUID } from "node:crypto";
-import type { ProviderAdapter, ProviderContext, ProviderError, ProviderEvent, ProviderMessageLike, ResolvedModel, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
-import { imageBudgetFor, normalizeThrown, shouldRequestSummary, stripOpaque, withinImageBudget } from "@yanlinglabs/winter-provider-runtime";
-import type { WireContentBlock, WireStreamEvent } from "@yanlinglabs/winter-agent-sdk";
+import type { ProviderAdapter, ProviderContext, ProviderError, ProviderEvent, ProviderMessageLike, ResolvedModel, StreamAssemblySink, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 import {
-  ProviderTurnError,
-  type ContentBlock,
-  type MessageOrigin,
-  type Provider,
-  type ProviderMessage,
-  type ProviderNativeState,
-  type ProviderRequest,
-  type ProviderStopReason,
-  type ProviderStreamSink,
-  type ProviderThinkingOutput,
-  type ProviderTurn,
-  type ProviderUsage,
-  type ReasoningProgress,
-} from "../engine.ts";
+  foldProviderStream as assembleProviderStream,
+  imageBudgetFor,
+  normalizeThrown,
+  shouldRequestSummary,
+  stampNativeState as stampAssembledNativeState,
+  stripOpaque,
+  withinImageBudget,
+} from "@yanlinglabs/winter-provider-runtime";
+import { ProviderTurnError, type MessageOrigin, type Provider, type ProviderMessage, type ProviderRequest, type ProviderStreamSink, type ProviderTurn } from "../engine.ts";
 import type { ContinuationChain } from "../store/provider-state.ts";
 
 // Re-exported so a lane reads the error type from the module it is working in. DECLARED in
@@ -284,441 +277,23 @@ export type FoldedProviderTurn = Exclude<ProviderTurn, { kind: "rpc_probe" }>;
 /**
  * The fold itself, exported so a lane can test its own adapter's stream against the REAL consumer
  * rather than a re-implementation of it.
+ *
+ * 0.0.56 (W8): THE FOLD NOW LIVES IN PROVIDER-RUNTIME (`stream-assembler.ts`, `foldProviderStream`), so a
+ * host driving `streamTurn` itself assembles turns with the same code. This is the engine's door onto
+ * it, unchanged in behaviour: the engine's sink, and every failure mapped onto `ProviderTurnError`
+ * exactly as before (`providerErrorToTurnError` for an `error` event, `toProviderTurnError` for a throw).
+ * The provider-reported cost (`usage.reportedCostUsd`) is not part of the engine's `ProviderUsage` and is
+ * dropped here, so the engine's turn is byte-for-byte what it was.
  */
 export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, sink?: ProviderStreamSink, signal?: AbortSignal): Promise<FoldedProviderTurn> {
-  let text = "";
-  let summary = "";
-  let exposed = "";
-  const thinkingBlocks: ContentBlock[] = [];
-  const calls: Array<{ id: string; name: string; input: unknown }> = [];
-  const callOrder: string[] = [];
-  const pendingCalls = new Map<string, { name: string; argumentsJson: string }>();
-  // WS-23 (block order): the turn's content IN THE ORDER THE STREAM PRODUCED IT, alongside the
-  // per-kind buckets above (which every existing consumer still reads). The buckets alone lose the
-  // interleaving: a `[thinking, text, thinking, tool_use]` response used to be persisted as
-  // `[thinking, thinking, text, tool_use]`, and Anthropic requires the thinking blocks of an active
-  // tool loop to come back UNMODIFIED and in place -- a reordered replay is exactly the history edit
-  // a block-binding row (Opus 5.5 / Fable 5.1) rejects, and it hands every other row a turn the model
-  // never wrote. A text run opens one text block and is closed by the next thinking block or call,
-  // the same boundary rule `StreamEventEmitter` already applies to the `stream_event` frames, so the
-  // persisted content and the streamed frames describe one sequence. Tool calls are placeholders
-  // here (their arguments are still streaming) and are materialised from `pendingCalls` at the end.
-  // CAVEAT: this is EVENT order, which equals wire order only for an adapter that emits each block when
-  // it completes; one that holds thinking to `message_stop` (see the Anthropic adapter's own note)
-  // would have its thinking placed last.
-  const ordered: Array<{ kind: "text"; text: string } | { kind: "block"; block: ContentBlock } | { kind: "call"; id: string }> = [];
-  let orderedTextOpen = false;
-  let usage: ProviderUsage | undefined;
-  let stopReason: ProviderStopReason | undefined;
-  let stopDetails: { category: string | null; explanation: string | null } | undefined;
-  let nativeState: ProviderNativeState | undefined;
-  // WS-23 (anthropic-cache): the provider's own id for this response -- the next main-loop request's
-  // `cacheDiagnostics.previousMessageId`.
-  let responseId: string | undefined;
-  const emitter = new StreamEventEmitter(sink);
-  // Fix wave round 2 (R-E2): has the STREAM begun? Every event except the pre-stream observations
-  // (`retry`, `rate_limit`, `auth_status`) and the failure itself marks it -- the same line
-  // `policy.commit()` draws in the adapters (the first SSE event). Carried onto the typed error so
-  // the engine's fallback honours R6-6's first-byte rule.
-  let committed = false;
-  // 0.0.47: the live reasoning stream. Every block it opens is closed -- by the adapter, or below, when
-  // the stream ends, fails or the turn is interrupted.
-  const progress = new ReasoningProgressTracker(sink);
-  // An interrupt aborts the request signal BEFORE the engine's race unwinds the turn (engine.ts,
-  // `interruptCurrentTurn`), and abort listeners run inside `abort()` -- so the open blocks' `end` frames
-  // are written before the interrupted turn's own frames, not whenever the abandoned stream finally dies.
-  const onAbort = (): void => progress.stop();
-  if (signal?.aborted === true) onAbort();
-  else signal?.addEventListener("abort", onAbort, { once: true });
-
-  try {
-    for await (const event of stream) {
-      if (event.type !== "retry" && event.type !== "rate_limit" && event.type !== "auth_status" && event.type !== "error") committed = true;
-      switch (event.type) {
-        case "message_start":
-          if (event.id !== undefined) responseId = event.id;
-          emitter.messageStart(event.id, event.model);
-          break;
-        case "text_delta": {
-          text += event.text;
-          const open = ordered[ordered.length - 1];
-          if (orderedTextOpen && open !== undefined && open.kind === "text") open.text += event.text;
-          else {
-            ordered.push({ kind: "text", text: event.text });
-            orderedTextOpen = true;
-          }
-          emitter.textDelta(event.text);
-          break;
-        }
-        case "thinking_summary_delta":
-          // FOREIGN reasoning. Accumulated for the sidecar's `summary` record and the Winter-only
-          // frame; NEVER forwarded as a `stream_event` (there is no pinned raw event for a foreign
-          // summary, and inventing one would put it in the model-facing block stream).
-          summary += event.text;
-          break;
-        case "thinking_exposed_delta":
-          exposed += event.text;
-          break;
-        case "reasoning_progress":
-          // OBSERVATIONAL ONLY: the summary/exposed deltas and `native_thinking_block` remain the
-          // carriers of record; this accumulates nothing into the turn.
-          progress.handle(event);
-          break;
-        case "native_thinking_block": {
-          // An IN-DIALECT Anthropic-family block, complete, with its real signature. Structurally
-          // validated rather than cast: these bytes came off a provider's wire.
-          const block = coerceDialectThinkingBlock(event.block);
-          if (block !== undefined) {
-            thinkingBlocks.push(block);
-            ordered.push({ kind: "block", block });
-            orderedTextOpen = false;
-            emitter.thinkingBlock(block);
-          }
-          break;
-        }
-        case "tool_call_start":
-          // A REPEATED start for an id already open is not a second call: `calls` below is built
-          // from `callOrder`, which would otherwise list it twice -- and so would `ordered`.
-          if (!pendingCalls.has(event.id)) {
-            callOrder.push(event.id);
-            ordered.push({ kind: "call", id: event.id });
-          }
-          pendingCalls.set(event.id, { name: event.name, argumentsJson: "" });
-          orderedTextOpen = false;
-          emitter.toolCallStart(event.id, event.name);
-          break;
-        case "tool_call_delta": {
-          const pending = pendingCalls.get(event.id);
-          // FRAGMENTED ARGUMENTS are the normal case, not an edge one: every family streams tool
-          // arguments as partial JSON, so the fold accumulates and parses ONCE at the end.
-          if (pending !== undefined) pending.argumentsJson += event.argumentsJsonDelta;
-          emitter.toolCallDelta(event.id, event.argumentsJsonDelta);
-          break;
-        }
-        case "tool_call_end":
-          emitter.toolCallEnd(event.id);
-          break;
-        case "native_state":
-          // CAPTURED FROM THE COMPLETION EVENT ONLY, which here means "the last one wins": an
-          // adapter emits this once, from the event its descriptor names as the completion. Taking
-          // an earlier partial copy would persist a continuation state the provider never finished
-          // minting, and the replay would fail on the next turn rather than here.
-          nativeState = { family: "", continuationDomain: "", items: event.items };
-          break;
-        case "usage":
-          usage = {
-            inputTokens: event.inputTokens,
-            outputTokens: event.outputTokens,
-            ...(event.cacheReadTokens !== undefined ? { cacheReadTokens: event.cacheReadTokens } : {}),
-            ...(event.cacheWriteTokens !== undefined ? { cacheWriteTokens: event.cacheWriteTokens } : {}),
-            // WS-23 (anthropic-cache): the 1-hour share of the writes and the provider's cache verdict.
-            ...(event.cacheWrite1hTokens !== undefined ? { cacheWrite1hTokens: event.cacheWrite1hTokens } : {}),
-            ...(event.cacheMiss !== undefined ? { cacheMiss: event.cacheMiss } : {}),
-            ...(event.thinkingBlocksDropped !== undefined ? { thinkingBlocksDropped: event.thinkingBlocksDropped } : {}),
-            // WS-24 (follow-up 1): the Responses family's reasoning-token count, carried verbatim.
-            ...(event.reasoningTokens !== undefined ? { reasoningTokens: event.reasoningTokens } : {}),
-          };
-          break;
-        case "retry":
-          sink?.onRetry({
-            attempt: event.attempt,
-            maxRetries: event.maxRetries,
-            retryDelayMs: event.retryDelayMs,
-            ...(event.errorStatus !== undefined ? { errorStatus: event.errorStatus } : {}),
-            error: event.error,
-          });
-          break;
-        case "rate_limit":
-          sink?.onRateLimit({ kind: event.kind, info: event.info });
-          break;
-        case "auth_status":
-          sink?.onAuthStatus({
-            isAuthenticating: event.isAuthenticating,
-            ...(event.output !== undefined ? { output: event.output } : {}),
-            ...(event.error !== undefined ? { error: event.error } : {}),
-          });
-          break;
-        case "done":
-          stopReason = event.stopReason;
-          stopDetails = event.stopDetails;
-          emitter.messageStop(event.stopReason);
-          break;
-        case "error":
-          // Review r1, I-6: an overflow the stream reported before producing anything is not a committed
-          // turn -- nothing reached the host, nothing ran -- so the engine may compact and retry it, as it
-          // does for the same refusal on a 400.
-          throw providerErrorToTurnError(event.error, committed && !((event.error.contextOverflow === true || event.error.imageOverflow === true) && ordered.length === 0));
-      }
-    }
-  } catch (err) {
-    throw toProviderTurnError(err, committed);
-  } finally {
-    // Every started block gets its `end`, however the stream stopped: a normal completion whose adapter
-    // left a block open, an `error` event, a throw, or an abort (already closed by the listener).
-    signal?.removeEventListener("abort", onAbort);
-    progress.closeAll();
-  }
-
-  // The COMPLETE summary still reaches the host once, at the end of the generation, as
-  // `system/reasoning_summary` -- unchanged, for hosts that read only that frame. R6-8's rule that this
-  // was the ONLY way reasoning text reached a host ("not per delta") is SUPERSEDED by the user's
-  // 2026-10-05 ruling, "everything that streams should stream": the same text now also streams live,
-  // per block, as `system/reasoning_progress` (the `reasoning_progress` case above). Neither frame ever
-  // puts reasoning into `assistant.message.content`, which is the part of R6-8 that still stands.
-  if (summary.length > 0) sink?.onReasoningSummary(summary);
-
-  for (const id of callOrder) {
-    const pending = pendingCalls.get(id);
-    if (pending === undefined) continue;
-    calls.push({ id, name: pending.name, input: parseToolArguments(pending.argumentsJson) });
-  }
-
-  // The ordered content, materialised. Each call is the SAME object `calls` carries (parsed once), and
-  // an empty text run -- a stream that opened a text block and never wrote into it -- is dropped:
-  // this endpoint family rejects an empty text block on replay, and it says nothing either way.
-  const callsById = new Map(calls.map((c) => [c.id, c]));
-  const content: ContentBlock[] = [];
-  for (const entry of ordered) {
-    if (entry.kind === "text") {
-      if (entry.text.length > 0) content.push({ type: "text", text: entry.text });
-    } else if (entry.kind === "block") {
-      content.push(entry.block);
-    } else {
-      const call = callsById.get(entry.id);
-      if (call !== undefined) content.push({ type: "tool_use", id: call.id, name: call.name, input: call.input });
-    }
-  }
-
-  // W18-15 (Phase 10b Lane S, S4): whether the ACCUMULATED exposed text is the model's WHOLE
-  // reasoning trace for this turn, never a partial one. "Normal stop" excludes `max_tokens`
-  // (truncated by the provider's own limit), `aborted` and `refusal` -- and an error mid-stream never
-  // reaches this point at all (the `throw` above ends the fold before `stopReason` is ever read), so
-  // there is no separate "a delta was dropped" case left to detect independently: every way a
-  // reasoning delta could go missing already fails one of these two checks.
-  const exposedComplete = exposed.length > 0 && (stopReason === "end_turn" || stopReason === "tool_use");
-
-  const thinking: ProviderThinkingOutput | undefined =
-    summary.length > 0 || exposed.length > 0 || thinkingBlocks.length > 0
-      ? {
-          ...(summary.length > 0 ? { summary } : {}),
-          ...(exposed.length > 0 ? { exposed, exposedComplete } : {}),
-          ...(thinkingBlocks.length > 0 ? { blocks: thinkingBlocks } : {}),
-        }
-      : undefined;
-
-  const common = {
-    ...(usage !== undefined ? { usage } : {}),
-    ...(stopReason !== undefined ? { stopReason } : {}),
-    ...(stopDetails !== undefined ? { stopDetails } : {}),
-    ...(thinking !== undefined ? { thinking } : {}),
-    ...(nativeState !== undefined ? { nativeState } : {}),
-    ...(content.length > 0 ? { content } : {}),
-    ...(responseId !== undefined ? { responseId } : {}),
-  };
-
-  // A turn with CALLS is a `tool_use` turn even when it also produced text -- and the text rides
-  // along on `text?` rather than being dropped, which is the whole reason R6-3 added that field.
-  if (calls.length > 0) return { kind: "tool_use", calls, ...(text.length > 0 ? { text } : {}), ...common };
-  return { kind: "text", text, ...common };
-}
-
-/**
- * Maps the fold's own progress onto the six pinned raw stream events (R6-5).
- *
- * Winter's normalized `ProviderEvent` vocabulary is NOT the Anthropic raw shape -- a family's stream
- * is normalized once, by its adapter, into `ProviderEvent`, and translated once, here, into what the
- * pinned `stream_event` frame carries. The block INDEX is maintained here for the same reason: it is
- * a property of the assembled message, not of any single event, so an adapter cannot get it wrong.
- *
- * Every method is a no-op without a sink, so an auxiliary generation costs nothing (R6-G).
- */
-class StreamEventEmitter {
-  private index = -1;
-  private textOpen = false;
-  private readonly toolIndex = new Map<string, number>();
-  constructor(private readonly sink: ProviderStreamSink | undefined) {}
-
-  private emit(event: WireStreamEvent): void {
-    this.sink?.onStreamEvent(event);
-  }
-
-  messageStart(id: string | undefined, model: string | undefined): void {
-    if (this.sink === undefined) return;
-    this.emit({ type: "message_start", message: { ...(id !== undefined ? { id } : {}), ...(model !== undefined ? { model } : {}), role: "assistant", content: [] } });
-  }
-
-  textDelta(text: string): void {
-    if (this.sink === undefined) return;
-    if (!this.textOpen) {
-      this.closeText();
-      this.index++;
-      this.textOpen = true;
-      this.emit({ type: "content_block_start", index: this.index, content_block: { type: "text", text: "" } });
-    }
-    this.emit({ type: "content_block_delta", index: this.index, delta: { type: "text_delta", text } });
-  }
-
-  thinkingBlock(block: { type: "thinking"; thinking: string; signature: string } | { type: "redacted_thinking"; data: string }): void {
-    if (this.sink === undefined) return;
-    this.closeText();
-    this.index++;
-    // A COMPLETE block arrives as one event, so it is emitted as start + its delta(s) + stop rather
-    // than being withheld: a host rendering the stream must see the same content the completed
-    // `assistant` message will carry.
-    //
-    // WS-23 (reasoning-state): WITHOUT its attestation -- no `signature_delta`, `signature: ""` and
-    // `data: ""` on the start frame -- exactly as the `assistant` frame carries it (engine.ts
-    // `contentForHost`). The signed bytes go back to the API from the provider-state sidecar; no host
-    // reads them, so no frame carries them.
-    this.emit({ type: "content_block_start", index: this.index, content_block: (block.type === "thinking" ? { type: "thinking", thinking: "", signature: "" } : { type: "redacted_thinking", data: "" }) as WireContentBlock });
-    if (block.type === "thinking") this.emit({ type: "content_block_delta", index: this.index, delta: { type: "thinking_delta", thinking: block.thinking } });
-    this.emit({ type: "content_block_stop", index: this.index });
-  }
-
-  toolCallStart(id: string, name: string): void {
-    if (this.sink === undefined) return;
-    this.closeText();
-    this.index++;
-    this.toolIndex.set(id, this.index);
-    this.emit({ type: "content_block_start", index: this.index, content_block: { type: "tool_use", id, name, input: {} } });
-  }
-
-  toolCallDelta(id: string, partialJson: string): void {
-    if (this.sink === undefined) return;
-    const index = this.toolIndex.get(id);
-    if (index === undefined) return;
-    this.emit({ type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: partialJson } });
-  }
-
-  toolCallEnd(id: string): void {
-    if (this.sink === undefined) return;
-    const index = this.toolIndex.get(id);
-    if (index === undefined) return;
-    this.emit({ type: "content_block_stop", index });
-  }
-
-  messageStop(stopReason: ProviderStopReason): void {
-    if (this.sink === undefined) return;
-    this.closeText();
-    this.emit({ type: "message_delta", delta: { stop_reason: stopReason } });
-    this.emit({ type: "message_stop" });
-  }
-
-  private closeText(): void {
-    if (!this.textOpen) return;
-    this.textOpen = false;
-    this.emit({ type: "content_block_stop", index: this.index });
-  }
-}
-
-/**
- * 0.0.47: an adapter's `reasoning_progress` events -> the sink's `onReasoningProgress`, with the
- * contract's invariants enforced HERE, once, rather than trusted to every adapter:
- *
- *   - `block_id` is a fresh UUID per block, so it is unique within the session however many
- *     generations reuse an adapter's own key (a Responses `#0`, an Anthropic block index 0);
- *   - a block gets exactly one `start` and one `end`: a repeated `start` is dropped, a `delta`/`end` for
- *     a block never started opens it first, and anything for a block already ended is dropped;
- *   - `end` carries the block's LAST kind (a `hidden` block that turned into an `update` ends as one) --
- *     the kind an adapter's own `end` names is not consulted for a block it already opened;
- *   - `closeAll()` ends every block still open -- the stream's end, a failure; `stop()` does the same
- *     for an interrupt and drops whatever the abandoned stream still yields.
- *
- * An empty `delta` is dropped, kind and all: it says nothing a host can render, and an omitted-display
- * Anthropic block streams exactly that. A non-empty `delta` may change the block's kind (its first
- * readable text).
- * Every method is a no-op without a sink, so an auxiliary generation costs nothing (R6-G).
- */
-class ReasoningProgressTracker {
-  private readonly open = new Map<string, { blockId: string; kind: ReasoningProgress["kind"] }>();
-  private readonly ended = new Set<string>();
-  private stopped = false;
-  constructor(private readonly sink: ProviderStreamSink | undefined) {}
-
-  handle(event: Extract<ProviderEvent, { type: "reasoning_progress" }>): void {
-    if (this.sink === undefined || this.stopped || this.ended.has(event.block)) return;
-    let block = this.open.get(event.block);
-    if (block === undefined) {
-      block = { blockId: randomUUID(), kind: event.kind };
-      this.open.set(event.block, block);
-      this.emit({ blockId: block.blockId, phase: "start", kind: event.kind });
-      if (event.phase === "start") return;
-    } else if (event.phase === "start") {
-      return;
-    }
-    if (event.phase === "end") {
-      // The kind an `end` names is ignored for a block already open: what the block turned out to be
-      // was settled by its deltas, and an adapter closing a block need not remember that.
-      this.close(event.block);
-      return;
-    }
-    // An EMPTY delta changes nothing, its kind included: a block that streamed only empty text (an
-    // omitted Anthropic block) is still the `hidden` block it opened as.
-    if (event.text === undefined || event.text.length === 0) return;
-    block.kind = event.kind;
-    this.emit({ blockId: block.blockId, phase: "delta", kind: block.kind, text: event.text, ...(event.part !== undefined ? { part: event.part } : {}) });
-  }
-
-  /** Ends every block still open, each with its last kind. Idempotent. */
-  closeAll(): void {
-    for (const key of [...this.open.keys()]) this.close(key);
-  }
-
-  /**
-   * The turn was interrupted: end what is open and report nothing more. The abandoned stream may still
-   * yield a few events before it dies, and a block opened behind an already-unwound turn would reach
-   * the host after that turn's own frames.
-   */
-  stop(): void {
-    this.closeAll();
-    this.stopped = true;
-  }
-
-  private close(key: string): void {
-    const block = this.open.get(key);
-    if (block === undefined) return;
-    this.open.delete(key);
-    this.ended.add(key);
-    this.emit({ blockId: block.blockId, phase: "end", kind: block.kind });
-  }
-
-  private emit(progress: ReasoningProgress): void {
-    try {
-      this.sink?.onReasoningProgress(progress);
-    } catch {
-      // An observation channel never breaks a generation (the engine's own sink already swallows).
-    }
-  }
-}
-
-/**
- * Fragmented tool arguments -> the call's `input`.
- *
- * An UNPARSEABLE accumulation is not an exception: the model produced something, the turn is real,
- * and refusing the whole turn over a malformed argument string would discard every other call in it.
- * The raw text is preserved under a marked key so the tool's own validation reports the real problem.
- */
-function parseToolArguments(argumentsJson: string): unknown {
-  if (argumentsJson.trim().length === 0) return {};
-  try {
-    return JSON.parse(argumentsJson);
-  } catch {
-    return { __winter_unparsed_arguments: argumentsJson };
-  }
-}
-
-/** Structural validation of an adapter-supplied in-dialect thinking block. Never a cast: these bytes came off a provider's wire. */
-function coerceDialectThinkingBlock(value: unknown): ({ type: "thinking"; thinking: string; signature: string } | { type: "redacted_thinking"; data: string }) | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
-  const v = value as Record<string, unknown>;
-  if (v.type === "thinking" && typeof v.thinking === "string") {
-    // `signature` is REQUIRED and may be `""`: capture (F) shows the pinned runtime materialising
-    // exactly that when a stream carries none, and replaying it byte-for-byte. Defaulting to `""`
-    // here reproduces the pinned normalisation rather than dropping the block.
-    return { type: "thinking", thinking: v.thinking, signature: typeof v.signature === "string" ? v.signature : "" };
-  }
-  if (v.type === "redacted_thinking" && typeof v.data === "string") return { type: "redacted_thinking", data: v.data };
-  return undefined;
+  const assembled = await assembleProviderStream(stream, {
+    ...(sink !== undefined ? { sink: sink as StreamAssemblySink } : {}),
+    ...(signal !== undefined ? { signal } : {}),
+    errors: { fromEvent: (error, committed) => providerErrorToTurnError(error, committed), fromThrown: (err, committed) => toProviderTurnError(err, committed) },
+  });
+  if (assembled.usage?.reportedCostUsd === undefined) return assembled as FoldedProviderTurn;
+  const { reportedCostUsd: _notEngineUsage, ...usage } = assembled.usage;
+  return { ...assembled, usage } as FoldedProviderTurn;
 }
 
 /** The longest a provider's own message may be in a `ProviderTurnError`. A provider error body can be arbitrarily long, and this string reaches a frame and a log. */
@@ -778,16 +353,10 @@ export function toProviderTurnError(err: unknown, committed = false): ProviderTu
 /**
  * Stamps the RESOLVED identity's family and continuation domain onto a folded turn's native state.
  *
- * The fold has no access to either -- it consumes an adapter's event stream, not its resolution -- so
- * this is the one place the two meet. A turn with no native state is returned untouched: stamping
- * never fabricates state that an adapter did not produce.
+ * 0.0.56 (W8): provider-runtime's `stampNativeState` (stream-assembler.ts), re-exported under the engine's
+ * turn type. A turn with no native state is returned untouched; a row with no certified domain stamps
+ * its MODEL KEY.
  */
 export function stampNativeState(turn: FoldedProviderTurn, origin: MessageOrigin): FoldedProviderTurn {
-  if (turn.nativeState === undefined) return turn;
-  return {
-    ...turn,
-    // WS-23 (defect e): a row with no certified domain stamps its MODEL KEY, never the family string --
-    // its state is valid for that model alone (the same floor `buildContinuationChain` applies on a resume).
-    nativeState: { family: origin.family, continuationDomain: origin.continuationDomain ?? origin.modelKey, items: turn.nativeState.items },
-  };
+  return stampAssembledNativeState(turn, origin);
 }

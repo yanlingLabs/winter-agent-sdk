@@ -18,8 +18,8 @@
 // import into the same binary, so this path is proven rather than assumed.
 
 import type { WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
-import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 import pkg from "../package.json";
+import { FIRST_PARTY_ORIGINATORS, WINTER_DEFAULT_IDENTITY } from "./winter-defaults.ts";
 
 // --- P7a (D19): the RUNNING product's identity ------------------------------------------------------
 //
@@ -59,9 +59,47 @@ export interface WinterIdentity {
    * is being true, and the only part of it a vendor would actually act on.
    */
   contactUrl: string;
+  /**
+   * 0.0.56 (W9): the version a HOST puts after its product token -- `User-Agent: <product>/<version>`
+   * and a row's `<version>` placeholder. ABSENT means this package's own version, which is right for
+   * Winter itself (the product and the version belong to the same release) and wrong for any other
+   * product: `discord-waifus/0.0.56` would name the provider layer's release as the host's.
+   */
+  version?: string;
 }
 
-const DEFAULT_IDENTITY: Readonly<WinterIdentity> = Object.freeze({ product: WINTER_BRAND.packageName, codexOriginator: WINTER_BRAND.codexOriginator, contactUrl: WINTER_BRAND.contactUrl });
+const DEFAULT_IDENTITY: Readonly<WinterIdentity> = Object.freeze({ ...WINTER_DEFAULT_IDENTITY });
+
+// --- 0.0.56 (W9): a HOST may now install its own identity directly ----------------------------------
+//
+// Until now the only caller was the runtime, with values its validated brand profile had already
+// checked (the sdk's `validateBrand`). `setWinterIdentity` is now a supported entry point for a host
+// that uses this package alone, so the same rules are applied HERE, at the door, rather than trusted:
+// a product token is a lowercase name, the codex originator never names a first party, the contact is
+// an https URL with no control byte, and a version is a plain version token. A refused identity throws
+// `TypeError` naming the field, and nothing is installed.
+// The sdk's `BRAND_TOKEN_RE`, the rule its `validateBrand` applies to `packageName` and `codexOriginator`.
+const PRODUCT_TOKEN_RE = /^[a-z][a-z0-9-]{0,31}$/;
+const VERSION_TOKEN_RE = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/;
+const CONTROL_BYTE_RE = /[\u0000-\u001f\u007f]/;
+
+/** Why an identity is refused, or `undefined` when it is acceptable. Exported for tests. */
+export function identityRefusal(identity: WinterIdentity): string | undefined {
+  if (typeof identity !== "object" || identity === null) return "the identity must be an object";
+  if (typeof identity.product !== "string" || !PRODUCT_TOKEN_RE.test(identity.product)) return "product must be a lowercase token of 1-32 chars: a letter, then letters, digits or hyphens";
+  if (typeof identity.codexOriginator !== "string" || !PRODUCT_TOKEN_RE.test(identity.codexOriginator)) return "codexOriginator must be a lowercase token of 1-32 chars";
+  if (FIRST_PARTY_ORIGINATORS.includes(identity.codexOriginator)) return `codexOriginator "${identity.codexOriginator}" names a first party, which a client identity may never claim`;
+  if (typeof identity.contactUrl !== "string" || CONTROL_BYTE_RE.test(identity.contactUrl)) return "contactUrl must be an https URL with no control characters";
+  let url: URL;
+  try {
+    url = new URL(identity.contactUrl);
+  } catch {
+    return "contactUrl must be an https URL with no control characters";
+  }
+  if (url.protocol !== "https:") return "contactUrl must be an https URL with no control characters";
+  if (identity.version !== undefined && (typeof identity.version !== "string" || !VERSION_TOKEN_RE.test(identity.version))) return "version must be a plain version token (letters, digits, '.', '+', '-'; at most 64 chars)";
+  return undefined;
+}
 
 /**
  * The INSTALLED FRAMES, innermost last. `activeIdentity` is always the last frame's value, or the
@@ -95,6 +133,8 @@ export function activeWinterIdentity(): Readonly<WinterIdentity> {
  * does nothing, so a host that disposes twice cannot pop somebody else's frame.
  */
 export function setWinterIdentity(next: WinterIdentity): () => void {
+  const refusal = identityRefusal(next);
+  if (refusal !== undefined) throw new TypeError(`setWinterIdentity: ${refusal}`);
   const installed: Readonly<WinterIdentity> = Object.freeze({ ...next });
   IDENTITY_FRAMES.push(installed);
   activeIdentity = installed;
@@ -117,7 +157,7 @@ export function setWinterIdentity(next: WinterIdentity): () => void {
  * field carries the running product's name too; it never carries somebody else's.
  */
 export function winterUserAgent(): string {
-  return `${activeIdentity.product}/${pkg.version}`;
+  return `${activeIdentity.product}/${activeIdentity.version ?? pkg.version}`;
 }
 
 // --- the per-row second identity field (WS-13b §7/§8.4, fix-wave R-FW-2) ---------------------------
@@ -210,5 +250,5 @@ export function identityHeaderLookup(catalog: WinterCatalog): IdentityHeaderLook
 export function winterIdentityHeaders(lookup: IdentityHeaderLookup | undefined, providerId: string): Record<string, string> {
   const declared = lookup?.(providerId);
   if (declared === undefined) return {};
-  return renderIdentityHeaders(declared, { version: pkg.version, product: activeIdentity.product, contact: activeIdentity.contactUrl });
+  return renderIdentityHeaders(declared, { version: activeIdentity.version ?? pkg.version, product: activeIdentity.product, contact: activeIdentity.contactUrl });
 }

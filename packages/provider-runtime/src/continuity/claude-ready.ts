@@ -31,7 +31,7 @@
 //       Reused primitives (`doorFor`, `buildDecoration`, `decorationOverhead`, the tag constant) are
 //       the SAME ones the live renderer uses, so the two carriage mechanisms can never render two
 //       different tag shapes for what is conceptually the same decoration.
-import type { SessionStoreEntry } from "@yanlinglabs/winter-agent-sdk";
+import type { SessionStoreEntry } from "../winter-defaults.ts";
 import { createHash } from "node:crypto";
 import type { ContentBlockLike, MessageOrigin } from "../types.ts";
 import { MIN_DECORATION_BODY_CHARS, RECOVERED_REASONING_TAG, buildDecoration, decorationOverhead, doorFor, type DecorationKind } from "./decoration.ts";

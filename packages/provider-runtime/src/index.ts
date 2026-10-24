@@ -60,6 +60,9 @@ export { renderIdentityHeaders } from "./identity.ts";
 // `activeWinterIdentity` is what the two originator sites read. See identity.ts's own header for
 // why this is process-level state and not a threaded parameter.
 export { setWinterIdentity, activeWinterIdentity } from "./identity.ts";
+// 0.0.56 (W9): Winter's own default identity, now declared in this package (it used to be read off the
+// sdk's brand profile, which made the sdk -- and its optional native binary -- a runtime dependency).
+export { WINTER_DEFAULT_IDENTITY } from "./winter-defaults.ts";
 export type { WinterIdentity } from "./identity.ts";
 export type { IdentityRenderContext } from "./identity.ts";
 
@@ -101,9 +104,25 @@ export {
 export type { AnthropicConsoleBrokerOptions, AnthropicConsoleLoginHandle } from "./adapters/anthropic/index.ts";
 export { parseSse } from "./sse.ts";
 export type { SseEvent, SseOptions } from "./sse.ts";
-export { WinterProviderResolutionError, createRegistry, estimateCostUsd } from "./registry.ts";
-export type { ModelInfo, ProviderRegistry, RegistryListing, ResolutionErrorCode, ResolveRequest, ResolvedModel, UsageForCost } from "./registry.ts";
+export { WinterProviderResolutionError, createRegistry, estimateCostUsd, pricingTierFor } from "./registry.ts";
+export type { CostEstimate, ModelInfo, ProviderRegistry, RegistryListing, ResolutionErrorCode, ResolveRequest, ResolvedModel, UsageForCost } from "./registry.ts";
 export { createDiscoveryCache, discoverModels } from "./discovery.ts";
+// 0.0.56 (W8): the stream assembler -- `streamTurn` events folded into one turn, and that turn as the
+// assistant message the next request (and `createHistoryRenderer`) takes. Moved here from the runtime's
+// provider bridge, which now imports it: one copy, for the engine and for a host's own agent loop.
+export { MAX_STREAM_ERROR_MESSAGE_CHARS, ProviderStreamError, assembledToMessage, foldProviderStream, stampNativeState } from "./stream-assembler.ts";
+export type {
+  AssembleOptions,
+  AssembledContentBlock,
+  AssembledReasoningProgress,
+  AssembledStopReason,
+  AssembledThinking,
+  AssembledTurn,
+  AssembledUsage,
+  AssemblerStreamEvent,
+  StreamAssemblySink,
+  StreamErrorMapping,
+} from "./stream-assembler.ts";
 export type { DiscoveryCache } from "./discovery.ts";
 
 // --- Phase 6 Task 10: the two surfaces the lanes built and the barrel could not publish -----------

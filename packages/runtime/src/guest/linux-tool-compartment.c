@@ -127,6 +127,22 @@ static void guidance_sealed(const char *guest) {
     require(statvfs(guest,&v),"guidance mount flags");
     if((v.f_flag&need)!=need)_exit(77);
 }
+/* The one file of the environment's /etc a process tool sees: /etc/gitconfig, read-only, so git can read the system configuration (a clone into a read-write folder
+ * fails without it). It is the environment disk's own etc/gitconfig, opened without following a symlink at either component, and it must be a regular, single-link,
+ * root-owned file nobody else can write and of bounded size. Nothing else of /etc is exposed, the file may be absent, and only the process worker is ever given it. */
+#define GITCONFIG_FILE "/etc/gitconfig"
+#define GITCONFIG_LIMIT 65536
+static int gitconfig_clone(int environment) {
+    struct stat st;
+    int etc=openat(environment,"etc",O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    if(etc<0) { if(errno==ENOENT)return -1; require(-1,"gitconfig directory"); }
+    int config=openat(etc,"gitconfig",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_NOCTTY|O_CLOEXEC);
+    close(etc);
+    if(config<0) { if(errno==ENOENT)return -1; require(-1,"gitconfig file"); }
+    require(fstat(config,&st),"gitconfig identity");
+    if(!S_ISREG(st.st_mode)||st.st_nlink!=1||st.st_uid!=0||(st.st_mode&0022)||st.st_size>GITCONFIG_LIMIT)_exit(64);
+    int tree=clone_descriptor(config,1,0);close(config);return tree;
+}
 /* Fixed process-tool inventory only. Never bind the guest's whole /dev tree or
  * reopen a device pathname after checking its descriptor's kernel identity. */
 struct tool_device { const char *name; unsigned int minor; };
@@ -213,6 +229,7 @@ int main(int argc,char **argv) {
     }
     int device_trees[TOOL_DEVICE_COUNT];
     if(process)for(size_t i=0;i<TOOL_DEVICE_COUNT;i++)device_trees[i]=tool_device_mount(&tool_devices[i]);
+    int gitconfig_tree=process?gitconfig_clone(environment):-1;
     if(process)for(int i=0;i<4;i++){
         int part=openat(environment,environment_parts[i],O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
         if(part<0){if(errno==ENOENT)continue;require(-1,"environment identity");}
@@ -251,6 +268,7 @@ int main(int argc,char **argv) {
             if(environment_trees[i]<0)continue;
             path(target,sizeof target,root,environment_parts[i]);require(mkdir(target,0755),"environment mountpoint");attach_descriptor(environment_trees[i],target);
         }
+        if(gitconfig_tree>=0) { guidance_file_point(root,GITCONFIG_FILE,target,sizeof target);attach_descriptor(gitconfig_tree,target); }
         path(target,sizeof target,root,"tmp");require(mkdir(target,0755),"scratch mountpoint");
         require(mount("tmpfs",target,"tmpfs",MS_NOSUID|MS_NODEV|MS_NOEXEC,"mode=1777,size=8m"),"private scratch");
         tool_device_view(root,device_trees);
@@ -259,6 +277,7 @@ int main(int argc,char **argv) {
     require(mount(NULL,root,NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NODEV,NULL),"protected skeleton");
     require(chdir(root),"view cwd");require(chroot("."),"view root");require(chdir(argv[10]),"admitted source cwd");
     if(guided) { guidance_sealed(GUIDANCE_ROOT);if(alias_tree>=0)guidance_sealed(GUIDANCE_ALIAS); }
+    if(gitconfig_tree>=0)guidance_sealed(GITCONFIG_FILE);
     require(prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0),"no new privileges");
     for(int cap=0;cap<=CAP_LAST_CAP;cap++)require(prctl(PR_CAPBSET_DROP,cap,0,0,0),"drop bounding capabilities");
     gid_t group=(gid_t)gid;require(setgroups(1,&group),"workspace group");

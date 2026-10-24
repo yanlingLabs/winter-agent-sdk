@@ -366,6 +366,36 @@ function checkPricing(errs: Errors, v: unknown, path: string): void {
   for (const k of ["cacheReadPerMTokUsd", "cacheWritePerMTokUsd"]) {
     if (v[k] !== undefined && !isFiniteNonNegative(v[k])) errs.add(`${path}.${k}`, `expected a finite non-negative number when present, got ${describe(v[k])}`);
   }
+  // 0.0.56 (W4): prompt-length tiers. Optional; when present, a non-empty array whose thresholds are
+  // positive integers in STRICTLY ascending order -- an unordered or repeated threshold would make
+  // "the highest tier the prompt reaches" ambiguous, and the estimator must never have to guess.
+  const tiers = v["longContextTiers"];
+  if (tiers === undefined) return;
+  if (!Array.isArray(tiers) || tiers.length === 0) {
+    errs.add(`${path}.longContextTiers`, `expected a non-empty array of price tiers when present, got ${describe(tiers)}`, "pricing-tier-invalid");
+    return;
+  }
+  let previous = 0;
+  tiers.forEach((tier: unknown, i: number) => {
+    const tp = `${path}.longContextTiers[${i}]`;
+    if (!isRecord(tier)) {
+      errs.add(tp, `expected a price tier object, got ${describe(tier)}`, "pricing-tier-invalid");
+      return;
+    }
+    const min = tier["minPromptTokens"];
+    if (!isPositiveInt(min)) errs.add(`${tp}.minPromptTokens`, `expected a positive integer, got ${describe(min)}`, "pricing-tier-invalid");
+    else if (min <= previous) errs.add(`${tp}.minPromptTokens`, `tiers must be in strictly ascending minPromptTokens; ${min} follows ${previous}`, "pricing-tier-order");
+    else previous = min;
+    for (const k of ["inputPerMTokUsd", "outputPerMTokUsd"]) {
+      if (!isFiniteNonNegative(tier[k])) errs.add(`${tp}.${k}`, `expected a finite non-negative number, got ${describe(tier[k])}`, "pricing-tier-invalid");
+    }
+    for (const k of ["cacheReadPerMTokUsd", "cacheWritePerMTokUsd"]) {
+      if (tier[k] !== undefined && !isFiniteNonNegative(tier[k])) errs.add(`${tp}.${k}`, `expected a finite non-negative number when present, got ${describe(tier[k])}`, "pricing-tier-invalid");
+    }
+    for (const k of Object.keys(tier)) {
+      if (!["minPromptTokens", "inputPerMTokUsd", "outputPerMTokUsd", "cacheReadPerMTokUsd", "cacheWritePerMTokUsd"].includes(k)) errs.add(`${tp}.${k}`, `unknown price tier field`, "pricing-tier-invalid");
+    }
+  });
 }
 
 function checkReasoning(errs: Errors, v: unknown, path: string): void {
