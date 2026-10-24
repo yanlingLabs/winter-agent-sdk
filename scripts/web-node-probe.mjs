@@ -1,8 +1,12 @@
 // THE winter-web PROBE -- plain ESM JavaScript, run against an INSTALLED (or built) copy of
 // `@yanlinglabs/winter-web` under Node and under Bun:
 //
-//   node scripts/web-node-probe.mjs [specifier-or-path]     (default: @yanlinglabs/winter-web)
-//   bun  scripts/web-node-probe.mjs [specifier-or-path]
+//   node scripts/web-node-probe.mjs [target]     (default: @yanlinglabs/winter-web)
+//   bun  scripts/web-node-probe.mjs [target]
+//
+// The target is one of three LITERAL choices -- `@yanlinglabs/winter-web` (the installed package),
+// `packages/web/dist/index.js` (this checkout's build) or `packages/web/src/index.ts` (its source,
+// Bun or a type-stripping Node) -- each its own `import("<literal>")`, never a computed specifier.
 //
 // No live network: every name is resolved by a fake, every server is on 127.0.0.1, and the TLS
 // certificate is made by `openssl` here and thrown away (the TLS legs are skipped, and said so, when
@@ -13,12 +17,14 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { join } from "node:path";
 
 const target = process.argv[2] ?? "@yanlinglabs/winter-web";
-const specifier = target.startsWith("@") ? target : pathToFileURL(isAbsolute(target) ? target : resolve(target)).href;
-const web = await import(specifier);
+const web =
+  target === "@yanlinglabs/winter-web" ? await import("@yanlinglabs/winter-web")
+  : target === "packages/web/dist/index.js" ? await import("../packages/web/dist/index.js")
+  : target === "packages/web/src/index.ts" ? await import("../packages/web/src/index.ts")
+  : (console.error(`unknown probe target "${target}"`), process.exit(2));
 const runtime = typeof process.versions.bun === "string" ? `bun ${process.versions.bun}` : `node ${process.versions.node}`;
 const failures = [];
 const check = (label, ok, detail = "") => {

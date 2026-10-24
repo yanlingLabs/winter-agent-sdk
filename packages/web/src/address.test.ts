@@ -1,9 +1,10 @@
-import { BUN_TEST, harness, isBun, type BunTestModule } from "./harness.test-support.ts";
+import { harness, isBun, type BunTestModule } from "./harness.test-support.ts";
 import assert from "node:assert/strict";
 import { networkInterfaces } from "node:os";
 import { classifyAddress, classifyHostnameLexically, formatAddress, parseIPv4Loose, parseIPv6 } from "./address.ts";
 
-const { describe, test } = await harness(isBun ? ((await import(BUN_TEST)) as BunTestModule) : undefined);
+// @ts-ignore -- `bun:test` has no types under the Node-only configs (the fence, this package's own tsconfig); it is imported only under Bun.
+const { describe, test } = await harness(isBun ? ((await import("bun:test")) as unknown as BunTestModule) : undefined);
 
 const refused = (address: string): boolean => !classifyAddress(address).public;
 const lexicallyRefused = (host: string): boolean => {

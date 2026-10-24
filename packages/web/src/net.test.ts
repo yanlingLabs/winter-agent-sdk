@@ -2,7 +2,7 @@
 // the body caps, timeouts and aborts. node:test + node:assert, so it runs under `node --test` and
 // `bun test` alike. No live network: every hostname is resolved by a fake, and every "public"
 // address is mapped onto a loopback server by the test transport.
-import { BUN_TEST, harness, isBun, type BunTestModule } from "./harness.test-support.ts";
+import { harness, isBun, type BunTestModule } from "./harness.test-support.ts";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -10,7 +10,8 @@ import { gzipSync } from "node:zlib";
 import { fetchWebResource, WEB_FETCH_MAX_REDIRECTS_CEILING, type WebFetchOptions, type WebFetchTransportRequest, type WebFetchResult } from "./net.ts";
 import { mappedTransport, PUBLIC_A, PUBLIC_B, startHttpsServer, testPki, type TestServer } from "./servers.test-support.ts";
 
-const { after, before, describe, test } = await harness(isBun ? ((await import(BUN_TEST)) as BunTestModule) : undefined);
+// @ts-ignore -- `bun:test` has no types under the Node-only configs (the fence, this package's own tsconfig); it is imported only under Bun.
+const { after, before, describe, test } = await harness(isBun ? ((await import("bun:test")) as unknown as BunTestModule) : undefined);
 
 const pki = testPki();
 const skip = pki === undefined ? "openssl is not available" : false;

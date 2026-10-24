@@ -1,13 +1,14 @@
 // The Exa client over the built-in MCP Streamable HTTP transport, against a loopback fake of Exa's MCP
 // server. Typed failures (429, quota, 5xx, breaker open, timeout, abort), anonymous-first with the
 // key as fallback, and the key never anywhere but the `x-api-key` header.
-import { BUN_TEST, harness, isBun, type BunTestModule } from "./harness.test-support.ts";
+import { harness, isBun, type BunTestModule } from "./harness.test-support.ts";
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createExaBackendState, createExaSearchClient, EXA_ANONYMOUS_COOLDOWN_MS, parseExaResults, type ExaSearchClientOptions, type ExaSearchResult } from "./exa.ts";
 
-const { describe, test } = await harness(isBun ? ((await import(BUN_TEST)) as BunTestModule) : undefined);
+// @ts-ignore -- `bun:test` has no types under the Node-only configs (the fence, this package's own tsconfig); it is imported only under Bun.
+const { describe, test } = await harness(isBun ? ((await import("bun:test")) as unknown as BunTestModule) : undefined);
 
 const KEY = "exa-test-key-0123456789abcdef";
 

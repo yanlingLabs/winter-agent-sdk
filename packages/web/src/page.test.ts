@@ -1,6 +1,6 @@
 // fetchWebPage (kinds, markdown, the cache and its re-check), the digest request, the HTML converter's
 // tokenizer edges, and the node transport's address comparison.
-import { BUN_TEST, harness, isBun, type BunTestModule } from "./harness.test-support.ts";
+import { harness, isBun, type BunTestModule } from "./harness.test-support.ts";
 import assert from "node:assert/strict";
 import { fetchWebPage, type FetchWebPageOptions } from "./page.ts";
 import { MemoryWebFetchCache, type WebFetchCacheEntry } from "./cache.ts";
@@ -11,7 +11,8 @@ import net from "node:net";
 import { createNodeWebFetchTransport, sameAddress } from "./transport-node.ts";
 import { mappedTransport, PUBLIC_A, startHttpsServer, testPki, type TestServer } from "./servers.test-support.ts";
 
-const { after, before, describe, test } = await harness(isBun ? ((await import(BUN_TEST)) as BunTestModule) : undefined);
+// @ts-ignore -- `bun:test` has no types under the Node-only configs (the fence, this package's own tsconfig); it is imported only under Bun.
+const { after, before, describe, test } = await harness(isBun ? ((await import("bun:test")) as unknown as BunTestModule) : undefined);
 
 const skip = testPki() === undefined ? "openssl is not available" : false;
 

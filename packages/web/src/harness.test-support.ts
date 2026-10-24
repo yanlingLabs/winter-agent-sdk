@@ -35,7 +35,7 @@ export interface Harness {
  * importing file, so a module shared between files must never import it itself. Under Node, pass
  * nothing. Each test file therefore starts with:
  *
- *     const { describe, test } = await harness(isBun ? await import(BUN_TEST) : undefined);
+ *     const { describe, test } = await harness(isBun ? await import("bun:test") : undefined);
  */
 export async function harness(bunTest: BunTestModule | undefined): Promise<Harness> {
   let api: Api;
@@ -67,5 +67,3 @@ export async function harness(bunTest: BunTestModule | undefined): Promise<Harne
 }
 
 export const isBun = typeof (process.versions as Record<string, string | undefined>)["bun"] === "string";
-/** The specifier, built at run time so Node never resolves it. */
-export const BUN_TEST = ["bun", "test"].join(":");
