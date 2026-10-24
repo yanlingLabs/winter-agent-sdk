@@ -1,0 +1,97 @@
+diff --git a/packages/runtime/src/guest/linux-supervisor.py b/packages/runtime/src/guest/linux-supervisor.py
+index 3d90ec06..14a1b17a 100644
+--- a/packages/runtime/src/guest/linux-supervisor.py
++++ b/packages/runtime/src/guest/linux-supervisor.py
+@@ -324,6 +324,12 @@ def native_mount_policy(policy):
+ # (epoch a canonical decimal, at most nine digits). It is the one root that is read-write under plan and it exists only under plan. PID 1 makes the directory
+ # (root-side, no symlink); this service only admits it, and never admits an epoch below one that already exists beside it: an earlier epoch is never mounted again.
+ PLAN_ROOT='/workspace/plan'
++# The Project/workspace memory share (contract revision 3): the one path under .winter a host-query or guided conversation may be shown, as a tool root. It is a host share
++# (another device), writable like any other root except under plan, and it is never a conversation's cwd and never a browse root.
++MEMORY_ROOT='/workspace/.winter/memory'
++def host_query_protected(guest_path):
++    # Everything under /workspace/.winter is the guest's own store; the memory share is the single exact exception.
++    return guest_path=='/workspace/.winter' or (guest_path.startswith('/workspace/.winter/') and guest_path!=MEMORY_ROOT)
+ PLAN_VIEW=re.compile(r'/workspace/plan/([A-Za-z0-9][A-Za-z0-9_.-]{0,127})/(0|[1-9][0-9]{0,8})')
+ def plan_view_epoch(guest_path,sid):
+     match=PLAN_VIEW.fullmatch(guest_path) if type(guest_path) is str else None
+@@ -355,7 +361,10 @@ def host_query_config(item,tool_classes,model):
+     modes={'auto':'default','ask':'default','plan':'plan','accept-edits':'default','dont-ask':'default','bypass':'default'}
+     if item['policy'] not in modes:raise Refusal('host_query_policy')
+     roots=[binding['root'] for binding in item['roots'].values()]
+-    if not 1<=len(roots)<=16 or any(not root['guestPath'].startswith('/workspace/') or root['guestPath']=='/workspace/.winter' or root['guestPath'].startswith('/workspace/.winter/') or item['policy']=='plan' and not root['readOnly'] and not is_plan_view(root['guestPath']) for root in roots):raise Refusal('host_query_roots')
++    if not 1<=len(roots)<=16 or any(not root['guestPath'].startswith('/workspace/') or host_query_protected(root['guestPath']) or item['policy']=='plan' and not root['readOnly'] and not is_plan_view(root['guestPath']) for root in roots):raise Refusal('host_query_roots')
++    # The working directory is the first root that is not the memory share; a conversation with only the memory share has nothing to work in.
++    cwd=next((root['guestPath'] for root in roots if root['guestPath']!=MEMORY_ROOT),None)
++    if cwd is None:raise Refusal('host_query_roots')
+     tools=[]
+     if 'read' in tool_classes:tools.append('Read')
+     if 'write' in tool_classes:
+@@ -367,7 +376,7 @@ def host_query_config(item,tool_classes,model):
+     coordinate='coordinate' in tool_classes
+     if coordinate:tools.extend(('SendMessage','ListAgents','AskUserQuestion','TaskCreate','TaskGet','TaskList','TaskUpdate'))
+     sid=item['logicalSessionId']
+-    return {'executionPosture':'confined-guest','sessionId':item['authority']['sessionId'],'model':model,'cwd':roots[0]['guestPath'],'winterHome':f'/run/winter/conversations/{sid}','storeHome':f'/workspace/.winter/conversations/{sid}','persistSession':True,'settingSources':[],'tools':tools,'allowedTools':[],'skills':[],'plugins':[],'strictMcpConfig':True,'mcpServers':{},'permissionMode':modes[item['policy']],'permissions':{'disableBypassPermissionsMode':True},'allowDangerouslySkipPermissions':False,**({'hostMessaging':True} if coordinate else {})}
++    return {'executionPosture':'confined-guest','sessionId':item['authority']['sessionId'],'model':model,'cwd':cwd,'winterHome':f'/run/winter/conversations/{sid}','storeHome':f'/workspace/.winter/conversations/{sid}','persistSession':True,'settingSources':[],'tools':tools,'allowedTools':[],'skills':[],'plugins':[],'strictMcpConfig':True,'mcpServers':{},'permissionMode':modes[item['policy']],'permissions':{'disableBypassPermissionsMode':True},'allowDangerouslySkipPermissions':False,**({'hostMessaging':True} if coordinate else {})}
+ 
+ def select_runtime_profile(config):
+     # Only the key Root's own trusted config FD carries selects a profile. Tool and
+@@ -1052,6 +1061,7 @@ def file_binding(conversations,request):
+     if item['authority']['incarnationId']!=request['incarnationId']:raise FileRefusal('stale_file')
+     root=item['roots'].get(request['locationId'])
+     if root is None or root['root']['id']!=request['locationId']:raise FileRefusal('file_unavailable')
++    if root['root']['guestPath']==MEMORY_ROOT:raise FileRefusal('file_unavailable')  # a share is never a browse root, whatever device it reports
+     return item,root
+ def file_root_admitted(fd,data_device,workspace_gid):
+     """Root's half of the root-device check, on the held descriptor: the data volume's device, and the setgid root:workspaceGid 2770 root
+diff --git a/packages/runtime/src/guest/linux-tool-compartment.c b/packages/runtime/src/guest/linux-tool-compartment.c
+index 63e5ea32..e0778bca 100644
+--- a/packages/runtime/src/guest/linux-tool-compartment.c
++++ b/packages/runtime/src/guest/linux-tool-compartment.c
+@@ -127,6 +127,22 @@ static void guidance_sealed(const char *guest) {
+     require(statvfs(guest,&v),"guidance mount flags");
+     if((v.f_flag&need)!=need)_exit(77);
+ }
++/* The one file of the environment's /etc a process tool sees: /etc/gitconfig, read-only, so git can read the system configuration (a clone into a read-write folder
++ * fails without it). It is the environment disk's own etc/gitconfig, opened without following a symlink at either component, and it must be a regular, single-link,
++ * root-owned file nobody else can write and of bounded size. Nothing else of /etc is exposed, the file may be absent, and only the process worker is ever given it. */
++#define GITCONFIG_FILE "/etc/gitconfig"
++#define GITCONFIG_LIMIT 65536
++static int gitconfig_clone(int environment) {
++    struct stat st;
++    int etc=openat(environment,"etc",O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
++    if(etc<0) { if(errno==ENOENT)return -1; require(-1,"gitconfig directory"); }
++    int config=openat(etc,"gitconfig",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_NOCTTY|O_CLOEXEC);
++    close(etc);
++    if(config<0) { if(errno==ENOENT)return -1; require(-1,"gitconfig file"); }
++    require(fstat(config,&st),"gitconfig identity");
++    if(!S_ISREG(st.st_mode)||st.st_nlink!=1||st.st_uid!=0||(st.st_mode&0022)||st.st_size>GITCONFIG_LIMIT)_exit(64);
++    int tree=clone_descriptor(config,1,0);close(config);return tree;
++}
+ /* Fixed process-tool inventory only. Never bind the guest's whole /dev tree or
+  * reopen a device pathname after checking its descriptor's kernel identity. */
+ struct tool_device { const char *name; unsigned int minor; };
+@@ -213,6 +229,7 @@ int main(int argc,char **argv) {
+     }
+     int device_trees[TOOL_DEVICE_COUNT];
+     if(process)for(size_t i=0;i<TOOL_DEVICE_COUNT;i++)device_trees[i]=tool_device_mount(&tool_devices[i]);
++    int gitconfig_tree=process?gitconfig_clone(environment):-1;
+     if(process)for(int i=0;i<4;i++){
+         int part=openat(environment,environment_parts[i],O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+         if(part<0){if(errno==ENOENT)continue;require(-1,"environment identity");}
+@@ -251,6 +268,7 @@ int main(int argc,char **argv) {
+             if(environment_trees[i]<0)continue;
+             path(target,sizeof target,root,environment_parts[i]);require(mkdir(target,0755),"environment mountpoint");attach_descriptor(environment_trees[i],target);
+         }
++        if(gitconfig_tree>=0) { guidance_file_point(root,GITCONFIG_FILE,target,sizeof target);attach_descriptor(gitconfig_tree,target); }
+         path(target,sizeof target,root,"tmp");require(mkdir(target,0755),"scratch mountpoint");
+         require(mount("tmpfs",target,"tmpfs",MS_NOSUID|MS_NODEV|MS_NOEXEC,"mode=1777,size=8m"),"private scratch");
+         tool_device_view(root,device_trees);
+@@ -259,6 +277,7 @@ int main(int argc,char **argv) {
+     require(mount(NULL,root,NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NODEV,NULL),"protected skeleton");
+     require(chdir(root),"view cwd");require(chroot("."),"view root");require(chdir(argv[10]),"admitted source cwd");
+     if(guided) { guidance_sealed(GUIDANCE_ROOT);if(alias_tree>=0)guidance_sealed(GUIDANCE_ALIAS); }
++    if(gitconfig_tree>=0)guidance_sealed(GITCONFIG_FILE);
+     require(prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0),"no new privileges");
+     for(int cap=0;cap<=CAP_LAST_CAP;cap++)require(prctl(PR_CAPBSET_DROP,cap,0,0,0),"drop bounding capabilities");
+     gid_t group=(gid_t)gid;require(setgroups(1,&group),"workspace group");

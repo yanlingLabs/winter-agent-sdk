@@ -164,7 +164,7 @@ class AdmissionTests(unittest.TestCase):
         ports = {} if profile == 'fresh' else {SID: self.pipes.ports}
         control = SimpleNamespace(st_mode=gq.stat.S_IFDIR | 0o700, st_uid=0)
         served = {SOURCE: self.base / 'source'}
-        served.update({root['guestPath']: self.base / 'planview' for root in roots if root['guestPath'].startswith('/workspace/plan/')})
+        served.update({root['guestPath']: self.base / 'planview' for root in roots if root['guestPath'].startswith('/workspace/plan/') or root['guestPath'] == '/workspace/.winter/memory'})
 
         def source_directory(source, protected, real=service.source_directory):
             target = served.get(source)

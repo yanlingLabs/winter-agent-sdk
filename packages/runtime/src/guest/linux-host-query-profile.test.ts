@@ -144,6 +144,21 @@ test("the plan view is admitted only under plan, writable, once, for this conver
   for (const readOnly of [false, true]) expect(() => assertLinuxHostQueryRoots(live, [{ ...source, readOnly: false }, view("4", readOnly)])).toThrow();
 });
 
+test("the memory share is admitted as the exact path, writable only outside plan, and is never the working directory", () => {
+  const memory = { id: "memory", guestPath: "/workspace/.winter/memory", readOnly: false };
+  const source = { id: "source", guestPath: "/workspace/source", readOnly: false };
+  const plan = { ...config(), permissionMode: "plan" as const };
+  expect(() => assertLinuxHostQueryRoots(config(), [source, memory])).not.toThrow();
+  expect(() => assertLinuxHostQueryRoots(config(), [memory, source])).not.toThrow();
+  expect(() => assertLinuxHostQueryRoots(plan, [{ ...source, readOnly: true }, memory])).toThrow();
+  expect(() => assertLinuxHostQueryRoots(plan, [{ ...source, readOnly: true }, { ...memory, readOnly: true }])).not.toThrow();
+  for (const guestPath of ["/workspace/.winter", "/workspace/.winter/memory/sub", "/workspace/.winter/memoryx", "/workspace/.winter/scratch/conversation", "/workspace/.winter/conversations/conversation", "/workspace/.winter/Memory"])
+    expect(() => assertLinuxHostQueryRoots(config(), [source, { ...memory, guestPath }]), guestPath).toThrow();
+  // The memory share alone cannot be the working directory.
+  expect(() => assertLinuxHostQueryRoots({ ...config(), cwd: memory.guestPath }, [memory])).toThrow();
+  expect(() => assertLinuxHostQueryRoots({ ...config(), cwd: memory.guestPath }, [source, memory])).toThrow();
+});
+
 test("a root carries no host source: any `source` key, equal to the guest path or not, is refused (the supervisor admits only source === guestPath for host-query roots)", () => {
   const root = { id: "source", guestPath: "/workspace/source", readOnly: false };
   for (const source of [root.guestPath, "/workspace/other", "/workspace/source/", "/tmp/x", "/workspace/.winter/store", "", 1, null, undefined]) {
