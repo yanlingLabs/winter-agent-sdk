@@ -30,7 +30,7 @@ import type { OAuthTokens } from "./pkce.ts";
 import { createChatCompletionsAdapter, type ChatTurnOptions } from "./chat-completions.ts";
 import { capabilityRefusal, errorEvent } from "./shared.ts";
 import { activeWinterIdentity } from "../../identity.ts";
-import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_DEFAULT_IDENTITY } from "../../winter-defaults.ts";
 
 /** The registered adapter id. One provider, so it is a constant rather than an option. */
 export const XAI_OAUTH_ADAPTER_ID = "winter.xai-oauth";
@@ -60,7 +60,7 @@ export const XAI_OAUTH = {
    * and it is never omitted — see the reversion condition below for what it means if that turns out
    * not to be allowed. A future edit here changes NOTHING on the wire; change the brand profile.
    */
-  identityValue: WINTER_BRAND.packageName,
+  identityValue: WINTER_DEFAULT_IDENTITY.product,
   deviceCodeUrl: "https://auth.x.ai/oauth2/device/code",
   tokenUrl: "https://auth.x.ai/oauth2/token",
   /**

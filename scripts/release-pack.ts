@@ -245,7 +245,7 @@ function assertDeclaredBinsExistOnMatchingHost(pkg: PublishablePackage): void {
 }
 
 /** Packs one workspace package by name via `pnpm --filter <name> pack` -- never `-r` (see header: `-r` does not honour `private`). */
-async function packOne(pkg: PublishablePackage, outDir: string, root: string): Promise<PackedPackage> {
+export async function packOne(pkg: PublishablePackage, outDir: string, root: string): Promise<PackedPackage> {
   const proc = Bun.spawn(["pnpm", "--filter", pkg.name, "pack", "--pack-destination", outDir, "--json"], {
     cwd: root,
     stdout: "pipe",
@@ -271,7 +271,7 @@ async function packOne(pkg: PublishablePackage, outDir: string, root: string): P
 }
 
 /** `tar -xzf <tarballPath> -C <destDir>` -- the same idiom `gen-declaration-snapshot.ts` and `check-derived-shapes.ts` already use for the pinned-upstream tarball. */
-async function extractTarball(tarballPath: string, destDir: string): Promise<void> {
+export async function extractTarball(tarballPath: string, destDir: string): Promise<void> {
   mkdirSync(destDir, { recursive: true });
   const proc = Bun.spawn(["tar", "-xzf", tarballPath, "-C", destDir], { stdout: "pipe", stderr: "pipe" });
   const exitCode = await proc.exited;

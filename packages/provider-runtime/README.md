@@ -17,12 +17,12 @@ registry is chosen by the release workflow, not by a committed pin — see [RELE
 
 ## Install
 
-Published to **both** registries — but not because a consumer of the wrapper needs it. The wrapper
-`@yanlinglabs/winter-agent-sdk` SPAWNS the compiled `winter` runtime rather than importing this
-package, so `npm install @yanlinglabs/winter-agent-sdk` does not pull it in. It is on public npm
-because `@yanlinglabs/winter-provider-conformance` — a harness the out-of-repo router package uses as
-a dev dependency — imports it, and a published manifest pins its dependencies at an exact version: a
-harness on npm whose own dependency is not there is an install that 404s.
+A **supported library** as of 0.0.56: a host with its own agent loop -- in-process, under Node 18+ or
+Bun, on any platform -- installs this package and `@yanlinglabs/winter-provider-catalog` and nothing
+else. It depends on the catalog alone: it does not pull in `@yanlinglabs/winter-agent-sdk` or the
+compiled `winter` runtime binary (a release gate packs both packages, installs them offline, and refuses
+any other package in the tree). The wrapper `@yanlinglabs/winter-agent-sdk` spawns the `winter` runtime
+rather than importing this package, so a consumer of the wrapper never needs it.
 
 ### From public npm (anyone)
 
@@ -50,6 +50,69 @@ JavaScript a consumer imports and the `.d.ts` declarations their type-checker re
 files, `README.md` and `LICENSE`. It does **not** ship `src/`: the TypeScript sources live at
 <https://github.com/yanlingLabs/winter-agent-sdk>, which is where to read them, file an issue, or send
 a patch.
+
+## Supported public API and versioning (0.0.56)
+
+**What is supported.** Every name exported from the two entry points below, with the types they
+declare, is this package's public API. Anything reached by a deep path (`dist/...`) is not.
+
+| Entry point | Supported for |
+| --- | --- |
+| `@yanlinglabs/winter-provider-runtime` | Production use. The pieces a host's own agent loop is built from: `createRegistry` / `resolve` and `createShippedAdapters`; `ProviderAdapter.streamTurn` with `TurnRequest` and the `ProviderEvent` stream; the stream assembler `foldProviderStream` (with its `StreamAssemblySink` -- `onTextDelta` for an SSE forwarder), `assembledToMessage`, `stampNativeState` and `ProviderStreamError`; `createHistoryRenderer` and `stripOpaque`; `estimateCostUsd` and `pricingTierFor`; the credential stores (`createEnvCredentialStore`, `createMemoryCredentialStore`, `createFileCredentialStore`, `createCompositeCredentialStore`); `withRetry` / `createRetryPolicy`; the error helpers (`isProviderError`, `normalizeThrown`, `parseRetryAfterMs`, `ProviderRequestError`); and the identity surface (`setWinterIdentity`, `activeWinterIdentity`, `winterUserAgent`, `WINTER_DEFAULT_IDENTITY`). |
+| `@yanlinglabs/winter-provider-runtime/testing` | Tests only. `createFakeProviderAdapter` with `fakeTextTurn` / `fakeToolCallTurn` / `fakeErrorTurn` (runs under Node and Bun), plus the fixture helpers Winter's own conformance harness uses. Supported, but a helper here may change shape in any release that says so. |
+
+**How versions move.** Both provider packages are released in lockstep with the rest of this repository,
+from one `VERSION`, and every release has a `CHANGELOG.md` entry. While versions are `0.0.x`:
+
+- a release may ADD exports, optional `TurnRequest` fields, optional result fields and `ProviderEvent`
+  fields, catalog rows and optional catalog fields at any time -- a host that ignores unknown fields is
+  never broken by one;
+- a change that can break a host using the supported surface -- a removed or renamed export, a changed
+  signature, a field made required, a narrowed union, a changed default, a catalog row removed or
+  renamed -- ships only under a **"Breaking for provider-package hosts"** heading in that release's
+  CHANGELOG entry, naming each affected export and what to do instead;
+- a supported export is **deprecated** (documented as such in the CHANGELOG and its doc comment) for at
+  least one release before it is removed, unless the removal closes a security problem;
+- catalog DATA (prices, limits, efforts) tracks the vendors and changes in any release; the row KEYS a
+  host stores are covered by the rules above.
+
+Pin an exact version (`"@yanlinglabs/winter-provider-runtime": "0.0.56"`) and read the CHANGELOG entry
+before moving it. The two packages must be the same version.
+
+**`stripOpaque`** is part of the supported surface: `stripOpaque(message)` returns the message's content
+with every opaque provider artefact removed -- in-dialect `thinking` / `redacted_thinking` blocks and
+anything else only the producing model can read -- and object identity preserved when there was nothing
+to strip. A host copying kept turns into a new context (a compaction epoch) uses it so no signed state
+travels past the conversation it was minted for.
+
+## A host's agent loop, in brief
+
+```ts
+import { createRegistry, createShippedAdapters, createHistoryRenderer, createEnvCredentialStore, foldProviderStream, assembledToMessage, estimateCostUsd, setWinterIdentity } from "@yanlinglabs/winter-provider-runtime";
+import type { ProviderContext, ProviderMessageLike } from "@yanlinglabs/winter-provider-runtime";
+import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
+
+setWinterIdentity({ product: "example-host", codexOriginator: "example-host", contactUrl: "https://example.com/contact", version: "1.0.0" });
+const catalog = loadCatalog();
+const registry = createRegistry(catalog);
+for (const adapter of createShippedAdapters(catalog)) registry.register(adapter);
+const renderer = createHistoryRenderer(registry);
+
+const resolved = registry.resolve({ model: "anthropic/claude-haiku-5.5", provider: { providerId: "openrouter" } });
+if (!("adapter" in resolved)) throw resolved;
+const origin = { providerId: resolved.providerId, modelKey: resolved.modelKey, family: resolved.adapter.family, ...(resolved.continuationDomain !== undefined ? { continuationDomain: resolved.continuationDomain } : {}) };
+const ctx: ProviderContext = { connection: { providerId: "openrouter" }, credentials: createEnvCredentialStore({ env: { OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY } }), authRef: { kind: "env", name: "OPENROUTER_API_KEY" }, stallTimeoutMs: 60_000, log: () => {} };
+
+const history: ProviderMessageLike[] = [{ role: "user", content: "Hello" }];
+const messages = renderer.render(history, new Map(), { ...origin, readableState: "none" });
+const turn = await foldProviderStream(resolved.adapter.streamTurn({ model: resolved.providerModelId, messages }, ctx), { sink: { onTextDelta: (text) => process.stdout.write(text) } });
+history.push(assembledToMessage(turn, origin));
+const cost = estimateCostUsd(turn.usage ?? { inputTokens: 0, outputTokens: 0 }, resolved.descriptor);
+```
+
+`setWinterIdentity` puts the host's own product on every request's `User-Agent` (`example-host/1.0.0`)
+instead of Winter's; it validates what it is given (a lowercase product token, a codex originator that is
+never a first party, an https contact URL, a plain version token) and throws `TypeError` otherwise.
 
 ## Bun-only surface
 

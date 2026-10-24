@@ -26,7 +26,7 @@
 // never Winter's.
 // ============================================================================================
 
-import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_DEFAULT_IDENTITY } from "../../winter-defaults.ts";
 
 export const CODEX = {
   /** OAuth application id — shared by all Codex CLI clients. */
@@ -54,12 +54,12 @@ export const CODEX = {
     /** PROTOCOL: the Responses surface on this backend requires it. */
     "OpenAI-Beta": "responses=experimental",
     /** PRIVILEGED (R6-L). See this file's header for why this is never a first-party value. */
-    originator: WINTER_BRAND.codexOriginator,
+    originator: WINTER_DEFAULT_IDENTITY.codexOriginator,
   } as Record<string, string>,
 } as const;
 
 /** The DEFAULT `originator` value, exported so a fixture asserts on it by name rather than by string literal. */
-export const CODEX_ORIGINATOR = WINTER_BRAND.codexOriginator;
+export const CODEX_ORIGINATOR = WINTER_DEFAULT_IDENTITY.codexOriginator;
 
 /**
  * The date `CODEX_MODELS` was last checked against the live `/models` catalogue, carried from the

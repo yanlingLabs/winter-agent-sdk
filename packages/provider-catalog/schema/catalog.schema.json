@@ -134,7 +134,24 @@
             "inputPerMTokUsd": { "type": "number", "minimum": 0 },
             "outputPerMTokUsd": { "type": "number", "minimum": 0 },
             "cacheReadPerMTokUsd": { "type": "number", "minimum": 0 },
-            "cacheWritePerMTokUsd": { "type": "number", "minimum": 0 }
+            "cacheWritePerMTokUsd": { "type": "number", "minimum": 0 },
+            "longContextTiers": {
+              "type": "array",
+              "minItems": 1,
+              "description": "0.0.56: prompt-length price tiers, strictly ascending minPromptTokens. A request whose whole prompt (input + cache reads + cache writes) is at least a tier's minPromptTokens (inclusive) is priced entirely at the highest such tier; absent on a flat-priced row.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["minPromptTokens", "inputPerMTokUsd", "outputPerMTokUsd"],
+                "properties": {
+                  "minPromptTokens": { "type": "integer", "minimum": 1 },
+                  "inputPerMTokUsd": { "type": "number", "minimum": 0 },
+                  "outputPerMTokUsd": { "type": "number", "minimum": 0 },
+                  "cacheReadPerMTokUsd": { "type": "number", "minimum": 0 },
+                  "cacheWritePerMTokUsd": { "type": "number", "minimum": 0 }
+                }
+              }
+            }
           }
         }
       }

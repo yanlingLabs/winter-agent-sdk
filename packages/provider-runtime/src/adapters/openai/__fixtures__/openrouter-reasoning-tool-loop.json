@@ -1,0 +1,18 @@
+{
+  "$comment": "0.0.56 (W7): an OpenRouter Chat Completions tool loop for an Anthropic model, as SSE `data:` payloads. SHAPED FROM OpenRouter's documented wire (https://openrouter.ai/docs/use-cases/reasoning-tokens: `choices[].delta.reasoning_details` items with `type`, `text`, `signature`, `format`, `index`; https://openrouter.ai/docs/use-cases/usage-accounting: `usage.cost`, `prompt_tokens_details.cached_tokens` / `cache_write_tokens`), not captured from a live call: every id and signature is synthetic. `scripts/probe-openrouter-reasoning.ts` is the live check of the same loop.",
+  "turn1": [
+    { "id": "gen-synthetic-1", "model": "anthropic/claude-sonnet-5.5", "choices": [{ "index": 0, "delta": { "role": "assistant", "content": "", "reasoning": "Let me", "reasoning_details": [{ "type": "reasoning.text", "text": "Let me", "format": "anthropic-claude-v1", "index": 0 }] }, "finish_reason": null }] },
+    { "id": "gen-synthetic-1", "choices": [{ "index": 0, "delta": { "reasoning": " check the forecast.", "reasoning_details": [{ "type": "reasoning.text", "text": " check the forecast.", "format": "anthropic-claude-v1", "index": 0 }] }, "finish_reason": null }] },
+    { "id": "gen-synthetic-1", "choices": [{ "index": 0, "delta": { "reasoning_details": [{ "type": "reasoning.text", "signature": "sig-synthetic-0001", "format": "anthropic-claude-v1", "index": 0 }] }, "finish_reason": null }] },
+    { "id": "gen-synthetic-1", "choices": [{ "index": 0, "delta": { "tool_calls": [{ "index": 0, "id": "toolu_synthetic_01", "type": "function", "function": { "name": "lookup", "arguments": "" } }] }, "finish_reason": null }] },
+    { "id": "gen-synthetic-1", "choices": [{ "index": 0, "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": "{\"q\":\"weather\"}" } }] }, "finish_reason": null }] },
+    { "id": "gen-synthetic-1", "choices": [{ "index": 0, "delta": {}, "finish_reason": "tool_calls" }] },
+    { "id": "gen-synthetic-1", "choices": [], "usage": { "prompt_tokens": 1200, "completion_tokens": 40, "total_tokens": 1240, "cost": 0.00123, "prompt_tokens_details": { "cached_tokens": 1000, "cache_write_tokens": 150 }, "completion_tokens_details": { "reasoning_tokens": 12 } } }
+  ],
+  "turn2": [
+    { "id": "gen-synthetic-2", "model": "anthropic/claude-sonnet-5.5", "choices": [{ "index": 0, "delta": { "role": "assistant", "content": "Sunny" }, "finish_reason": null }] },
+    { "id": "gen-synthetic-2", "choices": [{ "index": 0, "delta": { "content": " today." }, "finish_reason": "stop" }] },
+    { "id": "gen-synthetic-2", "choices": [], "usage": { "prompt_tokens": 1300, "completion_tokens": 5, "cost": 0.0002, "prompt_tokens_details": { "cached_tokens": 1150 } } }
+  ],
+  "expectedReasoningDetails": [{ "type": "reasoning.text", "text": "Let me check the forecast.", "format": "anthropic-claude-v1", "index": 0, "signature": "sig-synthetic-0001" }]
+}

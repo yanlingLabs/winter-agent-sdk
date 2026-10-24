@@ -17,14 +17,14 @@
 // `domains.ts`'s own `sameFamily` compares (`zai`, `deepseek` and `openai` are all `"openai"` there).
 // See `sameModelFamily` below for the comparison and why it is deliberately its own function rather
 // than a change to `domains.ts`.
-import type { SessionStoreEntry } from "@yanlinglabs/winter-agent-sdk";
+import type { SessionStoreEntry } from "../winter-defaults.ts";
 import { loadCatalog, modelFamilyOf, OTHER_FAMILY_ID, type WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
 import type { ProviderStateRecord } from "./claude-ready.ts";
 import type { ContinuityEndpoint } from "./domains.ts";
 import { classifySwitch, type SwitchClassification, type SwitchFacts } from "./warnings.ts";
 import { DECORATION_CHAR_BUDGET, estimateTextTokens, estimateTokensFromChars, estimateValueTokens, fitVerdict, type FitVerdict } from "./fit.ts";
 import { isServerToolBlockType } from "./renderer.ts";
-import { DEFAULT_COMPACTION_THRESHOLD } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_DEFAULT_COMPACTION_THRESHOLD as DEFAULT_COMPACTION_THRESHOLD } from "../winter-defaults.ts";
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;

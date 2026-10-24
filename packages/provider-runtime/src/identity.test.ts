@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { activeWinterIdentity, setWinterIdentity, winterUserAgent } from "./identity.ts";
+import { activeWinterIdentity, identityRefusal, setWinterIdentity, winterIdentityHeaders, winterUserAgent } from "./identity.ts";
 import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 import pkg from "../package.json";
 
@@ -74,5 +74,53 @@ describe("P7a: setWinterIdentity frames", () => {
     expect(activeWinterIdentity()).toEqual(acme);
     disposeB();
     expect(activeWinterIdentity()).toEqual(DEFAULTS);
+  });
+});
+
+// --- 0.0.56 (W9): a host installs its own identity ---------------------------------------------------
+describe("0.0.56: setWinterIdentity from a host", () => {
+  const host = { product: "example-host", codexOriginator: "example-host", contactUrl: "https://example.test/contact", version: "1.2.3" };
+
+  test("the User-Agent names the host and the HOST's version, then returns to Winter's own", () => {
+    const dispose = setWinterIdentity(host);
+    expect(winterUserAgent()).toBe("example-host/1.2.3");
+    dispose();
+    expect(winterUserAgent()).toBe(`winter-agent-sdk/${pkg.version}`);
+  });
+
+  test("without a version the package's own version is used (Winter's default behaviour is unchanged)", () => {
+    const { version: _omitted, ...noVersion } = host;
+    const dispose = setWinterIdentity(noVersion);
+    expect(winterUserAgent()).toBe(`example-host/${pkg.version}`);
+    dispose();
+  });
+
+  test("a row's <product>/<version>/<contact> placeholders render the host's values", () => {
+    const dispose = setWinterIdentity(host);
+    const lookup = () => ({ "Client-Agent": "<product>:<version>:<contact>" });
+    expect(winterIdentityHeaders(lookup, "aihorde")).toEqual({ "Client-Agent": "example-host:1.2.3:https://example.test/contact" });
+    dispose();
+  });
+
+  const refusals: Array<[string, Record<string, unknown>]> = [
+    ["an uppercase product", { ...host, product: "Example" }],
+    ["a product with a space", { ...host, product: "example host" }],
+    ["a first-party originator", { ...host, codexOriginator: "codex" }],
+    ["another first-party originator", { ...host, codexOriginator: "claude-code" }],
+    ["an http contact", { ...host, contactUrl: "http://example.test" }],
+    ["a contact with a newline", { ...host, contactUrl: "https://example.test/\nX-Injected: 1" }],
+    ["a version with a space", { ...host, version: "1.2 beta" }],
+    ["a version with a slash", { ...host, version: "1/2" }],
+  ];
+  for (const [label, identity] of refusals) {
+    test(`refuses ${label}, typed, and installs nothing`, () => {
+      expect(identityRefusal(identity as never)).toBeString();
+      expect(() => setWinterIdentity(identity as never)).toThrow(TypeError);
+      expect(winterUserAgent()).toBe(`winter-agent-sdk/${pkg.version}`);
+    });
+  }
+
+  test("every value the sdk's brand profile accepts is accepted here (Winter's own wiring still installs)", () => {
+    expect(identityRefusal({ product: WINTER_BRAND.packageName, codexOriginator: WINTER_BRAND.codexOriginator, contactUrl: WINTER_BRAND.contactUrl })).toBeUndefined();
   });
 });

@@ -50,12 +50,13 @@ importers:
 
   packages/provider-runtime:
     dependencies:
-      '@yanlinglabs/winter-agent-sdk':
-        specifier: workspace:*
-        version: link:../sdk
       '@yanlinglabs/winter-provider-catalog':
         specifier: workspace:*
         version: link:../provider-catalog
+    devDependencies:
+      '@yanlinglabs/winter-agent-sdk':
+        specifier: workspace:*
+        version: link:../sdk
 
   packages/runtime:
     dependencies:
