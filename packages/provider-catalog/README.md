@@ -1,12 +1,30 @@
 # `@yanlinglabs/winter-provider-catalog`
 
-Winter's provider and model catalog as inert, validated DATA: 218 provider rows and 1298 model rows
+Winter's provider and model catalog as inert, validated DATA: 218 provider rows and 1303 model rows
 with their endpoints, auth kinds, pricing evidence, admission tier and provenance, plus the validator
 and the vocabularies the JSON Schema restates.
 
 No network, no filesystem, no Bun API — the catalog is a bundled JSON module import, which is what
 lets it be decoded anywhere. `PROVENANCE.md` records where every row came from and under what
 evidence; `bun run provenance:tiers -- --check` regenerates its census from the shipped data.
+
+## Supported public API (0.0.56)
+
+Every name exported from `@yanlinglabs/winter-provider-catalog` and `@yanlinglabs/winter-provider-catalog/families`
+is supported: `loadCatalog`, `validateCatalog`, the descriptor types (`WinterCatalog`,
+`WinterModelDescriptor`, `WinterProviderDescriptor`, `ModelPricing`, `PricingTier`, `CapabilityEvidence`,
+...) and the family helpers. It follows the same versioning rules as `@yanlinglabs/winter-provider-runtime`
+(its README, "Supported public API and versioning"): the two packages move in lockstep and must be the
+same version; additive changes (rows, optional fields) can come in any release; anything that can break a
+host -- a removed or renamed export or row key, a field made required -- ships only under a "Breaking for
+provider-package hosts" heading in the CHANGELOG, after a release of deprecation. Catalog DATA (prices,
+limits, efforts, evidence) follows the vendors and changes in any release.
+
+**Prices.** `pricing.value` is USD per million tokens. 0.0.56 adds `longContextTiers`: a request whose
+whole prompt (input + cache reads + cache writes) reaches a tier's `minPromptTokens` (inclusive) is priced
+entirely at that tier -- Claude Haiku 5.5's "over 100,000 tokens" prices, OpenRouter's
+`min_prompt_tokens` overrides. A row without tiers is flat-priced, as before.
+`@yanlinglabs/winter-provider-runtime`'s `estimateCostUsd` applies them.
 
 ## Install
 
