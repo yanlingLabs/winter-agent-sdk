@@ -10,7 +10,12 @@
 // way to know the sweep is complete is to make an incomplete sweep fail.
 //
 // THE EXCEPTIONS ARE DISCLOSED, NOT INFERRED:
-//   * `packages/sdk/src/brand.ts` — the one module allowed to spell Winter's own names.
+//   * `packages/sdk/src/brand.ts` — the one module allowed to spell Winter's own names, and its MIRROR
+//     `packages/provider-runtime/src/winter-defaults.ts` (0.0.56, W9). The provider layer may no longer
+//     import the sdk at runtime (the sdk carries the native `winter` binary as an optional dependency,
+//     which every Node host of the provider layer would otherwise install), so it declares the four
+//     values it needs itself, and `winter-defaults.test.ts` holds them byte-equal to `WINTER_BRAND`:
+//     the mirror can never say something brand.ts does not.
 //   * `BASELINE_ALLOWLIST` below — the files that ALREADY carried a literal when this gate landed.
 //     Each lane deleted its own entries as it swept them, and the fix wave took the last one. IT IS
 //     NOW EMPTY, and a test asserts that (P7a close-out, part A): the exceptions are `brand.ts` and
@@ -70,6 +75,8 @@ const SCAN_ROOTS = ["packages/sdk/src", "packages/runtime/src", "packages/provid
  * The ONE file allowed to carry Winter's own names as literals. Everything else derives them.
  */
 const BRAND_MODULE = "packages/sdk/src/brand.ts";
+/** 0.0.56 (W9): brand.ts's mirror in the provider layer, held equal to it by `winter-defaults.test.ts` (see the header). */
+const BRAND_MIRROR = "packages/provider-runtime/src/winter-defaults.ts";
 
 /**
  * Rules 1-8: a raw occurrence anywhere in the file, comments included (see the header).
@@ -429,7 +436,7 @@ export function scanFileForBrandLiterals(relPath: string, src: string): BrandOff
 function sweep(): BrandOffence[] {
   const out: BrandOffence[] = [];
   for (const file of collectSourceFiles()) {
-    if (file === BRAND_MODULE) continue;
+    if (file === BRAND_MODULE || file === BRAND_MIRROR) continue;
     out.push(...scanFileForBrandLiterals(file, readFileSync(join(REPO_ROOT, file), "utf8")));
   }
   return out;
@@ -850,11 +857,6 @@ const BRANDLESS_CALL_SITE_ALLOWLIST: Readonly<Record<string, string>> = {
   "packages/runtime/src/skills/store.ts:45": "PROJECT_PLUGIN_NAME -- Winter's own value; a session's is `SkillIndexOptions.brand.projectDirName`",
   "packages/runtime/src/tools/impl/web-fetch.ts:97": "brandNameFor's DEFAULT for the domain-floor refusal text; the call site is `ctx.brand?.productName ?? WINTER_BRAND.productName`, a session's own brand always wins",
   "scripts/research/code-policy-compatibility.ts:45": "The isolated comparison intentionally uses each requested checkout's own default brand; its home is joined to the disposable fixture home, never resolved from the real process home.",
-  "packages/provider-runtime/src/identity.ts:64": "DEFAULT_IDENTITY -- what the process presents as until a branded session installs its own frame",
-  "packages/provider-runtime/src/continuity/handoff.ts:46": "INSTRUCTION_FILE_BASENAMES -- a recognition list beside CLAUDE.md/AGENTS.md, not a path this code writes",
-  "packages/provider-runtime/src/adapters/openai/codex-config.ts:57": "the codex profile's DEFAULT originator; the wire reads `activeWinterIdentity().codexOriginator`",
-  "packages/provider-runtime/src/adapters/openai/codex-config.ts:62": "CODEX_ORIGINATOR -- the same default, exported for the fixtures that assert it",
-  "packages/provider-runtime/src/adapters/openai/xai-oauth.ts:63": "DOCUMENTATION ONLY (that row's own comment): nothing reads it; all three wire sites read `activeWinterIdentity().product`",
   // --- (b) the `from` side of a rename, or a comparison against the default ------------------------
   "packages/runtime/src/tools/registry.ts:918": "RESERVED_MCP_SERVER_NAMES' module-load SEED -- the `from` side; `rebrandStandingServerTools` adds the session's own name (line shifted again by fix round 4's pluginWorkflows/workflowsPaths widening, by WS-23's comment corrections above it, by code-mode images' `ToolResultPayload.blocks` / `modelReadsImages`, by the host-only `ToolResultPayload.siteIcons`, and by the plain-named MCP tools / `optIn` / `requiresAnyCapability` fields, SDK 0.0.40's `concurrencyLane` and SDK 0.0.41's `concurrencySafe`)",
   "packages/runtime/src/mcp/winter-server.ts:23": "WINTER_SERVER_NAME -- the DEFAULT for both MCP doors' `reservedServerName` (I-2's fix), and the rename's `from` side (line moved by WS-23, which deleted the unused server factory above it)",

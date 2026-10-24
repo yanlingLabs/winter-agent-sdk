@@ -57,7 +57,9 @@
     }
   },
   "dependencies": {
-    "@yanlinglabs/winter-agent-sdk": "workspace:*",
     "@yanlinglabs/winter-provider-catalog": "workspace:*"
+  },
+  "devDependencies": {
+    "@yanlinglabs/winter-agent-sdk": "workspace:*"
   }
 }

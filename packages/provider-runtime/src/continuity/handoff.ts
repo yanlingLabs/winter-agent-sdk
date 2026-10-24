@@ -1,4 +1,4 @@
-import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_INSTRUCTIONS_FILE } from "../winter-defaults.ts";
 // Phase 6 Lane C: the PORTABLE HANDOFF -- report §9.3, built at the switch boundary and nowhere else.
 //
 // WHAT IT CONTAINS: task-continuation material only. Source identity; the source's reasoning summary
@@ -43,7 +43,7 @@ export const PRIOR_MODEL_HANDOFF_TAG = "prior_model_handoff";
  * instructionsFile`) -- a repository can perfectly well contain Winter's own instructions file and a
  * reuser's beside it, and neither belongs in a handoff.
  */
-export const INSTRUCTION_FILE_BASENAMES: readonly string[] = [WINTER_BRAND.instructionsFile, "MEMORY.md", "CLAUDE.md", "AGENTS.md"];
+export const INSTRUCTION_FILE_BASENAMES: readonly string[] = [WINTER_INSTRUCTIONS_FILE, "MEMORY.md", "CLAUDE.md", "AGENTS.md"];
 
 export interface HandoffToolFact {
   name: string;
