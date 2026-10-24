@@ -292,6 +292,33 @@ class LauncherArgumentTests(unittest.TestCase):
             self.assertEqual(flags, ['0', '0'], policy)
 
 
+class LinuxFixtureRunnerTests(unittest.TestCase):
+    """plan_view_cases.py is what verify.py runs as root on Linux CI. Here the same runner runs off Linux with the constructor's platform checks and the root-owned artifact check stood in for."""
+
+    def test_the_runner_passes_and_verify_py_runs_it(self):
+        import plan_view_cases
+        real = os.geteuid
+
+        def euid():
+            frame = sys._getframe(1)
+            while frame:
+                if frame.f_code.co_name == '__init__' and type(frame.f_locals.get('self')).__name__ == 'ToolService':
+                    return 0
+                frame = frame.f_back
+            return real()
+        control = SimpleNamespace(st_mode=gq.stat.S_IFDIR | 0o700, st_uid=0)
+        with tempfile.TemporaryDirectory() as work, patch.object(service.sys, 'platform', 'linux'), patch.object(service.os, 'geteuid', side_effect=euid), \
+                patch.object(service.sys, 'flags', SimpleNamespace(isolated=1, no_site=1)), patch.object(service.Path, 'read_text', return_value=gq.BOOT + '\n'), \
+                patch.object(service, 'pinned_artifact', side_effect=lambda value: os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC)), \
+                patch.object(service.Path, 'lstat', return_value=control), patch.object(service.os, 'chown'), patch.object(service, 'PLAN_ROOT', service.PLAN_ROOT):
+            cases = plan_view_cases.run(service, work)
+        self.assertEqual(cases, ['admitted-under-plan', 'refused-outside-plan', 'refused-foreign-malformed-read-only', 'refused-stale-epoch', 'stale-check-fails-closed'])
+        verify = (Path(__file__).resolve().parent / 'verify.py').read_text()
+        self.assertIn('plan_view_cases.py', verify)
+        for case in cases:
+            self.assertIn(f"'{case}'", verify)
+
+
 class LauncherSourceTests(unittest.TestCase):
     """The native launcher refuses the writable-view flag anywhere but plan + file, and mounts it writable only then. Source-level, since no native process starts here."""
 
