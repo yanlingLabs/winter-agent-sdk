@@ -4,6 +4,46 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.57
+
+### A provider error says when the account cannot pay
+
+`ProviderError.code` gains `"billing"` (the union is now exported as `ProviderErrorCode`): the account
+is out of prepaid credit, payment is required, or a spend or billing limit is reached. It is never
+retryable, it maps to the pinned `billing_error`, and a host can open a billing cooldown on the code
+alone, without matching message text. The message is built and redacted exactly as before. What each
+dialect sends:
+
+- **Anthropic**: the HTTP 400 `invalid_request_error` whose message is "Your credit balance is too
+  low…", and `billing_error` (402); the same two as mid-stream error frames.
+- **OpenRouter**: 402 (`metadata.error_type: "payment_required"`), its mid-stream error event with code
+  402, and an Anthropic credit refusal passed through in `error.metadata.raw` or as
+  `metadata.provider_code: "billing_error"`. OpenRouter's one wait-and-retry 402 (an in-flight budget,
+  sent with `Retry-After`) stays a retryable `rate_limit`.
+- **OpenAI** (429): `insufficient_quota` (as `code` or `type`), `credit_balance_exhausted`,
+  `organization_spend_limit_exceeded`, `project_spend_limit_exceeded`,
+  `organization_usage_limit_exceeded`, `billing_hard_limit_reached`, `billing_not_active`; also inside a
+  Responses stream's `response.failed` / `error` event.
+- **xAI** documents no credits-specific code or status, so nothing xAI-specific was added: an xAI 402,
+  or an xAI body carrying one of the codes above, is `billing` by the same rules.
+- A subscription's usage WINDOW (the Codex backend's `usage_limit_reached` / `usage_limit_exceeded`,
+  which reset on a clock) stays `rate_limit`, still not retried.
+
+### Breaking for provider-package hosts
+
+- `ProviderError.code` has a new member, `"billing"`. An exhaustive `switch` over it without a `default`
+  arm stops compiling; add a `billing` case.
+- Errors that were `rate_limit` with an account-billing provider code (OpenAI's `insufficient_quota`
+  and siblings) and errors that were `bad_request` for a 402 or an Anthropic credit refusal are now
+  `billing`. `retryable` is unchanged (`false`), and so is `toSdkAssistantMessageError` (`billing_error`).
+
+### Smaller
+
+- OpenRouter `reasoning_details` are captured and replayed on the `openrouter` provider only, not on any
+  other chat surface whose row happens to declare opaque state.
+- provider-runtime's README says how a Node project type-checks the one declaration that names a Bun type
+  (`skipLibCheck: true`, or `@types/bun`).
+
 ## 0.0.56
 
 ### The provider packages are a supported library for a host's own agent loop

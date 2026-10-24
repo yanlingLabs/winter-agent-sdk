@@ -26,6 +26,7 @@
 //     in the output stream is a tool the model invoked that this adapter cannot express as a
 //     `tool_call_*` triple. WS-13 §9 forbids dropping it silently, so it is a typed refusal.
 
+import { isBillingErrorBody } from "../../errors.ts";
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { createHash } from "node:crypto";
 import { parseSse } from "../../sse.ts";
@@ -882,7 +883,11 @@ export class ResponsesStreamMapper {
         // typed `contextOverflow` a 400 carries, so the engine's reactive compaction reaches it too.
         return this.failureCode(payload) === "context_length_exceeded"
           ? [{ type: "error", error: { code: "bad_request", message: this.failureMessage(payload), retryable: false, providerCode: "context_length_exceeded", contextOverflow: true } }]
-          : [{ type: "error", error: { code: "server", message: this.failureMessage(payload), retryable: false } }];
+          : isBillingErrorBody(payload["response"] !== null && typeof payload["response"] === "object" ? payload["response"] : payload)
+            ? // 0.0.57: an account that cannot pay, reported inside the stream (`error.code`/`type`
+              // `insufficient_quota` and its siblings): the same `billing` code a 429 carries.
+              [{ type: "error", error: { code: "billing", message: this.failureMessage(payload), retryable: false, ...(this.failureCode(payload) !== undefined ? { providerCode: this.failureCode(payload)! } : {}) } }]
+            : [{ type: "error", error: { code: "server", message: this.failureMessage(payload), retryable: false } }];
       default:
         // Forward compatibility: an unknown event is ignored, exactly as the port did. The ONE
         // exception is an unrepresentable CALL, which arrives on `output_item.added`/`.done` and is

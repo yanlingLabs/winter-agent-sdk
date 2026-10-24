@@ -54,7 +54,7 @@ import { cacheControlFor, resolveCacheTtls, type CacheTtl } from "../cache-ttl.t
 import type { WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { boundedFetch, ProviderRequestError } from "../../http.ts";
-import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
+import { isBillingErrorBody, normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
 import { applyPrivilegedHeaders, connectionEndpointOptions, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
@@ -1746,9 +1746,9 @@ async function openCommittedStream(stream: AsyncGenerator<SseEvent>): Promise<{ 
  * "unavailable or overloaded" for a request the API had REFUSED (an `invalid_request_error` live-gated on
  * Sonnet 5.5) and nobody could see why. Anthropic's error types
  * (https://platform.claude.com/docs/en/api/errors, read 2026-10-06) map onto the seam's codes the way
- * their HTTP statuses do in `normalizeHttpError`: `invalid_request_error` (400; also a spend limit or
- * an exhausted credit balance), `billing_error` (402), `not_found_error` (404), `conflict_error` (409)
- * and `request_too_large` (413) are `bad_request`; `authentication_error` (401) and `permission_error`
+ * their HTTP statuses do in `normalizeHttpError`: `billing_error` (402), and an `invalid_request_error`
+ * whose message is the exhausted-credit sentence, are `billing` (0.0.57); `invalid_request_error` (400),
+ * `not_found_error` (404), `conflict_error` (409) and `request_too_large` (413) are `bad_request`; `authentication_error` (401) and `permission_error`
  * (403) are `auth`; `rate_limit_error` (429) is `rate_limit`; `timeout_error` (504) is `timeout`;
  * `overloaded_error` (529), `api_error` (500) and any type the API adds later stay `server`. None is
  * retryable here (above).
@@ -1760,7 +1760,9 @@ export function streamErrorFrame(raw: unknown): ProviderError {
   const error = raw !== null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const providerCode = typeof error["type"] === "string" ? error["type"] : undefined;
   const detail = anthropicErrorMessage(error["message"]);
-  const code: ProviderError["code"] = providerCode !== undefined ? (STREAM_ERROR_CODES[providerCode] ?? "server") : "server";
+  // 0.0.57: `billing_error`, or an `invalid_request_error` whose message is the out-of-credit sentence,
+  // is `billing` -- the account cannot pay, which a host answers with a cooldown, not a fix to its request.
+  const code: ProviderError["code"] = isBillingErrorBody({ error }) ? "billing" : providerCode !== undefined ? (STREAM_ERROR_CODES[providerCode] ?? "server") : "server";
   return {
     code,
     message: `the provider ended the stream with an error frame${providerCode !== undefined ? ` (${providerCode})` : ""}${detail !== undefined ? `: ${detail}` : ""}`,
@@ -1772,7 +1774,7 @@ export function streamErrorFrame(raw: unknown): ProviderError {
 /** Anthropic's documented error types -> the seam's codes (see `streamErrorFrame`). */
 const STREAM_ERROR_CODES: Readonly<Record<string, ProviderError["code"]>> = {
   invalid_request_error: "bad_request",
-  billing_error: "bad_request",
+  billing_error: "billing",
   not_found_error: "bad_request",
   conflict_error: "bad_request",
   request_too_large: "bad_request",
