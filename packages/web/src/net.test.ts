@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
-import { fetchWebResource, type WebFetchOptions, type WebFetchTransportRequest, type WebFetchResult } from "./net.ts";
+import { fetchWebResource, WEB_FETCH_MAX_REDIRECTS_CEILING, type WebFetchOptions, type WebFetchTransportRequest, type WebFetchResult } from "./net.ts";
 import { mappedTransport, PUBLIC_A, PUBLIC_B, startHttpsServer, testPki, type TestServer } from "./servers.test-support.ts";
 
 const { after, before, describe, test } = await harness(isBun ? ((await import(BUN_TEST)) as BunTestModule) : undefined);
@@ -296,6 +296,20 @@ describe("fetchWebResource", () => {
         expectFailure(result, "too_many_redirects");
         assert.equal(seen.length, 11, `maxRedirects ${bad}`);
       }
+    });
+
+    test("a huge maxRedirects is clamped to the ceiling of 20 hops", async () => {
+      assert.equal(WEB_FETCH_MAX_REDIRECTS_CEILING, 20);
+      for (const huge of [1e9, Number.MAX_SAFE_INTEGER]) {
+        const seen: WebFetchTransportRequest[] = [];
+        const result = await fetchWebResource(`https://chain.test:${server.port}/chain/0`, redirectOpts({ maxRedirects: huge }, seen));
+        expectFailure(result, "too_many_redirects");
+        assert.equal(seen.length, 21, `maxRedirects ${huge}`);
+        if (!result.ok && result.code === "too_many_redirects") assert.equal(result.maxRedirects, 20);
+      }
+      const seen: WebFetchTransportRequest[] = [];
+      expectFailure(await fetchWebResource(`https://chain.test:${server.port}/chain/0`, redirectOpts({ maxRedirects: 20 }, seen)), "too_many_redirects");
+      assert.equal(seen.length, 21);
     });
 
     test("maxRedirects: 0 follows nothing", async () => {

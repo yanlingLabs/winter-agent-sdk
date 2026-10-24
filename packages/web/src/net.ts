@@ -36,6 +36,8 @@ export const WEB_FETCH_MAX_BYTES = 10_485_760;
 export const WEB_FETCH_MAX_ENCODED_BYTES = 2 * 1024 * 1024;
 export const WEB_FETCH_TIMEOUT_MS = 60_000;
 export const WEB_FETCH_MAX_REDIRECTS = 10;
+/** The hard ceiling on `maxRedirects`: a larger caller value is clamped to it, so no option setting makes the redirect walk unbounded. */
+export const WEB_FETCH_MAX_REDIRECTS_CEILING = 20;
 /** How long one resolved address gets to connect before the next one is tried. */
 export const WEB_FETCH_CONNECT_BUDGET_MS = 10_000;
 export const WEB_FETCH_ACCEPT = "text/markdown, text/html, */*";
@@ -104,7 +106,7 @@ export interface WebFetchOptions {
   userAgent?: string;
   /** Hosts never fetched, on any hop (suffix match on a label boundary). */
   blockedDomains?: readonly string[];
-  /** Redirects followed before `too_many_redirects`. Default 10. */
+  /** Redirects followed before `too_many_redirects`. Default 10; a non-negative integer, clamped to `WEB_FETCH_MAX_REDIRECTS_CEILING` (20); anything else uses the default. */
   maxRedirects?: number;
   followRedirects?: RedirectPolicy;
   /** Resolves a hostname to its addresses (ADVANCED; a test's fake resolver). Default `dns.lookup(host, { all: true })`. */
@@ -619,9 +621,9 @@ function safePolicy(policy: (from: URL, to: URL) => boolean, from: URL, to: URL)
   }
 }
 
-/** A caller's redirect cap: a non-negative integer, else the default -- NaN, Infinity, a negative or a fraction must not switch the cap off. */
+/** A caller's redirect cap: a non-negative integer (at most the ceiling), else the default -- NaN, Infinity, a negative or a fraction must not switch the cap off. */
 function redirectCap(value: number | undefined): number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : WEB_FETCH_MAX_REDIRECTS;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? Math.min(value, WEB_FETCH_MAX_REDIRECTS_CEILING) : WEB_FETCH_MAX_REDIRECTS;
 }
 
 function positive(value: number | undefined, fallback: number): number {

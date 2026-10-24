@@ -73,7 +73,7 @@ Nothing here throws for an expected failure: every refusal and every network out
 | `maxEncodedBytes` | 2 MiB | Cap on the compressed bytes of a `Content-Encoding` body (gzip, deflate, br). |
 | `onOverflow` | `"truncate"` | `"truncate"` keeps the first `maxBytes` (`truncated: true`); `"fail"` returns `too_large`. |
 | `followRedirects` | `"any"` | `"any"`, `"same-host"` (same scheme, port and host, a `www.` prefix ignored), or `(from: URL, to: URL) => boolean`. Every followed hop is re-validated in full. A redirect not followed is `redirect_not_followed` with the target (userinfo removed) in `location`. |
-| `maxRedirects` | 10 | Then `too_many_redirects`. |
+| `maxRedirects` | 10 | Then `too_many_redirects`. A non-negative integer; values above `WEB_FETCH_MAX_REDIRECTS_CEILING` (20, exported) are clamped to it, and a non-integer, negative or non-finite value uses the default. |
 | `blockedDomains` | `[]` | Hosts never fetched on any hop (suffix match on a label boundary: `example.com` blocks `docs.example.com`, not `notexample.com`). |
 | `userAgent` | `winter-web (+https://github.com/yanlingLabs/winter-agent-sdk)` | |
 | `cache` (`fetchWebPage` only) | none | Any `WebFetchCache` (`get`/`set`, sync or async). `MemoryWebFetchCache` is a TTL (15 min) + byte-weighted LRU (50 MiB). |
