@@ -73,6 +73,14 @@ static int string(struct parser *p,int i,char *out,size_t n){
 }
 static long integer(struct parser *p,int i){if(i<0)return -1;char buf[32],*end;int len=p->t[i].end-p->t[i].start;if(len<=0||len>=32)return -1;memcpy(buf,p->s+p->t[i].start,(size_t)len);buf[len]=0;errno=0;long n=strtol(buf,&end,10);return errno||*end?-1:n;}
 static int identifier(const char *s){size_t n=strlen(s);if(n<1||n>128||!strchr("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",*s))return 0;return strspn(s,"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-")==n;}
+/* The record's continuation (cold resume). A fresh record says `freshOnly: true`, as before. A resume says `continuation: "resume"` and no freshOnly.
+ * Supervisor is trusted to resolve `either`; native admits only these two shapes. Nothing else is accepted. */
+static int continuation_ok(struct parser *p){
+    int fresh=field(p,0,"freshOnly"),cont=field(p,0,"continuation");
+    int fresh_true=fresh>=0&&p->t[fresh].end-p->t[fresh].start==4&&!memcmp(p->s+p->t[fresh].start,"true",4);
+    if(fresh>=0)return fresh_true&&(cont<0||eq(p,cont,"fresh"));
+    return cont>=0&&eq(p,cont,"resume");
+}
 static int live(int fd){struct pollfd p={fd,POLLIN,0};return poll(&p,1,0)==0;}
 static int pidfd_pid(int fd){char path[64],line[256];snprintf(path,sizeof path,"/proc/self/fdinfo/%d",fd);FILE *f=fopen(path,"re");if(!f)return -1;int pid=-1;while(fgets(line,sizeof line,f))if(sscanf(line,"Pid:\t%d",&pid)==1)break;fclose(f);return pid;}
 static int pidfd_type(int fd){char path[64],target[128];snprintf(path,sizeof path,"/proc/self/fd/%d",fd);ssize_t n=readlink(path,target,sizeof target-1);if(n<0)return 0;target[n]=0;return !strcmp(target,"anon_inode:[pidfd]");}
@@ -169,8 +177,8 @@ uint64_t winter_owner_open(int socketfd){
         for(int i=0;i<4;i++)if(identity(o->fd[4],o->fd[i]))goto fail;
         if(!guided_peer(socketfd,SOCK_SEQPACKET,o->fd[1],o->fd[0])||!guided_peer(o->fd[4],SOCK_STREAM,o->fd[1],o->fd[0]))goto fail;
     }
-    int fresh=field(&p,0,"freshOnly"),scope=field(&p,0,"scope");char logical[129],id[129],expected[512];
-    if(integer(&p,field(&p,0,"protocolVersion"))!=1||fresh<0||p.t[fresh].end-p.t[fresh].start!=4||memcmp(p.s+p.t[fresh].start,"true",4)||integer(&p,field(&p,0,"runtimeUid"))!=(long)getuid()||string(&p,field(&p,0,"logicalSessionId"),logical,sizeof logical)||!identifier(logical))goto fail;
+    int scope=field(&p,0,"scope");char logical[129],id[129],expected[512];
+    if(integer(&p,field(&p,0,"protocolVersion"))!=1||!continuation_ok(&p)||integer(&p,field(&p,0,"runtimeUid"))!=(long)getuid()||string(&p,field(&p,0,"logicalSessionId"),logical,sizeof logical)||!identifier(logical))goto fail;
     for(int i=0;i<3;i++){const char *keys[]={"workspaceId","sessionId","incarnationId"};if(string(&p,field(&p,scope,keys[i]),id,sizeof id)||!identifier(id))goto fail;}
     if(integer(&p,field(&p,scope,"leaseEpoch"))<1||string(&p,field(&p,scope,"storeHome"),o->store,sizeof o->store)||string(&p,field(&p,scope,"currentBootId"),o->boot,sizeof o->boot))goto fail;
     snprintf(expected,sizeof expected,"/workspace/.winter/conversations/%s",logical);if(strcmp(expected,o->store))goto fail;
