@@ -36,19 +36,21 @@ export function assertLinuxHostQueryConfig(config: RuntimeConfig): void {
 /** The plan view (contract revision 3, 12.5): the conversation's own epoch-scoped planning scratch, `/workspace/plan/<logicalSessionId>/<epoch>`, OUTSIDE the store tree,
  * epoch a canonical decimal of at most nine digits. Read-write only under plan, at most once, and only for this conversation (its own id). That an EARLIER epoch is never
  * mounted once a later one exists is the supervisor's check (it alone sees the data disk); this profile check is corroboration of the record's shape. */
+/** The memory share: the one exact path under the guest store a host-query or guided conversation may be shown as a root. Never the working directory. */
+export const LINUX_MEMORY_ROOT = "/workspace/.winter/memory";
 export const LINUX_PLAN_VIEW = /^\/workspace\/plan\/([A-Za-z0-9][A-Za-z0-9_.-]{0,127})\/(0|[1-9][0-9]{0,8})$/;
 export function assertLinuxHostQueryRoots(config: RuntimeConfig, roots: readonly GuestFileRoot[]): void {
   assertLinuxHostQueryConfig(config);
   if (!Array.isArray(roots) || roots.length < 1 || roots.length > 16 || new Set(roots.map(root => root.id)).size !== roots.length || new Set(roots.map(root => root.guestPath)).size !== roots.length) refuse();
   let planViews = 0;
   for (const root of roots) {
-    if (!object(root) || !closed(root as unknown as Record<string, unknown>, ["id", "guestPath", "readOnly"]) || typeof root.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(root.id) || typeof root.guestPath !== "string" || !root.guestPath.startsWith("/workspace/") || root.guestPath.length > 4096 || root.guestPath.includes("\0") || root.guestPath.split("/").slice(1).some(part => part === "" || part === "." || part === "..") || root.guestPath === "/workspace/.winter" || root.guestPath.startsWith("/workspace/.winter/") || typeof root.readOnly !== "boolean" ) refuse();
+    if (!object(root) || !closed(root as unknown as Record<string, unknown>, ["id", "guestPath", "readOnly"]) || typeof root.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(root.id) || typeof root.guestPath !== "string" || !root.guestPath.startsWith("/workspace/") || root.guestPath.length > 4096 || root.guestPath.includes("\0") || root.guestPath.split("/").slice(1).some(part => part === "" || part === "." || part === "..") || (root.guestPath === "/workspace/.winter" || (root.guestPath.startsWith("/workspace/.winter/") && root.guestPath !== LINUX_MEMORY_ROOT)) || typeof root.readOnly !== "boolean" ) refuse();
     const view = LINUX_PLAN_VIEW.exec(root.guestPath);
     if (view !== null || root.guestPath === "/workspace/plan" || root.guestPath.startsWith("/workspace/plan/")) {
       if (view === null || config.permissionMode !== "plan" || root.readOnly !== false || view[1] !== (config.winterHome ?? "").split("/").pop() || ++planViews > 1) refuse();
     } else if (config.permissionMode === "plan" && !root.readOnly) refuse();
   }
-  if (!roots.some(root => root.guestPath === config.cwd)) refuse();
+  if (config.cwd === LINUX_MEMORY_ROOT || !roots.some(root => root.guestPath === config.cwd)) refuse();
 }
 /** end_input carries nothing; interrupt carries nothing or exactly the host SDK's `{ scope: "turn" }`. The engine ignores the payload, so both forms act alike. */
 function interruptPayload(subtype: unknown, payload: unknown): boolean {

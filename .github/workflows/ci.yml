@@ -42,6 +42,10 @@ jobs:
           python3 -I -S -B -m unittest discover -s scripts/guest-supervisor -p 'test_runtime_launcher_policy.py'
       - name: plan view -- the supervisor's admission (under plan only, once, writable, never a stale epoch), the launcher flag and the Linux fixture runner (source only)
         run: python3 -I -S -B scripts/guest-supervisor/test_plan_view.py
+      - name: memory share root (exact path, never the cwd, never a browse root) and the read-only /etc/gitconfig of the tool launcher (source only)
+        run: python3 -I -S -B scripts/guest-supervisor/test_memory_root.py
+      - name: /etc/gitconfig in the tracked tool launcher's process view -- a clone with it read-only succeeds; absent or unsafe, it does not (real private mount and PID namespaces, fixture environment image)
+        run: sudo -n env WINTER_REQUIRE_NATIVE_GITCONFIG=1 python3 -I -S -B scripts/guest-supervisor/test_gitconfig_native.py
       - name: guided Root bootstrap producer, fifth descriptor and profile selection (source only, nothing admitted)
         run: python3 -I -S -B scripts/guest-supervisor/test_guided_host_query.py
       - name: guided guidance view and WINTER.md alias -- the APPLIED sources, portable tests (source only, nothing admitted)

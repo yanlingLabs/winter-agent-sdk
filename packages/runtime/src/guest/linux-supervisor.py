@@ -324,6 +324,12 @@ def native_mount_policy(policy):
 # (epoch a canonical decimal, at most nine digits). It is the one root that is read-write under plan and it exists only under plan. PID 1 makes the directory
 # (root-side, no symlink); this service only admits it, and never admits an epoch below one that already exists beside it: an earlier epoch is never mounted again.
 PLAN_ROOT='/workspace/plan'
+# The Project/workspace memory share (contract revision 3): the one path under .winter a host-query or guided conversation may be shown, as a tool root. It is a host share
+# (another device), writable like any other root except under plan, and it is never a conversation's cwd and never a browse root.
+MEMORY_ROOT='/workspace/.winter/memory'
+def host_query_protected(guest_path):
+    # Everything under /workspace/.winter is the guest's own store; the memory share is the single exact exception.
+    return guest_path=='/workspace/.winter' or (guest_path.startswith('/workspace/.winter/') and guest_path!=MEMORY_ROOT)
 PLAN_VIEW=re.compile(r'/workspace/plan/([A-Za-z0-9][A-Za-z0-9_.-]{0,127})/(0|[1-9][0-9]{0,8})')
 def plan_view_epoch(guest_path,sid):
     match=PLAN_VIEW.fullmatch(guest_path) if type(guest_path) is str else None
@@ -355,7 +361,10 @@ def host_query_config(item,tool_classes,model):
     modes={'auto':'default','ask':'default','plan':'plan','accept-edits':'default','dont-ask':'default','bypass':'default'}
     if item['policy'] not in modes:raise Refusal('host_query_policy')
     roots=[binding['root'] for binding in item['roots'].values()]
-    if not 1<=len(roots)<=16 or any(not root['guestPath'].startswith('/workspace/') or root['guestPath']=='/workspace/.winter' or root['guestPath'].startswith('/workspace/.winter/') or item['policy']=='plan' and not root['readOnly'] and not is_plan_view(root['guestPath']) for root in roots):raise Refusal('host_query_roots')
+    if not 1<=len(roots)<=16 or any(not root['guestPath'].startswith('/workspace/') or host_query_protected(root['guestPath']) or item['policy']=='plan' and not root['readOnly'] and not is_plan_view(root['guestPath']) for root in roots):raise Refusal('host_query_roots')
+    # The working directory is the first root that is not the memory share; a conversation with only the memory share has nothing to work in.
+    cwd=next((root['guestPath'] for root in roots if root['guestPath']!=MEMORY_ROOT),None)
+    if cwd is None:raise Refusal('host_query_roots')
     tools=[]
     if 'read' in tool_classes:tools.append('Read')
     if 'write' in tool_classes:
@@ -367,7 +376,7 @@ def host_query_config(item,tool_classes,model):
     coordinate='coordinate' in tool_classes
     if coordinate:tools.extend(('SendMessage','ListAgents','AskUserQuestion','TaskCreate','TaskGet','TaskList','TaskUpdate'))
     sid=item['logicalSessionId']
-    return {'executionPosture':'confined-guest','sessionId':item['authority']['sessionId'],'model':model,'cwd':roots[0]['guestPath'],'winterHome':f'/run/winter/conversations/{sid}','storeHome':f'/workspace/.winter/conversations/{sid}','persistSession':True,'settingSources':[],'tools':tools,'allowedTools':[],'skills':[],'plugins':[],'strictMcpConfig':True,'mcpServers':{},'permissionMode':modes[item['policy']],'permissions':{'disableBypassPermissionsMode':True},'allowDangerouslySkipPermissions':False,**({'hostMessaging':True} if coordinate else {})}
+    return {'executionPosture':'confined-guest','sessionId':item['authority']['sessionId'],'model':model,'cwd':cwd,'winterHome':f'/run/winter/conversations/{sid}','storeHome':f'/workspace/.winter/conversations/{sid}','persistSession':True,'settingSources':[],'tools':tools,'allowedTools':[],'skills':[],'plugins':[],'strictMcpConfig':True,'mcpServers':{},'permissionMode':modes[item['policy']],'permissions':{'disableBypassPermissionsMode':True},'allowDangerouslySkipPermissions':False,**({'hostMessaging':True} if coordinate else {})}
 
 def select_runtime_profile(config):
     # Only the key Root's own trusted config FD carries selects a profile. Tool and
@@ -1052,6 +1061,7 @@ def file_binding(conversations,request):
     if item['authority']['incarnationId']!=request['incarnationId']:raise FileRefusal('stale_file')
     root=item['roots'].get(request['locationId'])
     if root is None or root['root']['id']!=request['locationId']:raise FileRefusal('file_unavailable')
+    if root['root']['guestPath']==MEMORY_ROOT:raise FileRefusal('file_unavailable')  # a share is never a browse root, whatever device it reports
     return item,root
 def file_root_admitted(fd,data_device,workspace_gid):
     """Root's half of the root-device check, on the held descriptor: the data volume's device, and the setgid root:workspaceGid 2770 root
