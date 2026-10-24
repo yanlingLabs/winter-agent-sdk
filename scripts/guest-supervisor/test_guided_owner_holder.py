@@ -39,7 +39,7 @@ HOLDER_OWNER_SHA256 = '95457d8f6ff256257b3b211e0201c64a4ed0b575aac6a9f933b3178b8
 RESUME_PATCH = ROOT / 'docs/research/guided-owner-cold-resume-DATA.patch'
 PARSER_TEST = 'scripts/guest-supervisor/test_native_parser.py'
 # The tracked bytes now.
-OWNER_SHA256 = '4edc3c40b13b1084e91a2a14c2b4fd37014d919037f134f6675e3f05f64d3d65'
+OWNER_SHA256 = '7630cb1f2e9b76be78fb6fb0f0efb6df74d437b39f9e3db69ac8aacc83162372'
 FIXTURE_SHA256 = 'a0c4929d88ae9dc66fc2201a2ff65c047e4c9ea0e85807d181080835539587d1'
 MATRIX_SHA256 = '8f93e9f8327e7da20241f52bdd2a2fdb556134456b64f037ab9a046811406cb4'
 FIXTURE = 'scripts/guest-supervisor/guided_owner_native_fixture.c'
@@ -277,11 +277,13 @@ class ColdResumeOwnerTests(unittest.TestCase):
         opened = function(source, 'winter_owner_open')
         self.assertEqual(opened.count('!continuation_ok(&p)'), 1)
         self.assertNotIn('freshOnly', opened)
-        self.assertEqual(source.count('"freshOnly"'), 1)
+        self.assertEqual(source.count('"freshOnly"'), function(source, 'continuation_ok').count('"freshOnly"'))
         self.assertLess(source.index('static int continuation_ok('), source.index('winter_owner_open('))
 
     def test_continuation_ok_admits_exactly_two_shapes(self):
         body = function(patched(), 'continuation_ok')
+        self.assertIn('if(key_count(p,0,"freshOnly")>1||key_count(p,0,"continuation")>1)return 0;', body)
+        self.assertLess(body.index('key_count(p,0,"freshOnly")'), body.index('field(p,0,"freshOnly")'))
         self.assertIn('if(fresh>=0)return fresh_true&&(cont<0||eq(p,cont,"fresh"));', body)
         self.assertIn('return cont>=0&&eq(p,cont,"resume");', body)
         self.assertIn('p->t[fresh].end-p->t[fresh].start==4&&!memcmp(p->s+p->t[fresh].start,"true",4)', body)

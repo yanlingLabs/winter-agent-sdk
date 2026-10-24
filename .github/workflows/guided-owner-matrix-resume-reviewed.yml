@@ -22,7 +22,7 @@ env:
   FIXTURE_SHA256: a0c4929d88ae9dc66fc2201a2ff65c047e4c9ea0e85807d181080835539587d1
   MATRIX_SHA256: 8f93e9f8327e7da20241f52bdd2a2fdb556134456b64f037ab9a046811406cb4
   # The fixture #includes this file (the production owner); the matrix recompiles the fixture as root.
-  OWNER_SHA256: 4edc3c40b13b1084e91a2a14c2b4fd37014d919037f134f6675e3f05f64d3d65
+  OWNER_SHA256: 7630cb1f2e9b76be78fb6fb0f0efb6df74d437b39f9e3db69ac8aacc83162372
 jobs:
   reviewed-disposable-owner-matrix:
     if: github.repository == 'yanlingLabs/winter-agent-sdk' && github.event_name == 'push' && github.ref == 'refs/heads/cowork/guided-owner-matrix-resume-run' && github.event.created == true && github.run_attempt == '1'

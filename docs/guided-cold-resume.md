@@ -37,7 +37,7 @@ It is stacked on guest messaging (`cowork/guest-messaging`) because both edit th
 
 - Supervisor sha: `82e2f43f...` (was `53b507bb...`). Re-pin once.
 - Engine bundle: moves (admission and profile change).
-- The native owner library moves in the follow-up that applies `docs/research/guided-owner-cold-resume-DATA.patch` (`OWNER_SHA256` `95457d8f...` -> `4edc3c40...`; see `docs/guided-owner-matrix-resume-run.md`). Until that patch is deployed, an unmodified owner refuses a resume record (it requires `freshOnly`), failing closed. The patch admits `continuation: "resume"` without `freshOnly`. Its one-run native matrix is unarmed and the owner's to arm.
+- The native owner library moves in the follow-up that applies `docs/research/guided-owner-cold-resume-DATA.patch` (`OWNER_SHA256` `95457d8f...` -> `7630cb1f...`; see `docs/guided-owner-matrix-resume-run.md`). Until that patch is deployed, an unmodified owner refuses a resume record (it requires `freshOnly`), failing closed. The patch admits `continuation: "resume"` without `freshOnly`. Its one-run native matrix is unarmed and the owner's to arm.
 - `docs/research/guided-supervisor-cold-resume-DATA.patch` records the supervisor delta for the pin chain.
 
 ## Belongs to other lanes

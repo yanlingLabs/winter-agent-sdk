@@ -40,6 +40,11 @@ int main(void){
     assert(document("{\"freshOnly\":false}",&p)&&!continuation_ok(&p));
     assert(document("{\"freshOnly\":\"true\"}",&p)&&!continuation_ok(&p));
     assert(document("{\"freshOnly\":false,\"continuation\":\"resume\"}",&p)&&!continuation_ok(&p));
+    assert(document("{\"freshOnly\":true,\"freshOnly\":true,\"continuation\":\"resume\"}",&p)&&!continuation_ok(&p));
+    assert(document("{\"freshOnly\":false,\"freshOnly\":true}",&p)&&!continuation_ok(&p));
+    assert(document("{\"freshOnly\":true,\"continuation\":\"fresh\",\"continuation\":\"resume\"}",&p)&&!continuation_ok(&p));
+    assert(document("{\"continuation\":\"resume\",\"continuation\":\"resume\"}",&p)&&!continuation_ok(&p));
+    assert(document("{\"freshOnly\":true,\"freshOnly\":false,\"continuation\":\"resume\"}",&p)&&!continuation_ok(&p));
     return 0;
 }
 '''

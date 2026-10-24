@@ -21,6 +21,7 @@ After: `continuation_ok` admits exactly two shapes, and `winter_owner_open` asks
 | `freshOnly: true`, `continuation: "resume"` | no |
 | `freshOnly: false`, or any other `freshOnly` value or type | no |
 | `continuation: "fresh"` alone, `continuation: "either"`, neither key | no |
+| a repeated `freshOnly` or `continuation` key (`field()` reads a repeated key as absent, so `continuation_ok` refuses it first via `key_count`) | no, a hard refusal |
 
 The supervisor resolves `either` before it writes the record, so the owner never sees it. Everything else in the owner is unchanged.
 
@@ -28,9 +29,9 @@ The supervisor resolves `either` before it writes the record, so the owner never
 
 - `scripts/guest-supervisor/guided_owner_native_fixture.c`: `a0c4929d...` (unchanged)
 - `scripts/guest-supervisor/test_guided_owner.py`: `8f93e9f8...` (unchanged)
-- `packages/runtime/src/guest/linux-session-owner.c` (the fixture `#include`s it): `4edc3c40...` (was `95457d8f...`)
+- `packages/runtime/src/guest/linux-session-owner.c` (the fixture `#include`s it): `7630cb1f...` (was `95457d8f...`)
 
-The owner pin chain: `c149d451...` (first run) -> holder patch -> `95457d8f...` (second run) -> cold-resume patch -> `4edc3c40...`. `scripts/guest-supervisor/test_guided_owner_holder.py`
+The owner pin chain: `c149d451...` (first run) -> holder patch -> `95457d8f...` (second run) -> cold-resume patch -> `7630cb1f...`. `scripts/guest-supervisor/test_guided_owner_holder.py`
 reverses and re-applies all three patches byte-exactly. The same owner sha is pinned in `test_guided_guidance_view.py` and `test_guided_reader_service.py` (frozen sources).
 
 ## Expected result: 15 pass + 1 skip

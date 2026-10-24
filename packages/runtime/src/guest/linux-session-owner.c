@@ -75,7 +75,15 @@ static long integer(struct parser *p,int i){if(i<0)return -1;char buf[32],*end;i
 static int identifier(const char *s){size_t n=strlen(s);if(n<1||n>128||!strchr("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",*s))return 0;return strspn(s,"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-")==n;}
 /* The record's continuation (cold resume). A fresh record says `freshOnly: true`, as before. A resume says `continuation: "resume"` and no freshOnly.
  * Supervisor is trusted to resolve `either`; native admits only these two shapes. Nothing else is accepted. */
+static int key_count(struct parser *p,int object,const char *name){
+    int n=0;
+    if(object<0||p->t[object].type!='{')return 0;
+    for(int i=object+1;i<p->t[object].next;){int value=i+1;if(eq(p,i,name))n++;i=p->t[value].next;}
+    return n;
+}
 static int continuation_ok(struct parser *p){
+    /* field() answers -1 for a repeated key, which would read as "absent": a repeated key is a hard refusal here, never a missing one. */
+    if(key_count(p,0,"freshOnly")>1||key_count(p,0,"continuation")>1)return 0;
     int fresh=field(p,0,"freshOnly"),cont=field(p,0,"continuation");
     int fresh_true=fresh>=0&&p->t[fresh].end-p->t[fresh].start==4&&!memcmp(p->s+p->t[fresh].start,"true",4);
     if(fresh>=0)return fresh_true&&(cont<0||eq(p,cont,"fresh"));
