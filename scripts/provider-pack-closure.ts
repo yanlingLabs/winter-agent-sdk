@@ -156,7 +156,7 @@ export async function packProviderClosure(opts: { root?: string; build?: boolean
     const nodeEnv = { PATH: process.env["PATH"] ?? "", HOME: project };
     const run = Bun.spawn(["node", probe, "--dry-run"], { cwd: project, stdout: "pipe", stderr: "pipe", env: nodeEnv });
     const [probeOut, probeErr, probeCode] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text(), run.exited]);
-    if (probeCode !== 0 || !probeOut.includes("ALL 5 STEPS PASS")) violations.push(`the installed packages failed the probe's dry run under Node (exit ${probeCode}):\n${probeOut}${probeErr}`);
+    if (probeCode !== 0 || !probeOut.includes("ALL 6 STEPS PASS")) violations.push(`the installed packages failed the probe's dry run under Node (exit ${probeCode}):\n${probeOut}${probeErr}`);
     const fake = Bun.spawn(["node", "--input-type=module", "-e", "const t = await import('@yanlinglabs/winter-provider-runtime/testing'); const r = await import('@yanlinglabs/winter-provider-runtime'); const a = t.createFakeProviderAdapter({ turns: [t.fakeTextTurn('ok')] }); const turn = await r.foldProviderStream(a.streamTurn({ model: 'm', messages: [] }, {})); if (turn.text !== 'ok') process.exit(3);"], { cwd: project, stdout: "pipe", stderr: "pipe", env: nodeEnv });
     const [fakeOut, fakeErr, fakeCode] = await Promise.all([new Response(fake.stdout).text(), new Response(fake.stderr).text(), fake.exited]);
     if (fakeCode !== 0) violations.push(`the ./testing fake adapter failed under Node (exit ${fakeCode}):\n${fakeOut}${fakeErr}`);

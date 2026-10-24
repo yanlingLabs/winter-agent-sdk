@@ -40,8 +40,10 @@ deprecation; pin both packages to the same exact version. `stripOpaque` is part 
 - **Reasoning replay.** `reasoning_details` are captured whole (streamed fragments joined by `index`) and
   sent back verbatim on the model's own next turn, so a Claude tool loop through OpenRouter keeps its
   signed reasoning. The OpenRouter Haiku 5.5, Sonnet 5.5, DeepSeek V4.1 Flash, GPT-6 Luna and GPT-6.1 Sol
-  rows are now `opaque-provider-state`, each its own continuation domain. A live probe the owner runs with
-  their own key: `scripts/probe-openrouter-reasoning.mjs` (`--dry-run` needs no key).
+  rows are now `opaque-provider-state`, each its own continuation domain. On OpenRouter the effort now
+  goes as its documented `reasoning: { effort }` object instead of `reasoning_effort`: sent the old way,
+  a Claude tool loop came back with no `reasoning_details`. A live probe the owner runs with their own
+  key: `scripts/probe-openrouter-reasoning.mjs` (`--dry-run` needs no key).
 - **Reported cost.** OpenRouter's `usage.cost` (USD) rides the usage event as `reportedCostUsd` and the
   assembled turn's usage, and `estimateCostUsd` returns it beside the estimate. Its
   `prompt_tokens_details.cache_write_tokens` is now `cacheWriteTokens` (taken out of `inputTokens`).

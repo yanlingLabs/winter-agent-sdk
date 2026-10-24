@@ -514,6 +514,24 @@ export function withChatCacheMarkers(messages: readonly unknown[], budget: numbe
 }
 
 /**
+ * 0.0.56 (W7 fix): how a chat surface takes a reasoning effort.
+ *
+ * `"reasoning_effort"` -- OpenAI's top-level field, and every other OpenAI-compatible server's.
+ * `"reasoning-object"` -- OpenRouter's documented unified parameter, `"reasoning": { "effort": "high" }`
+ * ("Accepted values are max, xhigh, high, medium, low, minimal and none",
+ * https://openrouter.ai/docs/use-cases/reasoning-tokens). OpenRouter's model list also names
+ * `reasoning_effort`, but a Claude tool loop sent that way came back with no `reasoning_details` at all
+ * (the owner's live probe, 2026-10-24), and the replay W7 depends on has nothing to replay. The row's
+ * efforts ARE OpenRouter's `supported_efforts`, verbatim, so the mapped value goes through unchanged.
+ */
+export type ChatReasoningParameter = "reasoning_effort" | "reasoning-object";
+
+/** The reasoning parameter a provider's chat surface takes. */
+export function chatReasoningParameterFor(providerId: string): ChatReasoningParameter {
+  return providerId === "openrouter" ? "reasoning-object" : "reasoning_effort";
+}
+
+/**
  * The chat request body.
  *
  * `max_completion_tokens` vs `max_tokens`: the newer spelling is required on reasoning models and
@@ -526,7 +544,7 @@ export function buildChatBody(
   reasoning: ReasoningPlan,
   descriptor: WinterModelDescriptor | undefined,
   replayExposedReasoning: boolean,
-  opts: { toolResultImages?: ChatToolResultImages; replayReasoningDetails?: boolean; anthropicCacheControl?: boolean } = {},
+  opts: { toolResultImages?: ChatToolResultImages; replayReasoningDetails?: boolean; anthropicCacheControl?: boolean; reasoningParameter?: ChatReasoningParameter } = {},
 ): Record<string, unknown> {
   const messages: unknown[] = [];
   const mapped = mapChatMessages(req.messages, replayExposedReasoning, opts);
@@ -553,7 +571,7 @@ export function buildChatBody(
     // Usage does not arrive at all without this: the final chunk carrying it is opt-in.
     stream_options: { include_usage: true },
     ...(tools.length > 0 ? { tools, tool_choice: mapChatToolChoice(req.toolChoice) } : {}),
-    ...(reasoning.enabled && reasoning.effort !== undefined ? { reasoning_effort: reasoning.effort } : {}),
+    ...(reasoning.enabled && reasoning.effort !== undefined ? (opts.reasoningParameter === "reasoning-object" ? { reasoning: { effort: reasoning.effort } } : { reasoning_effort: reasoning.effort }) : {}),
     ...(req.maxOutputTokens !== undefined ? { [budgetField]: req.maxOutputTokens } : {}),
   };
 }
@@ -807,8 +825,9 @@ export async function* chatTurn(
     const descriptor = options.descriptors?.(req.model, ctx.connection.providerId);
     assertRepresentableTools(req.tools);
     const reasoning = resolveReasoning(req, descriptor);
+    const reasoningParameter = chatReasoningParameterFor(ctx.connection.providerId);
     assertWithinLimits(req, descriptor, [
-      ...(reasoning.effort !== undefined ? ["reasoning_effort"] : []),
+      ...(reasoning.effort !== undefined ? [reasoningParameter === "reasoning-object" ? "reasoning" : "reasoning_effort"] : []),
       ...(req.maxOutputTokens !== undefined ? [descriptor?.reasoning !== undefined ? "max_completion_tokens" : "max_tokens"] : []),
       ...((req.tools?.length ?? 0) > 0 ? ["tools"] : []),
     ]);
@@ -840,6 +859,7 @@ export async function* chatTurn(
         toolResultImages: chatToolResultImagesFor(ctx.connection.providerId),
         replayReasoningDetails: captureDetails,
         anthropicCacheControl: openRouterAnthropicCaching(ctx.connection.providerId, descriptor),
+        reasoningParameter,
       }),
     );
   } catch (err) {

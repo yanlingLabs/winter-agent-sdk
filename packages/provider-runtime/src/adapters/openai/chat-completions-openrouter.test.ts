@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import fixture from "./__fixtures__/openrouter-reasoning-tool-loop.json" with { type: "json" };
-import { ChatStreamMapper, ReasoningDetailsAccumulator, buildChatBody, mapChatMessages, openRouterAnthropicCaching, withChatCacheMarkers } from "./chat-completions.ts";
+import { ChatStreamMapper, ReasoningDetailsAccumulator, buildChatBody, chatReasoningParameterFor, mapChatMessages, openRouterAnthropicCaching, withChatCacheMarkers } from "./chat-completions.ts";
 import { resolveReasoning } from "./shared.ts";
 import { testContext } from "./testing.ts";
 import { createShippedAdapters } from "../index.ts";
@@ -115,6 +115,43 @@ describe("W1: Anthropic cache_control through OpenRouter", () => {
   test("withChatCacheMarkers respects the budget the system blocks left", () => {
     const wire = [{ role: "user", content: "x" }];
     expect(withChatCacheMarkers(wire, 0, { rolling: "5m", lookback: "5m" })).toEqual(wire);
+  });
+});
+
+describe("W7 fix: OpenRouter takes the effort as its unified `reasoning` object", () => {
+  test("chatReasoningParameterFor: the object on OpenRouter only", () => {
+    expect(chatReasoningParameterFor("openrouter")).toBe("reasoning-object");
+    expect(chatReasoningParameterFor("deepseek")).toBe("reasoning_effort");
+    expect(chatReasoningParameterFor("openai")).toBe("reasoning_effort");
+  });
+
+  test("the shipped adapter's OpenRouter body carries reasoning: { effort }, the row's own value, and no reasoning_effort", async () => {
+    const bodies = stubFetchSequence([fixture.turn2, fixture.turn2, fixture.turn2]);
+    const adapter = createShippedAdapters(catalog).find((a) => a.id === "winter.openai-chat-completions")!;
+    for (const effort of ["medium", "high"] as const) {
+      await foldProviderStream(adapter.streamTurn({ model: "anthropic/claude-sonnet-5.5", effort, messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "openrouter" })));
+    }
+    await foldProviderStream(adapter.streamTurn({ model: "deepseek/deepseek-v4.1-flash", effort: "max", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "openrouter" })));
+    expect(bodies.map((b) => b["reasoning"])).toEqual([{ effort: "medium" }, { effort: "high" }, { effort: "max" }]);
+    for (const b of bodies) expect("reasoning_effort" in b).toBe(false);
+  });
+
+  test("no effort, no reasoning object; an effort the row does not list is refused before sending", async () => {
+    const bodies = stubFetchSequence([fixture.turn2]);
+    const adapter = createShippedAdapters(catalog).find((a) => a.id === "winter.openai-chat-completions")!;
+    await foldProviderStream(adapter.streamTurn({ model: "anthropic/claude-sonnet-5.5", messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "openrouter" })));
+    expect("reasoning" in bodies[0]!).toBe(false);
+    const refused = await foldProviderStream(adapter.streamTurn({ model: "anthropic/claude-sonnet-5.5", effort: "minimal" as never, messages: [{ role: "user", content: "hi" }] }, testContext({ providerId: "openrouter" }))).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(Error);
+    expect(bodies).toHaveLength(1);
+  });
+
+  test("other chat surfaces keep reasoning_effort", () => {
+    const req = { model: "deepseek-reasoner", effort: "high" as const, messages: [{ role: "user" as const, content: "hi" }] };
+    const deepseek = catalog.models.find((m) => m.key === "deepseek/deepseek-reasoner") ?? SONNET;
+    const b = buildChatBody(req, { effort: "high", wantsEncryptedContent: false, enabled: true }, deepseek, false, {});
+    expect(b["reasoning_effort"]).toBe("high");
+    expect("reasoning" in b).toBe(false);
   });
 });
 
