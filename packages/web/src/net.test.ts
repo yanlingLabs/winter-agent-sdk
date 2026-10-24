@@ -289,6 +289,22 @@ describe("fetchWebResource", () => {
       assert.equal(seen.length, 11);
     });
 
+    test("a maxRedirects that is not a non-negative integer falls back to the default cap of 10 (NaN and Infinity never disable it)", async () => {
+      for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1, 2.5]) {
+        const seen: WebFetchTransportRequest[] = [];
+        const result = await fetchWebResource(`https://chain.test:${server.port}/chain/0`, redirectOpts({ maxRedirects: bad }, seen));
+        expectFailure(result, "too_many_redirects");
+        assert.equal(seen.length, 11, `maxRedirects ${bad}`);
+      }
+    });
+
+    test("maxRedirects: 0 follows nothing", async () => {
+      const seen: WebFetchTransportRequest[] = [];
+      const result = await fetchWebResource(`https://chain.test:${server.port}/chain/0`, redirectOpts({ maxRedirects: 0 }, seen));
+      expectFailure(result, "too_many_redirects");
+      assert.equal(seen.length, 1);
+    });
+
     test("followRedirects: same-host returns a cross-host redirect instead of following it, with the target's userinfo removed", async () => {
       const seen: WebFetchTransportRequest[] = [];
       const result = await fetchWebResource(to("https://user:hunter2@other.test/x"), redirectOpts({ followRedirects: "same-host" }, seen));

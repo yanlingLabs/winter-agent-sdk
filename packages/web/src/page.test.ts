@@ -6,7 +6,9 @@ import { fetchWebPage, type FetchWebPageOptions } from "./page.ts";
 import { MemoryWebFetchCache, type WebFetchCacheEntry } from "./cache.ts";
 import { buildWebFetchDigestRequest, WEB_FETCH_DIGEST_CONTENT_CAP, WEB_FETCH_STRICT_GUIDELINES } from "./digest.ts";
 import { convertFetchedHtml, htmlToMarkdown, WEB_FETCH_HTML_TRUNCATION_NOTICE } from "./html.ts";
-import { sameAddress } from "./transport-node.ts";
+import http from "node:http";
+import net from "node:net";
+import { createNodeWebFetchTransport, sameAddress } from "./transport-node.ts";
 import { mappedTransport, PUBLIC_A, startHttpsServer, testPki, type TestServer } from "./servers.test-support.ts";
 
 const { after, before, describe, test } = await harness(isBun ? ((await import(BUN_TEST)) as BunTestModule) : undefined);
@@ -139,6 +141,18 @@ describe("fetchWebPage, the cache, the digest and the converter", () => {
       assert.equal(await htmlToMarkdown("<p>a</p><svg><g><path d='1'/><circle/></g></svg><p>b</p>"), "a\n\nb");
     });
 
+    test("stray end tags and unclosed start tags cost linear time (1 MB of <i> then </b> used to block ~17 s)", async () => {
+      const page = "<i>".repeat(175_000) + "</b>".repeat(130_000);
+      const started = Date.now();
+      await convertFetchedHtml(page);
+      const ms = Date.now() - started;
+      assert.ok(ms < 2_000, `took ${ms} ms`);
+      const nested = "<div><b>".repeat(60_000) + "</i>".repeat(100_000) + "</b></div>".repeat(60_000);
+      const again = Date.now();
+      await convertFetchedHtml(nested);
+      assert.ok(Date.now() - again < 2_000, "a deep stack closed by matching end tags is linear too");
+    });
+
     test("content over the 1,048,576-character cap is cut and the notice appended", async () => {
       const out = await convertFetchedHtml(`<p>${"y".repeat(1_100_000)}</p>`);
       assert.ok(out.endsWith(WEB_FETCH_HTML_TRUNCATION_NOTICE));
@@ -153,6 +167,72 @@ describe("fetchWebPage, the cache, the digest and the converter", () => {
       assert.equal(sameAddress("127.0.0.2", "127.0.0.1"), false);
       assert.equal(sameAddress("10.0.0.1", "93.184.216.34"), false);
       assert.equal(sameAddress("not-an-address", "127.0.0.1"), false);
+    });
+  });
+
+  // Bun's http client exposes no `remoteAddress` (see transport-node.ts), so the check is inert there.
+  describe("the node transport refuses a socket connected to another address", { skip: isBun ? "Bun's client reports no remoteAddress" : false }, () => {
+    test("a socket that connected to an address other than the pinned one is refused before any request byte is sent", async () => {
+      // A raw loopback server that counts the bytes it receives. The client socket is made to REPORT a
+      // different remote address than the one pinned (the property is patched for sockets to this port only).
+      let received = 0;
+      const sockets = new Set<net.Socket>();
+      const server = net.createServer((socket) => {
+        sockets.add(socket);
+        socket.on("data", (chunk) => void (received += chunk.length));
+        socket.on("error", () => {});
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+      const port = (server.address() as net.AddressInfo).port;
+      // The socket's reported remote address is overridden per socket: http.request is wrapped so an own
+      // `remoteAddress` getter lands on the request's socket before the transport's own 'socket' listener
+      // runs (the prototype getter is non-configurable under Node, and Bun's socket class is not net.Socket).
+      const realRequest = http.request;
+      const report = (override: string): void => {
+        http.request = ((...args: unknown[]) => {
+          const req = (realRequest as (...a: unknown[]) => http.ClientRequest)(...args);
+          req.on("socket", (socket: net.Socket) => {
+            let proto: object | null = Object.getPrototypeOf(socket);
+            let getter: (() => unknown) | undefined;
+            while (proto !== null && getter === undefined) {
+              getter = Object.getOwnPropertyDescriptor(proto, "remoteAddress")?.get;
+              proto = Object.getPrototypeOf(proto);
+            }
+            assert.ok(getter !== undefined, "remoteAddress is a getter");
+            Object.defineProperty(socket, "remoteAddress", { configurable: true, // Bun's client never reports a remote address of its own (the check there is inert), so it is
+            // reported at once; Node reports only once connected, and the check waits for 'connect'.
+            get: () => (!isBun && getter!.call(socket) === undefined ? undefined : override) });
+          });
+          return req;
+        }) as typeof http.request;
+      };
+      const request = () => ({
+        url: new URL(`http://127.0.0.1:${port}/x`),
+        address: "127.0.0.1",
+        family: 4 as const,
+        serverName: "127.0.0.1",
+        headers: { Host: `127.0.0.1:${port}` },
+        signal: AbortSignal.timeout(5_000),
+      });
+      try {
+        report("10.9.8.7");
+        await assert.rejects(createNodeWebFetchTransport()(request()), (err: unknown) => (err as { code?: string }).code === "ERR_CONNECTED_ADDRESS_MISMATCH");
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        assert.equal(received, 0, "no request byte reached the server");
+
+        // The same socket reporting the pinned address is let through (the server never answers, so abort).
+        report("127.0.0.1");
+        const controller = new AbortController();
+        const pending = createNodeWebFetchTransport()({ ...request(), signal: controller.signal });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        assert.ok(received > 0, "a matching address sends the request");
+        controller.abort();
+        await assert.rejects(pending);
+      } finally {
+        http.request = realRequest;
+        for (const socket of sockets) socket.destroy();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
     });
   });
 });

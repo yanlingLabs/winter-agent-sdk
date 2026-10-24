@@ -373,7 +373,7 @@ describe("every Bun API use in a Node-declaring publishable package is accounted
     return out.sort();
   }
 
-  test("the roots really are every publishable `engines.node` package -- four today, derived", () => {
+  test("the roots really are every publishable `engines.node` package -- five today, derived", () => {
     // The list round 2 hand-wrote covered two of these. Pinned by name so a package that gains or
     // loses `engines.node` shows up here rather than silently changing what the next test scans.
     expect(nodeDeclaringRoots()).toEqual([
@@ -381,11 +381,12 @@ describe("every Bun API use in a Node-declaring publishable package is accounted
       "packages/provider-catalog/src",
       "packages/provider-runtime/src",
       "packages/sdk/src",
+      "packages/web/src",
     ]);
   });
 
-  test("the sdk/catalog half is covered by a STRONGER gate than this scan -- the fence, with no Bun globals", () => {
-    // Why those two need no entries below: `tsconfig.sdk-fence.json` compiles exactly their production
+  test("the sdk/catalog/web half is covered by a STRONGER gate than this scan -- the fence, with no Bun globals", () => {
+    // Why those three need no entries below (web joined with its package: it must run under Node with no Bun API at all): `tsconfig.sdk-fence.json` compiles their production
     // code with `types: ["node"]`, so a `Bun.` reference is a TS2868 compile error rather than
     // something a text scan has to notice. Asserted here so the reasoning travels with the scan.
     const { readFileSync } = require("node:fs") as typeof import("node:fs");
@@ -393,7 +394,7 @@ describe("every Bun API use in a Node-declaring publishable package is accounted
       readFileSync(join(REPO_ROOT, "tsconfig.sdk-fence.json"), "utf8").replace(/^\s*\/\/.*$/gm, ""),
     ) as { compilerOptions: { types: string[] }; include: string[] };
     expect(fence.compilerOptions.types).toEqual(["node"]);
-    expect(fence.include).toEqual(["packages/sdk/src/**/*.ts", "packages/provider-catalog/src/**/*.ts"]);
+    expect(fence.include).toEqual(["packages/sdk/src/**/*.ts", "packages/provider-catalog/src/**/*.ts", "packages/web/src/**/*.ts"]);
   });
 
   test("the tree's Bun-using non-test files are exactly the accounted-for set", () => {

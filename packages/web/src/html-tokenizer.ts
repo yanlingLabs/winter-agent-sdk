@@ -46,6 +46,11 @@ interface Open {
 /** Walks `html` once, in order, calling `handlers` for every start tag and text run. */
 export function tokenizeHtml(html: string, handlers: TokenizerHandlers): void {
   const open: Open[] = [];
+  // How many open elements carry each name. An end tag whose name has none is ignored in O(1): without
+  // this every unmatched end tag scanned the whole stack, so a page of N start tags then M stray end
+  // tags cost N*M (a 1 MB page blocked the event loop for ~17 s). A matching end tag's scan stops at its
+  // match and everything it passes is popped, so the walk stays linear overall.
+  const openCount = new Map<string, number>();
   const len = html.length;
   let i = 0;
   let foreignDepth = 0;
@@ -57,12 +62,16 @@ export function tokenizeHtml(html: string, handlers: TokenizerHandlers): void {
   const closeTo = (index: number): void => {
     while (open.length > index) {
       const closed = open.pop()!;
+      const remaining = openCount.get(closed.tag)! - 1;
+      if (remaining > 0) openCount.set(closed.tag, remaining);
+      else openCount.delete(closed.tag);
       if (FOREIGN_ROOTS.has(closed.tag) && foreignDepth > 0) foreignDepth -= 1;
       for (const cb of closed.callbacks) cb();
     }
   };
 
   const endTag = (tag: string): void => {
+    if (!openCount.has(tag)) return;
     for (let k = open.length - 1; k >= 0; k--) {
       if (open[k]!.tag === tag) {
         closeTo(k);
@@ -136,6 +145,7 @@ export function tokenizeHtml(html: string, handlers: TokenizerHandlers): void {
       return p;
     }
     open.push(entry);
+    openCount.set(tag, (openCount.get(tag) ?? 0) + 1);
     if (FOREIGN_ROOTS.has(tag)) foreignDepth += 1;
     if (foreignDepth === 0 && tag === "plaintext") {
       emitText(p, len);

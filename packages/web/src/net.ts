@@ -415,7 +415,7 @@ export async function fetchWebResource(input: string | URL, options: WebFetchOpt
   const timeoutMs = positive(options.timeoutMs, WEB_FETCH_TIMEOUT_MS);
   const maxBytes = positive(options.maxBytes, WEB_FETCH_MAX_BYTES);
   const maxEncodedBytes = positive(options.maxEncodedBytes, WEB_FETCH_MAX_ENCODED_BYTES);
-  const maxRedirects = Math.max(0, Math.floor(options.maxRedirects ?? WEB_FETCH_MAX_REDIRECTS));
+  const maxRedirects = redirectCap(options.maxRedirects);
   const connectBudgetMs = positive(options.connectBudgetMs, WEB_FETCH_CONNECT_BUDGET_MS);
   const overflow: OverflowPolicy = options.onOverflow === "fail" ? "fail" : "truncate";
   const resolveHost = options.resolveHost ?? defaultResolveHost;
@@ -617,6 +617,11 @@ function safePolicy(policy: (from: URL, to: URL) => boolean, from: URL, to: URL)
   } catch {
     return false;
   }
+}
+
+/** A caller's redirect cap: a non-negative integer, else the default -- NaN, Infinity, a negative or a fraction must not switch the cap off. */
+function redirectCap(value: number | undefined): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : WEB_FETCH_MAX_REDIRECTS;
 }
 
 function positive(value: number | undefined, fallback: number): number {
