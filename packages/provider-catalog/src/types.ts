@@ -148,6 +148,34 @@ export interface ModelPricing {
   outputPerMTokUsd: number;
   cacheReadPerMTokUsd?: number;
   cacheWritePerMTokUsd?: number;
+  /**
+   * 0.0.56 (W4): PROMPT-LENGTH price tiers, for a vendor that charges more for a longer prompt (Claude
+   * Haiku 5.5: "a request whose prompt is over 100,000 tokens pays higher prices",
+   * https://platform.claude.com/docs/en/about-claude/pricing#long-context-pricing; OpenRouter's
+   * `pricing.overrides[].min_prompt_tokens`). ABSENT on a flat-priced row, which is every row before
+   * 0.0.56 and stays valid unchanged.
+   *
+   * The rates above are the BASE tier. A request whose prompt -- input + cache reads + cache writes, the
+   * whole prompt, counted once -- is at least a tier's `minPromptTokens` is priced ENTIRELY at the
+   * highest such tier (per request, not per token: Anthropic's own rule, and OpenRouter's override
+   * replaces the rates). Tiers are listed in strictly ascending `minPromptTokens`.
+   */
+  longContextTiers?: PricingTier[];
+}
+
+/**
+ * 0.0.56 (W4): one prompt-length price tier -- see `ModelPricing.longContextTiers`.
+ *
+ * `minPromptTokens` is INCLUSIVE, so each vendor's own threshold is written in the vendor's own terms:
+ * Anthropic's "over 100,000 tokens" is `100001`, OpenRouter's `min_prompt_tokens: 100000` is `100000`.
+ * A cache rate the tier does not state falls back to the tier's own input rate, as on the base tier.
+ */
+export interface PricingTier {
+  minPromptTokens: number;
+  inputPerMTokUsd: number;
+  outputPerMTokUsd: number;
+  cacheReadPerMTokUsd?: number;
+  cacheWritePerMTokUsd?: number;
 }
 
 /**

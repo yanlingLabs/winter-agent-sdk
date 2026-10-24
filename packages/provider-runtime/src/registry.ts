@@ -14,7 +14,7 @@
 // resolver. What this module guarantees is that a resolution either produces a fully-identified
 // model or a TYPED refusal — never a silent default (WS-13 §9: no routing, no substitution).
 
-import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import type { ModelPricing, PricingTier, WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import type { ProviderAdapter } from "./types.ts";
 
 export interface ResolvedModel {
@@ -113,7 +113,7 @@ export interface ResolveRequest {
  * of a pinned wire type are how the producer and the consumer of one round trip start disagreeing
  * about an optional field. One declaration; either import path gets it.
  */
-import type { ModelInfo } from "@yanlinglabs/winter-agent-sdk";
+import type { ModelInfo } from "./winter-defaults.ts";
 export type { ModelInfo };
 
 export interface RegistryListing {
@@ -140,6 +140,43 @@ export interface UsageForCost {
   cacheWriteTokens?: number;
   /** WS-23: the 1-hour-lifetime SUBSET of `cacheWriteTokens` (never added on top of it). */
   cacheWrite1hTokens?: number;
+  /**
+   * 0.0.56 (W5): what the PROVIDER says the request cost, in USD -- OpenRouter's `usage.cost` (the
+   * `usage` event's `reportedCostUsd`). Carried through to the result beside the estimate, never in
+   * place of it: the estimate is Winter's own list-price arithmetic, this is the bill.
+   */
+  reportedCostUsd?: number;
+}
+
+/** What `estimateCostUsd` returns. */
+export interface CostEstimate {
+  costUsd: number;
+  costBasis: "list" | "unknown";
+  /**
+   * 0.0.56 (W4): the `minPromptTokens` of the long-context tier the request was priced at. ABSENT when
+   * the base rates applied (a flat-priced row, or a prompt below every tier) or the basis is unknown.
+   */
+  pricingTierMinPromptTokens?: number;
+  /** 0.0.56 (W5): the provider's own reported cost, verbatim from the usage it was given -- present only when the usage carried one. */
+  reportedCostUsd?: number;
+}
+
+/**
+ * 0.0.56 (W4): the rates a request is priced at -- the base rates, or the HIGHEST long-context tier the
+ * whole prompt reaches. "The whole prompt" is input + cache reads + cache writes, counted once (the
+ * seam's usage convention), which is Anthropic's own rule ("A request's prompt length counts all of its
+ * input tokens, including cache reads and cache writes",
+ * https://platform.claude.com/docs/en/about-claude/pricing#long-context-pricing). The comparison is
+ * INCLUSIVE of `minPromptTokens`; each row writes its vendor's threshold in those terms.
+ */
+export function pricingTierFor(pricing: ModelPricing, promptTokens: number): { rates: Omit<PricingTier, "minPromptTokens">; minPromptTokens?: number } {
+  let chosen: PricingTier | undefined;
+  for (const tier of pricing.longContextTiers ?? []) {
+    if (promptTokens >= tier.minPromptTokens && (chosen === undefined || tier.minPromptTokens > chosen.minPromptTokens)) chosen = tier;
+  }
+  if (chosen === undefined) return { rates: pricing };
+  const { minPromptTokens, ...rates } = chosen;
+  return { rates, minPromptTokens };
 }
 
 /**
@@ -163,7 +200,8 @@ export const ONE_HOUR_CACHE_WRITE_INPUT_MULTIPLIER = 2;
  * Cache tokens with no cache rate are priced at the INPUT rate rather than free: pricing them at
  * zero would silently under-report, and the basis stays `"list"` because a real list price was used.
  */
-export function estimateCostUsd(usage: UsageForCost, descriptor: WinterModelDescriptor | undefined): { costUsd: number; costBasis: "list" | "unknown" } {
+export function estimateCostUsd(usage: UsageForCost, descriptor: WinterModelDescriptor | undefined): CostEstimate {
+  const reported = typeof usage.reportedCostUsd === "number" && Number.isFinite(usage.reportedCostUsd) && usage.reportedCostUsd >= 0 ? { reportedCostUsd: usage.reportedCostUsd } : {};
   const evidence = descriptor?.pricing;
   // R6-9 words the rule as "`official-doc` evidence → `costBasis: \"list\"`", and it is taken
   // literally: `"list"` is a claim that these are the vendor's PUBLISHED prices. A row priced from
@@ -171,21 +209,24 @@ export function estimateCostUsd(usage: UsageForCost, descriptor: WinterModelDesc
   // that guess into exactly the assurance this function exists to withhold — the same reasoning
   // that keeps invented prices out of the seed catalog. An inferred price therefore reports
   // 0 / "unknown", identically to no price at all.
-  if (evidence === undefined || evidence.source !== "official-doc") return { costUsd: 0, costBasis: "unknown" };
-  const pricing = evidence.value;
+  if (evidence === undefined || evidence.source !== "official-doc") return { costUsd: 0, costBasis: "unknown", ...reported };
   const perMillion = (tokens: number, rate: number): number => (tokens / 1_000_000) * rate;
   const cacheRead = usage.cacheReadTokens ?? 0;
   const cacheWrite = usage.cacheWriteTokens ?? 0;
   // WS-23: the 1-hour share is a SUBSET of the writes, clamped so a malformed report cannot price
   // tokens twice or negatively.
   const cacheWrite1h = Math.min(Math.max(usage.cacheWrite1hTokens ?? 0, 0), cacheWrite);
+  // 0.0.56 (W4): a long-context tier, when the row has them and the whole prompt reaches one, prices the
+  // ENTIRE request (every direction, cache rates included); a flat row is priced exactly as before.
+  const tier = pricingTierFor(evidence.value, usage.inputTokens + cacheRead + cacheWrite);
+  const pricing = tier.rates;
   const costUsd =
     perMillion(usage.inputTokens, pricing.inputPerMTokUsd) +
     perMillion(usage.outputTokens, pricing.outputPerMTokUsd) +
     perMillion(cacheRead, pricing.cacheReadPerMTokUsd ?? pricing.inputPerMTokUsd) +
     perMillion(cacheWrite - cacheWrite1h, pricing.cacheWritePerMTokUsd ?? pricing.inputPerMTokUsd) +
     perMillion(cacheWrite1h, pricing.inputPerMTokUsd * ONE_HOUR_CACHE_WRITE_INPUT_MULTIPLIER);
-  return { costUsd, costBasis: "list" };
+  return { costUsd, costBasis: "list", ...(tier.minPromptTokens !== undefined ? { pricingTierMinPromptTokens: tier.minPromptTokens } : {}), ...reported };
 }
 
 /**

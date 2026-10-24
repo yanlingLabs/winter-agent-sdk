@@ -12,6 +12,7 @@ export type {
   FamilySlot,
   ModelFamilyDescriptor,
   ModelPricing,
+  PricingTier,
   ModelStatus,
   ProviderAuthKind,
   ProviderProtocol,

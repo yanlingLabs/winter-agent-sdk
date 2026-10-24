@@ -16293,6 +16293,188 @@
       "modelFamily": "claude"
     },
     {
+      "key": "anthropic/claude-haiku-5-5",
+      "providerId": "anthropic",
+      "upstreamId": "claude-haiku-5-5",
+      "displayName": "Claude Haiku 5.5",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/models/haiku-5-5/overview — Claude Haiku 5.5 context window 1M (1000000) tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/models/haiku-5-5/overview — Claude Haiku 5.5 synchronous Messages max output 128K (128000) tokens; 300K only on the Message Batches API with the output-300k-2026-03-24 beta.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/models/haiku-5-5/overview — Claude Haiku 5.5 input → output: text and images → text.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/models/haiku-5-5/overview — Claude Haiku 5.5 input → output: text and images → text.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/about-claude/models/overview — \"All current models support text and image input, text output, multilingual capabilities, vision, and tool use\"; Claude Haiku 5.5 is in the current lineup.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/about-claude/models/overview — every current model supports tool use (client tools declared in `tools`); Claude Haiku 5.5 is in the current lineup.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/about-claude/pricing — Claude Haiku 5.5 has 5m/1h cache-write and cache-hit price columns; https://platform.claude.com/docs/en/models/haiku-5-5/overview — \"The minimum cacheable prompt length is 512 tokens\".",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-5-5/overview — Claude Haiku 5.5 thinking: Adaptive, on by default; https://platform.claude.com/docs/en/models/haiku-5-5/whats-new-haiku-5-5 — manual extended thinking (budget_tokens) returns an error.",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T00:00:00Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "continuation": "opaque-provider-state",
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "live-probe",
+          "sourceRef": "packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6.md capture (F) — the runtime normalises an unsigned thinking block to signature: \"\" and replays it",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinking.display",
+            "values": [
+              "summarized",
+              "omitted"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-5-5/whats-new-haiku-5-5 — \"Thinking text is omitted by default\": \"To receive summarized thinking, set `thinking.display` to `\\\"summarized\\\"`\". `updates` is not listed for this model on these pages, so it is not recorded.",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "content_block_stop",
+          "source": "official-doc",
+          "sourceRef": "R6-D's pinned stream vocabulary — a thinking block's `signature` arrives across `signature_delta` events, so the COMPLETE replayable block exists only at `content_block_stop`; an earlier partial copy would replay an unsigned block",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "anthropic/claude-haiku-5-5"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §4.4, BOTH halves, as on every Claude row: the model's own `thinking` blocks are replayed to it unchanged, in order, with their signatures intact, and \"when changing Claude models, prior `thinking` and `redacted_thinking` blocks should be stripped because they are tied to the model that produced them\". The domain is this model alone, never the Anthropic provider.",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "all-turns",
+          "source": "live-probe",
+          "sourceRef": "continuity report §3 (wire probe of the pinned Claude Agent SDK, 0.3.250→0.3.258) — every uncompacted historical thinking/redacted block is replayed on every later request",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — supportedModels lists claude-haiku-5-5; effort is requested through `output_config.effort`; \"Claude Haiku 5.5 supports all five effort levels, and `medium` is the default\".",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T00:00:00Z"
+        },
+        "perMessageEffort": {
+          "value": {
+            "beta": "mid-conversation-output-config-2026-07-01"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta — \"On the Claude API and Claude Models on Google Cloud (Google managed), Claude Haiku 5.5 also supports changing effort mid-conversation with a per-message `output_config`\", beta header mid-conversation-output-config-2026-07-01; with `thinking: disabled` a differing per-message effort returns 400 (Winter sends adaptive thinking whenever it sends per-message effort).",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T00:00:00Z"
+        }
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.1,
+          "outputPerMTokUsd": 0.5,
+          "cacheWritePerMTokUsd": 0.125,
+          "cacheReadPerMTokUsd": 0.01,
+          "longContextTiers": [
+            {
+              "minPromptTokens": 100001,
+              "inputPerMTokUsd": 0.5,
+              "outputPerMTokUsd": 2.5,
+              "cacheWritePerMTokUsd": 0.625,
+              "cacheReadPerMTokUsd": 0.05
+            }
+          ]
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/about-claude/pricing — Claude Haiku 5.5 USD/MTok, \"for prompts up to 100,000 tokens\": base input $0.10, 5m cache write $0.125, 1h cache write $0.20, cache hit $0.01, output $0.50; \"for prompts over 100,000 tokens\": $0.50, $0.625, $1, $0.05, $2.50 (the same on https://platform.claude.com/docs/en/models/haiku-5-5/overview). The 1h cache write is 2x the tier's input rate in both tiers, which the estimator's ONE_HOUR_CACHE_WRITE_INPUT_MULTIPLIER already applies.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "unsupportedParameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "thinking.type.enabled",
+        "thinking.type.disabled+output_config.effort.xhigh",
+        "thinking.type.disabled+output_config.effort.max"
+      ],
+      "status": "candidate",
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/models/haiku-5-5/whats-new-haiku-5-5 — \"Assistant message prefill returns an error\" (Breaking): \"End `messages` with a user turn.\"",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "canonicalModelId": "claude-haiku-5.5",
+      "modelFamily": "claude"
+    },
+    {
       "key": "anthropic/claude-opus-4.5",
       "providerId": "anthropic",
       "upstreamId": "claude-opus-4.5",
@@ -34656,6 +34838,188 @@
         "sourceRef": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool — the Model compatibility table lists Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5.5, Opus 5, Opus 4.8, 4.7, 4.6, Sonnet 4.6, Opus 4.5, Sonnet 4.5 and Haiku 4.5 (not Sonnet 5); \"Custom tool search implementation\": a client tool returns a tool_result whose content carries {type:\"tool_reference\", tool_name} blocks, every referenced tool declared in tools with defer_loading: true, and the API expands them; \"The prefix is untouched, so prompt caching is preserved\" (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching)."
       },
       "canonicalModelId": "claude-haiku-4.5",
+      "modelFamily": "claude"
+    },
+    {
+      "key": "console/claude-haiku-5-5",
+      "providerId": "console",
+      "upstreamId": "claude-haiku-5-5",
+      "displayName": "Claude Haiku 5.5",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/models/haiku-5-5/overview — Claude Haiku 5.5 context window 1M (1000000) tokens.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/models/haiku-5-5/overview — Claude Haiku 5.5 synchronous Messages max output 128K (128000) tokens; 300K only on the Message Batches API with the output-300k-2026-03-24 beta.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/models/haiku-5-5/overview — Claude Haiku 5.5 input → output: text and images → text.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/models/haiku-5-5/overview — Claude Haiku 5.5 input → output: text and images → text.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/about-claude/models/overview — \"All current models support text and image input, text output, multilingual capabilities, vision, and tool use\"; Claude Haiku 5.5 is in the current lineup.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/about-claude/models/overview — every current model supports tool use (client tools declared in `tools`); Claude Haiku 5.5 is in the current lineup.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/about-claude/pricing — Claude Haiku 5.5 has 5m/1h cache-write and cache-hit price columns; https://platform.claude.com/docs/en/models/haiku-5-5/overview — \"The minimum cacheable prompt length is 512 tokens\".",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-5-5/overview — Claude Haiku 5.5 thinking: Adaptive, on by default; https://platform.claude.com/docs/en/models/haiku-5-5/whats-new-haiku-5-5 — manual extended thinking (budget_tokens) returns an error.",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T00:00:00Z"
+        },
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "continuation": "opaque-provider-state",
+        "defaultEffort": "medium",
+        "readableState": {
+          "value": "summary",
+          "source": "live-probe",
+          "sourceRef": "packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6.md capture (F) — the runtime normalises an unsigned thinking block to signature: \"\" and replays it",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "summaryRequest": {
+          "value": {
+            "field": "thinking.display",
+            "values": [
+              "summarized",
+              "omitted"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/models/haiku-5-5/whats-new-haiku-5-5 — \"Thinking text is omitted by default\": \"To receive summarized thinking, set `thinking.display` to `\\\"summarized\\\"`\". `updates` is not listed for this model on these pages, so it is not recorded.",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T00:00:00Z"
+        },
+        "completionEvent": {
+          "value": "content_block_stop",
+          "source": "official-doc",
+          "sourceRef": "R6-D's pinned stream vocabulary — a thinking block's `signature` arrives across `signature_delta` events, so the COMPLETE replayable block exists only at `content_block_stop`; an earlier partial copy would replay an unsigned block",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "continuationDomain": {
+          "value": [
+            "console/claude-haiku-5-5"
+          ],
+          "source": "official-doc",
+          "sourceRef": "continuity report §4.4, BOTH halves, as on every Claude row: the model's own `thinking` blocks are replayed to it unchanged, in order, with their signatures intact, and \"when changing Claude models, prior `thinking` and `redacted_thinking` blocks should be stripped because they are tied to the model that produced them\". The domain is this model alone, never the Anthropic provider.",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "all-turns",
+          "source": "live-probe",
+          "sourceRef": "continuity report §3 (wire probe of the pinned Claude Agent SDK, 0.3.250→0.3.258) — every uncompacted historical thinking/redacted block is replayed on every later request",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort — supportedModels lists claude-haiku-5-5; effort is requested through `output_config.effort`; \"Claude Haiku 5.5 supports all five effort levels, and `medium` is the default\".",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T00:00:00Z"
+        },
+        "perMessageEffort": {
+          "value": {
+            "beta": "mid-conversation-output-config-2026-07-01"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.claude.com/docs/en/build-with-claude/effort#change-effort-mid-conversation-beta — \"On the Claude API and Claude Models on Google Cloud (Google managed), Claude Haiku 5.5 also supports changing effort mid-conversation with a per-message `output_config`\", beta header mid-conversation-output-config-2026-07-01; with `thinking: disabled` a differing per-message effort returns 400 (Winter sends adaptive thinking whenever it sends per-message effort).",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T00:00:00Z"
+        }
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.1,
+          "outputPerMTokUsd": 0.5,
+          "cacheWritePerMTokUsd": 0.125,
+          "cacheReadPerMTokUsd": 0.01,
+          "longContextTiers": [
+            {
+              "minPromptTokens": 100001,
+              "inputPerMTokUsd": 0.5,
+              "outputPerMTokUsd": 2.5,
+              "cacheWritePerMTokUsd": 0.625,
+              "cacheReadPerMTokUsd": 0.05
+            }
+          ]
+        },
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/about-claude/pricing — Claude Haiku 5.5 USD/MTok, \"for prompts up to 100,000 tokens\": base input $0.10, 5m cache write $0.125, 1h cache write $0.20, cache hit $0.01, output $0.50; \"for prompts over 100,000 tokens\": $0.50, $0.625, $1, $0.05, $2.50 (the same on https://platform.claude.com/docs/en/models/haiku-5-5/overview). The 1h cache write is 2x the tier's input rate in both tiers, which the estimator's ONE_HOUR_CACHE_WRITE_INPUT_MULTIPLIER already applies.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "unsupportedParameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "thinking.type.enabled",
+        "thinking.type.disabled+output_config.effort.xhigh",
+        "thinking.type.disabled+output_config.effort.max"
+      ],
+      "status": "candidate",
+      "assistantPrefill": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://platform.claude.com/docs/en/models/haiku-5-5/whats-new-haiku-5-5 — \"Assistant message prefill returns an error\" (Breaking): \"End `messages` with a user turn.\"",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T00:00:00Z"
+      },
+      "canonicalModelId": "claude-haiku-5.5",
       "modelFamily": "claude"
     },
     {
@@ -77657,7 +78021,138 @@
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/docs/features/prompt-caching (read 2026-10-24) — Anthropic Claude: caching is opt-in through `cache_control` breakpoints on content blocks (\"There is a limit of four explicit breakpoints\"; `\"ttl\": \"1h\"` extends the 5-minute default); this route's OpenRouter entry lists input_cache_read / input_cache_write prices.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
       "canonicalModelId": "claude-fable-5.1",
+      "modelFamily": "claude"
+    },
+    {
+      "key": "openrouter/anthropic/claude-haiku-5.5",
+      "providerId": "openrouter",
+      "upstreamId": "anthropic/claude-haiku-5.5",
+      "displayName": "Claude Haiku 5.5 (via OpenRouter)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `anthropic/claude-haiku-5.5` (read 2026-10-24): context_length 1000000",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `anthropic/claude-haiku-5.5` (read 2026-10-24): top_provider.max_completion_tokens 128000",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `anthropic/claude-haiku-5.5` (read 2026-10-24): architecture.input_modalities ['text', 'image', 'file'] (file/pdf inputs are not a Winter modality)",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `anthropic/claude-haiku-5.5` (read 2026-10-24): architecture.output_modalities ['text']",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `anthropic/claude-haiku-5.5` (read 2026-10-24): supported_parameters include `tools` and `tool_choice`",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `anthropic/claude-haiku-5.5` (read 2026-10-24): supported_parameters include `tools` and `tool_choice`",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `anthropic/claude-haiku-5.5` (read 2026-10-24): supported_parameters include `structured_outputs`",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/docs/features/prompt-caching (read 2026-10-24) — Anthropic Claude: caching is opt-in through `cache_control` breakpoints on content blocks (\"There is a limit of four explicit breakpoints\"; `\"ttl\": \"1h\"` extends the 5-minute default); this entry also lists input_cache_read / input_cache_write / input_cache_write_1h prices.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `anthropic/claude-haiku-5.5` (read 2026-10-24): reasoning {\"mandatory\": false, \"supported_efforts\": [\"max\", \"xhigh\", \"high\", \"medium\", \"low\", \"none\"], \"default_effort\": \"medium\"}; supported_parameters include `reasoning` and `reasoning_effort`",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T12:56:43Z"
+        },
+        "efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "none"
+        ],
+        "defaultEffort": "medium",
+        "continuation": "opaque-provider-state",
+        "continuationDomain": {
+          "value": [
+            "openrouter/anthropic/claude-haiku-5.5"
+          ],
+          "source": "official-doc",
+          "sourceRef": "https://openrouter.ai/docs/use-cases/reasoning-tokens (read 2026-10-24), BOTH halves. Own-state acceptance: \"Preserving reasoning\" -- the assistant message's `reasoning_details` are sent back unchanged (\"Pass the full reasoning_details block\"). Why the domain is NARROW: \"the entire sequence of consecutive reasoning blocks must match the outputs generated by the model\", so the state is valid for the model that produced it; the domain is this OpenRouter route alone, never the upstream vendor's own row (a different provider, credential and account).",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T12:56:43Z"
+        }
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.1,
+          "outputPerMTokUsd": 0.5,
+          "cacheReadPerMTokUsd": 0.01,
+          "cacheWritePerMTokUsd": 0.125,
+          "longContextTiers": [
+            {
+              "minPromptTokens": 100000,
+              "inputPerMTokUsd": 0.5,
+              "outputPerMTokUsd": 2.5,
+              "cacheReadPerMTokUsd": 0.05,
+              "cacheWritePerMTokUsd": 0.625
+            }
+          ]
+        },
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `anthropic/claude-haiku-5.5` (read 2026-10-24): OpenRouter's own current price, prompt 0.0000001 / completion 0.0000005 / input_cache_read 0.00000001 / input_cache_write 0.000000125 / input_cache_write_1h 0.0000002 USD per token; overrides [{\"min_prompt_tokens\": 100000, \"prompt\": \"0.0000005\", \"completion\": \"0.0000025\", \"input_cache_read\": \"0.00000005\", \"input_cache_write\": \"0.000000625\", \"input_cache_write_1h\": \"0.000001\"}] recorded as `longContextTiers` with minPromptTokens 100000 (OpenRouter's own field name is a minimum; it documents no further rule). The 1h write is 2x the input rate in both tiers.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "canonicalModelId": "claude-haiku-5.5",
       "modelFamily": "claude"
     },
     {
@@ -77754,6 +78249,13 @@
         "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `anthropic/claude-opus-5` (read 2026-09-27): OpenRouter's own current price, prompt 0.000005 / completion 0.000025 / input_cache_read 0.0000005 / input_cache_write 0.00000625 USD per token.",
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/docs/features/prompt-caching (read 2026-10-24) — Anthropic Claude: caching is opt-in through `cache_control` breakpoints on content blocks (\"There is a limit of four explicit breakpoints\"; `\"ttl\": \"1h\"` extends the 5-minute default); this route's OpenRouter entry lists input_cache_read / input_cache_write prices.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
       },
       "canonicalModelId": "claude-opus-5",
       "modelFamily": "claude"
@@ -77853,6 +78355,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/docs/features/prompt-caching (read 2026-10-24) — Anthropic Claude: caching is opt-in through `cache_control` breakpoints on content blocks (\"There is a limit of four explicit breakpoints\"; `\"ttl\": \"1h\"` extends the 5-minute default); this route's OpenRouter entry lists input_cache_read / input_cache_write prices.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
       "canonicalModelId": "claude-opus-5.5",
       "modelFamily": "claude"
     },
@@ -77951,6 +78460,13 @@
         "confidence": "declared",
         "observedAt": "2026-09-27T00:00:00Z"
       },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/docs/features/prompt-caching (read 2026-10-24) — Anthropic Claude: caching is opt-in through `cache_control` breakpoints on content blocks (\"There is a limit of four explicit breakpoints\"; `\"ttl\": \"1h\"` extends the 5-minute default); this route's OpenRouter entry lists input_cache_read / input_cache_write prices.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
       "canonicalModelId": "claude-sonnet-5",
       "modelFamily": "claude"
     },
@@ -78035,7 +78551,16 @@
           "low"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "opaque-provider-state",
+        "continuationDomain": {
+          "value": [
+            "openrouter/anthropic/claude-sonnet-5.5"
+          ],
+          "source": "official-doc",
+          "sourceRef": "https://openrouter.ai/docs/use-cases/reasoning-tokens (read 2026-10-24), BOTH halves. Own-state acceptance: \"Preserving reasoning\" -- the assistant message's `reasoning_details` are sent back unchanged (\"Pass the full reasoning_details block\"). Why the domain is NARROW: \"the entire sequence of consecutive reasoning blocks must match the outputs generated by the model\", so the state is valid for the model that produced it; the domain is this OpenRouter route alone, never the upstream vendor's own row (a different provider, credential and account).",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T12:56:43Z"
+        }
       },
       "pricing": {
         "value": {
@@ -78048,6 +78573,13 @@
         "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `anthropic/claude-sonnet-5.5` (read 2026-09-29): OpenRouter's own current price, prompt 0.000002 / completion 0.00001 / input_cache_read 0.0000002 / input_cache_write 0.0000025 USD per token.",
         "confidence": "declared",
         "observedAt": "2026-09-29T00:00:00Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/docs/features/prompt-caching (read 2026-10-24) — Anthropic Claude: caching is opt-in through `cache_control` breakpoints on content blocks (\"There is a limit of four explicit breakpoints\"; `\"ttl\": \"1h\"` extends the 5-minute default); this route's OpenRouter entry lists input_cache_read / input_cache_write prices.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
       },
       "canonicalModelId": "claude-sonnet-5.5",
       "modelFamily": "claude"
@@ -78224,7 +78756,16 @@
           "low"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "opaque-provider-state",
+        "continuationDomain": {
+          "value": [
+            "openrouter/deepseek/deepseek-v4.1-flash"
+          ],
+          "source": "official-doc",
+          "sourceRef": "https://openrouter.ai/docs/use-cases/reasoning-tokens (read 2026-10-24), BOTH halves. Own-state acceptance: \"Preserving reasoning\" -- the assistant message's `reasoning_details` are sent back unchanged (\"Pass the full reasoning_details block\"). Why the domain is NARROW: \"the entire sequence of consecutive reasoning blocks must match the outputs generated by the model\", so the state is valid for the model that produced it; the domain is this OpenRouter route alone, never the upstream vendor's own row (a different provider, credential and account).",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T12:56:43Z"
+        }
       },
       "pricing": {
         "value": {
@@ -78828,6 +79369,112 @@
         "observedAt": "2026-09-27T00:00:00Z"
       },
       "canonicalModelId": "muse-spark-1.3",
+      "modelFamily": "muse"
+    },
+    {
+      "key": "openrouter/meta/muse-spark-1.3-contributor",
+      "providerId": "openrouter",
+      "upstreamId": "meta/muse-spark-1.3-contributor",
+      "displayName": "Muse Spark 1.3 Contributor (via OpenRouter; Meta trains on your data)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `meta/muse-spark-1.3-contributor` (read 2026-10-24): context_length 1048576",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "maxOutputTokens": {
+        "value": 943718,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `meta/muse-spark-1.3-contributor` (read 2026-10-24): top_provider.max_completion_tokens 943718",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image",
+          "video"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `meta/muse-spark-1.3-contributor` (read 2026-10-24): architecture.input_modalities ['text', 'image', 'video', 'file'] (file/pdf inputs are not a Winter modality)",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `meta/muse-spark-1.3-contributor` (read 2026-10-24): architecture.output_modalities ['text']",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `meta/muse-spark-1.3-contributor` (read 2026-10-24): supported_parameters include `tools` and `tool_choice`",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `meta/muse-spark-1.3-contributor` (read 2026-10-24): supported_parameters include `tools` and `tool_choice`",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `meta/muse-spark-1.3-contributor` (read 2026-10-24): supported_parameters include `structured_outputs`",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `meta/muse-spark-1.3-contributor` (read 2026-10-24): pricing.input_cache_read 0.000000002 — a cached-input price is listed for this route",
+        "confidence": "inferred",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `meta/muse-spark-1.3-contributor` (read 2026-10-24): reasoning {\"mandatory\": true, \"supported_efforts\": [\"max\", \"xhigh\", \"high\", \"medium\", \"low\", \"minimal\"], \"default_effort\": \"medium\"}; supported_parameters include `reasoning` and `reasoning_effort`",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T12:56:43Z"
+        },
+        "efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "minimal"
+        ],
+        "defaultEffort": "medium",
+        "continuation": "none"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.1,
+          "outputPerMTokUsd": 0.2,
+          "cacheReadPerMTokUsd": 0.002
+        },
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `meta/muse-spark-1.3-contributor` (read 2026-10-24): OpenRouter's own current price, prompt 0.0000001 / completion 0.0000002 / input_cache_read 0.000000002 USD per token; no overrides.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "canonicalModelId": "muse-spark-1.3-contributor",
       "modelFamily": "muse"
     },
     {
@@ -80180,7 +80827,16 @@
           "none"
         ],
         "defaultEffort": "medium",
-        "continuation": "none"
+        "continuation": "opaque-provider-state",
+        "continuationDomain": {
+          "value": [
+            "openrouter/openai/gpt-6-luna"
+          ],
+          "source": "official-doc",
+          "sourceRef": "https://openrouter.ai/docs/use-cases/reasoning-tokens (read 2026-10-24), BOTH halves. Own-state acceptance: \"Preserving reasoning\" -- the assistant message's `reasoning_details` are sent back unchanged (\"Pass the full reasoning_details block\"). Why the domain is NARROW: \"the entire sequence of consecutive reasoning blocks must match the outputs generated by the model\", so the state is valid for the model that produced it; the domain is this OpenRouter route alone, never the upstream vendor's own row (a different provider, credential and account).",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T12:56:43Z"
+        }
       },
       "pricing": {
         "value": {
@@ -80294,6 +80950,129 @@
         "observedAt": "2026-09-27T00:00:00Z"
       },
       "canonicalModelId": "gpt-6-sol",
+      "modelFamily": "gpt"
+    },
+    {
+      "key": "openrouter/openai/gpt-6.1-sol",
+      "providerId": "openrouter",
+      "upstreamId": "openai/gpt-6.1-sol",
+      "displayName": "GPT-6.1 Sol (via OpenRouter)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1050000,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `openai/gpt-6.1-sol` (read 2026-10-24): context_length 1050000",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `openai/gpt-6.1-sol` (read 2026-10-24): top_provider.max_completion_tokens 128000",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `openai/gpt-6.1-sol` (read 2026-10-24): architecture.input_modalities ['file', 'image', 'text'] (file/pdf inputs are not a Winter modality)",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `openai/gpt-6.1-sol` (read 2026-10-24): architecture.output_modalities ['text']",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `openai/gpt-6.1-sol` (read 2026-10-24): supported_parameters include `tools` and `tool_choice`",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `openai/gpt-6.1-sol` (read 2026-10-24): supported_parameters include `tools` and `tool_choice`",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "structuredOutput": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `openai/gpt-6.1-sol` (read 2026-10-24): supported_parameters include `structured_outputs`",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "promptCaching": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/docs/features/prompt-caching (read 2026-10-24) — \"Prompt caching with OpenAI is automated and does not require any additional configuration\"; this entry lists input_cache_read / input_cache_write prices.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `openai/gpt-6.1-sol` (read 2026-10-24): reasoning {\"mandatory\": true, \"default_enabled\": true, \"supported_efforts\": [\"max\", \"xhigh\", \"high\", \"medium\", \"low\"], \"default_effort\": \"medium\"}; supported_parameters include `reasoning` and `reasoning_effort`",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T12:56:43Z"
+        },
+        "efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "defaultEffort": "medium",
+        "continuation": "opaque-provider-state",
+        "continuationDomain": {
+          "value": [
+            "openrouter/openai/gpt-6.1-sol"
+          ],
+          "source": "official-doc",
+          "sourceRef": "https://openrouter.ai/docs/use-cases/reasoning-tokens (read 2026-10-24), BOTH halves. Own-state acceptance: \"Preserving reasoning\" -- the assistant message's `reasoning_details` are sent back unchanged (\"Pass the full reasoning_details block\"). Why the domain is NARROW: \"the entire sequence of consecutive reasoning blocks must match the outputs generated by the model\", so the state is valid for the model that produced it; the domain is this OpenRouter route alone, never the upstream vendor's own row (a different provider, credential and account).",
+          "confidence": "declared",
+          "observedAt": "2026-10-24T12:56:43Z"
+        }
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 2,
+          "outputPerMTokUsd": 10,
+          "cacheReadPerMTokUsd": 0.1,
+          "cacheWritePerMTokUsd": 2.5,
+          "longContextTiers": [
+            {
+              "minPromptTokens": 272000,
+              "inputPerMTokUsd": 4,
+              "outputPerMTokUsd": 15,
+              "cacheReadPerMTokUsd": 0.2,
+              "cacheWritePerMTokUsd": 5
+            }
+          ]
+        },
+        "source": "official-doc",
+        "sourceRef": "https://openrouter.ai/api/v1/models — OpenRouter's own public model entry `openai/gpt-6.1-sol` (read 2026-10-24): OpenRouter's own current price, prompt 0.000002 / completion 0.00001 / input_cache_read 0.0000001 / input_cache_write 0.0000025 USD per token; overrides [{\"min_prompt_tokens\": 272000, \"prompt\": \"0.000004\", \"completion\": \"0.000015\", \"input_cache_read\": \"0.0000002\", \"input_cache_write\": \"0.000005\"}] recorded as `longContextTiers` with minPromptTokens 272000.",
+        "confidence": "declared",
+        "observedAt": "2026-10-24T12:56:43Z"
+      },
+      "canonicalModelId": "gpt-6.1-sol",
       "modelFamily": "gpt"
     },
     {
