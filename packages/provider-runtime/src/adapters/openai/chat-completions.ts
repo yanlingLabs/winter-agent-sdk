@@ -130,8 +130,10 @@ export class ReasoningDetailsAccumulator {
   private readonly byIndex = new Map<number, number>();
 
   add(fragments: unknown): void {
-    if (!Array.isArray(fragments)) return;
-    for (const fragment of fragments) {
+    // The documented form is an ARRAY; a single entry object is taken as a one-entry array rather than
+    // dropped (dropping it would lose a signature the next request must carry).
+    const list = Array.isArray(fragments) ? fragments : fragments !== null && typeof fragments === "object" ? [fragments] : [];
+    for (const fragment of list) {
       if (fragment === null || typeof fragment !== "object" || Array.isArray(fragment)) continue;
       const piece = fragment as Record<string, unknown>;
       const index = typeof piece["index"] === "number" ? piece["index"] : undefined;
@@ -607,6 +609,7 @@ export class ChatStreamMapper {
 
   /** 0.0.56 (W7): the turn's `reasoning_details`, joined from their streamed fragments. */
   private readonly details = new ReasoningDetailsAccumulator();
+  private sawDeltaDetails = false;
 
   constructor(
     private readonly captureExposedReasoning: boolean,
@@ -686,8 +689,14 @@ export class ChatStreamMapper {
     const choices = Array.isArray(payload.choices) ? payload.choices : [];
     for (const choice of choices) {
       if (choice === null || typeof choice !== "object") continue;
-      const record = choice as { delta?: unknown; finish_reason?: unknown };
+      const record = choice as { delta?: unknown; finish_reason?: unknown; message?: unknown };
       events.push(...this.mapDelta(record.delta));
+      // 0.0.56 (W7): a chunk that carries the COMPLETE message (the non-streaming shape,
+      // `choices[].message.reasoning_details`) instead of a delta -- taken only when no delta carried any,
+      // so the same entries are never counted twice.
+      if (this.opts.captureReasoningDetails === true && !this.sawDeltaDetails && record.message !== null && typeof record.message === "object") {
+        this.details.add((record.message as { reasoning_details?: unknown }).reasoning_details);
+      }
       const finish = record.finish_reason;
       if (typeof finish === "string" && finish.length > 0) {
         for (const index of this.order) {
@@ -728,7 +737,10 @@ export class ChatStreamMapper {
     const record = delta as { content?: unknown; reasoning_content?: unknown; reasoning?: unknown; tool_calls?: unknown; reasoning_details?: unknown };
     const events: ProviderEvent[] = [];
     // 0.0.56 (W7): accumulated, never surfaced -- opaque continuation state (signatures, encrypted data).
-    if (this.opts.captureReasoningDetails === true) this.details.add(record.reasoning_details);
+    if (this.opts.captureReasoningDetails === true && record.reasoning_details !== undefined && record.reasoning_details !== null) {
+      this.sawDeltaDetails = true;
+      this.details.add(record.reasoning_details);
+    }
 
     // DeepSeek spells it `reasoning_content`; OpenRouter re-exports the same channel as `reasoning`.
     // Both are FULL EXPOSED reasoning, which never becomes assistant content (R6-8).

@@ -13,11 +13,14 @@
 //   2. haiku-cache    the SAME prefix again: PASS when the provider reports a cache read (W1).
 //   3. haiku-cost     PASS when OpenRouter's `usage.cost` arrived as `reportedCostUsd` on both calls (W5).
 //   4. sonnet-param   checked on the OUTGOING request body before anything is judged on the response:
-//                     PASS when it carries OpenRouter's `reasoning: { effort: "medium" }` (W7: without it
+//                     PASS when it carries OpenRouter's `reasoning: { effort: "high" }` (W7: without it
 //                     OpenRouter returns no `reasoning_details` and there is nothing to replay).
-//   5. sonnet-call    openrouter/anthropic/claude-sonnet-5.5 at effort `medium`, asked a question that
+//   5. sonnet-call    openrouter/anthropic/claude-sonnet-5.5 at effort `high`, asked a question that
 //                     needs a little reasoning before its one tool call: PASS when it calls the tool AND
-//                     `reasoning_details` were captured (W7).
+//                     `reasoning_details` were captured (W7). Its line carries CONTENT-FREE stream
+//                     diagnostics: the delta key names seen, whether `reasoning` / `reasoning_details`
+//                     appeared (with their types and counts), `reasoning_tokens`, and the last chunk's and
+//                     its choice's top-level keys -- names, types and numbers, never text or signatures.
 //   6. sonnet-replay  the tool result sent back with the captured `reasoning_details` replayed verbatim:
 //                     PASS when at least one entry was replayed, byte for byte, and the provider accepts it
 //                     and answers (W7 -- the step that breaks without it). Zero replayed entries is a FAIL.
@@ -39,7 +42,7 @@
 // `--dry-run` answers every request from a canned in-process responder with a fake key (no network, no
 // key needed), to check the probe's own plumbing. Its numbers are fabricated.
 // Exit code: 0 when every step passes, 1 otherwise, 2 when OPENROUTER_API_KEY is unset.
-const SONNET_EFFORT = "medium";
+const SONNET_EFFORT = "high";
 import { createEnvCredentialStore, createHistoryRenderer, createRegistry, createShippedAdapters, assembledToMessage, foldProviderStream, setWinterIdentity } from "@yanlinglabs/winter-provider-runtime";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 
@@ -53,7 +56,7 @@ function redact(text) {
   let out = String(text);
   if (secret.length > 0) out = out.split(secret).join("[redacted]");
   out = out.replace(/sk-or-[A-Za-z0-9_-]+/g, "[redacted]").replace(/Bearer\s+\S+/gi, "Bearer [redacted]");
-  return out.length > 300 ? `${out.slice(0, 300)}...` : out;
+  return out.length > 1500 ? `${out.slice(0, 1500)}...` : out;
 }
 const say = (line) => console.log(redact(line));
 
@@ -67,6 +70,9 @@ if (DRY_RUN) installDryRunResponder();
 // Every outgoing request BODY is kept (in memory, never printed) so a step can check what was sent. The
 // headers -- where the key travels -- are not looked at.
 const sentBodies = [];
+// ...and every response's SSE stream is read a second time (a tee of the same bytes the adapter reads)
+// into CONTENT-FREE facts: key names, value types, counts and token numbers. Never a string value.
+const streamFacts = [];
 const innerFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   try {
@@ -74,8 +80,86 @@ globalThis.fetch = async (input, init) => {
   } catch {
     sentBodies.push(null);
   }
-  return innerFetch(input, init);
+  const response = await innerFetch(input, init);
+  const facts = { done: undefined };
+  facts.done = response.body === null ? Promise.resolve() : summarizeStream(response.clone(), facts);
+  streamFacts.push(facts);
+  return response;
 };
+
+const typeOf = (v) => (v === null ? "null" : Array.isArray(v) ? "array" : typeof v);
+
+/** Reads one SSE response into names, types and counts only. */
+async function summarizeStream(response, facts) {
+  facts.deltaKeys = new Set();
+  facts.chunkKeys = new Set();
+  facts.reasoning = { chunks: 0, types: new Set() };
+  facts.reasoningDetails = { chunks: 0, entries: 0, entryTypes: new Set(), entryKeys: new Set(), types: new Set() };
+  facts.messageReasoningDetails = 0;
+  facts.reasoningTokens = undefined;
+  facts.lastChunkKeys = [];
+  facts.lastChoiceKeys = [];
+  let text;
+  try {
+    text = await response.text();
+  } catch {
+    return;
+  }
+  for (const line of text.split("\n")) {
+    if (!line.startsWith("data:")) continue;
+    const data = line.slice(5).trim();
+    if (data === "[DONE]" || data.length === 0) continue;
+    let chunk;
+    try {
+      chunk = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    if (chunk === null || typeof chunk !== "object") continue;
+    for (const k of Object.keys(chunk)) facts.chunkKeys.add(k);
+    facts.lastChunkKeys = Object.keys(chunk);
+    const details = chunk.usage?.completion_tokens_details;
+    if (details && typeof details.reasoning_tokens === "number") facts.reasoningTokens = details.reasoning_tokens;
+    for (const choice of Array.isArray(chunk.choices) ? chunk.choices : []) {
+      if (choice === null || typeof choice !== "object") continue;
+      facts.lastChoiceKeys = Object.keys(choice);
+      const delta = choice.delta;
+      if (delta && typeof delta === "object") {
+        for (const k of Object.keys(delta)) facts.deltaKeys.add(k);
+        if ("reasoning" in delta && delta.reasoning !== null) {
+          facts.reasoning.chunks++;
+          facts.reasoning.types.add(typeOf(delta.reasoning));
+        }
+        if ("reasoning_details" in delta) {
+          facts.reasoningDetails.chunks++;
+          facts.reasoningDetails.types.add(typeOf(delta.reasoning_details));
+          for (const entry of Array.isArray(delta.reasoning_details) ? delta.reasoning_details : []) {
+            facts.reasoningDetails.entries++;
+            if (entry && typeof entry === "object") {
+              facts.reasoningDetails.entryTypes.add(String(entry.type));
+              for (const k of Object.keys(entry)) facts.reasoningDetails.entryKeys.add(k);
+            }
+          }
+        }
+      }
+      const message = choice.message;
+      if (message && typeof message === "object" && Array.isArray(message.reasoning_details)) facts.messageReasoningDetails += message.reasoning_details.length;
+    }
+  }
+}
+
+const list = (set) => [...set].sort().join(",") || "-";
+function describeFacts(facts) {
+  if (facts === undefined || facts.deltaKeys === undefined) return "stream: no diagnostics";
+  const r = facts.reasoning;
+  const d = facts.reasoningDetails;
+  return (
+    `stream: deltaKeys=[${list(facts.deltaKeys)}] reasoning=${r.chunks > 0 ? `yes(${r.chunks} chunks, ${list(r.types)})` : "no"} ` +
+    `reasoning_details=${d.chunks > 0 ? `yes(${d.chunks} chunks, ${list(d.types)}, ${d.entries} entries, types=[${list(d.entryTypes)}], keys=[${list(d.entryKeys)}])` : "no"} ` +
+    `message.reasoning_details=${facts.messageReasoningDetails} reasoning_tokens=${facts.reasoningTokens ?? "absent"} ` +
+    `chunkKeys=[${list(facts.chunkKeys)}] lastChunkKeys=[${facts.lastChunkKeys.join(",")}] lastChoiceKeys=[${facts.lastChoiceKeys.join(",")}]`
+  );
+}
 
 const catalog = loadCatalog();
 const registry = createRegistry(catalog);
@@ -152,7 +236,7 @@ async function main() {
     {
       role: "user",
       content:
-        "Of Lisbon, Oslo and Rome, which city lies farthest north, and which farthest south? Reason it out briefly, then call get_weather once, for the northernmost one, and answer in five words.",
+        "Think it through before you act. The city to look up is Oslo if (37 * 41) mod 7 is odd, otherwise Rome. Work out which, call get_weather once for that city, then answer in five words.",
     },
   ];
   const sonnetRequest = (messages) => ({ model: resolved.providerModelId, tools, effort: SONNET_EFFORT, maxOutputTokens: 8000, messages: renderer.render(messages, new Map(), target) });
@@ -169,7 +253,10 @@ async function main() {
     });
     captured = (call.nativeState?.items ?? []).filter((i) => i && i.type === "winter.reasoning_details").flatMap((i) => i.details);
     const types = [...new Set(captured.map((d) => (d && typeof d === "object" ? String(d.type) : "?")))].join(",") || "none";
+    const facts = streamFacts[streamFacts.length - 1];
+    await facts?.done;
     record("sonnet-call", call.kind === "tool_use" && captured.length > 0, `kind=${call.kind} reasoning_details=${captured.length} (${types}) ${usageLine(call.usage)}`);
+    say(`      diagnostics  ${describeFacts(facts)}`);
   } catch (err) {
     record("sonnet-call", false, failure(err));
   }
@@ -217,7 +304,7 @@ function installDryRunResponder() {
     if (!replay) {
       if (!reasons) return sse([{ id: "dry-s1", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "toolu_dry", type: "function", function: { name: "get_weather", arguments: '{"city":"Oslo"}' } }] }, finish_reason: "tool_calls" }] }, usage({ cached_tokens: 0 })]);
       return sse([
-        { id: "dry-s1", choices: [{ index: 0, delta: { reasoning_details: [{ type: "reasoning.text", text: "", format: "anthropic-claude-v1", index: 0 }] }, finish_reason: null }] },
+        { id: "dry-s1", choices: [{ index: 0, delta: { reasoning: "dry thinking", reasoning_details: [{ type: "reasoning.text", text: "dry thinking", format: "anthropic-claude-v1", index: 0 }] }, finish_reason: null }] },
         { id: "dry-s1", choices: [{ index: 0, delta: { reasoning_details: [{ type: "reasoning.text", signature: "dry-signature", format: "anthropic-claude-v1", index: 0 }] }, finish_reason: null }] },
         { id: "dry-s1", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "toolu_dry", type: "function", function: { name: "get_weather", arguments: '{"city":"Oslo"}' } }] }, finish_reason: "tool_calls" }] },
         usage({ cached_tokens: 0 }),

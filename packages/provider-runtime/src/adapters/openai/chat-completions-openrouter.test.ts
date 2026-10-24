@@ -182,6 +182,45 @@ describe("W7: reasoning_details", () => {
     ]);
   });
 
+  test("the documented Claude stream: `reasoning` text beside `reasoning_details` (text + signature, summary, encrypted [REDACTED]) -- every entry captured verbatim", () => {
+    const chunk = (delta: Record<string, unknown>, finish: string | null = null) => JSON.stringify({ id: "gen-x", choices: [{ index: 0, delta, finish_reason: finish }] });
+    const mapper = new ChatStreamMapper(false, { captureReasoningDetails: true });
+    const events: ProviderEvent[] = [];
+    for (const data of [
+      chunk({ role: "assistant", content: "", reasoning: "Let me think", reasoning_details: [{ type: "reasoning.text", text: "Let me think", signature: null, id: "reasoning-text-1", format: "anthropic-claude-v1", index: 0 }] }),
+      chunk({ reasoning: " about it.", reasoning_details: [{ type: "reasoning.text", text: " about it.", format: "anthropic-claude-v1", index: 0 }] }),
+      chunk({ reasoning_details: [{ type: "reasoning.text", text: "", signature: "sig-synthetic", format: "anthropic-claude-v1", index: 0 }] }),
+      chunk({ reasoning_details: [{ type: "reasoning.summary", summary: "Thought briefly.", id: "reasoning-summary-1", format: "anthropic-claude-v1", index: 1 }] }),
+      chunk({ reasoning_details: [{ type: "reasoning.encrypted", data: "[REDACTED]", id: "reasoning-encrypted-1", format: "anthropic-claude-v1", index: 2 }] }),
+      chunk({ tool_calls: [{ index: 0, id: "toolu_x", type: "function", function: { name: "t", arguments: "{}" } }] }),
+      chunk({}, "tool_calls"),
+      "[DONE]",
+    ]) events.push(...mapper.map(data));
+    // The text form still streams as exposed reasoning for the host...
+    expect(events.filter((e) => e.type === "thinking_exposed_delta").map((e) => (e as { text: string }).text).join("")).toBe("Let me think about it.");
+    // ...and the details ride the native state whole.
+    const state = events.find((e) => e.type === "native_state") as { items: Array<{ type: string; details: unknown[] }> };
+    expect(state.items).toEqual([
+      {
+        type: "winter.reasoning_details",
+        details: [
+          { type: "reasoning.text", text: "Let me think about it.", signature: "sig-synthetic", id: "reasoning-text-1", format: "anthropic-claude-v1", index: 0 },
+          { type: "reasoning.summary", summary: "Thought briefly.", id: "reasoning-summary-1", format: "anthropic-claude-v1", index: 1 },
+          { type: "reasoning.encrypted", data: "[REDACTED]", id: "reasoning-encrypted-1", format: "anthropic-claude-v1", index: 2 },
+        ],
+      },
+    ]);
+  });
+
+  test("a single entry object (not an array) is kept, and a choice carrying the complete `message` is read when no delta carried details", () => {
+    const one = new ChatStreamMapper(false, { captureReasoningDetails: true });
+    const a = [...one.map(JSON.stringify({ choices: [{ index: 0, delta: { reasoning_details: { type: "reasoning.text", text: "t", signature: "s", index: 0 } }, finish_reason: "stop" }] })), ...one.map("[DONE]")];
+    expect((a.find((e) => e.type === "native_state") as { items: Array<{ details: unknown[] }> }).items[0]!.details).toEqual([{ type: "reasoning.text", text: "t", signature: "s", index: 0 }]);
+    const whole = new ChatStreamMapper(false, { captureReasoningDetails: true });
+    const b = [...whole.map(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", content: "", reasoning_details: [{ type: "reasoning.encrypted", data: "opaque", index: 0 }] }, finish_reason: "stop" }] })), ...whole.map("[DONE]")];
+    expect((b.find((e) => e.type === "native_state") as { items: Array<{ details: unknown[] }> }).items[0]!.details).toEqual([{ type: "reasoning.encrypted", data: "opaque", index: 0 }]);
+  });
+
   test("not captured for a row whose continuation is not opaque state", () => {
     const events: ProviderEvent[] = [];
     const mapper = new ChatStreamMapper(false);
