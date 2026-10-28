@@ -4,6 +4,34 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.59
+
+### `@yanlinglabs/winter-web`: date filters, a page's title and links, binary bytes
+
+All additive; nothing an existing host does changes.
+
+- **Search by published date.** `ExaSearchParams` gains `startPublishedDate` / `endPublishedDate`
+  (`YYYY-MM-DD`, sent as is, or an ISO 8601 date-time with `Z` or an offset, sent as its UTC ISO
+  string; years 1000-9999) and `recentDays` (published in the last n days; with `startPublishedDate`
+  too, the later start wins). A date filter runs on Exa's `web_search_advanced_exa`, which takes both
+  fields (live schema re-probed 2026-10-28). An invalid filter rejects with a `TypeError` before any
+  request -- a caller error, not a search failure -- so `ExaSearchFailureCode` is unchanged.
+  `publishedDate` stays on each result when Exa sends one.
+- **A page's title and links.** An HTML `WebPage` carries `title` (the first `<title>` with text, else
+  the first `<h1>`; at most 300 characters) and `links: { text, url }[]`: absolute (resolved against
+  `finalUrl`), `http(s)` only, deduplicated by URL at first appearance, at most 500, link text without
+  link syntax and at most 200 characters (an icon-only link falls back to its `title`, then `aria-label`). **Their
+  order is the order the links appear in `text`**: they are read off the rendered markdown itself, so
+  an anchor a conversion rule dropped is never listed. Cached pages keep both; an HTML cache entry
+  stored without them (by 0.0.58) is a miss. `convertFetchedHtmlPage(html)` exposes the conversion
+  with the raw anchors; `htmlToMarkdown` and `convertFetchedHtml` are byte-identical to 0.0.58.
+- **Binary bodies, opt-in.** `fetchWebPage(url, { binary: "bytes" })` returns a binary body as
+  `bytes: Uint8Array` with its `contentType`, capped by `maxBytes` (`truncated` when cut). The default
+  (`"flag"`) is unchanged, and binary bodies are still never cached.
+- New exports: `convertFetchedHtmlPage`, `HtmlAnchor`, `HtmlPageConversion`, `WebPageLink`,
+  `WEB_PAGE_MAX_LINKS`, `WEB_PAGE_LINK_TEXT_MAX_CHARACTERS`, `WEB_PAGE_TITLE_MAX_CHARACTERS`.
+- SSRF/private-address handling, redirects and the cache's keying and re-check are untouched.
+
 ## 0.0.58
 
 ### New package: `@yanlinglabs/winter-web`

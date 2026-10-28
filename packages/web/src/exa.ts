@@ -24,8 +24,10 @@
 // LIVE SCHEMA (server `exa-search-server` 3.2.1, probed 2026-09-18):
 //   `web_search_exa`           requires `query` AND `objective`; optional `numResults`. No domain filter.
 //   `web_search_advanced_exa`  requires `query`; accepts `numResults`, `type`, `includeDomains`,
-//                              `excludeDomains`, `enableHighlights`, `highlightsMaxCharacters`,
+//                              `excludeDomains`, `startPublishedDate`, `endPublishedDate` (ISO 8601;
+//                              re-probed 2026-10-28), `enableHighlights`, `highlightsMaxCharacters`,
 //                              `textMaxCharacters`, ...
+// A domain filter or a published-date filter therefore selects the advanced tool.
 // PAYLOADS -- one `text` content block each, in two shapes:
 //   advanced: a JSON string `{ requestId, resolvedSearchType, results: [{ id, url, title,
 //             publishedDate, image, text, highlights: string[] }], searchTime }`; `text` is the WHOLE
@@ -67,6 +69,7 @@ export const EXA_TEXT_MAX_CHARACTERS = 300;
 /** The cap on one search's raw payload text as handed on. */
 export const EXA_MAX_RESULT_CHARS = 40_000;
 const FAVICON_MAX_CHARACTERS = 2048;
+const DAY_MS = 86_400_000;
 
 // --- shapes ---------------------------------------------------------------------------------------
 
@@ -90,6 +93,12 @@ export interface ExaSearchParams {
   excludeDomains?: readonly string[];
   /** `web_search_exa` REQUIRES one; defaults to the query itself. */
   objective?: string;
+  /** Only results published on or after this date: `YYYY-MM-DD`, or any ISO 8601 date-time (sent as its UTC `toISOString()`). */
+  startPublishedDate?: string;
+  /** Only results published on or before this date; same forms as `startPublishedDate`. */
+  endPublishedDate?: string;
+  /** Only results published in the last N days (a positive number; fractions allowed). With `startPublishedDate` too, the LATER of the two starts applies. */
+  recentDays?: number;
 }
 
 export type ExaTier = "anonymous" | "key";
@@ -316,6 +325,64 @@ export function parseExaResults(text: string): ExaSearchResultItem[] {
   return itemsFromPlainText(trimmed);
 }
 
+// --- published-date filters -----------------------------------------------------------------------
+
+const PLAIN_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+/** A date-time WITH its offset: one without would be read in the host's own time zone. Seconds and up to 3 fraction digits optional. */
+const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+const MIN_DATE_MS = Date.UTC(1000, 0, 1);
+const MAX_DATE_MS = Date.UTC(9999, 11, 31, 23, 59, 59, 999);
+
+/** Whether year-month-day names a real calendar day (no 2026-02-30). `setUTCFullYear`, because `Date.UTC` reads years 0-99 as 1900-1999. */
+function isCalendarDay(year: number, month: number, day: number): boolean {
+  const date = new Date(utcMidnight(year, month, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+/** A date argument as sent to Exa: a valid `YYYY-MM-DD` unchanged, a valid date-time with an explicit offset as its UTC ISO string. Years 1000-9999. Throws a `TypeError` naming `field` otherwise. */
+function publishedDateArg(field: string, value: unknown): { sent: string; ms: number } {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    const plain = PLAIN_DATE.exec(trimmed);
+    const timed = plain === null ? DATE_TIME.exec(trimmed) : null;
+    const parts = plain ?? timed;
+    if (parts !== null && isCalendarDay(Number(parts[1]), Number(parts[2]), Number(parts[3]))) {
+      const timeOk = timed === null || (Number(timed[4]) < 24 && Number(timed[5]) < 60 && Number(timed[6] ?? 0) < 60 && Number(timed[7] ?? 0) < 24 && Number(timed[8] ?? 0) < 60);
+      const exact = plain !== null ? utcMidnight(Number(plain[1]), Number(plain[2]), Number(plain[3])) : Date.parse(trimmed);
+      if (timeOk && Number.isFinite(exact) && exact >= MIN_DATE_MS && exact <= MAX_DATE_MS) return { sent: plain !== null ? trimmed : new Date(exact).toISOString(), ms: exact };
+    }
+  }
+  throw new TypeError(`${field} must be an ISO 8601 date (YYYY-MM-DD, or a date-time with Z or an offset), got ${JSON.stringify(typeof value === "string" ? value.slice(0, 64) : value)}`);
+}
+
+function utcMidnight(year: number, month: number, day: number): number {
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  return date.getTime();
+}
+
+/**
+ * The published-date window of one search, as Exa arguments. Throws a `TypeError` for a caller error
+ * (an unparseable date, a `recentDays` that is not a positive finite number, a start after the end):
+ * these are not search failures, and nothing is sent.
+ */
+function publishedDateArgs(params: ExaSearchParams, now: number): { startPublishedDate?: string; endPublishedDate?: string } {
+  let start = params.startPublishedDate !== undefined ? publishedDateArg("startPublishedDate", params.startPublishedDate) : undefined;
+  const end = params.endPublishedDate !== undefined ? publishedDateArg("endPublishedDate", params.endPublishedDate) : undefined;
+  if (params.recentDays !== undefined) {
+    if (typeof params.recentDays !== "number" || !Number.isFinite(params.recentDays) || params.recentDays <= 0) {
+      throw new TypeError(`recentDays must be a positive number of days, got ${JSON.stringify(params.recentDays)}`);
+    }
+    // A window reaching before year 1000 is no filter at all: clamp, never a RangeError from toISOString.
+    const ms = Math.max(MIN_DATE_MS, now - params.recentDays * DAY_MS);
+    if (start === undefined || ms > start.ms) start = { sent: new Date(ms).toISOString(), ms };
+  }
+  if (start !== undefined && end !== undefined && start.ms > end.ms) {
+    throw new TypeError(`the published-date window is empty: its start (${start.sent}) is after its end (${end.sent})`);
+  }
+  return { ...(start !== undefined ? { startPublishedDate: start.sent } : {}), ...(end !== undefined ? { endPublishedDate: end.sent } : {}) };
+}
+
 // --- the client -----------------------------------------------------------------------------------
 
 export interface ExaSearchClientOptions {
@@ -341,6 +408,7 @@ export interface ExaSearchClientOptions {
 }
 
 export interface ExaSearchClient {
+  /** Never rejects for a search failure (those are typed results); rejects with a `TypeError`, before any request, for an invalid published-date filter. */
   search(params: ExaSearchParams, options?: { signal?: AbortSignal }): Promise<ExaSearchResult>;
   /** Closes both tiers' connections. Idempotent; never throws. */
   close(): Promise<void>;
@@ -543,7 +611,8 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
       const exclude = include.length > 0 ? [] : backendExcludableDomains(localExclude);
       const requested = typeof params.numResults === "number" && Number.isFinite(params.numResults) ? Math.floor(params.numResults) : EXA_DEFAULT_NUM_RESULTS;
       const numResults = Math.min(EXA_MAX_NUM_RESULTS, Math.max(1, requested));
-      const filtered = include.length > 0 || exclude.length > 0;
+      const dates = publishedDateArgs(params, now());
+      const filtered = include.length > 0 || exclude.length > 0 || Object.keys(dates).length > 0;
       const tool = filtered ? EXA_ADVANCED_SEARCH_TOOL : EXA_SEARCH_TOOL;
       const query = typeof params.query === "string" ? params.query : String(params.query);
       const args: Record<string, unknown> = filtered
@@ -553,7 +622,8 @@ export function createExaSearchClient(options: ExaSearchClientOptions = {}): Exa
             enableHighlights: true,
             highlightsMaxCharacters: EXA_HIGHLIGHTS_MAX_CHARACTERS,
             textMaxCharacters: EXA_TEXT_MAX_CHARACTERS,
-            ...(include.length > 0 ? { includeDomains: include } : { excludeDomains: exclude }),
+            ...(include.length > 0 ? { includeDomains: include } : exclude.length > 0 ? { excludeDomains: exclude } : {}),
+            ...dates,
           }
         : { query, objective: params.objective !== undefined && params.objective.trim().length > 0 ? params.objective : query, numResults };
 
