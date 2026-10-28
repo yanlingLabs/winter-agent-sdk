@@ -139,6 +139,25 @@ describe("fetchWebPage, the cache, the digest and the converter", () => {
       }
     });
 
+    test("an HTML cache entry without links is a miss; links handed out are copies", async () => {
+      const cache = new MemoryWebFetchCache();
+      const url = `https://public.test:${server.port}/links/`;
+      cache.set(url, { finalUrl: url, status: 200, statusText: "OK", contentType: "text/html", kind: "html", text: "old", truncated: false, bytes: 3 });
+      const page = await fetchWebPage(url, opts({ cache }));
+      assert.ok(page.ok && !page.fromCache && (page.links?.length ?? 0) > 0);
+      if (!page.ok) return;
+      page.links!.reverse();
+      page.links![0]!.url = "https://changed.example/";
+      const hit = await fetchWebPage(url, opts({ cache }));
+      assert.ok(hit.ok && hit.fromCache);
+      if (hit.ok) {
+        assert.equal(hit.links![0]!.url, `https://public.test:${server.port}/h`);
+        hit.links!.length = 0;
+      }
+      const again = await fetchWebPage(url, opts({ cache }));
+      assert.ok(again.ok && again.links!.length === 6);
+    });
+
     test("a cache hit is served without a fetch, and re-checked against the policy before it is", async () => {
       const cache = new MemoryWebFetchCache();
       const first = await fetchWebPage(`https://public.test:${server.port}/page`, opts({ cache }));
@@ -246,7 +265,7 @@ describe("fetchWebPage, the cache, the digest and the converter", () => {
     test("the title falls back to the first h1 with text; a title or link inside svg or script counts for nothing", async () => {
       // <title> is raw text: markup inside it is its text, as a browser's tab shows it.
       assert.equal((await convertFetchedHtmlPage("<title>A <b>b</b></title>")).title, "A <b>b</b>");
-      assert.equal((await convertFetchedHtmlPage("<title> </title><svg><title>icon</title></svg><h1></h1><h1>Real <i>one</i></h1>")).title, "Real _one_");
+      assert.equal((await convertFetchedHtmlPage("<title> </title><svg><title>icon</title></svg><h1></h1><h1>Real <i>one</i></h1>")).title, "Real one");
       assert.equal((await convertFetchedHtmlPage("<p>no title</p>")).title, undefined);
       const page = await convertFetchedHtmlPage("<script>'<a href=/s>'</script><svg><a href='/v'>v</a></svg><a href='/k'>kept</a>");
       assert.deepEqual(page.anchors, [{ href: "/k", text: "kept" }]);
@@ -259,11 +278,31 @@ describe("fetchWebPage, the cache, the digest and the converter", () => {
       assert.deepEqual(icons.anchors.map((a) => a.text), ["By title", "By label", ""]);
     });
 
-    test("an anchor holding a megabyte of '[' converts in linear time", async () => {
-      const started = performance.now();
-      const page = await convertFetchedHtmlPage(`<a href='/x'>${"[".repeat(1_000_000)}</a>`);
-      assert.equal(page.anchors.length, 1);
-      assert.ok(performance.now() - started < 5_000);
+    test("hostile bracket runs stay linear: a megabyte of '[' in one anchor, 512 nested anchors, 500 flat ones", async () => {
+      for (const html of [`<a href='/x'>${"[".repeat(1_000_000)}</a>`, `${"<a href='/n'>".repeat(512)}${"[".repeat(2_000)}`, `<a href='/f'>${"[](".repeat(700)}</a>`.repeat(500)]) {
+        const started = performance.now();
+        const page = await convertFetchedHtmlPage(html);
+        assert.ok(page.anchors.length >= 1);
+        assert.ok(performance.now() - started < 3_000, `${html.slice(0, 40)}: ${Math.round(performance.now() - started)} ms`);
+      }
+    });
+
+    test("entity-encoded markers in attributes forge nothing, and none reaches the text", async () => {
+      const html = "<p><a href='/a'>a</a> <img alt='&#xE000;1&#xE001;' src='&#xe000;0&#xE001;'> <a href='/b' title='&#57344;0&#57345;'>b</a> <a href='/c&#xE000;'>c</a></p>";
+      const page = await convertFetchedHtmlPage(html);
+      assert.deepEqual(page.anchors.map((a) => a.href), ["/a", "/b", "/c"]);
+      assert.equal(/[\uE000\uE001]/.test(page.text), false);
+      // Without collecting, the attributes are exactly as before.
+      assert.ok((await convertFetchedHtml(html)).includes("\uE000"));
+    });
+
+    test("link text and titles are plain: no markdown wrappers, no marker cut in half at the input cap", async () => {
+      const page = await convertFetchedHtmlPage("<h1><strong>Big</strong> <em>title</em> <code>x</code></h1><a href='/d'><strong>Docs</strong> for <em>snake_case</em> [1]</a>");
+      assert.equal(page.title, "Big title x");
+      assert.deepEqual(page.anchors, [{ href: "/d", text: "Docs for snake_case [1]" }]);
+      // The inner anchor's marker straddles character 2000 of the outer one's text.
+      const nested = await convertFetchedHtmlPage(`<a href='/o'>${"x".repeat(1_999)}<a href='/i'>in</a></a>`);
+      assert.equal(/[\uE000\uE001]/.test(nested.anchors[0]!.text), false);
     });
   });
 

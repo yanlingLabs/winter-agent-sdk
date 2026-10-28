@@ -328,22 +328,37 @@ export function parseExaResults(text: string): ExaSearchResultItem[] {
 // --- published-date filters -----------------------------------------------------------------------
 
 const PLAIN_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+/** A date-time WITH its offset: one without would be read in the host's own time zone. Seconds and up to 3 fraction digits optional. */
+const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+const MIN_DATE_MS = Date.UTC(1000, 0, 1);
+const MAX_DATE_MS = Date.UTC(9999, 11, 31, 23, 59, 59, 999);
 
-/** A date argument as sent to Exa: a valid `YYYY-MM-DD` unchanged, any other parseable ISO date as its UTC ISO string. Throws a `TypeError` naming `field` otherwise. */
+/** Whether year-month-day names a real calendar day (no 2026-02-30). `setUTCFullYear`, because `Date.UTC` reads years 0-99 as 1900-1999. */
+function isCalendarDay(year: number, month: number, day: number): boolean {
+  const date = new Date(utcMidnight(year, month, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+/** A date argument as sent to Exa: a valid `YYYY-MM-DD` unchanged, a valid date-time with an explicit offset as its UTC ISO string. Years 1000-9999. Throws a `TypeError` naming `field` otherwise. */
 function publishedDateArg(field: string, value: unknown): { sent: string; ms: number } {
   if (typeof value === "string") {
     const trimmed = value.trim();
     const plain = PLAIN_DATE.exec(trimmed);
-    if (plain !== null) {
-      const ms = Date.UTC(Number(plain[1]), Number(plain[2]) - 1, Number(plain[3]));
-      const back = new Date(ms);
-      if (back.getUTCFullYear() === Number(plain[1]) && back.getUTCMonth() === Number(plain[2]) - 1 && back.getUTCDate() === Number(plain[3])) return { sent: trimmed, ms };
-    } else if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
-      const ms = Date.parse(trimmed);
-      if (Number.isFinite(ms)) return { sent: new Date(ms).toISOString(), ms };
+    const timed = plain === null ? DATE_TIME.exec(trimmed) : null;
+    const parts = plain ?? timed;
+    if (parts !== null && isCalendarDay(Number(parts[1]), Number(parts[2]), Number(parts[3]))) {
+      const timeOk = timed === null || (Number(timed[4]) < 24 && Number(timed[5]) < 60 && Number(timed[6] ?? 0) < 60 && Number(timed[7] ?? 0) < 24 && Number(timed[8] ?? 0) < 60);
+      const exact = plain !== null ? utcMidnight(Number(plain[1]), Number(plain[2]), Number(plain[3])) : Date.parse(trimmed);
+      if (timeOk && Number.isFinite(exact) && exact >= MIN_DATE_MS && exact <= MAX_DATE_MS) return { sent: plain !== null ? trimmed : new Date(exact).toISOString(), ms: exact };
     }
   }
-  throw new TypeError(`${field} must be an ISO 8601 date (YYYY-MM-DD or a date-time), got ${JSON.stringify(typeof value === "string" ? value.slice(0, 64) : value)}`);
+  throw new TypeError(`${field} must be an ISO 8601 date (YYYY-MM-DD, or a date-time with Z or an offset), got ${JSON.stringify(typeof value === "string" ? value.slice(0, 64) : value)}`);
+}
+
+function utcMidnight(year: number, month: number, day: number): number {
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  return date.getTime();
 }
 
 /**
@@ -358,7 +373,8 @@ function publishedDateArgs(params: ExaSearchParams, now: number): { startPublish
     if (typeof params.recentDays !== "number" || !Number.isFinite(params.recentDays) || params.recentDays <= 0) {
       throw new TypeError(`recentDays must be a positive number of days, got ${JSON.stringify(params.recentDays)}`);
     }
-    const ms = now - params.recentDays * DAY_MS;
+    // A window reaching before year 1000 is no filter at all: clamp, never a RangeError from toISOString.
+    const ms = Math.max(MIN_DATE_MS, now - params.recentDays * DAY_MS);
     if (start === undefined || ms > start.ms) start = { sent: new Date(ms).toISOString(), ms };
   }
   if (start !== undefined && end !== undefined && start.ms > end.ms) {

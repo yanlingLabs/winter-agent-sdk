@@ -164,6 +164,8 @@ interface Piece {
   tag: string;
   text: string;
   isBlock: boolean;
+  /** Collecting only: how many characters of `text` are anchor markers, so the render budget counts what the page READS, exactly as without collecting. */
+  marks?: number;
 }
 
 // Item 7 (memory): a <br>/<hr> piece is always byte-identical and NEVER mutated after being pushed --
@@ -263,15 +265,18 @@ function indentContinuation(text: string, marker: string): string {
     .join("\n");
 }
 
-function attr(map: Readonly<Record<string, string>>, name: string): string | undefined {
+/** An attribute, entity-decoded. `collecting`: the anchor-marker characters are removed AFTER decoding, so `&#xE000;` cannot forge one either. */
+function attr(map: Readonly<Record<string, string>>, name: string, collecting = false): string | undefined {
   const v = map[name];
-  return v === undefined || v === "" ? undefined : decodeHtmlEntities(v);
+  if (v === undefined || v === "") return undefined;
+  const decoded = decodeHtmlEntities(v);
+  return collecting ? decoded.replace(MARKER_CHARS_RE, "") : decoded;
 }
 
-function renderImage(attrs: Readonly<Record<string, string>>): string {
-  const src = attr(attrs, "src") ?? "";
-  const alt = attr(attrs, "alt") ?? "";
-  const title = attr(attrs, "title");
+function renderImage(attrs: Readonly<Record<string, string>>, collecting: boolean): string {
+  const src = attr(attrs, "src", collecting) ?? "";
+  const alt = attr(attrs, "alt", collecting) ?? "";
+  const title = attr(attrs, "title", collecting);
   return `![${alt}](${src}${title !== undefined ? ` "${title}"` : ""})`;
 }
 
@@ -341,23 +346,67 @@ interface Collector {
   firstH1?: string;
 }
 
-/** How much of a title's or a link's markdown is read as plain text -- the hosts cap both far below this, and it keeps the bracket patterns below linear in practice on a hostile page (one anchor holding 1 MB of `[`). */
+/** How much of a title's or a link's markdown is read as plain text: the hosts cap both far below this, and it bounds the work per anchor however deeply anchors nest. */
 const PLAIN_TEXT_INPUT_CAP = 2_000;
+/** A marker, or the start of one cut off by `PLAIN_TEXT_INPUT_CAP`. */
+const MARKER_OR_PARTIAL_RE = /\uE000\d*\uE001?/g;
 
-/** Markdown as plain text, for a title or a link's text: markers removed, images as their alt text, links as their text, whitespace collapsed. */
+/**
+ * `[text](url)` as `text` and `![alt](src)` as `alt`, with the same leftmost matching as
+ * `/!?\[([^\]]*)\]\([^)]*\)/g` -- but in ONE linear pass: the next `]` and the next `)` after every
+ * position are precomputed, so a run of unmatched `[` costs O(1) each, never a rescan.
+ */
+function unlinkMarkdown(text: string): string {
+  const n = text.length;
+  const nextClose = new Int32Array(n + 1).fill(-1);
+  const nextParen = new Int32Array(n + 1).fill(-1);
+  for (let i = n - 1; i >= 0; i--) {
+    nextClose[i] = text.charCodeAt(i) === 0x5d /* ] */ ? i : nextClose[i + 1]!;
+    nextParen[i] = text.charCodeAt(i) === 0x29 /* ) */ ? i : nextParen[i + 1]!;
+  }
+  let out = "";
+  let i = 0;
+  while (i < n) {
+    const isImage = text.charCodeAt(i) === 0x21 /* ! */ && text.charCodeAt(i + 1) === 0x5b;
+    const open = isImage ? i + 1 : i;
+    if (text.charCodeAt(open) === 0x5b /* [ */) {
+      const close = nextClose[open + 1]!;
+      if (close !== -1 && text.charCodeAt(close + 1) === 0x28 /* ( */) {
+        const end = nextParen[close + 2]!;
+        if (end !== -1) {
+          out += text.slice(open + 1, close);
+          i = end + 1;
+          continue;
+        }
+      }
+    }
+    out += text[i];
+    i += 1;
+  }
+  return out;
+}
+
+/** Markdown as plain text, for a title or a link's text: markers removed, images as their alt text, links as their text, the converter's own `**`/`_`/backtick wrappers dropped, whitespace collapsed. */
 function plainText(markdown: string): string {
-  return markdown
-    .slice(0, PLAIN_TEXT_INPUT_CAP)
-    .replace(ANCHOR_MARKER_RE, "")
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+  return unlinkMarkdown(markdown.slice(0, PLAIN_TEXT_INPUT_CAP).replace(MARKER_OR_PARTIAL_RE, ""))
+    .replace(/\*\*/g, "")
+    .replace(/`+/g, "")
+    .replace(/(^|[\s(])_(?=\S)|(?<=\S)_(?=$|[\s).,;:!?])/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
 }
 
 function renderFrame(frame: Frame, budget: { remaining: number }, collector?: Collector): Piece {
   const piece = renderFrameUnbudgeted(frame, collector);
-  budget.remaining -= piece.text.length;
+  if (collector !== undefined) {
+    // Every child's markers are inside this piece's text (a dropped child's are over-counted, which only loosens the budget by a marker's length).
+    let marks = piece.marks ?? 0;
+    for (const child of frame.buf) marks += child.marks ?? 0;
+    if (marks > 0) piece.marks = marks;
+    budget.remaining -= piece.text.length - marks;
+  } else {
+    budget.remaining -= piece.text.length;
+  }
   if (budget.remaining < 0) throw new HtmlBudgetExceededError("the HTML->markdown conversion's output budget was exceeded");
   return piece;
 }
@@ -452,16 +501,17 @@ function renderFrameUnbudgeted(frame: Frame, collector?: Collector): Piece {
 
   if (tag === "a") {
     const inner = insidePre ? joinVerbatim(buf) : joinPieces(buf);
-    const href = attr(attrs, "href");
+    const collecting = collector !== undefined;
+    const href = attr(attrs, "href", collecting);
     if (href === undefined) return { tag, text: inner, isBlock: false };
-    const title = attr(attrs, "title");
+    const title = attr(attrs, "title", collecting);
     let marker = "";
     if (collector !== undefined && !frame.insideSkip) {
       marker = `${ANCHOR_OPEN}${collector.anchors.length}${ANCHOR_CLOSE}`;
       // An icon-only link reads as its `title`, else its `aria-label`, rather than as nothing.
-      collector.anchors.push({ href, text: plainText(inner) || plainText(title ?? "") || plainText(attr(attrs, "aria-label") ?? "") });
+      collector.anchors.push({ href, text: plainText(inner) || plainText(title ?? "") || plainText(attr(attrs, "aria-label", true) ?? "") });
     }
-    return { tag, text: `${marker}[${inner}](${href}${title !== undefined ? ` "${title}"` : ""})`, isBlock: false };
+    return { tag, text: `${marker}[${inner}](${href}${title !== undefined ? ` "${title}"` : ""})`, isBlock: false, ...(marker.length > 0 ? { marks: marker.length } : {}) };
   }
 
   if (tag === "strong" || tag === "b") {
@@ -579,10 +629,10 @@ function convertHtml(html: string, collector: Collector | undefined): string {
 
       if (VOID_TAGS.has(tag)) {
         const attrs: Record<string, string> = {};
-        for (const [k, v] of el.attributes) attrs[k.toLowerCase()] = clean(v);
+        for (const [k, v] of el.attributes) attrs[k.toLowerCase()] = v;
         if (tag === "br") parent.buf.push(BR_PIECE);
         else if (tag === "hr") parent.buf.push(HR_PIECE);
-        else if (tag === "img") parent.buf.push({ tag, text: renderImage(attrs), isBlock: false });
+        else if (tag === "img") parent.buf.push({ tag, text: renderImage(attrs, collector !== undefined), isBlock: false });
         // meta/link/base/area/col/embed/input/param/source/track/wbr: no useful text -- contribute nothing.
         return;
       }
@@ -610,7 +660,7 @@ function convertHtml(html: string, collector: Collector | undefined): string {
       }
 
       const attrs: Record<string, string> = {};
-      for (const [k, v] of el.attributes) attrs[k.toLowerCase()] = clean(v);
+      for (const [k, v] of el.attributes) attrs[k.toLowerCase()] = v;
       const frame: Frame = { tag, attrs, buf: [], insidePre: top.insidePre || tag === "pre", insideSkip: top.insideSkip || SKIP_TAGS.has(tag), prefixDepth: newPrefixDepth };
       stack.push(frame);
       el.onEndTag(() => closeFrame(frame));

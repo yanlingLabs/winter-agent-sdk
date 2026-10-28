@@ -104,6 +104,11 @@ function linksFrom(anchors: readonly HtmlAnchor[], base: string): WebPageLink[] 
   return links;
 }
 
+/** A copy, so a caller sorting or editing `page.links` never edits a cached entry. */
+function copyLinks(links: readonly WebPageLink[]): WebPageLink[] {
+  return links.map((link) => ({ text: link.text, url: link.url }));
+}
+
 function utf8Length(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }
@@ -132,7 +137,10 @@ export async function fetchWebPage(url: string | URL, options: FetchWebPageOptio
   const key = url instanceof URL ? url.toString() : url;
   const { cache, binary, ...fetchOptions } = options;
   if (cache !== undefined) {
-    const hit = await cacheGet(cache, key);
+    const stored = await cacheGet(cache, key);
+    // An HTML entry without links (stored by 0.0.58, or by a cache that keeps only the fields it knows)
+    // is a miss: a served HTML page always carries its links.
+    const hit = stored !== undefined && !(stored.kind === "html" && stored.links === undefined) ? stored : undefined;
     if (hit !== undefined) {
       const inputHost = hostOf(key);
       const finalHost = hostOf(hit.finalUrl);
@@ -151,7 +159,7 @@ export async function fetchWebPage(url: string | URL, options: FetchWebPageOptio
         kind: hit.kind,
         text: hit.text,
         ...(hit.title !== undefined ? { title: hit.title } : {}),
-        ...(hit.links !== undefined ? { links: hit.links } : {}),
+        ...(hit.links !== undefined ? { links: copyLinks(hit.links) } : {}),
         truncated: hit.truncated,
         byteLength: textBytes,
         fromCache: true,
@@ -192,7 +200,7 @@ export async function fetchWebPage(url: string | URL, options: FetchWebPageOptio
   };
   if (cache !== undefined && kind !== "binary") {
     const bytes = utf8Length(text) + (title !== undefined ? utf8Length(title) : 0) + (links ?? []).reduce((sum, link) => sum + utf8Length(link.url) + utf8Length(link.text), 0);
-    await cacheSet(cache, key, { finalUrl: page.finalUrl, status: page.status, statusText: page.statusText, contentType: page.contentType, kind, text, ...(title !== undefined ? { title } : {}), ...(links !== undefined ? { links } : {}), truncated, bytes });
+    await cacheSet(cache, key, { finalUrl: page.finalUrl, status: page.status, statusText: page.statusText, contentType: page.contentType, kind, text, ...(title !== undefined ? { title } : {}), ...(links !== undefined ? { links: copyLinks(links) } : {}), truncated, bytes });
   }
   return page;
 }

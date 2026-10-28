@@ -348,10 +348,19 @@ describe("published-date filters", () => {
         { query: "q", recentDays: 0 },
         { query: "q", recentDays: Number.NaN },
         { query: "q", startPublishedDate: "2026-06-01", endPublishedDate: "2026-05-01" },
+        // No offset: it would be read in the host's own time zone.
+        { query: "q", startPublishedDate: "2026-10-28T10:00" },
+        { query: "q", startPublishedDate: "2026-02-30T00:00:00Z" },
+        { query: "q", startPublishedDate: "2026-10-28T24:00:00Z" },
+        { query: "q", startPublishedDate: "0050-01-01" },
       ]) {
         await assert.rejects(c.search(params), TypeError, JSON.stringify(params));
       }
       assert.equal(seen.length, 0);
+      // A recentDays reaching past year 1000 is clamped, never a RangeError.
+      assert.ok((await c.search({ query: "q", recentDays: 1e12 })).ok);
+      assert.equal(calls(seen)[0]?.args["startPublishedDate"], "1000-01-01T00:00:00.000Z");
+      seen.length = 0;
       // No filter at all: the basic tool, exactly as before.
       assert.ok((await c.search({ query: "q" })).ok);
       assert.equal(calls(seen)[0]?.name, "web_search_exa");

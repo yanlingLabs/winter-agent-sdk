@@ -67,9 +67,11 @@ present on an HTML page (possibly empty): one `{ text, url }` per distinct URL, 
 `[text](href)` appears in `text`** -- so "link 3" is the third distinct link a reader of `text` meets.
 Each `url` is absolute (resolved against `finalUrl`; `<base href>` is not applied), `http:`/`https:`
 only, at most 2,000 characters; a URL repeated in the page is listed once, at its first appearance,
-with that appearance's text (trimmed, at most 200 characters; an icon-only link falls back to its
-`title`, then its `aria-label`). At most 500 links (`WEB_PAGE_MAX_LINKS`). Anchors inside `script`,
-`svg`, `template` and the other discarded subtrees are not links. A page served from `cache` keeps both.
+with that appearance's text as plain text (no markdown; trimmed, at most 200 characters; an icon-only
+link falls back to its `title`, then its `aria-label`). At most 500 links (`WEB_PAGE_MAX_LINKS`). Anchors inside `script`,
+`svg`, `template` and the other discarded subtrees are not links. A page served from `cache` keeps both
+(an HTML entry stored without links -- by 0.0.58, or by a cache that drops unknown fields -- is
+treated as a miss and fetched again).
 `convertFetchedHtmlPage(html)` is the conversion alone: `convertFetchedHtml`'s text, the title and the
 raw `anchors` (unresolved, repeats included).
 
@@ -211,12 +213,13 @@ await search.close();
   apart. Both live in an `ExaBackendState` (no credential in it): every client shares
   `sharedExaBackendState` unless you pass `state: createExaBackendState()` to scope it.
 - **Published-date filters.** `startPublishedDate` / `endPublishedDate` take `YYYY-MM-DD` (sent as
-  is) or an ISO 8601 date-time (sent as its UTC ISO string); `recentDays: n` means "published in the
-  last n days" (with `startPublishedDate` as well, the later start wins). A date filter, like a domain
-  filter, runs on Exa's advanced search tool. An invalid filter -- an unparseable or impossible date, a
-  `recentDays` that is not a positive number, a start after the end -- **rejects with a `TypeError`**
-  before any request: it is the caller's error, not a search failure. `publishedDate` is on each result
-  when Exa sends one.
+  is) or an ISO 8601 date-time **with `Z` or an offset** (sent as its UTC ISO string; one without an
+  offset is refused, since it would be read in the host's time zone), years 1000-9999; `recentDays: n`
+  means "published in the last n days" (with `startPublishedDate` as well, the later start wins). A date
+  filter, like a domain filter, runs on Exa's advanced search tool. An invalid filter -- an unparseable
+  or impossible date, a `recentDays` that is not a positive number, a start after the end -- **rejects
+  with a `TypeError`** before any request: it is the caller's error, not a search failure.
+  `publishedDate` is on each result when Exa sends one.
 - `text` is the best excerpt (the highlights joined, else the summary, else the page text), at most
   1,200 characters; `numResults` is clamped to 1..20 (default 8). `blockedDomains` on the client is
   excluded from every search and filtered out of every result.
