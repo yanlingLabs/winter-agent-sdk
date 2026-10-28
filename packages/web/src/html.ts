@@ -282,6 +282,8 @@ interface Frame {
   attrs: Readonly<Record<string, string>>;
   buf: Piece[];
   insidePre: boolean;
+  /** Inside a `SKIP_TAGS` subtree (inclusive): nothing in it reaches the output, so it names no title and no link. */
+  insideSkip: boolean;
   /** How many `blockquote`/`ul`/`ol` ancestors (inclusive of this frame, if it is one) are open -- security review finding N2. */
   prefixDepth: number;
 }
@@ -313,14 +315,54 @@ export class HtmlBudgetExceededError extends Error {}
 const MAX_PREFIX_DEPTH = 32;
 const PREFIX_TAGS = new Set(["blockquote", "ul", "ol"]);
 
-function renderFrame(frame: Frame, budget: { remaining: number }): Piece {
-  const piece = renderFrameUnbudgeted(frame);
+// --- the page's title and links (`convertFetchedHtmlPage`) -------------------------------------------
+//
+// THE LINKS ARE READ OFF THE FINAL TEXT, not the walk. While collecting, every rendered anchor is
+// prefixed with a marker (`ANCHOR_OPEN` id `ANCHOR_CLOSE`, two private-use characters around its index);
+// once the whole document is rendered, the markers still present in the output ARE the links, in the
+// order a reader meets them -- an anchor inside a discarded subtree, or one an enclosing rule dropped,
+// left no marker -- and are then removed. Page text and attribute values are stripped of the two
+// marker characters while collecting, so a page cannot forge one. Without collecting (`htmlToMarkdown`,
+// `convertFetchedHtml`) no marker is ever written and the output is unchanged.
+const ANCHOR_OPEN = "\uE000";
+const ANCHOR_CLOSE = "\uE001";
+const MARKER_CHARS_RE = /[\uE000\uE001]/g;
+const ANCHOR_MARKER_RE = /\uE000(\d+)\uE001/g;
+
+/** One anchor as written in the page: its `href` (entity-decoded, unresolved) and its text as plain text. */
+export interface HtmlAnchor {
+  href: string;
+  text: string;
+}
+
+interface Collector {
+  anchors: HtmlAnchor[];
+  title?: string;
+  firstH1?: string;
+}
+
+/** How much of a title's or a link's markdown is read as plain text -- the hosts cap both far below this, and it keeps the bracket patterns below linear in practice on a hostile page (one anchor holding 1 MB of `[`). */
+const PLAIN_TEXT_INPUT_CAP = 2_000;
+
+/** Markdown as plain text, for a title or a link's text: markers removed, images as their alt text, links as their text, whitespace collapsed. */
+function plainText(markdown: string): string {
+  return markdown
+    .slice(0, PLAIN_TEXT_INPUT_CAP)
+    .replace(ANCHOR_MARKER_RE, "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function renderFrame(frame: Frame, budget: { remaining: number }, collector?: Collector): Piece {
+  const piece = renderFrameUnbudgeted(frame, collector);
   budget.remaining -= piece.text.length;
   if (budget.remaining < 0) throw new HtmlBudgetExceededError("the HTML->markdown conversion's output budget was exceeded");
   return piece;
 }
 
-function renderFrameUnbudgeted(frame: Frame): Piece {
+function renderFrameUnbudgeted(frame: Frame, collector?: Collector): Piece {
   const { tag, attrs, buf, insidePre } = frame;
 
   if (SKIP_TAGS.has(tag)) return { tag, text: "", isBlock: false };
@@ -329,9 +371,11 @@ function renderFrameUnbudgeted(frame: Frame): Piece {
     const content = joinPieces(buf).replace(/\s*\n+\s*/g, " ").trim();
     if (content.length === 0) return { tag, text: "", isBlock: false };
     const level = Number(tag[1]);
+    // The underline is as long as the heading READS: anchor markers (collecting only) are not counted.
+    const width = collector !== undefined ? content.replace(ANCHOR_MARKER_RE, "").length : content.length;
     let text: string;
-    if (level === 1) text = `${content}\n${"=".repeat(Math.max(content.length, 1))}`;
-    else if (level === 2) text = `${content}\n${"-".repeat(Math.max(content.length, 1))}`;
+    if (level === 1) text = `${content}\n${"=".repeat(Math.max(width, 1))}`;
+    else if (level === 2) text = `${content}\n${"-".repeat(Math.max(width, 1))}`;
     else text = `${"#".repeat(level)} ${content}`;
     return { tag, text, isBlock: true };
   }
@@ -411,7 +455,13 @@ function renderFrameUnbudgeted(frame: Frame): Piece {
     const href = attr(attrs, "href");
     if (href === undefined) return { tag, text: inner, isBlock: false };
     const title = attr(attrs, "title");
-    return { tag, text: `[${inner}](${href}${title !== undefined ? ` "${title}"` : ""})`, isBlock: false };
+    let marker = "";
+    if (collector !== undefined && !frame.insideSkip) {
+      marker = `${ANCHOR_OPEN}${collector.anchors.length}${ANCHOR_CLOSE}`;
+      // An icon-only link reads as its `title`, else its `aria-label`, rather than as nothing.
+      collector.anchors.push({ href, text: plainText(inner) || plainText(title ?? "") || plainText(attr(attrs, "aria-label") ?? "") });
+    }
+    return { tag, text: `${marker}[${inner}](${href}${title !== undefined ? ` "${title}"` : ""})`, isBlock: false };
   }
 
   if (tag === "strong" || tag === "b") {
@@ -497,7 +547,12 @@ function closesOnSiblingOpen(topTag: string, newTag: string): boolean {
  * fall back to the raw HTML, matching claude's own "turndown throwing -> raw HTML" rule.
  */
 export async function htmlToMarkdown(html: string): Promise<string> {
-  const root: Frame = { tag: "#root", attrs: {}, buf: [], insidePre: false, prefixDepth: 0 };
+  return convertHtml(html, undefined);
+}
+
+function convertHtml(html: string, collector: Collector | undefined): string {
+  const root: Frame = { tag: "#root", attrs: {}, buf: [], insidePre: false, insideSkip: false, prefixDepth: 0 };
+  const clean = (value: string): string => (collector !== undefined && value.length > 0 ? value.replace(MARKER_CHARS_RE, "") : value);
   const stack: Frame[] = [root];
   const budget = { remaining: HTML_RENDER_BUDGET_BYTES };
 
@@ -507,7 +562,13 @@ export async function htmlToMarkdown(html: string): Promise<string> {
     if (idx === -1) return;
     while (stack.length > idx) {
       const closed = stack.pop()!;
-      stack[stack.length - 1]!.buf.push(renderFrame(closed, budget));
+      if (collector !== undefined && !closed.insideSkip) {
+        if ((closed.tag === "title" && collector.title === undefined) || (closed.tag === "h1" && collector.firstH1 === undefined)) {
+          const text = plainText(joinPieces(closed.buf));
+          if (text.length > 0) collector[closed.tag === "title" ? "title" : "firstH1"] = text;
+        }
+      }
+      stack[stack.length - 1]!.buf.push(renderFrame(closed, budget, collector));
     }
   }
 
@@ -518,7 +579,7 @@ export async function htmlToMarkdown(html: string): Promise<string> {
 
       if (VOID_TAGS.has(tag)) {
         const attrs: Record<string, string> = {};
-        for (const [k, v] of el.attributes) attrs[k.toLowerCase()] = v;
+        for (const [k, v] of el.attributes) attrs[k.toLowerCase()] = clean(v);
         if (tag === "br") parent.buf.push(BR_PIECE);
         else if (tag === "hr") parent.buf.push(HR_PIECE);
         else if (tag === "img") parent.buf.push({ tag, text: renderImage(attrs), isBlock: false });
@@ -549,15 +610,15 @@ export async function htmlToMarkdown(html: string): Promise<string> {
       }
 
       const attrs: Record<string, string> = {};
-      for (const [k, v] of el.attributes) attrs[k.toLowerCase()] = v;
-      const frame: Frame = { tag, attrs, buf: [], insidePre: top.insidePre || tag === "pre", prefixDepth: newPrefixDepth };
+      for (const [k, v] of el.attributes) attrs[k.toLowerCase()] = clean(v);
+      const frame: Frame = { tag, attrs, buf: [], insidePre: top.insidePre || tag === "pre", insideSkip: top.insideSkip || SKIP_TAGS.has(tag), prefixDepth: newPrefixDepth };
       stack.push(frame);
       el.onEndTag(() => closeFrame(frame));
     },
     text(raw) {
       if (raw === "") return;
       const frame = stack[stack.length - 1]!;
-      const decoded = decodeHtmlEntities(raw);
+      const decoded = clean(decodeHtmlEntities(raw));
       const text = frame.insidePre ? decoded : decoded.replace(/[\t\n\r ]+/g, " ");
       if (!frame.insidePre && text === "") return;
       frame.buf.push({ tag: "#text", text, isBlock: false });
@@ -577,13 +638,44 @@ export async function htmlToMarkdown(html: string): Promise<string> {
  * capped) raw HTML, per claude's own "turndown throwing -> raw HTML."
  */
 export async function convertFetchedHtml(html: string): Promise<string> {
+  return convertFetched(html, undefined).text;
+}
+
+/** `convertFetchedHtml`'s text, with the page's title and its anchors. */
+export interface HtmlPageConversion {
+  /** Exactly `convertFetchedHtml`'s output (a page carrying the private-use characters U+E000/U+E001 has them removed). */
+  text: string;
+  /** The first `<title>` with text, else the first `<h1>` with text (never one inside `svg`/`math`/...); absent when there is none, or when the conversion fell back to raw HTML. */
+  title?: string;
+  /** Every anchor with an `href` that reached `text`, in the order its `[text](href)` appears there (repeats included, hrefs unresolved). Empty on the raw-HTML fallback. */
+  anchors: HtmlAnchor[];
+}
+
+/** `convertFetchedHtml`, also reading the page's title and anchors (see the section above `plainText`). */
+export async function convertFetchedHtmlPage(html: string): Promise<HtmlPageConversion> {
+  return convertFetched(html, { anchors: [] });
+}
+
+function convertFetched(html: string, collector: Collector | undefined): HtmlPageConversion {
   const truncated = html.length > HTML_TRUNCATION_LIMIT;
   const capped = truncated ? html.slice(0, HTML_TRUNCATION_LIMIT) : html;
   let content: string;
+  let title: string | undefined;
+  const anchors: HtmlAnchor[] = [];
   try {
-    content = await htmlToMarkdown(capped);
+    const marked = convertHtml(capped, collector);
+    content =
+      collector === undefined
+        ? marked
+        : marked.replace(ANCHOR_MARKER_RE, (_whole, id: string) => {
+            const anchor = collector.anchors[Number(id)];
+            if (anchor !== undefined) anchors.push(anchor);
+            return "";
+          });
+    title = collector?.title ?? collector?.firstH1;
   } catch {
     content = capped;
+    anchors.length = 0;
   }
-  return truncated ? content + WEB_FETCH_HTML_TRUNCATION_NOTICE : content;
+  return { text: truncated ? content + WEB_FETCH_HTML_TRUNCATION_NOTICE : content, ...(title !== undefined ? { title } : {}), anchors };
 }

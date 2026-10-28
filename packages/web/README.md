@@ -4,8 +4,8 @@ Web search and web fetching for agents, with the SSRF guard built in: Winter's o
 `WebFetch` internals as a standalone library. It is what Winter's runtime itself uses, so there is one
 copy of the code.
 
-- **`fetchWebPage(url, options)`** fetches a page and hands back markdown (HTML), text, or a binary
-  flag. With `privateAddressPolicy: "deny"` -- the default -- no request can reach loopback, the LAN,
+- **`fetchWebPage(url, options)`** fetches a page and hands back markdown (HTML, with the page's title
+  and links), text, or a binary flag (or, opted in, the bytes). With `privateAddressPolicy: "deny"` -- the default -- no request can reach loopback, the LAN,
   link-local, CGNAT, multicast, cloud metadata or this machine's own addresses, on any hop, whatever
   the URL looks like or the name resolves to.
 - **`createExaSearchClient(options)`** searches through Exa's hosted MCP server: anonymous tier first,
@@ -55,9 +55,27 @@ if (!page.ok) {
 } else {
   page.kind; // "html" | "text" | "binary"
   page.text; // HTML converted to markdown; "" for binary
+  page.title; // HTML: the <title>, else the first <h1>
+  page.links; // HTML: [{ text, url }] in the order the links appear in page.text
   page.truncated; // the body hit maxBytes (or the HTML hit the converter's 1,048,576-character cap)
 }
 ```
+
+**Title and links (HTML only).** `title` is the first `<title>` with text, else the first `<h1>` with
+text, whitespace collapsed, at most 300 characters (`WEB_PAGE_TITLE_MAX_CHARACTERS`). `links` is always
+present on an HTML page (possibly empty): one `{ text, url }` per distinct URL, **in the order its
+`[text](href)` appears in `text`** -- so "link 3" is the third distinct link a reader of `text` meets.
+Each `url` is absolute (resolved against `finalUrl`; `<base href>` is not applied), `http:`/`https:`
+only, at most 2,000 characters; a URL repeated in the page is listed once, at its first appearance,
+with that appearance's text (trimmed, at most 200 characters; an icon-only link falls back to its
+`title`, then its `aria-label`). At most 500 links (`WEB_PAGE_MAX_LINKS`). Anchors inside `script`,
+`svg`, `template` and the other discarded subtrees are not links. A page served from `cache` keeps both.
+`convertFetchedHtmlPage(html)` is the conversion alone: `convertFetchedHtml`'s text, the title and the
+raw `anchors` (unresolved, repeats included).
+
+**Binary bodies.** By default a binary body is `kind: "binary"` with `text: ""`. Pass
+`binary: "bytes"` to also get it as `bytes: Uint8Array`, with its `contentType` -- capped by `maxBytes`
+like any body (`truncated: true` when cut under `onOverflow: "truncate"`). Binary bodies are never cached.
 
 Nothing here throws for an expected failure: every refusal and every network outcome is a typed
 `{ ok: false, code, message, ... }`. Only a programming error (a bug) can throw.
@@ -77,6 +95,7 @@ Nothing here throws for an expected failure: every refusal and every network out
 | `blockedDomains` | `[]` | Hosts never fetched on any hop (suffix match on a label boundary: `example.com` blocks `docs.example.com`, not `notexample.com`). |
 | `userAgent` | `winter-web (+https://github.com/yanlingLabs/winter-agent-sdk)` | |
 | `cache` (`fetchWebPage` only) | none | Any `WebFetchCache` (`get`/`set`, sync or async). `MemoryWebFetchCache` is a TTL (15 min) + byte-weighted LRU (50 MiB). |
+| `binary` (`fetchWebPage` only) | `"flag"` | `"bytes"` returns a binary body as `bytes`. |
 | `resolveHost`, `transport`, `connectBudgetMs` | system resolver, `node:http(s)`, 10 s | Advanced; tests use them. A custom `transport` is only ever handed validated addresses. |
 
 `fetchWebResource(url, options)` is the same fetch returning the raw decoded `body: Uint8Array`
@@ -170,7 +189,7 @@ import { createExaSearchClient, createExaBackendState } from "@yanlinglabs/winte
 const search = createExaSearchClient({
   resolveKey: async () => process.env.EXA_API_KEY, // asked only when the free tier is exhausted
 });
-const result = await search.search({ query: "bun 1.4 release notes", numResults: 5, includeDomains: ["bun.com"] }, { signal });
+const result = await search.search({ query: "bun 1.4 release notes", numResults: 5, includeDomains: ["bun.com"], recentDays: 30 }, { signal });
 if (result.ok) {
   for (const r of result.results) r.url, r.title, r.publishedDate, r.text, r.highlights;
 } else {
@@ -191,6 +210,13 @@ await search.close();
   `retryAfterMs`) without touching the network. **The pacer** spaces anonymous call starts 500 ms
   apart. Both live in an `ExaBackendState` (no credential in it): every client shares
   `sharedExaBackendState` unless you pass `state: createExaBackendState()` to scope it.
+- **Published-date filters.** `startPublishedDate` / `endPublishedDate` take `YYYY-MM-DD` (sent as
+  is) or an ISO 8601 date-time (sent as its UTC ISO string); `recentDays: n` means "published in the
+  last n days" (with `startPublishedDate` as well, the later start wins). A date filter, like a domain
+  filter, runs on Exa's advanced search tool. An invalid filter -- an unparseable or impossible date, a
+  `recentDays` that is not a positive number, a start after the end -- **rejects with a `TypeError`**
+  before any request: it is the caller's error, not a search failure. `publishedDate` is on each result
+  when Exa sends one.
 - `text` is the best excerpt (the highlights joined, else the summary, else the page text), at most
   1,200 characters; `numResults` is clamped to 1..20 (default 8). `blockedDomains` on the client is
   excluded from every search and filtered out of every result.

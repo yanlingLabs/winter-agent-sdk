@@ -10,7 +10,9 @@
 // A cache is the caller's to scope: entries are keyed by URL alone, so a host serving several
 // tenants (users, sessions) keeps one cache per tenant.
 
-/** One stored page. `bytes` is the entry's weight for a size-bounded cache (the text's UTF-8 length). */
+import type { WebPageLink } from "./page.ts";
+
+/** One stored page. `bytes` is the entry's weight for a size-bounded cache: the UTF-8 length of the text, the title and every link's URL and text. */
 export interface WebFetchCacheEntry {
   finalUrl: string;
   status: number;
@@ -19,6 +21,10 @@ export interface WebFetchCacheEntry {
   kind: "html" | "text";
   text: string;
   truncated: boolean;
+  /** The HTML page's title, when it had one (see `WebPage.title`). */
+  title?: string;
+  /** The HTML page's links (see `WebPage.links`). Absent for text, and on an entry stored by 0.0.58. */
+  links?: WebPageLink[];
   bytes: number;
 }
 

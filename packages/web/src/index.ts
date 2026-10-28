@@ -29,7 +29,18 @@ export {
   type WebResource,
 } from "./net.ts";
 export { createNodeWebFetchTransport, type NodeWebFetchTransportOptions } from "./transport-node.ts";
-export { fetchWebPage, classifyContentType, type FetchWebPageOptions, type WebPage, type WebPageKind, type WebPageResult } from "./page.ts";
+export {
+  fetchWebPage,
+  classifyContentType,
+  WEB_PAGE_LINK_TEXT_MAX_CHARACTERS,
+  WEB_PAGE_MAX_LINKS,
+  WEB_PAGE_TITLE_MAX_CHARACTERS,
+  type FetchWebPageOptions,
+  type WebPage,
+  type WebPageKind,
+  type WebPageLink,
+  type WebPageResult,
+} from "./page.ts";
 export { MemoryWebFetchCache, WEB_FETCH_CACHE_MAX_BYTES, WEB_FETCH_CACHE_TTL_MS, type MemoryWebFetchCacheOptions, type WebFetchCache, type WebFetchCacheEntry } from "./cache.ts";
 export {
   buildWebFetchDigestRequest,
@@ -41,7 +52,7 @@ export {
   type WebFetchDigestInput,
   type WebFetchDigestRequest,
 } from "./digest.ts";
-export { convertFetchedHtml, decodeHtmlEntities, htmlToMarkdown, HtmlBudgetExceededError, WEB_FETCH_HTML_TRUNCATION_NOTICE } from "./html.ts";
+export { convertFetchedHtml, convertFetchedHtmlPage, decodeHtmlEntities, htmlToMarkdown, HtmlBudgetExceededError, WEB_FETCH_HTML_TRUNCATION_NOTICE, type HtmlAnchor, type HtmlPageConversion } from "./html.ts";
 
 // The rules every hop is checked against
 export {

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { fetchWebPage, type FetchWebPageOptions } from "./page.ts";
 import { MemoryWebFetchCache, type WebFetchCacheEntry } from "./cache.ts";
 import { buildWebFetchDigestRequest, WEB_FETCH_DIGEST_CONTENT_CAP, WEB_FETCH_STRICT_GUIDELINES } from "./digest.ts";
-import { convertFetchedHtml, htmlToMarkdown, WEB_FETCH_HTML_TRUNCATION_NOTICE } from "./html.ts";
+import { convertFetchedHtml, convertFetchedHtmlPage, htmlToMarkdown, WEB_FETCH_HTML_TRUNCATION_NOTICE } from "./html.ts";
 import http from "node:http";
 import net from "node:net";
 import { createNodeWebFetchTransport, sameAddress } from "./transport-node.ts";
@@ -15,6 +15,17 @@ import { mappedTransport, PUBLIC_A, startHttpsServer, testPki, type TestServer }
 const { after, before, describe, test } = await harness(isBun ? ((await import("bun:test")) as unknown as BunTestModule) : undefined);
 
 const skip = testPki() === undefined ? "openssl is not available" : false;
+
+const LINKS_PAGE = [
+  "<html><head><title>  The   Links &amp; page </title><base href='https://elsewhere.example/'></head><body>",
+  "<h1>Heading <a href='/h'>with a link</a></h1>",
+  "<p>See <a href='b'>relative</a>, <a href='https://abs.example/x?y=1#z'>absolute</a> and <a href='./b'>the same again</a>.</p>",
+  "<p><a href='mailto:x@y.example'>mail</a> <a href='javascript:alert(1)'>js</a> <a>no href</a> <a href='http://[bad'>broken</a></p>",
+  "<svg><a href='/in-svg'>hidden</a><title>svg title</title></svg>",
+  "<p><a href='/img'><img src='/i.png' alt='An   image'></a> <a href='#top'>top</a></p>",
+  "<p>forged \uE0000\uE001 marker <a href='/last' title='T'>  last\n  one  </a></p>",
+  "</body></html>",
+].join("");
 
 // The loopback server for the whole file (unref'd: it never holds the process open).
 const server: TestServer = skip !== false ? (undefined as unknown as TestServer) : await startHttpsServer((req, res) => {
@@ -26,6 +37,16 @@ const server: TestServer = skip !== false ? (undefined as unknown as TestServer)
     if (req.url === "/json") {
       res.setHeader("content-type", "application/json");
       res.end('{"a":1}');
+      return;
+    }
+    if (req.url === "/links/") {
+      res.setHeader("content-type", "text/html; charset=utf-8");
+      res.end(LINKS_PAGE);
+      return;
+    }
+    if (req.url === "/pdf") {
+      res.setHeader("content-type", "application/pdf");
+      res.end(Buffer.from("%PDF-1.7 0123456789"));
       return;
     }
     if (req.url === "/bin") {
@@ -61,6 +82,61 @@ describe("fetchWebPage, the cache, the digest and the converter", () => {
       assert.ok(json.ok && json.kind === "text" && json.text === '{"a":1}');
       const bin = await fetchWebPage(`https://public.test:${server.port}/bin`, opts());
       assert.ok(bin.ok && bin.kind === "binary" && bin.text === "" && bin.byteLength === 4);
+    });
+
+    test("an HTML page's title and links: absolute, http(s) only, first appearance, in the order of the text", async () => {
+      const base = `https://public.test:${server.port}/links/`;
+      const page = await fetchWebPage(base, opts());
+      assert.ok(page.ok);
+      if (!page.ok) return;
+      assert.equal(page.title, "The Links & page");
+      assert.deepEqual(page.links, [
+        { text: "with a link", url: `https://public.test:${server.port}/h` },
+        { text: "relative", url: `${base}b` },
+        { text: "absolute", url: "https://abs.example/x?y=1#z" },
+        { text: "An image", url: `https://public.test:${server.port}/img` },
+        { text: "top", url: `${base}#top` },
+        { text: "last one", url: `https://public.test:${server.port}/last` },
+      ]);
+      // The same order as the markdown links in `text` (this pattern stops at the first `)`, hence `alert(1`); no marker survives, and the page's forged one is gone.
+      const hrefs = [...page.text.matchAll(/\]\(([^ )]+)/g)].map((m) => m[1]);
+      assert.deepEqual(hrefs.filter((h) => h !== "/i.png"), ["/h", "b", "https://abs.example/x?y=1#z", "./b", "mailto:x@y.example", "javascript:alert(1", "http://[bad", "/img", "#top", "/last"]);
+      assert.equal(/[\uE000\uE001]/.test(page.text), false);
+      assert.ok(page.text.includes("forged 0 marker"));
+      // A text page has neither.
+      const json = await fetchWebPage(`https://public.test:${server.port}/json`, opts());
+      assert.ok(json.ok && json.title === undefined && json.links === undefined);
+    });
+
+    test("binary: \"bytes\" returns the body (capped by maxBytes); the default only flags it", async () => {
+      const url = `https://public.test:${server.port}/pdf`;
+      const flagged = await fetchWebPage(url, opts());
+      assert.ok(flagged.ok && flagged.kind === "binary" && flagged.text === "" && flagged.bytes === undefined);
+      const full = await fetchWebPage(url, opts({ binary: "bytes" }));
+      assert.ok(full.ok && full.kind === "binary" && full.text === "" && full.contentType === "application/pdf" && !full.truncated);
+      if (full.ok) assert.equal(Buffer.from(full.bytes!).toString(), "%PDF-1.7 0123456789");
+      const cut = await fetchWebPage(url, opts({ binary: "bytes", maxBytes: 8, onOverflow: "truncate" }));
+      assert.ok(cut.ok && cut.truncated && cut.byteLength === 8);
+      if (cut.ok) assert.equal(Buffer.from(cut.bytes!).toString(), "%PDF-1.7");
+      // A text page never carries bytes, and a binary body is never cached.
+      const cache = new MemoryWebFetchCache();
+      const json = await fetchWebPage(`https://public.test:${server.port}/json`, opts({ binary: "bytes", cache }));
+      assert.ok(json.ok && json.bytes === undefined);
+      await fetchWebPage(url, opts({ binary: "bytes", cache }));
+      assert.equal(cache.size, 1);
+    });
+
+    test("a cached page keeps its title and links; byteLength stays the text's length", async () => {
+      const cache = new MemoryWebFetchCache();
+      const url = `https://public.test:${server.port}/links/`;
+      const first = await fetchWebPage(url, opts({ cache }));
+      const second = await fetchWebPage(url, opts({ cache }));
+      assert.ok(first.ok && second.ok && second.fromCache);
+      if (first.ok && second.ok) {
+        assert.equal(second.title, first.title);
+        assert.deepEqual(second.links, first.links);
+        assert.equal(second.byteLength, new TextEncoder().encode(second.text).byteLength);
+      }
     });
 
     test("a cache hit is served without a fetch, and re-checked against the policy before it is", async () => {
@@ -157,6 +233,37 @@ describe("fetchWebPage, the cache, the digest and the converter", () => {
     test("content over the 1,048,576-character cap is cut and the notice appended", async () => {
       const out = await convertFetchedHtml(`<p>${"y".repeat(1_100_000)}</p>`);
       assert.ok(out.endsWith(WEB_FETCH_HTML_TRUNCATION_NOTICE));
+    });
+  });
+
+  describe("convertFetchedHtmlPage", () => {
+    test("its text is convertFetchedHtml's, byte for byte", async () => {
+      for (const html of ["<p>a <a href='/x' title='t'>b <a href='/y'>c</a></a></p>", "<ul><li><a href='/1'>one</a><li><a href='/2'>two</a></ul>", "<pre><a href='/p'>  code</a></pre>", "<h2><a href=x>h</a></h2>", "<h1>A <a href='/1'>b</a> <a href='/22'>c</a></h1>", "<code><a href='/c'>`x`</a></code>"]) {
+        assert.equal((await convertFetchedHtmlPage(html)).text, await convertFetchedHtml(html), html);
+      }
+    });
+
+    test("the title falls back to the first h1 with text; a title or link inside svg or script counts for nothing", async () => {
+      // <title> is raw text: markup inside it is its text, as a browser's tab shows it.
+      assert.equal((await convertFetchedHtmlPage("<title>A <b>b</b></title>")).title, "A <b>b</b>");
+      assert.equal((await convertFetchedHtmlPage("<title> </title><svg><title>icon</title></svg><h1></h1><h1>Real <i>one</i></h1>")).title, "Real _one_");
+      assert.equal((await convertFetchedHtmlPage("<p>no title</p>")).title, undefined);
+      const page = await convertFetchedHtmlPage("<script>'<a href=/s>'</script><svg><a href='/v'>v</a></svg><a href='/k'>kept</a>");
+      assert.deepEqual(page.anchors, [{ href: "/k", text: "kept" }]);
+    });
+
+    test("nested anchors list the outer first; repeats are kept (fetchWebPage dedupes)", async () => {
+      const page = await convertFetchedHtmlPage("<a href='/o'>out <a href='/i'>in</a></a><a href='/o'>again</a>");
+      assert.deepEqual(page.anchors.map((a) => a.href), ["/o", "/i", "/o"]);
+      const icons = await convertFetchedHtmlPage("<a href='/1' title='By title'><img src=i.png></a><a href='/2' aria-label='By label'><svg></svg></a><a href='/3'></a>");
+      assert.deepEqual(icons.anchors.map((a) => a.text), ["By title", "By label", ""]);
+    });
+
+    test("an anchor holding a megabyte of '[' converts in linear time", async () => {
+      const started = performance.now();
+      const page = await convertFetchedHtmlPage(`<a href='/x'>${"[".repeat(1_000_000)}</a>`);
+      assert.equal(page.anchors.length, 1);
+      assert.ok(performance.now() - started < 5_000);
     });
   });
 

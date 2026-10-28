@@ -293,3 +293,69 @@ describe("parseExaResults", () => {
     assert.deepEqual(basic, [{ url: "https://c.example", title: "T", text: "line one\nline two" }]);
   });
 });
+
+describe("published-date filters", () => {
+  const calls = (seen: Seen[]): { name: string; args: Record<string, unknown> }[] =>
+    seen.flatMap((s) => {
+      if (s.rpc !== "tools/call") return [];
+      const params = (JSON.parse(s.body) as { params: { name: string; arguments: Record<string, unknown> } }).params;
+      return [{ name: params.name, args: params.arguments }];
+    });
+
+  test("a date filter selects the advanced tool and is passed through; publishedDate is kept on the results", async () => {
+    await withFake({}, async (endpoint, seen) => {
+      const c = client(endpoint);
+      const result = await c.search({ query: "bun release notes", startPublishedDate: "2026-01-01", endPublishedDate: "2026-06-30T12:00:00+02:00" });
+      assert.ok(result.ok);
+      if (result.ok) {
+        assert.equal(result.tool, "web_search_advanced_exa");
+        assert.equal(result.results[0]?.publishedDate, "2026-01-01");
+      }
+      const [call] = calls(seen);
+      assert.equal(call?.name, "web_search_advanced_exa");
+      assert.equal(call?.args["startPublishedDate"], "2026-01-01");
+      assert.equal(call?.args["endPublishedDate"], "2026-06-30T10:00:00.000Z");
+      assert.equal("includeDomains" in (call?.args ?? {}), false);
+      assert.equal("excludeDomains" in (call?.args ?? {}), false);
+      assert.equal("objective" in (call?.args ?? {}), false);
+      await c.close();
+    });
+  });
+
+  test("recentDays is a start date N days before now; with startPublishedDate the later start applies", async () => {
+    const now = Date.UTC(2026, 9, 28, 12, 0, 0);
+    await withFake({}, async (endpoint, seen) => {
+      const c = client(endpoint, { now: () => now });
+      assert.ok((await c.search({ query: "q", recentDays: 7 })).ok);
+      assert.ok((await c.search({ query: "q", recentDays: 7, startPublishedDate: "2026-10-25" })).ok);
+      assert.ok((await c.search({ query: "q", recentDays: 7, startPublishedDate: "2026-01-01", excludeDomains: ["b.example"] })).ok);
+      const [first, second, third] = calls(seen);
+      assert.equal(first?.args["startPublishedDate"], "2026-10-21T12:00:00.000Z");
+      assert.equal(second?.args["startPublishedDate"], "2026-10-25");
+      assert.equal(third?.args["startPublishedDate"], "2026-10-21T12:00:00.000Z");
+      assert.deepEqual(third?.args["excludeDomains"], ["b.example"]);
+      await c.close();
+    });
+  });
+
+  test("an invalid filter rejects with a TypeError before any request", async () => {
+    await withFake({}, async (endpoint, seen) => {
+      const c = client(endpoint);
+      for (const params of [
+        { query: "q", startPublishedDate: "last week" },
+        { query: "q", startPublishedDate: "2026-02-30" },
+        { query: "q", endPublishedDate: "2026-13-01" },
+        { query: "q", recentDays: 0 },
+        { query: "q", recentDays: Number.NaN },
+        { query: "q", startPublishedDate: "2026-06-01", endPublishedDate: "2026-05-01" },
+      ]) {
+        await assert.rejects(c.search(params), TypeError, JSON.stringify(params));
+      }
+      assert.equal(seen.length, 0);
+      // No filter at all: the basic tool, exactly as before.
+      assert.ok((await c.search({ query: "q" })).ok);
+      assert.equal(calls(seen)[0]?.name, "web_search_exa");
+      await c.close();
+    });
+  });
+});
