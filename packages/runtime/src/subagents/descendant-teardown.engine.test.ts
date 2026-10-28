@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +15,10 @@ import { bindRestoredChildren, drainRestoredChildren, restoredChildHandle } from
 
 const homes: string[] = [];
 const PROBE = "descendant_teardown_permission_probe";
+// The running-subagent counter is process-wide: under a whole-repo `bun test`, a file that runs earlier
+// and leaves a child counted would otherwise shift this file's exact counts (the v0.0.59 release job
+// read 3 where 2 are running here). Start every test from zero, as `afterEach` already ends it.
+beforeEach(() => resetSpawnLimitsForTest());
 afterEach(() => {
   unregisterToolForTest(PROBE);
   resetChildEngineFactoryForTest();
