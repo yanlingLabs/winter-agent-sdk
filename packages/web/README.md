@@ -67,7 +67,7 @@ present on an HTML page (possibly empty): one `{ text, url }` per distinct URL, 
 `[text](href)` appears in `text`** -- so "link 3" is the third distinct link a reader of `text` meets.
 Each `url` is absolute (resolved against `finalUrl`; `<base href>` is not applied), `http:`/`https:`
 only, at most 2,000 characters; a URL repeated in the page is listed once, at its first appearance,
-with that appearance's text as plain text (no markdown; trimmed, at most 200 characters; an icon-only
+with that appearance's text (link and image syntax and `**` removed; trimmed, at most 200 characters; an icon-only
 link falls back to its `title`, then its `aria-label`). At most 500 links (`WEB_PAGE_MAX_LINKS`). Anchors inside `script`,
 `svg`, `template` and the other discarded subtrees are not links. A page served from `cache` keeps both
 (an HTML entry stored without links -- by 0.0.58, or by a cache that drops unknown fields -- is

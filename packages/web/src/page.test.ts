@@ -265,7 +265,7 @@ describe("fetchWebPage, the cache, the digest and the converter", () => {
     test("the title falls back to the first h1 with text; a title or link inside svg or script counts for nothing", async () => {
       // <title> is raw text: markup inside it is its text, as a browser's tab shows it.
       assert.equal((await convertFetchedHtmlPage("<title>A <b>b</b></title>")).title, "A <b>b</b>");
-      assert.equal((await convertFetchedHtmlPage("<title> </title><svg><title>icon</title></svg><h1></h1><h1>Real <i>one</i></h1>")).title, "Real one");
+      assert.equal((await convertFetchedHtmlPage("<title> </title><svg><title>icon</title></svg><h1></h1><h1>Real <b>one</b></h1>")).title, "Real one");
       assert.equal((await convertFetchedHtmlPage("<p>no title</p>")).title, undefined);
       const page = await convertFetchedHtmlPage("<script>'<a href=/s>'</script><svg><a href='/v'>v</a></svg><a href='/k'>kept</a>");
       assert.deepEqual(page.anchors, [{ href: "/k", text: "kept" }]);
@@ -297,9 +297,9 @@ describe("fetchWebPage, the cache, the digest and the converter", () => {
     });
 
     test("link text and titles are plain: no markdown wrappers, no marker cut in half at the input cap", async () => {
-      const page = await convertFetchedHtmlPage("<h1><strong>Big</strong> <em>title</em> <code>x</code></h1><a href='/d'><strong>Docs</strong> for <em>snake_case</em> [1]</a>");
-      assert.equal(page.title, "Big title x");
-      assert.deepEqual(page.anchors, [{ href: "/d", text: "Docs for snake_case [1]" }]);
+      const page = await convertFetchedHtmlPage("<h1><strong>Big</strong> title</h1><a href='/d'><strong>Docs</strong> for __init__.py [1]</a><a href='/e'><code>run()</code></a>");
+      assert.equal(page.title, "Big title");
+      assert.deepEqual(page.anchors, [{ href: "/d", text: "Docs for __init__.py [1]" }, { href: "/e", text: "`run()`" }]);
       // The inner anchor's marker straddles character 2000 of the outer one's text.
       const nested = await convertFetchedHtmlPage(`<a href='/o'>${"x".repeat(1_999)}<a href='/i'>in</a></a>`);
       assert.equal(/[\uE000\uE001]/.test(nested.anchors[0]!.text), false);

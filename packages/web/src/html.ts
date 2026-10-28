@@ -386,12 +386,14 @@ function unlinkMarkdown(text: string): string {
   return out;
 }
 
-/** Markdown as plain text, for a title or a link's text: markers removed, images as their alt text, links as their text, the converter's own `**`/`_`/backtick wrappers dropped, whitespace collapsed. */
+/**
+ * Markdown as plain text, for a title or a link's text: markers removed, images as their alt text,
+ * links as their text, `**` dropped, whitespace collapsed. The `_` and backtick wrappers are KEPT: a
+ * page writes those itself (`__init__.py`, `_redirects`), and stripping them would misname the link.
+ */
 function plainText(markdown: string): string {
   return unlinkMarkdown(markdown.slice(0, PLAIN_TEXT_INPUT_CAP).replace(MARKER_OR_PARTIAL_RE, ""))
     .replace(/\*\*/g, "")
-    .replace(/`+/g, "")
-    .replace(/(^|[\s(])_(?=\S)|(?<=\S)_(?=$|[\s).,;:!?])/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
 }
