@@ -1356,7 +1356,9 @@ describe("review round 1 — the three Importants, pinned where they broke", () 
     for (const model of catalog.models) {
       const domain = model.reasoning?.continuationDomain;
       if (domain === undefined) continue;
-      expect([model.key, domain.confidence]).toEqual([model.key, "declared"]);
+      // `inferred` (2026-10-29 audit): the domain is still the row's own key; the acceptance behind it is
+      // read from two documents together or from the vendor's own tooling, not stated for this endpoint.
+      expect([model.key, ["declared", "inferred"].includes(domain.confidence)]).toEqual([model.key, true]);
       expect([model.key, domain.source]).toEqual([model.key, "official-doc"]);
       expect(domain.sourceRef).toMatch(/own-state acceptance|BOTH halves/);
       expect(domain.value).toEqual([model.key]);
@@ -2246,6 +2248,13 @@ describe("0.0.61 + the 2026-10-29 audit: every OpenRouter reasoning row replays 
       expect([m.key, m.reasoning!.continuation]).toEqual([m.key, "opaque-provider-state"]);
       expect([m.key, m.reasoning!.continuationDomain?.value]).toEqual([m.key, [m.key]]);
     }
+    // Meta-served Muse rows rest on OpenRouter's and Meta's docs read together (inferred); the open-weight
+    // Muse rows are served by third-party hosts and carry OpenRouter's generic evidence (declared).
+    for (const key of ["openrouter/meta/muse-spark-1.3", "openrouter/meta/muse-spark-1.3-contributor"]) expect([key, catalog.models.find((m) => m.key === key)!.reasoning!.continuationDomain!.confidence]).toEqual([key, "inferred"]);
+    for (const key of ["openrouter/meta/muse-spark-open", "openrouter/meta/muse-glimmer-30b"]) {
+      const domain = catalog.models.find((m) => m.key === key)!.reasoning!.continuationDomain!;
+      expect([key, domain.confidence, domain.sourceRef!.includes("meta-responses-v1")]).toEqual([key, "declared", false]);
+    }
   });
 
   test("rows without reasoning keep none", () => {
@@ -2273,10 +2282,18 @@ describe("2026-10-29 continuation audit: each provider family's documented repla
     }
   };
 
-  test("a Chat Completions row is `plaintext` exactly when it is `full-exposed` -- the adapter replays `reasoning_content` only for such a row, so `plaintext` without it claimed state nothing kept", () => {
+  // Rows left at their 0.0.61 `plaintext` because no document covers their host or model (review of the
+  // audit): the adapter replays nothing for them, and they are on the live-call list.
+  const LEFT_AT_0061 = new Set(["tencent-token-plan/hy3", "tencent-token-plan/hy4-preview", "tencent-token-plan/kimi-k2.7-code", "tencent-token-plan/kimi-k3", "tencent-tokenhub/hy4-preview", "tencent-tokenhub-intl/hy4-preview"]);
+
+  test("a Chat Completions row is `plaintext` exactly when it is `full-exposed` -- the adapter replays `reasoning_content` only for such a row -- except the rows left at 0.0.61", () => {
     for (const m of catalog.models) {
       if (adapterOf.get(m.providerId) !== "winter.openai-chat-completions" || m.reasoning === undefined) continue;
       const exposed = m.reasoning.readableState?.value === "full-exposed";
+      if (LEFT_AT_0061.has(m.key)) {
+        expect([m.key, m.reasoning.continuation, exposed, m.reasoning.continuationDomain]).toEqual([m.key, "plaintext", false, undefined]);
+        continue;
+      }
       expect([m.key, m.reasoning.continuation === "plaintext"]).toEqual([m.key, exposed]);
     }
   });
@@ -2289,6 +2306,8 @@ describe("2026-10-29 continuation audit: each provider family's documented repla
   test("Kimi: reasoning_content on the Open Platform and Kimi Code chat; signed thinking blocks on both Messages endpoints", () => {
     for (const p of ["moonshot", "moonshot-cn", "kimi-coding-openai", "kimi-coding-intl-openai"]) expectAll(reasoning(p), "plaintext", 6);
     for (const p of ["moonshot-anthropic", "moonshot-cn-anthropic", "kimi-coding", "kimi-coding-intl"]) expectAll(reasoning(p), "opaque-provider-state", 3);
+    // Kimi Code's own API docs say nothing about thinking blocks: its acceptance is inferred.
+    for (const p of ["kimi-coding", "kimi-coding-intl"]) for (const m of reasoning(p)) expect([m.key, m.reasoning!.continuationDomain?.confidence]).toEqual([m.key, "inferred"]);
     for (const p of ["kimi-coding-openai", "kimi-coding-intl-openai"]) for (const m of reasoning(p)) expect([m.key, m.reasoning!.toolLoopRequirement?.value]).toEqual([m.key, "hard-error"]);
     expect(row("moonshot/kimi-k2.6").reasoning!.replayScope?.value).toBe("current-tool-loop");
     expect(row("moonshot/kimi-k3.1-pro").reasoning!.replayScope?.value).toBe("all-turns");
@@ -2312,9 +2331,12 @@ describe("2026-10-29 continuation audit: each provider family's documented repla
 
   test("Z.ai / BigModel: reasoning_content on every Chat endpoint -- the current tool loop on the standard API, every turn on the Coding Plan; the Messages endpoints document nothing and stay none", () => {
     for (const p of ["zai", "zhipu"]) {
-      expectAll(reasoning(p), "plaintext", 12);
-      for (const m of reasoning(p)) expect([m.key, m.reasoning!.replayScope?.value]).toEqual([m.key, "current-tool-loop"]);
+      const covered = reasoning(p, (m) => !(p === "zai" && m.upstreamId.startsWith("glm-4.5")));
+      expectAll(covered, "plaintext", 11);
+      for (const m of covered) expect([m.key, m.reasoning!.replayScope?.value]).toEqual([m.key, "current-tool-loop"]);
     }
+    // Z.ai's `thinking` is "Only supported by GLM-4.6 series and higher models", and its thinking pages start at 4.6.
+    expectAll(reasoning("zai", (m) => m.upstreamId.startsWith("glm-4.5")), "none", 4);
     for (const p of ["zai-coding", "zhipu-coding"]) {
       expectAll(reasoning(p), "plaintext", 2);
       for (const m of reasoning(p)) expect([m.key, m.reasoning!.replayScope?.value]).toEqual([m.key, "all-turns"]);
@@ -2354,10 +2376,12 @@ describe("2026-10-29 continuation audit: each provider family's documented repla
     expectAll(reasoning("openai"), "opaque-provider-state", 24);
   });
 
-  test("Alibaba Model Studio / Qwen Cloud: preserve_thinking models and GLM-5.x are plaintext on every PAYG and Token Plan host, the same model alike on each; the rest, and the Coding Plan, are none", () => {
+  test("Alibaba Model Studio / Qwen Cloud: preserve_thinking models and GLM-5.x are plaintext on the documented pay-as-you-go hosts, the same model alike on each; the rest, the Token Plan and the Coding Plan are none", () => {
     const preserve = /^(qwen3\.6-(plus|flash)|qwen3\.7-(max|plus|flash)|qwen3\.8-(max|flash|omni-flash)|kimi-k2\.6|kimi-k2\.7-code)(-[0-9-]+)?$/;
     const glm = /^glm-5(\.[123])?$/;
-    for (const p of ["alibaba", "alibaba-cn", "qwen-cloud", "qwen-cloud-token-plan"]) {
+    // The parameter references document the standard compatible-mode base only; nothing is claimed on the plans' hosts.
+    expectAll(reasoning("qwen-cloud-token-plan"), "none", 11);
+    for (const p of ["alibaba", "alibaba-cn", "qwen-cloud"]) {
       expectAll(reasoning(p, (m) => preserve.test(m.upstreamId) || glm.test(m.upstreamId)), "plaintext", 4);
       expectAll(reasoning(p, (m) => !preserve.test(m.upstreamId) && !glm.test(m.upstreamId)), "none", 1);
     }
@@ -2368,9 +2392,15 @@ describe("2026-10-29 continuation audit: each provider family's documented repla
     for (const p of ["alibaba-anthropic", "alibaba-cn-anthropic", "qwen-coding-anthropic", "qwen-coding-cn-anthropic", "qwen-token-plan-anthropic"]) expectAll(reasoning(p), "none", 10);
   });
 
-  test("Tencent: hy3/hy4-preview and Kimi keep reasoning_content; TokenHub's DeepSeek, GLM and MiniMax pages say not to send it back", () => {
-    for (const p of ["tencent-tokenhub", "tencent-tokenhub-intl"]) expectAll(reasoning(p), "plaintext", 2);
-    expectAll(reasoning("tencent-token-plan", (m) => /^(hy|kimi-)/.test(m.upstreamId)), "plaintext", 4);
+  test("Tencent: TokenHub's hy3 replays reasoning_content; nothing is claimed for hy4-preview or for the LKEAP plan hosts beyond 0.0.61", () => {
+    for (const p of ["tencent-tokenhub", "tencent-tokenhub-intl"]) {
+      expectAll(reasoning(p, (m) => m.upstreamId === "hy3"), "plaintext", 1);
+      for (const m of reasoning(p, (r) => r.upstreamId === "hy3")) expect([m.key, m.reasoning!.readableState?.value, JSON.stringify(m.reasoning).includes("hy4-preview")]).toEqual([m.key, "full-exposed", false]);
+    }
+    // Left at 0.0.61 (no page covers them): no readable state, so nothing is replayed.
+    for (const m of [...reasoning("tencent-tokenhub", (r) => r.upstreamId === "hy4-preview"), ...reasoning("tencent-token-plan", (r) => /^(hy|kimi-)/.test(r.upstreamId))]) {
+      expect([m.key, m.reasoning!.continuation, m.reasoning!.readableState]).toEqual([m.key, "plaintext", undefined]);
+    }
     expectAll(reasoning("tencent-token-plan", (m) => /^(deepseek|glm|minimax)-/.test(m.upstreamId)), "none", 9);
     expectAll(reasoning("tencent-coding"), "none", 1);
   });

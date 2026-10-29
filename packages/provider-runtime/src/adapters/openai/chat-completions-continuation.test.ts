@@ -234,7 +234,6 @@ describe("reasoning_content replay on the surfaces that document it", () => {
     ["doubao", "doubao-seed-2-0-pro-260215", {}],
     ["volcengine-agent-plan", "glm-5-2-260617", {}],
     ["tencent-tokenhub", "hy3", {}],
-    ["tencent-token-plan", "kimi-k3", {}],
     ["qianfan", "ernie-5.0", {}],
     ["alibaba", "qwen3.8-flash", { preserve_thinking: true }],
     ["qwen-cloud", "qwen3.8-flash", { preserve_thinking: true }],
@@ -263,6 +262,8 @@ describe("reasoning_content replay on the surfaces that document it", () => {
       ["qwen-coding", "qwen3.7-plus"],
       ["alibaba", "qwen3.5-plus"],
       ["tencent-token-plan", "deepseek-v4-pro-202606"],
+      ["qwen-cloud-token-plan", "qwen3.8-flash"],
+      ["zai", "glm-4.5"],
       ["novita", "moonshotai/kimi-k2.6"],
     ] as const) {
       const registry = shippedRegistry();
@@ -289,7 +290,9 @@ describe("reasoning_content replay on the surfaces that document it", () => {
   test("preserve_thinking: Model Studio / Qwen Cloud rows on the documented list only -- never GLM, never the Coding Plan, never another provider", () => {
     expect(chatPreserveThinkingFor("alibaba", row("alibaba/qwen3.8-flash"))).toBe(true);
     expect(chatPreserveThinkingFor("qwen-cloud", row("qwen-cloud/qwen3.7-max-2026-06-08"))).toBe(true);
-    expect(chatPreserveThinkingFor("qwen-cloud-token-plan", row("qwen-cloud-token-plan/qwen3.6-flash"))).toBe(true);
+    // The plans' hosts are undocumented for the parameter: never sent there, whatever the row says.
+    expect(chatPreserveThinkingFor("qwen-cloud-token-plan", { ...row("qwen-cloud-token-plan/qwen3.6-flash"), reasoning: { ...row("qwen-cloud-token-plan/qwen3.6-flash").reasoning!, continuation: "plaintext" } })).toBe(false);
+    expect(row("qwen-cloud-token-plan/qwen3.6-flash").reasoning!.continuation).toBe("none");
     expect(chatPreserveThinkingFor("alibaba", row("alibaba/glm-5.2"))).toBe(false);
     expect(chatPreserveThinkingFor("alibaba", row("alibaba/qwen3.5-plus"))).toBe(false);
     expect(chatPreserveThinkingFor("qwen-coding", row("qwen-coding/qwen3.7-plus"))).toBe(false);
