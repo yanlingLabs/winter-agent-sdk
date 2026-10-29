@@ -1,0 +1,19 @@
+{
+  "$comment": "2026-10-29: a thinking tool loop on an OpenAI-compatible Chat Completions surface that returns its reasoning as `reasoning_content`, as SSE `data:` payloads. SHAPED FROM the vendors' documented wire -- `choices[].delta.reasoning_content` streamed before `content` and `tool_calls` (https://platform.kimi.ai/docs/guide/use-thinking-models, https://mimo.mi.com/static/docs/quick-start/usage-guide/text-generation/deep-thinking.md, https://platform.minimax.io/docs/api-reference/text-openai-api, https://docs.z.ai/guides/capabilities/thinking, https://docs.fireworks.ai/guides/reasoning, https://www.volcengine.com/docs/82379/1449737, https://cloud.tencent.com/document/product/1823/130930, https://cloud.baidu.com/doc/qianfan-docs/s/6mkqjcw2w, https://www.alibabacloud.com/help/en/model-studio/deep-thinking) -- not captured from a live call: every id is synthetic. `turn1Reasoning` uses `reasoning` instead, Cerebras's parsed field (https://inference-docs.cerebras.ai/capabilities/reasoning).",
+  "turn1": [
+    { "id": "chatcmpl-synthetic-1", "choices": [{ "index": 0, "delta": { "role": "assistant", "content": "", "reasoning_content": "The user wants Paris. " }, "finish_reason": null }] },
+    { "id": "chatcmpl-synthetic-1", "choices": [{ "index": 0, "delta": { "reasoning_content": "I will call the tool." }, "finish_reason": null }] },
+    { "id": "chatcmpl-synthetic-1", "choices": [{ "index": 0, "delta": { "tool_calls": [{ "index": 0, "id": "call_synthetic_1", "type": "function", "function": { "name": "get_current_temperature", "arguments": "{\"location\":\"Paris\"}" } }] }, "finish_reason": null }] },
+    { "id": "chatcmpl-synthetic-1", "choices": [{ "index": 0, "delta": {}, "finish_reason": "tool_calls" }], "usage": { "prompt_tokens": 60, "completion_tokens": 20, "total_tokens": 80 } }
+  ],
+  "turn1Reasoning": [
+    { "id": "chatcmpl-synthetic-1", "choices": [{ "index": 0, "delta": { "role": "assistant", "content": "", "reasoning": "The user wants Paris. " }, "finish_reason": null }] },
+    { "id": "chatcmpl-synthetic-1", "choices": [{ "index": 0, "delta": { "reasoning": "I will call the tool." }, "finish_reason": null }] },
+    { "id": "chatcmpl-synthetic-1", "choices": [{ "index": 0, "delta": { "tool_calls": [{ "index": 0, "id": "call_synthetic_1", "type": "function", "function": { "name": "get_current_temperature", "arguments": "{\"location\":\"Paris\"}" } }] }, "finish_reason": null }] },
+    { "id": "chatcmpl-synthetic-1", "choices": [{ "index": 0, "delta": {}, "finish_reason": "tool_calls" }], "usage": { "prompt_tokens": 60, "completion_tokens": 20, "total_tokens": 80 } }
+  ],
+  "turn2": [
+    { "id": "chatcmpl-synthetic-2", "choices": [{ "index": 0, "delta": { "role": "assistant", "content": "It is 15C in Paris." }, "finish_reason": "stop" }], "usage": { "prompt_tokens": 100, "completion_tokens": 8, "total_tokens": 108 } }
+  ],
+  "expectedReasoning": "The user wants Paris. I will call the tool."
+}

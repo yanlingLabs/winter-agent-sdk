@@ -1,0 +1,15 @@
+{
+  "$comment": "2026-10-29: a Gemini 3+/4 tool loop on Google's OpenAI-compatible Chat Completions endpoint, as SSE `data:` payloads. SHAPED FROM Google's documented wire (https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures, \"Signatures for OpenAI compatibility\": a `tool_calls` entry carries `\"extra_content\": {\"google\": {\"thought_signature\": \"<Signature A>\"}}` beside `function`, `id` and `type`; in a parallel batch only the FIRST call carries one), not captured from a live call: every id and signature is synthetic. The doc shows the non-streamed entry; on the stream the object is placed on the call's first fragment, the one that names it.",
+  "turn1": [
+    { "id": "chatcmpl-synthetic-1", "model": "gemini-4-argon", "choices": [{ "index": 0, "delta": { "role": "assistant", "tool_calls": [{ "index": 0, "id": "function-call-synthetic-1", "type": "function", "function": { "name": "get_current_temperature", "arguments": "{\"location\":\"Paris\"}" }, "extra_content": { "google": { "thought_signature": "Q2lRQVZhZjhaU3ludGhldGljQQ==" } } }] }, "finish_reason": null }] },
+    { "id": "chatcmpl-synthetic-1", "choices": [{ "index": 0, "delta": { "tool_calls": [{ "index": 1, "id": "function-call-synthetic-2", "type": "function", "function": { "name": "get_current_temperature", "arguments": "{\"location\":\"London\"}" } }] }, "finish_reason": null }] },
+    { "id": "chatcmpl-synthetic-1", "choices": [{ "index": 0, "delta": {}, "finish_reason": "tool_calls" }], "usage": { "prompt_tokens": 80, "completion_tokens": 30, "total_tokens": 110 } }
+  ],
+  "turn2": [
+    { "id": "chatcmpl-synthetic-2", "model": "gemini-4-argon", "choices": [{ "index": 0, "delta": { "role": "assistant", "content": "Paris is 15C, London 12C." }, "finish_reason": "stop" }], "usage": { "prompt_tokens": 140, "completion_tokens": 9, "total_tokens": 149 } }
+  ],
+  "expectedToolCalls": [
+    { "extra_content": { "google": { "thought_signature": "Q2lRQVZhZjhaU3ludGhldGljQQ==" } }, "id": "function-call-synthetic-1", "type": "function", "function": { "name": "get_current_temperature", "arguments": "{\"location\":\"Paris\"}" } },
+    { "id": "function-call-synthetic-2", "type": "function", "function": { "name": "get_current_temperature", "arguments": "{\"location\":\"London\"}" } }
+  ]
+}
