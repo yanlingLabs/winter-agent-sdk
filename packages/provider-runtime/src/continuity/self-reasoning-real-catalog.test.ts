@@ -120,8 +120,13 @@ function wireTexts(wire: Array<{ content: Record<string, unknown>[] }>): string[
 describe("the model's OWN reasoning is replayed natively, never decorated -- Anthropic-dialect rows with no continuation domain", () => {
   const rows = reasoningRowsWithoutDomain("winter.anthropic-messages");
 
-  test("the probe has real rows to examine, and the reported row is one of them (a vacuous pass is not a pass)", () => {
-    expect(rows.map((m) => m.key)).toContain("deepseek-anthropic/deepseek-flash");
+  test("the probe has real rows to examine (a vacuous pass is not a pass)", () => {
+    // The reported row, deepseek-anthropic/deepseek-flash, left this population in the 2026-10-29
+    // continuation audit: DeepSeek documents `thinking` blocks as accepted input, so it now carries its
+    // own continuation domain (and replays natively through `sameDomain`). Z.ai's Messages endpoint,
+    // whose docs say nothing about thinking blocks, is still here.
+    expect(rows.map((m) => m.key)).toContain("zai-anthropic/glm-5.3");
+    expect(rows.map((m) => m.key)).not.toContain("deepseek-anthropic/deepseek-flash");
   });
 
   test.each(rows.map((m) => [m.key] as const))("%s: step 2's request carries step 1's thinking block natively and no <recovered_reasoning> text", (modelKey) => {
@@ -234,7 +239,9 @@ describe("genuinely FOREIGN material is still decorated (the fix did not become 
 
   test("a target that does not name its own identity (a caller built before the field existed) behaves exactly as before", () => {
     const registry = realRegistry();
-    const { target, origin } = bridgeTarget(registry, "deepseek-anthropic/deepseek-v4-flash");
+    // A row with NO continuation domain (zai-anthropic, still `none`): without the identity fields the
+    // model's own turn cannot be recognised, so it is decorated exactly as before the self-replay fix.
+    const { target, origin } = bridgeTarget(registry, "zai-anthropic/glm-5.3");
     const { providerId: _p, modelKey: _m, ...anonymous } = target;
     const { report } = createHistoryRenderer(registry).renderWithReport(anthropicTurn(origin), chainOf({ a1: { origin } }), anonymous);
     expect(report.decorations).toHaveLength(1);
